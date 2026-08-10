@@ -1,0 +1,22 @@
+{
+  "id": "http_api.structured-output-json-object",
+  "domain": "http_api",
+  "label": "http api • json_object mode returns parseable JSON matching a simple schema",
+  "query": "Return a JSON object describing a fictional person with exactly two keys: \"name\" (a string) and \"age\" (an integer). Output only the JSON object.",
+  "notes": "Structured-output behavior, scored deterministically: response_format json_object must yield content that parses as a single JSON object AND validates against the declared schema via SchemaValidator — no judge involved. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "httpAPI": {
+      "scenario": "structured_output",
+      "maxTokens": 256,
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "age": { "type": "integer" }
+        },
+        "required": ["name", "age"]
+      }
+    }
+  }
+}

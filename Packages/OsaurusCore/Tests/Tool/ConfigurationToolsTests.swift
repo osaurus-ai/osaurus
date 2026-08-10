@@ -55,6 +55,7 @@ struct ConfigurationToolsGateContractTests {
             OsaurusMCPTool(),
             OsaurusPluginTool(),
             OsaurusScheduleTool(),
+            OsaurusWatcherTool(),
             OsaurusAgentTool(),
         ]
     }
@@ -161,6 +162,47 @@ struct ConsolidatedActionSchemaTests {
         let actions = actionEnum(of: OsaurusScheduleTool())
         #expect(actions.contains("enable"))
         #expect(actions.contains("disable"), "osaurus_schedule must expose a first-class `disable` action")
+    }
+
+    @Test
+    func watcherTool_offersDisableAsFirstClassAction() {
+        let actions = actionEnum(of: OsaurusWatcherTool())
+        #expect(actions.contains("enable"))
+        #expect(actions.contains("disable"), "osaurus_watcher must expose a first-class `disable` action")
+    }
+}
+
+/// Pins the read-scope surface of `osaurus_list` / `osaurus_describe`.
+/// These scopes are a product contract: the configuration agent can only
+/// answer "what skills/watchers/themes/… do I have?" from live state when
+/// the scope is offered in the schema enum. Removing one silently
+/// downgrades the agent to reciting the guide.
+@Suite
+struct ConfigurationReadScopeTests {
+
+    private func scopeEnum(of tool: any OsaurusTool) -> Set<String> {
+        guard case .object(let root)? = tool.parameters,
+            case .object(let props)? = root["properties"],
+            case .object(let scope)? = props["scope"],
+            case .array(let values)? = scope["enum"]
+        else { return [] }
+        return Set(values.compactMap { if case .string(let s) = $0 { return s } else { return nil } })
+    }
+
+    private static let expectedScopes: Set<String> = [
+        "agents", "models", "providers", "mcp", "plugins", "schedules",
+        "skills", "watchers", "knowledge", "themes", "commands", "channels",
+        "search",
+    ]
+
+    @Test
+    func listTool_offersEveryReadScope() {
+        #expect(scopeEnum(of: OsaurusListTool()) == Self.expectedScopes)
+    }
+
+    @Test
+    func describeTool_offersEveryReadScope() {
+        #expect(scopeEnum(of: OsaurusDescribeTool()) == Self.expectedScopes)
     }
 }
 

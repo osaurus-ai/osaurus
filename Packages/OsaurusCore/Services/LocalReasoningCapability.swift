@@ -19,7 +19,7 @@ import Foundation
 import Darwin
 
 enum LocalReasoningCapability {
-    struct Capability: Sendable {
+    struct Capability: Sendable, Equatable {
         /// Template references `<think>` or `</think>` tags.
         let supportsThinking: Bool
         /// Template reads an `enable_thinking` kwarg.
@@ -38,9 +38,32 @@ enum LocalReasoningCapability {
         ///     (`... and enable_thinking`) → absent kwarg ⇒ thinking OFF.
         /// Only meaningful when `isToggleableThinking` is true.
         let defaultThinkingOn: Bool
+        /// The serving default the PUBLISHER explicitly stamped into
+        /// `generation_config.json > default_chat_template_kwargs >
+        /// enable_thinking` — the same key HF transformers honors when the
+        /// caller omits the kwarg. `nil` when the bundle carries no such
+        /// declaration (template-inferred and jang_config defaults do NOT
+        /// populate this). Distinct from `defaultThinkingOn` so policy code
+        /// can tell a deliberate bundle contract (Laguna/Raptor) apart from
+        /// a heuristic template read.
+        let declaredDefaultThinkingOn: Bool?
         /// True when the template both exposes a toggle kwarg and uses
         /// reasoning markers the runtime recognizes.
         var isToggleableThinking: Bool { supportsThinking && hasEnableThinkingKwarg }
+
+        init(
+            supportsThinking: Bool,
+            hasEnableThinkingKwarg: Bool,
+            templateInjectsThinkTag: Bool,
+            defaultThinkingOn: Bool,
+            declaredDefaultThinkingOn: Bool? = nil
+        ) {
+            self.supportsThinking = supportsThinking
+            self.hasEnableThinkingKwarg = hasEnableThinkingKwarg
+            self.templateInjectsThinkTag = templateInjectsThinkTag
+            self.defaultThinkingOn = defaultThinkingOn
+            self.declaredDefaultThinkingOn = declaredDefaultThinkingOn
+        }
 
         static let none = Capability(
             supportsThinking: false,
@@ -64,6 +87,14 @@ enum LocalReasoningCapability {
 
         let detected = detect(modelId: modelId)
 
+        // A main-thread lookup during the launch scan can miss purely
+        // because the local-models cache is still cold (see
+        // `localDirectory(forModelId:)`). Don't memoize that provisional
+        // miss — the next lookup after the scan lands gets the real answer.
+        if detected == .none, !ModelManager.isLocalModelsCacheWarm {
+            return detected
+        }
+
         lock.lock()
         cache[key] = detected
         lock.unlock()
@@ -84,7 +115,18 @@ enum LocalReasoningCapability {
             return .none
         }
         if let template = readChatTemplate(at: dir) {
-            return analyze(template: template)
+            let analyzed = analyze(template: template)
+            let declared = generationConfigDeclaredThinkingOn(at: dir)
+            if let metadataDefault = declared ?? readTemplateDefaultThinkingOn(at: dir) {
+                return Capability(
+                    supportsThinking: analyzed.supportsThinking,
+                    hasEnableThinkingKwarg: analyzed.hasEnableThinkingKwarg,
+                    templateInjectsThinkTag: analyzed.templateInjectsThinkTag,
+                    defaultThinkingOn: metadataDefault,
+                    declaredDefaultThinkingOn: declared
+                )
+            }
+            return analyzed
         }
         // Fallback for JANG bundles that ship no chat template (DSV4-Flash
         // ships `encoding/encoding_dsv4.py` instead; the JANG converter
@@ -183,10 +225,21 @@ enum LocalReasoningCapability {
         // `ORG/REPO` id, case-insensitive. Re-implementing the match here was
         // silently returning nil whenever the caller passed a form neither of
         // our candidate heuristics covered.
-        guard let found = ModelManager.findInstalledMLXModel(named: modelId) else {
-            return nil
-        }
-        return found.localDirectory
+        //
+        // On the main thread use the cache-only lookup: this is reached from
+        // SwiftUI body evaluation (FloatingInputCard's reasoning suffix), and
+        // the blocking variant parks on the cold-cache scan condition for up
+        // to ~10s at launch. Off-main (server/generation paths) keep the
+        // blocking lookup so capability detection stays authoritative.
+        // Under tests everything runs on the main thread and suites expect
+        // the blocking lookup's synchronous answer, so the shortcut is
+        // production-only.
+        let cacheOnly = Thread.isMainThread && !RuntimeEnvironment.isUnderTests
+        let found =
+            cacheOnly
+            ? ModelManager.findInstalledMLXModelFromCache(named: modelId)
+            : ModelManager.findInstalledMLXModel(named: modelId)
+        return found?.localDirectory
     }
 
     /// Read `jang_config.json > chat > reasoning` and surface it as a
@@ -242,8 +295,59 @@ enum LocalReasoningCapability {
             supportsThinking: true,
             hasEnableThinkingKwarg: false,
             templateInjectsThinkTag: false,
-            defaultThinkingOn: false
+            defaultThinkingOn: jangReasoningDefaultThinkingOn(reasoning) ?? false
         )
+    }
+
+    /// The publisher's explicit serving-default declaration. Kept separate
+    /// from the jang_config fallback below because this one is a deliberate
+    /// wire contract (HF transformers applies the same key when the caller
+    /// omits `enable_thinking`) and `AgentReasoningPolicy` honors it even on
+    /// agent/tool surfaces, while jang_config defaults remain
+    /// presentation-level metadata.
+    private static func generationConfigDeclaredThinkingOn(at dir: URL) -> Bool? {
+        guard
+            let data = readSmallConfigFile(dir.appendingPathComponent("generation_config.json")),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let defaults = root["default_chat_template_kwargs"] as? [String: Any],
+            let enableThinking = defaults["enable_thinking"] as? Bool
+        else { return nil }
+        return enableThinking
+    }
+
+    /// Bundle metadata can override the Jinja fallback for omitted kwargs. Laguna
+    /// S 2.1 is the concrete case: its sidecar template says
+    /// `enable_thinking | default(false)`, but generation_config and
+    /// jang_config both stamp the serving default as thinking-on. The UI should
+    /// present that effective default, and request construction should still
+    /// send nothing until the user/API makes an explicit choice.
+    private static func readTemplateDefaultThinkingOn(at dir: URL) -> Bool? {
+        let jangURL = dir.appendingPathComponent("jang_config.json")
+        guard let data = readSmallConfigFile(jangURL),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let chat = root["chat"] as? [String: Any],
+            let reasoning = chat["reasoning"] as? [String: Any]
+        else {
+            return nil
+        }
+        return jangReasoningDefaultThinkingOn(reasoning)
+    }
+
+    private static func jangReasoningDefaultThinkingOn(_ reasoning: [String: Any]) -> Bool? {
+        if let enabled = reasoning["default_enabled"] as? Bool {
+            return enabled
+        }
+        if let mode = reasoning["default_mode"] as? String {
+            switch mode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "think", "thinking", "reason", "reasoning", "high", "max":
+                return true
+            case "chat", "direct", "none", "no_think", "nothink", "off":
+                return false
+            default:
+                break
+            }
+        }
+        return nil
     }
 
     static func readChatTemplate(at dir: URL) -> String? {

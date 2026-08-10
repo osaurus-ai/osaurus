@@ -185,11 +185,17 @@ final class StreamingDeltaProcessor {
 
         if smoothStreamingEnabled && pendingCount > 0 {
             startPacingTimerIfNeeded()
-            // Block here until `pacingTick` empties the buffer and
-            // resumes us. The processor stays alive for the duration
-            // because the surrounding `send(...)` is awaiting.
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                self.pacingDoneContinuation = continuation
+            // Drain one tick synchronously. Short final tails should not
+            // depend on any future run-loop timer delivery before ChatView can
+            // leave its streaming state.
+            pacingTick()
+            if pendingCount > 0 {
+                // Block here until `pacingTick` empties the buffer and
+                // resumes us. The processor stays alive for the duration
+                // because the surrounding `send(...)` is awaiting.
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    self.pacingDoneContinuation = continuation
+                }
             }
         } else if pendingCount > 0 {
             // Non-smooth path: drain immediately.
@@ -240,6 +246,12 @@ final class StreamingDeltaProcessor {
         pacingTimer = nil
     }
 
+    private func resumePacingDoneIfNeeded() {
+        guard let cont = pacingDoneContinuation else { return }
+        pacingDoneContinuation = nil
+        cont.resume()
+    }
+
     /// Drain a chunk from the head of `deltaBuffer` into the turn + push
     /// one sync. Chunk size adapts to the pending buffer so a giant
     /// response that arrived in one shot still finishes typing out within
@@ -251,17 +263,26 @@ final class StreamingDeltaProcessor {
         if pending == 0 {
             stopPacingTimer()
             // Wake up `finalize()` if it's waiting for the tail to drain.
-            if let cont = pacingDoneContinuation {
-                pacingDoneContinuation = nil
-                cont.resume()
-            }
+            resumePacingDoneIfNeeded()
             return
         }
         let scaled = pending / Self.pacingDrainTicks
         let take = min(pending, max(Self.pacingCharsPerTick, scaled))
         appendContent(consume(take))
         lastFlushTime = Date()
-        syncToTurn()
+        // Throttled: appends still land every 16ms tick, but the (expensive)
+        // UI re-apply follows the adaptive `syncIntervalMs` cadence. Any
+        // residual pending content is synced by `finalize()`.
+        syncIfNeeded(now: Date())
+        if pendingCount == 0 {
+            // The last visible chunk was just consumed. Do not require one
+            // more run-loop timer tick to finish the chat run: if that tick is
+            // coalesced or never delivered, ChatView keeps `isStreaming=true`
+            // after the answer is fully visible and the red Stop button never
+            // clears.
+            stopPacingTimer()
+            resumePacingDoneIfNeeded()
+        }
     }
 
     /// Pending (unrevealed) character count. O(1) — replaces the O(n)
@@ -309,9 +330,25 @@ final class StreamingDeltaProcessor {
         onSync?()
     }
 
-    private func syncIfNeeded(now: Date) {
-        let syncIntervalMs: Double = 16
+    /// UI sync cadence, scaled down as the turn grows. Every sync re-applies
+    /// the streaming cell — markdown segment dispatch, table relayout, height
+    /// update — and that work is O(content length), so a fixed 16ms cadence
+    /// makes the whole stream O(n²): ChatPerfTrace measured ~21s of
+    /// main-thread work over a 259s markdown stream at ~25 syncs/s, with
+    /// 100ms single-sync peaks (the fleet-hardware app-hang cluster). Short
+    /// responses — the common case — keep the full-rate typewriter; long
+    /// ones trade imperceptible reveal granularity for a bounded per-second
+    /// cost.
+    private var syncIntervalMs: Double {
+        switch contentLength + thinkingLength {
+        case ..<2_000: return 16
+        case ..<8_000: return 33
+        case ..<32_000: return 66
+        default: return 100
+        }
+    }
 
+    private func syncIfNeeded(now: Date) {
         let timeSinceSync = now.timeIntervalSince(lastSyncTime) * 1000
         if (syncCount == 0 && hasPendingContent)
             || (timeSinceSync >= syncIntervalMs && hasPendingContent)

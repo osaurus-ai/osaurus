@@ -252,6 +252,9 @@ public struct SandboxProvisioningReport: Codable, Sendable, Equatable {
 public enum SandboxProvisioningDiagnostics {
     public static let schemaVersion = 1
     public static let defaultMinimumColdProvisionFreeBytes: Int64 = 12 * 1024 * 1024 * 1024
+    /// Free-space floor for the Seatbelt backend, which provisions no VM
+    /// image or rootfs — it only needs working room for agent files.
+    public static let defaultMinimumSeatbeltFreeBytes: Int64 = 1 * 1024 * 1024 * 1024
 
     public static func makeReport(
         generatedAt: Date = Date(),
@@ -259,10 +262,10 @@ public enum SandboxProvisioningDiagnostics {
         operatingSystemMajorVersion: Int = ProcessInfo.processInfo.operatingSystemVersion.majorVersion,
         isAppleSilicon: Bool = defaultIsAppleSilicon,
         environment: [String: String] = ProcessInfo.processInfo.environment,
+        backend: SandboxBackend = SandboxBackend.current,
         fileManager fm: FileManager = .default
     ) -> SandboxProvisioningReport {
         let rootSource = resolvedRootSource(environment: environment)
-        let specs = locationSpecs()
         var locations: [SandboxProvisioningLocation] = []
         var findings: [SandboxProvisioningFinding] = []
 
@@ -282,7 +285,11 @@ public enum SandboxProvisioningDiagnostics {
             )
         }
 
-        if operatingSystemMajorVersion < 26 {
+        // The macOS-version and Apple Silicon requirements belong to the
+        // Containerization VM runtime. The Seatbelt backend exists precisely
+        // for hosts that fail the version check, so those findings are
+        // skipped there.
+        if backend == .virtualMachine, operatingSystemMajorVersion < 26 {
             findings.append(
                 finding(
                     code: .sandboxUnavailable,
@@ -300,7 +307,7 @@ public enum SandboxProvisioningDiagnostics {
             )
         }
 
-        if !isAppleSilicon {
+        if backend == .virtualMachine, !isAppleSilicon {
             findings.append(
                 finding(
                     code: .unsupportedArchitecture,
@@ -315,7 +322,9 @@ public enum SandboxProvisioningDiagnostics {
             )
         }
 
-        let configuration = loadConfigurationSnapshot(fileManager: fm)
+        let configurationResult = loadConfiguration(fileManager: fm)
+        let configuration = configurationResult.snapshot
+        let specs = locationSpecs(config: configurationResult.config, backend: backend)
         switch configuration.source {
         case .loaded:
             break
@@ -369,10 +378,16 @@ public enum SandboxProvisioningDiagnostics {
             findings.append(contentsOf: result.findings)
         }
 
+        // Seatbelt has no image download or rootfs materialization, so the
+        // multi-gigabyte cold-provision headroom requirement doesn't apply.
+        let effectiveMinimumFreeBytes =
+            backend == .seatbelt
+            ? min(minimumColdProvisionFreeBytes, defaultMinimumSeatbeltFreeBytes)
+            : minimumColdProvisionFreeBytes
         findings.append(
             contentsOf: volumeFindings(
                 locations: locations,
-                minimumColdProvisionFreeBytes: minimumColdProvisionFreeBytes
+                minimumColdProvisionFreeBytes: effectiveMinimumFreeBytes
             )
         )
 
@@ -384,7 +399,7 @@ public enum SandboxProvisioningDiagnostics {
             rootSource: rootSource,
             osMajorVersion: operatingSystemMajorVersion,
             isAppleSilicon: isAppleSilicon,
-            minimumColdProvisionFreeBytes: minimumColdProvisionFreeBytes,
+            minimumColdProvisionFreeBytes: effectiveMinimumFreeBytes,
             configuration: configuration,
             locations: locations,
             findings: findings
@@ -416,10 +431,54 @@ public enum SandboxProvisioningDiagnostics {
         let findings: [SandboxProvisioningFinding]
     }
 
-    private static func locationSpecs() -> [LocationSpec] {
+    /// Location IDs that only exist for the Containerization VM runtime:
+    /// kernel/initfs assets, the ext4 rootfs, VM container state, and the
+    /// vsock bridge socket. The Seatbelt backend runs directly on the host
+    /// filesystem, so preflight must not report these as missing there.
+    private static let vmOnlyLocationIDs: Set<SandboxProvisioningLocationID> = [
+        .containerKernelDirectory,
+        .containerKernelFile,
+        .containerInitFSFile,
+        .containerStateDirectory,
+        .containerRootFSFile,
+        .bridgeSocket,
+    ]
+
+    private static func locationSpecs(
+        config: SandboxConfiguration,
+        backend: SandboxBackend
+    ) -> [LocationSpec] {
         let containerState = OsaurusPaths.container()
             .appendingPathComponent("containers/osaurus-sandbox", isDirectory: true)
-        return [
+        let rootfs: (title: String, url: URL)
+        if config.perAgentEnvironments {
+            let key = SandboxManager.rootfsTemplateKey
+            if let environment = SandboxRootfsTemplateStore.listEnvironments()
+                .reversed()
+                .first(where: {
+                    SandboxRootfsTemplateStore.environmentIsValid(agentName: $0.name, key: key)
+                })
+            {
+                rootfs = (
+                    L("Per-agent warm restart rootfs"),
+                    SandboxRootfsTemplateStore.environmentRootfs(agentName: environment.name)
+                )
+            } else {
+                // A valid template is sufficient even before the selected
+                // agent has an environment: startup materializes its CoW
+                // rootfs from this file without another image unpack.
+                rootfs = (
+                    L("Per-agent rootfs template"),
+                    SandboxRootfsTemplateStore.templateFile(key: key)
+                )
+            }
+        } else {
+            rootfs = (
+                L("Warm restart rootfs"),
+                containerState.appendingPathComponent("rootfs.ext4")
+            )
+        }
+        let specs: [LocationSpec] = [
             LocationSpec(
                 id: .root,
                 title: L("Osaurus root"),
@@ -565,8 +624,8 @@ public enum SandboxProvisioningDiagnostics {
             ),
             LocationSpec(
                 id: .containerRootFSFile,
-                title: L("Warm restart rootfs"),
-                url: containerState.appendingPathComponent("rootfs.ext4"),
+                title: rootfs.title,
+                url: rootfs.url,
                 kind: .file,
                 stage: .runtime,
                 missingSeverity: .warning,
@@ -586,6 +645,10 @@ public enum SandboxProvisioningDiagnostics {
                 minimumFileBytes: nil
             ),
         ]
+        guard backend == .virtualMachine else {
+            return specs.filter { !vmOnlyLocationIDs.contains($0.id) }
+        }
+        return specs
     }
 
     private static func checkLocation(
@@ -832,28 +895,44 @@ public enum SandboxProvisioningDiagnostics {
         return .ready
     }
 
-    private static func loadConfigurationSnapshot(
+    private struct ConfigurationCheckResult {
+        let snapshot: SandboxProvisioningConfigurationSnapshot
+        let config: SandboxConfiguration
+    }
+
+    private static func loadConfiguration(
         fileManager fm: FileManager
-    ) -> SandboxProvisioningConfigurationSnapshot {
+    ) -> ConfigurationCheckResult {
         let url = OsaurusPaths.sandboxConfigFile().standardizedFileURL
         guard fm.fileExists(atPath: url.path) else {
-            return configurationSnapshot(
-                path: url.path,
-                source: .missingUsingDefaults,
-                config: .default,
-                error: nil
+            let config = SandboxConfiguration.default
+            return ConfigurationCheckResult(
+                snapshot: configurationSnapshot(
+                    path: url.path,
+                    source: .missingUsingDefaults,
+                    config: config,
+                    error: nil
+                ),
+                config: config
             )
         }
         do {
             let data = try Data(contentsOf: url)
             let config = try JSONDecoder().decode(SandboxConfiguration.self, from: data)
-            return configurationSnapshot(path: url.path, source: .loaded, config: config, error: nil)
+            return ConfigurationCheckResult(
+                snapshot: configurationSnapshot(path: url.path, source: .loaded, config: config, error: nil),
+                config: config
+            )
         } catch {
-            return configurationSnapshot(
-                path: url.path,
-                source: .invalidUsingDefaults,
-                config: .default,
-                error: error.localizedDescription
+            let config = SandboxConfiguration.default
+            return ConfigurationCheckResult(
+                snapshot: configurationSnapshot(
+                    path: url.path,
+                    source: .invalidUsingDefaults,
+                    config: config,
+                    error: error.localizedDescription
+                ),
+                config: config
             )
         }
     }

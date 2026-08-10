@@ -34,6 +34,14 @@ enum ContentBlockKind: Equatable {
     case paragraph(index: Int, text: String, isStreaming: Bool, role: MessageRole)
     case toolCallGroup(calls: [ToolCallItem])
     case thinking(index: Int, text: String, isStreaming: Bool, duration: TimeInterval?)
+    /// Display-time rollup of a run of consecutive `.thinking` /
+    /// `.toolCallGroup` blocks (possibly spanning consecutive assistant
+    /// turns in an agent loop). Collapsed it renders as a single summary
+    /// row; expanded it renders its children, whose own block ids keep
+    /// per-item expansion working through the shared expandedIds set.
+    /// Built only in `rollupActivityBlocks` — never stored in the block
+    /// cache, mirroring `coalesceToolGroups`.
+    case activityGroup(children: [ContentBlock])
     /// `responseTurnId` is the assistant turn that answered this message (the
     /// first assistant turn that follows it), used by the overflow menu's
     /// "Inspect response" to open that reply's request/response log. Nil when the
@@ -70,6 +78,12 @@ enum ContentBlockKind: Equatable {
     /// affordance instead of silently dropping the turn. `costMicro` is the raw
     /// micro-USD string; `status` is the router's terminal status.
     case emptyResponseNotice(turnId: UUID, outputTokens: Int, costMicro: String, status: String)
+    /// Divider marker at the LLM context-compaction boundary: everything above
+    /// it is covered by the session's ConversationSummary in the OUTBOUND
+    /// context (the visible turns are untouched). Expandable to read the
+    /// summary text the model sees. Injected at display time in
+    /// `ChatSession.rebuildVisibleBlocks` — never stored in the block cache.
+    case compactionMarker(savedTokens: Int, modelName: String, summaryText: String)
 
     /// Custom Equatable optimized for performance during streaming.
     /// Uses text length comparison as a cheap proxy for content change detection.
@@ -87,6 +101,9 @@ enum ContentBlockKind: Equatable {
 
         case let (.toolCallGroup(lCalls), .toolCallGroup(rCalls)):
             return lCalls == rCalls
+
+        case let (.activityGroup(lChildren), .activityGroup(rChildren)):
+            return lChildren == rChildren
 
         case let (.thinking(lIdx, lText, lStream, lDur), .thinking(rIdx, rText, rStream, rDur)):
             // Same optimization as paragraph
@@ -140,6 +157,14 @@ enum ContentBlockKind: Equatable {
         ):
             return lId == rId && lTokens == rTokens && lCost == rCost && lStatus == rStatus
 
+        case let (
+            .compactionMarker(lSaved, lModel, lText),
+            .compactionMarker(rSaved, rModel, rText)
+        ):
+            guard lSaved == rSaved && lModel == rModel else { return false }
+            guard lText.count == rText.count else { return false }
+            return lText == rText
+
         default:
             return false
         }
@@ -159,9 +184,9 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         switch kind {
         case let .header(role, _, _): return role
         case let .paragraph(_, _, _, role): return role
-        case .toolCallGroup, .thinking, .sharedArtifact, .pendingToolCall,
+        case .toolCallGroup, .thinking, .activityGroup, .sharedArtifact, .pendingToolCall,
             .generationStats, .typingIndicator, .groupSpacer, .chart, .assistantActions,
-            .emptyResponseNotice, .fileDiff:
+            .emptyResponseNotice, .fileDiff, .compactionMarker:
             return .assistant
         case .userMessage: return .user
         }
@@ -180,6 +205,38 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
 
     func withPosition(_ newPosition: BlockPosition) -> ContentBlock {
         ContentBlock(id: id, turnId: turnId, kind: kind, position: newPosition)
+    }
+
+    /// Raw text the find bar (Cmd+F) highlighter scans for this block, or
+    /// nil for block kinds that never paint search matches. Must stay in
+    /// sync with the cell layer's `setSearchHighlight` call sites so the
+    /// per-turn occurrence indices computed from turn content line up with
+    /// the blocks that render them.
+    var searchableText: String? {
+        switch kind {
+        case let .paragraph(_, text, _, role) where role == .user || role == .assistant:
+            return text
+        case let .userMessage(text, _, _, _):
+            return text
+        default:
+            return nil
+        }
+    }
+
+    /// True when a disclosure toggle with this id is rendered by this block:
+    /// the block itself, a tool call id inside its group, or either nested in
+    /// an activity rollup. Used by the table coordinator to map a toggled id
+    /// back to the row that must re-measure.
+    func rendersToggleId(_ toggleId: String) -> Bool {
+        if id == toggleId { return true }
+        switch kind {
+        case let .toolCallGroup(calls):
+            return calls.contains { $0.call.id == toggleId }
+        case let .activityGroup(children):
+            return children.contains { $0.rendersToggleId(toggleId) }
+        default:
+            return false
+        }
     }
 
     // MARK: - Factory Methods
@@ -237,6 +294,23 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
             turnId: turnId,
             kind: .toolCallGroup(calls: calls),
             position: position
+        )
+    }
+
+    /// Stable id for an activity rollup, derived from its first child so the
+    /// id survives streaming appends to the end of the run. Shared by the
+    /// rollup pass and ChatView's streaming-expansion logic.
+    static func activityGroupId(firstChildId: String) -> String {
+        "activity-\(firstChildId)"
+    }
+
+    /// Wraps a non-empty run of consecutive thinking / tool-call blocks.
+    static func activityGroup(children: [ContentBlock]) -> ContentBlock {
+        ContentBlock(
+            id: activityGroupId(firstChildId: children[0].id),
+            turnId: children[0].turnId,
+            kind: .activityGroup(children: children),
+            position: children[0].position
         )
     }
 
@@ -368,6 +442,25 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
             turnId: turnId,
             kind: .fileDiff(diff: diff),
             position: position
+        )
+    }
+
+    /// Compaction-boundary divider. Keyed on the summary id so a re-compaction
+    /// (new summary covering more turns) moves/re-renders it; `turnId` is the
+    /// last covered turn, anchoring the marker right below the covered span.
+    static func compactionMarker(
+        summary: ConversationSummary,
+        afterTurnId: UUID
+    ) -> ContentBlock {
+        ContentBlock(
+            id: "compaction-\(summary.id.uuidString)",
+            turnId: afterTurnId,
+            kind: .compactionMarker(
+                savedTokens: summary.savedTokensEstimate,
+                modelName: summary.modelIdentifier,
+                summaryText: summary.summaryText
+            ),
+            position: .only
         )
     }
 
@@ -639,7 +732,11 @@ extension ContentBlock {
                         let preview = FileDiff.streamingPreview(
                             toolName: call.function.name,
                             partialArgs: call.function.arguments,
-                            isStreaming: false
+                            isStreaming: false,
+                            fallbackPath: FileDiff.inferredEditPath(
+                                partialArgs: call.function.arguments,
+                                knownFiles: Self.knownFileContents(in: turns)
+                            )
                         )
                     {
                         // FAILED file write: the streamed content was never
@@ -659,7 +756,11 @@ extension ContentBlock {
                         FileDiff.diffProducingToolNames.contains(call.function.name),
                         let preview = FileDiff.streamingPreview(
                             toolName: call.function.name,
-                            partialArgs: call.function.arguments
+                            partialArgs: call.function.arguments,
+                            fallbackPath: FileDiff.inferredEditPath(
+                                partialArgs: call.function.arguments,
+                                knownFiles: Self.knownFileContents(in: turns)
+                            )
                         )
                     {
                         // File write currently EXECUTING: the streamed preview
@@ -706,7 +807,11 @@ extension ContentBlock {
                 if let partialArgs = turn.pendingToolArgFull,
                     let preview = FileDiff.streamingPreview(
                         toolName: pendingName,
-                        partialArgs: partialArgs
+                        partialArgs: partialArgs,
+                        fallbackPath: FileDiff.inferredEditPath(
+                            partialArgs: partialArgs,
+                            knownFiles: Self.knownFileContents(in: turns)
+                        )
                     )
                 {
                     turnBlocks.append(
@@ -803,7 +908,130 @@ extension ContentBlock {
         return result
     }
 
+    /// Steps a run of thinking / tool-call blocks represents: each thinking
+    /// segment and each individual tool call counts as one. Drives both the
+    /// rollup threshold and the group header's "N steps" badge.
+    static func activityStepCount(of children: [ContentBlock]) -> Int {
+        children.reduce(0) { acc, child in
+            switch child.kind {
+            case .thinking: return acc + 1
+            case let .toolCallGroup(calls): return acc + calls.count
+            default: return acc
+            }
+        }
+    }
+
+    /// Rolls up every run of consecutive `.thinking` / `.toolCallGroup`
+    /// blocks totalling ≥2 steps into a single `.activityGroup`, so agent
+    /// loops (thought → tool → thought → tool …) collapse to one summary row
+    /// instead of stacking N disclosure rows. The threshold counts steps, not
+    /// blocks: `coalesceToolGroups` has already merged an entire tool run
+    /// into one block, so a lone group carrying many calls (the shape loaded
+    /// chats take) must still roll up. Anything else (a paragraph, chart,
+    /// pending chip, the final answer) breaks the run, so live progress chips
+    /// and content stay outside the rollup. A single thinking segment or a
+    /// lone one-call group is left bare — hiding one row behind a group adds
+    /// a click for no space savings.
+    ///
+    /// Applied at the display chokepoint (`BlockMemoizer.limited`), after
+    /// `coalesceToolGroups`, and never stored in the cache — same contract as
+    /// coalescing, so incremental regeneration keeps stable per-turn ids.
+    static func rollupActivityBlocks(_ blocks: [ContentBlock]) -> [ContentBlock] {
+        var result: [ContentBlock] = []
+        result.reserveCapacity(blocks.count)
+        var run: [ContentBlock] = []
+
+        func flushRun() {
+            if activityStepCount(of: run) >= 2 {
+                result.append(.activityGroup(children: run))
+            } else {
+                result.append(contentsOf: run)
+            }
+            run = []
+        }
+
+        for block in blocks {
+            switch block.kind {
+            case .thinking, .toolCallGroup:
+                run.append(block)
+            default:
+                flushRun()
+                result.append(block)
+            }
+        }
+        flushRun()
+        return result
+    }
+
+    /// Id of the activity group containing the given child block id in the
+    /// displayed block array, or nil when the child renders bare. Used by
+    /// ChatView's streaming expansion to open the enclosing rollup alongside
+    /// the live thinking block.
+    static func enclosingActivityGroupId(forChildId childId: String, in blocks: [ContentBlock]) -> String? {
+        for block in blocks {
+            if case let .activityGroup(children) = block.kind,
+                children.contains(where: { $0.id == childId })
+            {
+                return block.id
+            }
+        }
+        return nil
+    }
+
     /// Reconstructs a SharedArtifact from an enriched share_artifact tool result.
+    /// Contents of every file the conversation has seen, keyed by path —
+    /// `file_read` result text (line-number display prefixes stripped) and
+    /// `file_write` argument content, latest version per path. Feeds
+    /// `FileDiff.inferredEditPath`, which matches a streaming edit's
+    /// `old_string` against these to name the card before its `path`
+    /// argument streams.
+    private static func knownFileContents(in turns: [ChatTurn]) -> [(path: String, content: String)] {
+        var latest: [String: String] = [:]
+        for turn in turns {
+            guard let calls = turn.toolCalls else { continue }
+            for call in calls {
+                switch call.function.name {
+                case "file_read", "sandbox_read_file":
+                    guard let result = turn.toolResults[call.id],
+                        let payload = ToolEnvelope.successPayload(result) as? [String: Any],
+                        (payload["kind"] as? String) != "directory",
+                        let path = payload["path"] as? String, !path.isEmpty,
+                        let text = payload["text"] as? String
+                    else { continue }
+                    // Reads render each line as `<line number>|<content>`;
+                    // strip the display prefix so excerpts match raw bytes.
+                    let content =
+                        payload["line_format"] == nil
+                        ? text
+                        : text.components(separatedBy: "\n")
+                            .map { line -> Substring in
+                                guard let bar = line.firstIndex(of: "|") else { return line[...] }
+                                return line[line.index(after: bar)...]
+                            }
+                            .joined(separator: "\n")
+                    latest[path] = content
+                case "file_write", "sandbox_write_file":
+                    guard let data = call.function.arguments.data(using: .utf8),
+                        let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                        let path = (obj["path"] as? String), !path.isEmpty,
+                        let content = obj["content"] as? String
+                    else { continue }
+                    // Appends only add bytes; overwrites replace them.
+                    latest[path] = (obj["mode"] as? String) == "append"
+                        ? (latest[path] ?? "") + content
+                        : content
+                default:
+                    continue
+                }
+            }
+        }
+        // This index is rebuilt on the streaming UI tick and matched with
+        // `String.contains` — cap each entry so a huge file_read (up to 5MB)
+        // can't turn the tick into a main-thread scan. An excerpt past the
+        // cap just leaves the card on its placeholder.
+        return latest.map { (path: $0.key, content: String($0.value.prefix(262_144))) }
+    }
+
     private static func parseSharedArtifactFromResult(_ result: String) -> SharedArtifact? {
         SharedArtifact.fromEnrichedToolResult(result)
     }
@@ -1005,6 +1233,21 @@ extension ContentBlock {
             return regex.firstMatch(in: line, range: range) != nil
         }
     }
+
+    /// Chat-settings toggle gating `rollupActivityBlocks`. Default off —
+    /// opt-in like "Expand Thinking While Streaming". Read per display
+    /// rebuild (cheap UserDefaults hit) so flipping the toggle applies to
+    /// open chats without relaunch.
+    enum ActivityRollupSetting {
+        static let defaultsKey = "chatActivityRollupEnabled"
+        static var isEnabled: Bool {
+            UserDefaults.standard.bool(forKey: defaultsKey)
+        }
+    }
+
+    /// Posted by Chat settings when the rollup toggle flips, so open chat
+    /// sessions rebuild their visible blocks with the new grouping.
+    static let activityRollupSettingChanged = Notification.Name("activityRollupSettingChanged")
 
     private static func assignPositions(to blocks: [ContentBlock]) -> [ContentBlock] {
         guard !blocks.isEmpty else { return blocks }

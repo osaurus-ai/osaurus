@@ -41,7 +41,18 @@ struct DiscordGuild: Codable, Equatable, Sendable {
     let name: String
 }
 
-struct DiscordChannel: Codable, Equatable, Sendable {
+struct DiscordGuildMember: Codable, Equatable, Sendable, Identifiable {
+    var id: String { user.id }
+    let user: DiscordMessageAuthor
+    let nick: String?
+
+    var displayName: String {
+        if let nick, !nick.isEmpty { return nick }
+        return user.displayName
+    }
+}
+
+struct DiscordChannel: Codable, Equatable, Sendable, Identifiable {
     let id: String
     let guildId: String?
     let name: String?
@@ -156,12 +167,60 @@ enum DiscordAPIError: LocalizedError, Equatable, Sendable {
     }
 }
 
+struct DiscordGatewayInfo: Codable, Equatable, Sendable {
+    let url: String
+}
+
 protocol DiscordAPIClientProtocol: Sendable {
     func currentUser(token: String) async throws -> DiscordBotIdentity
+    func gatewayURL(token: String) async throws -> URL
+    func guilds(token: String) async throws -> [DiscordGuild]
     func guild(id: String, token: String) async throws -> DiscordGuild
+    func members(guildId: String, token: String) async throws -> [DiscordGuildMember]
     func channels(guildId: String, token: String) async throws -> [DiscordChannel]
     func messages(channelId: String, token: String, limit: Int) async throws -> [DiscordMessage]
+    func messages(channelId: String, token: String, limit: Int, after: String?) async throws -> [DiscordMessage]
     func sendMessage(channelId: String, content: String, token: String) async throws -> DiscordMessage
+    func updateMessage(channelId: String, messageId: String, content: String, token: String) async throws -> DiscordMessage
+    func deleteMessage(channelId: String, messageId: String, token: String) async throws
+    func addReaction(channelId: String, messageId: String, reaction: String, token: String) async throws
+    func removeReaction(channelId: String, messageId: String, reaction: String, token: String) async throws
+    func sendTyping(channelId: String, token: String) async throws
+}
+
+extension DiscordAPIClientProtocol {
+    func messages(channelId: String, token: String, limit: Int, after _: String?) async throws -> [DiscordMessage] {
+        try await messages(channelId: channelId, token: token, limit: limit)
+    }
+    func gatewayURL(token _: String) async throws -> URL {
+        throw DiscordAPIError.invalidResponse("Discord Gateway discovery is not implemented by this client.")
+    }
+    func guilds(token _: String) async throws -> [DiscordGuild] {
+        throw DiscordAPIError.invalidResponse("Discord server discovery is not implemented by this client.")
+    }
+    func members(guildId _: String, token _: String) async throws -> [DiscordGuildMember] {
+        throw DiscordAPIError.invalidResponse("Discord member discovery is not implemented by this client.")
+    }
+    func updateMessage(
+        channelId _: String,
+        messageId _: String,
+        content _: String,
+        token _: String
+    ) async throws -> DiscordMessage {
+        throw DiscordAPIError.invalidResponse("Discord message editing is not implemented by this client.")
+    }
+    func deleteMessage(channelId _: String, messageId _: String, token _: String) async throws {
+        throw DiscordAPIError.invalidResponse("Discord message deletion is not implemented by this client.")
+    }
+    func addReaction(channelId _: String, messageId _: String, reaction _: String, token _: String) async throws {
+        throw DiscordAPIError.invalidResponse("Discord reactions are not implemented by this client.")
+    }
+    func removeReaction(channelId _: String, messageId _: String, reaction _: String, token _: String) async throws {
+        throw DiscordAPIError.invalidResponse("Discord reactions are not implemented by this client.")
+    }
+    func sendTyping(channelId _: String, token _: String) async throws {
+        throw DiscordAPIError.invalidResponse("Discord typing indicators are not implemented by this client.")
+    }
 }
 
 final class DiscordAPIClient: DiscordAPIClientProtocol, @unchecked Sendable {
@@ -180,9 +239,39 @@ final class DiscordAPIClient: DiscordAPIClientProtocol, @unchecked Sendable {
         try await get(["users", "@me"], token: token)
     }
 
+    func gatewayURL(token: String) async throws -> URL {
+        let info: DiscordGatewayInfo = try await get(["gateway", "bot"], token: token)
+        guard var components = URLComponents(string: info.url),
+              components.scheme == "wss"
+        else {
+            throw DiscordAPIError.invalidResponse("Discord returned an invalid Gateway URL.")
+        }
+        components.queryItems = [
+            URLQueryItem(name: "v", value: "10"),
+            URLQueryItem(name: "encoding", value: "json"),
+        ]
+        guard let url = components.url else {
+            throw DiscordAPIError.invalidResponse("Discord Gateway URL could not be built.")
+        }
+        return url
+    }
+
+    func guilds(token: String) async throws -> [DiscordGuild] {
+        try await get(["users", "@me", "guilds"], token: token)
+    }
+
     func guild(id: String, token: String) async throws -> DiscordGuild {
         try validateSnowflake(id, label: "guild_id")
         return try await get(["guilds", id], token: token)
+    }
+
+    func members(guildId: String, token: String) async throws -> [DiscordGuildMember] {
+        try validateSnowflake(guildId, label: "guild_id")
+        return try await get(
+            ["guilds", guildId, "members"],
+            token: token,
+            query: [URLQueryItem(name: "limit", value: "1000")]
+        )
     }
 
     func channels(guildId: String, token: String) async throws -> [DiscordChannel] {
@@ -191,14 +280,21 @@ final class DiscordAPIClient: DiscordAPIClientProtocol, @unchecked Sendable {
     }
 
     func messages(channelId: String, token: String, limit: Int) async throws -> [DiscordMessage] {
+        try await messages(channelId: channelId, token: token, limit: limit, after: nil)
+    }
+
+    func messages(channelId: String, token: String, limit: Int, after: String?) async throws -> [DiscordMessage] {
         try validateSnowflake(channelId, label: "channel_id")
         let safeLimit = DiscordConnectionConfiguration.clampReadLimit(limit)
+        var query = [URLQueryItem(name: "limit", value: "\(safeLimit)")]
+        if let after, !after.isEmpty {
+            try validateSnowflake(after, label: "after")
+            query.append(URLQueryItem(name: "after", value: after))
+        }
         return try await get(
             ["channels", channelId, "messages"],
             token: token,
-            query: [
-                URLQueryItem(name: "limit", value: "\(safeLimit)")
-            ]
+            query: query
         )
     }
 
@@ -214,6 +310,60 @@ final class DiscordAPIClient: DiscordAPIClientProtocol, @unchecked Sendable {
                 ],
             ]
         )
+    }
+
+    func updateMessage(
+        channelId: String,
+        messageId: String,
+        content: String,
+        token: String
+    ) async throws -> DiscordMessage {
+        try validateSnowflake(channelId, label: "channel_id")
+        try validateSnowflake(messageId, label: "message_id")
+        return try await requestJSON(
+            ["channels", channelId, "messages", messageId],
+            method: "PATCH",
+            token: token,
+            body: [
+                "content": content,
+                "allowed_mentions": ["parse": [] as [String]],
+            ]
+        )
+    }
+
+    func deleteMessage(channelId: String, messageId: String, token: String) async throws {
+        try validateSnowflake(channelId, label: "channel_id")
+        try validateSnowflake(messageId, label: "message_id")
+        try await requestEmpty(
+            ["channels", channelId, "messages", messageId],
+            method: "DELETE",
+            token: token
+        )
+    }
+
+    func addReaction(channelId: String, messageId: String, reaction: String, token: String) async throws {
+        try validateSnowflake(channelId, label: "channel_id")
+        try validateSnowflake(messageId, label: "message_id")
+        try await requestEmpty(
+            ["channels", channelId, "messages", messageId, "reactions", reaction, "@me"],
+            method: "PUT",
+            token: token
+        )
+    }
+
+    func removeReaction(channelId: String, messageId: String, reaction: String, token: String) async throws {
+        try validateSnowflake(channelId, label: "channel_id")
+        try validateSnowflake(messageId, label: "message_id")
+        try await requestEmpty(
+            ["channels", channelId, "messages", messageId, "reactions", reaction, "@me"],
+            method: "DELETE",
+            token: token
+        )
+    }
+
+    func sendTyping(channelId: String, token: String) async throws {
+        try validateSnowflake(channelId, label: "channel_id")
+        try await requestEmpty(["channels", channelId, "typing"], method: "POST", token: token)
     }
 
     private func get<T: Decodable>(
@@ -236,6 +386,39 @@ final class DiscordAPIClient: DiscordAPIClientProtocol, @unchecked Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: .osaurusCanonical)
         return try await perform(request, token: token)
+    }
+
+    private func requestJSON<T: Decodable>(
+        _ path: [String],
+        method: String,
+        token: String,
+        body: [String: Any]
+    ) async throws -> T {
+        var request = try makeRequest(path, token: token)
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body, options: .osaurusCanonical)
+        return try await perform(request, token: token)
+    }
+
+    private func requestEmpty(_ path: [String], method: String, token: String) async throws {
+        var request = try makeRequest(path, token: token)
+        request.httpMethod = method
+        do {
+            let (data, response) = try await sessionProvider().data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw DiscordAPIError.invalidResponse("Discord returned a non-HTTP response.")
+            }
+            guard (200 ..< 300).contains(http.statusCode) else {
+                throw mapHTTPError(status: http.statusCode, data: data, token: token)
+            }
+        } catch let error as DiscordAPIError {
+            throw error
+        } catch {
+            throw DiscordAPIError.requestFailed(
+                DiscordSecurity.redact(error.localizedDescription, token: token)
+            )
+        }
     }
 
     private func makeRequest(

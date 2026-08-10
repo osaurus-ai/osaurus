@@ -99,8 +99,24 @@ actor AgentChannelTransportSupervisor {
     private let telegramConfiguration: @Sendable () -> TelegramConnectionConfiguration
     private let telegramHasBotToken: @Sendable () -> Bool
     private let telegramRuntime: any AgentChannelReceiveTransportRuntime
+    private let discordConfiguration: @Sendable () -> DiscordConnectionConfiguration
+    private let discordHasBotToken: @Sendable () -> Bool
+    private let discordRuntime: any AgentChannelReceiveTransportRuntime
+    private let discordPresenceRuntime: any DiscordGatewayPresenceMaintaining
+    private let imessageConfiguration: @Sendable () -> IMessageConnectionConfiguration
+    private let imessageHelperAvailable: @Sendable () -> Bool
+    private let imessageRuntime: any AgentChannelReceiveTransportRuntime
+    private let whatsappConfiguration: @Sendable () -> WhatsAppConnectionConfiguration
+    private let whatsappHelperAvailable: @Sendable () -> Bool
+    private let whatsappRuntime: any AgentChannelReceiveTransportRuntime
+    private var additionalSlackRuntimes: [String: SlackSocketModeTransportRuntime] = [:]
     private var slackStarted = false
     private var telegramStarted = false
+    private var discordStarted = false
+    private var discordPresenceStarted = false
+    private var imessageStarted = false
+    private var whatsappStarted = false
+    private var whatsappMediaSignature = ""
 
     init(
         slackConfiguration: @escaping @Sendable () -> SlackConnectionConfiguration = {
@@ -119,7 +135,29 @@ actor AgentChannelTransportSupervisor {
         telegramHasBotToken: @escaping @Sendable () -> Bool = {
             TelegramConnectionService.shared.hasBotToken()
         },
-        telegramRuntime: any AgentChannelReceiveTransportRuntime = TelegramLongPollTransportRuntime()
+        telegramRuntime: any AgentChannelReceiveTransportRuntime = TelegramLongPollTransportRuntime(),
+        discordConfiguration: @escaping @Sendable () -> DiscordConnectionConfiguration = {
+            DiscordConnectionService.shared.configuration()
+        },
+        discordHasBotToken: @escaping @Sendable () -> Bool = {
+            DiscordConnectionService.shared.hasBotToken()
+        },
+        discordRuntime: any AgentChannelReceiveTransportRuntime = DiscordPollingTransportRuntime(),
+        discordPresenceRuntime: any DiscordGatewayPresenceMaintaining = DiscordGatewayPresenceRuntime(),
+        imessageConfiguration: @escaping @Sendable () -> IMessageConnectionConfiguration = {
+            IMessageConnectionService.shared.configuration()
+        },
+        imessageHelperAvailable: @escaping @Sendable () -> Bool = {
+            IMessageConnectionService.shared.helperAvailable()
+        },
+        imessageRuntime: any AgentChannelReceiveTransportRuntime = IMessageWatchTransportRuntime(),
+        whatsappConfiguration: @escaping @Sendable () -> WhatsAppConnectionConfiguration = {
+            WhatsAppConnectionService.shared.configuration()
+        },
+        whatsappHelperAvailable: @escaping @Sendable () -> Bool = {
+            WhatsAppConnectionService.shared.helperAvailable()
+        },
+        whatsappRuntime: any AgentChannelReceiveTransportRuntime = WhatsAppWatchTransportRuntime()
     ) {
         self.slackConfiguration = slackConfiguration
         self.slackHasBotToken = slackHasBotToken
@@ -128,11 +166,24 @@ actor AgentChannelTransportSupervisor {
         self.telegramConfiguration = telegramConfiguration
         self.telegramHasBotToken = telegramHasBotToken
         self.telegramRuntime = telegramRuntime
+        self.discordConfiguration = discordConfiguration
+        self.discordHasBotToken = discordHasBotToken
+        self.discordRuntime = discordRuntime
+        self.discordPresenceRuntime = discordPresenceRuntime
+        self.imessageConfiguration = imessageConfiguration
+        self.imessageHelperAvailable = imessageHelperAvailable
+        self.imessageRuntime = imessageRuntime
+        self.whatsappConfiguration = whatsappConfiguration
+        self.whatsappHelperAvailable = whatsappHelperAvailable
+        self.whatsappRuntime = whatsappRuntime
     }
 
     func startFromLaunch() async {
         await refreshSlackRuntime()
         await refreshTelegramRuntime()
+        await refreshDiscordRuntime()
+        await refreshIMessageRuntime()
+        await refreshWhatsAppRuntime()
     }
 
     func refreshSlackRuntime(now: Date = Date()) async {
@@ -141,15 +192,48 @@ actor AgentChannelTransportSupervisor {
             && slackHasAppToken()
             && !configuration.readableChannelIds.isEmpty
             && !configuration.senderAllowlist.isEmpty {
-            guard !slackStarted else { return }
-            slackStarted = true
-            await slackRuntime.start(pollInterval: 1)
-            return
+            if !slackStarted {
+                slackStarted = true
+                await slackRuntime.start(pollInterval: 1)
+            }
+        } else if slackStarted {
+            slackStarted = false
+            await slackRuntime.stop(now: now)
         }
 
-        guard slackStarted else { return }
-        slackStarted = false
-        await slackRuntime.stop(now: now)
+        await refreshAdditionalSlackRuntimes(configuration: configuration, now: now)
+    }
+
+    private func refreshAdditionalSlackRuntimes(
+        configuration: SlackConnectionConfiguration,
+        now: Date
+    ) async {
+        let desired = Set<String>(configuration.workspaceAccounts.compactMap { account in
+            guard !account.readableChannelIds.isEmpty,
+                  !account.senderAllowlist.isEmpty,
+                  SlackConnectionService.shared.socketModeAppToken(teamId: account.teamId) != nil
+            else { return nil }
+            return account.teamId
+        })
+        for teamId in additionalSlackRuntimes.keys where !desired.contains(teamId) {
+            if let runtime = additionalSlackRuntimes.removeValue(forKey: teamId) {
+                await runtime.stop(now: now)
+            }
+        }
+        for teamId in desired where additionalSlackRuntimes[teamId] == nil {
+            let runtime = SlackSocketModeTransportRuntime(teamId: teamId)
+            additionalSlackRuntimes[teamId] = runtime
+            await runtime.start(pollInterval: 1)
+        }
+    }
+
+    /// Temporarily stop the Telegram long-poll runtime so another consumer
+    /// (settings discovery issuing its own getUpdates) does not conflict
+    /// with it. Resume with `refreshTelegramRuntime()`.
+    func suspendTelegramRuntime(now: Date = Date()) async {
+        guard telegramStarted else { return }
+        telegramStarted = false
+        await telegramRuntime.stop(now: now)
     }
 
     func refreshTelegramRuntime(now: Date = Date()) async {
@@ -166,6 +250,69 @@ actor AgentChannelTransportSupervisor {
         await telegramRuntime.stop(now: now)
     }
 
+    func refreshDiscordRuntime(now: Date = Date()) async {
+        let configuration = discordConfiguration()
+        // Platform presence only needs the bot token — a send-only Discord
+        // setup should still show the bot online while Osaurus runs.
+        if discordHasBotToken() {
+            if !discordPresenceStarted {
+                discordPresenceStarted = true
+                await discordPresenceRuntime.start()
+            }
+        } else if discordPresenceStarted {
+            discordPresenceStarted = false
+            await discordPresenceRuntime.stop()
+        }
+        if discordHasBotToken()
+            && !configuration.readableChannelIds.isEmpty
+            && !configuration.senderAllowlist.isEmpty {
+            guard !discordStarted else { return }
+            discordStarted = true
+            await discordRuntime.start(pollInterval: 3)
+            return
+        }
+        guard discordStarted else { return }
+        discordStarted = false
+        await discordRuntime.stop(now: now)
+    }
+
+    func refreshIMessageRuntime(now: Date = Date()) async {
+        let configuration = imessageConfiguration()
+        if imessageHelperAvailable() && configuration.canStartReceive() {
+            guard !imessageStarted else { return }
+            imessageStarted = true
+            await imessageRuntime.start(pollInterval: TimeInterval(configuration.pollIntervalSeconds))
+            return
+        }
+        guard imessageStarted else { return }
+        imessageStarted = false
+        await imessageRuntime.stop(now: now)
+    }
+
+    func refreshWhatsAppRuntime(now: Date = Date()) async {
+        let configuration = whatsappConfiguration()
+        // Media-download parameters bind at `watch.subscribe` time (unlike
+        // allowlists, which the session re-reads per event), so a running
+        // session must bounce when they change.
+        let mediaSignature = "\(configuration.attachmentIngestionEnabled)|\(configuration.maxAttachmentBytes)"
+        // Linked-session state is probed inside the runtime's supervision
+        // loop (it can change at any time when the phone unlinks); the
+        // supervisor only gates on the static preconditions.
+        if whatsappHelperAvailable() && configuration.canStartReceive() {
+            if whatsappStarted {
+                guard mediaSignature != whatsappMediaSignature else { return }
+                await whatsappRuntime.stop(now: now)
+            }
+            whatsappStarted = true
+            whatsappMediaSignature = mediaSignature
+            await whatsappRuntime.start(pollInterval: 5)
+            return
+        }
+        guard whatsappStarted else { return }
+        whatsappStarted = false
+        await whatsappRuntime.stop(now: now)
+    }
+
     func stop(now: Date = Date()) async {
         if slackStarted {
             slackStarted = false
@@ -175,5 +322,25 @@ actor AgentChannelTransportSupervisor {
             telegramStarted = false
             await telegramRuntime.stop(now: now)
         }
+        if discordStarted {
+            discordStarted = false
+            await discordRuntime.stop(now: now)
+        }
+        if discordPresenceStarted {
+            discordPresenceStarted = false
+            await discordPresenceRuntime.stop()
+        }
+        if imessageStarted {
+            imessageStarted = false
+            await imessageRuntime.stop(now: now)
+        }
+        if whatsappStarted {
+            whatsappStarted = false
+            await whatsappRuntime.stop(now: now)
+        }
+        for runtime in additionalSlackRuntimes.values {
+            await runtime.stop(now: now)
+        }
+        additionalSlackRuntimes.removeAll()
     }
 }

@@ -289,7 +289,7 @@ enum ComputerUsePermissionDoctor {
                     id: agent.id,
                     name: agent.displayName,
                     value: "Off",
-                    detail: "Enable Computer Use in this agent's Features tab.",
+                    detail: "Enable Computer Use in this agent's Subagents tab.",
                     severity: .inactive
                 )
             }

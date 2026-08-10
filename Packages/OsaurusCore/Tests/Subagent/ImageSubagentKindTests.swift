@@ -44,20 +44,20 @@ struct ImageSubagentKindTests {
         #expect(params.isEdit == false)
     }
 
-    @Test("dimensions clamp to 256...1024 on a 16px grid; steps + guidance clamp")
+    @Test("dimensions clamp to 256...4096 on a 16px grid; steps + guidance clamp")
     func numericClamping() {
         let params = ImageTool.buildParams(
             args: [
                 "prompt": "x",
                 "width": 99,  // below floor → 256
-                "height": 5000,  // above ceiling → 1024
+                "height": 5000,  // above ceiling → 4096
                 "steps": 999,  // → 50
                 "guidance": 999.0,  // → 20
             ],
             prompt: "x"
         )
         #expect(params.width == 256)
-        #expect(params.height == 1024)
+        #expect(params.height == 4096)
         #expect(params.steps == 50)
         #expect(params.guidance == 20)
     }

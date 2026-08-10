@@ -876,6 +876,28 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         }
     }
 
+    /// DSV4's native transcript has one unmarked system preface at the start
+    /// of the prompt. A later reminder has its own trained role token. Keep a
+    /// contiguous leading system preface intact, but never render a caller's
+    /// mid-conversation `system` message as bare, unmarked text between turns:
+    /// that both violates the native transcript shape and tempts adapters to
+    /// hoist changing bytes into the cached prefix.
+    private static func normalizeDeepseekV4ReminderRoles(
+        _ messages: [MLXLMCommon.DeepseekV4ChatEncoder.Message]
+    ) -> [MLXLMCommon.DeepseekV4ChatEncoder.Message] {
+        var reachedConversationBody = false
+        return messages.map { message in
+            if message.role != .system {
+                reachedConversationBody = true
+                return message
+            }
+            guard reachedConversationBody else { return message }
+            var reminder = message
+            reminder.role = .latestReminder
+            return reminder
+        }
+    }
+
     private static func deepseekV4String(_ value: Any?) -> String? {
         guard let value else { return nil }
         if let string = value as? String { return string }
@@ -994,6 +1016,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 task: Self.deepseekV4String(raw["task"])
             )
         }
+        dsv4Messages = Self.normalizeDeepseekV4ReminderRoles(dsv4Messages)
         let toolChoiceRequired =
             Self.deepseekV4String(additionalContext?["tool_choice"]) == "required"
         let toolChoiceName = Self.deepseekV4String(additionalContext?["tool_choice_name"])
@@ -1035,9 +1058,16 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             }
         }
 
+        // DSV4's bundle contract (jang_config chat.reasoning) declares
+        // default_mode="thinking" with default_effort="low" — and "low" adds
+        // no effort preface. An absent enable_thinking therefore means the
+        // thinking rail; only an explicit false selects chat. Defaulting the
+        // absent case to .chat rendered a closed </think> tail while the
+        // model options chip displayed the "Low" thinking default — the
+        // user saw "reasoning: Low" and got zero reasoning.
         let enableThinking = additionalContext?["enable_thinking"] as? Bool
         let thinkingMode: MLXLMCommon.DeepseekV4ThinkingMode =
-            enableThinking == true ? .thinking : .chat
+            enableThinking == false ? .chat : .thinking
 
         let effort: MLXLMCommon.DeepseekV4ReasoningEffort?
         if thinkingMode == .thinking {
@@ -1071,7 +1101,17 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 prompt.removeLast(tail.count)
             }
         }
-        return upstream.encode(text: prompt, addSpecialTokens: false)
+        // Throwing, not force-unwrapping. This template emits DeepSeek's control markers
+        // (`<｜Assistant｜>`, `<think>`, …) as literal text, and a bundle whose vocab does
+        // not carry one of them has no id to return for it — DeepSeek's byte-level BPE
+        // declares no unknown token to stand in either. `encode` force-unwrapped that nil
+        // and killed the app (Sentry APPLE-MACOS-10S, 9 events in 0.22.0), from inside a
+        // prefix-cache probe that only wanted to measure the generation-prompt suffix.
+        //
+        // Every caller up this chain already handles a thrown error — the suffix probe
+        // treats failure as "no reusable boundary" and carries on — so a mismatched
+        // bundle now costs a cache optimization instead of the user's session.
+        return try upstream.encodeThrowing(text: prompt, addSpecialTokens: false)
     }
 
     private static func compactCompletedDSV4ToolHistory(

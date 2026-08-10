@@ -25,15 +25,35 @@ enum HuggingFaceAuth {
     /// reads the keychain synchronously; call `preloadInBackground()` early
     /// so that read never lands on the main thread.
     static var token: String? {
-        cachedToken.withLock { (state: inout String??) -> String? in
-            if case .some(let loaded) = state { return loaded }
-            let raw = Keychain.read(service: keychainService, account: keychainAccount)
-                .flatMap { String(data: $0, encoding: .utf8) }?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let value = (raw?.isEmpty == false) ? raw : nil
-            state = .some(value)
-            return value
+        // Fast path: return the already-resolved value. Only the in-memory
+        // state is touched under the lock — never I/O.
+        if case .some(let loaded) = cachedToken.withLock({ $0 }) { return loaded }
+
+        // Cold path: perform the (potentially slow) keychain read OUTSIDE the
+        // lock. Holding an `OSAllocatedUnfairLock` across a synchronous
+        // `SecItemCopyMatching` — which can block for seconds, or hang, under
+        // securityd/first-unlock contention — would wedge every other accessor
+        // of this lock, including the non-blocking `cachedTokenPresence` that
+        // the catalog card reads on the main thread at view-init. That is the
+        // deadlock behind the Catalog-tab hang: the main thread blocks on the
+        // lock held by a background keychain read.
+        let outcome = Keychain.readItem(service: keychainService, account: keychainAccount)
+        let raw = outcome.data
+            .flatMap { String(data: $0, encoding: .utf8) }?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = (raw?.isEmpty == false) ? raw : nil
+
+        // Publish once; a racing reader that resolved the same value first
+        // wins (the keychain read is idempotent, so a double read is benign).
+        // Only definitive outcomes (found / not-found) are cached: a locked
+        // or transiently failing keychain must not latch "no token" for the
+        // rest of the process lifetime.
+        if outcome.isDefinitive {
+            cachedToken.withLock { state in
+                if case .none = state { state = .some(value) }
+            }
         }
+        return value
     }
 
     /// Store (or clear, when empty/nil) the token. The in-memory cache is
@@ -53,6 +73,19 @@ enum HuggingFaceAuth {
     }
 
     static var hasToken: Bool { token != nil }
+
+    /// Non-blocking presence check for the render path: returns the cached
+    /// answer when the keychain has already been read, or `nil` while the
+    /// cache is still cold — WITHOUT performing a synchronous
+    /// `SecItemCopyMatching`, which can block the main thread for seconds
+    /// under securityd/first-unlock contention. UI seeds from this and then
+    /// resolves the cold case off-main (see `HuggingFaceTokenCard`).
+    static var cachedTokenPresence: Bool? {
+        cachedToken.withLock { (state: inout String??) -> Bool? in
+            if case .some(let loaded) = state { return loaded != nil }
+            return nil
+        }
+    }
 
     /// Warm the token cache off the main thread so the first authorized
     /// request doesn't pay a synchronous keychain read.

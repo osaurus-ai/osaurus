@@ -1,5 +1,5 @@
 {
-  "originHash" : "65e3237144419ba6e862058b4a18440e70ba90bc4e73db274e72fab957c62145",
+  "originHash" : "4ace0dec3570ed63e0fc1bb250e5f133771e977760d1f6002b7531a36ae900c6",
   "pins" : [
     {
       "identity" : "aachartkit-swift",
@@ -33,8 +33,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/containerization.git",
       "state" : {
-        "revision" : "f1ee6f8b737ab8dffbd620bfa47283f6f0bc1822",
-        "version" : "0.31.0"
+        "revision" : "44bec8b9933bc491d0cbf44abac90a1f6aaebf6b",
+        "version" : "0.35.0"
       }
     },
     {
@@ -374,7 +374,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/osaurus-ai/vmlx-swift",
       "state" : {
-        "revision" : "0d3444cad48f658103789cbf8fc9b13f4b7a80d4"
+        "revision" : "fd7ce91cde0be283c817142d96c9b3f87efcc5e5"
       }
     },
     {

@@ -9,9 +9,10 @@
 //  event queue, and the invoke queue (barrier) before calling `destroy`.
 //  Two callback paths escaped that drain:
 //
-//  1. Main-actor invocations (`dispatchPluginCallOnMainActor`) never touch
-//     `invokeQueue`, so the barrier could not see them — `destroy(ctx)`
-//     could free the context while the main thread was inside plugin code.
+//  1. Accessibility-queue invocations (isolation `.accessibilityQueue`,
+//     formerly a synchronous main-actor hop) never touch `invokeQueue`, so
+//     the barrier could not see them — `destroy(ctx)` could free the
+//     context while that queue was still inside plugin code.
 //  2. Task events delivered on a per-task queue created AFTER the snapshot
 //     (or whose body read `isShutDown == false` just before the mid-drain
 //     flip) ran concurrently with `destroy`.
@@ -163,30 +164,30 @@ struct PluginShutdownRaceTests {
         return (plugin, retain)
     }
 
-    /// A main-actor invocation (accessibility-style plugin call) blocked
-    /// inside plugin code must delay `destroy(ctx)` until it returns —
-    /// `invokeQueue`'s barrier drain cannot see main-actor calls, so only
-    /// `inFlightCallbacks` prevents the use-after-free.
+    /// An accessibility-queue invocation blocked inside plugin code must
+    /// delay `destroy(ctx)` until it returns — those calls run on the
+    /// shared AX serial queue, which `invokeQueue`'s barrier drain cannot
+    /// see, so only `inFlightCallbacks` prevents the use-after-free.
     @Test
-    func shutdownWaitsForInFlightMainActorInvocation() async throws {
+    func shutdownWaitsForInFlightAccessibilityQueueInvocation() async throws {
         let recorder = Recorder()
         let (plugin, retain) = makePlugin(
             recorder: recorder,
-            pluginId: "com.test.shutdown-race.mainactor.\(UUID().uuidString)"
+            pluginId: "com.test.shutdown-race.axqueue.\(UUID().uuidString)"
         )
         defer { retain.release() }
 
         let invokeTask = Task {
-            try await plugin.invoke(type: "tool", id: "t", payload: "{}", isolation: .mainActor)
+            try await plugin.invoke(type: "tool", id: "t", payload: "{}", isolation: .accessibilityQueue)
         }
         #expect(await signaled(recorder.callbackStarted))
 
         let shutdownTask = Task.detached { await plugin.shutdown() }
         // Give shutdown time to finish every drain it CAN see. Before the
-        // fix, destroy fired inside this window while the main thread was
-        // still executing plugin code.
+        // fix, destroy fired inside this window while the accessibility
+        // queue was still executing plugin code.
         try await Task.sleep(nanoseconds: 200_000_000)
-        #expect(recorder.destroyCount == 0, "destroy must wait for the in-flight main-actor call")
+        #expect(recorder.destroyCount == 0, "destroy must wait for the in-flight accessibility-queue call")
 
         recorder.releaseCallback.signal()
         let result = try await invokeTask.value

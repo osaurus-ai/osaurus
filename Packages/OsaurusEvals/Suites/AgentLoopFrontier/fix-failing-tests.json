@@ -19,10 +19,12 @@
   "expect": {
     "agentLoop": {
       "maxIterations": 18,
+      "maxModelSteps": 16,
       "mustCallTools": [
         "shell_run"
       ],
       "todoUpdatedBeforeComplete": true,
+      "todoCompletedBeforeFinal": true,
       "files": [
         {
           "path": "test_mathlib.py",

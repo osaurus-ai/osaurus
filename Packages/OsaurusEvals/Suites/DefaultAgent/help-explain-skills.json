@@ -1,0 +1,21 @@
+{
+  "id": "default_agent.help-explain-skills",
+  "domain": "default_agent",
+  "label": "default agent • explain one feature (skills) from the bundled guide",
+  "query": "What are skills in Osaurus and how do I add one to my agent?",
+  "notes": "Feature-explanation path: osaurus_help read of the skills topic, then an answer grounded in that text. Skill loading is disabled for the Default agent itself, so the only correct source is the guide — a model that tries capabilities_load or skill_load instead of osaurus_help is exercising the exact dead end this revamp removed.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "rubric": [
+        "Explains what skills are (curated instruction/tool bundles agents can use) and how to enable one for an agent, grounded in the guide content rather than invented details or a refusal."
+      ],
+      "mustCallTools": ["osaurus_help"],
+      "mustNotCallTools": ["capabilities_discover", "skill_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_help", "args": { "action": "read", "topic": "skill" } }
+      ],
+      "maxIterations": 6
+    }
+  }
+}

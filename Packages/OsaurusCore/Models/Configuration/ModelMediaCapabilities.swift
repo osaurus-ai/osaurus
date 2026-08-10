@@ -156,7 +156,26 @@ public enum ModelMediaCapabilities {
     /// loaded so the drag-drop UI knows whether to advertise audio /
     /// video accept slots. After load, `from(directory:modelId:)`
     /// can refine via the bundle's `config_omni.json` sidecar.
+    /// Detection is a pure function of the id but runs a dozen substring
+    /// scans and regex matches, and callers hit it from main-thread paths
+    /// (composer capabilities, warmup payload builds) on every evaluation —
+    /// so identical ids are memoized.
+    private static let fromMemoLock = NSLock()
+    private nonisolated(unsafe) static var fromMemo: [String: Capabilities] = [:]
+
     public static func from(modelId: String) -> Capabilities {
+        fromMemoLock.lock()
+        let cached = fromMemo[modelId]
+        fromMemoLock.unlock()
+        if let cached { return cached }
+        let result = fromImpl(modelId: modelId)
+        fromMemoLock.lock()
+        fromMemo[modelId] = result
+        fromMemoLock.unlock()
+        return result
+    }
+
+    private static func fromImpl(modelId: String) -> Capabilities {
         let lower = modelId.lowercased()
 
         // Nemotron-3-Nano-Omni / Nemotron-Omni-Nano — only family with
@@ -261,7 +280,8 @@ public enum ModelMediaCapabilities {
     /// granting audio or video.
     public static func composerCapabilities(
         modelId: String?,
-        fallbackSupportsImages: Bool
+        fallbackSupportsImages: Bool,
+        localModelType: String? = nil
     ) -> Capabilities {
         guard let modelId,
             !modelId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -275,6 +295,24 @@ public enum ModelMediaCapabilities {
             !ModelFamilyNames.isNemotronOmniFamily(modelId)
         {
             return .textOnly
+        }
+        // A locally installed bundle may have a product name that does not
+        // advertise its architecture (for example Bonsai-27b-1bit-JANG).
+        // The background model scan records config.json's model_type, while
+        // fallbackSupportsImages proves this particular bundle has a vision
+        // path. Combine those two facts so video-capable Qwen/SmolVLM bundles
+        // do not get downgraded to image-only by their display name. Never use
+        // model_type alone: text-only Qwen 3.5 bundles share the same outer
+        // type and must not acquire media support without the vision bit.
+        if fallbackSupportsImages,
+            let localModelType,
+            videoCapableModelTypes.contains(localModelType.lowercased())
+        {
+            return Capabilities(
+                supportsImage: true,
+                supportsVideo: true,
+                supportsAudio: detected.supportsAudio
+            )
         }
         guard fallbackSupportsImages, !detected.supportsImage else {
             return detected
@@ -296,19 +334,23 @@ public enum ModelMediaCapabilities {
 
     public static func composerDescriptor(
         modelId: String?,
-        fallbackSupportsImages: Bool
+        fallbackSupportsImages: Bool,
+        localModelType: String? = nil
     ) -> Descriptor {
         let normalized = modelId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let displayId = normalized.isEmpty ? "unspecified model" : normalized
         let capabilities = composerCapabilities(
             modelId: modelId,
-            fallbackSupportsImages: fallbackSupportsImages
+            fallbackSupportsImages: fallbackSupportsImages,
+            localModelType: localModelType
         )
         let detected = normalized.isEmpty ? Capabilities.textOnly : from(modelId: normalized)
         let source =
-            fallbackSupportsImages && capabilities.supportsImage && !detected.supportsImage
-            ? "composer fallback"
-            : "model id"
+            capabilities.supportsVideo && !detected.supportsVideo && localModelType != nil
+            ? "local bundle model_type"
+            : fallbackSupportsImages && capabilities.supportsImage && !detected.supportsImage
+                ? "composer fallback"
+                : "model id"
         return buildDescriptor(
             modelId: displayId,
             capabilities: capabilities,
@@ -380,14 +422,6 @@ public enum ModelMediaCapabilities {
 
         // Cross-check the family-by-model_type for video support.
         // model_types known to support video at the engine level:
-        let videoCapableModelTypes: Set<String> = [
-            "qwen2_vl", "qwen2_5_vl", "qwen3_vl",
-            "qwen3_5", "qwen3_5_moe",
-            "qwen3_6", "qwen3_6_moe",
-            "smolvlm",
-            "nemotron_h_omni",
-            "NemotronH_Nano_Omni_Reasoning_V3".lowercased(),
-        ]
         if videoCapableModelTypes.contains(modelType) {
             // Audio belongs only to omni — already returned above.
             return .imageVideo
@@ -432,6 +466,15 @@ public enum ModelMediaCapabilities {
     }
 
     // MARK: - Helpers
+
+    private static let videoCapableModelTypes: Set<String> = [
+        "qwen2_vl", "qwen2_5_vl", "qwen3_vl",
+        "qwen3_5", "qwen3_5_moe",
+        "qwen3_6", "qwen3_6_moe",
+        "smolvlm",
+        "nemotron_h_omni",
+        "NemotronH_Nano_Omni_Reasoning_V3".lowercased(),
+    ]
 
     private static func buildDescriptor(
         modelId: String,

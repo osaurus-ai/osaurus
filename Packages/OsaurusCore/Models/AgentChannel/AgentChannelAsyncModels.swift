@@ -310,6 +310,128 @@ struct AgentChannelProviderRoute: Codable, Equatable, Sendable {
     }
 }
 
+/// One inbound routing rule: send messages from a specific room (or any
+/// room when `roomId` is nil) to `agentId`. `nameAliases` optionally let a
+/// sender pick this route inside a shared room by prefixing the message
+/// with the alias (e.g. "sales: what changed this week?").
+struct AgentChannelDispatchRoute: Codable, Equatable, Sendable, Identifiable {
+    var id: UUID
+    /// Provider room/channel/chat id this route is scoped to; nil matches
+    /// any room (alias-only routes).
+    var roomId: String?
+    var agentId: UUID
+    /// Case-insensitive leading tokens that select this route inside a
+    /// room. Stored trimmed and lowercased.
+    var nameAliases: [String]
+
+    init(
+        id: UUID = UUID(),
+        roomId: String? = nil,
+        agentId: UUID,
+        nameAliases: [String] = []
+    ) {
+        self.id = id
+        let trimmedRoom = roomId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.roomId = (trimmedRoom?.isEmpty ?? true) ? nil : trimmedRoom
+        self.agentId = agentId
+        self.nameAliases = Self.normalizedAliases(nameAliases)
+    }
+
+    static func normalizedAliases(_ aliases: [String]) -> [String] {
+        var seen = Set<String>()
+        return aliases
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case roomId
+        case agentId
+        case nameAliases
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID(),
+            roomId: try container.decodeIfPresent(String.self, forKey: .roomId),
+            agentId: try container.decode(UUID.self, forKey: .agentId),
+            nameAliases: try container.decodeIfPresent([String].self, forKey: .nameAliases) ?? []
+        )
+    }
+}
+
+struct AgentChannelInboundDispatchConfiguration: Codable, Equatable, Sendable {
+    var enabled: Bool
+    /// Default agent for messages no route claims. Kept for backward
+    /// compatibility with configs written before per-room routing existed.
+    var targetAgentId: UUID?
+    /// Per-room / alias routing rules, evaluated before `targetAgentId`.
+    var routes: [AgentChannelDispatchRoute]
+    var requireMention: Bool
+    var continueThreads: Bool
+    var autoReplyEnabled: Bool
+
+    init(
+        enabled: Bool = false,
+        targetAgentId: UUID? = nil,
+        routes: [AgentChannelDispatchRoute] = [],
+        requireMention: Bool = true,
+        continueThreads: Bool = true,
+        autoReplyEnabled: Bool = false
+    ) {
+        self.enabled = enabled
+        self.targetAgentId = targetAgentId
+        self.routes = routes
+        self.requireMention = requireMention
+        self.continueThreads = continueThreads
+        self.autoReplyEnabled = autoReplyEnabled
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled
+        case targetAgentId
+        case routes
+        case requireMention
+        case continueThreads
+        case autoReplyEnabled
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false,
+            targetAgentId: try container.decodeIfPresent(UUID.self, forKey: .targetAgentId),
+            routes: try container.decodeIfPresent(
+                [AgentChannelDispatchRoute].self, forKey: .routes) ?? [],
+            requireMention: try container.decodeIfPresent(Bool.self, forKey: .requireMention)
+                ?? true,
+            continueThreads: try container.decodeIfPresent(Bool.self, forKey: .continueThreads)
+                ?? true,
+            autoReplyEnabled: try container.decodeIfPresent(Bool.self, forKey: .autoReplyEnabled)
+                ?? false
+        )
+    }
+
+    var isConfigured: Bool {
+        enabled && (targetAgentId != nil || !routes.isEmpty)
+    }
+
+    /// Every agent id this configuration can dispatch to (default + routes).
+    var referencedAgentIds: [UUID] {
+        var seen = Set<UUID>()
+        var ids: [UUID] = []
+        if let targetAgentId, seen.insert(targetAgentId).inserted {
+            ids.append(targetAgentId)
+        }
+        for route in routes where seen.insert(route.agentId).inserted {
+            ids.append(route.agentId)
+        }
+        return ids
+    }
+}
+
 struct AgentChannelReplyToken: RawRepresentable, Codable, Hashable, Sendable, CustomStringConvertible {
     var rawValue: String
 

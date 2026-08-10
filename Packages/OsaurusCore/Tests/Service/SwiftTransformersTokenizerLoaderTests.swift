@@ -698,7 +698,11 @@ struct SwiftTransformersTokenizerLoaderTests {
         let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
 
         #expect(decoded.contains("Create a file named osaurus_live_probe.txt"), "Decoded: \(decoded)")
-        #expect(decoded.contains("capabilities_discover"), "Decoded: \(decoded)")
+        // This snapshot is the Default configuration agent. Its current
+        // contract exposes the consolidated osaurus_* surface directly and
+        // intentionally omits the custom-agent discovery gateway.
+        #expect(decoded.contains("osaurus_status"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("capabilities_discover"), "Decoded: \(decoded)")
     }
 
     @Test func loaderNormalizesRawGemmaSensitiveToolSchemas() throws {
@@ -771,6 +775,52 @@ struct SwiftTransformersTokenizerLoaderTests {
         )
     }
 
+    @Test func dsv4AbsentThinkingControlsDefaultToThinkingRail() async throws {
+        // DSV4's jang_config declares default_mode="thinking" with
+        // default_effort="low" (which adds no preface). A request carrying
+        // NO enable_thinking and NO reasoning_effort — exactly what the UI
+        // sends when the user never touches the Reasoning Mode segments —
+        // must render the OPEN <think> tail. Defaulting the absent case to
+        // chat produced a closed </think> tail while the model chip showed
+        // "· Low": the user saw a reasoning default and got zero reasoning.
+        let defaultPath = "/Users/eric/models/DeepSeek-V4-Flash-0731-JANG"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_DSV4_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+
+        let absentContext = try tokenizer.applyChatTemplate(
+            messages: [["role": "user", "content": "Say ok."]],
+            tools: nil,
+            additionalContext: nil
+        )
+        let absentDecoded = tokenizer.decode(
+            tokenIds: absentContext, skipSpecialTokens: false)
+        #expect(
+            absentDecoded.hasSuffix("<\u{FF5C}Assistant\u{FF5C}><think>"),
+            "Absent thinking controls must default to the bundle's thinking rail. Decoded tail: \(absentDecoded.suffix(60))"
+        )
+
+        // Explicit opt-out still selects the chat rail.
+        let offContext = try tokenizer.applyChatTemplate(
+            messages: [["role": "user", "content": "Say ok."]],
+            tools: nil,
+            additionalContext: ["enable_thinking": false]
+        )
+        let offDecoded = tokenizer.decode(tokenIds: offContext, skipSpecialTokens: false)
+        #expect(
+            offDecoded.hasSuffix("<\u{FF5C}Assistant\u{FF5C}></think>"),
+            "Explicit enable_thinking=false must keep the closed chat rail. Decoded tail: \(offDecoded.suffix(60))"
+        )
+    }
+
     @Test func dsv4LocalTokenizerUsesCanonicalNoChatTemplatePath() async throws {
         let defaultPath = "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_DSV4_TEST_MODEL"] ?? defaultPath
@@ -824,6 +874,67 @@ struct SwiftTransformersTokenizerLoaderTests {
                 "<\u{FF5C}User\u{FF5C}>Turn 2.<\u{FF5C}Assistant\u{FF5C}></think>"
             ),
             "DSV4 final instruct tail must be closed-thinking. Decoded: \(multiTurnDecoded)"
+        )
+    }
+
+    @Test func dsv4MidConversationSystemUsesLatestReminderWithoutBreakingPrefix() async throws {
+        let defaultPath = "/Users/eric/models/DeepSeek-V4-Flash-0731-JANG"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_DSV4_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        guard let controllable = tokenizer as? any GenerationPromptControllableTokenizer else {
+            Issue.record("DSV4 tokenizer must expose no-generation rendering for prefix proof")
+            return
+        }
+
+        let stableHistory: [[String: any Sendable]] = [
+            ["role": "system", "content": "Stable system preface."],
+            ["role": "user", "content": "Turn one."],
+            ["role": "assistant", "content": "Answer one."],
+        ]
+        let extendedHistory = stableHistory + [
+            ["role": "system", "content": "Use the newest project state."],
+            ["role": "user", "content": "Turn two."],
+        ]
+        let context: [String: any Sendable] = ["enable_thinking": false]
+        let stableTokens = try controllable.applyChatTemplate(
+            messages: stableHistory,
+            tools: nil,
+            additionalContext: context,
+            addGenerationPrompt: false
+        )
+        let extendedTokens = try controllable.applyChatTemplate(
+            messages: extendedHistory,
+            tools: nil,
+            additionalContext: context,
+            addGenerationPrompt: true
+        )
+        let decoded = tokenizer.decode(tokenIds: extendedTokens, skipSpecialTokens: false)
+
+        #expect(
+            extendedTokens.prefix(stableTokens.count).elementsEqual(stableTokens),
+            "A tail reminder must extend, not rewrite, the stable DSV4 token prefix. Decoded: \(decoded)"
+        )
+        #expect(
+            decoded.contains(
+                "<\u{FF5C}latest_reminder\u{FF5C}>Use the newest project state."
+                    + "<\u{FF5C}User\u{FF5C}>Turn two."
+            ),
+            "A mid-conversation system reminder must use DSV4's trained latest_reminder role. Decoded: \(decoded)"
+        )
+        #expect(
+            decoded.hasPrefix(
+                "<\u{FF5C}begin\u{2581}of\u{2581}sentence\u{FF5C}>Stable system preface."
+            ),
+            "The leading system preface must remain at token zero. Decoded: \(decoded)"
         )
     }
 

@@ -524,10 +524,13 @@ struct TranscriptionModeSettingsTab: View {
 
                         Spacer()
 
-                        Text(
-                            transcriptionStopMode == .manual || pauseDuration == 0
-                                ? "Disabled" : String(format: "%.1fs", pauseDuration)
-                        )
+                        Group {
+                            if transcriptionStopMode == .manual || pauseDuration == 0 {
+                                Text("Disabled", bundle: .module)
+                            } else {
+                                Text(verbatim: String(format: "%.1fs", pauseDuration))
+                            }
+                        }
                         .font(.system(size: 13, weight: .medium, design: .monospaced))
                         .foregroundColor(theme.accentColor)
                     }

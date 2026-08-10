@@ -1,0 +1,54 @@
+{
+  "id": "tool_result_grounding.multi-tool-synthesis",
+  "domain": "tool_result_grounding",
+  "label": "tool result grounding: answer synthesizes values from two different tool results",
+  "query": "What's the weather and the local time in Denver right now?",
+  "fixtures": {},
+  "notes": "Multi-tool grounding: the final answer must combine facts from TWO distinct results — the weather tool's temperature and the clock tool's time — each bound to its own callId so a value borrowed from the wrong tool (or from arguments) fails.",
+  "expect": {
+    "toolResultGrounding": {
+      "events": [
+        {
+          "kind": "toolCall",
+          "callId": "wx-1",
+          "tool": "weather",
+          "arguments": "{\"city\":\"Denver\"}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "wx-1",
+          "tool": "weather",
+          "content": "{\"city\":\"Denver\",\"tempF\":54,\"cond\":\"partly cloudy\"}"
+        },
+        {
+          "kind": "toolCall",
+          "callId": "clk-1",
+          "tool": "clock",
+          "arguments": "{\"tz\":\"America/Denver\"}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "clk-1",
+          "tool": "clock",
+          "content": "{\"local_time\":\"3:47 PM\"}"
+        },
+        {
+          "kind": "assistant",
+          "content": "In Denver it's 54°F and partly cloudy, and the local time is 3:47 PM."
+        }
+      ],
+      "assertions": [
+        {
+          "callId": "wx-1",
+          "answerMustContain": ["54", "partly cloudy"],
+          "resultMustContain": ["\"tempF\":54"]
+        },
+        {
+          "callId": "clk-1",
+          "answerMustContain": ["3:47 PM"],
+          "resultMustContain": ["\"local_time\":\"3:47 PM\""]
+        }
+      ]
+    }
+  }
+}

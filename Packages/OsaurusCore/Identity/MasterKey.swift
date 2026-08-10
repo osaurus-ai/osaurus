@@ -150,10 +150,15 @@ public struct MasterKey: Sendable {
             refreshExistsInBackground()
             return known
         }
-        // Cold: seed once from the keychain, then serve the memo thereafter.
-        let probed = exists()
-        setCachedExists(probed)
-        return probed
+        // Cold: never probe on the calling thread. Launch paths seed the memo
+        // deliberately (`warmExistsCacheInBackground` /
+        // `seedExistsCacheOffMainActor`), so reaching here cold means a hot UI
+        // path won the race — and a synchronous `SecItemCopyMatching` there
+        // has hung the main thread when securityd stalls. Report "no identity"
+        // until the seed lands; identity-gated chrome appears one refresh
+        // tick later, and correctness-critical callers use `exists()`.
+        refreshExistsInBackground()
+        return false
     }
 
     private static func setCachedExists(_ value: Bool) {
@@ -170,7 +175,22 @@ public struct MasterKey: Sendable {
     /// latency-sensitive thread. Call once at launch; idempotent.
     public static func warmExistsCacheInBackground() {
         DispatchQueue.global(qos: .utility).async {
-            _ = existsCached()
+            setCachedExists(exists())
+        }
+    }
+
+    /// Awaitable variant of `warmExistsCacheInBackground` for launch paths
+    /// that are about to enter a cold `existsCached()` caller on the main
+    /// actor (e.g. `RemoteProviderManager.shared`'s init). Awaiting the seed
+    /// guarantees that caller finds the memo populated instead of racing the
+    /// fire-and-forget warm and paying the synchronous keychain probe on the
+    /// main thread.
+    public static func seedExistsCacheOffMainActor() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global(qos: .utility).async {
+                setCachedExists(exists())
+                continuation.resume()
+            }
         }
     }
 

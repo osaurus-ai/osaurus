@@ -65,6 +65,8 @@ extension EvalRunner {
             return await scoreImageLane(testCase, exp: exp, modelId: modelId, label: label)
         case "computer_use":
             return await scoreComputerUseLane(testCase, exp: exp, modelId: modelId, label: label)
+        case "browser_use":
+            return await scoreBrowserUseLane(testCase, exp: exp, modelId: modelId, label: label)
         default:
             return .terminal(
                 id: testCase.id,
@@ -73,7 +75,8 @@ extension EvalRunner {
                 outcome: .errored,
                 notes: [
                     "unknown subagent lane '\(exp.lane)' "
-                        + "(expected scripted|spawn|spawn_model|spawn_model_residency|image|computer_use)"
+                        + "(expected scripted|spawn|spawn_model|spawn_model_residency|image|"
+                        + "computer_use|browser_use)"
                 ],
                 modelId: modelId
             )
@@ -96,6 +99,27 @@ extension EvalRunner {
         if let raw = exp.runFailure, ScriptedSubagentSpec.Failure(rawValue: raw) == nil {
             return scriptedSpecError(testCase, label: label, modelId: modelId, field: "runFailure", raw: raw)
         }
+        if let invalid = exp.scriptedBatch?.compactMap(\.runFailure).first(where: {
+            ScriptedSubagentSpec.Failure(rawValue: $0) == nil
+        }) {
+            return scriptedSpecError(
+                testCase,
+                label: label,
+                modelId: modelId,
+                field: "scriptedBatch.runFailure",
+                raw: invalid
+            )
+        }
+        if let scriptedBatch = exp.scriptedBatch, scriptedBatch.count < 2 {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .errored,
+                notes: ["`scriptedBatch` requires at least two child specs"],
+                modelId: modelId
+            )
+        }
 
         let parallel = exp.parallel ?? 1
         let spec = ScriptedSubagentSpec(
@@ -115,7 +139,41 @@ extension EvalRunner {
         // concurrent host runs, shared overlap probe); otherwise one run,
         // optionally stopped mid-run through the real interrupt center.
         let transcript: SubagentJobTranscript
-        if parallel >= 2 {
+        if let scriptedBatch = exp.scriptedBatch {
+            let jobs = scriptedBatch.enumerated().map { index, child in
+                let id = child.id ?? "scripted-\(index + 1)"
+                let modelName =
+                    child.modelName ?? child.target ?? "scripted-model"
+                let spec = ScriptedSubagentSpec(
+                    kindId: id,
+                    needsHandoff: child.needsHandoff ?? false,
+                    decision: mapDecision(exp.decision),
+                    resolveFailure: exp.resolveFailure.flatMap(ScriptedSubagentSpec.Failure.init(rawValue:)),
+                    runFailure: (child.runFailure ?? exp.runFailure)
+                        .flatMap(ScriptedSubagentSpec.Failure.init(rawValue:)),
+                    recurse: exp.recurse ?? false,
+                    phases: exp.phases ?? ["running"],
+                    summary: child.summary ?? "scripted digest \(id)",
+                    resultKind: child.resultKind ?? "scripted_result",
+                    modelName: modelName,
+                    remote: child.remote ?? false,
+                    runDelayMs: child.runDelayMs ?? exp.runDelayMs ?? 0,
+                    includeUsageAccounting: exp.includeUsageAccounting ?? false,
+                    rendezvousArrivals: child.rendezvousArrivals ?? 0
+                )
+                return ScriptedSpawnBatchJobSpec(
+                    id: id,
+                    targetType: child.targetType ?? "model",
+                    target: child.target ?? modelName,
+                    input: child.input ?? "scripted batch input \(index + 1)",
+                    subagent: spec
+                )
+            }
+            transcript = await SubagentJobEvaluator.runScriptedSpawnBatch(
+                jobs,
+                interruptAfterMs: exp.interruptAfterMs
+            )
+        } else if parallel >= 2 {
             transcript = await SubagentJobEvaluator.runScriptedParallelBatch(spec, count: parallel)
         } else {
             transcript = await SubagentJobEvaluator.runScripted(
@@ -161,17 +219,38 @@ extension EvalRunner {
         let interruptAfterMs = exp.interruptAfterMs
         let transcript: SubagentJobTranscript
         if exp.seedSpawnableAgent == true {
-            transcript = await SubagentJobEvaluator.withSpawnableAgent(name: agent) {
+            transcript = await SubagentJobEvaluator.withSpawnableAgent(name: agent) { agentID in
                 await SubagentJobEvaluator.runSpawn(
-                    agent: agent,
+                    agentID: agentID,
                     input: input,
                     modelId: modelId,
                     interruptAfterMs: interruptAfterMs
                 )
             }
         } else {
+            let configuredAgentID = UUID(uuidString: agent)
+            let uniqueNamedAgentID: UUID? =
+                configuredAgentID == nil
+                ? await MainActor.run {
+                        let matches = AgentManager.shared.agents.filter {
+                            $0.name.caseInsensitiveCompare(agent) == .orderedSame
+                        }
+                        return matches.count == 1 ? matches[0].id : nil
+                    }
+                : nil
+            guard let agentID = configuredAgentID ?? uniqueNamedAgentID
+            else {
+                return .terminal(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    outcome: .errored,
+                    notes: ["spawn lane agent target is missing or ambiguous: \(agent)"],
+                    modelId: modelId
+                )
+            }
             transcript = await SubagentJobEvaluator.runSpawn(
-                agent: agent,
+                agentID: agentID,
                 input: input,
                 modelId: modelId,
                 interruptAfterMs: interruptAfterMs
@@ -608,6 +687,143 @@ extension EvalRunner {
         )
     }
 
+    // MARK: - Live browser_use lane (host + fixture web world)
+
+    /// Drive the real `browser_use` host (`SubagentSession` + `BrowserUseKind`)
+    /// against an in-memory `FixtureBrowserWorld`, then score BOTH the
+    /// host-parity transcript (envelope/feed/summary) AND the world state
+    /// (typed values, clicked ids, verb trace) read back from the world.
+    /// Always live (the child model plans the tool calls); tiny-context models
+    /// SKIP because they can't emit tool calls.
+    private static func scoreBrowserUseLane(
+        _ testCase: EvalCase,
+        exp: EvalCase.SubagentExpectations,
+        modelId: String,
+        label: String
+    ) async -> EvalCaseReport {
+        guard let pages = exp.pages, !pages.isEmpty else {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .errored,
+                notes: ["browser_use lane needs `pages`"],
+                modelId: modelId
+            )
+        }
+
+        let window = ContextSizeResolver.resolve(modelId: modelId)
+        if window.sizeClass.disablesTools {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .skipped,
+                notes: [
+                    "tools auto-disabled for '\(modelId)': context size class "
+                        + "\(window.sizeClass) (≤\(ContextSizeResolver.tinyCeiling)-token window) "
+                        + "can't drive the browser_use child toolset; live case skipped"
+                ],
+                modelId: modelId
+            )
+        }
+
+        let world = FixtureBrowserWorld(pages: pages, startURL: exp.startURL)
+        let transcript = await SubagentJobEvaluator.runBrowserUse(
+            goal: testCase.query,
+            modelId: modelId,
+            maxSteps: exp.maxSteps ?? 16,
+            execute: { name, argsJSON in
+                await world.execute(name: name, argumentsJSON: argsJSON)
+            }
+        )
+
+        // Host-parity matchers (envelope/feed/summary/resultKind).
+        var (passed, notes) = score(transcript, against: exp)
+
+        // Availability-skip: a host without a routable model reads "didn't
+        // apply" (same semantics as the other live lanes).
+        let availabilitySkipKinds: Set<String> = ["rejected", "unavailable", "user_denied"]
+        if !transcript.succeeded,
+            availabilitySkipKinds.contains(transcript.envelopeKind),
+            exp.expectEnvelopeKind != transcript.envelopeKind
+        {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .skipped,
+                notes: [
+                    "live browser_use lane unavailable on this host: "
+                        + (transcript.error ?? transcript.envelopeKind)
+                ],
+                modelId: modelId
+            )
+        }
+
+        // World-state read-back — the substantive "did it work" check.
+        let finalValues = await world.finalValues()
+        let verbTrace = await world.verbTrace()
+        func check(_ ok: Bool, pass: String, fail: String) {
+            passed = passed && ok
+            notes.append(ok ? pass : fail)
+        }
+        for predicate in exp.successValues ?? [] {
+            let value = (finalValues[predicate.id] ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let exact = predicate.equals {
+                check(
+                    value == exact.trimmingCharacters(in: .whitespacesAndNewlines),
+                    pass: "value[\(predicate.id)] == '\(exact)'",
+                    fail: "value[\(predicate.id)] = '\(value)' != '\(exact)'"
+                )
+            }
+            if let needle = predicate.contains {
+                check(
+                    value.localizedCaseInsensitiveContains(needle),
+                    pass: "value[\(predicate.id)] contains '\(needle)'",
+                    fail: "value[\(predicate.id)] = '\(value)' missing '\(needle)'"
+                )
+            }
+        }
+        for id in exp.successClicked ?? [] {
+            let wasClicked = await world.wasClicked(id)
+            check(wasClicked, pass: "clicked '\(id)'", fail: "never clicked '\(id)'")
+        }
+        for id in exp.failIfClicked ?? [] {
+            let wasClicked = await world.wasClicked(id)
+            check(!wasClicked, pass: "correctly avoided '\(id)'", fail: "clicked forbidden '\(id)'")
+        }
+        if let order = exp.expectVerbsInOrder, !order.isEmpty {
+            check(
+                containsSubsequence(verbTrace, order),
+                pass: "verb order ok: \(order) ⊑ [\(verbTrace.joined(separator: ","))]",
+                fail: "verb order \(order) not a subsequence of [\(verbTrace.joined(separator: ","))]"
+            )
+        }
+        notes.append("verbs: [\(verbTrace.joined(separator: ","))]")
+        if !passed {
+            notes.append(
+                "final values: "
+                    + finalValues.keys.sorted()
+                    .map { "\($0)='\(finalValues[$0] ?? "")'" }
+                    .joined(separator: " ")
+            )
+        }
+
+        return EvalCaseReport(
+            id: testCase.id,
+            label: label,
+            domain: testCase.domain,
+            query: testCase.query,
+            outcome: passed ? .passed : .failed,
+            notes: notes,
+            modelId: modelId,
+            latencyMs: transcript.latencyMs,
+            toolUsage: verbUsageStats(verbTrace)
+        )
+    }
+
     // MARK: - Shared scoring
 
     /// Convert a live-lane transcript into a report, applying the
@@ -757,6 +973,64 @@ extension EvalRunner {
                 t.runsCompleted == want,
                 pass: "runsCompleted ok: \(want)",
                 fail: "runsCompleted \(t.runsCompleted.map(String.init) ?? "nil") != \(want)"
+            )
+        }
+        if let want = exp.expectRunsSettled {
+            check(
+                t.runsSettled == want,
+                pass: "runsSettled ok: \(want)",
+                fail: "runsSettled \(t.runsSettled.map(String.init) ?? "nil") != \(want)"
+            )
+        }
+        if let want = exp.expectRunEnvelopeKinds {
+            check(
+                t.runEnvelopeKinds == want,
+                pass: "run envelope kinds ok: \(want)",
+                fail:
+                    "run envelope kinds \(t.runEnvelopeKinds ?? []) "
+                    + "!= \(want)"
+            )
+        }
+        if let want = exp.expectBatchAggregateStatus {
+            check(
+                t.batchAggregateStatus == want,
+                pass: "batch aggregate status ok: \(want)",
+                fail:
+                    "batch aggregate status "
+                    + "\(t.batchAggregateStatus ?? "nil") != \(want)"
+            )
+        }
+        if let want = exp.expectBatchJobIDs {
+            let got = t.batchJobs?.map(\.id)
+            check(
+                got == want,
+                pass: "batch job ids ok: \(want)",
+                fail: "batch job ids \(got ?? []) != \(want)"
+            )
+        }
+        if let want = exp.expectBatchSummaries {
+            let got = t.batchJobs?.map(\.summary)
+            check(
+                got == want,
+                pass: "batch summaries ok: \(want)",
+                fail: "batch summaries \(got ?? []) != \(want)"
+            )
+        }
+        if let want = exp.expectBatchPayloadFields {
+            let got = t.batchJobs ?? []
+            let payloadsMatch =
+                got.count == want.count
+                && zip(got, want).allSatisfy { child, expected in
+                    expected.allSatisfy { key, value in
+                        child.payload?[key] == value
+                    }
+                }
+            check(
+                payloadsMatch,
+                pass: "batch payload subsets ok",
+                fail:
+                    "batch payload subsets mismatch: "
+                    + "\(got.map { $0.payload ?? [:] })"
             )
         }
         if exp.expectUsageRecorded == true {

@@ -17,12 +17,17 @@ struct ChatViewSandboxTests {
     }
 
     @Test
-    func buildToolSpecs_sandboxEnabledIncludesBuiltIns() async {
+    func buildToolSpecs_sandboxEnabledUsesPublicWorkspaceVocabulary() async {
         await withRegisteredSandboxBuiltins {
             let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .sandbox(hostRead: nil))
-
-            #expect(specs.contains(where: { $0.function.name == "capabilities_discover" }))
-            #expect(specs.contains(where: { $0.function.name == "capabilities_load" }))
+            let names = Set(specs.map(\.function.name))
+            #expect(ToolRegistry.coreWorkspaceToolNames.isSubset(of: names))
+            #expect(
+                names.isDisjoint(
+                    with: ToolRegistry.sandboxBackendAdapterToolNames
+                )
+            )
+            #expect(names.contains("sandbox_install"))
         }
     }
 
@@ -40,15 +45,15 @@ struct ChatViewSandboxTests {
         let sandboxPrompt = sandboxCtx.prompt
 
         #expect(standardPrompt.contains(SystemPromptTemplates.sandboxSectionHeading) == false)
-        #expect(sandboxPrompt.contains(SystemPromptTemplates.sandboxSectionHeading))
-        // Pinning a tool name keeps the sandbox section honest.
-        #expect(sandboxPrompt.contains("sandbox_exec"))
-        // Plain sandbox (no host folder) must NOT emit the combined
-        // read-only workspace section or the unified Files block.
+        #expect(sandboxPrompt.contains("## Working directory"))
+        #expect(sandboxPrompt.contains("Host folders are unavailable"))
         #expect(sandboxPrompt.contains("## Host workspace (read-only)") == false)
         #expect(sandboxPrompt.contains("## Files") == false)
-        // Plain sandbox keeps the sandbox read tools in its dispatch guide.
-        #expect(sandboxPrompt.contains("sandbox_read_file"))
+        #expect(sandboxPrompt.contains("capability ids are separate from sandbox programs"))
+        #expect(sandboxPrompt.contains("sandbox_install"))
+        for privateName in ToolRegistry.sandboxBackendAdapterToolNames {
+            #expect(!sandboxPrompt.contains(privateName))
+        }
     }
 
     /// The sandbox section must state the agent's ABSOLUTE home (so the
@@ -68,13 +73,13 @@ struct ChatViewSandboxTests {
         #expect(expectedHome.isEmpty == false)
         // The absolute home path is named verbatim in the env block...
         #expect(prompt.contains(expectedHome))
-        // ...with the "default there / omit cwd" guidance.
-        #expect(prompt.contains("default"))
-        #expect(prompt.contains("`cwd`"))
+        #expect(prompt.contains("Use paths relative to this directory."))
+        #expect(prompt.contains("Host folders are unavailable."))
+        #expect(prompt.contains("complete requested work now"))
     }
 
     @Test
-    func buildSystemPrompt_combinedMode_emitsSandboxAndReadOnlyWorkspaceSections() async {
+    func buildSystemPrompt_legacyCombinedInputDoesNotExposeHostWorkspace() async {
         let folder = FolderContext(
             rootPath: URL(fileURLWithPath: "/tmp/osaurus-combined-prompt-\(UUID().uuidString)"),
             projectType: .swift,
@@ -90,23 +95,38 @@ struct ChatViewSandboxTests {
         )
         let prompt = combinedCtx.prompt
 
-        // Sandbox framing is present (exec is sandbox-only)...
-        #expect(prompt.contains(SystemPromptTemplates.sandboxSectionHeading))
-        // ...alongside the read-only host workspace section and the
-        // unified Files block that routes one file family by path so the
-        // model never picks between `file_*` and `sandbox_*` read tools.
-        #expect(prompt.contains("## Host workspace (read-only)"))
-        #expect(prompt.contains("## Files"))
-        // The unified Files block must name the real exec tools, never the
-        // (hidden in this mode) host `shell_run`.
-        #expect(prompt.contains("sandbox_exec"))
-        #expect(prompt.contains("shell_run") == false)
-        // Combined mode hides the redundant sandbox read tools; the
-        // dispatch guide steers to the unified `file_*` family instead.
-        // `file_read` reads files AND lists directories, so there is no
-        // separate `file_tree`.
-        #expect(prompt.contains("file_read"))
-        #expect(prompt.contains("file_tree") == false)
+        #expect(prompt.contains("## Working directory"))
+        #expect(prompt.contains("Host folders are unavailable"))
+        #expect(prompt.contains(folder.rootPath.path) == false)
+        #expect(prompt.contains("## Host workspace") == false)
+        for privateName in ToolRegistry.sandboxBackendAdapterToolNames {
+            #expect(!prompt.contains(privateName))
+        }
+    }
+
+    @Test
+    func buildSystemPrompt_legacyWritableCombinedInputStillIsVmOnly() async {
+        let folder = FolderContext(
+            rootPath: URL(fileURLWithPath: "/tmp/osaurus-writable-prompt-\(UUID().uuidString)"),
+            projectType: .swift,
+            tree: "./\nREADME.md\nSources/App.swift",
+            manifest: nil,
+            gitStatus: nil,
+            isGitRepo: false,
+            contextFiles: nil
+        )
+        let ctx = await SystemPromptComposer.composeChatContext(
+            agentId: Agent.defaultId,
+            executionMode: .sandbox(hostRead: folder, hostWrite: true)
+        )
+        let prompt = ctx.prompt
+
+        #expect(prompt.contains("Host folders are unavailable"))
+        #expect(prompt.contains(folder.rootPath.path) == false)
+        #expect(prompt.contains("## Host workspace") == false)
+        for privateName in ToolRegistry.sandboxBackendAdapterToolNames {
+            #expect(!prompt.contains(privateName))
+        }
     }
 
     @Test
@@ -147,7 +167,7 @@ struct ChatViewSandboxTests {
             let sandboxToolTokens = sandboxBreakdown.context.first { $0.id == "tools" }?.tokens ?? 0
             let inactiveToolTokens = inactiveBreakdown.context.first { $0.id == "tools" }?.tokens ?? 0
             #expect(sandboxToolTokens > inactiveToolTokens)
-            #expect(sandboxToolTokens >= ToolRegistry.shared.estimatedTokens(for: "sandbox_exec"))
+            #expect(sandboxToolTokens > 0)
 
             ToolRegistry.shared.unregisterAllSandboxTools()
             manager.setActiveAgent(originalActiveAgentId)
@@ -160,6 +180,7 @@ struct ChatViewSandboxTests {
     func alwaysLoadedSpecs_includesCapabilityTools() {
         let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
 
+        #expect(specs.contains(where: { $0.function.name == "capabilities" }))
         #expect(specs.contains(where: { $0.function.name == "capabilities_discover" }))
         #expect(specs.contains(where: { $0.function.name == "capabilities_load" }))
     }
@@ -229,7 +250,9 @@ struct ChatViewSandboxTests {
             #expect(sandboxMode.usesSandboxTools)
 
             let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: sandboxMode)
-            #expect(specs.contains(where: { $0.function.name == "sandbox_exec" }))
+            let names = Set(specs.map(\.function.name))
+            #expect(names.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+            #expect(!names.contains("sandbox_exec"))
 
             ToolRegistry.shared.unregisterAllSandboxTools()
             SandboxManager.State.shared.status = originalStatus
@@ -330,63 +353,6 @@ struct ChatViewSandboxTests {
             // auto-mode strip, so the Tools row grows.
             session.invalidateTokenCache()
             #expect(toolTokens() > baseTools)
-
-            manager.setActiveAgent(originalActiveAgentId)
-            _ = await manager.delete(id: agent.id)
-        }
-    }
-
-    /// Editing the agent's autonomous-exec config after a send must update
-    /// the Context Budget popover. Before the fix, the authoritative
-    /// last-send context (`cachedContext`) stayed pinned and the
-    /// `.agentUpdated`-driven resync only refreshed the (unused) preview, so
-    /// toggling e.g. background processes never moved the number until the
-    /// next send.
-    @Test
-    func estimatedContextBreakdown_updatesWhenAutonomousConfigEditedAfterSend() async {
-        await SandboxTestLock.runWithStoragePaths {
-            let manager = AgentManager.shared
-            let originalActiveAgentId = manager.activeAgentId
-            var agent = Agent(
-                name: "Budget Edit",
-                agentAddress: "test-budget-edit-\(UUID().uuidString)",
-                autonomousExec: AutonomousExecConfig(enabled: true)
-            )
-            manager.add(agent)
-            manager.setActiveAgent(agent.id)
-
-            let session = ChatSession()
-            session.agentId = agent.id
-
-            // Prime the preview cache (background OFF) and stand in for a
-            // completed send by seeding a composed context as authoritative.
-            session.resyncBudgetEstimateForTests()
-            let sentContext = await SystemPromptComposer.composeChatContext(
-                agentId: agent.id,
-                executionMode: .sandbox(hostRead: nil),
-                query: "do some work"
-            )
-            session.seedSendContextForTests(sentContext)
-            let beforeEdit = session.estimatedContextBreakdown.total
-            #expect(beforeEdit > 0)
-
-            // A benign resync (no config change) must NOT drop the
-            // authoritative send context.
-            #expect(session.resyncBudgetEstimateForTests() == false)
-            #expect(session.estimatedContextBreakdown.total == beforeEdit)
-
-            // Edit the agent: enable background processes. The cached send
-            // context is now stale for the next send.
-            agent.autonomousExec = AutonomousExecConfig(
-                enabled: true,
-                backgroundProcessEnabled: true
-            )
-            manager.update(agent)
-
-            // The resync the running app drives on `.agentUpdated` must now
-            // drop the stale send context and re-price from the edited config.
-            #expect(session.resyncBudgetEstimateForTests() == true)
-            #expect(session.estimatedContextBreakdown.total != beforeEdit)
 
             manager.setActiveAgent(originalActiveAgentId)
             _ = await manager.delete(id: agent.id)

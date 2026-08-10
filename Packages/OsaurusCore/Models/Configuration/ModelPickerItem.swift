@@ -78,6 +78,12 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// Whether this is a Vision Language Model
     let isVLM: Bool
 
+    /// Canonical local-bundle architecture from config.json. Nil for remote,
+    /// Foundation, image-generation, or legacy picker entries that do not
+    /// expose bundle metadata. Prompt-family routing must prefer this over
+    /// marketing/repository names when it is available.
+    let modelType: String?
+
     /// Whether the local bundle is in MLX format and therefore loadable by the
     /// local engine. Set from `MLXModel.isMLXFormat` for local items so the
     /// picker can grey out (and refuse to select) co-mingled non-MLX bundles
@@ -106,12 +112,27 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// filter the Osaurus tab by context limit; `nil` when unknown.
     let contextLength: Int?
 
+    /// Whether Router metadata explicitly advertises tool calling. Nil for
+    /// non-Router models and older catalogs that do not publish the capability.
+    /// The first-run temporary Cloud selector uses this with price + context to
+    /// choose a lower-cost model that can still run the agent experience.
+    let supportsToolCalling: Bool?
+
+    /// Catalog-driven reasoning-effort capabilities for remote models: the
+    /// live ChatGPT/Codex catalog contract, or the documented official
+    /// OpenAI GPT-5.6 API-key contract. Nil for models without a dynamic
+    /// effort surface (they keep the static profile fallback).
+    let reasoningCapabilities: ModelReasoningCapabilities?
+
     /// Image-generation metadata. Nil for text/remote chat models.
     let imageKind: String?
     let imageCapabilities: ImageModelCapabilities?
     let imageDefaultSteps: Int?
     let imageDefaultGuidance: Float?
     let imageReady: Bool
+    /// Provider-neutral media metadata for remote image/video rows. Local
+    /// image rows retain their existing `image*` fields.
+    let mediaModel: MediaModelInfo?
 
     init(
         id: String,
@@ -120,17 +141,21 @@ struct ModelPickerItem: Identifiable, Hashable {
         parameterCount: String? = nil,
         quantization: String? = nil,
         isVLM: Bool = false,
+        modelType: String? = nil,
         isMLXFormat: Bool = true,
         isEmbedding: Bool = false,
         description: String? = nil,
         inputPriceMicroPerMTok: Int64? = nil,
         outputPriceMicroPerMTok: Int64? = nil,
         contextLength: Int? = nil,
+        supportsToolCalling: Bool? = nil,
+        reasoningCapabilities: ModelReasoningCapabilities? = nil,
         imageKind: String? = nil,
         imageCapabilities: ImageModelCapabilities? = nil,
         imageDefaultSteps: Int? = nil,
         imageDefaultGuidance: Float? = nil,
-        imageReady: Bool = false
+        imageReady: Bool = false,
+        mediaModel: MediaModelInfo? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -138,17 +163,21 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.parameterCount = parameterCount
         self.quantization = quantization
         self.isVLM = isVLM
+        self.modelType = modelType
         self.isMLXFormat = isMLXFormat
         self.isEmbedding = isEmbedding
         self.description = description
         self.inputPriceMicroPerMTok = inputPriceMicroPerMTok
         self.outputPriceMicroPerMTok = outputPriceMicroPerMTok
         self.contextLength = contextLength
+        self.supportsToolCalling = supportsToolCalling
+        self.reasoningCapabilities = reasoningCapabilities
         self.imageKind = imageKind
         self.imageCapabilities = imageCapabilities
         self.imageDefaultSteps = imageDefaultSteps
         self.imageDefaultGuidance = imageDefaultGuidance
         self.imageReady = imageReady
+        self.mediaModel = mediaModel
     }
 
     /// Check if model matches search query using fuzzy matching.
@@ -170,7 +199,7 @@ struct ModelPickerItem: Identifiable, Hashable {
 extension ModelPickerItem {
     /// Create a Foundation model picker item
     static func foundation() -> ModelPickerItem {
-        ModelPickerItem(
+        return ModelPickerItem(
             id: "foundation",
             displayName: "Foundation",
             source: .foundation,
@@ -180,13 +209,14 @@ extension ModelPickerItem {
 
     /// Create a local MLX model picker item from an MLXModel.
     static func fromMLXModel(_ model: MLXModel) -> ModelPickerItem {
-        ModelPickerItem(
+        return ModelPickerItem(
             id: model.id,
             displayName: model.name,
             source: .local,
             parameterCount: model.parameterCount,
             quantization: model.quantization,
             isVLM: model.isVLM,
+            modelType: model.modelType,
             isMLXFormat: model.isMLXFormat,
             isEmbedding: model.isEmbedding,
             description: model.description
@@ -209,8 +239,68 @@ extension ModelPickerItem {
         )
     }
 
-    /// Create a remote provider model picker item
+    /// Create a remote provider model picker item. `contextLength` is the
+    /// window the provider's `/models` endpoint advertised (e.g. vLLM's
+    /// `max_model_len`), when known; it feeds the same provider-metadata
+    /// resolution step router models use, ahead of the 128k fallback.
     static func fromRemoteModel(
+        modelId: String,
+        providerName: String,
+        providerId: UUID,
+        contextLength: Int? = nil
+    ) -> ModelPickerItem {
+        ModelPickerItem(
+            id: modelId,
+            displayName: displayName(fromModelId: modelId),
+            source: .remote(providerName: providerName, providerId: providerId),
+            contextLength: contextLength
+        )
+    }
+
+    static func fromMediaModel(_ model: MediaModelInfo, providerId: UUID) -> ModelPickerItem {
+        let details = [
+            model.privacy,
+            model.pricing?.minimumUSD.map { String(format: "From $%.4f", $0) },
+        ]
+        .compactMap { $0 }
+        .joined(separator: " · ")
+        return ModelPickerItem(
+            id: model.id,
+            displayName: model.displayName,
+            source: .remote(providerName: model.providerName, providerId: providerId),
+            description: details.isEmpty ? nil : details,
+            imageReady: model.isAvailable,
+            mediaModel: model
+        )
+    }
+
+    /// Create a ChatGPT/Codex remote model picker item enriched with the
+    /// live catalog's display name and per-model reasoning capabilities.
+    /// `metadata` is nil for fallback (pre-catalog) slugs, which then behave
+    /// exactly like plain remote items.
+    static func fromCodexRemoteModel(
+        modelId: String,
+        providerName: String,
+        providerId: UUID,
+        metadata: CodexModelMetadata?
+    ) -> ModelPickerItem {
+        let catalogDisplayName = metadata?.displayName?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return ModelPickerItem(
+            id: modelId,
+            displayName: (catalogDisplayName?.isEmpty == false ? catalogDisplayName : nil)
+                ?? displayName(fromModelId: modelId),
+            source: .remote(providerName: providerName, providerId: providerId),
+            reasoningCapabilities: metadata.flatMap(ModelReasoningCapabilities.init(codex:))
+        )
+    }
+
+    /// Create a picker item for the official `api.openai.com` API-key route.
+    /// GPT-5.6 models attach the documented public reasoning profile
+    /// (`none` … `max`, never Codex-only `ultra`); every other id keeps the
+    /// plain `/v1/models` id/display behavior and the generic static
+    /// profile fallback.
+    static func fromOfficialOpenAIModel(
         modelId: String,
         providerName: String,
         providerId: UUID
@@ -218,8 +308,16 @@ extension ModelPickerItem {
         ModelPickerItem(
             id: modelId,
             displayName: displayName(fromModelId: modelId),
-            source: .remote(providerName: providerName, providerId: providerId)
+            source: .remote(providerName: providerName, providerId: providerId),
+            reasoningCapabilities: isPublicGPT56ModelId(modelId) ? .officialOpenAIGPT56 : nil
         )
+    }
+
+    /// Whether a (possibly provider-prefixed) id names a GPT-5.6 model
+    /// covered by the documented public API reasoning contract.
+    static func isPublicGPT56ModelId(_ id: String) -> Bool {
+        let bare = id.split(separator: "/").last.map(String.init) ?? id
+        return bare.lowercased().hasPrefix("gpt-5.6")
     }
 
     /// Create an Osaurus Router model picker item enriched with the router's
@@ -244,7 +342,8 @@ extension ModelPickerItem {
             outputPriceMicroPerMTok: Int64(
                 metadata.outputMicroPerMTok.trimmingCharacters(in: .whitespacesAndNewlines)
             ),
-            contextLength: metadata.contextLength > 0 ? metadata.contextLength : nil
+            contextLength: metadata.contextLength > 0 ? metadata.contextLength : nil,
+            supportsToolCalling: metadata.supportsToolCalling
         )
     }
 
@@ -297,6 +396,17 @@ extension OsaurusRouterModel {
         }
     }
 
+    /// Router catalogs currently use `tools`; accept common aliases so a
+    /// backend naming cleanup does not silently make first-run selection less
+    /// capable. Nil means the catalog did not make a claim either way.
+    var supportsToolCalling: Bool? {
+        guard let capabilities else { return nil }
+        let toolKeys: Set<String> = ["tools", "tool_calling", "function_calling"]
+        let matches = capabilities.filter { toolKeys.contains($0.key.lowercased()) }
+        guard !matches.isEmpty else { return nil }
+        return matches.contains { $0.value }
+    }
+
     /// Human-friendly context window (e.g. 131072 -> "131K", 1048576 -> "1M").
     static func formatContextLength(_ context: Int) -> String? {
         guard context > 0 else { return nil }
@@ -328,6 +438,7 @@ extension ModelPickerItem {
     /// heuristic, the array helper below falls back to the first item so the
     /// picker is never left empty when models exist.
     var isLikelyChatCapable: Bool {
+        if mediaModel != nil { return false }
         switch source {
         case .foundation:
             // Foundation is Apple's on-device chat model.
@@ -364,11 +475,20 @@ extension ModelPickerItem {
     }
 
     var isImageGenerationDelegateCandidate: Bool {
-        source.isImageGeneration && imageReady && (imageCapabilities?.textToImage == true)
+        (source.isImageGeneration && imageReady && (imageCapabilities?.textToImage == true))
+            || (mediaModel?.kind == .image && mediaModel?.isAvailable == true)
     }
 
     var isImageEditDelegateCandidate: Bool {
         source.isImageGeneration && imageReady && (imageCapabilities?.imageEdit == true)
+    }
+
+    var isVideoGenerationDelegateCandidate: Bool {
+        mediaModel?.kind.isVideo == true && mediaModel?.isAvailable == true
+    }
+
+    var isMediaGeneration: Bool {
+        source.isImageGeneration || mediaModel != nil
     }
 
     /// Ranking used only when Chat needs an automatic fallback selection.
@@ -379,6 +499,7 @@ extension ModelPickerItem {
     /// because it sorts earlier on disk.
     var defaultChatSelectionRank: Int {
         let lower = id.lowercased()
+        if mediaModel != nil { return 40 }
         switch source {
         case .imageGeneration:
             return 40
@@ -591,6 +712,10 @@ extension Array where Element == ModelPickerItem {
 
     var imageGenerationDelegateCandidates: [ModelPickerItem] {
         filter(\.isImageGenerationDelegateCandidate)
+    }
+
+    var videoGenerationDelegateCandidates: [ModelPickerItem] {
+        filter(\.isVideoGenerationDelegateCandidate)
     }
 
     var imageEditDelegateCandidates: [ModelPickerItem] {

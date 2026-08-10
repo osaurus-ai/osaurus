@@ -205,6 +205,29 @@ public final class OAuthLoopbackServer: @unchecked Sendable {
         }
     }
 
+    /// Default hard ceiling for browser sign-in flows. Long enough for a user
+    /// to complete MFA, short enough that an abandoned browser tab can't pin
+    /// the sign-in task (and the bound loopback port) forever.
+    public static let defaultSignInTimeout: TimeInterval = 300
+
+    /// Await the authorization callback with a hard deadline. If the browser
+    /// flow is abandoned (tab closed, user walks away), this throws
+    /// `OAuthLoopbackError.callbackTimeout` after `timeout` seconds instead
+    /// of suspending forever. `valueWithDeadline` never re-joins the losing
+    /// branch, so even a wait whose cancellation handler misbehaves cannot
+    /// keep the caller blocked past the deadline; the unbounded
+    /// `waitForCallback()` still resolves through its own cancellation
+    /// handler, so no continuation is stranded.
+    public func waitForCallback(timeout: TimeInterval) async throws -> OAuthCallbackResult {
+        do {
+            return try await valueWithDeadline(seconds: timeout, operationName: "OAuth callback") {
+                try await self.waitForCallback()
+            }
+        } catch is DeadlineExceededError {
+            throw OAuthLoopbackError.callbackTimeout
+        }
+    }
+
     public func stop() {
         listener.cancel()
     }

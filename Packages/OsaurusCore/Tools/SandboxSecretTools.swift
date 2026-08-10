@@ -35,6 +35,14 @@ struct SandboxSecretCheckTool: OsaurusTool, @unchecked Sendable {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
+        let context = await SandboxToolRequestContext.resolve(
+            fallbackAgentId: agentId
+        )
+        if let rejection = context.rejection(for: .autonomous, tool: name) {
+            return rejection
+        }
+        let agentId = context.agentId
+
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
@@ -115,6 +123,14 @@ struct SandboxSecretSetTool: OsaurusTool, @unchecked Sendable {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
+        let context = await SandboxToolRequestContext.resolve(
+            fallbackAgentId: agentId
+        )
+        if let rejection = context.rejection(for: .autonomous, tool: name) {
+            return rejection
+        }
+        let agentId = context.agentId
+
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
@@ -235,30 +251,118 @@ enum SecretToolResult {
 
 // MARK: - Persisted-Argument Scrubbing
 
+/// Execution vs recording views of one tool-call argument payload.
+///
+/// The direct `value` path of `sandbox_secret_set` must reach
+/// `ToolRegistry.execute` intact so Keychain can store the secret, but the
+/// same JSON must never re-enter model-visible history, plugin SSE,
+/// persistence, or host tool-call logs. Surfaces that need both forms call
+/// `split` so the execution/recording boundary is explicit and hard to invert.
+struct ToolCallArgumentMaterial: Sendable, Equatable {
+    /// Byte-identical arguments for execution and permission gates.
+    let forExecution: String
+    /// Arguments safe for history, model re-feed, SSE deltas, and logs.
+    let forRecording: String
+
+    /// Build both views from the raw model-emitted arguments.
+    static func split(toolName: String, argumentsJSON: String) -> ToolCallArgumentMaterial {
+        ToolCallArgumentMaterial(
+            forExecution: argumentsJSON,
+            forRecording: SecretArgumentScrubber.recordedArguments(
+                toolName: toolName,
+                argumentsJSON: argumentsJSON
+            )
+        )
+    }
+}
+
 /// Scrubs the secret `value` out of `sandbox_secret_set` tool-call
-/// arguments before they land in chat history / persistence.
+/// arguments before they land in recorded / model-visible / plugin-visible
+/// material.
 ///
 /// The direct-`value` path stores the secret in Keychain correctly, but
 /// the model's tool-call arguments would otherwise ride along in every
 /// later context window and in the persisted session file — defeating
 /// the Keychain. Execution always sees the original arguments; only the
-/// RECORDED copy is scrubbed.
+/// RECORDED copy is scrubbed. Scrubbing fails closed: malformed or
+/// non-serializable `sandbox_secret_set` payloads never re-emit the
+/// original input.
 public enum SecretArgumentScrubber {
     static let redactedPlaceholder = "[REDACTED]"
+    private static let allowedSecretSetKeys: Set<String> = [
+        "key", "description", "instructions", "value",
+    ]
+
+    /// Fail-closed stub used when `sandbox_secret_set` arguments cannot be
+    /// parsed or re-serialized without risk of re-emitting a secret.
+    static let failClosedArgumentsJSON = #"{"value":"[REDACTED]"}"#
+
+    /// Arguments JSON safe for recorded/model-visible/persisted surfaces.
+    /// Non-`sandbox_secret_set` tools return the input byte-for-byte.
+    static func recordedArguments(toolName: String, argumentsJSON: String) -> String {
+        scrubForPersistence(toolName: toolName, argumentsJSON: argumentsJSON)
+    }
 
     /// Returns scrubbed arguments JSON for `sandbox_secret_set` calls
-    /// that carry a non-empty `value`; every other input is returned
-    /// unchanged.
+    /// that carry a secret-bearing `value`; every other *tool* returns its
+    /// input unchanged. For `sandbox_secret_set` itself, unparseable or
+    /// non-serializable payloads fail closed rather than echoing the
+    /// original text (which may still contain a secret).
     public static func scrubForPersistence(toolName: String, argumentsJSON: String) -> String {
-        guard toolName == "sandbox_secret_set",
-            let data = argumentsJSON.data(using: .utf8),
-            var args = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-            let value = args["value"] as? String,
-            !value.isEmpty,
-            value != redactedPlaceholder
-        else { return argumentsJSON }
+        let recordedName = ToolRegistry.deferredToolAliasTarget(toolName) ?? toolName
+        guard recordedName == "sandbox_secret_set" else { return argumentsJSON }
 
-        args["value"] = redactedPlaceholder
+        // Malformed / non-object JSON may still embed a secret as raw text.
+        // Never re-emit the original payload for this tool.
+        guard let data = argumentsJSON.data(using: .utf8),
+            var args = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else {
+            return failClosedArgumentsJSON
+        }
+
+        // The tool schema forbids unknown fields and requires these three
+        // strings. Preserve only structurally valid prompt/direct-call
+        // payloads; malformed objects can hide a second copy of the secret
+        // under an ignored nested or extra field.
+        guard Set(args.keys).isSubset(of: allowedSecretSetKeys),
+            args["key"] is String,
+            args["description"] is String,
+            args["instructions"] is String
+        else {
+            return failClosedArgumentsJSON
+        }
+
+        guard let rawValue = args["value"] else {
+            // Valid prompt path (no direct value) — leave byte-identical.
+            return argumentsJSON
+        }
+
+        if let value = rawValue as? String {
+            // Empty / already-redacted values need no rewrite.
+            guard !value.isEmpty, value != redactedPlaceholder else {
+                return argumentsJSON
+            }
+            // The model can duplicate the direct secret into another
+            // schema-valid string field. Redacting only `value` would then
+            // preserve the same credential in recorded history. Replace the
+            // exact known value everywhere in the retained object before
+            // serializing it.
+            for key in ["key", "description", "instructions"] {
+                if let string = args[key] as? String {
+                    args[key] = string.replacingOccurrences(
+                        of: value,
+                        with: redactedPlaceholder
+                    )
+                }
+            }
+            args["value"] = redactedPlaceholder
+        } else {
+            // A non-string `value` is outside the tool contract. We do not
+            // have a trustworthy scalar to scrub from sibling fields, so
+            // retain none of them.
+            return failClosedArgumentsJSON
+        }
+
         guard
             let scrubbed = try? JSONSerialization.data(
                 withJSONObject: args,
@@ -267,11 +371,106 @@ public enum SecretArgumentScrubber {
             let json = String(data: scrubbed, encoding: .utf8)
         else {
             // Re-serialization should never fail for a dict we just
-            // parsed; if it somehow does, fail CLOSED (drop the args
-            // entirely) rather than persisting the secret.
-            return "{\"value\":\"\(redactedPlaceholder)\"}"
+            // parsed; if it somehow does, fail CLOSED rather than
+            // persisting the secret.
+            return failClosedArgumentsJSON
         }
         return json
+    }
+
+    /// Whether a raw or capability-style tool name identifies the
+    /// secret-setting tool. Used to omit raw provider wire snapshots that
+    /// cannot be safely rewritten without changing their protocol shape.
+    static func isSecretSetToolName(_ toolName: String) -> Bool {
+        (ToolRegistry.deferredToolAliasTarget(toolName) ?? toolName) == "sandbox_secret_set"
+    }
+
+    /// Build a history/SSE-safe `ToolCall` from an execution invocation.
+    /// Use this whenever a surface materializes tool-call args into
+    /// history, plugin deltas, or logs; pass `invocation.jsonArguments`
+    /// unchanged to `ToolRegistry.execute`.
+    ///
+    /// Package-internal: takes `ServiceToolInvocation`, which is not part of
+    /// the public module surface.
+    static func recordedToolCall(
+        id: String,
+        invocation: ServiceToolInvocation
+    ) -> ToolCall {
+        ToolCall(
+            id: id,
+            type: "function",
+            function: ToolCallFunction(
+                name: invocation.toolName,
+                arguments: recordedArguments(
+                    toolName: invocation.toolName,
+                    argumentsJSON: invocation.jsonArguments
+                )
+            ),
+            geminiThoughtSignature: invocation.geminiThoughtSignature
+        )
+    }
+
+    /// Scrub every tool-call argument on an assistant message before it
+    /// enters multi-turn history. Used by the plugin non-stream path,
+    /// which appends the model's full `choice.message` (including raw
+    /// `tool_calls`) in one shot.
+    ///
+    /// Package-internal: takes `ChatMessage`, which is not part of the
+    /// public module surface.
+    static func recordedAssistantMessage(_ message: ChatMessage) -> ChatMessage {
+        guard let calls = message.tool_calls, !calls.isEmpty else { return message }
+        let scrubbed = calls.map { call in
+            ToolCall(
+                id: call.id,
+                type: call.type,
+                function: ToolCallFunction(
+                    name: call.function.name,
+                    arguments: recordedArguments(
+                        toolName: call.function.name,
+                        argumentsJSON: call.function.arguments
+                    )
+                ),
+                geminiThoughtSignature: call.geminiThoughtSignature
+            )
+        }
+        // Preserve identity when nothing secret-bearing was present so
+        // unrelated tools keep their exact argument text.
+        if zip(calls, scrubbed).allSatisfy({ $0.function.arguments == $1.function.arguments }) {
+            return message
+        }
+        return ChatMessage(
+            role: message.role,
+            content: message.content,
+            contentParts: message.contentParts,
+            localAudioSamples: message.localAudioSamples,
+            tool_calls: scrubbed,
+            tool_call_id: message.tool_call_id,
+            reasoning_content: message.reasoning_content,
+            reasoning_item_id: message.reasoning_item_id,
+            reasoning_encrypted: message.reasoning_encrypted
+        )
+    }
+
+    /// Copy a completion response for persistence while preserving transport
+    /// metadata and redacting only assistant tool-call arguments.
+    static func recordedResponse(_ response: ChatCompletionResponse) -> ChatCompletionResponse {
+        var recorded = ChatCompletionResponse(
+            id: response.id,
+            created: response.created,
+            model: response.model,
+            choices: response.choices.map {
+                ChatChoice(
+                    index: $0.index,
+                    message: recordedAssistantMessage($0.message),
+                    finish_reason: $0.finish_reason
+                )
+            },
+            usage: response.usage,
+            system_fingerprint: response.system_fingerprint
+        )
+        recorded.object = response.object
+        recorded.prefix_hash = response.prefix_hash
+        return recorded
     }
 }
 

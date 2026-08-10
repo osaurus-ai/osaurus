@@ -134,29 +134,39 @@ struct TotalPromptBudgetTests {
             SystemPromptTemplates.platformIdentity,
             SystemPromptTemplates.defaultPersona,
             SystemPromptTemplates.soulSection(cappedSoul),
-            SystemPromptTemplates.selfImprovementGuidance(canCreatePlugins: true),
+            SystemPromptTemplates.selfImprovementGuidance(
+                canCreatePlugins: true,
+                compact: true
+            ),
             // Heaviest compact family block (`.small` gets compact variants).
             ModelFamilyGuidance.compactGuidance(for: .gptCodex),
-            SystemPromptTemplates.groundingDirective(discoveryAvailable: true),
-            SystemPromptTemplates.codeStyleGuidance,
-            SystemPromptTemplates.riskAwareGuidance,
-            SystemPromptTemplates.secretHandlingGuidance,
+            SystemPromptTemplates.groundingDirective(
+                discoveryAvailable: true,
+                compact: true
+            ),
+            SystemPromptTemplates.codeStyleGuidanceCompact,
+            SystemPromptTemplates.riskAwareGuidanceCompact,
+            SystemPromptTemplates.secretHandlingGuidanceCompact,
             // `.small` gets the agent-loop cheat sheet from turn 1.
-            SystemPromptTemplates.agentLoopGuidance,
+            SystemPromptTemplates.agentLoopGuidanceCompact,
             SystemPromptTemplates.sandbox(
                 home: "/home/agent-abcdef123456",
                 hostReadCombined: false,
-                backgroundEnabled: true
+                backgroundEnabled: true,
+                compact: true
             ),
             SystemPromptTemplates.sandboxState(
                 secretNames: ["SERVICE_API_KEY", "DB_CONNECTION_STRING"],
                 installedPackages: .init(pip: ["requests", "flask"], npm: ["axios"])
             ),
-            SystemPromptTemplates.capabilityDiscoveryNudgeSandbox(canCreatePlugins: true),
+            SystemPromptTemplates.capabilityDiscoveryNudgeSandbox(
+                canCreatePlugins: true,
+                compact: true
+            ),
             manifest,
-            SystemPromptTemplates.skillsGovernToolGroups,
             PluginCreatorGate.section(
-                instructions: SystemPromptTemplates.pluginCreatorInstructions
+                instructions:
+                    SystemPromptTemplates.pluginCreatorInstructionsCompactBody()
             ),
         ]
         return sections.joined(separator: "\n\n")
@@ -182,21 +192,30 @@ struct TotalPromptBudgetTests {
         let sections: [String] = [
             SystemPromptTemplates.platformIdentity,
             SystemPromptTemplates.defaultPersona,
-            SystemPromptTemplates.selfImprovementGuidance(canCreatePlugins: false),
+            SystemPromptTemplates.selfImprovementGuidance(
+                canCreatePlugins: false,
+                compact: true
+            ),
             ModelFamilyGuidance.compactGuidance(for: .glmQwen),
-            SystemPromptTemplates.groundingDirective(discoveryAvailable: true),
-            SystemPromptTemplates.codeStyleGuidance,
-            SystemPromptTemplates.riskAwareGuidance,
-            SystemPromptTemplates.secretHandlingGuidance,
-            SystemPromptTemplates.agentLoopGuidance,
+            SystemPromptTemplates.groundingDirective(
+                discoveryAvailable: true,
+                compact: true
+            ),
+            SystemPromptTemplates.codeStyleGuidanceCompact,
+            SystemPromptTemplates.riskAwareGuidanceCompact,
+            SystemPromptTemplates.secretHandlingGuidanceCompact,
+            SystemPromptTemplates.agentLoopGuidanceCompact,
             SystemPromptTemplates.sandbox(
                 home: "/home/agent-abcdef123456",
                 hostReadCombined: false,
-                backgroundEnabled: false
+                backgroundEnabled: false,
+                compact: true
             ),
-            SystemPromptTemplates.capabilityDiscoveryNudgeSandbox(canCreatePlugins: false),
+            SystemPromptTemplates.capabilityDiscoveryNudgeSandbox(
+                canCreatePlugins: false,
+                compact: true
+            ),
             manifest,
-            SystemPromptTemplates.skillsGovernToolGroups,
         ]
         return sections.joined(separator: "\n\n")
     }

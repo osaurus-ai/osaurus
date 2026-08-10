@@ -23,59 +23,62 @@ struct SubagentJobEvaluatorSeedTests {
 
     /// A built-in agent name so `withSpawnableAgent` takes the "already
     /// exists" branch and does not touch `AgentStore` / `AgentManager`.
-    private var existingAgentName: String {
-        Agent.builtInAgents.first?.name ?? "eval-seed-agent"
+    private var existingAgent: Agent {
+        Agent.builtInAgents.first
+            ?? Agent(id: UUID(), name: "eval-seed-agent", description: "", systemPrompt: "")
     }
 
     @Test func seedsAgentAndHandoffDuringBodyThenRestores() async {
         let lease = await acquireSubagentStoreSandbox("spawnseed")
         defer { lease.release() }
-        let agent = existingAgentName
+        let agent = existingAgent
 
         // Known prior: handoff OFF, empty spawn pool — the worst case where the
         // live spawn lane would otherwise skip (no agent, no local handoff).
         let prior = SubagentConfiguration(
             localTextDelegationEnabled: false,
-            spawnableAgentNames: []
+            spawnableAgentIDs: []
         )
         SubagentConfigurationStore.save(prior)
-        #expect(!SubagentConfigurationStore.snapshot().isAgentSpawnable(agent))
+        #expect(!SubagentConfigurationStore.snapshot().isAgentSpawnable(agent.id))
 
-        await SubagentJobEvaluator.withSpawnableAgent(name: agent) {
+        await SubagentJobEvaluator.withSpawnableAgent(name: agent.name) { seededID in
+            #expect(seededID == agent.id)
             let during = SubagentConfigurationStore.snapshot()
-            #expect(during.isAgentSpawnable(agent), "agent must be spawnable during the body")
+            #expect(during.isAgentSpawnable(agent.id), "agent must be spawnable during the body")
             #expect(during.localTextDelegationEnabled, "local handoff must be enabled during the body")
         }
 
         // Restored exactly: pool empty again, handoff back off.
         let after = SubagentConfigurationStore.snapshot()
-        #expect(after.spawnableAgentNames.isEmpty, "spawn pool must be restored; got \(after.spawnableAgentNames)")
-        #expect(!after.isAgentSpawnable(agent))
+        #expect(after.spawnableAgentIDs.isEmpty, "spawn pool must be restored; got \(after.spawnableAgentIDs)")
+        #expect(!after.isAgentSpawnable(agent.id))
         #expect(!after.localTextDelegationEnabled, "local handoff must be restored to off")
     }
 
     @Test func noOpAndRestoreWhenAlreadyConfigured() async {
         let lease = await acquireSubagentStoreSandbox("spawnseed-noop")
         defer { lease.release() }
-        let agent = existingAgentName
+        let agent = existingAgent
 
         // Prior already has the agent + handoff on: seeding is a no-op and the
         // restore must leave that prior state intact (not strip a user's config).
         let prior = SubagentConfiguration(
             localTextDelegationEnabled: true,
-            spawnableAgentNames: [agent]
+            spawnableAgentIDs: [agent.id]
         )
         SubagentConfigurationStore.save(prior)
 
-        await SubagentJobEvaluator.withSpawnableAgent(name: agent) {
+        await SubagentJobEvaluator.withSpawnableAgent(name: agent.name) { seededID in
+            #expect(seededID == agent.id)
             let during = SubagentConfigurationStore.snapshot()
-            #expect(during.isAgentSpawnable(agent))
+            #expect(during.isAgentSpawnable(agent.id))
             #expect(during.localTextDelegationEnabled)
         }
 
         let after = SubagentConfigurationStore.snapshot()
-        #expect(after.isAgentSpawnable(agent))
+        #expect(after.isAgentSpawnable(agent.id))
         #expect(after.localTextDelegationEnabled)
-        #expect(after.spawnableAgentNames == [agent], "pool must be unchanged; got \(after.spawnableAgentNames)")
+        #expect(after.spawnableAgentIDs == [agent.id], "pool must be unchanged; got \(after.spawnableAgentIDs)")
     }
 }

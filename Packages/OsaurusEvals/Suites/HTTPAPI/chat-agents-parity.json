@@ -1,0 +1,15 @@
+{
+  "id": "http_api.chat-agents-parity",
+  "domain": "http_api",
+  "label": "http api • same prompt through /v1/chat/completions and the agents surface answers on both",
+  "query": "What is 8 plus 5? Answer with just the number.",
+  "notes": "Parity pin: the same prompt driven through the OpenAI-compatible chat surface and the agents run surface must BOTH produce a non-empty answer satisfying responseContains — catching a routing/config divergence where one surface silently degrades. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "httpAPI": {
+      "scenario": "chat_agents_parity",
+      "maxTokens": 64,
+      "responseContains": ["13"]
+    }
+  }
+}

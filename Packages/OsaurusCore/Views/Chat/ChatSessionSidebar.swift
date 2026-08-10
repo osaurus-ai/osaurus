@@ -5,6 +5,7 @@
 //  Sidebar showing chat session history
 //
 
+import AppKit
 import SwiftUI
 
 /// In-memory toggle for the delete-conversation confirmation. Resets on
@@ -31,7 +32,11 @@ struct ChatSessionSidebar: View {
     let onDelete: (UUID) -> Void
     let onRename: (UUID, String) -> Void
     let onSetArchived: (UUID, Bool) -> Void
+    let onSetPinned: (UUID, Bool) -> Void
     let onExport: (ChatSessionData, ExportFormat) -> Void
+    /// Stop the live run driving the given session id. Rows only offer the
+    /// control while `SessionActivityMonitor` reports the session active.
+    var onStop: ((UUID) -> Void)? = nil
     /// Optional callback for opening a session in a new window
     var onOpenInNewWindow: ((ChatSessionData) -> Void)? = nil
 
@@ -44,8 +49,21 @@ struct ChatSessionSidebar: View {
     @Environment(\.theme) private var theme
     @Environment(\.themedAlertScope) private var alertScope
     @ObservedObject private var agentManager = AgentManager.shared
+    /// Live "session id → working / waiting for input" map. Drives the
+    /// animated avatar ring, the status metadata line, the per-row Stop
+    /// control, and floating active rows to the top of the list.
+    @ObservedObject private var activityMonitor = SessionActivityMonitor.shared
+    /// Freshly imported session ids; their rows glow briefly and the list
+    /// scrolls the first one into view so the user can see where the
+    /// imports landed (they sort by original date, not to the top).
+    @ObservedObject private var importHighlight = ChatSessionImportHighlight.shared
     @State private var editingSessionId: UUID?
     @State private var editingBuffer: String = ""
+    /// IDs the user has multi-selected (⌘-click to toggle, ⇧-click to
+    /// range-select). Empty means normal single-select navigation is active.
+    @State private var selectedIds: Set<UUID> = []
+    /// The row a ⇧-click range extends from. Set on every plain or ⌘ click.
+    @State private var selectionAnchorId: UUID?
     @State private var searchQuery: String = ""
     @State private var sourceFilter: SourceFilter = .all
     @State private var hoveredFilter: SourceFilter?
@@ -86,8 +104,11 @@ struct ChatSessionSidebar: View {
         .source(.chat),
         .source(.plugin),
         .source(.http),
+        .source(.channel),
         .source(.schedule),
         .source(.watcher),
+        .source(.selfSchedule),
+        .source(.imported),
         .archived,
     ]
 
@@ -105,9 +126,9 @@ struct ChatSessionSidebar: View {
             byFilter = sessions.filter { $0.archived }
         }
         guard !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty else {
-            return byFilter
+            return orderedForDisplay(byFilter)
         }
-        return byFilter.filter { session in
+        let matched = byFilter.filter { session in
             if SearchService.matches(query: searchQuery, in: session.title) { return true }
             if let key = session.externalSessionKey,
                 SearchService.matches(query: searchQuery, in: key)
@@ -122,6 +143,20 @@ struct ChatSessionSidebar: View {
                 SearchService.matches(query: searchQuery, in: cap.label)
             }
         }
+        return orderedForDisplay(matched)
+    }
+
+    /// Stable partition floating active (running / waiting-for-input)
+    /// sessions to the very top, then pinned sessions, while preserving the
+    /// incoming (recency-descending) order within each group. Display-only:
+    /// `updatedAt` and persistence are untouched. The `.archived` lens keeps
+    /// its own order — pins/activity are a default-view concern — but
+    /// partitioning there too is harmless and keeps the rule uniform.
+    private func orderedForDisplay(_ list: [ChatSessionData]) -> [ChatSessionData] {
+        SessionActivityOrdering.ordered(
+            list,
+            activeIds: Set(activityMonitor.statuses.keys)
+        )
     }
 
     /// Debounced full-text lookup for the search query. The in-memory
@@ -193,6 +228,14 @@ struct ChatSessionSidebar: View {
             Divider()
                 .opacity(0.3)
 
+            // Batch action bar for the current multi-selection.
+            if !selectedIds.isEmpty {
+                selectionActionBar
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
             // Session list
             if sessions.isEmpty {
                 emptyState
@@ -215,6 +258,7 @@ struct ChatSessionSidebar: View {
         // sidebar's loadSession) is a context change — wipe per-window
         // filter state so the new agent starts on "All" with an empty
         // search instead of inheriting the previous agent's lens.
+        .animation(theme.animationQuick(), value: selectedIds)
         .onChange(of: searchQuery) { _, query in
             scheduleContentSearch(query)
         }
@@ -222,6 +266,7 @@ struct ChatSessionSidebar: View {
             sourceFilter = .all
             searchQuery = ""
             hoveredFilter = nil
+            clearSelection()
         }
     }
 
@@ -302,6 +347,59 @@ struct ChatSessionSidebar: View {
         editingBuffer = ""
     }
 
+    // MARK: - Multi-Select
+
+    /// Routes a row tap by the modifier keys held at click time. ⌘ toggles
+    /// the row in the multi-selection and ⇧ extends a contiguous range from
+    /// the anchor. With no modifier: while a selection is active a plain click
+    /// toggles the row (so a chat can be deselected as easily as it was
+    /// selected); otherwise it navigates to the chat as usual.
+    private func handleTap(_ session: ChatSessionData) {
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.command) {
+            toggleSelection(session.id)
+        } else if flags.contains(.shift) {
+            extendSelection(to: session.id)
+        } else if !selectedIds.isEmpty {
+            toggleSelection(session.id)
+        } else {
+            selectionAnchorId = session.id
+            handleSelect(session)
+        }
+    }
+
+    private func toggleSelection(_ id: UUID) {
+        if selectedIds.contains(id) {
+            selectedIds.remove(id)
+        } else {
+            selectedIds.insert(id)
+        }
+        selectionAnchorId = id
+    }
+
+    /// Adds every row between the anchor and `id` (inclusive) in the
+    /// currently-visible order. Falls back to a single toggle when there is
+    /// no usable anchor yet.
+    private func extendSelection(to id: UUID) {
+        let ids = filteredSessions.map(\.id)
+        guard
+            let anchor = selectionAnchorId ?? currentSessionId,
+            let anchorIndex = ids.firstIndex(of: anchor),
+            let targetIndex = ids.firstIndex(of: id)
+        else {
+            selectedIds.insert(id)
+            selectionAnchorId = id
+            return
+        }
+        let range = anchorIndex <= targetIndex ? anchorIndex...targetIndex : targetIndex...anchorIndex
+        selectedIds.formUnion(ids[range])
+    }
+
+    private func clearSelection() {
+        selectedIds.removeAll()
+        selectionAnchorId = nil
+    }
+
     // MARK: - Navigate-Away Rename Guard
 
     private func handleSelect(_ session: ChatSessionData) {
@@ -359,6 +457,49 @@ struct ChatSessionSidebar: View {
         )
     }
 
+    // MARK: - Import Guide
+
+    /// Entry point for the header's Import button. First-time users get a
+    /// themed guide explaining how to obtain an export from each provider;
+    /// the persisted "don't show again" toggle skips straight to the panel.
+    private func requestImport() {
+        let scope = alertScope
+        let startImport = {
+            ChatSessionImportCoordinator.run(
+                agentId: agentId == Agent.defaultId ? nil : agentId,
+                scope: scope,
+                source: .sidebar,
+                // A single-conversation import opens immediately so the
+                // user isn't left hunting the list for it.
+                onOpen: { onSelect($0) }
+            )
+        }
+        if ImportGuidePreference.shared.skip {
+            startImport()
+            return
+        }
+        let requestId = UUID()
+        let sheet = ImportGuideSheet {
+            ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+            startImport()
+        }
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: "Import Conversations",
+                message: nil,
+                buttons: [.cancel(L("Cancel"))],
+                showsCloseButton: true,
+                customContent: AnyView(sheet),
+                width: 470,
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
+    }
+
     // MARK: - Header
 
     private var sidebarHeader: some View {
@@ -368,6 +509,16 @@ struct ChatSessionSidebar: View {
                 .foregroundColor(theme.primaryText)
 
             Spacer()
+
+            Button {
+                requestImport()
+            } label: {
+                Image(systemName: "square.and.arrow.down")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+            }
+            .buttonStyle(.plain)
+            .localizedHelp("Import Conversations")
 
             Button(action: onNewChat) {
                 Image(systemName: "square.and.pencil")
@@ -380,6 +531,106 @@ struct ChatSessionSidebar: View {
         .padding(.horizontal, 16)
         .padding(.top, 20)
         .padding(.bottom, 8)
+    }
+
+    // MARK: - Selection Action Bar
+
+    /// Batch actions for the current multi-selection: archive, delete, and a
+    /// trailing clear. Mirrors the per-row menu's destructive-delete flow but
+    /// operates on every selected id at once.
+    private var selectionActionBar: some View {
+        HStack(spacing: 8) {
+            Text("\(selectedIds.count) selected", bundle: .module)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+
+            Spacer(minLength: 4)
+
+            selectionBarButton(icon: "archivebox", help: "Archive", tint: theme.secondaryText) {
+                archiveSelected()
+            }
+            selectionBarButton(icon: "trash", help: "Delete", tint: .red) {
+                requestDeleteSelected()
+            }
+            selectionBarButton(icon: "xmark", help: "Clear Selection", tint: theme.secondaryText) {
+                clearSelection()
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous)
+                .fill(theme.accentColor.opacity(theme.isDark ? 0.16 : 0.10))
+        )
+    }
+
+    private func selectionBarButton(
+        icon: String,
+        help: LocalizedStringKey,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(tint)
+                .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
+                .background(
+                    RoundedRectangle(cornerRadius: SidebarStyle.actionButtonCornerRadius, style: .continuous)
+                        .fill(theme.secondaryBackground.opacity(0.5))
+                )
+        }
+        .buttonStyle(.plain)
+        .localizedHelp(help)
+    }
+
+    // MARK: - Batch Operations
+
+    /// Archives every selected session (idempotent per row) and clears the
+    /// selection. Archiving is non-destructive, so it skips the confirm.
+    private func archiveSelected() {
+        for id in selectedIds {
+            onSetArchived(id, true)
+        }
+        clearSelection()
+    }
+
+    /// Confirms once, then deletes every selected session. Honors the
+    /// per-session "don't ask again" opt-out just like the single-row flow.
+    private func requestDeleteSelected() {
+        let ids = selectedIds
+        guard !ids.isEmpty else { return }
+        if DeleteConfirmationPreference.shared.skipForSession {
+            performDelete(ids)
+            return
+        }
+        let requestId = UUID()
+        let scope = alertScope
+        let accessory = AnyView(DontAskAgainToggle())
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: "Delete Conversations?",
+                message: L("\(ids.count) conversations will be removed permanently. This can't be undone."),
+                accessory: accessory,
+                buttons: [
+                    .cancel(L("Cancel")),
+                    .destructive(L("Delete")) { performDelete(ids) },
+                ],
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
+    }
+
+    private func performDelete(_ ids: Set<UUID>) {
+        for id in ids {
+            onDelete(id)
+        }
+        clearSelection()
     }
 
     // MARK: - Empty State
@@ -417,58 +668,82 @@ struct ChatSessionSidebar: View {
     // MARK: - Session List
 
     private var sessionList: some View {
-        ScrollView {
-            LazyVStack(spacing: 2) {
-                ForEach(filteredSessions) { session in
-                    SessionRow(
-                        session: session,
-                        agent: agentManager.agent(for: session.agentId ?? Agent.defaultId),
-                        isSelected: session.id == currentSessionId,
-                        isEditing: editingSessionId == session.id,
-                        onSelect: {
-                            handleSelect(session)
-                        },
-                        onStartRename: {
-                            if editingSessionId != nil && editingSessionId != session.id {
-                                dismissEditing()
-                            }
-                            editingSessionId = session.id
-                            editingBuffer = session.title
-                        },
-                        onConfirmRename: { newTitle in
-                            let trimmed = newTitle.trimmingCharacters(in: .whitespaces)
-                            if !trimmed.isEmpty {
-                                onRename(session.id, trimmed)
-                            }
-                            editingSessionId = nil
-                        },
-                        onCancelRename: {
-                            editingSessionId = nil
-                        },
-                        onBufferChange: { editingBuffer = $0 },
-                        onDelete: {
-                            if editingSessionId != nil {
-                                dismissEditing()
-                            }
-                            onDelete(session.id)
-                        },
-                        onToggleArchive: {
-                            onSetArchived(session.id, !session.archived)
-                        },
-                        onExport: { format in
-                            onExport(session, format)
-                        },
-                        onOpenInNewWindow: onOpenInNewWindow != nil
-                            ? {
-                                onOpenInNewWindow?(session)
-                            } : nil
-                    )
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(filteredSessions) { session in
+                        SessionRow(
+                            session: session,
+                            agent: agentManager.agent(for: session.agentId ?? Agent.defaultId),
+                            isSelected: session.id == currentSessionId,
+                            isMultiSelected: selectedIds.contains(session.id),
+                            isImportHighlighted: importHighlight.sessionIds.contains(session.id),
+                            activityStatus: activityMonitor.statuses[session.id],
+                            isEditing: editingSessionId == session.id,
+                            onSelect: {
+                                handleTap(session)
+                            },
+                            onStartRename: {
+                                if editingSessionId != nil && editingSessionId != session.id {
+                                    dismissEditing()
+                                }
+                                editingSessionId = session.id
+                                editingBuffer = session.title
+                            },
+                            onConfirmRename: { newTitle in
+                                let trimmed = newTitle.trimmingCharacters(in: .whitespaces)
+                                if !trimmed.isEmpty {
+                                    onRename(session.id, trimmed)
+                                }
+                                editingSessionId = nil
+                            },
+                            onCancelRename: {
+                                editingSessionId = nil
+                            },
+                            onBufferChange: { editingBuffer = $0 },
+                            onDelete: {
+                                if editingSessionId != nil {
+                                    dismissEditing()
+                                }
+                                onDelete(session.id)
+                            },
+                            onToggleArchive: {
+                                onSetArchived(session.id, !session.archived)
+                            },
+                            onTogglePin: {
+                                onSetPinned(session.id, !session.pinned)
+                            },
+                            onExport: { format in
+                                onExport(session, format)
+                            },
+                            onStop: onStop.map { stop in
+                                { stop(session.id) }
+                            },
+                            onOpenInNewWindow: onOpenInNewWindow != nil
+                                ? {
+                                    onOpenInNewWindow?(session)
+                                } : nil
+                        )
+                        .id(session.id)
+                    }
+                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 8)
+                // Rows glide (rather than teleport) when a run starts/ends
+                // and the active-first partition reorders the list.
+                .animation(theme.springAnimation(responseMultiplier: 0.9), value: filteredSessions.map(\.id))
+            }
+            .scrollIndicators(.hidden)
+            .onChange(of: importHighlight.sessionIds) { _, ids in
+                // Bring the topmost freshly imported row into view; the
+                // glow only helps if the row is on screen.
+                guard let target = filteredSessions.first(where: { ids.contains($0.id) })
+                else { return }
+                withAnimation(.easeInOut(duration: 0.35)) {
+                    proxy.scrollTo(target.id, anchor: .center)
                 }
             }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 8)
         }
-        .scrollIndicators(.hidden)
     }
 }
 
@@ -478,6 +753,16 @@ private struct SessionRow: View {
     let session: ChatSessionData
     let agent: Agent?
     let isSelected: Bool
+    /// Whether this row is part of an active multi-selection. Drives the
+    /// accent background and the leading checkmark.
+    var isMultiSelected: Bool = false
+    /// True while this session is in the freshly-imported flash window;
+    /// renders a short accent glow so the row is findable in the list.
+    var isImportHighlighted: Bool = false
+    /// Live activity for this row's session: `.working` animates the avatar
+    /// ring, `.waitingForInput` renders the warning ring + badge, and either
+    /// state swaps the metadata line for a status line and surfaces Stop.
+    var activityStatus: SessionActivityMonitor.Status? = nil
     let isEditing: Bool
     let onSelect: () -> Void
     let onStartRename: () -> Void
@@ -488,7 +773,10 @@ private struct SessionRow: View {
     var onBufferChange: ((String) -> Void)? = nil
     let onDelete: () -> Void
     let onToggleArchive: () -> Void
+    let onTogglePin: () -> Void
     let onExport: (ChatSessionSidebar.ExportFormat) -> Void
+    /// Stop this row's live run. Only rendered while `activityStatus` is set.
+    var onStop: (() -> Void)? = nil
     /// Optional callback for opening in a new window
     var onOpenInNewWindow: (() -> Void)? = nil
 
@@ -526,15 +814,42 @@ private struct SessionRow: View {
                 .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
         } else {
             HStack(spacing: 10) {
-                // Agent indicator
-                if isDefaultAgent {
-                    defaultAgentIndicator
-                } else if let agent = agent {
-                    agentIndicatorView(agent)
+                // Multi-select check, shown in place of leading padding so the
+                // row doesn't shift when selection toggles.
+                if isMultiSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.accentColor)
+                        .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
+
+                // Agent indicator, ringed while the session's run is live.
+                Group {
+                    if isDefaultAgent {
+                        defaultAgentIndicator
+                    } else if let agent = agent {
+                        agentIndicatorView(agent)
+                    }
+                }
+                .overlay(
+                    Group {
+                        if let activityStatus {
+                            SessionActivityRing(status: activityStatus)
+                        }
+                    }
+                    .allowsHitTesting(false)
+                )
+                .animation(theme.springAnimation(responseMultiplier: 0.8), value: activityStatus)
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 5) {
+                        if session.pinned {
+                            Image(systemName: "pin.fill")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(theme.secondaryText.opacity(0.85))
+                                .rotationEffect(.degrees(45))
+                        }
+
                         Text(session.title)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(theme.primaryText)
@@ -549,12 +864,31 @@ private struct SessionRow: View {
                         }
                     }
 
-                    Text(metadataLine)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.secondaryText.opacity(0.85))
-                        .lineLimit(1)
+                    // Live status replaces the relative timestamp while the
+                    // session's run is active so the state is glanceable.
+                    Group {
+                        switch activityStatus {
+                        case .working:
+                            Text("Running…", bundle: .module)
+                                .foregroundColor(theme.accentColor)
+                        case .waitingForInput:
+                            Text("Needs your input", bundle: .module)
+                                .foregroundColor(theme.warningColor)
+                        case nil:
+                            Text(metadataLine)
+                                .foregroundColor(theme.secondaryText.opacity(0.85))
+                        }
+                    }
+                    .font(.system(size: 10))
+                    .lineLimit(1)
                 }
                 Spacer()
+
+                // Persistent (not hover-gated) Stop for the live run, so an
+                // active task can be halted straight from the sidebar.
+                if activityStatus != nil, let onStop {
+                    SessionStopButton(action: onStop)
+                }
 
                 if isHovered || showActionsPopover {
                     SidebarRowActionButton(
@@ -570,12 +904,26 @@ private struct SessionRow: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
+            .background(SidebarRowBackground(isSelected: isSelected || isMultiSelected, isHovered: isHovered))
             .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous)
+                    .stroke(
+                        theme.accentColor.opacity(isImportHighlighted ? 0.8 : 0),
+                        lineWidth: 1.5
+                    )
+                    .shadow(
+                        color: theme.accentColor.opacity(isImportHighlighted ? 0.5 : 0),
+                        radius: 5
+                    )
+                    .allowsHitTesting(false)
+            )
+            .animation(.easeOut(duration: 0.6), value: isImportHighlighted)
             .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
             .onTapGesture {
                 onSelect()
             }
+            .animation(theme.springAnimation(responseMultiplier: 0.8), value: isMultiSelected)
             .onHover { hovering in
                 withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
                     isHovered = hovering
@@ -583,6 +931,18 @@ private struct SessionRow: View {
             }
             .animation(theme.springAnimation(responseMultiplier: 0.8), value: isSelected)
             .contextMenu {
+                if activityStatus != nil, let onStop {
+                    Button {
+                        onStop()
+                    } label: {
+                        Label {
+                            Text("Stop", bundle: .module)
+                        } icon: {
+                            Image(systemName: "stop.circle")
+                        }
+                    }
+                    Divider()
+                }
                 if let openInNewWindow = onOpenInNewWindow {
                     Button {
                         openInNewWindow()
@@ -596,6 +956,9 @@ private struct SessionRow: View {
                     Divider()
                 }
                 Button(action: onStartRename) { Text("Rename", bundle: .module) }
+                Button(action: onTogglePin) {
+                    Text(session.pinned ? "Unpin" : "Pin", bundle: .module)
+                }
                 Divider()
                 Button(action: requestExport) { Text("Export…", bundle: .module) }
                 Divider()
@@ -614,6 +977,14 @@ private struct SessionRow: View {
             ActionsPopoverButton(icon: "pencil", label: "Rename", isDestructive: false) {
                 showActionsPopover = false
                 onStartRename()
+            }
+            ActionsPopoverButton(
+                icon: session.pinned ? "pin.slash" : "pin",
+                label: session.pinned ? "Unpin" : "Pin",
+                isDestructive: false
+            ) {
+                showActionsPopover = false
+                onTogglePin()
             }
             Divider().padding(.vertical, 2)
             ActionsPopoverButton(icon: "square.and.arrow.up", label: "Export…", isDestructive: false) {
@@ -783,9 +1154,11 @@ private struct SessionRow: View {
         case .chat: return theme.secondaryText
         case .plugin: return theme.accentColorLight
         case .http: return theme.accentColorLight.opacity(0.85)
+        case .channel: return theme.accentColor
         case .schedule: return theme.warningColor
         case .watcher: return theme.successColor
         case .selfSchedule: return theme.warningColor.opacity(0.9)
+        case .imported: return theme.accentColorLight.opacity(0.7)
         }
     }
 
@@ -800,12 +1173,16 @@ private struct SessionRow: View {
             return Text("Plugin", bundle: .module)
         case .http:
             return Text("HTTP API", bundle: .module)
+        case .channel:
+            return Text("Agent Channel", bundle: .module)
         case .schedule:
             return Text("Schedule", bundle: .module)
         case .watcher:
             return Text("Watcher", bundle: .module)
         case .selfSchedule:
             return Text("Self-scheduled", bundle: .module)
+        case .imported:
+            return Text("Imported", bundle: .module)
         }
     }
 
@@ -957,6 +1334,106 @@ private struct ActionsPopoverButton: View {
     }
 }
 
+// MARK: - Session Activity Ring
+
+/// Ring drawn around a row's 24pt avatar while its run is live. `.working`
+/// continuously rotates an angular-gradient stroke (a steady ring under
+/// Reduce Motion); `.waitingForInput` renders a steady warning ring with a
+/// question-mark badge, matching `BackgroundTaskStatus.waitingForInput`'s
+/// iconography.
+private struct SessionActivityRing: View {
+    let status: SessionActivityMonitor.Status
+
+    @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isSpinning = false
+
+    private static let diameter: CGFloat = 30
+    private static let lineWidth: CGFloat = 2
+
+    var body: some View {
+        switch status {
+        case .working:
+            if reduceMotion {
+                ring(theme.accentColor.opacity(0.85))
+            } else {
+                Circle()
+                    .stroke(
+                        AngularGradient(
+                            gradient: Gradient(colors: [
+                                theme.accentColor.opacity(0.05),
+                                theme.accentColor,
+                            ]),
+                            center: .center
+                        ),
+                        style: StrokeStyle(lineWidth: Self.lineWidth, lineCap: .round)
+                    )
+                    .frame(width: Self.diameter, height: Self.diameter)
+                    .rotationEffect(.degrees(isSpinning ? 360 : 0))
+                    .animation(
+                        .linear(duration: 1.1).repeatForever(autoreverses: false),
+                        value: isSpinning
+                    )
+                    .onAppear { isSpinning = true }
+                    .onDisappear { isSpinning = false }
+            }
+        case .waitingForInput:
+            ring(theme.warningColor.opacity(0.9))
+                .overlay(alignment: .bottomTrailing) {
+                    ZStack {
+                        // Mask the ring/backdrop behind the badge glyph so it
+                        // stays legible at this size.
+                        Circle()
+                            .fill(theme.primaryBackground)
+                            .frame(width: 11, height: 11)
+                        Image(systemName: "questionmark.circle.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(theme.warningColor)
+                    }
+                    .offset(x: 2, y: 2)
+                }
+        }
+    }
+
+    private func ring(_ color: Color) -> some View {
+        Circle()
+            .stroke(color, lineWidth: Self.lineWidth)
+            .frame(width: Self.diameter, height: Self.diameter)
+    }
+}
+
+// MARK: - Session Stop Button
+
+/// Persistent (non-hover-gated) stop control for a row whose run is live.
+/// Styled like `SidebarRowActionButton` but tinted with the error color on
+/// hover to telegraph that it halts execution.
+private struct SessionStopButton: View {
+    let action: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "stop.circle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(isHovered ? theme.errorColor : theme.secondaryText)
+                .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
+                .background(
+                    RoundedRectangle(
+                        cornerRadius: SidebarStyle.actionButtonCornerRadius, style: .continuous
+                    )
+                    .fill(isHovered ? theme.errorColor.opacity(0.12) : .clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .localizedHelp("Stop")
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.15), value: isHovered)
+    }
+}
+
 // MARK: - Don't Ask Again Toggle
 
 /// Checkbox row rendered as the delete-confirmation accessory. Writes
@@ -990,6 +1467,7 @@ private struct DontAskAgainToggle: View {
                 onDelete: { _ in },
                 onRename: { _, _ in },
                 onSetArchived: { _, _ in },
+                onSetPinned: { _, _ in },
                 onExport: { _, _ in }
             )
             .frame(height: 400)

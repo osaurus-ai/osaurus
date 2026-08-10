@@ -54,8 +54,7 @@ struct DefaultAgentConfigurationStoreTests {
                     disableTools: true,
                     autonomousExec: nil,
                     toolSelectionMode: .manual,
-                    manualToolNames: ["osaurus_status", "osaurus_list"],
-                    manualSkillNames: ["greeting"]
+                    manualToolNames: ["osaurus_status", "osaurus_list"]
                 )
 
                 DefaultAgentConfigurationStore.save(configured)
@@ -84,6 +83,17 @@ struct DefaultAgentConfigurationStoreTests {
         #expect(decoded.autonomousExec == nil)
         #expect(decoded.toolSelectionMode == nil)
         #expect(decoded.manualToolNames == nil)
-        #expect(decoded.manualSkillNames == nil)
+    }
+
+    /// Legacy `manualSkillNames` keys must decode as ignored extra data —
+    /// no error, no destructive migration.
+    @Test
+    func decode_legacyManualSkillNames_isIgnored() throws {
+        let json = #"{"manualToolNames": ["osaurus_status"], "manualSkillNames": ["greeting"]}"#
+        let decoded = try JSONDecoder().decode(
+            DefaultAgentConfiguration.self,
+            from: Data(json.utf8)
+        )
+        #expect(decoded.manualToolNames == ["osaurus_status"])
     }
 }

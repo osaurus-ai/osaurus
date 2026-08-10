@@ -1,0 +1,16 @@
+{
+  "id": "memory.no-memory-no-fabrication",
+  "domain": "memory",
+  "label": "memory • empty store: the model must not fabricate a remembered fact",
+  "query": "What is the name of my boat? If you don't know, say you don't know.",
+  "notes": "The negative fixture: nothing is seeded, so a correct answer admits not knowing. answerMustNotContain pins the codewords used by the sibling cases — a run-order contamination bug (store not reset between cases) or a fabricating model both fail here. Off-CI (needs a model).",
+  "fixtures": {
+    "seedMemory": {}
+  },
+  "expect": {
+    "memory": {
+      "maxTokens": 256,
+      "answerMustNotContain": ["Peregrine Dusk"]
+    }
+  }
+}

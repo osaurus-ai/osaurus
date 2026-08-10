@@ -1,0 +1,14 @@
+{
+  "id": "reasoning_channel.marker-vocabulary-pressure",
+  "domain": "reasoning_channel",
+  "label": "reasoning channel • conversation ABOUT thinking doesn't leak think tokens",
+  "query": "In two or three sentences, explain the difference between thinking out loud and thinking silently when solving a puzzle.",
+  "notes": "Vocabulary-pressure row: the topic pushes the model toward 'thinking' vocabulary, the region of token space where a buggy parser or a weakly-bounded model is most likely to emit literal <think>-family protocol markers. The built-in marker sweep is the whole assertion; the natural-language word 'thinking' itself is of course allowed. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "reasoning": {
+      "maxTokens": 1024,
+      "visibleContains": ["think"]
+    }
+  }
+}

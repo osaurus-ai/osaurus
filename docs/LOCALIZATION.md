@@ -20,9 +20,9 @@ All SwiftUI and `String` UI text in **OsaurusCore** must resolve against the **p
 | Simplified Chinese | `zh-Hans` | Required |
 | Korean | `ko` | Required |
 | Russian | `ru` | Required |
+| Traditional Chinese | `zh-Hant` | Maintained (not yet CI-required) |
 | Spanish | `es` | Help wanted |
 | Japanese | `ja` | Help wanted |
-| Traditional Chinese | `zh-Hant` | Help wanted |
 
 All of the above are listed in the Xcode project's `knownRegions`, so the
 "help wanted" locales already have empty columns ready in the String Catalog
@@ -47,7 +47,7 @@ Helpers live in `Packages/OsaurusCore/Utils/`:
 Text(LocalizedStringKey(title), bundle: .module)
 ```
 
-After adding a key in code, add **de**, **zh-Hans**, **ko**, and **ru** in `Localizable.xcstrings` (Xcode String Catalog editor).
+After adding a key in code, add **de**, **zh-Hans**, **ko**, and **ru** in `Localizable.xcstrings` (Xcode String Catalog editor). Add **zh-Hant** too when you can — it is community-maintained and nearly complete, but not yet enforced by CI.
 
 Avoid raw `Text("…")`, `.help("…")`, `Button("…")`, `panel.title = "…"`, and `UNMutableNotificationContent.title = "…"` in `Packages/OsaurusCore`. CI flags these because they usually resolve against the wrong bundle.
 

@@ -60,6 +60,10 @@ public enum MemoryRelevanceGate {
             return .pinned
         }
 
+        if isPossessiveReference(lower) {
+            return .pinned
+        }
+
         // Heuristic-only: when no signal fired, skip memory.
         if mode == .heuristic {
             return .none
@@ -85,14 +89,24 @@ public enum MemoryRelevanceGate {
         return false
     }
 
-    private static let literalRecallPhrases: Set<String> = [
-        "exact words", "exactly", "verbatim", "word for word", "literally said",
-        "what i typed", "what i wrote",
-    ]
+    /// Output constraints such as `exactly`, `verbatim`, `word for word`, and
+    /// `use the exact words` are not memory-recall signals by themselves.
+    /// Treating them as recall caused ordinary exact-output and tool prompts to
+    /// pull unrelated transcript turns into `[Memory]`, which could then
+    /// override the current task. Require an explicit reference to the user's
+    /// earlier words while preserving natural questions such as "what exactly
+    /// did I say?", "repeat back what I typed", and the established
+    /// search-style shorthand "exact words <terms>".
+    private static let literalRecallPattern = try? NSRegularExpression(
+        pattern:
+            #"^exact\s+words\b|\b(?:what\s+(?:were\s+)?my\s+exact\s+words|what\s+exact\s+words\s+did\s+i\s+(?:say|write|type)|what\s+(?:exactly\s+)?did\s+i\s+(?:say|write|type)(?:\s+(?:exactly|verbatim|word\s+for\s+word))?|what\s+i\s+(?:said|wrote|typed)|(?:quote|repeat)\s+(?:back\s+)?(?:what\s+i\s+(?:said|wrote|typed)|my\s+(?:exact\s+)?words))\b"#,
+        options: [.caseInsensitive]
+    )
 
     private static func isLiteralRecall(_ s: String) -> Bool {
-        for p in literalRecallPhrases where s.contains(p) { return true }
-        return false
+        guard let re = literalRecallPattern else { return false }
+        let range = NSRange(s.startIndex..., in: s)
+        return re.firstMatch(in: s, range: range) != nil
     }
 
     private static let temporalPattern = try? NSRegularExpression(
@@ -138,6 +152,24 @@ public enum MemoryRelevanceGate {
 
     private static func hasExplicitRecallVerb(_ s: String) -> Bool {
         guard let re = recallVerbPattern else { return false }
+        let range = NSRange(s.startIndex..., in: s)
+        return re.firstMatch(in: s, range: range) != nil
+    }
+
+    /// "What is the name of my boat?", "which wifi network should I connect
+    /// it to — my smart plug needs one", "invite my book club to my favorite
+    /// restaurant". A possessive reference to the user's OWN things is a
+    /// direct memory signal: the store is the only place the assistant can
+    /// learn what "my X" refers to, so consult pinned facts. The planner
+    /// still returns nothing when no fact matches, so the false-positive
+    /// cost is one bounded store lookup.
+    private static let possessivePattern = try? NSRegularExpression(
+        pattern: #"\b(my|our) [a-z]"#,
+        options: [.caseInsensitive]
+    )
+
+    private static func isPossessiveReference(_ s: String) -> Bool {
+        guard let re = possessivePattern else { return false }
         let range = NSRange(s.startIndex..., in: s)
         return re.firstMatch(in: s, range: range) != nil
     }

@@ -88,7 +88,7 @@ public struct RecipeSignals: Sendable, Equatable {
 
 public enum AppRecipes {
     /// All shipped recipes. Universal ones first so callers can rely on order.
-    public static let all: [AppRecipe] = [dialog, safari, chromium]
+    public static let all: [AppRecipe] = [dialog, textEdit, safari, chromium]
 
     /// Recipes that apply to `app` (universal + name-matched).
     public static func matching(app: String?) -> [AppRecipe] {
@@ -146,6 +146,37 @@ public enum AppRecipes {
                     "Read the dialog buttons (Save / Don't Save / Cancel).",
                     "Pick the button matching the user's intent; Don't Save discards work.",
                     "Confirm the dialog closed via the verify delta.",
+                ]
+            )
+        ]
+    )
+
+    /// TextEdit refinement: the AX tree can expose several open documents at
+    /// once. A replacement task must bind to the textarea whose visible value
+    /// contains the requested old text, replace it once, and stop as soon as
+    /// the verify capture shows the requested new value. Saving/formatting are
+    /// separate user intents, not implied by editing an open document.
+    static let textEdit = AppRecipe(
+        id: "textedit",
+        displayName: "TextEdit",
+        matchers: ["textedit"],
+        flows: [
+            RecipeFlow(
+                name: "Create a blank document",
+                steps: [
+                    "If the standard Open window is visible, click New Document before doing anything else.",
+                    "Verify the Open window closed and an editable text area is visible.",
+                    "Finish with done without typing example or placeholder text.",
+                    "Do not save unless the goal explicitly requests it.",
+                ]
+            ),
+            RecipeFlow(
+                name: "Replace text in an open document",
+                steps: [
+                    "Choose the textarea whose visible value contains the old text, using its window label when several documents are open.",
+                    "Use set_value once with the complete requested replacement text.",
+                    "When the verify view shows the new value in that same window, finish with done.",
+                    "Do not save, close, format, create a file, or repeat the edit unless the goal explicitly requests it.",
                 ]
             )
         ]

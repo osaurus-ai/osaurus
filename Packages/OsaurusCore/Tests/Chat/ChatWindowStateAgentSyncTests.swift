@@ -183,6 +183,36 @@ struct ChatWindowStateAgentSyncTests {
         }
     }
 
+    @Test("Default prompt Save → lazy UI read cannot hide pre-send shape change")
+    func defaultPromptSave_lazyPreviewRead_preservesShapeChange() async throws {
+        try await ChatHistoryTestStorage.run {
+            let originalConfig = DefaultAgentConfigurationStore.load()
+            defer { DefaultAgentConfigurationStore.save(originalConfig) }
+
+            var revisionA = originalConfig
+            revisionA.systemPrompt = "settings revision A"
+            DefaultAgentConfigurationStore.save(revisionA)
+
+            let window = makeWindow(for: Agent.defaultId)
+            // Seed the exact preview baseline that backed the live green chip.
+            _ = window.session.estimatedContextBreakdown
+
+            var revisionB = revisionA
+            revisionB.systemPrompt = "settings revision B"
+            DefaultAgentConfigurationStore.save(revisionB)
+            await flushMainQueue()
+
+            // Reproduce the SwiftUI redraw between Settings Save and the
+            // debounced prompt-shape observer. This used to lazily cache B
+            // after `refreshAgentConfig()` erased A, so Send compared B to B
+            // and skipped the required rewarm.
+            _ = window.session.estimatedContextBreakdown
+
+            #expect(window.session.reconcilePromptShapeBeforeSendForTests())
+            #expect(!window.session.reconcilePromptShapeBeforeSendForTests())
+        }
+    }
+
     // MARK: - 3. Non-active mutations stay cheap
 
     /// Renaming a non-active agent must update the dropdown's `agents`

@@ -402,7 +402,10 @@ private struct OptionChip: View {
 /// between them and wraps to a new line when the next child would
 /// overflow the proposed width. Each child gets exactly its ideal
 /// size — no equal-width column squashing.
-private struct ChipFlowLayout: Layout {
+///
+/// Internal (not file-private) so the notch's inline clarify chips can
+/// reuse the same wrapping behavior as the in-chat prompt card.
+struct ChipFlowLayout: Layout {
     var spacing: CGFloat = 8
     var lineSpacing: CGFloat = 8
 

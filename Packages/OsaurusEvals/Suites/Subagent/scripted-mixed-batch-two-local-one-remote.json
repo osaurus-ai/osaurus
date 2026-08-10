@@ -1,0 +1,74 @@
+{
+  "id": "subagent.scripted-mixed-batch-two-local-one-remote",
+  "domain": "subagent",
+  "label": "Subagent • mixed batch: two local-exclusive plus one remote",
+  "query": "One parent fans out two local-handoff children and one remote child.",
+  "notes": "Model-free. Three heterogeneous children enter the real SubagentSession host together. The two handoff children use local-exclusive admission and therefore never overlap each other; the remote child overlaps the first local child. Peak run-body concurrency must be exactly 2, all three terminal envelopes must settle in input order, and the aggregate must return success so the parent can continue.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "scripted",
+      "decision": "allow",
+      "phases": ["running"],
+      "scriptedBatch": [
+        {
+          "id": "local-a",
+          "target": "scripted-local-a",
+          "summary": "local A complete",
+          "resultKind": "local_result",
+          "needsHandoff": true,
+          "runDelayMs": 80,
+          "rendezvousArrivals": 2
+        },
+        {
+          "id": "local-b",
+          "target": "scripted-local-b",
+          "summary": "local B complete",
+          "resultKind": "local_result",
+          "needsHandoff": true,
+          "runDelayMs": 80
+        },
+        {
+          "id": "remote-c",
+          "target": "scripted-remote",
+          "summary": "remote C complete",
+          "resultKind": "remote_result",
+          "remote": true,
+          "runDelayMs": 80,
+          "rendezvousArrivals": 2
+        }
+      ],
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "spawn_batch_result",
+      "expectMaxConcurrent": 2,
+      "expectRunsCompleted": 3,
+      "expectRunsSettled": 3,
+      "expectRunEnvelopeKinds": ["success", "success", "success"],
+      "expectBatchAggregateStatus": "succeeded",
+      "expectBatchJobIDs": ["local-a", "local-b", "remote-c"],
+      "expectBatchSummaries": [
+        "local A complete",
+        "local B complete",
+        "remote C complete"
+      ],
+      "expectBatchPayloadFields": [
+        {
+          "kind": "local_result",
+          "model": "scripted-local-a",
+          "summary": "local A complete"
+        },
+        {
+          "kind": "local_result",
+          "model": "scripted-local-b",
+          "summary": "local B complete"
+        },
+        {
+          "kind": "remote_result",
+          "model": "scripted-remote",
+          "summary": "remote C complete"
+        }
+      ]
+    }
+  }
+}

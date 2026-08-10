@@ -78,14 +78,20 @@ struct ChatHistoryMigrationRepairTests {
     private static let alterV6 = ["ALTER TABLE turns ADD COLUMN tool_call_durations TEXT"]
     private static let alterV7 = ["ALTER TABLE turns ADD COLUMN thinking_duration REAL"]
     private static let alterV8 = ["ALTER TABLE turns ADD COLUMN router_billing TEXT"]
+    private static let alterV12 = ["ALTER TABLE turns ADD COLUMN terminal_stop_reason TEXT"]
+    private static let alterV13 = [
+        "ALTER TABLE turns ADD COLUMN model_context_excluded INTEGER NOT NULL DEFAULT 0"
+    ]
+    private static let alterV14 = ["ALTER TABLE turns ADD COLUMN shared_artifacts TEXT"]
 
-    // MARK: - Reporter-exact: v1 stuck, every column except v8 router_billing
+    // MARK: - Reporter-exact legacy state: v1 stuck before v8 router_billing
 
-    /// The exact reproduced failure state: `user_version = 1`, all columns
-    /// through v7 present, only `router_billing` missing. Opening must NOT
-    /// throw, must add `router_billing`, must reconcile the version to 8,
-    /// must return the pre-existing turns (not nil), and a fresh save must
-    /// round-trip.
+    /// The exact reproduced failure state at the time of the report:
+    /// `user_version = 1`, all columns through v7 present, and `router_billing`
+    /// missing. Newer migrations may now add later columns too. Opening must
+    /// NOT throw, must reconcile every missing column and the version to the
+    /// latest, must return the pre-existing turns (not nil), and a fresh save
+    /// must round-trip.
     @Test
     func stuckV1MissingRouterBillingHealsAndPreservesHistory() async throws {
         try await runWithPlaintextRoot {
@@ -118,8 +124,10 @@ struct ChatHistoryMigrationRepairTests {
             try db.open()  // must not throw on the duplicate-column ALTER
             defer { db.close() }
 
-            #expect(self.diskUserVersion() == 8)
+            #expect(self.diskUserVersion() == ChatHistoryDatabase.latestSchemaVersion)
             #expect(self.diskColumns(table: "turns").contains("router_billing"))
+            #expect(self.diskColumns(table: "turns").contains("model_context_excluded"))
+            #expect(self.diskColumns(table: "turns").contains("shared_artifacts"))
 
             let loaded = db.loadSession(id: sid)
             #expect(loaded != nil)
@@ -127,6 +135,7 @@ struct ChatHistoryMigrationRepairTests {
             #expect(loaded?.turns.first?.role == .user)
             #expect(loaded?.turns.first?.content == "hello from before the upgrade")
             #expect(loaded?.turns.last?.role == .assistant)
+            #expect(loaded?.turns.allSatisfy { !$0.modelContextExcluded } == true)
 
             let newId = UUID()
             let newSession = ChatSessionData(
@@ -141,11 +150,11 @@ struct ChatHistoryMigrationRepairTests {
         }
     }
 
-    // MARK: - v1 stuck, every v2-v8 column already present
+    // MARK: - v1 stuck, every turn-column migration already present
 
     /// A store whose `user_version` is stuck at 1 but already carries every
-    /// column (including v8). Every migration ALTER must be skipped, the
-    /// version reconciled to 8, and data must still load + save.
+    /// migrated turn column (including v14). Every migration ALTER must be skipped, the
+    /// version reconciled to the latest, and data must still load + save.
     @Test
     func stuckV1WithAllColumnsPresentOpensCleanly() async throws {
         try await runWithPlaintextRoot {
@@ -154,15 +163,17 @@ struct ChatHistoryMigrationRepairTests {
             var statements = [Self.createSessionsV1]
             statements += Self.alterV3 + Self.alterV4
             statements.append(Self.createTurnsV1)
-            statements += Self.alterV2 + Self.alterV5 + Self.alterV6 + Self.alterV7 + Self.alterV8
+            statements +=
+                Self.alterV2 + Self.alterV5 + Self.alterV6 + Self.alterV7
+                + Self.alterV8 + Self.alterV12 + Self.alterV13 + Self.alterV14
             statements += [
                 """
                 INSERT INTO sessions (id, title, created_at, updated_at, source, turn_count, archived, capabilities)
                 VALUES ('\(sid.uuidString)', 'All columns', 1000, 2000, 'chat', 1, 0, '')
                 """,
                 """
-                INSERT INTO turns (id, session_id, seq, role, content)
-                VALUES ('\(UUID().uuidString)', '\(sid.uuidString)', 0, 'user', 'already fully columned')
+                INSERT INTO turns (id, session_id, seq, role, content, model_context_excluded)
+                VALUES ('\(UUID().uuidString)', '\(sid.uuidString)', 0, 'user', 'already fully columned', 1)
                 """,
                 "PRAGMA user_version = 1",
             ]
@@ -172,10 +183,11 @@ struct ChatHistoryMigrationRepairTests {
             try db.open()
             defer { db.close() }
 
-            #expect(self.diskUserVersion() == 8)
+            #expect(self.diskUserVersion() == ChatHistoryDatabase.latestSchemaVersion)
             let loaded = db.loadSession(id: sid)
             #expect(loaded?.turns.count == 1)
             #expect(loaded?.turns.first?.content == "already fully columned")
+            #expect(loaded?.turns.first?.modelContextExcluded == true)
 
             let newId = UUID()
             try db.saveSession(
@@ -194,7 +206,7 @@ struct ChatHistoryMigrationRepairTests {
     /// A store stalled before the v3/v4 session columns: `content_hash`
     /// present but `archived`/`capabilities` missing. Here it is the
     /// metadata path (`loadAllMetadata` / `saveSession`) that breaks
-    /// pre-fix. Opening must add the columns, reconcile to 8, and both the
+    /// pre-fix. Opening must add the columns, reconcile to the latest, and both the
     /// sidebar metadata query and saves must succeed.
     @Test
     func stuckV1MissingArchivedAndCapabilitiesHeals() async throws {
@@ -220,7 +232,7 @@ struct ChatHistoryMigrationRepairTests {
             try db.open()
             defer { db.close() }
 
-            #expect(self.diskUserVersion() == 8)
+            #expect(self.diskUserVersion() == ChatHistoryDatabase.latestSchemaVersion)
             #expect(self.diskColumns(table: "sessions").contains("archived"))
             #expect(self.diskColumns(table: "sessions").contains("capabilities"))
 
@@ -240,7 +252,7 @@ struct ChatHistoryMigrationRepairTests {
     // MARK: - Fresh database
 
     /// Guard against migration regressions: a brand-new (empty) database
-    /// migrates 0 -> 8 cleanly and round-trips a session.
+    /// migrates 0 -> latest cleanly and round-trips a session.
     @Test
     func freshDatabaseMigratesToLatestAndRoundTrips() async throws {
         try await runWithPlaintextRoot {
@@ -248,7 +260,7 @@ struct ChatHistoryMigrationRepairTests {
             try db.open()
             defer { db.close() }
 
-            #expect(self.diskUserVersion() == 8)
+            #expect(self.diskUserVersion() == ChatHistoryDatabase.latestSchemaVersion)
 
             let id = UUID()
             try db.saveSession(

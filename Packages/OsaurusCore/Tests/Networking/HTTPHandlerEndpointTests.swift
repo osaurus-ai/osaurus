@@ -96,6 +96,32 @@ struct HTTPHandlerEndpointTests {
         }
     }
 
+    @Test func cacheStats_reportsEffectiveDSV4ActivationQATLoadValue() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenRuntimeSettingsDirectory(dir) {
+            var settings = VMLXServerRuntimeSettings()
+            settings.performance = VMLXServerPerformanceSettings(
+                deepseekV4ActivationQAT: true)
+            ServerRuntimeSettingsStore.save(settings)
+
+            let server = try await startServer()
+            defer { Task { await server.shutdown() } }
+
+            let (data, resp) = try await URLSession.shared.data(
+                from: URL(
+                    string: "http://\(server.host):\(server.port)/admin/cache-stats")!)
+            #expect((resp as? HTTPURLResponse)?.statusCode == 200)
+            let object = try #require(
+                JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let memorySafety = try #require(
+                object["memory_safety"] as? [String: Any])
+            let loadConfiguration = try #require(
+                memorySafety["load_configuration"] as? [String: Any])
+
+            #expect(loadConfiguration["deepseek_v4_activation_qat"] as? Bool == true)
+        }
+    }
+
     @Test func runtimeSettings_put_persistsAndReportsRuntimeEffects() async throws {
         let dir = try makeTempDirectory()
         try await withOverriddenRuntimeSettingsDirectory(dir) {
@@ -124,6 +150,48 @@ struct HTTPHandlerEndpointTests {
         }
     }
 
+    @Test @MainActor
+    func runtimeSettings_put_clearPersistsNullAndResolvedCapacity()
+        async throws
+    {
+        let dir = try makeTempDirectory()
+        try await withOverriddenRuntimeSettingsDirectory(dir) {
+            var initial = VMLXServerRuntimeSettings()
+            initial.concurrency.maxConcurrentSequences = 8
+            ServerRuntimeSettingsStore.save(initial)
+
+            let server = try await startServer()
+            defer { Task { await server.shutdown() } }
+
+            var automatic = initial
+            automatic.concurrency.maxConcurrentSequences = nil
+            let (data, resp) = try await putRuntimeSettings(
+                automatic,
+                server: server
+            )
+
+            #expect((resp as? HTTPURLResponse)?.statusCode == 200)
+            let decoded = try JSONDecoder().decode(
+                RuntimeSettingsResponse.self,
+                from: data
+            )
+            #expect(
+                decoded.settings.concurrency.maxConcurrentSequences == nil
+            )
+
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let persisted = ServerRuntimeSettingsStore.snapshot()
+            #expect(
+                persisted.concurrency.maxConcurrentSequences == nil
+            )
+            #expect(
+                ServerRuntimeSettingsStore.resolvedBatchEngineMaxBatchSize(
+                    for: persisted
+                ) == 1
+            )
+        }
+    }
+
     @Test func runtimeSettings_put_performanceChange_refreshesLoadedModel() async throws {
         // Decode-performance levers (compiled decode + tied-head codec) are
         // applied at model LOAD, so toggling them must evict the resident model
@@ -140,7 +208,8 @@ struct HTTPHandlerEndpointTests {
             var headOnly = initial
             headOnly.performance = VMLXServerPerformanceSettings(
                 tiedHeadCodec: .q6,
-                compiledDecode: false
+                compiledDecode: false,
+                deepseekV4ActivationQAT: false
             )
             let (headData, headResp) = try await putRuntimeSettings(headOnly, server: server)
             #expect((headResp as? HTTPURLResponse)?.statusCode == 200)
@@ -149,12 +218,29 @@ struct HTTPHandlerEndpointTests {
             #expect(headDecoded.effects?.compiledDecodeRestartRequired == false)
             #expect(headDecoded.settings.effectivePerformance.tiedHeadCodec == .q6)
 
+            // DSV4 activation QAT is another load-time graph choice. It must
+            // unload the resident model but does not require an app restart.
+            var qatOn = headOnly
+            qatOn.performance = VMLXServerPerformanceSettings(
+                tiedHeadCodec: .q6,
+                compiledDecode: false,
+                deepseekV4ActivationQAT: true
+            )
+            let (qatData, qatResp) = try await putRuntimeSettings(qatOn, server: server)
+            #expect((qatResp as? HTTPURLResponse)?.statusCode == 200)
+            let qatDecoded = try JSONDecoder().decode(
+                RuntimeSettingsResponse.self, from: qatData)
+            #expect(qatDecoded.effects?.loadedModelRefreshNeeded == true)
+            #expect(qatDecoded.effects?.compiledDecodeRestartRequired == false)
+            #expect(qatDecoded.settings.effectivePerformance.deepseekV4ActivationQAT == true)
+
             // Compiled-decode toggle: a process-startup lever, so the response
             // must report restart_required (it cannot engage mid-session).
-            var next = headOnly
+            var next = qatOn
             next.performance = VMLXServerPerformanceSettings(
                 tiedHeadCodec: .q6,
-                compiledDecode: true
+                compiledDecode: true,
+                deepseekV4ActivationQAT: true
             )
             let (data, resp) = try await putRuntimeSettings(next, server: server)
 
@@ -164,6 +250,7 @@ struct HTTPHandlerEndpointTests {
             #expect(decoded.effects?.compiledDecodeRestartRequired == true)
             #expect(decoded.settings.effectivePerformance.compiledDecode == true)
             #expect(decoded.settings.effectivePerformance.tiedHeadCodec == .q6)
+            #expect(decoded.settings.effectivePerformance.deepseekV4ActivationQAT == true)
         }
     }
 

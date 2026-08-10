@@ -23,6 +23,18 @@ public enum RemoteProviderServiceError: LocalizedError {
     case invalidResponse
     case streamingError(String)
     case noModelsAvailable
+    /// Provider replied 429 (or 503 with a retry hint). `retryAfter` is the
+    /// parsed `Retry-After` header in seconds when present.
+    case rateLimited(retryAfter: TimeInterval?, statusCode: Int)
+    /// The request carries an input the provider's wire format cannot
+    /// express (e.g. audio/video parts on an Anthropic/Gemini route).
+    /// Rejecting loudly beats silently dropping the user's attachment.
+    case unsupportedParameter(String)
+    /// The configured base URL answered an MCP `initialize` handshake like an
+    /// MCP server — the user pasted an MCP endpoint (e.g. runalyze.com/mcp)
+    /// into the API provider form. Typed so the edit sheet can offer a
+    /// redirect to Tools > Connections instead of a dead-end failure badge.
+    case mcpEndpointDetected
 
     public var errorDescription: String? {
         switch self {
@@ -39,9 +51,26 @@ public enum RemoteProviderServiceError: LocalizedError {
         case .invalidResponse:
             return L("Invalid response from provider")
         case .streamingError(let message):
-            return L("Streaming error: \(message)")
+            // Redact here (not in the associated value) so upstream error
+            // bodies surfaced mid-stream can't leak keys/tokens into the UI
+            // or logs, while `isTransientStreamRetryable` still matches on
+            // the raw sentinel text.
+            return L("Streaming error: \(ProviderDiagnosticRedactor.safe(message, maxLength: 500))")
         case .noModelsAvailable:
             return L("No models available from provider")
+        case .rateLimited(let retryAfter, let statusCode):
+            let condition =
+                statusCode == 503
+                ? L("The provider is temporarily unavailable (HTTP 503).")
+                : L("The provider rate-limited this request (HTTP \(statusCode)).")
+            if let retryAfter, retryAfter > 0 {
+                return condition + " " + L("Retry in about \(Int(retryAfter.rounded(.up)))s.")
+            }
+            return condition + " " + L("Retry shortly.")
+        case .unsupportedParameter(let message):
+            return L("\(message)")
+        case .mcpEndpointDetected:
+            return RemoteProviderMCPDetection.guidance()
         }
     }
 
@@ -67,9 +96,48 @@ public enum RemoteProviderServiceError: LocalizedError {
             return .requestFailedWithDiagnostics("Invalid response from provider", diagnostics)
         case .requestFailedWithDiagnostics:
             return self
-        case .invalidURL, .notConnected, .streamingError, .noModelsAvailable:
+        case .invalidURL, .notConnected, .streamingError, .noModelsAvailable, .rateLimited,
+            .unsupportedParameter, .mcpEndpointDetected:
             return self
         }
+    }
+
+    /// Typed rate-limit mapping for an HTTP response: 429 always qualifies;
+    /// 503 qualifies only when the server sent a `Retry-After` hint (a plain
+    /// 503 stays a `requestFailed` so real outages read as failures, not
+    /// throttles). Returns nil for every other status.
+    static func rateLimited(from httpResponse: HTTPURLResponse) -> RemoteProviderServiceError? {
+        let retryAfter = parseRetryAfterSeconds(
+            httpResponse.value(forHTTPHeaderField: "Retry-After")
+        )
+        switch httpResponse.statusCode {
+        case 429:
+            return .rateLimited(retryAfter: retryAfter, statusCode: 429)
+        case 503 where retryAfter != nil:
+            return .rateLimited(retryAfter: retryAfter, statusCode: 503)
+        default:
+            return nil
+        }
+    }
+
+    /// Parse a `Retry-After` header value: either delta-seconds ("120") or an
+    /// HTTP-date. Returns nil when absent/unparseable or non-positive.
+    static func parseRetryAfterSeconds(_ headerValue: String?) -> TimeInterval? {
+        guard let raw = headerValue?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else {
+            return nil
+        }
+        if let seconds = TimeInterval(raw) {
+            return seconds > 0 ? seconds : nil
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        if let date = formatter.date(from: raw) {
+            let delta = date.timeIntervalSinceNow
+            return delta > 0 ? delta : nil
+        }
+        return nil
     }
 }
 
@@ -82,27 +150,45 @@ public actor RemoteProviderService: ToolCapableService {
     private var availableModels: [String]
     private var session: URLSession
     private var cachedOAuthTokens: RemoteProviderOAuthTokens?
+    /// Stable provider-compatible UUIDv7 per Osaurus conversation. GPT-5.6's
+    /// Responses Lite path uses this value consistently for `session-id`,
+    /// `x-session-affinity`, and `prompt_cache_key`.
+    private var codexResponsesLiteSessionIds: [String: String] = [:]
+    private var codexResponsesLiteSessionOrder: [String] = []
 
-    /// Race-resistant flag set by `invalidateSession()`. The connect-retry
-    /// loop in `connectWithRetry` MUST consult this before every
-    /// `URLSession.bytes(for:)` attempt: calling `bytes(for:)` on a session
-    /// that has already had `invalidateAndCancel()` called raises an
-    /// uncatchable Obj-C `NSInvalidArgumentException` from
-    /// `-[__NSURLSessionLocal taskForClassInfo:]` (synchronously, inside
-    /// the Swift-generated closure passed to `withTaskCancellationHandler`).
-    /// Swift `try`/`catch` does not catch Obj-C exceptions, so the
-    /// exception unwinds straight into `_objc_terminate` and `abort()`s
-    /// the entire xctest process — an entire test bundle dies. The flag
-    /// is checked across an actor boundary by a non-isolated, lock-backed
-    /// accessor so the producer task can read it without an `await` hop
-    /// (no actor reentrancy, no extra suspension point per retry attempt).
-    /// Closing the residual microsecond TOCTOU window between this check
-    /// and `bytes(for:)` requires an Obj-C `@try`/`@catch` bridge — left
-    /// out here because it would require restructuring the package as
-    /// mixed-source SPM. The flag-based mitigation eliminates the
-    /// dominant 200ms / 800ms backoff-window race that surfaces in
-    /// parallel CI test runs.
-    private let sessionInvalidatedFlag = OSAllocatedUnfairLock<Bool>(initialState: false)
+    /// Session lifecycle guard closing the invalidate-vs-task-creation race.
+    /// Calling `bytes(for:)`/`data(for:)` on a session that has already had
+    /// `invalidateAndCancel()` called raises an uncatchable Obj-C
+    /// `NSInvalidArgumentException` from
+    /// `-[__NSURLSessionLocal taskForClassInfo:]`. Swift `try`/`catch` does
+    /// not catch Obj-C exceptions, so the exception unwinds straight into
+    /// `_objc_terminate` and `abort()`s the entire process (in production:
+    /// whenever a provider is disabled/updated during active generation; in
+    /// CI: whole xctest bundles die).
+    ///
+    /// The guard makes the two operations mutually exclusive rather than
+    /// merely unlikely to collide:
+    /// - Every session task-creation call is bracketed by
+    ///   `beginSessionRequest()` / `endSessionRequest()`. `begin` atomically
+    ///   refuses (returns false) once invalidation has been requested.
+    /// - `invalidateSession()` atomically marks the session invalidated; if
+    ///   requests are in flight it *defers* the actual
+    ///   `invalidateAndCancel()` to the last `endSessionRequest()`, so the
+    ///   session can never be invalidated under a concurrent `bytes(for:)`.
+    ///
+    /// Iterating an already-connected `AsyncBytes` stream after invalidation
+    /// is safe — it throws a catchable `URLError.cancelled` — so only the
+    /// task-creation windows need bracketing, and a deferred
+    /// `invalidateAndCancel()` still tears down connected streams promptly.
+    private struct SessionLifecycle {
+        var invalidationRequested = false
+        var inFlightRequests = 0
+        /// The session to invalidate once `inFlightRequests` drains to zero.
+        var deferredInvalidation: URLSession?
+    }
+    private nonisolated let sessionLifecycle = OSAllocatedUnfairLock<SessionLifecycle>(
+        initialState: SessionLifecycle()
+    )
 
     nonisolated public var id: String {
         "remote-\(provider.id.uuidString)"
@@ -111,7 +197,34 @@ public actor RemoteProviderService: ToolCapableService {
     /// Lock-backed sync read of the session-invalidated flag. Safe to call
     /// from any thread / actor / Task without awaiting the actor.
     nonisolated public var isSessionInvalidated: Bool {
-        sessionInvalidatedFlag.withLock { $0 }
+        sessionLifecycle.withLock { $0.invalidationRequested }
+    }
+
+    /// Open a task-creation window on the session. Returns `false` when
+    /// invalidation has been requested — the caller must throw
+    /// `CancellationError` instead of touching the session. Every successful
+    /// `begin` MUST be paired with exactly one `endSessionRequest()`.
+    nonisolated func beginSessionRequest() -> Bool {
+        sessionLifecycle.withLock { state in
+            guard !state.invalidationRequested else { return false }
+            state.inFlightRequests += 1
+            return true
+        }
+    }
+
+    /// Close a task-creation window. Runs a deferred `invalidateAndCancel()`
+    /// if `invalidateSession()` was requested while this request was in
+    /// flight and this was the last one out.
+    nonisolated func endSessionRequest() {
+        let deferred: URLSession? = sessionLifecycle.withLock { state in
+            state.inFlightRequests -= 1
+            guard state.invalidationRequested, state.inFlightRequests == 0,
+                let session = state.deferredInvalidation
+            else { return nil }
+            state.deferredInvalidation = nil
+            return session
+        }
+        deferred?.invalidateAndCancel()
     }
 
     public init(
@@ -133,8 +246,9 @@ public actor RemoteProviderService: ToolCapableService {
         let config = URLSessionConfiguration.default
         // Request timeout must be generous: thinking models can pause for minutes
         // between tokens. The app-level streamInactivityTimeout handles stall detection.
-        // When the user opts into no-timeout mode, every limit is lifted (see
-        // RemoteProvider.unboundedTimeout) so long-running turns are never interrupted.
+        // When the user opts into no-timeout mode, limits are lifted to the 24h hard
+        // ceiling (see RemoteProvider.unboundedTimeout) so long-running turns are
+        // never interrupted but a dead socket can't pin a task forever.
         if provider.disableTimeout {
             config.timeoutIntervalForRequest = RemoteProvider.unboundedTimeout
             config.timeoutIntervalForResource = RemoteProvider.unboundedTimeout
@@ -228,21 +342,54 @@ public actor RemoteProviderService: ToolCapableService {
     /// Invalidate the URLSession to release its strong delegate reference.
     /// Must be called before discarding this service instance to avoid leaking.
     ///
-    /// Sets `sessionInvalidatedFlag` BEFORE `invalidateAndCancel()` so any
-    /// concurrent connect-retry loop in `connectWithRetry` observes the
-    /// flag on its next pre-attempt check and bails out with a Swift
-    /// `CancellationError` instead of calling `bytes(for:)` on the now-
-    /// invalidated session and triggering the uncatchable Obj-C
-    /// `NSException` abort. See the doc comment on
-    /// `sessionInvalidatedFlag` for the full hazard description.
+    /// Marks the session invalidated BEFORE any teardown so concurrent
+    /// producers observe it (`isSessionInvalidated` / a refused
+    /// `beginSessionRequest()`) and bail out with a Swift `CancellationError`
+    /// instead of calling `bytes(for:)` on an invalidated session and
+    /// triggering the uncatchable Obj-C `NSException` abort. When a
+    /// task-creation window is currently open, the actual
+    /// `invalidateAndCancel()` is deferred to the closing
+    /// `endSessionRequest()` — draining in-flight requests instead of
+    /// invalidating under them. See the `SessionLifecycle` doc comment for
+    /// the full hazard description.
     public func invalidateSession() {
-        sessionInvalidatedFlag.withLock { $0 = true }
-        session.invalidateAndCancel()
+        let currentSession = session
+        let invalidateNow: Bool = sessionLifecycle.withLock { state in
+            guard !state.invalidationRequested else { return false }
+            state.invalidationRequested = true
+            if state.inFlightRequests == 0 { return true }
+            state.deferredInvalidation = currentSession
+            return false
+        }
+        if invalidateNow {
+            currentSession.invalidateAndCancel()
+        }
+    }
+
+    /// `session.data(for:)` bracketed by the session-lifecycle guard, so a
+    /// concurrent `invalidateSession()` can never run `invalidateAndCancel()`
+    /// under the task-creation call (uncatchable Obj-C exception — see
+    /// `SessionLifecycle`).
+    private func trackedData(for request: URLRequest) async throws -> (Data, URLResponse) {
+        guard beginSessionRequest() else { throw CancellationError() }
+        defer { endSessionRequest() }
+        return try await session.data(for: request)
     }
 
     /// Update available models (called when connection refreshes)
     public func updateModels(_ models: [String]) {
         self.availableModels = models
+    }
+
+    /// Unprefixed Osaurus Router model ids that advertise image/vision input
+    /// in the `/models` capability catalog. Pushed by `RemoteProviderManager`
+    /// on connect and on catalog refetch; consulted when normalizing user
+    /// media for the Router wire (non-vision upstream adapters reject
+    /// array-form user content). Empty for non-Router providers.
+    private var routerVisionModelIds: Set<String> = []
+
+    public func updateOsaurusRouterVisionModels(_ modelIds: Set<String>) {
+        routerVisionModelIds = modelIds
     }
 
     /// Get the prefixed model names for this provider
@@ -268,6 +415,13 @@ public actor RemoteProviderService: ToolCapableService {
             return false
         }
 
+        // Spawn-only ids carry the immutable provider UUID. This is the exact
+        // route when two connected providers have identical display names and
+        // model slugs; ordinary chat ids keep using the name prefix below.
+        if let spawn = SpawnRemoteModelIdentity.parse(model) {
+            return spawn.providerId == provider.id
+        }
+
         // Check if model starts with our provider prefix
         let prefix = provider.name
             .lowercased()
@@ -277,12 +431,18 @@ public actor RemoteProviderService: ToolCapableService {
         return model.lowercased().hasPrefix(prefix + "/")
     }
 
-    /// Extract the actual model name without provider prefix
-    private func extractModelName(_ requestedModel: String?) -> String? {
+    /// Extract the actual upstream model slug without the chat-picker or
+    /// spawn-only route prefix. Internal so routing tests can prove the exact
+    /// provider id is not leaked onto the wire.
+    func extractModelName(_ requestedModel: String?) -> String? {
         guard let model = requestedModel?.trimmingCharacters(in: .whitespacesAndNewlines),
             !model.isEmpty
         else {
             return nil
+        }
+
+        if let spawn = SpawnRemoteModelIdentity.parse(model) {
+            return spawn.providerId == provider.id ? spawn.modelId : nil
         }
 
         // Remove provider prefix if present
@@ -315,7 +475,8 @@ public actor RemoteProviderService: ToolCapableService {
             return try await PrivacyFilterPipeline.applyOutbound(
                 messages: messages,
                 sessionId: parameters.sessionId,
-                providerId: provider.id
+                providerId: provider.id,
+                requestSource: parameters.requestSource
             )
         } catch PrivacyFilterPipelineError.reviewCanceled {
             throw CancellationError()
@@ -384,7 +545,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         try await refreshCodexOAuthIfNeeded()
         try await refreshXAIOAuthIfNeeded()
-        let (data, response) = try await session.data(for: try await buildURLRequest(for: request))
+        let (data, response) = try await trackedData(for: try await buildURLRequest(for: request))
         WireTransportProbe.current?.replaceResponseBody(data)
 
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -392,6 +553,7 @@ public actor RemoteProviderService: ToolCapableService {
         }
 
         if httpResponse.statusCode >= 400 {
+            if let rateLimited = RemoteProviderServiceError.rateLimited(from: httpResponse) { throw rateLimited }
             let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
             throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
         }
@@ -498,7 +660,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         try await refreshCodexOAuthIfNeeded()
         try await refreshXAIOAuthIfNeeded()
-        let (data, response) = try await session.data(for: try await buildURLRequest(for: request))
+        let (data, response) = try await trackedData(for: try await buildURLRequest(for: request))
         WireTransportProbe.current?.replaceResponseBody(data)
 
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -506,6 +668,7 @@ public actor RemoteProviderService: ToolCapableService {
         }
 
         if httpResponse.statusCode >= 400 {
+            if let rateLimited = RemoteProviderServiceError.rateLimited(from: httpResponse) { throw rateLimited }
             let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
             throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
         }
@@ -521,14 +684,17 @@ public actor RemoteProviderService: ToolCapableService {
             map: redactionMap
         )
 
-        // Check for tool calls
-        if let toolCalls = unscrubbedToolCalls, let firstCall = toolCalls.first {
-            throw ServiceToolInvocation(
-                toolName: firstCall.function.name,
-                jsonArguments: firstCall.function.arguments,
-                toolCallId: firstCall.id,
-                geminiThoughtSignature: firstCall.geminiThoughtSignature
-            )
+        // Check for tool calls — dispatch the whole (possibly parallel) batch.
+        if let toolCalls = unscrubbedToolCalls, !toolCalls.isEmpty {
+            let invocations = toolCalls.map { call in
+                ServiceToolInvocation(
+                    toolName: call.function.name,
+                    jsonArguments: call.function.arguments,
+                    toolCallId: call.id,
+                    geminiThoughtSignature: call.geminiThoughtSignature
+                )
+            }
+            throw Self.toolInvocationFinishError(invocations)
         }
 
         return unscrubbedContent ?? ""
@@ -697,32 +863,76 @@ public actor RemoteProviderService: ToolCapableService {
         }
     }
 
+    /// Bridges `URLSession.AsyncBytes` into line/4KB-batched `Data` chunks,
+    /// with an optional built-in inactivity watchdog.
+    ///
+    /// The watchdog is ONE long-lived task per stream that sleeps until a
+    /// deadline and re-arms whenever a chunk is delivered — replacing the
+    /// previous per-chunk `ThrowingTaskGroup` race, which spawned and
+    /// cancelled two child tasks for every chunk on the streaming hot path.
+    /// On inactivity it finishes the stream cleanly (the consumer sees `nil`,
+    /// exactly the old timeout contract) and cancels the pump so the byte
+    /// iteration stops.
     static func makeChunkStream(
-        from bytes: URLSession.AsyncBytes
+        from bytes: URLSession.AsyncBytes,
+        inactivityTimeout: TimeInterval? = nil
     ) -> AsyncThrowingStream<Data, Error> {
         AsyncThrowingStream<Data, Error> { continuation in
+            let lastActivity = OSAllocatedUnfairLock<ContinuousClock.Instant>(
+                initialState: ContinuousClock.now
+            )
             let pumpTask = Task {
-                var buffer = Data()
+                // Accumulate into a plain byte array (cheaper per-byte append
+                // than `Data`) and materialize one `Data` per flushed chunk.
+                var buffer = [UInt8]()
                 buffer.reserveCapacity(4096)
                 do {
                     for try await byte in bytes {
-                        if Task.isCancelled { break }
                         buffer.append(byte)
                         // Flush at line boundaries (LF) or when the buffer fills,
                         // so consumers see chunks promptly without per-byte awakens.
                         if byte == 0x0A || buffer.count >= 4096 {
-                            continuation.yield(buffer)
+                            // Cancellation check only at flush boundaries: the
+                            // per-byte check was pure hot-path overhead, and a
+                            // cancelled stream's socket is torn down via
+                            // `LiveURLSessionTaskBox` anyway, which ends this
+                            // byte iteration promptly.
+                            if Task.isCancelled { break }
+                            lastActivity.withLock { $0 = ContinuousClock.now }
+                            continuation.yield(Data(buffer))
                             buffer.removeAll(keepingCapacity: true)
                         }
                     }
-                    if !buffer.isEmpty { continuation.yield(buffer) }
+                    if !buffer.isEmpty { continuation.yield(Data(buffer)) }
                     continuation.finish()
                 } catch {
-                    if !buffer.isEmpty { continuation.yield(buffer) }
+                    if !buffer.isEmpty { continuation.yield(Data(buffer)) }
                     continuation.finish(throwing: error)
                 }
             }
-            continuation.onTermination = { _ in pumpTask.cancel() }
+            let watchdogTask: Task<Void, Never>? = inactivityTimeout.map { timeoutSeconds in
+                let timeout = Duration.seconds(timeoutSeconds)
+                return Task {
+                    let clock = ContinuousClock()
+                    while !Task.isCancelled {
+                        let deadline = lastActivity.withLock { $0 }.advanced(by: timeout)
+                        if ContinuousClock.now >= deadline {
+                            // No bytes within the window: end the stream the
+                            // same way natural EOF does and stop the pump.
+                            continuation.finish()
+                            pumpTask.cancel()
+                            return
+                        }
+                        // Sleep to the current deadline; if a chunk arrives
+                        // meanwhile the next loop pass re-arms to the newer one.
+                        try? await clock.sleep(until: deadline)
+                    }
+                }
+            }
+            continuation.onTermination = { _ in
+                pumpTask.cancel()
+                watchdogTask?.cancel()
+            }
         }
     }
 
@@ -747,41 +957,29 @@ public actor RemoteProviderService: ToolCapableService {
     final class LiveURLSessionTaskBox: @unchecked Sendable {
         private let lock = NSLock()
         private var task: URLSessionTask?
+        private var cancellationRequested = false
+
         func store(_ task: URLSessionTask?) {
             lock.lock()
-            defer { lock.unlock() }
+            if cancellationRequested {
+                lock.unlock()
+                // Termination can beat URLSession task creation. Preserve that
+                // cancellation across the race instead of publishing a live
+                // socket after the consumer has already gone away.
+                task?.cancel()
+                return
+            }
             self.task = task
+            lock.unlock()
         }
+
         func cancel() {
             lock.lock()
+            cancellationRequested = true
             let t = task
             task = nil
             lock.unlock()
             t?.cancel()
-        }
-    }
-
-    /// Reads the next chunk from `ref`, racing against an inactivity timeout.
-    /// Returns `nil` if the stream ended naturally or the timeout fired.
-    /// Cancelling the local AsyncStream iterator is safe — buffered chunks
-    /// remain available for subsequent `next()` calls and the upstream
-    /// URLSession iterator (running in `makeChunkStream`'s pump task) is
-    /// unaffected.
-    static func nextChunk(
-        from ref: ChunkIteratorRef,
-        timeout: TimeInterval
-    ) async throws -> Data? {
-        try await withThrowingTaskGroup(of: Data?.self) { group in
-            group.addTask { try await ref.next() }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                return nil
-            }
-            defer { group.cancelAll() }
-            guard let first = try await group.next() else {
-                return nil
-            }
-            return first
         }
     }
 
@@ -791,27 +989,28 @@ public actor RemoteProviderService: ToolCapableService {
     /// silently logged and the stream appeared to "end" with no diagnosis.
     static func tryDecodeStreamError(
         _ jsonData: Data,
-        providerType: RemoteProviderType
+        providerType: RemoteProviderType,
+        decoder: JSONDecoder = JSONDecoder()
     ) -> String? {
         if providerType == .osaurusRouter,
-            let routerError = try? JSONDecoder().decode(OsaurusRouterErrorEnvelope.self, from: jsonData)
+            let routerError = try? decoder.decode(OsaurusRouterErrorEnvelope.self, from: jsonData)
         {
             return "\(routerError.error.code): \(routerError.error.message)"
         }
 
         // Generic OpenAI-compatible error envelope: {"error":{"message":"..."}}
-        if let openAIError = try? JSONDecoder().decode(OpenAIError.self, from: jsonData) {
+        if let openAIError = try? decoder.decode(OpenAIError.self, from: jsonData) {
             return openAIError.error.message
         }
         switch providerType {
         case .anthropic:
             // Anthropic mid-stream error: {"type":"error","error":{"type":"...","message":"..."}}
-            if let anthropicError = try? JSONDecoder().decode(AnthropicStreamErrorEvent.self, from: jsonData) {
+            if let anthropicError = try? decoder.decode(AnthropicStreamErrorEvent.self, from: jsonData) {
                 return anthropicError.error.message
             }
         case .gemini:
             // Gemini error: {"error":{"code":...,"message":"...","status":"..."}}
-            if let geminiError = try? JSONDecoder().decode(GeminiErrorResponse.self, from: jsonData) {
+            if let geminiError = try? decoder.decode(GeminiErrorResponse.self, from: jsonData) {
                 return geminiError.error.message
             }
         default:
@@ -846,6 +1045,35 @@ public actor RemoteProviderService: ToolCapableService {
     private static func logRouterEmptyStreamIfNeeded(_ diagnostics: RouterStreamDiagnostics?) {
         guard let diagnostics, diagnostics.shouldLogEmptyTerminal else { return }
         print("[Osaurus][Router][EmptyStream] \(diagnostics.sanitizedSummary)")
+    }
+
+    /// Coarse per-event classification kind for the router diagnostics
+    /// counters. Production streams record only this (via `routerEventKind`,
+    /// a byte/substring sniff); the JSON decode + re-serialize work of
+    /// `routerEventDebugSummary` runs only when the debug flag is on.
+    enum RouterEventKind: String {
+        case doneMarker = "done-marker"
+        case summary
+        case usage
+        case choice
+        case error
+        case unrecognized
+    }
+
+    /// Cheap classification for the per-event diagnostics counters. Substring
+    /// sniffing is intentionally approximate (it's a counter, not a parser):
+    /// `"choices"` is checked first because every real content/tool delta has
+    /// it, so a content payload that merely *mentions* "osaurus" or "usage"
+    /// in its text still counts as a choice event.
+    static func routerEventKind(_ dataContent: String) -> RouterEventKind {
+        let trimmed = dataContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == "[DONE]" { return .doneMarker }
+        guard trimmed.utf8.first == UInt8(ascii: "{") else { return .unrecognized }
+        if trimmed.contains("\"choices\"") { return .choice }
+        if trimmed.contains("\"osaurus\"") { return .summary }
+        if trimmed.contains("\"error\"") { return .error }
+        if trimmed.contains("\"usage\"") { return .usage }
+        return .unrecognized
     }
 
     private static func routerEventDebugSummary(_ dataContent: String) -> String {
@@ -904,8 +1132,12 @@ public actor RemoteProviderService: ToolCapableService {
             return "continue"
         case .finishNormal:
             return "finishNormal"
-        case .finishWithToolCall(let invocation):
-            return "finishWithToolCall(\(invocation.toolName), argsBytes=\(invocation.jsonArguments.utf8.count))"
+        case .finishWithToolCall(let invocations):
+            let summary =
+                invocations
+                .map { "\($0.toolName), argsBytes=\($0.jsonArguments.utf8.count)" }
+                .joined(separator: "; ")
+            return "finishWithToolCall(\(summary))"
         case .finishWithError(let error):
             return "finishWithError(\(error.localizedDescription))"
         }
@@ -996,21 +1228,29 @@ public actor RemoteProviderService: ToolCapableService {
             byteCount += chunk.count
         }
 
-        mutating func recordEvent(summary: String) {
+        /// Bump the per-event counters from the cheap `kind` classification.
+        /// `summary` is the expensive human-readable debug string — non-nil
+        /// only when the router debug flag is on; production events store the
+        /// compact kind label instead.
+        mutating func recordEvent(kind: RouterEventKind, summary: String? = nil) {
             eventCount += 1
-            lastEventSummary = summary
-            recentEventSummaries.append(summary)
+            let stored = summary ?? kind.rawValue
+            lastEventSummary = stored
+            recentEventSummaries.append(stored)
             if recentEventSummaries.count > 5 {
                 recentEventSummaries.removeFirst(recentEventSummaries.count - 5)
             }
-            if summary == "done-marker" {
+            switch kind {
+            case .doneMarker:
                 doneMarkerCount += 1
-            } else if summary.hasPrefix("summary ") {
+            case .summary:
                 summaryCount += 1
-            } else if summary.hasPrefix("usage ") {
+            case .usage:
                 usageOnlyCount += 1
-            } else if summary.hasPrefix("non-json") || summary.hasPrefix("object keys=") {
+            case .unrecognized:
                 unrecognizedEventCount += 1
+            case .choice, .error:
+                break
             }
         }
 
@@ -1159,6 +1399,12 @@ public actor RemoteProviderService: ToolCapableService {
         /// Stable router request id for local correlation. This is the signed
         /// idempotency key unless the router summary frame provides request_id.
         var routerRequestId: String?
+        /// Set when the Router's billing summary frame was decoded on this
+        /// stream. A router stream that reached the wire but terminated
+        /// without it triggers a debounced server-truth balance/usage
+        /// reconciliation (the optimistic local decrement never ran, yet the
+        /// server may have charged for partial generation).
+        var routerSummarySeen: Bool = false
 
         /// Non-nil only for providers that inline reasoning as `<think>` in the
         /// content rail (MiniMax). When set, content deltas are split so the
@@ -1176,6 +1422,13 @@ public actor RemoteProviderService: ToolCapableService {
 
         let stopSequences: [String]
         let trackContent: Bool
+
+        /// One decoder reused for every SSE event in this stream. `JSONDecoder`
+        /// construction is per-event overhead on the hot path (multiple
+        /// speculative decodes per event across the error/summary/chunk
+        /// envelopes); the state is owned by a single producer task, so
+        /// reuse is safe.
+        let decoder = JSONDecoder()
 
         /// Append yielded text to `accumulatedContent` if the caller cares
         /// about the inline-tool-detection fallback.
@@ -1205,17 +1458,30 @@ public actor RemoteProviderService: ToolCapableService {
         case `continue`
         /// Stream finished normally (provider sent a "done" marker without a tool call).
         case finishNormal
-        /// Provider signalled a tool call ready to dispatch.
-        case finishWithToolCall(ServiceToolInvocation)
+        /// Provider signalled one or more (parallel) tool calls ready to dispatch.
+        case finishWithToolCall([ServiceToolInvocation])
         /// Provider sent a structured error mid-stream.
         case finishWithError(Error)
     }
 
-    /// Resolution of any tool-call accumulated at a final dispatch site.
+    /// Resolution of any tool-call(s) accumulated at a final dispatch site.
     enum AccumulatedToolCallResult {
         case none
-        case ready(ServiceToolInvocation)
+        case ready([ServiceToolInvocation])
         case truncated(Error)
+    }
+
+    /// Finish a stream by throwing the resolved tool call(s) in the shape the
+    /// consumers expect: a bare `ServiceToolInvocation` for a single call
+    /// (long-standing contract), `ServiceToolInvocations` for a parallel
+    /// batch — matching the local vmlx path (`ModelRuntime.throwIfTools`), so
+    /// the agent loop dispatches every call instead of dropping all but the
+    /// first.
+    static func toolInvocationFinishError(_ invocations: [ServiceToolInvocation]) -> Error {
+        if invocations.count == 1, let only = invocations.first {
+            return only
+        }
+        return ServiceToolInvocations(invocations: invocations)
     }
 
     /// Inspect any tool-call accumulated by the provider event handler and
@@ -1224,13 +1490,43 @@ public actor RemoteProviderService: ToolCapableService {
     /// OpenAI `finish_reason`, and the post-loop drain) so a single call site
     /// honours `wasRepaired` consistently — repaired args mean truncation, not
     /// a successful call to lock into history.
+    /// `emptyArgsAreComplete`: pass `true` when the provider DECLARED this
+    /// finish (Anthropic `message_stop`, Gemini `STOP`, Responses
+    /// `response.completed`, OpenAI `finish_reason=tool_calls`) — there a
+    /// zero-byte argument slot is a real no-argument call. Leave `false` for
+    /// abrupt ends (stream cut without a finish reason), where zero bytes
+    /// means truncation and the call must be quarantined.
     static func resolveAccumulatedToolCall(
         from accumulated: [Int: StreamingState.ToolSlot],
-        finishMarker: String
+        finishMarker: String,
+        emptyArgsAreComplete: Bool = false
     ) -> AccumulatedToolCallResult {
         OpenAICompatibleToolCallAccumulator.resolveAccumulatedToolCall(
             from: accumulated,
-            finishMarker: finishMarker
+            finishMarker: finishMarker,
+            emptyArgsAreComplete: emptyArgsAreComplete
+        )
+    }
+
+    /// A provider output cap is never a valid tool-call finish. Arguments can
+    /// be syntactically valid at the cut point (or still completely buffered
+    /// upstream), so JSON repair alone cannot identify this truncation.
+    static func outputLimitToolCallError(
+        from accumulated: [Int: StreamingState.ToolSlot],
+        finishMarker: String
+    ) -> RemoteProviderServiceError {
+        let calls = accumulated.values.filter { $0.name != nil }
+        let names = calls.compactMap(\.name).joined(separator: "', '")
+        let receivedBytes = calls.reduce(0) { $0 + $1.args.utf8.count }
+        let label = names.isEmpty ? "tool call" : "tool call '\(names)'"
+        print(
+            "[Osaurus] Discarding output-limited \(label): "
+                + "received \(receivedBytes) argument bytes (\(finishMarker))"
+        )
+        return .streamingError(
+            "Provider reached the output token limit while generating \(label) "
+                + "arguments (\(finishMarker), received \(receivedBytes) bytes). "
+                + "Increase the agent's Max Tokens setting and retry."
         )
     }
 
@@ -1246,9 +1542,21 @@ public actor RemoteProviderService: ToolCapableService {
         tools: [Tool],
         continuation: AsyncThrowingStream<String, Error>.Continuation
     ) -> Bool {
-        let eventSummary = routerEventDebugSummary(dataContent)
-        state.routerDiagnostics?.recordEvent(summary: eventSummary)
-        routerStreamDebug(providerType: providerType, "event \(eventSummary)")
+        // Per-event diagnostics are router-only, and the expensive debug
+        // summary (JSON decode + re-serialize of every SSE event) runs only
+        // when the debug flag is on. Production keeps the cheap sniffed
+        // counters; other providers skip this block entirely.
+        if providerType == .osaurusRouter {
+            let debugSummary =
+                routerStreamDebugEnabled ? routerEventDebugSummary(dataContent) : nil
+            state.routerDiagnostics?.recordEvent(
+                kind: routerEventKind(dataContent),
+                summary: debugSummary
+            )
+            if let debugSummary {
+                routerStreamDebug(providerType: providerType, "event \(debugSummary)")
+            }
+        }
 
         if dataContent.trimmingCharacters(in: .whitespaces) == "[DONE]" {
             routerStreamFinalDebug(providerType: providerType, marker: "[DONE]", state: state)
@@ -1297,8 +1605,9 @@ public actor RemoteProviderService: ToolCapableService {
         }
 
         if providerType == .osaurusRouter,
-            let summary = try? JSONDecoder().decode(OsaurusRouterSummaryEvent.self, from: jsonData)
+            let summary = try? state.decoder.decode(OsaurusRouterSummaryEvent.self, from: jsonData)
         {
+            state.routerSummarySeen = true
             Task { @MainActor in
                 OsaurusRouterAccountService.shared.noteRouterSummary(summary.osaurus)
             }
@@ -1356,8 +1665,8 @@ public actor RemoteProviderService: ToolCapableService {
                 continuation: continuation
             )
             return true
-        case .finishWithToolCall(let invocation):
-            continuation.finish(throwing: invocation)
+        case .finishWithToolCall(let invocations):
+            continuation.finish(throwing: Self.toolInvocationFinishError(invocations))
             return true
         case .finishWithError(let error):
             continuation.finish(throwing: error)
@@ -1374,7 +1683,11 @@ public actor RemoteProviderService: ToolCapableService {
         state: inout StreamingState,
         yield: (String) -> Void
     ) -> StreamEventOutcome {
-        if let errorMessage = tryDecodeStreamError(jsonData, providerType: providerType) {
+        if let errorMessage = tryDecodeStreamError(
+            jsonData,
+            providerType: providerType,
+            decoder: state.decoder
+        ) {
             return .finishWithError(RemoteProviderServiceError.requestFailed(errorMessage))
         }
 
@@ -1402,8 +1715,34 @@ public actor RemoteProviderService: ToolCapableService {
                 )
             }
         } catch {
-            print("[Osaurus] Warning: Failed to parse SSE chunk: \(error.localizedDescription)")
-            return .continue
+            // Fatal only while tool arguments are accumulating: an undecodable
+            // event there can hide truncated arguments, and dispatching a
+            // partial call is worse than failing the turn. Outside that window
+            // an unrecognized chunk shape (e.g. a delta-less finish or
+            // keep-alive frame from an OpenAI-compatible provider) is skipped,
+            // matching pre-0.22.8 behavior; the finish boundary still closes
+            // the stream normally.
+            guard !state.accumulatedToolCalls.isEmpty else {
+                print(
+                    "[Osaurus] Warning: Skipping unparseable provider SSE event: "
+                        + "\(error.localizedDescription) (\(jsonData.count) bytes)"
+                )
+                return .continue
+            }
+            // Console-only payload prefix: without it an "invalid streaming
+            // event" report gives no way to identify the offending frame shape.
+            let payloadPrefix = String(decoding: jsonData.prefix(200), as: UTF8.self)
+            print(
+                "[Osaurus] Failed to parse provider SSE event while receiving tool arguments: "
+                    + "\(error.localizedDescription) (\(jsonData.count) bytes) "
+                    + "payloadPrefix=\(payloadPrefix)"
+            )
+            return .finishWithError(
+                RemoteProviderServiceError.streamingError(
+                    "Provider emitted an invalid streaming event while receiving tool arguments "
+                        + "(\(jsonData.count) bytes). The response may have been truncated in transit."
+                )
+            )
         }
     }
 
@@ -1454,7 +1793,11 @@ public actor RemoteProviderService: ToolCapableService {
         providerType: RemoteProviderType,
         parameters: GenerationParameters
     ) -> Int? {
-        if providerType == .osaurusRouter {
+        // Router upstreams and Anthropic's Messages API both require an
+        // explicit output cap. Preserve ChatEngine's resolved implicit budget
+        // for them instead of falling through to a smaller transport-local
+        // fallback (Anthropic previously dropped 16K to 4K).
+        if providerType == .osaurusRouter || providerType == .anthropic {
             return parameters.maxTokens
         }
         return parameters.maxTokensExplicit ? parameters.maxTokens : nil
@@ -1483,7 +1826,7 @@ public actor RemoteProviderService: ToolCapableService {
         state: inout StreamingState,
         yield: (String) -> Void
     ) throws -> StreamEventOutcome {
-        let chunk = try JSONDecoder().decode(GeminiGenerateContentResponse.self, from: jsonData)
+        let chunk = try state.decoder.decode(GeminiGenerateContentResponse.self, from: jsonData)
 
         if let parts = chunk.candidates?.first?.content?.parts {
             for part in parts {
@@ -1524,7 +1867,16 @@ public actor RemoteProviderService: ToolCapableService {
         }
 
         if let finishReason = chunk.candidates?.first?.finishReason {
-            state.lastFinishReason = finishReason
+            // Same normalization as the Anthropic path: downstream consumers
+            // speak OpenAI `finish_reason` vocabulary.
+            switch finishReason {
+            case "STOP":
+                state.lastFinishReason = "stop"
+            case "MAX_TOKENS":
+                state.lastFinishReason = "length"
+            default:
+                state.lastFinishReason = finishReason
+            }
             if finishReason == "SAFETY" {
                 return .finishWithError(
                     RemoteProviderServiceError.requestFailed("Content blocked by safety settings.")
@@ -1533,7 +1885,10 @@ public actor RemoteProviderService: ToolCapableService {
             if finishReason == "STOP" || finishReason == "MAX_TOKENS" {
                 switch resolveAccumulatedToolCall(
                     from: state.accumulatedToolCalls,
-                    finishMarker: "gemini=\(finishReason)"
+                    finishMarker: "gemini=\(finishReason)",
+                    // Only a clean STOP proves the call was fully delivered;
+                    // MAX_TOKENS may have cut the arguments.
+                    emptyArgsAreComplete: finishReason == "STOP"
                 ) {
                 case .none: return .finishNormal
                 case .ready(let inv): return .finishWithToolCall(inv)
@@ -1550,9 +1905,7 @@ public actor RemoteProviderService: ToolCapableService {
         state: inout StreamingState,
         yield: (String) -> Void
     ) throws -> StreamEventOutcome {
-        guard let event = try? JSONDecoder().decode(AnthropicSSEEvent.self, from: jsonData) else {
-            return .continue
-        }
+        let event = try state.decoder.decode(AnthropicSSEEvent.self, from: jsonData)
 
         switch event.type {
         case "message_start":
@@ -1560,18 +1913,28 @@ public actor RemoteProviderService: ToolCapableService {
             // usage split. Log the cache read/write counts so the win from the
             // top-level `cache_control` in `toAnthropicRequest()` is observable
             // per turn (cache reads bill 0.1x input; writes 1.25x).
-            if let startEvent = try? JSONDecoder().decode(MessageStartEvent.self, from: jsonData) {
-                let usage = startEvent.message.usage
-                debugLog(
-                    "[Cache][Anthropic] input=\(usage.input_tokens)"
-                        + " cacheRead=\(usage.cache_read_input_tokens ?? 0)"
-                        + " cacheWrite=\(usage.cache_creation_input_tokens ?? 0)"
+            let startEvent = try state.decoder.decode(MessageStartEvent.self, from: jsonData)
+            let usage = startEvent.message.usage
+            debugLog(
+                "[Cache][Anthropic] input=\(usage.input_tokens)"
+                    + " cacheRead=\(usage.cache_read_input_tokens ?? 0)"
+                    + " cacheWrite=\(usage.cache_creation_input_tokens ?? 0)"
+            )
+            // Seed provider usage with the prompt side; `message_delta`
+            // fills in the completion side. Without this capture the
+            // Anthropic path never emitted a `StreamingStatsHint`, so
+            // completion tokens fell back to estimates and the provider's
+            // stop reason never reached the HTTP `finish_reason`.
+            state.captureProviderUsage(
+                Usage(
+                    prompt_tokens: usage.input_tokens,
+                    completion_tokens: 0,
+                    total_tokens: usage.input_tokens
                 )
-            }
+            )
 
         case "content_block_delta":
-            guard let deltaEvent = try? JSONDecoder().decode(ContentBlockDeltaEvent.self, from: jsonData)
-            else { return .continue }
+            let deltaEvent = try state.decoder.decode(ContentBlockDeltaEvent.self, from: jsonData)
             if case .textDelta(let textDelta) = deltaEvent.delta {
                 let (truncated, hitStop) = applyStopSequences(
                     textDelta.text,
@@ -1592,22 +1955,63 @@ public actor RemoteProviderService: ToolCapableService {
             }
 
         case "content_block_start":
-            guard let startEvent = try? JSONDecoder().decode(ContentBlockStartEvent.self, from: jsonData)
-            else { return .continue }
+            let startEvent = try state.decoder.decode(ContentBlockStartEvent.self, from: jsonData)
             if case .toolUse(let toolBlock) = startEvent.content_block {
                 let idx = startEvent.index
+                let initialArgs: String
+                if toolBlock.input.isEmpty {
+                    initialArgs = ""
+                } else {
+                    let input = toolBlock.input.mapValues(\.value)
+                    let data = try JSONSerialization.data(
+                        withJSONObject: input,
+                        options: .osaurusCanonical
+                    )
+                    initialArgs = String(decoding: data, as: UTF8.self)
+                }
                 state.accumulatedToolCalls[idx] = (
-                    id: toolBlock.id, name: toolBlock.name, args: "", thoughtSignature: nil
+                    id: toolBlock.id,
+                    name: toolBlock.name,
+                    args: initialArgs,
+                    thoughtSignature: nil
                 )
                 print("[Osaurus] Anthropic tool call detected: index=\(idx), name=\(toolBlock.name)")
                 yield(StreamingToolHint.encode(toolBlock.name))
+                if !initialArgs.isEmpty {
+                    yield(StreamingToolHint.encodeArgs(initialArgs))
+                }
             }
 
         case "message_delta":
-            if let deltaEvent = try? JSONDecoder().decode(MessageDeltaEvent.self, from: jsonData),
-                let stopReason = deltaEvent.delta.stop_reason
-            {
-                state.lastFinishReason = stopReason
+            let deltaEvent = try state.decoder.decode(MessageDeltaEvent.self, from: jsonData)
+            // Complete the usage pair started at `message_start` so
+            // `dispatchFinal` emits a stats hint with the REAL output
+            // token count (Anthropic reports it on this event).
+            let promptTokens = state.providerUsage?.prompt_tokens ?? 0
+            state.captureProviderUsage(
+                Usage(
+                    prompt_tokens: promptTokens,
+                    completion_tokens: deltaEvent.usage.output_tokens,
+                    total_tokens: promptTokens + deltaEvent.usage.output_tokens
+                )
+            )
+            if let stopReason = deltaEvent.delta.stop_reason {
+                // Normalize the Anthropic stop vocabulary to the OpenAI
+                // `finish_reason` contract every downstream consumer expects
+                // (`InferenceLog.FinishReason`, the HTTP chat writer, the
+                // Anthropic-compat writer which maps back `length` →
+                // `max_tokens`). Storing the raw value made a truncated
+                // Anthropic turn report `finish_reason: "stop"`.
+                switch stopReason {
+                case "end_turn", "stop_sequence", "pause_turn":
+                    state.lastFinishReason = "stop"
+                case "max_tokens":
+                    state.lastFinishReason = "length"
+                case "tool_use":
+                    state.lastFinishReason = "tool_calls"
+                default:
+                    state.lastFinishReason = stopReason
+                }
                 // Anthropic safety refusal (`stop_reason: "refusal"`): the
                 // API blocks the whole turn with ZERO content blocks, so
                 // without this the caller sees a silent empty completion.
@@ -1616,7 +2020,7 @@ public actor RemoteProviderService: ToolCapableService {
                 // honestly instead of an empty reply.
                 if stopReason == "refusal" {
                     let explanation =
-                        (try? JSONDecoder().decode(
+                        (try? state.decoder.decode(
                             AnthropicRefusalDeltaEvent.self,
                             from: jsonData
                         ))?.delta.stop_details?.explanation
@@ -1631,9 +2035,21 @@ public actor RemoteProviderService: ToolCapableService {
             }
 
         case "message_stop":
+            if state.lastFinishReason == "length", !state.accumulatedToolCalls.isEmpty {
+                return .finishWithError(
+                    outputLimitToolCallError(
+                        from: state.accumulatedToolCalls,
+                        finishMarker: "anthropic stop_reason=max_tokens"
+                    )
+                )
+            }
             switch resolveAccumulatedToolCall(
                 from: state.accumulatedToolCalls,
-                finishMarker: "anthropic message_stop"
+                finishMarker: "anthropic message_stop",
+                // Anthropic represents a no-input tool_use with zero
+                // input_json_delta events; message_stop declares the turn
+                // complete (max_tokens was handled above).
+                emptyArgsAreComplete: true
             ) {
             case .none: return .finishNormal
             case .ready(let inv): return .finishWithToolCall(inv)
@@ -1651,13 +2067,13 @@ public actor RemoteProviderService: ToolCapableService {
         state: inout StreamingState,
         yield: (String) -> Void
     ) throws -> StreamEventOutcome {
-        guard let event = try? JSONDecoder().decode(OpenResponsesSSEEvent.self, from: jsonData) else {
+        guard let event = try? state.decoder.decode(OpenResponsesSSEEvent.self, from: jsonData) else {
             return .continue
         }
 
         switch event.type {
         case "response.output_text.delta":
-            if let deltaEvent = try? JSONDecoder().decode(OutputTextDeltaEvent.self, from: jsonData) {
+            if let deltaEvent = try? state.decoder.decode(OutputTextDeltaEvent.self, from: jsonData) {
                 let (truncated, hitStop) = applyStopSequences(
                     deltaEvent.delta,
                     stopSequences: state.stopSequences
@@ -1681,7 +2097,7 @@ public actor RemoteProviderService: ToolCapableService {
             }
 
         case "response.output_item.added":
-            if let addedEvent = try? JSONDecoder().decode(OutputItemAddedEvent.self, from: jsonData),
+            if let addedEvent = try? state.decoder.decode(OutputItemAddedEvent.self, from: jsonData),
                 case .functionCall(let funcCall) = addedEvent.item
             {
                 let idx = addedEvent.output_index
@@ -1693,7 +2109,7 @@ public actor RemoteProviderService: ToolCapableService {
             }
 
         case "response.function_call_arguments.delta":
-            if let deltaEvent = try? JSONDecoder().decode(
+            if let deltaEvent = try? state.decoder.decode(
                 FunctionCallArgumentsDeltaEvent.self,
                 from: jsonData
             ) {
@@ -1709,7 +2125,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         case "response.function_call_arguments.done":
             // Authoritative complete arguments — overwrite accumulated deltas.
-            if let doneEvent = try? JSONDecoder().decode(
+            if let doneEvent = try? state.decoder.decode(
                 FunctionCallArgumentsDoneEvent.self,
                 from: jsonData
             ) {
@@ -1744,7 +2160,7 @@ public actor RemoteProviderService: ToolCapableService {
 
             // Final confirmed item — extract args from the completed function_call
             // when no `.delta` events landed first (common for short calls).
-            if let doneEvent = try? JSONDecoder().decode(OutputItemDoneEvent.self, from: jsonData) {
+            if let doneEvent = try? state.decoder.decode(OutputItemDoneEvent.self, from: jsonData) {
                 switch doneEvent.item {
                 case .functionCall(let funcCall):
                     let idx = doneEvent.output_index
@@ -1770,7 +2186,9 @@ public actor RemoteProviderService: ToolCapableService {
             }
             switch resolveAccumulatedToolCall(
                 from: state.accumulatedToolCalls,
-                finishMarker: "response.completed"
+                finishMarker: "response.completed",
+                // response.completed is the Responses API's declared finish.
+                emptyArgsAreComplete: true
             ) {
             case .none: return .finishNormal
             case .ready(let inv): return .finishWithToolCall(inv)
@@ -1880,16 +2298,33 @@ public actor RemoteProviderService: ToolCapableService {
             )
         }
 
+        if state.lastFinishReason == "length", !state.accumulatedToolCalls.isEmpty {
+            continuation.finish(
+                throwing: outputLimitToolCallError(
+                    from: state.accumulatedToolCalls,
+                    finishMarker: finishMarker
+                )
+            )
+            return
+        }
+
         switch resolveAccumulatedToolCall(
             from: state.accumulatedToolCalls,
-            finishMarker: finishMarker
+            finishMarker: finishMarker,
+            // The drain path runs for both declared and abrupt ends. A prior
+            // `finish_reason=tool_calls` (deferred dispatch for usage-enabled
+            // upstreams) proves the provider finished the call cleanly; a
+            // stream that just stopped without one keeps the truncation
+            // quarantine for zero-byte argument slots.
+            emptyArgsAreComplete: state.lastFinishReason == "tool_calls"
         ) {
-        case .ready(let invocation):
+        case .ready(let invocations):
             print(
-                "[Osaurus] Stream ended: emitting tool call '\(invocation.toolName)' "
+                "[Osaurus] Stream ended: emitting \(invocations.count) tool call(s) "
+                    + "'\(invocations.map(\.toolName).joined(separator: "', '"))' "
                     + "(finish_reason: \(state.lastFinishReason ?? "none"))"
             )
-            continuation.finish(throwing: invocation)
+            continuation.finish(throwing: Self.toolInvocationFinishError(invocations))
 
         case .truncated(let error):
             continuation.finish(throwing: error)
@@ -1973,10 +2408,14 @@ public actor RemoteProviderService: ToolCapableService {
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
-        // The producer runs in a `Task` whose closure inherits the
-        // calling task's locals (unlike `Task.detached`). Snapshot
-        // the probe here so the read happens once on producer
-        // entry and we don't re-touch the task-local on every chunk.
+        // The producer runs DETACHED from this actor: a `Task {}` here would
+        // inherit the actor's isolation, serializing every chunk of every
+        // concurrent stream to this provider through one executor. All state
+        // the producer needs is captured explicitly below; the only `self`
+        // touches are the lock-backed nonisolated `isSessionInvalidated` and
+        // the immutable `provider` let. `Task.detached` does not inherit
+        // task-locals, so snapshot the probe here (one read on producer
+        // entry, no per-chunk task-local touch).
         let probe = WireTransportProbe.current
 
         // Holds the connected URLSession task so stream teardown can close the
@@ -1984,12 +2423,28 @@ public actor RemoteProviderService: ToolCapableService {
         // a prompt close lets the peer cancel the in-flight remote agent run.
         let liveTaskBox = LiveURLSessionTaskBox()
 
-        let producerTask = Task {
+        let producerTask = Task.detached {
+            var state = StreamingState(stopSequences: stopSequences, trackContent: trackContent)
+            state.routerDiagnostics = initialRouterDiagnostics
+            state.routerRequestId = request.idempotencyKey
+            // True once a 2xx stream response was accepted (chunk loop
+            // entered). Connect-phase failures never reach the router's
+            // billed path, so they don't need reconciliation.
+            var routerStreamConnected = false
+            // Billing reconciliation: however this producer exits (natural
+            // end, finish marker, error, cancel), a connected router stream
+            // that never delivered its summary frame may still have been
+            // charged server-side — and the optimistic local balance
+            // decrement never ran. Ask the account service for a debounced
+            // server-truth balance/usage refresh.
+            defer {
+                if providerType == .osaurusRouter, routerStreamConnected, !state.routerSummarySeen {
+                    Task { @MainActor in
+                        OsaurusRouterAccountService.shared.reconcileAfterStreamWithoutSummary()
+                    }
+                }
+            }
             do {
-                var state = StreamingState(stopSequences: stopSequences, trackContent: trackContent)
-                state.routerDiagnostics = initialRouterDiagnostics
-                state.routerRequestId = request.idempotencyKey
-
                 // Idempotent connect-phase retry: only retries the
                 // `bytes(for:)` call (no stream data has been delivered
                 // upstream yet, so retrying is safe). Once we start
@@ -2010,30 +2465,44 @@ public actor RemoteProviderService: ToolCapableService {
                 connectLoop: while true {
                     attempt += 1
 
-                    var outboundRequest = urlRequest
+                    // Bracket the task-creation window (secure handshake +
+                    // connect) with the session-lifecycle guard: a concurrent
+                    // `invalidateSession()` either refuses this `begin` (we
+                    // bail with CancellationError) or defers its
+                    // `invalidateAndCancel()` until the matching `end`, so
+                    // the session can never be invalidated mid-`bytes(for:)`.
+                    guard self.beginSessionRequest() else { throw CancellationError() }
+                    let bytes: URLSession.AsyncBytes
+                    let response: URLResponse
                     var secureOpener: SecureResponseOpener? = nil
-                    if let secureProvider {
-                        // Seal per attempt: each call consumes a fresh
-                        // sequence number, so a retry can't be a replay.
-                        let wrapped = try await SecureChannelClient.shared.wrappedRequest(
-                            for: urlRequest,
-                            provider: secureProvider,
-                            urlSession: currentSession
-                        )
-                        outboundRequest = wrapped.request
-                        // Hold the opener; the decoder is built only once we
-                        // confirm the response is an encrypted SSE stream. A
-                        // buffered error envelope is decoded separately below.
-                        secureOpener = wrapped.opener
-                    }
-
-                    let (bytes, response) = try await Self.connectWithRetry(
-                        session: currentSession,
-                        urlRequest: outboundRequest,
-                        isCancelled: { [weak self] in
-                            self?.isSessionInvalidated ?? true
+                    do {
+                        var outboundRequest = urlRequest
+                        if let secureProvider {
+                            // Seal per attempt: each call consumes a fresh
+                            // sequence number, so a retry can't be a replay.
+                            let wrapped = try await SecureChannelClient.shared.wrappedRequest(
+                                for: urlRequest,
+                                provider: secureProvider,
+                                urlSession: currentSession
+                            )
+                            outboundRequest = wrapped.request
+                            // Hold the opener; the decoder is built only once we
+                            // confirm the response is an encrypted SSE stream. A
+                            // buffered error envelope is decoded separately below.
+                            secureOpener = wrapped.opener
                         }
-                    )
+                        (bytes, response) = try await Self.connectWithRetry(
+                            session: currentSession,
+                            urlRequest: outboundRequest,
+                            isCancelled: { [weak self] in
+                                self?.isSessionInvalidated ?? true
+                            }
+                        )
+                    } catch {
+                        self.endSessionRequest()
+                        throw error
+                    }
+                    self.endSessionRequest()
 
                     guard let httpResponse = response as? HTTPURLResponse else {
                         continuation.finish(throwing: RemoteProviderServiceError.invalidResponse)
@@ -2065,7 +2534,17 @@ public actor RemoteProviderService: ToolCapableService {
                             await SecureChannelClient.shared.invalidateSession(for: secureProvider)
                             continue connectLoop
                         }
-                        let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+                        if let rateLimited = RemoteProviderServiceError.rateLimited(from: httpResponse) {
+                            continuation.finish(throwing: rateLimited)
+                            return
+                        }
+                        // Parse the error envelope instead of dumping the raw
+                        // JSON body into chat; known upstream rejections map
+                        // to actionable copy.
+                        let errorMessage = Self.extractErrorMessage(
+                            from: errorData,
+                            statusCode: httpResponse.statusCode
+                        )
                         continuation.finish(
                             throwing: RemoteProviderServiceError.requestFailed(
                                 "HTTP \(httpResponse.statusCode): \(errorMessage)"
@@ -2126,6 +2605,7 @@ public actor RemoteProviderService: ToolCapableService {
                     }
 
                     connectedBytes = bytes
+                    routerStreamConnected = true
                     // Expose the live task so `onTermination` can hard-cancel
                     // it (closes the socket) the instant the consumer stops.
                     liveTaskBox.store(bytes.task)
@@ -2156,7 +2636,14 @@ public actor RemoteProviderService: ToolCapableService {
                 var routerChunkCount = 0
                 var routerByteCount = 0
                 var routerEventCount = 0
-                let chunkStream = Self.makeChunkStream(from: bytes)
+                // Inactivity is enforced by the chunk stream's built-in
+                // watchdog (single deadline-reset task; see `makeChunkStream`)
+                // — a timeout surfaces here as a clean `nil`, identical to
+                // natural EOF, so the loop below needs no per-chunk race.
+                let chunkStream = Self.makeChunkStream(
+                    from: bytes,
+                    inactivityTimeout: inactivityTimeout
+                )
                 let chunkIter = ChunkIteratorRef(chunkStream.makeAsyncIterator())
 
                 chunkLoop: while true {
@@ -2165,10 +2652,7 @@ public actor RemoteProviderService: ToolCapableService {
                         return
                     }
 
-                    let chunk = try await Self.nextChunk(
-                        from: chunkIter,
-                        timeout: inactivityTimeout
-                    )
+                    let chunk = try await chunkIter.next()
 
                     if let chunk = chunk {
                         if providerType == .osaurusRouter {
@@ -2413,8 +2897,14 @@ public actor RemoteProviderService: ToolCapableService {
             // Router-only: the body is signed, so this rides the existing
             // signature. Gated here so no other OpenAI-compat upstream receives
             // an unexpected `idempotency_key` field (some 422 on unknown keys).
+            // Surfaces that don't derive their own key (subagent runner,
+            // plugin completions, other headless dispatch) get a synthesized
+            // per-request key: the body is built once and connect-phase
+            // retries re-POST the same bytes, so the router can still dedupe
+            // a request it already received (e.g. a timeout after receipt)
+            // instead of billing it twice.
             idempotencyKey: provider.providerType == .osaurusRouter
-                ? parameters.idempotencyKey : nil
+                ? (parameters.idempotencyKey ?? "auto-\(UUID().uuidString)") : nil
         )
 
         // Ask OpenAI Chat-Completions upstreams to emit a final `usage` chunk so
@@ -2426,6 +2916,14 @@ public actor RemoteProviderService: ToolCapableService {
         if stream, Self.requestsStreamUsageOptions(providerType: provider.providerType) {
             request.streamOptions = StreamOptions(include_usage: true)
         }
+        // Local-only key used to keep Codex Responses Lite affinity stable
+        // across every turn in the same Osaurus conversation. The actual wire
+        // value is a provider-compatible UUIDv7 generated by the service.
+        if !isAgentRun, provider.providerType == .openAICodex,
+            let sessionId = parameters.sessionId, !sessionId.isEmpty
+        {
+            request.codexSessionKey = sessionId
+        }
         // Session-scoped prompt-cache routing hint for genuine OpenAI hosts.
         // The chat surface already threads a stable per-conversation
         // `session_id`; scoping the key to it keeps one conversation's turns
@@ -2435,6 +2933,18 @@ public actor RemoteProviderService: ToolCapableService {
             Self.supportsPromptCacheKey(providerType: provider.providerType, host: provider.host)
         {
             request.promptCacheKey = "osaurus-session-\(sessionId)"
+        }
+        // Parameter fidelity: forward the caller's deterministic seed and JSON
+        // mode instead of silently dropping them. Standard OpenAI fields on
+        // the chat-completions wire; Gemini remaps them in `toGeminiRequest`;
+        // Anthropic has no faithful equivalent — its `output_config.format`
+        // requires a strict json_schema, which schema-free json_object mode
+        // can't provide (documented in docs/REMOTE_PROVIDERS.md).
+        if !isAgentRun {
+            request.seed = parameters.seed.flatMap { Int(exactly: $0) }
+            if parameters.jsonMode {
+                request.response_format = ResponseFormat(type: "json_object")
+            }
         }
         request.runAsRemoteAgent = parameters.runAsRemoteAgent
         return request
@@ -2469,21 +2979,104 @@ public actor RemoteProviderService: ToolCapableService {
         }
         guard tokens.isExpired else { return }
 
-        let refreshed = try await OpenAICodexOAuthService.refresh(tokens)
+        let refreshed: RemoteProviderOAuthTokens
+        do {
+            refreshed = try await OpenAICodexOAuthService.refresh(tokens)
+        } catch {
+            notifyManagerIfPermanentOAuthFailure(error)
+            throw error
+        }
         cachedOAuthTokens = refreshed
         await RemoteProviderKeychain.saveOAuthTokensOffMainActor(refreshed, for: provider.id)
+    }
+
+    /// A mid-chat token refresh that fails with a *permanent* auth error
+    /// (`invalid_grant` / 401) means every future request is doomed until the
+    /// user signs in again. Tell the manager so it clears the dead tokens and
+    /// flips the durable `requiresAuth` state, rather than leaving a
+    /// connected-looking provider that errors on every turn.
+    private func notifyManagerIfPermanentOAuthFailure(_ error: Error) {
+        guard RemoteProviderManager.isPermanentOAuthFailure(error) else { return }
+        let providerId = provider.id
+        Task { @MainActor in
+            RemoteProviderManager.shared.handlePermanentOAuthFailure(providerId: providerId)
+        }
     }
 
     private func codexOAuthHeaders() throws -> [String: String] {
         guard let tokens = cachedOAuthTokens else {
             throw OpenAICodexOAuthError.missingSignInTokens
         }
+        // The Codex backend routes some models (e.g. gpt-5.6-luna) by
+        // originator + User-Agent identity; without a Codex CLI-style user
+        // agent the request resolves to a missing internal engine and fails
+        // with HTTP 404 "Model not found" (openai/codex#31967).
         return [
             "Authorization": "Bearer \(tokens.accessToken)",
             "chatgpt-account-id": tokens.accountId,
             "OpenAI-Beta": "responses=experimental",
             "originator": "codex_cli_rs",
+            "User-Agent": OpenAICodexOAuthService.codexUserAgent(),
         ]
+    }
+
+    /// Identity and affinity headers required by Codex Responses Lite.
+    /// `version` and the internal Lite marker match codex-rs 0.144's wire
+    /// contract. Legacy Codex models must not receive these headers.
+    static func codexResponsesLiteHeaders(sessionId: String) -> [String: String] {
+        [
+            "session-id": sessionId,
+            "x-session-affinity": sessionId,
+            "version": OpenAICodexOAuthService.codexClientVersion,
+            "x-openai-internal-codex-responses-lite": "true",
+        ]
+    }
+
+    private func codexResponsesLiteSessionId(for sourceKey: String?) -> String {
+        let key: String
+        if let sourceKey, !sourceKey.isEmpty {
+            key = sourceKey
+        } else {
+            key = "request-\(UUID().uuidString)"
+        }
+        if let existing = codexResponsesLiteSessionIds[key] {
+            return existing
+        }
+        // Bound provider-lifetime state without disturbing active/recent chats.
+        if codexResponsesLiteSessionIds.count >= 1_024,
+            let oldest = codexResponsesLiteSessionOrder.first
+        {
+            codexResponsesLiteSessionIds.removeValue(forKey: oldest)
+            codexResponsesLiteSessionOrder.removeFirst()
+        }
+        let generated = Self.makeUUIDv7()
+        codexResponsesLiteSessionIds[key] = generated
+        codexResponsesLiteSessionOrder.append(key)
+        return generated
+    }
+
+    /// UUIDv7 layout: 48-bit Unix epoch milliseconds, version nibble 7, and
+    /// RFC 4122 variant bits. Codex uses UUIDv7 thread/session identifiers.
+    static func makeUUIDv7(now: Date = Date(), randomUUID: UUID = UUID()) -> String {
+        var bytes = withUnsafeBytes(of: randomUUID.uuid) { Array($0) }
+        let milliseconds = UInt64(max(0, now.timeIntervalSince1970 * 1_000))
+        bytes[0] = UInt8((milliseconds >> 40) & 0xff)
+        bytes[1] = UInt8((milliseconds >> 32) & 0xff)
+        bytes[2] = UInt8((milliseconds >> 24) & 0xff)
+        bytes[3] = UInt8((milliseconds >> 16) & 0xff)
+        bytes[4] = UInt8((milliseconds >> 8) & 0xff)
+        bytes[5] = UInt8(milliseconds & 0xff)
+        bytes[6] = (bytes[6] & 0x0f) | 0x70
+        bytes[8] = (bytes[8] & 0x3f) | 0x80
+
+        let hex = bytes.map { String(format: "%02x", $0) }
+        return [
+            hex[0...3].joined(),
+            hex[4...5].joined(),
+            hex[6...7].joined(),
+            hex[8...9].joined(),
+            hex[10...15].joined(),
+        ].joined(separator: "-")
     }
 
     private func refreshXAIOAuthIfNeeded() async throws {
@@ -2493,7 +3086,13 @@ public actor RemoteProviderService: ToolCapableService {
         }
         guard tokens.isExpired else { return }
 
-        let refreshed = try await XAIOAuthService.refresh(tokens)
+        let refreshed: RemoteProviderOAuthTokens
+        do {
+            refreshed = try await XAIOAuthService.refresh(tokens)
+        } catch {
+            notifyManagerIfPermanentOAuthFailure(error)
+            throw error
+        }
         cachedOAuthTokens = refreshed
         await RemoteProviderKeychain.saveOAuthTokensOffMainActor(refreshed, for: provider.id)
     }
@@ -2540,7 +3139,16 @@ public actor RemoteProviderService: ToolCapableService {
 
         let producerTask = Task {
             do {
-                let (data, response) = try await currentSession.data(for: urlRequest)
+                guard self.beginSessionRequest() else { throw CancellationError() }
+                let data: Data
+                let response: URLResponse
+                do {
+                    (data, response) = try await currentSession.data(for: urlRequest)
+                } catch {
+                    self.endSessionRequest()
+                    throw error
+                }
+                self.endSessionRequest()
                 probe?.replaceResponseBody(data)
 
                 guard let httpResponse = response as? HTTPURLResponse else {
@@ -2564,7 +3172,7 @@ public actor RemoteProviderService: ToolCapableService {
                 )
 
                 if let parts = geminiResponse.candidates?.first?.content?.parts {
-                    var pendingToolCall: ServiceToolInvocation?
+                    var pendingToolCalls: [ServiceToolInvocation] = []
 
                     for part in parts {
                         if part.thought == true { continue }
@@ -2577,19 +3185,23 @@ public actor RemoteProviderService: ToolCapableService {
                         case .inlineData(let imageData):
                             continuation.yield(Self.imageMarkdown(imageData, thoughtSignature: part.thoughtSignature))
                         case .functionCall(let funcCall):
-                            pendingToolCall = ServiceToolInvocation(
-                                toolName: funcCall.name,
-                                jsonArguments: Self.geminiArgsJSON(from: funcCall.args),
-                                toolCallId: Self.geminiToolCallId(),
-                                geminiThoughtSignature: funcCall.thoughtSignature
+                            // Gemini can return several functionCall parts in
+                            // one candidate (parallel calling) — keep them all.
+                            pendingToolCalls.append(
+                                ServiceToolInvocation(
+                                    toolName: funcCall.name,
+                                    jsonArguments: Self.geminiArgsJSON(from: funcCall.args),
+                                    toolCallId: Self.geminiToolCallId(),
+                                    geminiThoughtSignature: funcCall.thoughtSignature
+                                )
                             )
                         case .functionResponse:
                             break
                         }
                     }
 
-                    if let invocation = pendingToolCall {
-                        continuation.finish(throwing: invocation)
+                    if !pendingToolCalls.isEmpty {
+                        continuation.finish(throwing: Self.toolInvocationFinishError(pendingToolCalls))
                         return
                     }
                 }
@@ -2655,6 +3267,14 @@ public actor RemoteProviderService: ToolCapableService {
             configuredProviderType: provider.providerType,
             request: request
         )
+        let codexResponsesLiteSessionId: String?
+        if requestProviderType == .openAICodex,
+            OpenAICodexOAuthService.usesResponsesLite(modelId: request.model)
+        {
+            codexResponsesLiteSessionId = self.codexResponsesLiteSessionId(for: request.codexSessionKey)
+        } else {
+            codexResponsesLiteSessionId = nil
+        }
 
         // Mode 2 hard guard (defense-in-depth): a remote-agent run must only
         // ever target a native Osaurus peer's `/agents/{address}/run`. If
@@ -2704,6 +3324,16 @@ public actor RemoteProviderService: ToolCapableService {
             if trimmedModel.unicodeScalars.contains(where: { !allowed.contains($0) }) {
                 throw RemoteProviderServiceError.requestFailed(
                     "Invalid Gemini model name '\(trimmedModel)': only letters, digits, '-', '_', '.', and '/' are allowed. Check provider settings."
+                )
+            }
+            // `/` is allowed for legitimate parents (`tunedModels/…`,
+            // `models/…`), but a `..` segment would walk out of the
+            // `/models/` base and hit an unintended endpoint. Reject any
+            // relative-traversal segment explicitly.
+            let modelSegments = trimmedModel.split(separator: "/", omittingEmptySubsequences: false)
+            if modelSegments.contains("..") || modelSegments.contains(".") {
+                throw RemoteProviderServiceError.requestFailed(
+                    "Invalid Gemini model name '\(trimmedModel)': path traversal segments ('.'/'..') are not allowed. Check provider settings."
                 )
             }
             let endpoint = "/models/\(trimmedModel):\(action)"
@@ -2762,7 +3392,14 @@ public actor RemoteProviderService: ToolCapableService {
         if provider.providerType == .osaurusRouter {
             headers = [:]
         } else if provider.authType == .openAICodexOAuth {
-            headers = try codexOAuthHeaders()
+            let oauthHeaders = try codexOAuthHeaders()
+            if let codexResponsesLiteSessionId {
+                headers = oauthHeaders.merging(
+                    Self.codexResponsesLiteHeaders(sessionId: codexResponsesLiteSessionId)
+                ) { _, lite in lite }
+            } else {
+                headers = oauthHeaders
+            }
         } else if provider.authType == .xaiOAuth {
             // Merge the refreshed Bearer over the cached headers so any
             // user-supplied custom headers still apply.
@@ -2772,7 +3409,7 @@ public actor RemoteProviderService: ToolCapableService {
             // to avoid Keychain access issues from the actor's background executor.
             headers = cachedHeaders
         }
-        for (key, value) in headers {
+        for (key, value) in headers where Self.isSafeHeader(name: key, value: value) {
             urlRequest.setValue(value, forHTTPHeaderField: key)
         }
 
@@ -2780,19 +3417,26 @@ public actor RemoteProviderService: ToolCapableService {
         // (ds4, vLLM, sglang, Anthropic prompt cache, ...) hash the
         // rendered prompt — including inlined tool schemas — byte for
         // byte; see `JSONDeterminism.swift` / `docs/JSON_DETERMINISM.md`.
-        let encoder = JSONEncoder.osaurusCanonical(prettyPrinted: true)
+        // Compact output: sorted keys are what cache determinism needs;
+        // pretty-printing only inflated every request body (up to ~30% on
+        // tool-heavy payloads) for zero wire benefit.
+        let encoder = JSONEncoder.osaurusCanonical(prettyPrinted: false)
 
         let bodyData: Data
         switch requestProviderType {
         case .anthropic:
+            try Self.rejectDroppedMediaInputs(in: request.messages, wireName: "Anthropic")
             let anthropicRequest = request.toAnthropicRequest()
             bodyData = try encoder.encode(anthropicRequest)
         case .openResponses:
             let openResponsesRequest = request.toOpenResponsesRequest()
             bodyData = try encoder.encode(openResponsesRequest)
         case .openAICodex:
-            bodyData = try request.toCodexOpenResponsesRequest().toCodexOAuthPayloadData()
+            bodyData = try request.toCodexOpenResponsesRequest().toCodexOAuthPayloadData(
+                responsesLiteSessionId: codexResponsesLiteSessionId
+            )
         case .gemini:
+            try Self.rejectDroppedMediaInputs(in: request.messages, wireName: "Gemini")
             let geminiRequest = request.toGeminiRequest()
             bodyData = try encoder.encode(geminiRequest)
         case .openaiLegacy, .azureOpenAI, .osaurus, .osaurusRouter:
@@ -2806,7 +3450,10 @@ public actor RemoteProviderService: ToolCapableService {
                 model: request.model
             ).transformOutbound(outbound.messages)
             if requestProviderType == .osaurusRouter {
-                outbound.messages = Self.routerWireCompatibleMessages(outbound.messages)
+                outbound.messages = Self.routerWireCompatibleMessages(
+                    outbound.messages,
+                    modelSupportsImageInput: routerVisionModelIds.contains(request.model)
+                )
                 outbound.clamp_to_balance = false
             } else {
                 // Plain OpenAI-compat upstreams enforce tool pairing both ways
@@ -2861,6 +3508,31 @@ public actor RemoteProviderService: ToolCapableService {
     /// are merged here at the remote wire boundary — concatenating their text so
     /// the model still reads the notice — and never in local history.
     ///
+    /// The Anthropic and Gemini wire converters translate only text and image
+    /// content parts; audio (`input_audio`) and video (`video_url`) parts have
+    /// no mapping and were previously dropped without a trace — the model
+    /// answered as if the attachment never existed. Reject with a typed error
+    /// instead so the caller learns the modality is unsupported on this route.
+    static func rejectDroppedMediaInputs(in messages: [ChatMessage], wireName: String) throws {
+        for message in messages {
+            guard let parts = message.contentParts else { continue }
+            for part in parts {
+                switch part {
+                case .audioInput:
+                    throw RemoteProviderServiceError.unsupportedParameter(
+                        "Audio input is not supported on the \(wireName) provider route. Remove the audio attachment or use a provider/model that accepts audio."
+                    )
+                case .videoUrl:
+                    throw RemoteProviderServiceError.unsupportedParameter(
+                        "Video input is not supported on the \(wireName) provider route. Remove the video attachment or use a provider/model that accepts video."
+                    )
+                case .text, .imageUrl:
+                    continue
+                }
+            }
+        }
+    }
+
     /// Only adjacent same-id results within one run of consecutive `tool`
     /// messages merge; distinct ids in a parallel batch stay separate and the
     /// order is preserved, so Anthropic's "result immediately follows the
@@ -3103,10 +3775,24 @@ public actor RemoteProviderService: ToolCapableService {
 
     /// Router fan-out advertises one OpenAI-compatible request to many
     /// upstreams, so it uses the strictest shared chat-completions history
-    /// shape. User media stays multimodal; assistant history leaves Osaurus as
-    /// string `content` because several upstreams reject assistant arrays or
-    /// omitted assistant content on tool-call turns.
-    static func routerWireCompatibleMessages(_ messages: [ChatMessage]) -> [ChatMessage] {
+    /// shape. Assistant history leaves Osaurus as string `content` because
+    /// several upstreams reject assistant arrays or omitted assistant content
+    /// on tool-call turns.
+    ///
+    /// User media is capability-gated: image parts stay multimodal only when
+    /// the target model advertises image input (`modelSupportsImageInput`,
+    /// from the Router `/models` capability catalog). For non-vision models
+    /// the Router's upstream adapters (notably Anthropic/Claude) reject
+    /// array-form user content with HTTP 400 "user message content must be a
+    /// string" — and because history is replayed every turn, one media
+    /// message anywhere in the conversation used to fail every subsequent
+    /// turn. Audio/video parts have no mapping on any Router upstream and
+    /// are always flattened. Removed attachments are replaced with a visible
+    /// text notice (truthful removal) instead of being silently dropped.
+    static func routerWireCompatibleMessages(
+        _ messages: [ChatMessage],
+        modelSupportsImageInput: Bool = true
+    ) -> [ChatMessage] {
         // Collapse same-id tool results FIRST: the router fans out to Claude,
         // which rejects more than one tool_result per tool_use_id. THEN drop
         // any orphaned tool_use/tool_result half-pair (also a Claude 400) so
@@ -3117,8 +3803,13 @@ public actor RemoteProviderService: ToolCapableService {
         )
         let wireMessages = routerMessagesDroppingUnsupportedAssistantPrefill(deduped)
         return wireMessages.map { message in
-            guard requiresRouterAssistantStringContent(message) else { return message }
-            return routerAssistantWireMessage(message)
+            if requiresRouterAssistantStringContent(message) {
+                return routerAssistantWireMessage(message)
+            }
+            return routerUserWireMessage(
+                message,
+                modelSupportsImageInput: modelSupportsImageInput
+            )
         }
     }
 
@@ -3151,6 +3842,78 @@ public actor RemoteProviderService: ToolCapableService {
             reasoning_item_id: message.reasoning_item_id,
             reasoning_encrypted: message.reasoning_encrypted
         )
+    }
+
+    /// Normalize a user message's media parts for the Router wire. Returns the
+    /// message unchanged when it carries no unsupported media. Otherwise the
+    /// unsupported parts (audio/video always; images when the model lacks
+    /// image input) are removed and replaced with one visible text notice so
+    /// neither the model nor the user is silently lied to about what shipped.
+    /// When only supported image parts remain, the message stays multimodal;
+    /// when no media parts remain, it collapses to plain string content —
+    /// which is exactly the shape non-vision Router upstream adapters accept.
+    private static func routerUserWireMessage(
+        _ message: ChatMessage,
+        modelSupportsImageInput: Bool
+    ) -> ChatMessage {
+        guard message.role.lowercased() == "user", let parts = message.contentParts else {
+            return message
+        }
+
+        var keptParts: [MessageContentPart] = []
+        var removedKinds: [String] = []
+        for part in parts {
+            switch part {
+            case .text:
+                keptParts.append(part)
+            case .imageUrl:
+                if modelSupportsImageInput {
+                    keptParts.append(part)
+                } else {
+                    removedKinds.append("image")
+                }
+            case .audioInput:
+                removedKinds.append("audio")
+            case .videoUrl:
+                removedKinds.append("video")
+            }
+        }
+        guard !removedKinds.isEmpty else { return message }
+
+        let summary = Self.removedMediaSummary(removedKinds)
+        let notice = "[Osaurus: \(summary) removed — not supported by this model on Osaurus Router]"
+        wirePairingLogger.warning(
+            "Router wire: removed unsupported user media (\(summary, privacy: .public)) for non-capable model (truthful removal)"
+        )
+
+        let keptText = keptParts.compactMap { part -> String? in
+            if case .text(let text) = part { return text }
+            return nil
+        }
+        let hasRemainingMedia = keptParts.contains { part in
+            if case .text = part { return false }
+            return true
+        }
+        if hasRemainingMedia {
+            return ChatMessage(
+                role: message.role,
+                content: message.content,
+                contentParts: keptParts + [.text(notice)]
+            )
+        }
+        let flattened = (keptText + [notice]).joined(separator: "\n")
+        return ChatMessage(role: message.role, content: flattened)
+    }
+
+    /// "1 image", "2 images and 1 audio attachment" — compact removal summary
+    /// for the wire notice and log line.
+    private static func removedMediaSummary(_ kinds: [String]) -> String {
+        var counts: [String: Int] = [:]
+        for kind in kinds { counts[kind, default: 0] += 1 }
+        let parts = counts.sorted { $0.key < $1.key }.map { kind, count in
+            "\(count) \(kind) attachment\(count == 1 ? "" : "s")"
+        }
+        return parts.joined(separator: " and ")
     }
 
     /// Parse response based on provider type
@@ -3488,11 +4251,25 @@ struct RemoteChatRequest: Encodable {
     /// `supportsPromptCacheKey`) so strict third-party OpenAI-compat schemas
     /// never see an unknown field. Encoded only when non-nil.
     var promptCacheKey: String? = nil
+    /// OpenAI deterministic-sampling `seed`. Forwarded from the caller's
+    /// request on OpenAI-compatible chat-completions wires (standard field,
+    /// unknown-but-ignored elsewhere); Gemini maps it into
+    /// `generationConfig.seed` in `toGeminiRequest`. Anthropic has no seed
+    /// parameter, so it is omitted there. Encoded only when non-nil.
+    var seed: Int? = nil
+    /// OpenAI `response_format` (JSON mode). Set only for
+    /// `{type: json_object}` requests; Gemini maps it to
+    /// `generationConfig.responseMimeType` in `toGeminiRequest`. Anthropic
+    /// has no equivalent, so it is omitted there. Encoded only when non-nil.
+    var response_format: ResponseFormat? = nil
     /// Local-only routing marker (Mode 2). When true, `buildURLRequest` targets
     /// the peer's `/agents/{address}/run` endpoint instead of
     /// `/chat/completions`. Intentionally absent from `CodingKeys` so it never
     /// reaches the wire — the endpoint choice already encodes the intent.
     var runAsRemoteAgent: Bool = false
+    /// Local-only source conversation key for Codex Responses Lite affinity.
+    /// Intentionally absent from `CodingKeys`.
+    var codexSessionKey: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_completion_tokens, max_tokens, stream
@@ -3505,6 +4282,8 @@ struct RemoteChatRequest: Encodable {
         case veniceParameters = "venice_parameters"
         case streamOptions = "stream_options"
         case promptCacheKey = "prompt_cache_key"
+        case seed
+        case response_format
     }
 
     func encode(to encoder: Encoder) throws {
@@ -3556,6 +4335,8 @@ struct RemoteChatRequest: Encodable {
         try container.encodeIfPresent(veniceParameters, forKey: .veniceParameters)
         try container.encodeIfPresent(streamOptions, forKey: .streamOptions)
         try container.encodeIfPresent(promptCacheKey, forKey: .promptCacheKey)
+        try container.encodeIfPresent(seed, forKey: .seed)
+        try container.encodeIfPresent(response_format, forKey: .response_format)
         // `modelOptions` is intentionally not in `CodingKeys` — it stays
         // in-process for model-specific feature flags.
     }
@@ -3705,7 +4486,11 @@ struct RemoteChatRequest: Encodable {
                 AnthropicTool(
                     name: tool.function.name,
                     description: tool.function.description,
-                    input_schema: tool.function.parameters ?? emptySchema
+                    input_schema: tool.function.parameters ?? emptySchema,
+                    // GA Anthropic contract: stream large parameter values as
+                    // generated so file-write calls do not sit entirely in an
+                    // upstream buffer until the value closes.
+                    eager_input_streaming: stream ? true : nil
                 )
             }
         }
@@ -3739,6 +4524,9 @@ struct RemoteChatRequest: Encodable {
             "claude-fable", "claude-mythos",
             "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8",
             "claude-sonnet-4-6",
+            // Observed live 2026-07-09 (req_011CcscQwssbYSF8ZBJ8Awdp): HTTP 400
+            // "`temperature` is deprecated for this model." on claude-sonnet-5.
+            "claude-sonnet-5",
         ]
         let deprecatesSamplerKnobs = knobDeprecatingClaudePrefixes.contains {
             bareModel.hasPrefix($0)
@@ -3950,9 +4738,13 @@ struct RemoteChatRequest: Encodable {
             return GeminiImageConfig(aspectRatio: effectiveRatio, imageSize: effectiveSize)
         }()
 
+        // Map OpenAI parameter-fidelity fields into Gemini's generationConfig:
+        // `seed` carries over directly; JSON mode becomes `responseMimeType`.
+        let jsonMimeType: String? = response_format?.type == "json_object" ? "application/json" : nil
         var generationConfig: GeminiGenerationConfig?
         if temperature != nil || max_completion_tokens != nil || top_p != nil || stop != nil
             || responseModalities != nil || imageConfig != nil
+            || seed != nil || jsonMimeType != nil
         {
             generationConfig = GeminiGenerationConfig(
                 temperature: temperature.map { Double($0) },
@@ -3961,7 +4753,9 @@ struct RemoteChatRequest: Encodable {
                 topK: nil,
                 stopSequences: stop,
                 responseModalities: responseModalities,
-                imageConfig: imageConfig
+                imageConfig: imageConfig,
+                seed: seed,
+                responseMimeType: jsonMimeType
             )
         }
 
@@ -4292,7 +5086,7 @@ struct RemoteChatRequest: Encodable {
 }
 
 extension OpenResponsesRequest {
-    func toCodexOAuthPayloadData() throws -> Data {
+    func toCodexOAuthPayloadData(responsesLiteSessionId: String? = nil) throws -> Data {
         let encoded = try JSONEncoder.osaurusCanonical().encode(self)
         guard var object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] else {
             return encoded
@@ -4302,7 +5096,73 @@ extension OpenResponsesRequest {
         object["include"] = ["reasoning.encrypted_content"]
         object.removeValue(forKey: "max_output_tokens")
 
+        if let responsesLiteSessionId {
+            guard var input = object["input"] as? [Any] else {
+                throw EncodingError.invalidValue(
+                    object["input"] as Any,
+                    .init(
+                        codingPath: [],
+                        debugDescription: "Codex Responses Lite requires an input-item array"
+                    )
+                )
+            }
+
+            // Responses Lite carries tool declarations and base instructions
+            // as developer input items rather than top-level fields.
+            let tools = object["tools"] as? [Any] ?? []
+            var prefix: [Any] = [
+                [
+                    "type": "additional_tools",
+                    "role": "developer",
+                    "tools": tools,
+                ] as [String: Any]
+            ]
+            if let instructions = object["instructions"] as? String, !instructions.isEmpty {
+                prefix.append([
+                    "type": "message",
+                    "role": "developer",
+                    "content": [
+                        [
+                            "type": "input_text",
+                            "text": instructions,
+                        ]
+                    ],
+                ] as [String: Any])
+            }
+            input.insert(contentsOf: prefix, at: 0)
+            object["input"] = Self.strippingImageDetail(from: input)
+            object.removeValue(forKey: "tools")
+            object.removeValue(forKey: "instructions")
+
+            object["tool_choice"] = "auto"
+            object["parallel_tool_calls"] = false
+            object["prompt_cache_key"] = responsesLiteSessionId
+
+            var reasoning = object["reasoning"] as? [String: Any] ?? [:]
+            reasoning["context"] = "all_turns"
+            object["reasoning"] = reasoning
+        }
+
         return try JSONSerialization.data(withJSONObject: object, options: .osaurusCanonical)
+    }
+
+    /// Responses Lite does not accept the public Responses API's image
+    /// `detail` hint. Remove it recursively from input images, including tool
+    /// outputs, while preserving all other content fields.
+    private static func strippingImageDetail(from value: Any) -> Any {
+        if let array = value as? [Any] {
+            return array.map(Self.strippingImageDetail)
+        }
+        guard var dictionary = value as? [String: Any] else {
+            return value
+        }
+        if dictionary["type"] as? String == "input_image" {
+            dictionary.removeValue(forKey: "detail")
+        }
+        for (key, nested) in dictionary {
+            dictionary[key] = Self.strippingImageDetail(from: nested)
+        }
+        return dictionary
     }
 }
 
@@ -4408,6 +5268,110 @@ extension RemoteProviderService {
             return try await fetchOsaurusRouterModels(from: provider)
         }
 
+        if isFireworksProvider(provider) {
+            return try await fetchFireworksModels(from: provider)
+        }
+
+        if isVeniceProvider(provider) {
+            return try await fetchVeniceModelsDiscovery(from: provider).chatModelIDs
+        }
+
+        return try await fetchOpenAICompatibleModels(from: provider)
+    }
+
+    static func isVeniceProvider(_ provider: RemoteProvider) -> Bool {
+        provider.host.lowercased() == "api.venice.ai"
+    }
+
+    /// Venice's OpenAI-compatible `/models` response also includes billable
+    /// image/video entries. Decode those into a separate media catalog and
+    /// return only `type=text` ids to chat/spawn consumers.
+    static func fetchVeniceModelsDiscovery(
+        from provider: RemoteProvider
+    ) async throws -> VeniceModelDiscovery {
+        guard let url = provider.url(for: "/models?type=all") else {
+            throw RemoteProviderServiceError.invalidURL
+        }
+        let request = modelDiscoveryRequest(
+            url: url,
+            headers: await provider.resolvedHeadersOffMainActor(),
+            timeout: provider.timeout
+        )
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+        } catch {
+            throw RemoteProviderServiceError.requestFailed(
+                "Network error: \(ProviderDiagnosticRedactor.safe(error.localizedDescription, maxLength: 240))"
+            )
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw RemoteProviderServiceError.invalidResponse
+        }
+        if let rateLimited = RemoteProviderServiceError.rateLimited(from: http) {
+            throw rateLimited
+        }
+        guard http.statusCode < 400 else {
+            throw RemoteProviderServiceError.requestFailed(
+                extractErrorMessage(from: data, statusCode: http.statusCode)
+            )
+        }
+        do {
+            return try VeniceModelDiscovery.decode(
+                data,
+                providerID: provider.id,
+                providerName: provider.name
+            )
+        } catch {
+            throw RemoteProviderServiceError.requestFailed(
+                "Invalid Venice /models response: \(ProviderDiagnosticRedactor.safe(error.localizedDescription, maxLength: 240))"
+            )
+        }
+    }
+
+    /// Fetch models from an OpenAI-compatible `/models` endpoint.
+    static func fetchOpenAICompatibleModels(from provider: RemoteProvider) async throws -> [String] {
+        try await fetchOpenAICompatibleModelsDiscovery(from: provider).models
+    }
+
+    /// Per-model context windows advertised by an OpenAI-compatible `/models`
+    /// endpoint, alongside the discovered ids. Servers outside the strict
+    /// OpenAI schema commonly report the window under a vendor key (vLLM's
+    /// `max_model_len`, OpenRouter/LM Studio's `context_length`, llama.cpp's
+    /// `max_context_length`, gateway-style `context_window`); honoring it
+    /// keeps the chat budget from collapsing to the 128k unknown-metadata
+    /// fallback.
+    struct OpenAICompatibleModelDiscovery: Sendable {
+        let models: [String]
+        /// Model id -> advertised context window in tokens. Only ids whose
+        /// entry carried a positive window appear here.
+        let contextLengths: [String: Int]
+    }
+
+    /// Like `fetchModels(from:)` but also surfaces per-model context windows
+    /// when the provider's `/models` route is the OpenAI-compatible one.
+    /// Every other provider family keeps its existing discovery path and
+    /// returns an empty context map.
+    public static func fetchModelsDiscovery(
+        from provider: RemoteProvider
+    ) async throws -> (models: [String], contextLengths: [String: Int]) {
+        // Mirror `fetchModels`' routing: only requests that would fall through
+        // to the OpenAI-compatible endpoint take the discovery variant.
+        if isOpenAICompatibleModelDiscoveryProvider(provider.providerType),
+            provider.authType != .xaiOAuth,
+            !isFireworksProvider(provider),
+            !isVeniceProvider(provider)
+        {
+            let discovery = try await fetchOpenAICompatibleModelsDiscovery(from: provider)
+            return (discovery.models, discovery.contextLengths)
+        }
+        return (try await fetchModels(from: provider), [:])
+    }
+
+    static func fetchOpenAICompatibleModelsDiscovery(
+        from provider: RemoteProvider
+    ) async throws -> OpenAICompatibleModelDiscovery {
         // OpenAI-compatible providers use /models endpoint
         guard let url = provider.url(for: "/models") else {
             throw RemoteProviderServiceError.invalidURL
@@ -4452,13 +5416,29 @@ extension RemoteProviderService {
             responseData: data,
             configuredSecretHeaderKeys: provider.secretHeaderKeys
         )
+        // Typed rate-limit/unavailable before the generic decode path so the
+        // connect phase can honor Retry-After with a bounded retry. Model
+        // discovery is an idempotent GET, so a plain 503 (no Retry-After) is
+        // also safe to classify as retryable here — unlike the chat path,
+        // where only explicit throttle responses are typed.
+        if let rateLimited = RemoteProviderServiceError.rateLimited(from: httpResponse) {
+            throw rateLimited
+        }
+        if httpResponse.statusCode == 503 {
+            throw RemoteProviderServiceError.rateLimited(retryAfter: nil, statusCode: 503)
+        }
         do {
-            return try decodeOpenAICompatibleModelsResponse(
+            return try decodeOpenAICompatibleModelsDiscovery(
                 data: data,
                 statusCode: httpResponse.statusCode,
                 provider: provider
             )
         } catch let error as RemoteProviderServiceError {
+            if httpResponse.statusCode >= 400,
+                let refined = await refineMCPServerMisconfiguration(for: provider)
+            {
+                throw refined.attachingReplayDiagnostics(diagnostics)
+            }
             throw error.attachingReplayDiagnostics(diagnostics)
         } catch {
             throw RemoteProviderServiceError.requestFailedWithDiagnostics(
@@ -4473,25 +5453,145 @@ extension RemoteProviderService {
         statusCode: Int,
         provider: RemoteProvider
     ) throws -> [String] {
+        try decodeOpenAICompatibleModelsDiscovery(
+            data: data,
+            statusCode: statusCode,
+            provider: provider
+        ).models
+    }
+
+    /// One entry of an OpenAI-compatible `/models` list, keeping the vendor
+    /// context-window keys the shared serving struct (`OpenAIModel`) has no
+    /// business encoding back out.
+    private struct OpenAICompatibleModelEntry: Decodable {
+        let id: String
+        let maxModelLen: Int?
+        let contextLength: Int?
+        let maxContextLength: Int?
+        let contextWindow: Int?
+
+        private enum CodingKeys: String, CodingKey {
+            case id
+            case maxModelLen = "max_model_len"
+            case contextLength = "context_length"
+            case maxContextLength = "max_context_length"
+            case contextWindow = "context_window"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(String.self, forKey: .id)
+            // These keys were ignored entirely before context discovery; an
+            // off-spec value (float, numeric string) must degrade to nil, not
+            // fail the whole `/models` decode for the provider.
+            maxModelLen = Self.lenientInt(container, .maxModelLen)
+            contextLength = Self.lenientInt(container, .contextLength)
+            maxContextLength = Self.lenientInt(container, .maxContextLength)
+            contextWindow = Self.lenientInt(container, .contextWindow)
+        }
+
+        private static func lenientInt(
+            _ container: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys
+        ) -> Int? {
+            if let int = try? container.decode(Int.self, forKey: key) { return int }
+            if let double = try? container.decode(Double.self, forKey: key), double.isFinite {
+                return Int(exactly: double.rounded())
+            }
+            if let string = try? container.decode(String.self, forKey: key) {
+                return Int(string.trimmingCharacters(in: .whitespaces))
+            }
+            return nil
+        }
+
+        /// First positive vendor-reported window, in the order the keys are
+        /// most specific: vLLM, then OpenRouter/LM Studio, then llama.cpp,
+        /// then gateway-style `context_window`.
+        var advertisedContextLength: Int? {
+            [maxModelLen, contextLength, maxContextLength, contextWindow]
+                .compactMap { $0 }
+                .first { $0 > 0 }
+        }
+    }
+
+    private struct OpenAICompatibleModelList: Decodable {
+        let data: [OpenAICompatibleModelEntry]
+    }
+
+    static func decodeOpenAICompatibleModelsDiscovery(
+        data: Data,
+        statusCode: Int,
+        provider: RemoteProvider
+    ) throws -> OpenAICompatibleModelDiscovery {
         if statusCode >= 400 {
             let errorMessage = extractErrorMessage(from: data, statusCode: statusCode)
             if canUseManualModelDiscoveryFallback(for: provider, statusCode: statusCode),
                 let fallbackModels = manualModelDiscoveryFallback(for: provider)
             {
-                return fallbackModels
+                return OpenAICompatibleModelDiscovery(models: fallbackModels, contextLengths: [:])
             }
             throw RemoteProviderServiceError.requestFailed(errorMessage)
         }
 
         do {
-            let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
-            return modelsResponse.data.map { $0.id }
+            let modelsResponse = try JSONDecoder().decode(OpenAICompatibleModelList.self, from: data)
+            var contextLengths: [String: Int] = [:]
+            for entry in modelsResponse.data {
+                if let contextLength = entry.advertisedContextLength {
+                    contextLengths[entry.id] = contextLength
+                }
+            }
+            return OpenAICompatibleModelDiscovery(
+                models: modelsResponse.data.map { $0.id },
+                contextLengths: contextLengths
+            )
         } catch {
             if let fallbackModels = manualModelDiscoveryFallback(for: provider) {
-                return fallbackModels
+                return OpenAICompatibleModelDiscovery(models: fallbackModels, contextLengths: [:])
             }
             throw error
         }
+    }
+
+    /// After model discovery fails with an HTTP error on an OpenAI-compatible
+    /// provider, probe the base URL with an MCP `initialize` handshake. Users
+    /// sometimes paste an MCP endpoint (e.g. https://runalyze.com/mcp) into
+    /// the API provider form; `<base>/models` then 404s with an unhelpful
+    /// "Not Found". When the base URL answers like an MCP server, replace the
+    /// generic failure with guidance pointing at Tools > Connections. Returns
+    /// nil (keep the original error) for other provider types, on any
+    /// transport failure, or when the response doesn't look like MCP.
+    static func refineMCPServerMisconfiguration(
+        for provider: RemoteProvider,
+        headers: [String: String]? = nil
+    ) async -> RemoteProviderServiceError? {
+        guard provider.providerType == .openaiLegacy || provider.providerType == .openResponses,
+            let url = provider.baseURL
+        else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        // Bounded tighter than discovery: a streamable HTTP server may hold
+        // the SSE response open, and this probe only refines an error message.
+        request.timeoutInterval = min(modelDiscoveryTimeout(provider.timeout), 10)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
+        // `headers` lets the connect-test path pass its already-resolved
+        // header set (the test API key never reaches the Keychain).
+        let resolved: [String: String]
+        if let headers {
+            resolved = headers
+        } else {
+            resolved = await provider.resolvedHeadersOffMainActor()
+        }
+        for (key, value) in resolved where isSafeHeader(name: key, value: value) {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        request.httpBody = MCPAuthFailureProbe.handshakeBody()
+        guard
+            let (data, response) = try? await GlobalProxySettings.sharedSession().data(for: request),
+            let http = response as? HTTPURLResponse,
+            RemoteProviderMCPDetection.looksLikeMCPServer(response: http, body: data)
+        else { return nil }
+        return .mcpEndpointDetected
     }
 
     /// Builds a bounded `/models` request so provider connect tests do not hang
@@ -4506,11 +5606,29 @@ extension RemoteProviderService {
         request.timeoutInterval = modelDiscoveryTimeout(timeout)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
-        for (key, value) in headers {
+        for (key, value) in headers where isSafeHeader(name: key, value: value) {
             request.setValue(value, forHTTPHeaderField: key)
         }
 
         return request
+    }
+
+    /// Reject header names/values that contain characters Foundation's
+    /// `URLRequest.setValue(_:forHTTPHeaderField:)` can choke on — CR/LF (the
+    /// classic header-injection / request-splitting vector) and other control
+    /// characters. Applied as defense-in-depth at the wire boundary so a
+    /// malformed custom header (from config or a paste) is dropped rather than
+    /// crashing the request or smuggling an extra header line upstream. An
+    /// empty name is also rejected.
+    static func isSafeHeader(name: String, value: String) -> Bool {
+        if name.isEmpty { return false }
+        let hasControl: (String) -> Bool = { text in
+            text.unicodeScalars.contains { scalar in
+                // Disallow C0 controls (incl. CR, LF, tab) and DEL.
+                scalar.value < 0x20 || scalar.value == 0x7F
+            }
+        }
+        return !hasControl(name) && !hasControl(value)
     }
 
     static func modelDiscoveryTimeout(_ timeout: TimeInterval) -> TimeInterval {
@@ -4943,13 +6061,128 @@ extension RemoteProviderService {
         return allModels
     }
 
+    /// Fireworks' OpenAI-compatible `/inference/v1/models` only lists the
+    /// account's default/deployed serverless models (a handful), not the full
+    /// serverless catalog. Detect Fireworks by host so discovery can augment
+    /// the standard `/models` result with the public catalog.
+    static func isFireworksProvider(_ provider: RemoteProvider) -> Bool {
+        guard isOpenAICompatibleModelDiscoveryProvider(provider.providerType) else { return false }
+        // `host` may embed a path (e.g. "api.fireworks.ai/inference").
+        let host = provider.host.lowercased()
+            .split(separator: "/", maxSplits: 1, omittingEmptySubsequences: true)
+            .first.map(String.init) ?? ""
+        return host == "fireworks.ai" || host.hasSuffix(".fireworks.ai")
+    }
+
+    /// Standard `/models` discovery plus the Fireworks serverless catalog.
+    /// `/models` stays authoritative for the account's own deployments and
+    /// fine-tunes; the catalog is best-effort — on any failure the `/models`
+    /// result is returned unchanged so Fireworks behaves no worse than before.
+    static func fetchFireworksModels(from provider: RemoteProvider) async throws -> [String] {
+        let discovered = try await fetchOpenAICompatibleModels(from: provider)
+        do {
+            let catalog = try await fetchFireworksCatalogModels(
+                headers: await provider.resolvedHeadersOffMainActor(),
+                timeout: provider.timeout
+            )
+            return mergeFireworksModelIds(discovered: discovered, catalog: catalog)
+        } catch {
+            print(
+                "[Osaurus] Fireworks catalog discovery failed, using /models result only: \(ProviderDiagnosticRedactor.safe(error.localizedDescription, maxLength: 240))"
+            )
+            return discovered
+        }
+    }
+
+    private static let fireworksCatalogURL = "https://api.fireworks.ai/v1/accounts/fireworks/models"
+    private static let fireworksCatalogMaxPages = 25
+
+    /// `/models` results first (the account's own deployments), then catalog
+    /// entries, case-insensitively deduplicated.
+    static func mergeFireworksModelIds(discovered: [String], catalog: [String]) -> [String] {
+        var seen = Set<String>()
+        var merged: [String] = []
+        for id in discovered + catalog {
+            let key = id.lowercased()
+            guard !key.isEmpty, !seen.contains(key) else { continue }
+            seen.insert(key)
+            merged.append(id)
+        }
+        return merged
+    }
+
+    /// Page through the Fireworks gateway catalog and return serverless,
+    /// chat-capable model resource names (`accounts/fireworks/models/...`),
+    /// which the OpenAI-compatible inference endpoints accept as model ids.
+    static func fetchFireworksCatalogModels(
+        headers: [String: String],
+        timeout: TimeInterval,
+        transport: (@MainActor (URLRequest) async throws -> (Data, URLResponse))? = nil
+    ) async throws -> [String] {
+        var allModels: [String] = []
+        var pageToken: String?
+
+        for _ in 0..<fireworksCatalogMaxPages {
+            guard var components = URLComponents(string: fireworksCatalogURL) else {
+                throw RemoteProviderServiceError.invalidURL
+            }
+            var queryItems = [URLQueryItem(name: "pageSize", value: "200")]
+            if let pageToken {
+                queryItems.append(URLQueryItem(name: "pageToken", value: pageToken))
+            }
+            components.queryItems = queryItems
+
+            guard let url = components.url else {
+                throw RemoteProviderServiceError.invalidURL
+            }
+
+            let request = modelDiscoveryRequest(url: url, headers: headers, timeout: timeout)
+            let data: Data
+            let response: URLResponse
+            if let transport {
+                (data, response) = try await transport(request)
+            } else {
+                (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw RemoteProviderServiceError.invalidResponse
+            }
+            if httpResponse.statusCode >= 400 {
+                let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
+                throw RemoteProviderServiceError.requestFailed(errorMessage)
+            }
+
+            let page = try decodeFireworksCatalogPage(data: data)
+            allModels.append(contentsOf: page.models)
+
+            guard let next = page.nextPageToken, !next.isEmpty else { break }
+            pageToken = next
+        }
+
+        return allModels
+    }
+
+    static func decodeFireworksCatalogPage(
+        data: Data
+    ) throws -> (models: [String], nextPageToken: String?) {
+        let page = try JSONDecoder().decode(FireworksModelsPage.self, from: data)
+        let models = (page.models ?? [])
+            .filter { $0.isServerlessChatModel }
+            .map { $0.name }
+        return (models, page.nextPageToken)
+    }
+
     /// Extract a human-readable error message from API error response data
-    private static func extractErrorMessage(from data: Data, statusCode: Int) -> String {
+    static func extractErrorMessage(from data: Data, statusCode: Int) -> String {
         // Try to parse as JSON error response (OpenAI/xAI format)
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             // OpenAI/xAI format: {"error": {"message": "...", "type": "...", "code": "..."}}
             if let error = json["error"] as? [String: Any] {
                 if let message = error["message"] as? String {
+                    if let friendly = friendlyUpstreamRejection(message) {
+                        return friendly
+                    }
                     // Include error code if available for more context
                     if let code = error["code"] as? String {
                         return "\(message) (code: \(code))"
@@ -4975,5 +6208,19 @@ extension RemoteProviderService {
         }
 
         return "HTTP \(statusCode): Unknown error"
+    }
+
+    /// Rewrite known upstream-adapter rejections into actionable copy. The
+    /// Router's non-vision upstream adapters reject array-form user content
+    /// with a terse protocol message that means nothing to a user staring at
+    /// a chat bubble — translate it to what actually happened and how to
+    /// recover. Returns nil for everything else (message passes through).
+    static func friendlyUpstreamRejection(_ message: String) -> String? {
+        let lowered = message.lowercased()
+        if lowered.contains("user message content must be a string") {
+            return
+                "This model doesn't accept image, audio, or video attachments. Remove the attachment from the conversation (or start a new chat without it), or switch to a vision-capable model."
+        }
+        return nil
     }
 }

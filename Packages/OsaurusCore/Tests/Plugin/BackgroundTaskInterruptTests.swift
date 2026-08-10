@@ -20,7 +20,7 @@ struct BackgroundTaskInterruptTests {
 
     private func makeRunningState() -> (state: BackgroundTaskState, mgr: BackgroundTaskManager) {
         let context = ExecutionContext(agentId: Agent.defaultId)
-        context.chatSession.chatEngineFactory = { MockChatEngine() }
+        context.chatSession.chatEngineFactory = { _ in MockChatEngine() }
         let state = BackgroundTaskState(
             id: UUID(),
             taskTitle: "interrupt-test",

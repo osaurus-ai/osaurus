@@ -1,0 +1,53 @@
+{
+  "id": "agentdb.import-crlf-csv",
+  "domain": "agent_loop",
+  "label": "agentdb • import a CRLF CSV without preprocessing",
+  "query": "Import assets_crlf.csv from the working folder into a new table named release_assets in one bulk operation, then tell me the number of imported rows and the total downloads.",
+  "notes": "End-to-end regression for the valid CRLF file that previously parsed as one Swift Character record and failed with 'No data rows were found'. The first db_import call must succeed without shell line-ending conversion or per-row fallback.",
+  "fixtures": {
+    "agentCapabilities": {
+      "dbEnabled": true
+    },
+    "workspaceFiles": [
+      {
+        "path": "assets_crlf.csv",
+        "contents": "asset_id,asset_name,downloads\r\n1,Osaurus.dmg,10\r\n2,Osaurus-0.22.13.dmg,20\r\n3,Osaurus-0.22.13-dSYMs.zip,30\r\n4,Osaurus-0.22.13.html,40\r\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "mustCallTools": [
+        "db_import"
+      ],
+      "mustNotCallTools": [
+        "db_insert",
+        "db_upsert",
+        "shell_run"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "db_import",
+          "maxCalls": 1,
+          "maxErrors": 0,
+          "argsMustContain": "assets_crlf.csv"
+        }
+      ],
+      "dbState": [
+        {
+          "sql": "SELECT COUNT(*) FROM release_assets",
+          "expectFirstValue": "4"
+        },
+        {
+          "sql": "SELECT SUM(downloads) FROM release_assets",
+          "expectFirstValue": "100"
+        }
+      ],
+      "finalTextContains": [
+        "4",
+        "100"
+      ]
+    }
+  }
+}

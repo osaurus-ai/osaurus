@@ -176,3 +176,10 @@ App/osaurus/Secrets.xcconfig
 # `local/` dir stays local. Committed synthetic fixtures live alongside it in
 # Packages/OsaurusEvals/Fixtures/ScreenContext/*.json.
 Packages/OsaurusEvals/Fixtures/ScreenContext/local/
+# Local debug output — /tmp contents are never committed.
+tmp/
+
+# Go helper build artifacts (osaurus-wa builds into build/ via `make
+# wa-helper`, but a bare `go build ./...` drops the binary next to its
+# sources).
+helpers/osaurus-wa/osaurus-wa

@@ -56,6 +56,17 @@ public final class AgentDatabaseStore: @unchecked Sendable {
         return candidate
     }
 
+    /// Return the cached connection for `agentId` only if one is already
+    /// open — never opens. For callers on the main thread (e.g. the
+    /// context-budget preview) where a first open (file I/O + SQLCipher key
+    /// derivation) would hang the UI.
+    public func cachedOpenDatabase(for agentId: UUID) -> AgentDatabase? {
+        if let existing = lockedGet(agentId), existing.isOpen {
+            return existing
+        }
+        return nil
+    }
+
     /// Push a fresh storage limit into the (already-cached) connection
     /// for `agentId`. Called by `AgentManager` whenever the user edits
     /// `Agent.settings.limits.storageBytesLimit`, so the next mutation

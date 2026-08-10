@@ -24,7 +24,9 @@ public actor MetalSafeEmbedder: VecturaEmbedder {
     }
 
     public func embed(texts: [String]) async throws -> [[Float]] {
-        await MetalGate.shared.enterEmbedding()
+        // Throws CancellationError if cancelled while waiting; no gate is
+        // held on that path, so the exit pairing below is untouched.
+        try await MetalGate.shared.enterEmbedding()
         do {
             let result = try await inner.embed(texts: texts)
             await MetalGate.shared.exitEmbedding()
@@ -36,7 +38,7 @@ public actor MetalSafeEmbedder: VecturaEmbedder {
     }
 
     public func embed(text: String) async throws -> [Float] {
-        await MetalGate.shared.enterEmbedding()
+        try await MetalGate.shared.enterEmbedding()
         do {
             let result = try await inner.embed(text: text)
             await MetalGate.shared.exitEmbedding()

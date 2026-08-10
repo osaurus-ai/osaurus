@@ -14,27 +14,27 @@ import Testing
 
 @Suite("PDFTableDetector")
 struct PDFTableDetectorTests {
-    @Test func rows_clusterGlyphsByVisualYAndSplitCellsOnWideGaps() {
+    @Test func rows_clusterGlyphsByVisualYAndSplitCellsOnWideGaps() throws {
         let glyphs = Self.gridGlyphs([
             ["Name", "Amount", "Status"],
             ["Alice", "1200", "Paid"],
         ])
 
-        let rows = PDFTableDetector.rows(from: glyphs)
+        let rows = try PDFTableDetector.rows(from: glyphs)
 
         #expect(rows.count == 2)
         #expect(rows[0].cells.map(\.text) == ["Name", "Amount", "Status"])
         #expect(rows[1].cells.map(\.text) == ["Alice", "1200", "Paid"])
     }
 
-    @Test func detectTables_groupsAlignedRowsIntoOneTable() {
+    @Test func detectTables_groupsAlignedRowsIntoOneTable() throws {
         let glyphs = Self.gridGlyphs([
             ["Quarter", "Revenue"],
             ["Q1", "1200"],
             ["Q2", "1800"],
         ])
 
-        let tables = PDFTableDetector.detectTables(glyphs: glyphs)
+        let tables = try PDFTableDetector.detectTables(glyphs: glyphs)
 
         #expect(tables.count == 1)
         #expect(tables[0].rows.count == 3)
@@ -43,10 +43,10 @@ struct PDFTableDetectorTests {
         #expect(tables[0].rows[2].cells.map(\.columnIndex) == [0, 1])
     }
 
-    @Test func detectTables_ignoresSingleRowCandidates() {
+    @Test func detectTables_ignoresSingleRowCandidates() throws {
         let glyphs = Self.gridGlyphs([["Only", "One", "Row"]])
 
-        #expect(PDFTableDetector.detectTables(glyphs: glyphs).isEmpty)
+        #expect(try PDFTableDetector.detectTables(glyphs: glyphs).isEmpty)
     }
 
     private static func gridGlyphs(_ rows: [[String]]) -> [PDFTableDetector.Glyph] {

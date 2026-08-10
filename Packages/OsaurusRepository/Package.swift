@@ -17,7 +17,8 @@ let package = Package(
                 .product(name: "OsaurusNetworking", package: "OsaurusNetworking")
             ],
             path: ".",
-            exclude: ["Tests"]
+            exclude: ["Tests"],
+            linkerSettings: [.linkedLibrary("z")]
         ),
         .testTarget(
             name: "OsaurusRepositoryTests",

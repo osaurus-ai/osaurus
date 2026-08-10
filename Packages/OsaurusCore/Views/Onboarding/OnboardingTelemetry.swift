@@ -31,17 +31,23 @@ enum OnboardingTelemetry {
     }
 
     /// The user committed to a brain on the Configure AI step. `source` is the
-    /// low-cardinality path (`local` | `provider_key`); the bring-your-own-key
-    /// path also carries the closed-enum `provider` type. No key, model id, or
-    /// URL is ever attached. Selection is payment-free — this fires at the
-    /// proceed moment, not on any checkout.
+    /// low-cardinality path (`hosted` | `local` | `provider_key`); the
+    /// bring-your-own-key path also carries the closed-enum `provider` type,
+    /// and the local path carries `download_started` — whether committing
+    /// kicked off a background model download (vs. an already-downloaded
+    /// model). No key, model id, or URL is ever attached. Selection is
+    /// payment-free — this fires at the proceed moment, not on any checkout.
     static func brainSourceSelected(
         _ source: BrainSource,
+        downloadStarted: Bool? = nil,
         service: TelemetryService = .shared
     ) {
         var props: [String: Value] = ["source": source.telemetryValue]
         if let provider = source.providerTelemetryValue {
             props["provider"] = provider
+        }
+        if let downloadStarted {
+            props["download_started"] = downloadStarted
         }
         service.track("brain_source_selected", props)
     }

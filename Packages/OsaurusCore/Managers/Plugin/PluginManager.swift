@@ -133,6 +133,12 @@ final class PluginManager {
     /// calls from overwriting and deallocating each other's host contexts.
     private var activeReloadTask: Task<Void, Never>?
 
+    /// True while PluginManager, ToolRegistry, and SkillManager expose one
+    /// complete catalog snapshot. A reload clears it until registry mutation
+    /// finishes. Prompt composition uses this readiness boundary so a
+    /// persisted KV prefix can never depend on launch/reload task timing.
+    private var isPromptCatalogReady = false
+
     private init() {}
 
     /// Returns the load error for a specific plugin, if any
@@ -181,6 +187,19 @@ final class PluginManager {
 
     // MARK: - Loading
 
+    /// Wait for the process's initial plugin catalog snapshot without turning
+    /// every prompt into a rescan. Concurrent launch/warmup/send callers join
+    /// the same `activeReloadTask`; later install/uninstall paths still call
+    /// `loadAll()` directly to refresh the catalog.
+    func ensurePromptCatalogReady() async {
+        if isPromptCatalogReady { return }
+        if let task = activeReloadTask {
+            await task.value
+            return
+        }
+        await loadAll()
+    }
+
     /// Result of heavy plugin scanning performed on a background thread.
     private struct PluginScanResult: @unchecked Sendable {
         let allURLs: [URL]
@@ -204,6 +223,7 @@ final class PluginManager {
             }
         }
 
+        isPromptCatalogReady = false
         let task = Task {
             await _loadAll(forceReload: forceReload)
         }
@@ -283,21 +303,34 @@ final class PluginManager {
         for entry in scanResult.loadResults {
             switch entry.result {
             case .success(let loaded):
+                // Loaded plugin IDs must be unique: tools, routes, host
+                // contexts, and secrets are all keyed by plugin ID, so a
+                // second instance would silently shadow (or corrupt) the
+                // first. Keep the already-loaded instance and reject the
+                // newcomer (e.g. a version dir that contains two dylibs).
+                if let existing = plugins.first(where: { $0.plugin.id == loaded.plugin.id }) {
+                    let pluginId = loaded.plugin.id
+                    let errorMsg =
+                        "Duplicate plugin id '\(pluginId)': already loaded from \(existing.plugin.bundlePath); ignoring \(entry.url.path)"
+                    NSLog("[Osaurus] %@", errorMsg)
+                    failedPlugins[pluginId] = FailedPlugin(
+                        pluginId: pluginId,
+                        error: errorMsg,
+                        lastKnownManifest: loaded.plugin.manifest
+                    )
+                    await loaded.plugin.shutdown()
+                    continue
+                }
                 plugins.append(loaded)
                 loadedPluginPaths.insert(entry.url.path)
                 loadedNew = true
 
-                // Register tools — except for plugins whose functionality is
-                // now built into Osaurus (native search supersedes
-                // osaurus.search); their dylib stays loaded for routes/skills
-                // but the tools would collide with the native surface.
-                if !Self.supersededPluginIds.contains(loaded.plugin.id) {
-                    for tool in loaded.tools {
-                        ToolRegistry.shared.registerPluginTool(tool)
-                    }
+                // Superseded plugins never reach this point — the scan stage
+                // filters them out (see `excludeSupersededPlugins`), so every
+                // loaded plugin registers its full tool and skill surface.
+                for tool in loaded.tools {
+                    ToolRegistry.shared.registerPluginTool(tool)
                 }
-
-                // Register plugin skills
                 for skill in loaded.skills {
                     await SkillManager.shared.registerPluginSkill(skill)
                 }
@@ -320,6 +353,11 @@ final class PluginManager {
         }
 
         observeTunnelStatus()
+        // Every model-facing tool/skill registry mutation is complete here.
+        // Publish readiness before first-delivery callbacks: a plugin is
+        // allowed to invoke host inference from a callback, and making that
+        // nested request await its own active reload task would deadlock.
+        isPromptCatalogReady = true
         // Per-plugin first-delivery sweep, each step bracketed by the
         // `.currently_loading` marker. A SIGABRT inside the plugin's
         // `on_config_changed` (e.g. misaligned ABI mirror calling
@@ -350,11 +388,53 @@ final class PluginManager {
     nonisolated static let abiProbeKey = "__osaurus_abi_probe__"
 
     /// Plugins whose functionality has been absorbed into Osaurus itself.
-    /// Their tools are NOT registered (the native implementation owns the
-    /// tool names); the Plugins UI shows a "built into Osaurus" notice
-    /// instead of the usual tool list. `nonisolated` so views and the
-    /// migration path can consult it from any context.
-    nonisolated static let supersededPluginIds: Set<String> = ["osaurus.search"]
+    /// Their dylibs are skipped entirely at the scan stage (see
+    /// `excludeSupersededPlugins`): the native implementation owns the tool
+    /// names, none of these plugins declare routes, and never dlopen-ing
+    /// them removes the ABI probe / config-push crash surface for code that
+    /// will never serve a tool again. The Plugins UI shows a "built into
+    /// Osaurus" notice instead of the usual tool list — installed-state
+    /// detection keys off `InstalledPluginsStore`, not the loaded pool.
+    /// `nonisolated` so views and the migration path can consult it from
+    /// any context.
+    nonisolated static let supersededPluginIds: Set<String> = [
+        "osaurus.search", "osaurus.browser",
+    ]
+
+    /// Drops superseded plugins from a scan result BEFORE any dlopen. Also
+    /// removes their verification failures (e.g. a missing consent marker)
+    /// so the Plugins UI keeps showing the "Built into Osaurus" banner
+    /// instead of a load error for a plugin that will never load again.
+    /// Removing them from `urls` also means `_loadAll`'s removed-plugin
+    /// sweep unloads any instance a previous scan loaded (hot-reload
+    /// transition). Pure function so the skip contract is unit-testable
+    /// without real dylibs.
+    nonisolated static func excludeSupersededPlugins(
+        urls: [URL],
+        failures: [String: String]
+    ) -> (urls: [URL], failures: [String: String]) {
+        var filteredFailures = failures
+        for pluginId in supersededPluginIds {
+            filteredFailures.removeValue(forKey: pluginId)
+        }
+        return (
+            urls: urls.filter { !supersededPluginIds.contains(extractPluginId(from: $0)) },
+            failures: filteredFailures
+        )
+    }
+
+    /// The settings tab that owns a superseded plugin's native replacement,
+    /// for Plugins-UI deep links ("Built into Osaurus" banner / dead Browse
+    /// cards).
+    nonisolated static func nativeSettingsTab(forSupersededPlugin pluginId: String)
+        -> ManagementTab?
+    {
+        switch pluginId {
+        case "osaurus.search": return .search
+        case "osaurus.browser": return .browser
+        default: return nil
+        }
+    }
 
     /// Per-plugin first-delivery sweep. The synthetic ABI probe is
     /// delivered SYNCHRONOUSLY inside a `.currently_loading` marker so
@@ -384,42 +464,66 @@ final class PluginManager {
     private func runFirstDeliverySweep(from scanResult: PluginScanResult) {
         let agents = AgentManager.shared.agents
         let statuses = RelayTunnelManager.shared.agentStatuses
+        let agentIds = agents.map(\.id)
+        let probeAgentId = agents.first?.id ?? Agent.defaultId
 
-        for entry in scanResult.loadResults {
-            guard case .success(let loaded) = entry.result else { continue }
+        let loadedPlugins: [LoadedPlugin] = scanResult.loadResults.compactMap { entry in
+            guard case .success(let loaded) = entry.result else { return nil }
+            return loaded
+        }
+        guard !loadedPlugins.isEmpty else { return }
 
-            let pluginId = loaded.plugin.id
-            Self.writeLoadingMarker(pluginId: pluginId)
-            // Deliberately no `defer`: the marker must persist on the
-            // SIGABRT path. It is cleared only after the probe returns
-            // cleanly below.
-            runAbiHandshakeProbe(loaded: loaded, agentId: agents.first?.id ?? Agent.defaultId)
-            Self.clearLoadingMarker()
-
-            // Real per-agent config + tunnel URL pushes resume the
-            // existing async fire-and-forget path. The probe above
-            // already exercised the misalignment-prone host call
-            // pattern, so this fan-out preserves perf without giving
-            // up the crash-loop guard.
-            //
-            // Resolve and deliver the per-agent config off the main
-            // actor: the secret reads behind it round-trip to the
-            // authentication daemon over blocking XPC, which can stall
-            // the main thread for seconds at launch. The plugin's
-            // `on_config_changed` already runs on its own serial queue,
-            // so nothing on this path needs the main thread.
-            let agentIds = agents.map(\.id)
-            Task.detached(priority: .userInitiated) { [weak self] in
-                guard let self else { return }
-                for agentId in agentIds {
-                    self.deliverInitialConfig(to: loaded, agentId: agentId)
+        // Tunnel URLs for routed plugins, resolved on the main actor now so
+        // the off-main sweep below doesn't need `RelayTunnelManager` state.
+        let tunnelPushes: [(pluginId: String, agentId: UUID, url: String)] = loadedPlugins
+            .filter { !$0.routes.isEmpty }
+            .flatMap { loaded in
+                agents.compactMap { agent -> (String, UUID, String)? in
+                    guard case .connected(let url) = statuses[agent.id] else { return nil }
+                    return (loaded.plugin.id, agent.id, url)
                 }
             }
 
-            if !loaded.routes.isEmpty {
-                for agent in agents {
-                    guard case .connected(let url) = statuses[agent.id] else { continue }
-                    pushTunnelURL(url, to: loaded, agentId: agent.id)
+        // The whole sweep runs off the main actor: the ABI handshake probe
+        // (`notifyConfigBatchSync`) blocks until the plugin's C
+        // `on_config_changed` returns, and a plugin doing heavy work there
+        // (HTTP, OAuth refresh) used to stall the main thread for seconds at
+        // launch — one plugin at a time. The secret reads behind the config
+        // delivery also round-trip to the authentication daemon over
+        // blocking XPC. Nothing on this path needs the main thread; the
+        // per-plugin ordering (marker → probe → clear → config → tunnel)
+        // is preserved because the sweep stays sequential inside one task,
+        // keeping the crash-loop quarantine contract: a SIGABRT inside the
+        // probe leaves the marker on disk for the next launch to read.
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            for loaded in loadedPlugins {
+                let pluginId = loaded.plugin.id
+                Self.writeLoadingMarker(pluginId: pluginId)
+                // Deliberately no `defer`: the marker must persist on the
+                // SIGABRT path. It is cleared only after the probe returns
+                // cleanly below.
+                Self.runAbiHandshakeProbe(loaded: loaded, agentId: probeAgentId)
+                Self.clearLoadingMarker()
+
+                // Real per-agent config delivery. The probe above already
+                // exercised the misalignment-prone host call pattern, so
+                // this fan-out runs outside the marker window.
+                for agentId in agentIds {
+                    self.deliverInitialConfig(to: loaded, agentId: agentId)
+                }
+
+                // Tunnel pushes after the probe, so an ABI-misaligned
+                // plugin aborts inside the marker window (quarantine on
+                // next launch) rather than on this uncovered path. The
+                // dedup cache lives on the main actor.
+                let pushes = tunnelPushes.filter { $0.pluginId == pluginId }
+                if !pushes.isEmpty {
+                    await MainActor.run {
+                        for push in pushes {
+                            self.pushTunnelURL(push.url, to: loaded, agentId: push.agentId)
+                        }
+                    }
                 }
             }
         }
@@ -433,10 +537,12 @@ final class PluginManager {
     /// instead of crash-looping the host on every subsequent launch.
     ///
     /// No-op for v1 plugins (no `on_config_changed` slot to dispatch to).
-    private func runAbiHandshakeProbe(loaded: LoadedPlugin, agentId: UUID) {
+    /// `nonisolated static`: runs from the off-main first-delivery sweep
+    /// (blocking until plugin C code returns must never happen on main).
+    private nonisolated static func runAbiHandshakeProbe(loaded: LoadedPlugin, agentId: UUID) {
         guard loaded.plugin.abiVersion >= 2 else { return }
         loaded.plugin.notifyConfigBatchSync(
-            [(key: Self.abiProbeKey, value: UUID().uuidString)],
+            [(key: abiProbeKey, value: UUID().uuidString)],
             agentId: agentId
         )
     }
@@ -466,12 +572,18 @@ final class PluginManager {
         else { return }
 
         let allFieldKeys = Set(configSpec.sections.flatMap { $0.fields.map { $0.key } })
-        var values = ToolSecretsKeychain.getAllSecrets(for: pluginId, agentId: agentId)
+        // Shared resolution policy (exact agent overlaid on default-agent
+        // globals) so initial delivery matches tool payload injection —
+        // a key saved once on the Plugins tab reaches every agent's
+        // `on_config_changed`, not just the Default agent's.
+        var values = ToolSecretsKeychain.resolvedSecretsWithDefaults(
+            pluginId: pluginId, agentId: agentId)
 
         for section in configSpec.sections {
             for field in section.fields {
                 if values[field.key] == nil, field.type != .readonly, field.type != .status,
-                    let val = ToolSecretsKeychain.getSecret(id: field.key, for: pluginId, agentId: agentId)
+                    let val = ToolSecretsKeychain.resolvedSecret(
+                        id: field.key, for: pluginId, agentId: agentId)
                 {
                     values[field.key] = val
                 }
@@ -479,7 +591,8 @@ final class PluginManager {
                     values[field.key] = def.stringValue
                 }
                 if let connKey = field.connected_when, values[connKey] == nil,
-                    let val = ToolSecretsKeychain.getSecret(id: connKey, for: pluginId, agentId: agentId)
+                    let val = ToolSecretsKeychain.resolvedSecret(
+                        id: connKey, for: pluginId, agentId: agentId)
                 {
                     values[connKey] = val
                 }
@@ -564,8 +677,12 @@ final class PluginManager {
 
     /// Tear down per-agent state on every loaded plugin when an agent is
     /// deleted: push `tunnel_url=""` so plugins can deregister their
-    /// webhooks. Per-agent keychain secrets are swept by
-    /// `AgentManager.delete(id:)` itself before this handler runs.
+    /// webhooks. `AgentManager.delete(id:)` already ran the awaitable
+    /// `tearDownPluginsForRemovedAgent` before sweeping keychain secrets;
+    /// this notification-driven pass is a belt-and-braces repeat for any
+    /// other `.agentRemoved` poster — the plugin-side delivery dedup
+    /// filters the duplicate `tunnel_url=""` so `on_config_changed`
+    /// doesn't re-fire.
     private func handleAgentRemoved(_ agentId: UUID) {
         for loaded in plugins where !loaded.routes.isEmpty {
             pushTunnelURL(nil, to: loaded, agentId: agentId)
@@ -576,6 +693,41 @@ final class PluginManager {
         for pluginId in lastPushedTunnelURL.keys {
             lastPushedTunnelURL[pluginId]?.removeValue(forKey: agentId)
         }
+    }
+
+    /// Awaitable per-agent plugin teardown for agent deletion. Pushes
+    /// `tunnel_url=""` to every routed plugin through the SYNCHRONOUS
+    /// config-delivery path and returns only after each plugin's
+    /// `on_config_changed` has run.
+    ///
+    /// Ordering contract: `AgentManager.delete(id:)` must call this
+    /// BEFORE `ToolSecretsKeychain.deleteAllSecrets(forAgent:)`. Plugins
+    /// deregister webhooks inside this callback and read their config
+    /// (e.g. Telegram's `bot_token`) while doing so — sweeping the
+    /// keychain first made those reads return nothing, leaving the
+    /// webhook registered upstream forever.
+    func tearDownPluginsForRemovedAgent(agentId: UUID) async {
+        // Drop the host-side tunnel-push dedup entries regardless of
+        // whether any plugin needs a delivery.
+        for pluginId in lastPushedTunnelURL.keys {
+            lastPushedTunnelURL[pluginId]?.removeValue(forKey: agentId)
+        }
+
+        let routed = plugins.filter { !$0.routes.isEmpty }
+        guard !routed.isEmpty else { return }
+
+        // Off the main actor: the keychain write blocks on security-daemon
+        // XPC and `notifyConfigBatchSync` blocks until the plugin's C
+        // callback returns.
+        await Task.detached(priority: .userInitiated) {
+            for loaded in routed {
+                Self.persistTunnelURLSecret(nil, pluginId: loaded.plugin.id, agentId: agentId)
+                loaded.plugin.notifyConfigBatchSync(
+                    [(key: "tunnel_url", value: "")],
+                    agentId: agentId
+                )
+            }
+        }.value
     }
 
     private func handleTunnelStatusChange(_ statuses: [UUID: AgentRelayStatus]) {
@@ -658,12 +810,6 @@ final class PluginManager {
     ) {
         let pluginId = loaded.plugin.id
 
-        if let url {
-            ToolSecretsKeychain.saveSecret(url, id: "tunnel_url", for: pluginId, agentId: agentId)
-        } else {
-            ToolSecretsKeychain.deleteSecret(id: "tunnel_url", for: pluginId, agentId: agentId)
-        }
-
         // Record the value we pushed so `handleTunnelStatusChange` can
         // dedup. Setting `[agentId] = nil` removes the entry; that's
         // intentional — an absent entry is treated as "last pushed = nil"
@@ -677,18 +823,39 @@ final class PluginManager {
         )
 
         if sync {
+            Self.persistTunnelURLSecret(url, pluginId: pluginId, agentId: agentId)
             loaded.plugin.notifyConfigBatchSync(
                 [(key: "tunnel_url", value: url ?? "")],
                 agentId: agentId,
                 force: force
             )
         } else {
-            loaded.plugin.notifyConfigChanged(
-                key: "tunnel_url",
-                value: url ?? "",
-                agentId: agentId,
-                force: force
-            )
+            // The keychain write blocks on security-daemon XPC and has
+            // hung the main thread for seconds on relay reconnects, so the
+            // fire-and-forget path persists and notifies off the main
+            // actor. The write lands before the notify so plugins that
+            // read the secret back see the new value.
+            Task.detached(priority: .userInitiated) {
+                Self.persistTunnelURLSecret(url, pluginId: pluginId, agentId: agentId)
+                loaded.plugin.notifyConfigChanged(
+                    key: "tunnel_url",
+                    value: url ?? "",
+                    agentId: agentId,
+                    force: force
+                )
+            }
+        }
+    }
+
+    private nonisolated static func persistTunnelURLSecret(
+        _ url: String?,
+        pluginId: String,
+        agentId: UUID
+    ) {
+        if let url {
+            ToolSecretsKeychain.saveSecret(url, id: "tunnel_url", for: pluginId, agentId: agentId)
+        } else {
+            ToolSecretsKeychain.deleteSecret(id: "tunnel_url", for: pluginId, agentId: agentId)
         }
     }
 
@@ -746,7 +913,11 @@ final class PluginManager {
     nonisolated private static func performPluginScan(
         alreadyLoadedPaths: Set<String>
     ) -> PluginScanResult {
-        let (urls, verificationFailures) = toolsDirectoryURLsWithFailures()
+        let scanned = toolsDirectoryURLsWithFailures()
+        let (urls, verificationFailures) = excludeSupersededPlugins(
+            urls: scanned.urls,
+            failures: scanned.failures
+        )
 
         var loadResults: [(url: URL, result: Result<LoadedPlugin, PluginLoadError>)] = []
         for url in urls {
@@ -905,6 +1076,60 @@ final class PluginManager {
         return current.patchVersion >= required.patchVersion
     }
 
+    // MARK: - Load-time validation (pure helpers)
+
+    /// Returns a message when the plugin's ABI table is missing any of the
+    /// five required function pointers. Every plugin — v1 or v2+ — must
+    /// provide the full required prefix; optional v2 callbacks stay optional.
+    nonisolated static func abiTableValidationFailure(_ api: osr_plugin_api) -> String? {
+        var missing: [String] = []
+        if api.free_string == nil { missing.append("free_string") }
+        if api.`init` == nil { missing.append("init") }
+        if api.destroy == nil { missing.append("destroy") }
+        if api.get_manifest == nil { missing.append("get_manifest") }
+        if api.invoke == nil { missing.append("invoke") }
+        guard !missing.isEmpty else { return nil }
+        return "Plugin ABI table is missing required function(s): \(missing.joined(separator: ", "))"
+    }
+
+    /// Returns a message when the manifest's `plugin_id` does not match the
+    /// install-directory-derived ID the receipt/consent/quarantine machinery
+    /// is keyed by.
+    nonisolated static func manifestIdentityValidationFailure(
+        manifest: PluginManifest,
+        directoryId: String
+    ) -> String? {
+        guard manifest.plugin_id != directoryId else { return nil }
+        return
+            "Plugin manifest declares plugin_id '\(manifest.plugin_id)' but is installed as '\(directoryId)'. Reinstall the plugin under its canonical ID."
+    }
+
+    /// Returns a message when the manifest declares an empty or duplicate
+    /// tool ID, or an empty or duplicate route ID.
+    nonisolated static func manifestCapabilityValidationFailure(_ manifest: PluginManifest) -> String? {
+        var seenToolIds = Set<String>()
+        for tool in manifest.capabilities.tools ?? [] {
+            let id = tool.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            if id.isEmpty {
+                return "Plugin \(manifest.plugin_id) declares a tool with an empty id"
+            }
+            if !seenToolIds.insert(id).inserted {
+                return "Plugin \(manifest.plugin_id) declares duplicate tool id '\(id)'"
+            }
+        }
+        var seenRouteIds = Set<String>()
+        for route in manifest.capabilities.routes ?? [] {
+            let id = route.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            if id.isEmpty {
+                return "Plugin \(manifest.plugin_id) declares a route with an empty id"
+            }
+            if !seenRouteIds.insert(id).inserted {
+                return "Plugin \(manifest.plugin_id) declares duplicate route id '\(id)'"
+            }
+        }
+        return nil
+    }
+
     /// Loads a single plugin from a dylib URL via dlopen + C ABI handshake.
     /// Tries v2 entry point first (with host API injection), then falls back to v1.
     nonisolated private static func loadPluginWithError(at url: URL) -> Result<LoadedPlugin, PluginLoadError> {
@@ -973,8 +1198,11 @@ final class PluginManager {
                 return .failure(PluginLoadError(message: errorMsg))
             }
 
-            let apiPtr = apiRawPtr.assumingMemoryBound(to: osr_plugin_api.self)
-            api = apiPtr.pointee
+            // Historical v1 structs contain ONLY the required prefix — reading
+            // the full `osr_plugin_api` here would read past the end of the
+            // plugin's static struct. Decode via the explicit prefix layout.
+            let prefixPtr = apiRawPtr.assumingMemoryBound(to: osr_plugin_api_v1.self)
+            api = osr_plugin_api(v1: prefixPtr.pointee)
             abiVersion = 1
             print(
                 "[Osaurus] Loaded plugin from \(url.lastPathComponent) (entry=v1 legacy). "
@@ -984,6 +1212,19 @@ final class PluginManager {
         } else {
             let errorMsg = "Missing plugin entry point (osaurus_plugin_entry_v2 or osaurus_plugin_entry)"
             print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
+            dlclose(handle)
+            return .failure(PluginLoadError(message: errorMsg))
+        }
+
+        // Reject incomplete ABI tables BEFORE calling init. Accepting a nil
+        // `free_string` leaks every returned string, a nil `destroy` makes
+        // teardown impossible, and a nil `invoke` produces tools that can
+        // never run — none of which the plugin can fix after init has
+        // already handed out a live context.
+        if let abiError = abiTableValidationFailure(api) {
+            let errorMsg = "\(abiError) in \(url.lastPathComponent)"
+            print("[Osaurus] \(errorMsg)")
+            hostContext?.teardown()
             dlclose(handle)
             return .failure(PluginLoadError(message: errorMsg))
         }
@@ -1039,10 +1280,33 @@ final class PluginManager {
             return .failure(PluginLoadError(message: errorMsg))
         }
 
-        // If the manifest plugin_id differs from the directory-derived ID,
-        // re-register the host context under the canonical ID.
-        if let hc = hostContext, manifest.plugin_id != hc.pluginId {
-            PluginHostContext.rekeyContext(from: hc.pluginId, to: manifest.plugin_id)
+        // The install layout (`Tools/<plugin_id>/<version>/`) and the receipt
+        // are keyed by the directory-derived ID; verification, consent,
+        // quarantine, and secrets all use it. A manifest that declares a
+        // different ID would let a plugin masquerade under another plugin's
+        // identity (and previously just re-keyed the host context to the
+        // manifest's claim). Fail the load instead.
+        let directoryId = extractPluginId(from: url)
+        if let identityError = manifestIdentityValidationFailure(
+            manifest: manifest,
+            directoryId: directoryId
+        ) {
+            print("[Osaurus] \(identityError)")
+            api.destroy?(ctx)
+            hostContext?.teardown()
+            dlclose(handle)
+            return .failure(PluginLoadError(message: identityError, manifest: manifest))
+        }
+
+        // Reject empty or duplicate tool/route IDs up front — duplicate tool
+        // IDs would silently overwrite each other in the tool registry, and
+        // empty/duplicate route IDs break route dispatch and diagnostics.
+        if let capabilityError = manifestCapabilityValidationFailure(manifest) {
+            print("[Osaurus] \(capabilityError)")
+            api.destroy?(ctx)
+            hostContext?.teardown()
+            dlclose(handle)
+            return .failure(PluginLoadError(message: capabilityError, manifest: manifest))
         }
 
         // Enforce manifest-declared compatibility constraints. Authors
@@ -1073,12 +1337,13 @@ final class PluginManager {
         if let mount = manifest.capabilities.web?.mount,
             let routes = manifest.capabilities.routes
         {
-            let normalizedMount = mount.hasPrefix("/") ? mount : "/\(mount)"
             for route in routes {
                 let routePath = route.path.hasPrefix("/") ? route.path : "/\(route.path)"
-                let isShadowed =
-                    routePath == normalizedMount
-                    || routePath.hasPrefix(normalizedMount + "/")
+                // Same segment-boundary helper HTTPHandler uses for static
+                // dispatch, so validation and runtime can never disagree
+                // about which paths the mount captures.
+                let isShadowed = PluginManifest.WebSpec.mountCaptures(
+                    subpath: routePath, mount: mount)
                 if isShadowed {
                     let errorMsg =
                         "Plugin \(manifest.plugin_id) declares route '\(route.path)' under web mount '\(mount)'; the static web branch would shadow this route. Move the route outside the web mount or remove the web mount overlap."
@@ -1172,7 +1437,7 @@ final class PluginManager {
                     version: skill.version,
                     author: skill.author,
                     category: skill.category,
-                    enabled: skill.enabled,
+                    keywords: skill.keywords,
                     instructions: skill.instructions,
                     isBuiltIn: false,
                     createdAt: skill.createdAt,
@@ -1332,29 +1597,44 @@ final class PluginManager {
     /// durable path fails for any reason — partial protection beats
     /// none.
     private nonisolated static func writeLoadingMarker(pluginId: String) {
-        let url = currentlyLoadingURL()
-        let data = Data(pluginId.utf8)
-        let fm = FileManager.default
-        let tmpURL = url.appendingPathExtension("tmp-\(UUID().uuidString)")
-        do {
-            try data.write(to: tmpURL, options: [.atomic])
-            if let handle = try? FileHandle(forUpdating: tmpURL) {
-                try? handle.synchronize()
-                try? handle.close()
+        // `sync` (not direct execution) so a still-running async clear from
+        // the previous plugin can't be reordered after this write and delete
+        // the fresh marker. The write itself must complete before the caller
+        // enters the dlopen/init danger zone, so it cannot be async.
+        markerQueue.sync {
+            let url = currentlyLoadingURL()
+            let data = Data(pluginId.utf8)
+            let fm = FileManager.default
+            let tmpURL = url.appendingPathExtension("tmp-\(UUID().uuidString)")
+            do {
+                try data.write(to: tmpURL, options: [.atomic])
+                if let handle = try? FileHandle(forUpdating: tmpURL) {
+                    try? handle.synchronize()
+                    try? handle.close()
+                }
+                if fm.fileExists(atPath: url.path) {
+                    _ = try fm.replaceItemAt(url, withItemAt: tmpURL)
+                } else {
+                    try fm.moveItem(at: tmpURL, to: url)
+                }
+                fsyncDirectory(url.deletingLastPathComponent())
+            } catch {
+                try? data.write(to: url)
             }
-            if fm.fileExists(atPath: url.path) {
-                _ = try fm.replaceItemAt(url, withItemAt: tmpURL)
-            } else {
-                try fm.moveItem(at: tmpURL, to: url)
-            }
-            fsyncDirectory(url.deletingLastPathComponent())
-        } catch {
-            try? data.write(to: url)
         }
     }
 
+    /// Serializes loading-marker file operations. Clearing is fire-and-forget
+    /// off the caller's thread — the `unlink` stalled for 3+ seconds on slow
+    /// disks and hung the UI when the sweep ran on the main actor — while
+    /// writes stay synchronous for crash durability.
+    private nonisolated static let markerQueue = DispatchQueue(
+        label: "ai.osaurus.plugin-loading-marker", qos: .utility)
+
     private nonisolated static func clearLoadingMarker() {
-        try? FileManager.default.removeItem(at: currentlyLoadingURL())
+        markerQueue.async {
+            try? FileManager.default.removeItem(at: currentlyLoadingURL())
+        }
     }
 
     /// `fsync()`s the directory containing `url` so a preceding atomic

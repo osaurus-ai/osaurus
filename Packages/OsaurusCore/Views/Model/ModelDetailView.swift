@@ -70,6 +70,9 @@ struct ModelDetailView: View, Identifiable {
     /// Whether the Advanced section is expanded
     @State private var isAdvancedExpanded = false
 
+    /// Whether the developer-oriented Runtime Diagnostics section is expanded
+    @State private var isDiagnosticsExpanded = false
+
     /// Rendered model card markdown (README with front-matter stripped).
     @State private var readme: String? = nil
 
@@ -132,8 +135,6 @@ struct ModelDetailView: View, Identifiable {
 
                     variantPickerSection
 
-                    runtimeDiagnosticsCard
-
                     modelCardSection
 
                     detailsCard
@@ -141,6 +142,8 @@ struct ModelDetailView: View, Identifiable {
                     filesSection
 
                     advancedSection
+
+                    runtimeDiagnosticsSection
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 18)
@@ -408,57 +411,81 @@ struct ModelDetailView: View, Identifiable {
         return model.isVLM
     }
 
-    @ViewBuilder
-    private var runtimeDiagnosticsCard: some View {
-        if let report = diagnostics {
-            diagnosticsCard(for: report)
-        } else {
-            diagnosticsLoadingCard
-        }
-    }
-
-    /// Placeholder shown while `diagnostics` is being read from disk so the
-    /// card slot keeps its place and the layout doesn't jump when the real
-    /// report lands.
-    private var diagnosticsLoadingCard: some View {
-        HStack(spacing: 10) {
-            ProgressView()
-                .controlSize(.small)
-            Text("Checking runtime compatibility…", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.tertiaryText)
-            Spacer(minLength: 0)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .detailCardSurface()
-    }
-
-    private func diagnosticsCard(
-        for report: ModelCompatibilityDiagnostics.Report
-    ) -> some View {
-        let tint = runtimeDiagnosticTint(report.runtime.kind)
-
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: runtimeDiagnosticIcon(report.runtime.kind))
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(tint)
-                    .frame(width: 18, height: 18)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(report.primaryTitle)
+    /// Collapsible, developer-oriented runtime diagnostics. Collapsed by
+    /// default and placed last so the runtime-proof details (bundle status,
+    /// preflight, evidence keys) don't lead the sheet for regular users.
+    /// The header still surfaces the one-line verdict so a blocked or
+    /// unproven runtime is visible without expanding.
+    private var runtimeDiagnosticsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isDiagnosticsExpanded.toggle()
+                }
+            }) {
+                HStack(spacing: 8) {
+                    Text("Runtime Diagnostics", bundle: .module)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
-                    Text(report.primaryDetail)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                    if let report = diagnostics {
+                        HStack(spacing: 4) {
+                            Image(systemName: runtimeDiagnosticIcon(report.runtime.kind))
+                                .font(.system(size: 10, weight: .semibold))
+                            Text(report.primaryTitle)
+                                .font(.system(size: 11, weight: .medium))
+                                .lineLimit(1)
+                        }
+                        .foregroundColor(runtimeDiagnosticTint(report.runtime.kind))
+                    } else {
+                        ProgressView()
+                            .controlSize(.small)
+                            .scaleEffect(0.6)
+                            .frame(width: 12, height: 12)
+                    }
 
-                Spacer(minLength: 0)
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                        .rotationEffect(.degrees(isDiagnosticsExpanded ? 90 : 0))
+                }
+                .padding(14)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(PlainButtonStyle())
+
+            if isDiagnosticsExpanded {
+                Group {
+                    if let report = diagnostics {
+                        diagnosticsDetail(for: report)
+                    } else {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Checking runtime compatibility…", bundle: .module)
+                                .font(.system(size: 12))
+                                .foregroundColor(theme.tertiaryText)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 14)
+            }
+        }
+        .detailCardSurface()
+    }
+
+    private func diagnosticsDetail(
+        for report: ModelCompatibilityDiagnostics.Report
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(report.primaryDetail)
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
 
             LazyVGrid(
                 columns: [
@@ -536,9 +563,7 @@ struct ModelDetailView: View, Identifiable {
                 }
             }
         }
-        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .detailCardSurface()
     }
 
     private func runtimeDiagnosticTint(_ kind: ModelCompatibilityDiagnostics.RuntimeStatus.Kind) -> Color {
@@ -579,6 +604,19 @@ struct ModelDetailView: View, Identifiable {
                 spacing: 12
             ) {
                 MetaItem(label: L("Download size"), value: estimatedSizeString)
+
+                if let memory = model.formattedEstimatedMemory {
+                    MetaItem(label: L("Estimated memory while running"), value: memory)
+                }
+
+                if let source = model.sizeEstimateSource {
+                    MetaItem(
+                        label: L("Estimate basis"),
+                        value: source == .measured
+                            ? L("Measured model files")
+                            : L("Model name and quantization")
+                    )
+                }
 
                 MetaItem(
                     label: L("Type"),
@@ -679,74 +717,84 @@ struct ModelDetailView: View, Identifiable {
 
     // MARK: - Compatibility Line
 
-    /// Slim, single-row "will it run on this Mac?" verdict. Kept compact so
-    /// the README leads, but still the first thing visible for a pre-download
-    /// decision.
+    /// Plain-language "will it run on this Mac?" verdict. The three numbers
+    /// are deliberately labeled so download size, installed memory, and the
+    /// smaller comfortable Metal budget cannot be mistaken for one another.
     private var compatibilityLine: some View {
-        let verdict = model.compatibility(totalMemoryGB: systemMonitor.totalMemoryGB)
-        let totalMem = systemMonitor.totalMemoryGB
+        let assessment = model.memoryAssessment(totalMemoryGB: systemMonitor.totalMemoryGB)
 
-        // The memory estimate reads the same for every verdict except
-        // `.unknown` (where we have nothing to show), so compute it once.
-        let memoryDetail = String(
-            format: L("~%@ of %.0f GB"),
-            model.formattedEstimatedMemory ?? "—",
-            totalMem
-        )
-
-        let (icon, title, detail, tint): (String, String, String, Color) = {
-            switch verdict {
+        let (icon, title, explanation, tint): (String, String, String, Color) = {
+            switch assessment.compatibility {
             case .compatible:
                 return (
                     "checkmark.shield.fill",
-                    L("Should run smoothly on this Mac"),
-                    memoryDetail,
+                    assessment.compatibility.displayName,
+                    L("This estimate leaves room for macOS, other apps, and longer chats."),
                     theme.successColor
                 )
             case .tight:
                 return (
                     "exclamationmark.triangle.fill",
-                    L("Will be a tight fit"),
-                    memoryDetail,
+                    assessment.compatibility.displayName,
+                    L(
+                        "This model is close to the comfortable limit. Longer chats or other memory-heavy apps may slow it down."
+                    ),
                     theme.warningColor
                 )
             case .tooLarge:
                 return (
                     "xmark.octagon.fill",
-                    L("Too large for this Mac"),
-                    memoryDetail,
+                    assessment.compatibility.displayName,
+                    L(
+                        "It may load, but macOS is likely to page memory and generation can be very slow. Choose a smaller version."
+                    ),
                     theme.errorColor
                 )
             case .unknown:
                 return (
                     "questionmark.circle.fill",
-                    L("Compatibility unknown"),
-                    "",
+                    assessment.compatibility.displayName,
+                    L("We could not estimate running memory yet. Check the download size or try another version."),
                     theme.tertiaryText
                 )
             }
         }()
 
-        return HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 14))
-                .foregroundColor(tint)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 14))
+                    .foregroundColor(tint)
 
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(1)
-
-            Spacer(minLength: 8)
-
-            if !detail.isEmpty {
-                Text(detail)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.secondaryText)
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
             }
+
+            HStack(alignment: .top, spacing: 24) {
+                compatibilityMetric(
+                    label: L("Estimated memory while running"),
+                    value: assessment.estimatedRunningMemoryGB.map(formattedMemoryGB) ?? "—"
+                )
+                compatibilityMetric(
+                    label: L("Your Mac"),
+                    value: assessment.physicalMemoryGB > 0
+                        ? formattedMemoryGB(assessment.physicalMemoryGB) : "—"
+                )
+                compatibilityMetric(
+                    label: L("Recommended model-memory budget"),
+                    value: assessment.comfortableModelBudgetGB > 0
+                        ? formattedMemoryGB(assessment.comfortableModelBudgetGB) : "—"
+                )
+            }
+
+            Text(explanation)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 10)
@@ -756,6 +804,24 @@ struct ModelDetailView: View, Identifiable {
                         .stroke(tint.opacity(0.22), lineWidth: 1)
                 )
         )
+    }
+
+    private func compatibilityMetric(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
+            Text(value)
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundColor(theme.primaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func formattedMemoryGB(_ value: Double) -> String {
+        value < 1
+            ? String(format: "%.0f MB", value * 1024)
+            : String(format: value.rounded() == value ? "%.0f GB" : "%.1f GB", value)
     }
 
     // MARK: - Versions (precision variants)
@@ -827,22 +893,27 @@ struct ModelDetailView: View, Identifiable {
         totalMemoryGB: Double
     ) -> some View {
         let isSelected = variant.id == model.id
+        // The selected build may have received an exact Hub size after the
+        // sheet opened. Render that resolved copy instead of the stale variant
+        // snapshot supplied by the parent grid.
+        let displayedVariant = isSelected ? model : variant
         let isOnDisk = MLXModelDownloadCache.value(for: variant.id) ?? false
         let quantLabel =
-            ModelMetadataParser.quantization(from: variant.id) ?? L("Original")
-        let repoTail = variant.id.split(separator: "/").last.map(String.init) ?? variant.id
+            ModelMetadataParser.quantization(from: displayedVariant.id) ?? L("Original")
+        let repoTail =
+            displayedVariant.id.split(separator: "/").last.map(String.init) ?? displayedVariant.id
 
-        let (fitText, fitTint): (String?, Color) = {
-            let memory = variant.formattedEstimatedMemory
-            switch variant.compatibility(totalMemoryGB: totalMemoryGB) {
-            case .compatible:
-                return (memory.map { L("Runs Well · needs \($0)") } ?? L("Runs Well"), theme.successColor)
-            case .tight:
-                return (memory.map { L("Tight Fit · needs \($0)") } ?? L("Tight Fit"), theme.warningColor)
-            case .tooLarge:
-                return (memory.map { L("Too Large · needs \($0)") } ?? L("Too Large"), theme.errorColor)
-            case .unknown:
-                return (nil, theme.tertiaryText)
+        let compatibility = displayedVariant.compatibility(totalMemoryGB: totalMemoryGB)
+        let fitText =
+            displayedVariant.formattedEstimatedMemory.map {
+                "\(compatibility.displayName) · \(L("est. \($0) running"))"
+            } ?? compatibility.displayName
+        let fitTint: Color = {
+            switch compatibility {
+            case .compatible: return theme.successColor
+            case .tight: return theme.warningColor
+            case .tooLarge: return theme.errorColor
+            case .unknown: return theme.tertiaryText
             }
         }()
 
@@ -897,16 +968,14 @@ struct ModelDetailView: View, Identifiable {
                 Spacer(minLength: 8)
 
                 VStack(alignment: .trailing, spacing: 2) {
-                    if let size = variant.formattedDownloadSize {
+                    if let size = displayedVariant.formattedDownloadSize {
                         Text(size)
                             .font(.system(size: 11, weight: .semibold, design: .monospaced))
                             .foregroundColor(theme.secondaryText)
                     }
-                    if let fitText {
-                        Text(fitText)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(fitTint)
-                    }
+                    Text(fitText)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(fitTint)
                 }
             }
             .padding(.horizontal, 10)
@@ -1389,7 +1458,16 @@ struct ModelDetailView: View, Identifiable {
         await MainActor.run {
             guard isCurrent(target.id) else { return }
             self.estimatedSize = size
-            if size == nil { self.estimateError = "Could not estimate size right now." }
+            if let size, size > 0 {
+                // Recompute every memory/fit surface from the measured Hub
+                // bytes immediately; do not leave the banner on its
+                // parameter/quantization fallback while Details shows the
+                // resolved download size.
+                self.selectedModel = target.withDownloadSize(size)
+                self.modelManager.applyResolvedDownloadSize(size, for: target.id)
+            } else {
+                self.estimateError = "Could not estimate size right now."
+            }
             self.isEstimating = false
         }
     }

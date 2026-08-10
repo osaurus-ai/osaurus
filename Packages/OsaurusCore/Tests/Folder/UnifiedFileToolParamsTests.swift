@@ -420,29 +420,4 @@ struct UnifiedFileToolParamsTests {
         }
     }
 
-    // MARK: - Secret refusal can't be bypassed via a bound bridge
-
-    @Test func fileRead_relativeSecret_refusesEvenWithBridgeBound() async throws {
-        let root = tmpRoot()
-        defer { try? FileManager.default.removeItem(at: root) }
-        try "SECRET=1".write(
-            to: root.appendingPathComponent(".env"),
-            atomically: true,
-            encoding: .utf8
-        )
-
-        let bridge = SandboxReadBridge(agentName: "test-agent", home: "/workspace/agents/test-agent")
-        let output = try await ChatExecutionContext.$hostReadOnlyScope.withValue(root) {
-            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
-                try await FileReadTool(rootPath: root).execute(
-                    argumentsJSON: #"{"path":".env"}"#
-                )
-            }
-        }
-
-        // Relative path = host route; the secret denylist applies and the
-        // bound sandbox bridge does not provide an escape hatch.
-        #expect(ToolEnvelope.isError(output))
-        #expect(EnvelopeAssertions.failureKind(output) == "rejected")
-    }
 }

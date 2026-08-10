@@ -98,8 +98,9 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
             throw SubagentError.denied("AppleScript is not enabled for this agent.")
         }
 
-        // Dedicated model: the configured per-agent / global id, else the first
-        // installed catalog model. `nil` → none installed → fail cleanly.
+        // Dedicated model: an explicit per-agent id, otherwise the global
+        // Computer Use default, otherwise the first installed catalog model.
+        // `nil` after catalog resolution → none installed → fail cleanly.
         let preferred = SubagentToolVisibility.effectiveAppleScriptModel(
             isDefault: isDefault,
             config: config,
@@ -255,12 +256,23 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
             frontmost: desktop.frontmost,
             runningAppNames: desktop.running.map(\.name)
         )
+        let groundedTask = AppleScriptAppKnowledge.groundingWorkingAppReference(
+            task: task,
+            resolvedApp: targetApps.count == 1 ? targetApps[0] : nil
+        )
+        AppleScriptTraceLog.recordDispatchContext(
+            frontmost: desktop.frontmost,
+            targetApps: targetApps,
+            workingReference: AppleScriptAppKnowledge.mentionsWorkingApp(task),
+            taskGrounded: groundedTask != task,
+            literalKeys: literals.names
+        )
         let knowledge = AppleScriptAppKnowledge.compose(
             apps: targetApps,
             runningApps: desktop.running
         )
         let result = await AppleScriptLoop.run(
-            task: task,
+            task: groundedTask,
             modelId: resolved.name,
             feed: feed,
             interrupt: interrupt,
@@ -277,7 +289,8 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
             environmentContext: desktop.contextText,
             dictionaryContext: knowledge.dictionary,
             recipeContext: knowledge.recipes,
-            literals: literals
+            literals: literals,
+            enableThinking: scope.enableThinking
         )
         return try Self.mapOutcome(result, model: resolved.name, mode: mode)
     }
@@ -307,7 +320,25 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
             for app in running where seen.insert(app.name.lowercased()).inserted {
                 unique.append(app)
             }
-            let frontmost = workspace.frontmostApplication?.localizedName
+            // The user necessarily brings Osaurus frontmost to submit a chat
+            // task, so NSWorkspace usually reports Osaurus here instead of the
+            // app they were working in. Computer Use already preserves that
+            // handoff through FrontmostAppTracker; use the same source for
+            // AppleScript so phrases such as "the file" or "the document"
+            // can resolve against the real working app and receive its
+            // dictionary/recipes. A genuinely frontmost non-Osaurus app still
+            // wins, and no synthetic app is invented when the tracker is empty.
+            let current = workspace.frontmostApplication
+            let currentIsSelf =
+                current?.processIdentifier == ProcessInfo.processInfo.processIdentifier
+                || (
+                    current?.bundleIdentifier != nil
+                        && current?.bundleIdentifier == Bundle.main.bundleIdentifier
+                )
+            let frontmost =
+                currentIsSelf
+                ? FrontmostAppTracker.shared.lastNonSelfAppName
+                : current?.localizedName
             var lines: [String] = []
             if let frontmost { lines.append("Frontmost app: \(frontmost)") }
             lines.append(
@@ -318,16 +349,26 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
     }
 
     /// Map a finished `AppleScriptLoop` run onto the shared subagent result
-    /// contract. `done` → the rich success payload. `interrupted` → a
-    /// `user_denied` envelope. A `stepCapReached` / `failed` run that ACTUALLY
-    /// RAN scripts still returns the rich payload (with an honest
-    /// `failed`/`partial` status + the transcript) so the parent can
-    /// troubleshoot — only a run where nothing executed is a hard tool failure.
+    /// contract. A completed run with no attempted scripts may carry the
+    /// model's useful explanation. Once script work was attempted (including
+    /// malformed calls that never reached the executor), at least one script
+    /// must have succeeded for a successful outer envelope. `interrupted` → a
+    /// `user_denied` envelope. A `stepCapReached` / `failed` run with at least
+    /// one successful script still returns the rich partial payload so the
+    /// parent can use the real value and troubleshoot later failures.
     static func mapOutcome(
         _ result: AppleScriptRunResult,
         model: String,
         mode: AppleScriptRunMode
     ) throws -> SubagentResult {
+        let attemptedWork = result.scriptsExecuted > 0 || !result.steps.isEmpty
+        if attemptedWork, result.succeeded == 0 {
+            throw SubagentError.executionFailed(
+                message: result.outcome.summary,
+                retryable: false
+            )
+        }
+
         switch result.outcome {
         case .done(let summary):
             return successResult(result, model: model, mode: mode, summary: summary)
@@ -347,8 +388,8 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
     /// Assemble the parent-facing payload: the headline `values`, an honest
     /// aggregate `status` (`succeeded` / `partial` / `failed`), and a capped
     /// per-step transcript plus convenience `errors` / `permission_needed`. The
-    /// top-level envelope `ok` means "the tool ran"; the task outcome lives in
-    /// `status`, so the two never collide.
+    /// top-level envelope remains successful only when at least one script
+    /// succeeded; the task's aggregate outcome lives in `status`.
     private static func successResult(
         _ result: AppleScriptRunResult,
         model: String,

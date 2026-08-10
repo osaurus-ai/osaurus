@@ -1,0 +1,15 @@
+{
+  "id": "http_api.chat-completion-envelope",
+  "domain": "http_api",
+  "label": "http api • non-streaming /v1/chat/completions envelope + content",
+  "query": "What is the capital of France? Answer in one word.",
+  "notes": "The non-streaming envelope pin: object == chat.completion, one choice with role assistant and non-empty content, usage block present, and the content actually answers (responseContains). Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "httpAPI": {
+      "scenario": "chat_completion",
+      "maxTokens": 128,
+      "responseContains": ["paris"]
+    }
+  }
+}

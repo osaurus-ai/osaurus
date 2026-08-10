@@ -220,21 +220,35 @@ struct BackgroundTaskStatusTests {
         #expect(status.displayName == L("Running"))
     }
 
-    @Test func awaitingClarificationIsActive() {
-        let status = BackgroundTaskStatus.awaitingClarification
+    @Test func queuedIsActiveButNotSlotConsuming() {
+        let status = BackgroundTaskStatus.queued
         #expect(status.isActive == true)
+        #expect(status.consumesExecutionSlot == false)
+        #expect(status.displayName == L("Queued"))
+    }
+
+    @Test func waitingForInputIsActiveButNotSlotConsuming() {
+        let status = BackgroundTaskStatus.waitingForInput
+        #expect(status.isActive == true)
+        #expect(status.consumesExecutionSlot == false)
         #expect(status.displayName == L("Waiting"))
     }
 
-    @Test func completedSuccessIsNotActive() {
-        let status = BackgroundTaskStatus.completed(success: true, summary: "Done")
+    @Test func runningConsumesExecutionSlot() {
+        #expect(BackgroundTaskStatus.running.consumesExecutionSlot == true)
+    }
+
+    @Test func completedIsNotActive() {
+        let status = BackgroundTaskStatus.completed(summary: "Done")
         #expect(status.isActive == false)
+        #expect(status.consumesExecutionSlot == false)
         #expect(status.displayName == L("Completed"))
     }
 
-    @Test func completedFailureIsNotActive() {
-        let status = BackgroundTaskStatus.completed(success: false, summary: "Error")
+    @Test func failedIsNotActive() {
+        let status = BackgroundTaskStatus.failed(summary: "Error")
         #expect(status.isActive == false)
+        #expect(status.consumesExecutionSlot == false)
         #expect(status.displayName == L("Failed"))
     }
 
@@ -245,10 +259,11 @@ struct BackgroundTaskStatusTests {
     }
 
     @Test func iconNames() {
+        #expect(BackgroundTaskStatus.queued.iconName == "clock")
         #expect(BackgroundTaskStatus.running.iconName == "arrow.triangle.2.circlepath")
-        #expect(BackgroundTaskStatus.awaitingClarification.iconName == "questionmark.circle.fill")
-        #expect(BackgroundTaskStatus.completed(success: true, summary: "").iconName == "checkmark.circle.fill")
-        #expect(BackgroundTaskStatus.completed(success: false, summary: "").iconName == "xmark.circle.fill")
+        #expect(BackgroundTaskStatus.waitingForInput.iconName == "questionmark.circle.fill")
+        #expect(BackgroundTaskStatus.completed(summary: "").iconName == "checkmark.circle.fill")
+        #expect(BackgroundTaskStatus.failed(summary: "").iconName == "xmark.circle.fill")
         #expect(BackgroundTaskStatus.cancelled.iconName == "stop.circle.fill")
     }
 
@@ -256,12 +271,12 @@ struct BackgroundTaskStatusTests {
         #expect(BackgroundTaskStatus.running == BackgroundTaskStatus.running)
         #expect(BackgroundTaskStatus.cancelled == BackgroundTaskStatus.cancelled)
         #expect(
-            BackgroundTaskStatus.completed(success: true, summary: "ok")
-                == BackgroundTaskStatus.completed(success: true, summary: "ok")
+            BackgroundTaskStatus.completed(summary: "ok")
+                == BackgroundTaskStatus.completed(summary: "ok")
         )
         #expect(
-            BackgroundTaskStatus.completed(success: true, summary: "ok")
-                != BackgroundTaskStatus.completed(success: false, summary: "ok")
+            BackgroundTaskStatus.completed(summary: "ok")
+                != BackgroundTaskStatus.failed(summary: "ok")
         )
     }
 }
@@ -647,7 +662,7 @@ struct TaskStateDictTests {
             agentId: Agent.defaultId,
             chatSession: context.chatSession,
             executionContext: context,
-            status: .completed(success: true, summary: "All done")
+            status: .completed(summary: "All done")
         )
         let dict = PluginHostContext.taskStateDict(id: state.id, state: state)
         #expect(dict["title"] as? String == "Deploy app")

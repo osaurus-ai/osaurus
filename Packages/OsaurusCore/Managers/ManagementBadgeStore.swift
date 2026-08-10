@@ -87,6 +87,8 @@ public final class ManagementBadgeStore: ObservableObject {
             Notification.Name.toolsListChanged,
             Notification.Name("schedulesChanged"),
             Notification.Name("watchersChanged"),
+            Notification.Name.knowledgeCollectionsChanged,
+            Notification.Name.knowledgeCurationChanged,
         ] {
             let observer = NotificationCenter.default.addObserver(
                 forName: name,
@@ -145,6 +147,7 @@ public final class ManagementBadgeStore: ObservableObject {
         counts[.agents] = AgentManager.shared.agents.filter { !$0.isBuiltIn }.count
         counts[.schedules] = ScheduleManager.shared.schedules.count
         counts[.watchers] = WatcherManager.shared.watchers.count
+        counts[.knowledge] = KnowledgeManager.shared.collections.count
         counts[.voice] = SpeechModelManager.shared.downloadedModelsCount
         counts[.themes] = ThemeManager.shared.installedThemes.filter { !$0.isBuiltIn }.count
 
@@ -168,6 +171,11 @@ public final class ManagementBadgeStore: ObservableObject {
         if snapshot.highlights.contains(.identity) {
             highlights.insert(.identity)
         }
+        // Knowledge highlight ("proposals awaiting review") is resolved
+        // off-main below; carry the prior value so it doesn't flicker.
+        if snapshot.highlights.contains(.knowledge) {
+            highlights.insert(.knowledge)
+        }
 
         let next = Snapshot(counts: counts, highlights: highlights)
         if next != snapshot {
@@ -184,16 +192,39 @@ public final class ManagementBadgeStore: ObservableObject {
         Task.detached(priority: .utility) { [weak self] in
             let downloadedModels = models.filter { $0.isDownloaded }.count
             let pinned = (try? MemoryDatabase.shared.pinnedFactStats()) ?? 0
-            await self?.applyBackgroundBadges(downloadedModels: downloadedModels, pinnedFacts: pinned)
+            // Pending knowledge proposals drive the "review needed"
+            // highlight. Only counted when the knowledge database is
+            // already open — a badge poll must not trigger the first open.
+            let pendingProposals =
+                KnowledgeDatabase.shared.isOpen
+                ? ((try? KnowledgeDatabase.shared.pendingProposalCount()) ?? 0)
+                : 0
+            await self?.applyBackgroundBadges(
+                downloadedModels: downloadedModels,
+                pinnedFacts: pinned,
+                pendingKnowledgeProposals: pendingProposals
+            )
         }
     }
 
-    private func applyBackgroundBadges(downloadedModels: Int, pinnedFacts: Int) {
+    private func applyBackgroundBadges(
+        downloadedModels: Int,
+        pinnedFacts: Int,
+        pendingKnowledgeProposals: Int
+    ) {
         var counts = snapshot.counts
         counts[.models] = downloadedModels
         counts[.memory] = pinnedFacts
 
-        let next = Snapshot(counts: counts, highlights: snapshot.highlights)
+        var highlights = snapshot.highlights
+        if pendingKnowledgeProposals > 0 {
+            highlights.insert(.knowledge)
+        } else if KnowledgeDatabase.shared.isOpen {
+            // Authoritative zero (DB was consulted) clears the highlight.
+            highlights.remove(.knowledge)
+        }
+
+        let next = Snapshot(counts: counts, highlights: highlights)
         if next != snapshot {
             snapshot = next
         }

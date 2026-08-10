@@ -22,12 +22,14 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Methods                          | Stable    | "Skills & Methods" | SKILLS.md                     | Models/Method/Method.swift, Services/Method/MethodService.swift, Services/Method/MethodSearchService.swift, Storage/MethodDatabase.swift |
 | Context Management               | Stable    | -                  | SKILLS.md                     | Services/Context/CapabilitySearch.swift, Tools/CapabilityTools.swift, Services/Tool/ToolSearchService.swift, Services/Tool/ToolIndexService.swift |
 | Memory                           | Stable    | "Key Features"     | MEMORY.md                     | Services/Memory/MemoryService.swift, Services/Memory/MemorySearchService.swift, Services/Memory/MemoryContextAssembler.swift |
+| Knowledge Collections            | Foundation | -                 | KNOWLEDGE.md                  | Managers/KnowledgeManager.swift, Services/Knowledge/, Storage/KnowledgeDatabase.swift, Tools/KnowledgeTools.swift, Tools/KnowledgeCurationTools.swift, Views/Knowledge/KnowledgeView.swift |
 | Privacy Filter                   | Experimental | "Key Features"  | PRIVACY_FILTER.md             | PrivacyFilter/Core/PrivacyFilterPipeline.swift, PrivacyFilter/Core/PrivacyFilterEngine.swift, PrivacyFilter/Core/RegexEntityDetector.swift, PrivacyFilter/Store/PrivacyFilterStore.swift, PrivacyFilter/Views/PrivacyView.swift, PrivacyFilter/Views/RedactionReviewSheet.swift, Services/Provider/WireTransportProbe.swift, Views/Chat/RedactionHighlighter.swift, Views/Chat/RedactionHoverController.swift |
 | Agents                         | Stable    | "Agents"         | (in README)                   | Managers/AgentManager.swift, Models/Agent/Agent.swift, Views/Agent/AgentsView.swift         |
 | Agent DB & Self-Scheduling       | Stable    | "Agents"           | AGENT_DB.md                   | Storage/AgentDatabase.swift, Storage/SchedulerDatabase.swift, Managers/NextRunScheduler.swift, Tools/Database/, Views/Agent/AgentDBTabViews.swift, Views/Agent/NextRunPanelView.swift |
 | Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule/Schedule.swift, Views/Schedule/SchedulesView.swift      |
 | Watchers                         | Stable    | "Watchers"         | WATCHERS.md                   | Managers/WatcherManager.swift, Models/Watcher/Watcher.swift, Views/Watcher/WatchersView.swift         |
 | Agent Loop & Folder Context      | Stable    | "Agent Loop"       | AGENT_LOOP.md                 | Services/Chat/AgentToolLoop.swift, Services/Chat/AgentTaskState.swift, Folder/, Tools/AgentLoopTools.swift, Tools/FolderToolManager.swift, Models/Chat/AgentTodo.swift, Models/Chat/AgentTodoStore.swift, Models/Chat/SharedArtifact.swift |
+| Agent Channels (Slack / Discord / Telegram) | Beta | -           | AGENT_CHANNELS.md             | Services/AgentChannel/, Models/AgentChannel/, Tools/AgentChannelTools.swift, Storage/AgentChannelMessageStore.swift, Views/Settings/AgentChannelConnectionCenterView.swift, Views/Settings/AgentChannelDestinationViews.swift |
 | Developer Tools: Insights        | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/Insights/InsightsView.swift, Managers/InsightsService.swift                              |
 | Developer Tools: Server Explorer | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/Settings/ServerView.swift                                                                |
 | Apple Foundation Models          | macOS 26+ | "What is Osaurus?" | (in README)                   | Services/Inference/FoundationModelService.swift                                                 |
@@ -43,6 +45,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Voice Input (FluidAudio)         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Managers/SpeechService.swift, Managers/Model/SpeechModelManager.swift                  |
 | VAD Mode                         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/Voice/VADService.swift, Views/ContentView.swift (VAD controls)                     |
 | Transcription Mode               | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/Voice/TranscriptionModeService.swift, Views/Voice/TranscriptionOverlayView.swift         |
+| Text-to-Speech (PocketTTS + OpenAI-compatible servers) | Stable | - | TEXT_TO_SPEECH.md            | Managers/TTSService.swift, Managers/OpenAICompatibleTTSClient.swift, Views/Voice/TTSModeSettingsTab.swift |
 | Sandbox                          | macOS 26+ | "Sandbox"          | SANDBOX.md                    | Services/Sandbox/SandboxManager.swift, Tools/BuiltinSandboxTools.swift, Managers/Plugin/SandboxPluginManager.swift, Views/Sandbox/SandboxView.swift |
 | Computer Use                     | Experimental | -               | COMPUTER_USE.md               | ComputerUse/ (Tool, Loop, Policy, Perception, Recipes, Driver), Views/Settings/ComputerUseSettingsView.swift, Views/Chat/ComputerUseFeedView.swift |
 | Storage (plaintext default, opt-in encryption) | Stable | -          | STORAGE.md                    | Storage/StorageFileFormat.swift, Storage/StorageEncryptionPolicy.swift, Storage/OsaurusStorageOpener.swift, Storage/StorageMigrationCoordinator.swift, Storage/StorageRecoveryService.swift, Storage/StorageFile.swift, Storage/PersistenceHealth.swift, Identity/StorageKeyManager.swift, Storage/EncryptedSQLiteOpener.swift, Storage/StorageDatabaseCatalog.swift, Storage/StorageMutationGate.swift, Storage/StorageExportService.swift, Storage/EncryptedFileStore.swift, Storage/AttachmentBlobStore.swift, Storage/StorageMaintenance.swift, Views/Settings/StorageSettingsView.swift, SQLCipher/ |
@@ -117,10 +120,11 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── WatcherStore (Watcher persistence)                              │
 │  │   └── DirectoryFingerprint (Change detection via Merkle hashing)      │
 │  ├── Folder Tools                                                        │
-│  │   ├── FolderContextService (Working folder + security-scoped bookmarks) │
-│  │   ├── FolderToolManager (Registers folder tools when folder selected) │
-│  │   ├── FolderToolFactory (Builds file/coding/git tools per project)    │
-│  │   └── FileOperationLog (Logs writes/exec for undo support)            │
+│  │   ├── ChatFolderState (Per-chat folder + security-scoped bookmark)    │
+│  │   ├── FolderContextService (Stateless bookmark/context utilities)     │
+│  │   ├── FolderToolManager (One-time canonical folder tool registration) │
+│  │   ├── FolderToolFactory (Builds file/coding/git tools)                │
+│  │   └── FileOperationLog (Logs writes/exec + per-op root for undo)      │
 │  ├── Sandbox                                                             │
 │  │   ├── SandboxManager (Container lifecycle and exec)                   │
 │  │   ├── SandboxPluginManager (Per-agent plugin install/uninstall)       │
@@ -195,7 +199,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 - **Window-scoped warm-up** — Models are loaded and prefix-cached when a chat window opens, not at app launch. Each window warms its own model independently, using the window's agent context (system prompt, memory, tools) for the prefix cache.
 - **Smart unloading** — The "Keep model loaded after use" setting controls whether a local model unloads immediately after use, stays warm for 5/15/30/60 minutes, or stays resident until an explicit unload/cleanup. Strict single-model switches still unload the replaced model immediately, and idle unload never deletes downloaded models or disk KV cache entries. The warm-up indicator (yellow dot) signals when a model is loading.
-- **Continuous batching** — `BatchEngine` shares a single forward pass across overlapping requests for the same model. The default `mlxBatchEngineMaxBatchSize` is `1` so vmlx compiled decode stays eligible for single-user chat; tune with `defaults write ai.osaurus ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize -int 8` for server-style concurrency. Takes effect on the next inference call — the registry hot-resizes the cached engine via vmlx's `BatchEngine.updateMaxBatchSize(_:)`.
+- **Continuous batching** — `BatchEngine` shares a single forward pass across overlapping requests for the same model. Server Settings resolves its capacity from the explicit Memory Safety sequence override, explicit Concurrent Sessions value, or Memory Safety profile, in that order. Performance/Balanced automatically resolve to `2`, Safe Auto/Strict to `1`, and Continuous Batching off pins `1`. The registry hot-resizes the cached engine via vmlx's `BatchEngine.updateMaxBatchSize(_:)`.
 - **Library-managed KV cache** — vmlx-swift's `CacheCoordinator` owns KV cache geometry (paged for global attention, rotating for sliding-window, SSM state for Mamba) sized per-model. Multi-turn KV reuse, mediaSalt for VLMs, and sliding-window correctness are all handled inside the engine — osaurus configures only `modelKey`, `diskCacheDir`, and a writability fallback.
 - **Model eviction policy** — Configurable in Settings > Local Inference > Model Management. "Strict (One Model)" keeps only one model loaded (default). "Flexible (Multi Model)" allows concurrent models for high-RAM systems. `/health` exposes additive `resident_models[]` diagnostics with in-flight counts and idle-unload timing for each loaded model.
 
@@ -205,7 +209,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 - Default port: `1337` (override with `OSU_PORT`)
 - KV cache disk storage: `~/.osaurus/cache/kv/`
 - Settings: Top P, eviction policy, model idle residency, allowed origins.
-- One advanced tunable, exposed via `defaults` only: `ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize` (default `1`, clamped to `[1, 32]`; hot-resized via `BatchEngine.updateMaxBatchSize(_:)` on the next inference call).
+- Runtime server settings persist in `~/.osaurus/config/server-runtime.json`, the sole live authority for BatchEngine concurrency. The old `ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize` UserDefaults key is import-only during first-run migration when that file is absent.
 
 See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architecture.
 
@@ -634,6 +638,34 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 
 ---
 
+### Agent Channels
+
+**Purpose:** Connect agents to Slack, Discord, and Telegram natively — inbound messages dispatch to an answering agent, and agents can proactively post back to rooms they answer on.
+
+**Inbound:** Per-provider connections (Settings → Channels) with credential storage, readable-room and sender allowlists, and a dispatch configuration that routes rooms to agents. Inbound events land in the Agent Channel message store and run through the standard agent loop.
+
+**Proactive posting (outbound):**
+
+- **Zero-config destinations** — when a channel has a credential, write access to a room, and inbound dispatch enabled, a confirm-only "automatic" posting destination is derived for each writable room × answering agent (`AgentChannelAutoDestinationResolver`). No manual setup; a stored customization for the same route always takes precedence, and derived destinations disappear the moment a room leaves the write allowlist.
+- **Modes per destination** — Ask first (queue for operator approval), Auto-send (host-enforced rate limits), Drafts only, or Off. Derived destinations can never be autonomous.
+- **Durable outbox** — every proactive send is recorded as an outbound intent with an idempotent `intent_key` (queued → approved → sending → sent / failed / delivery-unknown), with crash recovery, per-destination serialization, retention pruning, and a global channel-write kill switch.
+- **Prompt/tool wiring** — the `agent_channel_publish` tool and the destinations prompt section appear only when the agent has usable destinations; destinations are referenced by `binding_id` only, never raw room ids.
+
+**Components:**
+
+- `Services/AgentChannel/AgentChannelAutoDestinationResolver.swift` — derived destinations + stored-binding precedence
+- `Services/AgentChannel/AgentChannelPublishService.swift` — outbound intent ledger, approval, delivery state machine
+- `Services/AgentChannel/AgentChannelConnectionManager.swift` — connection/binding CRUD and validation
+- `Tools/AgentChannelTools.swift` — `agent_channel_publish` (contextual permissions: confirm → ask when attended, queue when unattended)
+- `Storage/AgentChannelMessageStore.swift` — inbound messages + outbound intents
+- `Views/Settings/AgentChannelConnectionCenterView.swift`, `Views/Settings/AgentChannelDestinationViews.swift` — Channels center, Channel Posting cards, Customize sheet, outbox review
+
+**Documentation:** [AGENT_CHANNELS.md](AGENT_CHANNELS.md) (architecture and flows), [AGENT_CHANNEL_SECURITY.md](AGENT_CHANNEL_SECURITY.md) (security model), [AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md](AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md) (setup guide)
+
+**Storage:** `~/.osaurus/config/agent-channels.json` (connections + bindings), Agent Channel message store (messages + outbound intents)
+
+---
+
 ### Agent Loop & Folder Context
 
 **Purpose:** Drive every chat as an agent loop. The model writes a markdown todo, calls tools (file, sandbox, MCP, plugin), and ends the loop with a verified `complete` summary or pauses with `clarify`. Selecting a working folder turns on file/git tools; toggling the sandbox swaps in Linux exec.
@@ -645,11 +677,12 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 - `Services/Chat/ContextBudgetManager.swift` + `Services/Chat/CompactionWatermark.swift` — Budget reservations and sticky, KV-prefix-stable history compaction (monotonic summarize→drop decisions, byte-stable trim note, `overBudget` signal)
 - `Services/Context/AgentLoopEvaluator.swift` — Drives the same loop end-to-end for the OsaurusEvals `agent_loop` proof suite
 - `Tools/AgentLoopTools.swift` — The three chat-layer-intercepted loop tools (`todo`, `complete`, `clarify`); registered as global built-ins
-- `Tools/FolderToolManager.swift` — Registers folder tools when a working folder is selected; unregisters on clear. `share_artifact` is no longer registered here — it lives as a global built-in alongside the loop tools.
+- `Tools/FolderToolManager.swift` — Ensures the canonical folder tool surface is registered once per process (lazily, on the first folder mount anywhere); per-request visibility is schema filtering in `ToolRegistry`, not register/unregister. `share_artifact` is no longer registered here — it lives as a global built-in alongside the loop tools.
 - `Folder/FolderContext.swift` — Project type, file tree, manifest, git status, optional `AGENTS.md`/`CLAUDE.md`/`.cursorrules`
-- `Folder/FolderContextService.swift` — `NSOpenPanel`, security-scoped bookmark persistence, MainActor service
+- `Folder/ChatFolderState.swift` — Per-`ChatSession` folder ownership: security-scoped URL, built context, persistable bookmark, refresh/clear, one-time legacy global-bookmark adoption
+- `Folder/FolderContextService.swift` — Stateless bookmark helpers + `FolderContext` building (no process-wide "current folder" state)
 - `Folder/FolderTools.swift` — File / shell / git tool implementations + `FolderToolFactory`
-- `Folder/ChatExecutionContext.swift` — TaskLocal session/agent/batch IDs read by tools at execution time
+- `Folder/ChatExecutionContext.swift` — TaskLocal session/agent/batch IDs plus the executing chat's folder root, read by tools at execution time
 - `Folder/ExecutionMode.swift` — First-class `.hostFolder | .sandbox(hostRead:) | .none` enum (the sandbox case carries an optional read-only host folder for combined mode)
 - `Folder/FileOperation.swift`, `Folder/FileOperationLog.swift` — Per-op log used for undo
 - `Models/Chat/AgentTodo.swift`, `Models/Chat/AgentTodoStore.swift` — Markdown checklist parser + per-session store
@@ -663,8 +696,8 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 - **KV-stable compaction** — History trimming is sticky and monotonic (`CompactionWatermark`), so the rendered prompt prefix stays byte-stable across iterations and the paged-KV cache keeps its hits; UI and runtime share one budget assessment (`AgentLoopBudget.assess`) so the context chip and the send gate can't disagree with the trimmer
 - **`todo` / `complete` / `clarify`** — Three minimal-schema global built-in tools whose results the chat layer intercepts to drive the inline UI (not a pre-dispatch hook — the registry runs them like any other tool)
 - **Single mode resolver** — `ToolRegistry.resolveExecutionMode(folderContext:autonomousEnabled:)` decides sandbox > host folder > none for chat, plugin, and HTTP entry points
-- **Working folder picker** — Per-chat folder via `FolderContextService`, with security-scoped bookmark persistence
-- **Project-aware tools** — Core file tools + `shell_run` registered for every folder mount; git tools layered on when the folder is a git repo. Project type only changes the file-tree ignore patterns (and prompt metadata), not the tool surface.
+- **Per-chat working folder** — Each chat session owns its folder (`ChatFolderState`): picking, refreshing, or clearing a folder affects only that chat, concurrent chats can work against different repos, and the security-scoped bookmark is persisted per session and restored on reopen. Tools resolve the executing chat's root from the TaskLocal execution scope, never from process-wide state.
+- **Project-aware tools** — Core file tools + `shell_run` surfaced for every folder mount; git tools layered on when that session's folder is a git repo. Project type only changes the file-tree ignore patterns (and prompt metadata), not the tool surface.
 - **Sandbox toggle** — Composes with the working-folder backend. Sandbox-only keeps current behavior; **combined mode** (sandbox on + folder selected → `.sandbox(hostRead: ctx)`) exposes the host workspace **read-only** (`file_read` / `file_search`, scoped to the folder root, secret files refused; `file_read` also lists directories) while all execution stays in the sandbox VM, which has no mount of the host workspace. Host write/edit/shell/git stay hidden in combined mode. Residual risks (the trusted agent is the read→exec bridge, prompt injection from read content, in-scope secrets) are mitigated by scope enforcement + secret refusal; v1 keeps sandbox network-on, so document the exfiltration residual rather than relying on isolation.
 - **`share_artifact`** — Only path for the user to see files the agent produced
 **Loop Tools (engine-intercepted):**
@@ -701,9 +734,9 @@ The previously-discrete `file_move`, `file_copy`, `file_delete`, `dir_create`, a
 
 **Storage:**
 
-- Folder bookmark — UserDefaults (`FolderContextBookmark`)
+- Folder bookmark + display path — persisted per chat session (`ChatSessionData.folderBookmark` / `folderPath`, sessions schema v10). The legacy process-wide UserDefaults key (`FolderContextBookmark`) is migrated once to the first eligible chat opened after the update, then deleted.
 - Artifacts — `~/.osaurus/artifacts/<sessionId>/`
-- Per-session todo and file-op log — in-memory keyed by chat session ID
+- Per-session todo and file-op log — in-memory keyed by chat session ID (each file op records the folder root it ran against, so undo stays correct across chats with different folders)
 
 See [AGENT_LOOP.md](AGENT_LOOP.md) for the full guide.
 
@@ -760,17 +793,18 @@ See [AGENT_LOOP.md](AGENT_LOOP.md) for the full guide.
 
 | Tool | Category | Description |
 |------|----------|-------------|
-| `sandbox_read_file` | Read-only | Read file contents (supports line ranges and log tails). Use instead of `cat`/`head`/`tail`. |
-| `sandbox_search_files` | Read-only | Search file contents (`target="content"`, ripgrep) **or** find files by name (`target="files"`, glob). Replaces the old `sandbox_search_files` + `sandbox_find_files` + `sandbox_list_directory` trio. |
-| `sandbox_write_file` | Write | Write a whole file (`content`, creates parent directories) **or** edit it in place (`old_string`+`new_string`, exact match) — the presence of `old_string` selects the edit path. Use instead of `echo`/`cat` heredoc / `sed` / `awk`. |
-| `sandbox_exec` | Exec | Run shell command. Foreground (default) or `background:true` for servers/long jobs. |
-| `sandbox_process` | Exec | Manage background jobs from `sandbox_exec(background:true)` — `poll` / `wait` / `kill`. |
+| `file_read` | Read-only | Read files or list directories; supports line ranges and log tails. VM paths are raw-text reads. |
+| `file_search` | Read-only | Search file contents (`target="content"`) or find files by name (`target="files"`). |
+| `file_write` | Write | Create, overwrite, or append UTF-8 files; creates parent directories. |
+| `file_edit` | Write | Replace one exact, unique text occurrence without rewriting the whole file. |
+| `shell_run` | Exec | Run a shell command. Foreground by default; `background:true` is available when Background Processes is enabled. |
+| `sandbox_process` | Exec | Inspect, wait for, or kill jobs started by `shell_run(background:true)`. |
 | `sandbox_install` | Package | Install packages — one tool, `manager` selects `apk` (system, root), `pip` (Python venv), or `npm` (Node workspace). Replaces the old `sandbox_pip_install` + `sandbox_npm_install`. |
 | `sandbox_secret_check` | Secret | Check whether a secret exists (never reveals value) |
 | `sandbox_secret_set` | Secret | Store a secret directly or prompt the user |
 | `sandbox_plugin_register` | Plugin | Register an agent-created plugin (requires `pluginCreate`) |
 
-The previously-discrete `sandbox_list_directory`, `sandbox_find_files`, `sandbox_move`, `sandbox_delete`, `sandbox_exec_background`, `sandbox_run_script`, `sandbox_edit_file`, and `sandbox_execute_code` tools were dropped. Their behaviour now comes from a flag (`background:true` on `sandbox_exec`, `target` on `sandbox_search_files`), an argument (`old_string`+`new_string` on `sandbox_write_file` for in-place edits), or a direct shell invocation (`mv` / `rm` in `sandbox_exec`). `sandbox_run_script` and `sandbox_execute_code`'s use case — multi-step scripts/orchestration — is now `sandbox_write_file` the script then `sandbox_exec` to run it (e.g. `python3 script.py`). The `sandbox_pip_install` / `sandbox_npm_install` tools were folded into `sandbox_install` (pick the manager with `manager:"pip"` / `"npm"`); a failed bare `apk add` / `pip install` / `npm install` in `sandbox_exec` surfaces a self-heal hint pointing at `sandbox_install`.
+The model sees the same five public workspace names in trusted-folder and VM modes. Private `sandbox_read_file`, `sandbox_search_files`, `sandbox_write_file`, and `sandbox_exec` adapters remain implementation details and are never callable from model schemas. Older discrete operations now use `file_read` for reads/listing, `file_search` for content/name search, `file_write` plus `file_edit` for mutations, and `shell_run` for processes or `mv` / `rm`. Multi-line code should be written as a script with `file_write`, then run with `shell_run`. The old `sandbox_pip_install` / `sandbox_npm_install` pair was folded into `sandbox_install`.
 
 `share_artifact` is a global built-in (registered in `ToolRegistry`, available in plain chat / folder / sandbox alike) so it does not appear in this sandbox-specific table.
 
@@ -784,10 +818,11 @@ Read-only tools are always available. Write/exec/package/secret tools require `a
 | `description` | Brief description |
 | `dependencies` | System packages via `apk add` |
 | `setup` | Setup command as agent user |
-| `files` | Seed files into plugin directory |
 | `tools` | Custom tool definitions (shell commands with `$PARAM_` env vars) |
 | `secrets` | Required secret names |
 | `permissions` | Network and inference access |
+
+Write plugin scripts beside `plugin.json` before registration; the registrar packages the directory automatically. A manifest `files` field is not supported.
 
 **Host API Bridge Services:**
 
@@ -899,11 +934,12 @@ See [docs/plugins/README.md](plugins/README.md) for the full reference.
 
 - **GitHub Import** — Import from repositories with `.claude-plugin/marketplace.json`
 - **File Import** — Load `.md` (Agent Skills), `.json`, or `.zip` packages
-- **Built-in Skills** — 6 pre-installed skills for common use cases
+- **Built-in Skills** — 9 pre-installed tool-grounded skills for common use cases
 - **Reference Files** — Attach text files loaded into skill context
 - **Asset Files** — Support files for skills
 - **Categories** — Organize skills by type
-- **Automated Discovery** — Skills are listed in the enabled-capabilities manifest and loaded on demand via `capabilities_discover` / `capabilities_load`
+- **Universal Availability** — Every installed skill is automatically available to custom agents; there are no enable toggles or per-agent assignment
+- **Automated Discovery** — Skills are listed in the capabilities manifest and loaded on demand via `capabilities_discover` / `capabilities_load`; `/skill-name` forces one for a single message
 
 **Skill Properties:**
 
@@ -1021,9 +1057,9 @@ Each time a method is used, a `MethodEvent` is recorded (`loaded`, `succeeded`, 
 
 ### Context Management
 
-**Purpose:** Give the agent a complete, statically-ordered view of every enabled capability (methods, tools, and skills) and let it load the ones it needs on demand.
+**Purpose:** Give the agent a complete, statically-ordered view of every available capability (methods, tools, and skills) and let it load the ones it needs on demand.
 
-Context management replaces manual per-turn tool selection with a static, session-frozen design. The system prompt carries an enabled-capabilities manifest that lists every capability the agent is allowed to use; only a fixed "hot set" of tools is loaded into the schema up front. The agent pulls in additional capabilities mid-session with `capabilities_discover` / `capabilities_load`. The manifest and hot set are frozen at session start so the static prompt prefix stays byte-stable across turns (KV-cache reuse), and there is no per-turn LLM picker.
+Context management replaces manual per-turn tool selection with a static, session-frozen design. The system prompt carries a capabilities manifest that lists the agent's assigned tools plus every installed skill; only a fixed "hot set" of tools is loaded into the schema up front. The agent pulls in additional capabilities mid-session with `capabilities_discover` / `capabilities_load`. The manifest and hot set are frozen at session start so the static prompt prefix stays byte-stable across turns (KV-cache reuse), and there is no per-turn LLM picker.
 
 **Components:**
 
@@ -1409,6 +1445,8 @@ The post-scrub invariant only re-scans categories whose built-in regex toggle is
 | [MODEL_COMPATIBILITY_RESEARCH.md](MODEL_COMPATIBILITY_RESEARCH.md) | Local model compatibility research and rollout plan |
 | [WATCHERS.md](WATCHERS.md)                                     | Watchers and folder monitoring guide              |
 | [AGENT_LOOP.md](AGENT_LOOP.md)                                 | Agent loop, folder context, and `todo`/`complete`/`clarify` |
+| [AGENT_CHANNELS.md](AGENT_CHANNELS.md)                         | Native Slack/Discord/Telegram channels and proactive posting |
+| [AGENT_CHANNEL_SECURITY.md](AGENT_CHANNEL_SECURITY.md)         | Agent channel security model and outbound write gates    |
 | [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md)                     | Remote provider setup and configuration           |
 | [REMOTE_MCP_PROVIDERS.md](REMOTE_MCP_PROVIDERS.md)             | Remote MCP provider setup                         |
 | [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server Explorer guide                |

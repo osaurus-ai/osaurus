@@ -67,6 +67,15 @@ public enum MCPProviderKeychain {
         getToken(for: providerId) != nil
     }
 
+    /// Typed availability of the static bearer token, distinguishing a
+    /// definitively missing token from a keychain that can't answer right now.
+    public static func tokenAvailability(for providerId: UUID) -> SecretAvailability {
+        if KeychainQueryHelpers.disablesKeychainForProcess { return .absent }
+        return availability(account: tokenAccount(for: providerId)) {
+            String(data: $0, encoding: .utf8) != nil
+        }
+    }
+
     // MARK: - OAuth tokens
 
     @discardableResult
@@ -76,8 +85,25 @@ public enum MCPProviderKeychain {
     }
 
     public static func getOAuthTokens(for providerId: UUID) -> MCPOAuthTokens? {
-        getData(account: oauthAccount(for: providerId))
-            .flatMap { try? JSONDecoder().decode(MCPOAuthTokens.self, from: $0) }
+        guard let data = getData(account: oauthAccount(for: providerId)) else { return nil }
+        do {
+            return try JSONDecoder().decode(MCPOAuthTokens.self, from: data)
+        } catch {
+            // Corrupt stored blob, not absence: surface via availability and
+            // logs so the caller can offer a re-sign-in instead of silently
+            // treating the provider as signed out.
+            NSLog("MCPProviderKeychain: stored OAuth token blob failed to decode")
+            return nil
+        }
+    }
+
+    /// Typed availability of the OAuth token blob, distinguishing corrupt
+    /// stored data and a transiently unavailable keychain from absence.
+    public static func oauthTokensAvailability(for providerId: UUID) -> SecretAvailability {
+        if KeychainQueryHelpers.disablesKeychainForProcess { return .absent }
+        return availability(account: oauthAccount(for: providerId)) {
+            (try? JSONDecoder().decode(MCPOAuthTokens.self, from: $0)) != nil
+        }
     }
 
     @discardableResult
@@ -189,6 +215,21 @@ public enum MCPProviderKeychain {
     // MARK: - Generic CRUD
     //
     // All items route through the shared `Keychain` helper.
+
+    /// Map the typed read outcome for `account` into a `SecretAvailability`,
+    /// using `decodes` to detect a corrupt payload.
+    private static func availability(
+        account: String, decodes: (Data) -> Bool
+    ) -> SecretAvailability {
+        switch Keychain.readItem(service: service, account: account) {
+        case .found(let data):
+            return decodes(data) ? .present : .corrupt
+        case .notFound, .disabled:
+            return .absent
+        case .unavailable, .accessDenied, .failure:
+            return .unavailable
+        }
+    }
 
     @discardableResult
     private static func setData(_ data: Data, account: String) -> Bool {

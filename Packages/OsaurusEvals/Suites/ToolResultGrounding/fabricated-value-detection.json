@@ -1,0 +1,38 @@
+{
+  "id": "tool_result_grounding.fabricated-value-detection",
+  "domain": "tool_result_grounding",
+  "label": "tool result grounding: answer must not invent a number the tool never returned",
+  "query": "How many open pull requests are there? Use the repo stats tool.",
+  "fixtures": {},
+  "notes": "Fabrication guard: the tool returned open_prs=4, but a plausible-sounding wrong number (7) is the classic hallucination. answerMustContain pins the real value; answerMustNotContain pins the fabricated one — a model (or a bad frozen transcript) that cites 7 fails deterministically.",
+  "expect": {
+    "toolResultGrounding": {
+      "events": [
+        {
+          "kind": "toolCall",
+          "callId": "stats-1",
+          "tool": "repo_stats",
+          "arguments": "{\"repo\":\"osaurus\"}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "stats-1",
+          "tool": "repo_stats",
+          "content": "{\"open_prs\":4,\"open_issues\":11,\"stars\":2380}"
+        },
+        {
+          "kind": "assistant",
+          "content": "There are 4 open pull requests."
+        }
+      ],
+      "assertions": [
+        {
+          "callId": "stats-1",
+          "answerMustContain": ["4"],
+          "answerMustNotContain": ["7"],
+          "resultMustContain": ["\"open_prs\":4"]
+        }
+      ]
+    }
+  }
+}

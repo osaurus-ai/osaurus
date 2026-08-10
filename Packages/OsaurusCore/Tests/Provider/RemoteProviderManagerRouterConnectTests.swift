@@ -77,6 +77,34 @@ struct RemoteProviderManagerRouterConnectTests {
         #expect(!RemoteProviderManager.isTransientConnectError(URLError(.userAuthenticationRequired)))
     }
 
+    // MARK: - Retry-After hint extraction
+
+    @Test func retryAfterHint_extractsTypedRateLimitHints() {
+        #expect(
+            RemoteProviderManager.retryAfterHint(
+                from: RemoteProviderServiceError.rateLimited(retryAfter: 7, statusCode: 429)
+            ) == 7
+        )
+        #expect(
+            RemoteProviderManager.retryAfterHint(
+                from: OsaurusRouterAPIError.rateLimited(retryAfter: "12")
+            ) == 12
+        )
+        // No hint: absent value, unparseable value, other error shapes.
+        #expect(
+            RemoteProviderManager.retryAfterHint(
+                from: OsaurusRouterAPIError.rateLimited(retryAfter: nil)
+            ) == nil
+        )
+        #expect(
+            RemoteProviderManager.retryAfterHint(
+                from: OsaurusRouterAPIError.rateLimited(retryAfter: "soon")
+            ) == nil
+        )
+        #expect(RemoteProviderManager.retryAfterHint(from: URLError(.timedOut)) == nil)
+        #expect(RemoteProviderManager.retryAfterHint(from: nil) == nil)
+    }
+
     // MARK: - connectOsaurusRouterWithRetry
 
     @Test func routerConnect_retriesTransientFailureThenSucceeds() async throws {
@@ -351,6 +379,65 @@ struct RemoteProviderManagerRouterConnectTests {
             #expect(state?.isConnected == true)
             #expect(state?.discoveredModels == ["router/model-b"])
             #expect(manager.cachedAvailableModels().contains { $0.providerId == routerId })
+        }
+    }
+
+    // MARK: - Offline mode (connectivity-driven)
+
+    /// Losing the network path enters offline mode: remote models and services
+    /// are hidden from chat (picker source + routing source both empty) and a
+    /// picker rebuild is signalled, while the provider's connected state and
+    /// catalog are untouched. Regaining the path restores both without a
+    /// reconnect and signals another rebuild.
+    @Test func offlineMode_hidesRemoteModelsAndServicesUntilRecovery() async throws {
+        await RemoteProviderTestLock.shared.run {
+            let manager = RemoteProviderManager.shared
+            resetRouter(manager)
+            defer { manager._testRemoveProviders(ids: [routerId]) }
+
+            manager.testIdentityExistsOverride = true
+            manager.testFetchModelsOverride = { _ in ["router/model-a"] }
+
+            await manager.connectOsaurusRouterWithRetry(maxAttempts: 1)
+            #expect(manager.providerStates[routerId]?.isConnected == true)
+            #expect(manager.cachedAvailableModels().contains { $0.providerId == routerId })
+            #expect(!manager.connectedServices().isEmpty)
+
+            let counter = Counter()
+            let observer = observeModelsChanged(counter)
+            defer { NotificationCenter.default.removeObserver(observer) }
+
+            // Baseline satisfied reading: still online, no rebuild signalled.
+            manager.handleNetworkPathUpdate(satisfied: true)
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            #expect(manager.isOffline == false)
+            #expect(counter.value == 0)
+
+            // Path drops → offline: remote models/services are gated off and
+            // the pickers are told to rebuild, but the provider itself stays
+            // connected with its catalog intact.
+            manager.handleNetworkPathUpdate(satisfied: false)
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            #expect(manager.isOffline == true)
+            #expect(manager.cachedAvailableModels().isEmpty)
+            #expect(manager.connectedServices().isEmpty)
+            #expect(manager.providerStates[routerId]?.isConnected == true)
+            #expect(manager.providerStates[routerId]?.discoveredModels == ["router/model-a"])
+            #expect(counter.value == 1)
+
+            // Repeated unsatisfied readings are not new edges — no re-signal.
+            manager.handleNetworkPathUpdate(satisfied: false)
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            #expect(counter.value == 1)
+
+            // Recovery edge: models/services reappear as-is (no reconnect was
+            // needed — the connected state was preserved) and pickers rebuild.
+            manager.handleNetworkPathUpdate(satisfied: true)
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            #expect(manager.isOffline == false)
+            #expect(manager.cachedAvailableModels().contains { $0.providerId == routerId })
+            #expect(!manager.connectedServices().isEmpty)
+            #expect(counter.value == 2)
         }
     }
 }

@@ -27,6 +27,17 @@ struct MCPHTTPHandlerTests {
         "agent_channel_draft_message",
         "agent_channel_send_message",
         "agent_channel_reply_thread",
+        "agent_channel_edit_message",
+        "agent_channel_delete_message",
+        "agent_channel_add_reaction",
+        "agent_channel_remove_reaction",
+        "agent_channel_send_typing",
+        "agent_channel_imessage_send_attachment",
+        "agent_channel_imessage_send_effect",
+        "agent_channel_imessage_create_poll",
+        "agent_channel_imessage_manage_group",
+        "agent_channel_whatsapp_send_attachment",
+        "agent_channel_publish",
     ]
 
     @Test func mcp_health_returns_ok() async throws {
@@ -252,6 +263,36 @@ struct MCPHTTPHandlerTests {
         #expect(remoteHostWrite)
     }
 
+    @Test func unattended_curation_auto_approval_is_scoped_and_still_externally_denied() {
+        // The curator draft tool is the only member today.
+        #expect(
+            ToolRegistry.unattendedAutoApprovableToolNames.contains("propose_knowledge_update"))
+
+        // Defense in depth: unattended auto-approval never relaxes the external
+        // deny. Every auto-approvable tool must still be blocked for external
+        // callers, and binding `isUnattendedDispatch` under an external surface
+        // must NOT clear that denial.
+        for name in ToolRegistry.unattendedAutoApprovableToolNames {
+            #expect(ToolRegistry.externallyDeniedToolNames.contains(name))
+            let deniedUnderExternal = ChatExecutionContext.$isExternalSurface.withValue(true) {
+                ChatExecutionContext.$isUnattendedDispatch.withValue(true) {
+                    ToolRegistry.isDeniedForCurrentSurface(name)
+                }
+            }
+            #expect(deniedUnderExternal, "\(name) must stay denied on external surfaces")
+        }
+
+        // Only the schedule / self-schedule / watcher sources mark a run
+        // unattended, and only when not external.
+        for source in [SessionSource.schedule, .selfSchedule, .watcher] {
+            let req = DispatchRequest(prompt: "p", source: source, externalSurface: false)
+            #expect(!BackgroundTaskManager.resolvedExternalSurface(for: req))
+        }
+        // An interactive chat or an external HTTP dispatch is never unattended.
+        #expect(BackgroundTaskManager.resolvedExternalSurface(
+            for: DispatchRequest(prompt: "p", source: .http, externalSurface: true)))
+    }
+
     @Test func remote_dispatch_surface_binding_propagates_to_unstructured_tasks() async {
         for toolName in Self.agentChannelToolNames {
             let inherited = await ChatExecutionContext.$isExternalSurface.withValue(
@@ -352,6 +393,25 @@ struct MCPHTTPHandlerTests {
         }
     }
 
+    @Test func stdio_mcp_execution_denies_agent_channel_tools() async throws {
+        for toolName in Self.agentChannelToolNames {
+            let text = try await MCPServerManager.executeToolAsExternalMCP(
+                name: toolName,
+                argumentsJSON: #"{"connection_id":"telegram","room_id":"-100111222333","content":"must not leak"}"#
+            )
+            let envelope = try JSONSerialization.jsonObject(
+                with: Data(text.utf8)
+            ) as? [String: Any]
+
+            #expect(envelope?["ok"] as? Bool == false, "\(toolName) should be denied")
+            #expect(envelope?["tool"] as? String == toolName)
+            #expect(EnvelopeAssertions.failureKind(text) == "rejected")
+            let message = EnvelopeAssertions.failureMessage(text) ?? ""
+            #expect(message.contains("external callers"))
+            #expect(!text.contains("must not leak"))
+        }
+    }
+
     @Test func mcp_call_rejects_disabled_tool() async throws {
         try await DynamicCatalogTestLock.shared.run {
             let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -424,6 +484,98 @@ struct MCPHTTPHandlerTests {
             #expect(isError == true)
         }
     }
+
+    /// Non-throwing `ToolEnvelope.failure` must surface as MCP `isError: true`
+    /// while keeping HTTP 200 transport semantics. Also proves the request log
+    /// reuses the same error flag.
+    @Test func mcp_call_failure_envelope_sets_isError_true_and_logs_it() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-tests-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            ToolConfigurationStore.overrideDirectory = tempDir
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+            ToolRegistry.shared.register(FailureEnvelopeTool())
+            ToolRegistry.shared.setEnabled(true, for: FailureEnvelopeTool.nameStatic)
+            defer { ToolRegistry.shared.unregister(names: [FailureEnvelopeTool.nameStatic]) }
+
+            let server = try await startTestServer()
+            defer { Task { await server.shutdown() } }
+
+            let (data, resp) = try await postMCPCall(
+                host: server.host,
+                port: server.port,
+                name: FailureEnvelopeTool.nameStatic,
+                arguments: ["marker": FailureEnvelopeTool.marker]
+            )
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            #expect(status == 200)
+
+            let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            #expect(json["isError"] as? Bool == true)
+            let content = try #require(json["content"] as? [[String: Any]])
+            let text = try #require(content.first?["text"] as? String)
+            #expect(ToolEnvelope.isError(text))
+            #expect(text.contains(FailureEnvelopeTool.failureMessage))
+            #expect(text.contains(#""ok":false"#) || text.contains(#""ok": false"#))
+
+            let log = await findMCPCallLog(
+                toolName: FailureEnvelopeTool.nameStatic,
+                marker: FailureEnvelopeTool.marker
+            )
+            let found = try #require(log, "expected Insights log for failure-envelope MCP call")
+            #expect(found.statusCode == 200)
+            let toolCall = try #require(found.toolCalls?.first { $0.name == FailureEnvelopeTool.nameStatic })
+            #expect(toolCall.isError == true)
+            #expect(toolCall.result?.contains(FailureEnvelopeTool.failureMessage) == true)
+        }
+    }
+
+    /// Tool bodies that throw are folded into a failure envelope by the
+    /// registry; MCP must still report `isError: true` at HTTP 200.
+    @Test func mcp_call_thrown_tool_error_sets_isError_true() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-tests-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            ToolConfigurationStore.overrideDirectory = tempDir
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+            ToolRegistry.shared.register(ThrowingProbeTool())
+            ToolRegistry.shared.setEnabled(true, for: ThrowingProbeTool.nameStatic)
+            defer { ToolRegistry.shared.unregister(names: [ThrowingProbeTool.nameStatic]) }
+
+            let server = try await startTestServer()
+            defer { Task { await server.shutdown() } }
+
+            let (data, resp) = try await postMCPCall(
+                host: server.host,
+                port: server.port,
+                name: ThrowingProbeTool.nameStatic,
+                arguments: ["marker": ThrowingProbeTool.marker]
+            )
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            #expect(status == 200)
+
+            let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            #expect(json["isError"] as? Bool == true)
+            let content = try #require(json["content"] as? [[String: Any]])
+            let text = try #require(content.first?["text"] as? String)
+            #expect(ToolEnvelope.isError(text))
+            #expect(text.contains(ThrowingProbeTool.errorMessage))
+
+            let log = await findMCPCallLog(
+                toolName: ThrowingProbeTool.nameStatic,
+                marker: ThrowingProbeTool.marker
+            )
+            let found = try #require(log, "expected Insights log for thrown-tool MCP call")
+            let toolCall = try #require(found.toolCalls?.first { $0.name == ThrowingProbeTool.nameStatic })
+            #expect(toolCall.isError == true)
+        }
+    }
 }
 
 // MARK: - Test tool
@@ -461,6 +613,79 @@ private struct ExternalSurfaceProbeTool: OsaurusTool {
     func execute(argumentsJSON: String) async throws -> String {
         ChatExecutionContext.isExternalSurface ? "external" : "internal"
     }
+}
+
+/// Returns a non-throwing `ToolEnvelope.failure` for MCP isError regression.
+private struct FailureEnvelopeTool: OsaurusTool {
+    static let nameStatic = "mcp_envelope_failure_probe"
+    static let marker = "envelope-failure-marker"
+    static let failureMessage = "intentional envelope failure for MCP isError proof"
+    let name: String = FailureEnvelopeTool.nameStatic
+    let description: String = "Returns a non-throwing ToolEnvelope.failure"
+    let parameters: JSONValue? = nil
+
+    func execute(argumentsJSON: String) async throws -> String {
+        ToolEnvelope.failure(
+            kind: .executionError,
+            message: FailureEnvelopeTool.failureMessage,
+            tool: name
+        )
+    }
+}
+
+/// Throws so the registry folds the error into a failure envelope.
+private struct ThrowingProbeTool: OsaurusTool {
+    static let nameStatic = "mcp_envelope_throw_probe"
+    static let marker = "envelope-throw-marker"
+    static let errorMessage = "intentional throw for MCP isError proof"
+    let name: String = ThrowingProbeTool.nameStatic
+    let description: String = "Throws from the tool body"
+    let parameters: JSONValue? = nil
+
+    func execute(argumentsJSON: String) async throws -> String {
+        throw NSError(
+            domain: "MCPHTTPHandlerTests",
+            code: 42,
+            userInfo: [NSLocalizedDescriptionKey: ThrowingProbeTool.errorMessage]
+        )
+    }
+}
+
+// MARK: - MCP call helpers
+
+private func postMCPCall(
+    host: String,
+    port: Int,
+    name: String,
+    arguments: [String: Any]
+) async throws -> (Data, URLResponse) {
+    var request = URLRequest(url: URL(string: "http://\(host):\(port)/mcp/call")!)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.authenticate()
+    let bodyObj: [String: Any] = [
+        "name": name,
+        "arguments": arguments,
+    ]
+    request.httpBody = try JSONSerialization.data(withJSONObject: bodyObj)
+    return try await URLSession.shared.data(for: request)
+}
+
+/// Polls Insights for the exact `/mcp/call` row created by this test.
+private func findMCPCallLog(toolName: String, marker: String) async -> RequestLog? {
+    for _ in 0 ..< 40 {
+        let match = await MainActor.run {
+            InsightsService.shared.logs.first { log in
+                log.path == "/mcp/call"
+                    && log.toolCalls?.contains(where: {
+                        $0.name == toolName && $0.arguments.contains(marker)
+                    }) == true
+            }
+        }
+        if let match { return match }
+        try? await Task.sleep(nanoseconds: 25_000_000)
+    }
+    return nil
 }
 
 // MARK: - Test server bootstrap

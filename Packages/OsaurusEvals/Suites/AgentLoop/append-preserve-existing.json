@@ -2,8 +2,8 @@
   "id": "agent_loop.append-preserve-existing",
   "domain": "agent_loop",
   "label": "agent loop • append a section without dropping existing content",
-  "query": "Append a new section to CHANGELOG.md: a line '## v1.1' followed by a line '- bug fixes'. Keep everything already in the file exactly as-is — do not delete or rewrite the v1.0 section.",
-  "notes": "Pins additive editing: the model must extend a file while preserving prior content. The file assertions check BOTH the preserved v1.0 lines and the newly appended v1.1 lines survive, so a destructive overwrite (a common small-model failure) fails the case.",
+  "query": "Append exactly this new section to CHANGELOG.md after the existing final newline: first one blank line, then a line '## v1.1', then a line '- bug fixes'. Keep every existing byte exactly as-is — do not delete or rewrite the v1.0 section.",
+  "notes": "Pins byte-exact additive editing: the model must preserve every existing byte, then append one blank line and the two requested v1.1 lines. A destructive overwrite, duplicate append, or missing separator fails the exact command assertion.",
   "fixtures": {
     "workspaceFiles": [
       { "path": "CHANGELOG.md", "contents": "# Changelog\n\n## v1.0\n- initial release\n" }
@@ -18,6 +18,12 @@
         { "path": "CHANGELOG.md", "contains": "initial release" },
         { "path": "CHANGELOG.md", "contains": "## v1.1" },
         { "path": "CHANGELOG.md", "contains": "bug fixes" }
+      ],
+      "commands": [
+        {
+          "command": "python3 -c 'from pathlib import Path; actual=Path(\"CHANGELOG.md\").read_text().rstrip(\"\\n\"); expected=\"# Changelog\\n\\n## v1.0\\n- initial release\\n\\n## v1.1\\n- bug fixes\"; raise SystemExit(0 if actual == expected else 1)'",
+          "expectExitCode": 0
+        }
       ]
     }
   }

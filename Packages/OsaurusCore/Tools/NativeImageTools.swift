@@ -18,7 +18,7 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
     /// Shared description (gen + edit), also shown in the permission prompt by
     /// the kind. Used when a ready edit model is installed.
     public static let toolDescription =
-        "Create or edit an image with the user's local image model. To create, call with a "
+        "Create or edit an image with the user's configured image model. To create, call with a "
         + "`prompt`. To edit an existing image, also pass `source_paths` (one to four local image "
         + "paths from prior results or attachments) — that switches the tool into edit mode. The "
         + "result is shown to the user automatically; do NOT call share_artifact on it."
@@ -27,7 +27,7 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
     /// Drops every edit affordance so the schema never offers an edit the
     /// runtime can't perform. Paired with `generationOnlyParameters`.
     public static let generationOnlyToolDescription =
-        "Create an image with the user's local image model: call with a `prompt`. The result is "
+        "Create an image with the user's configured image model: call with a `prompt`. The result is "
         + "shown to the user automatically; do NOT call share_artifact on it."
 
     public var description: String { Self.toolDescription }
@@ -52,7 +52,7 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
             ]),
             "model": .object([
                 "type": .string("string"),
-                "description": .string("Optional local image model id. Omit to use the configured default."),
+                "description": .string("Optional configured image model id. Omit to use the default."),
             ]),
             "negative_prompt": .object([
                 "type": .string("string"),
@@ -91,7 +91,7 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
             ]),
             "model": .object([
                 "type": .string("string"),
-                "description": .string("Optional local image model id. Omit to use the configured default."),
+                "description": .string("Optional configured image model id. Omit to use the default."),
             ]),
             "negative_prompt": .object([
                 "type": .string("string"),
@@ -198,7 +198,7 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
     }
 
     private static func clampedDimension(_ value: Int) -> Int {
-        let bounded = min(1024, max(256, value))
+        let bounded = min(4096, max(256, value))
         let rounded = (bounded / 16) * 16
         return max(256, rounded)
     }

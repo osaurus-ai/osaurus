@@ -46,6 +46,80 @@ struct RemoteProviderManagerTestConnectionTests {
         }
     }
 
+    @Test func testConnectionFireworksMergesServerlessCatalogAcrossPages() async throws {
+        try await RemoteProviderTestLock.shared.run {
+            let manager = RemoteProviderManager.shared
+            defer {
+                manager.testConnectionTransportOverride = nil
+                manager._testRemoveProviders(ids: [])
+            }
+
+            manager.testConnectionTransportOverride = { request in
+                let url = request.url!.absoluteString
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+                if url == "https://api.fireworks.ai/inference/v1/models" {
+                    return (
+                        Data(
+                            #"{"object":"list","data":[{"id":"accounts/fireworks/models/llama-v3p1-70b-instruct","object":"model","created":0,"owned_by":"fireworks"}]}"#
+                                .utf8
+                        ),
+                        response
+                    )
+                }
+                #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer fw-test-key")
+                if url.contains("pageToken=page-2") {
+                    return (
+                        Data(
+                            #"{"models":[{"name":"accounts/fireworks/models/qwen3-235b","state":"READY","supportsServerless":true,"conversationConfig":{}}]}"#
+                                .utf8
+                        ),
+                        response
+                    )
+                }
+                #expect(url == "https://api.fireworks.ai/v1/accounts/fireworks/models?pageSize=200")
+                return (
+                    Data(
+                        #"""
+                        {"models":[
+                          {"name":"accounts/fireworks/models/LLAMA-V3P1-70B-INSTRUCT","state":"READY","supportsServerless":true,"conversationConfig":{}},
+                          {"name":"accounts/fireworks/models/deepseek-v3","state":"READY","supportsServerless":true,"conversationConfig":{}},
+                          {"name":"accounts/fireworks/models/an-embedding","state":"READY","supportsServerless":true}
+                        ],"nextPageToken":"page-2"}
+                        """#.utf8
+                    ),
+                    response
+                )
+            }
+
+            let models = try await manager.testConnection(
+                host: "api.fireworks.ai",
+                providerProtocol: .https,
+                port: nil,
+                basePath: "/inference/v1",
+                authType: .apiKey,
+                providerType: .openaiLegacy,
+                apiKey: "fw-test-key",
+                headers: [:]
+            )
+
+            // /models first, then catalog pages; the case-different catalog
+            // duplicate of the /models entry and the chat-incapable embedding
+            // are both dropped.
+            #expect(
+                models == [
+                    "accounts/fireworks/models/llama-v3p1-70b-instruct",
+                    "accounts/fireworks/models/deepseek-v3",
+                    "accounts/fireworks/models/qwen3-235b",
+                ]
+            )
+        }
+    }
+
     @Test func testConnectionCodexWithoutStoredTokensReturnsStaticFallback() async throws {
         try await RemoteProviderTestLock.shared.run {
             // No OAuth tokens exist for a fresh provider id, so the Codex

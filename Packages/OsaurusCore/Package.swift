@@ -6,14 +6,22 @@ let package = Package(
     defaultLocalization: "en",
     platforms: [.macOS(.v15)],
     products: [
-        .library(name: "OsaurusCore", targets: ["OsaurusCore"])
+        .library(name: "OsaurusCore", targets: ["OsaurusCore"]),
+        // Out-of-process native plugin host: loads one plugin dylib via the
+        // frozen C ABI and executes it over stdio JSON-RPC so the app can
+        // kill/restart wedged accessibility/automation plugin code instead
+        // of hanging in-process. See `PluginHost/main.swift` and
+        // `Services/Plugin/PluginProcessHost.swift`.
+        .executable(name: "osaurus-plugin-host", targets: ["osaurus-plugin-host"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.88.0"),
-        // Keep package-local SwiftPM builds aligned with the workspace
-        // lockfiles. Containerization 0.32.x changed Process.kill's signal
-        // parameter type while the app CI graph is still pinned to 0.31.x.
-        .package(url: "https://github.com/apple/containerization.git", .upToNextMinor(from: "0.31.0")),
+        // Pinned to the 0.35 line — the same Containerization release Apple
+        // Container 1.1.0 ships — for the OCI `initfsReference` provisioning
+        // path, configurable VM overhead, filesystem freeze/thaw/trim, and
+        // the hardened mount/vmnet work. Keep the app workspace lockfiles in
+        // step when bumping.
+        .package(url: "https://github.com/apple/containerization.git", .upToNextMinor(from: "0.35.0")),
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.0"),
         // MCP pulls EventSource transitively. Enable its AsyncHTTPClient
         // trait at the root so the target's conditional AsyncHTTPClient
@@ -56,10 +64,113 @@ let package = Package(
         // scope; the compile() overloads and innerCall degrade to empty
         // results instead of trapping on a failed closure evaluation — so a
         // recorded MLX error reaches the error-scope exit instead of dying in
-        // a Swift bounds check. Contains the previous ff714f1 pin.
+        // a Swift bounds check. Contains the previous ff714f1 pin. Now also
+        // carries #149: native schema-2 affine1 JANG loading and Metal kernels,
+        // Qwen3-VL tool-schema preservation, and bounded media-cache cleanup.
+        // Also carries #153: fail-closed support for historical schema-1 JANG
+        // affine manifests. Also carries #93: Gemma4 model registrations no
+        // longer inject the stale `<end_of_turn>` token into extraEOSTokens;
+        // bundle generation_config.json remains the stop-token authority. The
+        // PR #154 proof revision also reports the exact cache-layer topology
+        // before/after each real TurboQuant transition. The ZAYA cache proof
+        // revision adds real-attention-only TQ ownership, native CCA companion
+        // restore, atomic typed L2 records, and a proven four-bit floor for
+        // TQ-native ZAYA disk boundaries. The Nemotron Omni revision also
+        // aligns the RADIO/projector contract, bounds media prefill, and
+        // enables safe image/audio hybrid-prefix restore. The paged-cache
+        // follow-up separates typed-disk persistence from paged compatibility,
+        // restores recurrent companions at the exact matched boundary, and
+        // keeps every unproven cache topology fail-closed. PR #171 persists
+        // stable system/tool warm-up boundaries in SSD L2 and excludes unsafe
+        // exact hybrid/GDN candidates while preserving their matched recurrent
+        // companion state. The Laguna S 2.1 revision adds the released
+        // full-KV + rotating-SWA runtime contract, safe fresh-session SSD
+        // seeds, growing partial-leaf reuse, and complete TQ window restore.
+        // vmlx-swift#179 additionally recovers Qwen XML plain bracket lists
+        // only for schema-declared array<string> tool arguments and routes
+        // Gemma's decoded thought-channel opener into reasoning. The static
+        // prefix hint revision lets Osaurus's byte-stable system prefix seed
+        // SSD cache boundaries even when mutable DB/tool state changes later
+        // in the same rendered system message. The disk-recency revision
+        // refreshes accepted KV + recurrent companion groups on restore so
+        // combined-quota eviction preserves genuinely hot SSD prefixes. The
+        // stable-checkpoint follow-up also refreshes the existing canonical
+        // system/tool seed when a longer compatible disk entry serves a
+        // growing turn, preventing tool-loop snapshots from evicting the next
+        // chat's warm-start checkpoint. vmlx-swift#189 makes the solo
+        // TokenIterator path report an accepted disk/paged restore only after
+        // path-dependent rollback checks, with exact restored/total counts.
+        // vmlx-swift#190 captures the exact prompt-minus-one SSD seed while the real
+        // prefill crosses it for standalone rotating/SWA cache topologies.
+        // This preserves the existing fail-closed post-hoc rederive guard
+        // while allowing a later compatible turn to restore the longer seed.
+        // vmlx-swift#191 preserves canonical scalar content for Gemma 4
+        // text-only system/developer turns. Real bundle templates otherwise
+        // omit prompt-affecting settings text and can accept an incompatible
+        // SSD checkpoint because distinct revisions tokenize identically.
+        // vmlx-swift#192 adds Nanbeige 4.2's looped-transformer runtime with
+        // 44 loop-layer KV slots and fail-closed runtime-contract validation.
+        // The atomic BatchEngine-capacity revision exposes one actor-consistent
+        // configured/active/pending snapshot so Osaurus can report and plan
+        // subagent waves against the engine that actually owns admission.
+        // vmlx-swift#195 keeps Qwen 3.5 / Ornith GatedDelta recurrent state
+        // in float32 across cold and restored prefix partitions, and admits
+        // linked KV + recurrent disk boundaries under one quota transaction.
+        // vmlx-swift#196 marks caller-proven reusable-prefix warmup prompts
+        // explicitly so solo, batched, and native-MTP cache writers retain
+        // exact boundaries for fully restorable topologies and recurrent-safe
+        // processor seeds for hybrid state, without persisting the warmup's
+        // throwaway decoded token. vmlx-swift#198 prevents fully restorable,
+        // non-recurrent disk-only caches such as DSV4 from synchronously
+        // replaying older stable boundaries before warmup can finish and keeps
+        // DSV4 on its measured model-native compiled gate/SwiGLU path instead
+        // of the incompatible generic whole-cache compiled trace.
+        // vmlx-swift#199 captures DSV4's complete SWA/CSA/HSA prompt-minus-one
+        // disk seed during prefill so exact replay restores the longest valid
+        // prefix and re-feeds only the final prompt token. Warm restores do not
+        // recapture the seed or retain an unusable exact-prompt duplicate.
+        // Its follow-up persists that materialized seed before decode and drops
+        // the duplicate pool state so an uncached DSV4 turn keeps native speed.
+        // Reusable-prefix warmups publish that same seed so the visible request
+        // restores the warmed prefix instead of prefilling it a second time.
+        // vmlx-swift#186-#188 correct FalconH1 key
+        // projection scaling, prefixed output-head loading, and gated RMSNorm
+        // group normalization without changing the shared unload/cache APIs.
+        // vmlx-swift#210 round-trips LFM2/LFM2.5 short-conv prefix-cache
+        // state: the v2 disk payload persists the single occupied MambaCache
+        // slot (a stateless tagged mamba layer is an atomic required miss,
+        // retiring KV-only pseudo-hits), the paged companion rail recovers
+        // per-layer arity so 1-slot conv layers no longer cross-wire, and
+        // LFM2Configuration reads stock intermediate_size configs. It also
+        // pins the LFM2.5-2.6B template ({% generation %}, Pythonic tool
+        // envelope, unconditional <think> generation prompt) and the
+        // qwen3-reasoning + lfm2-tool capability stamp resolution.
+        // vmlx-swift#211 advances LFM2/LFM2.5 short-conv cache offsets each
+        // forward so the #208 boundary-offset guard admits the family's
+        // paged/disk stores instead of vetoing every one (conv layers were
+        // stuck at offset 0; observed live as zero kv_v2 entries).
+        // vmlx-swift#212 honors DSV4's bundle thinking default (absent
+        // enable_thinking = thinking rail), publishes the N-1 disk seed for
+        // reusable-prefix warmups on the solo path (a DSV4 warmup otherwise
+        // published nothing and the visible send re-prefilled the identical
+        // prefix), aligns the post-answer boundary key with the consumed
+        // stop token the async pipeline already forwarded, and hardens SSD
+        // q8 pool blocks (empty-pool round-trip, non-q8 poison-to-miss,
+        // atomic .qkv record refusal).
+        // The DSV4 decode-fastpath revision defaults the quantized lm_head to
+        // fused 8-bit quantizedMatmul instead of dequantizing the whole head
+        // to FP32 every forward (greedy-identical, turn-1 wall 37.4s -> 8.9s;
+        // VMLX_DSV4_LM_HEAD_MODE=exact restores the old path), shares exact
+        // RoPE cos/sin tables across equal-frequency instances, and projects
+        // the Metal live-buffer ceiling (iogpu.rsrc_limit) into a generated-
+        // token cap for cache topologies that retain per-token buffers —
+        // DSV4's cumulative pools retained ~1 buffer/layer/token and long
+        // generations died mid-stream at the 499000 allocator wall.
+        // Conventional KV topologies report zero retention and are never
+        // capped (VMLX_METAL_BUFFER_COUNT_GUARD=0 disables).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "0d3444cad48f658103789cbf8fc9b13f4b7a80d4"
+            revision: "fd7ce91cde0be283c817142d96c9b3f87efcc5e5"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
@@ -227,7 +338,7 @@ let package = Package(
                 .product(name: "Sentry", package: "sentry-cocoa"),
             ],
             path: ".",
-            exclude: ["Tests", "SQLCipher", "ObjCSupport"],
+            exclude: ["Tests", "SQLCipher", "ObjCSupport", "PluginHost"],
             resources: [.process("Resources")],
             swiftSettings: [
                 // `SystemLanguageModel.contextSize` only exists in the macOS 26.4+
@@ -237,11 +348,22 @@ let package = Package(
                 // .define("HAS_FM_CONTEXT_SIZE"),
             ]
         ),
+        // Dependency-free (Foundation-only) helper executable: it must never
+        // link the app graph, so a wedged app subsystem can't wedge the
+        // helper and the binary stays small enough to respawn instantly.
+        .executableTarget(
+            name: "osaurus-plugin-host",
+            path: "PluginHost"
+        ),
         .testTarget(
             name: "OsaurusCoreTests",
             dependencies: [
                 "OsaurusCore",
                 "OsaurusSQLCipher",
+                // Ensures the helper binary is built into the products
+                // directory for every test lane (swift test AND xcodebuild),
+                // so PluginProcessHostTests can spawn the real executable.
+                "osaurus-plugin-host",
                 .product(name: "VMLXJinja", package: "vmlx-swift"),
                 .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "VecturaKit", package: "VecturaKit"),

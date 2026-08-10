@@ -27,6 +27,7 @@ struct AppleScriptModelsView: View {
     /// main chat and "choose automatically" agents fall back to). Persisted to
     /// the shared `SubagentConfiguration` store on edit.
     @State private var configuration = SubagentConfigurationStore.snapshot()
+    @State private var configurationBaseline = SubagentConfigurationStore.snapshot()
 
     /// Gates persist-on-change until the initial snapshot has landed so loading
     /// the tab never round-trips a default back through `save()`. Mirrors the
@@ -37,6 +38,11 @@ struct AppleScriptModelsView: View {
     /// finish so the rows re-segment into Installed vs Available without each
     /// row re-reading the disk during a render pass.
     @State private var installedIds: Set<String> = []
+    /// Curated plus locally discovered dedicated AppleScript bundles (primary
+    /// Models Directory and External Models). Kept separate from
+    /// `installedModels` below so an upstream bundle is selectable without
+    /// presenting a destructive catalog Delete action for its source.
+    @State private var selectableInstalledModels: [MLXModel] = []
 
     private var catalog: [MLXModel] { AppleScriptModelCatalog.models }
     private var installedModels: [MLXModel] { catalog.filter { installedIds.contains($0.id) } }
@@ -52,9 +58,9 @@ struct AppleScriptModelsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 aboutSection
+                modelsSection
                 permissionSection
                 behaviorSection
-                modelsSection
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 24)
@@ -68,18 +74,31 @@ struct AppleScriptModelsView: View {
             refreshInstalled()
         }
         .onAppear {
-            configuration = SubagentConfigurationStore.snapshot()
+            let latest = SubagentConfigurationStore.snapshot()
+            configurationBaseline = latest
+            configuration = latest
             DispatchQueue.main.async { hasLoaded = true }
         }
         .onChange(of: configuration) { _, newValue in
             guard hasLoaded else { return }
-            SubagentConfigurationStore.save(newValue)
+            let saved = SubagentConfigurationStore.saveEditorSnapshot(
+                newValue,
+                loadedBaseline: configurationBaseline
+            )
+            configurationBaseline = saved
+            if saved != newValue { configuration = saved }
         }
         .onReceive(
             NotificationCenter.default.publisher(for: .subagentConfigurationChanged)
         ) { _ in
             let latest = SubagentConfigurationStore.snapshot()
-            if latest != configuration { configuration = latest }
+            let reconciled = SubagentConfiguration.mergingEditorSnapshot(
+                configuration,
+                loadedBaseline: configurationBaseline,
+                live: latest
+            )
+            configurationBaseline = latest
+            if reconciled != configuration { configuration = reconciled }
         }
     }
 
@@ -259,11 +278,11 @@ struct AppleScriptModelsView: View {
             Text("Choose automatically", bundle: .module).tag("")
             if let current = configuration.defaultAppleScriptModelId,
                 !current.isEmpty,
-                !installedModels.contains(where: { $0.id == current })
+                !selectableInstalledModels.contains(where: { $0.id == current })
             {
                 Text("\(current) (unavailable)", bundle: .module).tag(current)
             }
-            ForEach(installedModels) { model in
+            ForEach(selectableInstalledModels) { model in
                 Text(verbatim: model.name).tag(model.id)
             }
         }
@@ -379,7 +398,8 @@ struct AppleScriptModelsView: View {
     }
 
     private func refreshInstalled() {
-        installedIds = Set(catalog.filter { $0.isDownloaded }.map(\.id))
+        selectableInstalledModels = AppleScriptModelCatalog.installedModels()
+        installedIds = Set(selectableInstalledModels.map(\.id))
     }
 
     private func normalized(_ value: String) -> String? {

@@ -22,7 +22,8 @@
                     minimumColdProvisionFreeBytes: 0,
                     operatingSystemMajorVersion: 26,
                     isAppleSilicon: true,
-                    environment: [:]
+                    environment: [:],
+                    backend: .virtualMachine
                 )
 
                 #expect(report.rootSource == .testOverride)
@@ -56,7 +57,8 @@
                     minimumColdProvisionFreeBytes: 0,
                     operatingSystemMajorVersion: 26,
                     isAppleSilicon: true,
-                    environment: [:]
+                    environment: [:],
+                    backend: .virtualMachine
                 )
 
                 #expect(report.overallReadiness == .blocked)
@@ -86,7 +88,8 @@
                     minimumColdProvisionFreeBytes: 0,
                     operatingSystemMajorVersion: 26,
                     isAppleSilicon: true,
-                    environment: [:]
+                    environment: [:],
+                    backend: .virtualMachine
                 )
 
                 #expect(report.overallReadiness == .ready)
@@ -103,6 +106,35 @@
         }
 
         @Test
+        func perAgentModeChecksEnvironmentRootfsInsteadOfSharedRootfs() async throws {
+            try await Self.withTemporaryRoot { _ in
+                try Self.createReadyProvisioningTree(perAgentEnvironments: true)
+
+                let report = SandboxProvisioningDiagnostics.makeReport(
+                    generatedAt: Self.fixedDate,
+                    minimumColdProvisionFreeBytes: 0,
+                    operatingSystemMajorVersion: 26,
+                    isAppleSilicon: true,
+                    environment: [:],
+                    backend: .virtualMachine
+                )
+
+                #expect(report.overallReadiness == .ready)
+                let rootfs = try #require(
+                    report.locations.first { $0.id == .containerRootFSFile }
+                )
+                #expect(rootfs.status == .ready)
+                #expect(rootfs.title == "Per-agent warm restart rootfs")
+                #expect(rootfs.path.contains("/environments/agent-test/rootfs.ext4"))
+                #expect(
+                    !report.findings.contains {
+                        $0.locationID == .containerRootFSFile && $0.severity == .warning
+                    }
+                )
+            }
+        }
+
+        @Test
         func reportOutputUsesSnakeCaseJSONAndPlainTextFindings() async throws {
             try await Self.withTemporaryRoot { _ in
                 let report = SandboxProvisioningDiagnostics.makeReport(
@@ -110,7 +142,8 @@
                     minimumColdProvisionFreeBytes: 0,
                     operatingSystemMajorVersion: 26,
                     isAppleSilicon: true,
-                    environment: [:]
+                    environment: [:],
+                    backend: .virtualMachine
                 )
 
                 let json = try report.jsonString()
@@ -123,6 +156,39 @@
                 #expect(text.contains("Sandbox Provisioning Diagnostics"))
                 #expect(text.contains("setup_incomplete"))
                 #expect(text.contains("repair:"))
+            }
+        }
+
+        @Test
+        func seatbeltBackendSkipsVMOnlyChecks() async throws {
+            try await Self.withTemporaryRoot { _ in
+                try Self.createBaseRoot(setupComplete: true)
+                try OsaurusPaths.ensureExists(OsaurusPaths.container())
+                try OsaurusPaths.ensureExists(OsaurusPaths.containerWorkspace())
+                try OsaurusPaths.ensureExists(OsaurusPaths.containerAgentsDir())
+                try OsaurusPaths.ensureExists(OsaurusPaths.containerSharedDir())
+
+                let report = SandboxProvisioningDiagnostics.makeReport(
+                    generatedAt: Self.fixedDate,
+                    minimumColdProvisionFreeBytes: 0,
+                    operatingSystemMajorVersion: 15,
+                    isAppleSilicon: false,
+                    environment: [:],
+                    backend: .seatbelt
+                )
+
+                #expect(report.overallReadiness == .ready)
+                #expect(!report.findings.contains { $0.code == .sandboxUnavailable })
+                #expect(!report.findings.contains { $0.code == .unsupportedArchitecture })
+                let vmOnly: Set<SandboxProvisioningLocationID> = [
+                    .containerKernelDirectory,
+                    .containerKernelFile,
+                    .containerInitFSFile,
+                    .containerStateDirectory,
+                    .containerRootFSFile,
+                    .bridgeSocket,
+                ]
+                #expect(!report.locations.contains { vmOnly.contains($0.id) })
             }
         }
 
@@ -143,15 +209,26 @@
             }
         }
 
-        private static func createBaseRoot(setupComplete: Bool) throws {
+        private static func createBaseRoot(
+            setupComplete: Bool,
+            perAgentEnvironments: Bool = false
+        ) throws {
             try OsaurusPaths.ensureExists(OsaurusPaths.config())
             try OsaurusPaths.ensureExists(OsaurusPaths.cache())
-            let config = SandboxConfiguration(setupComplete: setupComplete)
+            let config = SandboxConfiguration(
+                setupComplete: setupComplete,
+                perAgentEnvironments: perAgentEnvironments
+            )
             try JSONEncoder().encode(config).write(to: OsaurusPaths.sandboxConfigFile(), options: .atomic)
         }
 
-        private static func createReadyProvisioningTree() throws {
-            try createBaseRoot(setupComplete: true)
+        private static func createReadyProvisioningTree(
+            perAgentEnvironments: Bool = false
+        ) throws {
+            try createBaseRoot(
+                setupComplete: true,
+                perAgentEnvironments: perAgentEnvironments
+            )
             try OsaurusPaths.ensureExists(OsaurusPaths.container())
             try OsaurusPaths.ensureExists(OsaurusPaths.containerWorkspace())
             try OsaurusPaths.ensureExists(OsaurusPaths.containerAgentsDir())
@@ -160,13 +237,24 @@
             try Data("kernel".utf8).write(to: OsaurusPaths.containerKernelFile(), options: .atomic)
             try Data("initfs".utf8).write(to: OsaurusPaths.containerInitFSFile(), options: .atomic)
 
-            let state = OsaurusPaths.container()
-                .appendingPathComponent("containers/osaurus-sandbox", isDirectory: true)
-            try OsaurusPaths.ensureExists(state)
-            try Data("rootfs".utf8).write(
-                to: state.appendingPathComponent("rootfs.ext4"),
-                options: .atomic
-            )
+            if perAgentEnvironments {
+                let source = OsaurusPaths.container().appendingPathComponent("diagnostic-rootfs.ext4")
+                try Data("rootfs".utf8).write(to: source, options: .atomic)
+                let key = SandboxManager.rootfsTemplateKey
+                try SandboxRootfsTemplateStore.captureTemplate(from: source, key: key)
+                _ = try SandboxRootfsTemplateStore.ensureEnvironment(
+                    agentName: "agent-test",
+                    key: key
+                )
+            } else {
+                let state = OsaurusPaths.container()
+                    .appendingPathComponent("containers/osaurus-sandbox", isDirectory: true)
+                try OsaurusPaths.ensureExists(state)
+                try Data("rootfs".utf8).write(
+                    to: state.appendingPathComponent("rootfs.ext4"),
+                    options: .atomic
+                )
+            }
         }
     }
 

@@ -145,6 +145,27 @@ public enum SettingsSearchIndex {
             keywords: ["persona", "instructions", "system prompt"]
         ),
         .init(
+            id: "settings.chat.autoGenerateTitles",
+            tab: .chat,
+            section: "Chat",
+            title: "Automatically Name Chats",
+            keywords: ["title", "auto title", "rename", "chat name", "summary"]
+        ),
+        .init(
+            id: "settings.chat.cmdNNewChat",
+            tab: .chat,
+            section: "Chat",
+            title: "⌘+N Starts a New Chat in the Current Window",
+            keywords: ["cmd n", "new chat", "shortcut", "keyboard", "new window", "hotkey"]
+        ),
+        .init(
+            id: "settings.chat.compactionModel",
+            tab: .chat,
+            section: "Chat",
+            title: "Compaction Model",
+            keywords: ["compaction", "compact", "summarize", "context", "summary model"]
+        ),
+        .init(
             id: "settings.chat.temperature",
             tab: .chat,
             section: "Generation",
@@ -155,15 +176,22 @@ public enum SettingsSearchIndex {
             id: "settings.chat.maxTokens",
             tab: .chat,
             section: "Generation",
-            title: "Max Tokens",
-            keywords: ["response length", "output tokens"]
+            title: "Default Agent Max Output Tokens",
+            keywords: [
+                "response length", "output tokens", "generation config",
+                "max new tokens", "not context", "not kv",
+            ]
         ),
         .init(
             id: "settings.chat.contextLength",
-            tab: .chat,
-            section: "Generation",
-            title: "Context Length",
-            keywords: ["context window", "context"]
+            tab: .server,
+            section: "Cache",
+            title: "Context & KV Policy",
+            keywords: [
+                "context window", "context", "model maximum",
+                "metadata fallback", "kv retention", "cache window",
+            ],
+            subTab: "cache"
         ),
         .init(
             id: "settings.chat.topP",
@@ -385,7 +413,10 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Decode Performance",
             title: "Decode Performance",
-            keywords: ["decode", "throughput", "speed", "tokens per second"],
+            keywords: [
+                "decode", "throughput", "speed", "tokens per second",
+                "deepseek", "dsv4", "activation qat", "graph fidelity",
+            ],
             subTab: "decodePerformance"
         ),
         .init(
@@ -450,6 +481,20 @@ public enum SettingsSearchIndex {
             title: "Computer Use",
             keywords: ["screen control", "cursor", "automation", "accessibility", "per-app"]
         ),
+        .init(
+            id: "browser.enable",
+            tab: .browser,
+            title: "Browser Use",
+            keywords: [
+                "browser", "web", "browse", "session", "sign in", "login", "cookies", "webkit",
+            ]
+        ),
+        .init(
+            id: "browser.sessions",
+            tab: .browser,
+            title: "Browser Sessions",
+            keywords: ["sessions", "profiles", "signed in", "reset browser", "browsing data"]
+        ),
 
         // MARK: Channels / Integrations
         .init(
@@ -458,15 +503,18 @@ public enum SettingsSearchIndex {
             title: "Channels",
             keywords: [
                 "agent channels", "integrations", "channels", "discord", "slack", "telegram",
-                "custom json", "custom http", "remote channel",
+                "imessage", "whatsapp", "custom json", "custom http", "remote channel",
             ]
         ),
         .init(
             id: "agentChannels.globalWrites",
             tab: .agentChannels,
-            section: "Global Channel Safety",
-            title: "Global Channel Writes",
-            keywords: ["kill switch", "disable writes", "remote writes", "channel writes"]
+            section: "Sending",
+            title: "Allow Agents to Send Messages",
+            keywords: [
+                "kill switch", "disable writes", "remote writes", "channel writes",
+                "sending", "read-only", "pause sending",
+            ]
         ),
         .init(
             id: "agentChannels.discord",
@@ -497,11 +545,55 @@ public enum SettingsSearchIndex {
             ]
         ),
         .init(
+            id: "agentChannels.imessage",
+            tab: .agentChannels,
+            section: "Native Integrations",
+            title: "iMessage",
+            keywords: [
+                "imessage", "messages app", "imessage chats", "full disk access",
+                "messages automation", "imsg helper", "sender allowlist",
+                "tapback", "unsend", "sip", "library validation",
+            ]
+        ),
+        .init(
+            id: "agentChannels.whatsapp",
+            tab: .agentChannels,
+            section: "Native Integrations",
+            title: "WhatsApp",
+            keywords: [
+                "whatsapp", "whatsapp web", "whatsapp qr code", "qr code", "link device",
+                "whatsmeow",
+                "osaurus-wa helper", "sender allowlist", "whatsapp chats",
+                "phone number", "group jid",
+            ]
+        ),
+        .init(
             id: "agentChannels.customJSON",
             tab: .agentChannels,
             section: "Custom JSON Connections",
             title: "Custom HTTP Connections",
             keywords: ["custom json channels", "webhook", "agent-channels.json", "secret references"]
+        ),
+        .init(
+            id: "agentChannels.destinations",
+            tab: .agentChannels,
+            section: "Messages Agents Can Start",
+            title: "Messages Agents Can Start",
+            keywords: [
+                "proactive", "publish", "destination", "binding", "outbound",
+                "autonomous", "draft", "confirm", "agent destinations",
+                "new messages", "agent posting", "post", "room", "auto-send",
+            ]
+        ),
+        .init(
+            id: "agentChannels.outbox",
+            tab: .agentChannels,
+            section: "Outbox",
+            title: "Channel Outbox",
+            keywords: [
+                "outbox", "pending approval", "approve message", "queued messages",
+                "outbound activity", "drafts",
+            ]
         ),
 
         // MARK: Image Generation tab (subTab values are ImageGenerationTab raw values)
@@ -547,14 +639,13 @@ public enum SettingsSearchIndex {
             subTab: "Models"
         ),
 
-        // MARK: Subagents (runtime knobs in the Settings tab)
+        // MARK: Subagents (main-chat policy + runtime knobs in Settings)
         // There is no global master switch and no dedicated Spawn tab anymore.
-        // What remains are the shared runtime knobs (local handoff, RAM-safety),
-        // folded into the Settings tab as a "Subagents" card. Per-agent
-        // spawn/image config (targets, models, permissions, budgets) — including
-        // the built-in main chat — is configured in each agent's Subagents tab
-        // (not indexed here). Global image-generation settings live in the
-        // Image Generation tab (indexed above).
+        // The built-in main chat has no AgentDetailView, so its allowed agents,
+        // models, notes, permission, worker tools, and budgets live alongside
+        // shared handoff/RAM-safety knobs in this card. Custom-agent spawn/image
+        // policy remains in each agent's Subagents tab. Global image-generation
+        // settings live in the Image Generation tab (indexed above).
         .init(
             id: "settings.subagents",
             tab: .settings,
@@ -562,7 +653,19 @@ public enum SettingsSearchIndex {
             title: "Subagents",
             keywords: [
                 "spawn", "delegate", "delegation", "subagent",
-                "helper jobs", "agent delegation",
+                "helper jobs", "agent delegation", "allowed agents",
+                "allowed models", "main chat", "batch subagents",
+            ]
+        ),
+        .init(
+            id: "settings.subagents.mainChat",
+            tab: .settings,
+            section: "Subagents",
+            title: "Main Chat Spawn",
+            keywords: [
+                "default agent", "built-in chat", "spawn pool", "model notes",
+                "worker tools", "max subagents", "permission", "cloud model",
+                "local model",
             ]
         ),
         .init(
@@ -638,6 +741,31 @@ public enum SettingsSearchIndex {
             subTab: "settings"
         ),
 
+        // MARK: Agents
+        // Landing anchors live on the Agents screen (`AgentsView`): the header
+        // glows for the overview entry; the agent grid glows for the database
+        // entry, where each custom agent card exposes an Open Database
+        // shortcut into that agent's Database workspace.
+        .init(
+            id: "agents.overview",
+            tab: .agents,
+            title: "Agents",
+            keywords: [
+                "agent", "assistant", "persona", "custom agent", "create agent",
+                "system prompt", "agent settings",
+            ]
+        ),
+        .init(
+            id: "agents.database",
+            tab: .agents,
+            section: "Knowledge",
+            title: "Agent Database",
+            keywords: [
+                "database", "tables", "rows", "saved views", "sql", "sqlite",
+                "agent data", "structured data", "encrypted database", "db",
+            ]
+        ),
+
         // MARK: Search
         .init(
             id: "search.providers",
@@ -646,6 +774,25 @@ public enum SettingsSearchIndex {
             keywords: [
                 "web search", "search engine", "tavily", "exa", "brave", "serper", "parallel",
                 "google", "kagi", "duckduckgo", "bing", "api key", "internet",
+            ]
+        ),
+        .init(
+            id: "search.premium",
+            tab: .search,
+            title: "Premium Search",
+            keywords: [
+                "premium search", "hosted search", "osaurus search", "router search",
+                "paid search", "web search credits",
+            ]
+        ),
+        .init(
+            id: "credits.webSearch",
+            tab: .credits,
+            section: "Web search",
+            title: "Search Credits",
+            keywords: [
+                "web search", "premium search", "free searches", "search credits",
+                "auto pay", "search billing", "page extract", "grant",
             ]
         ),
         .init(

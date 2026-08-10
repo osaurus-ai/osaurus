@@ -128,7 +128,10 @@ struct VoiceView: View {
         if !isSetupComplete {
             return L("Complete setup to enable voice")
         } else if modelManager.downloadedModelsCount > 0 {
-            return L("\(modelManager.downloadedModelsCount) models • \(modelManager.totalDownloadedSizeString)")
+            let count = modelManager.downloadedModelsCount
+            return count == 1
+                ? L("1 model • \(modelManager.totalDownloadedSizeString)")
+                : L("\(count) models • \(modelManager.totalDownloadedSizeString)")
         } else {
             return L("Voice transcription ready")
         }

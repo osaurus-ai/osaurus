@@ -1,0 +1,22 @@
+{
+  "id": "memory.distractor-not-surfaced",
+  "domain": "memory",
+  "label": "memory • irrelevant seeded memory must not bleed into the answer",
+  "query": "What is the name of my boat?",
+  "notes": "Precision, not just recall: two facts are seeded — the right one (boat) and a distractor (a private medical appointment). The answer must carry the boat codeword and must NOT volunteer the distractor; a model that dumps its whole memory section fails. Off-CI (needs a model).",
+  "fixtures": {
+    "seedMemory": {
+      "pinnedFacts": [
+        "The user's sailboat is named Peregrine Dusk.",
+        "The user has a dermatology appointment on the 14th with Dr. Quillfeather."
+      ]
+    }
+  },
+  "expect": {
+    "memory": {
+      "maxTokens": 256,
+      "answerContains": ["Peregrine Dusk"],
+      "answerMustNotContain": ["Quillfeather", "dermatology"]
+    }
+  }
+}

@@ -62,12 +62,24 @@ public actor MemoryContextAssembler {
         // Identity overrides are always included (and tiny).
         let overridesBlock = MemoryPlanner.assembleIdentityOverridesOnly()
 
-        // Pull a small entity list for the gate from recent episodes.
+        // Pull a small entity list for the gate from recent episodes AND
+        // pinned facts. Facts are the store's densest entity source ("The
+        // user's home wifi network is called Kelp-Forest-77") — without
+        // them a query like "what wifi network should I connect to?" never
+        // opened the gate and stored facts were unreachable.
         let recentEpisodes =
             (try? MemoryDatabase.shared.loadEpisodes(agentId: agentId, days: 90, limit: 25)) ?? []
+        let recentFacts =
+            (try? MemoryDatabase.shared.loadPinnedFacts(agentId: agentId, limit: 25)) ?? []
+        let factWords = recentFacts.flatMap { fact in
+            fact.content.lowercased()
+                .split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "-" })
+                .map(String.init)
+        }
         let knownEntities = Set(
             recentEpisodes.flatMap(\.entities)
                 + identity.overrides.flatMap { $0.split(separator: " ").map(String.init) }
+                + factWords
         ).filter { $0.count >= 4 }
 
         let section = MemoryRelevanceGate.decide(

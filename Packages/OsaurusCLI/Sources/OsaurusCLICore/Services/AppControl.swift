@@ -7,6 +7,7 @@
 
 import Foundation
 import AppKit
+import Darwin
 
 public struct AppControl {
     public static func postDistributedNotification(name: String, userInfo: [AnyHashable: Any]) {
@@ -19,6 +20,7 @@ public struct AppControl {
         )
     }
 
+    @MainActor
     public static func launchAppIfNeeded() async {
         // Try to detect if server responds; if yes, nothing to do
         let port = Configuration.resolveConfiguredPort() ?? 1337
@@ -59,56 +61,100 @@ public struct AppControl {
     }
 
     /// Attempts to locate the installed Osaurus.app bundle path using common locations and Spotlight.
-    private static func findAppBundlePath() -> String? {
+    @MainActor
+    public static func findAppBundlePath() -> String? {
         let fm = FileManager.default
-        let home = NSHomeDirectory()
-        let candidates = [
-            "/Applications/Osaurus.app",
-            "\(home)/Applications/Osaurus.app",
-            "/Applications/osaurus.app",
-            "\(home)/Applications/osaurus.app",
-        ]
-        for c in candidates {
-            if fm.fileExists(atPath: c) { return c }
+        for path in commonAppBundlePaths() where fm.fileExists(atPath: path) {
+            return path
         }
-        // Try Spotlight via mdfind, restricted to Applications folders first
-        if let path = spotlightFind(queryArgs: [
-            "-onlyin", "/Applications",
-            "-onlyin", "\(home)/Applications",
-            "kMDItemCFBundleIdentifier == 'com.dinoki.osaurus'",
-        ]) {
-            if fm.fileExists(atPath: path) { return path }
-        }
-        // Unrestricted Spotlight fallback (search entire metadata index)
-        if let path = spotlightFind(queryArgs: [
-            "kMDItemCFBundleIdentifier == 'com.dinoki.osaurus'"
-        ]) {
-            if fm.fileExists(atPath: path) { return path }
-        }
-        return nil
+        return findAppBundlePaths().first
     }
 
-    /// Runs mdfind with the provided arguments and returns the first non-empty line.
-    private static func spotlightFind(queryArgs: [String]) -> String? {
+    /// Returns every known bundle for the Osaurus identifier. Multiple rows
+    /// are significant because LaunchServices can otherwise launch a stale
+    /// registration even when the CLI belongs to a newer app bundle.
+    @MainActor
+    public static func findAppBundlePaths(includeSpotlightSearch: Bool = true) -> [String] {
+        let fm = FileManager.default
+        let home = NSHomeDirectory()
+        let candidates = commonAppBundlePaths()
+        var paths = candidates.filter { fm.fileExists(atPath: $0) }
+        if let launchServicesSelection = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: "com.dinoki.osaurus"
+        ) {
+            paths.append(launchServicesSelection.path)
+        }
+        if includeSpotlightSearch {
+            let query = "kMDItemCFBundleIdentifier == 'com.dinoki.osaurus'"
+            paths.append(contentsOf: spotlightFindAll(queryArgs: ["-onlyin", "/Applications", query]))
+            paths.append(contentsOf: spotlightFindAll(queryArgs: ["-onlyin", "\(home)/Applications", query]))
+            // Preserve discovery of side-loaded and development bundles that
+            // are indexed but not currently registered with LaunchServices.
+            paths.append(contentsOf: spotlightFindAll(queryArgs: [query]))
+        }
+        return deduplicatedBundlePaths(paths.filter {
+            fm.fileExists(atPath: $0) && URL(fileURLWithPath: $0).pathExtension.lowercased() == "app"
+        })
+    }
+
+    private static func commonAppBundlePaths() -> [String] {
+        [
+            "/Applications/Osaurus.app",
+            "\(NSHomeDirectory())/Applications/Osaurus.app",
+            "/Applications/osaurus.app",
+            "\(NSHomeDirectory())/Applications/osaurus.app",
+        ]
+    }
+
+    static func deduplicatedBundlePaths(_ paths: [String]) -> [String] {
+        var seen = Set<String>()
+        return paths.compactMap { path in
+            let canonical = URL(fileURLWithPath: path)
+                .resolvingSymlinksInPath()
+                .standardizedFileURL.path
+            // macOS application volumes are normally case-insensitive. Treat
+            // spelling-only variants as one registration even on a test volume.
+            guard seen.insert(canonical.lowercased()).inserted else { return nil }
+            return canonical
+        }
+    }
+
+    @MainActor
+    public static func runningAppBundlePath() -> String? {
+        NSRunningApplication.runningApplications(withBundleIdentifier: "com.dinoki.osaurus")
+            .first?.bundleURL?.path
+    }
+
+    /// Runs mdfind with the provided arguments and returns existing result paths.
+    private static func spotlightFindAll(queryArgs: [String]) -> [String] {
         let mdfind = Process()
         let outPipe = Pipe()
+        let finished = DispatchSemaphore(value: 0)
         mdfind.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
         mdfind.standardOutput = outPipe
+        mdfind.standardError = FileHandle.nullDevice
         mdfind.arguments = queryArgs
+        mdfind.terminationHandler = { _ in finished.signal() }
         do {
             try mdfind.run()
-            mdfind.waitUntilExit()
+            guard finished.wait(timeout: .now() + 2) == .success else {
+                mdfind.terminate()
+                if finished.wait(timeout: .now() + 0.5) == .timedOut {
+                    Darwin.kill(mdfind.processIdentifier, SIGKILL)
+                    _ = finished.wait(timeout: .now() + 1)
+                }
+                mdfind.waitUntilExit()
+                return []
+            }
             if mdfind.terminationStatus == 0 {
                 let data = try outPipe.fileHandleForReading.readToEnd() ?? Data()
                 if let s = String(data: data, encoding: .utf8) {
-                    if let first = s.split(separator: "\n").first, !first.isEmpty {
-                        return String(first)
-                    }
+                    return s.split(separator: "\n").map(String.init)
                 }
             }
         } catch {
             // ignore failures; fallback will be nil
         }
-        return nil
+        return []
     }
 }

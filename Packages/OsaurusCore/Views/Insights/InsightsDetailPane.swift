@@ -243,6 +243,7 @@ struct InsightsDetailPane: View {
         case .httpAPI: return "network"
         case .plugin: return "puzzlepiece.extension.fill"
         case .p2p: return "antenna.radiowaves.left.and.right"
+        case .scheduled: return "clock.arrow.circlepath"
         }
     }
 

@@ -50,16 +50,20 @@ public struct SubagentCapability: Sendable {
     /// write through the descriptor instead of hardcoding field names.
     public enum PerAgentFlag: Sendable, Hashable {
         case computerUse
+        case browserUse
         case spawn
         case image
+        case video
         case appleScript
 
         /// The resolved per-agent flag for the `resolveTools` strip.
         public func enabled(in snapshot: AgentConfigSnapshot) -> Bool {
             switch self {
             case .computerUse: return snapshot.computerUseEnabled
+            case .browserUse: return snapshot.browserUseEnabled
             case .spawn: return snapshot.spawnDelegationEnabled
             case .image: return snapshot.imageEnabled
+            case .video: return snapshot.videoEnabled
             case .appleScript: return snapshot.appleScriptEnabled
             }
         }
@@ -68,8 +72,10 @@ public struct SubagentCapability: Sendable {
         public func read(from settings: AgentSettings) -> Bool {
             switch self {
             case .computerUse: return settings.computerUseEnabled
+            case .browserUse: return settings.browserUseEnabled
             case .spawn: return settings.spawnDelegationEnabled
             case .image: return settings.imageEnabled
+            case .video: return settings.videoEnabled
             case .appleScript: return settings.appleScriptEnabled
             }
         }
@@ -78,8 +84,10 @@ public struct SubagentCapability: Sendable {
         public func write(_ value: Bool, into settings: inout AgentSettings) {
             switch self {
             case .computerUse: settings.computerUseEnabled = value
+            case .browserUse: settings.browserUseEnabled = value
             case .spawn: settings.spawnDelegationEnabled = value
             case .image: settings.imageEnabled = value
+            case .video: settings.videoEnabled = value
             case .appleScript: settings.appleScriptEnabled = value
             }
         }
@@ -188,24 +196,45 @@ public enum SubagentCapabilityRegistry {
         guidanceLabelKey: "Computer Use"
     )
 
+    /// Browser Use — the `browser_use` entry tool that drives an isolated,
+    /// persistent per-agent WebKit session (the native replacement for the
+    /// `osaurus.browser` plugin). `.perAgent` like computer_use and available
+    /// only to custom agents; the built-in Default agent is hard-off.
+    public static let browserUse = SubagentCapability(
+        id: "browser_use",
+        toolNames: [BrowserUseTool.toolName],
+        gate: .perAgent,
+        perAgentFlag: .browserUse,
+        modelSource: .inheritsParent,
+        supportsModelOverride: true,
+        displayLabel: "Browser Use",
+        iconName: "globe",
+        guidance: SystemPromptTemplates.browserUseGuidance,
+        guidanceSectionId: "browserUse",
+        guidanceLabelKey: "Browser Use"
+    )
+
     /// Stable tool name for the agent-context spawn (`spawn_agent(input,
     /// agent)`). SSOT so the tool, registry gating, and visibility resolver agree.
     public static let spawnAgentToolName = "spawn_agent"
     /// Stable tool name for the model-only spawn (`spawn_model(input, model)`).
     public static let spawnModelToolName = "spawn_model"
+    /// Stable tool name for bounded heterogeneous fan-out. Each job explicitly
+    /// selects one allow-listed agent or model and carries a caller-stable id.
+    public static let spawnBatchToolName = "spawn_batch"
 
-    /// The text-spawn family — two sibling tools, one shared capability:
+    /// The text-spawn family — three sibling tools, one shared capability:
     /// `spawn_agent` (delegate WITH an agent's system prompt + model) and
-    /// `spawn_model` (delegate to a bare model id, no agent). Splitting into two
-    /// single-required-target tools keeps each JSON contract enforceable (no
-    /// "exactly one of agent/model" the schema can't express). Each is gated
-    /// independently by its own pool (agents vs models). No static guidance — the
-    /// composer renders one dynamic spawn block enumerating the live agents /
-    /// models, so `guidance == nil` keeps the generic guidance loop off it. Names
-    /// are the SSOT here; `ToolRegistry`'s derived sets read these for gating.
+    /// `spawn_model` (delegate to a bare model id, no agent). `spawn_batch`
+    /// accepts several explicitly typed jobs and is available when either pool
+    /// is non-empty. The single-target tools remain the compatibility surface.
+    /// No static guidance — the composer renders one dynamic spawn block
+    /// enumerating the live agents / models, so `guidance == nil` keeps the
+    /// generic guidance loop off it. Names are the SSOT here; `ToolRegistry`'s
+    /// derived sets read these for gating.
     public static let spawn = SubagentCapability(
         id: "spawn",
-        toolNames: [spawnAgentToolName, spawnModelToolName],
+        toolNames: [spawnAgentToolName, spawnModelToolName, spawnBatchToolName],
         gate: .delegation,
         perAgentFlag: .spawn,
         modelSource: .agent,
@@ -236,6 +265,23 @@ public enum SubagentCapabilityRegistry {
         guidanceLabelKey: "Image Generation"
     )
 
+    public static let video = SubagentCapability(
+        id: "video",
+        toolNames: ["video"],
+        gate: .delegation,
+        perAgentFlag: .video,
+        modelSource: .dedicatedConfigured,
+        supportsModelOverride: false,
+        displayLabel: "Video",
+        iconName: "video",
+        guidance:
+            "Use `video` for text-to-video or image-to-video generation. It is billable: "
+            + "the tool obtains and presents a current quote before queueing. For image-to-video, "
+            + "pass exactly one local source image path. Generated video is displayed automatically.",
+        guidanceSectionId: "videoGeneration",
+        guidanceLabelKey: "Video Generation"
+    )
+
     /// The AppleScript family — two sibling tools, one shared capability + one
     /// on-device model (the curated `AppleScriptModelCatalog`): `applescript`
     /// (state-changing automation, the user's confirm gate) and `mac_query`
@@ -261,13 +307,15 @@ public enum SubagentCapabilityRegistry {
         guidanceLabelKey: "AppleScript"
     )
 
-    /// Every capability, in guidance-render order (computer_use, then image,
-    /// then applescript; spawn renders its own dynamic guidance block in the
-    /// composer).
-    public static let all: [SubagentCapability] = [computerUse, spawn, image, appleScript]
+    /// Every capability, in guidance-render order (computer_use, then
+    /// browser_use, then image, then applescript; spawn renders its own
+    /// dynamic guidance block in the composer).
+    public static let all: [SubagentCapability] = [
+        computerUse, browserUse, spawn, image, video, appleScript,
+    ]
 
     /// The delegation-gated capabilities (spawn + image + applescript).
-    public static let delegationFamily: [SubagentCapability] = [spawn, image, appleScript]
+    public static let delegationFamily: [SubagentCapability] = [spawn, image, video, appleScript]
 
     /// Distinct per-agent toggle flags, in registry order (computer_use, spawn,
     /// image, applescript). One entry per *toggle* (deduped, so a future kind
@@ -342,9 +390,9 @@ public enum SubagentToolVisibility {
         isDefault: Bool,
         config: SubagentConfiguration,
         perAgentEnabled: Bool,
-        perAgentTargets: [String]
-    ) -> [String] {
-        if isDefault { return config.spawnableAgentNames }
+        perAgentTargets: [UUID]
+    ) -> [UUID] {
+        if isDefault { return config.spawnableAgentIDs }
         return perAgentEnabled ? perAgentTargets : []
     }
 
@@ -369,7 +417,7 @@ public enum SubagentToolVisibility {
         isDefault: Bool,
         config: SubagentConfiguration,
         perAgentEnabled: Bool,
-        perAgentTargets: [String]
+        perAgentTargets: [UUID]
     ) -> Bool {
         !effectiveSpawnableAgents(
             isDefault: isDefault,
@@ -406,6 +454,14 @@ public enum SubagentToolVisibility {
         isDefault ? config.imageDelegationActive : perAgentEnabled
     }
 
+    static func videoAvailable(
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        perAgentEnabled: Bool
+    ) -> Bool {
+        isDefault ? config.videoDelegationEnabled : perAgentEnabled
+    }
+
     /// Whether `applescript` is available for an agent. The Default / main chat
     /// is governed by its own AppleScript switch (`appleScriptDelegationActive`);
     /// a custom agent by its own toggle. There is no global master switch. The
@@ -422,15 +478,15 @@ public enum SubagentToolVisibility {
     /// Whether a specific `spawn_agent` TARGET agent is reachable from a
     /// launching agent — the execution-time check the spawn kind enforces.
     /// Default / main chat uses its own pool; a custom agent its own allow-list.
-    /// Agent names match case-insensitively (display names are user-facing prose).
+    /// UUID identity is exact; display names are never authorization keys.
     static func spawnTargetAllowed(
-        _ name: String,
+        _ id: UUID,
         isDefault: Bool,
         config: SubagentConfiguration,
-        perAgentTargets: [String]
+        perAgentTargets: [UUID]
     ) -> Bool {
-        if isDefault { return config.isAgentSpawnable(name) }
-        return perAgentTargets.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
+        if isDefault { return config.isAgentSpawnable(id) }
+        return perAgentTargets.contains(id)
     }
 
     /// Whether a specific `spawn_model` TARGET model id is reachable from a
@@ -467,28 +523,37 @@ public enum SubagentToolVisibility {
         snapshot: AgentConfigSnapshot,
         config: SubagentConfiguration,
         hasReadyImageModel: Bool,
+        hasReadyVideoModel: Bool = false,
         hasReadyAppleScriptModel: Bool = false
     ) -> Set<String> {
         let isDefault = (agentId == Agent.defaultId)
         var names = Set<String>()
-        // The two spawn tools gate independently: each appears only when its own
-        // pool is non-empty, so an agent with only models sees `spawn_model` and
-        // not `spawn_agent` (and vice versa).
-        if spawnAgentAvailable(
-            isDefault: isDefault,
-            config: config,
-            perAgentEnabled: snapshot.spawnDelegationEnabled,
-            perAgentTargets: snapshot.spawnableAgentNames
-        ) {
+        // The two compatibility tools gate independently; the batch tool is
+        // available whenever either exact target pool is non-empty.
+        let hasAgents =
+            snapshot.spawnConfiguration.map { !$0.agentIDs.isEmpty }
+            ?? spawnAgentAvailable(
+                isDefault: isDefault,
+                config: config,
+                perAgentEnabled: snapshot.spawnDelegationEnabled,
+                perAgentTargets: snapshot.spawnableAgentIDs
+            )
+        let hasModels =
+            snapshot.spawnConfiguration.map { !$0.modelNames.isEmpty }
+            ?? spawnModelAvailable(
+                isDefault: isDefault,
+                config: config,
+                perAgentEnabled: snapshot.spawnDelegationEnabled,
+                perAgentModelTargets: snapshot.spawnableModelNames
+            )
+        if hasAgents {
             names.insert(SubagentCapabilityRegistry.spawnAgentToolName)
         }
-        if spawnModelAvailable(
-            isDefault: isDefault,
-            config: config,
-            perAgentEnabled: snapshot.spawnDelegationEnabled,
-            perAgentModelTargets: snapshot.spawnableModelNames
-        ) {
+        if hasModels {
             names.insert(SubagentCapabilityRegistry.spawnModelToolName)
+        }
+        if hasAgents || hasModels {
+            names.insert(SubagentCapabilityRegistry.spawnBatchToolName)
         }
         if hasReadyImageModel,
             imageAvailable(
@@ -498,6 +563,15 @@ public enum SubagentToolVisibility {
             )
         {
             names.formUnion(SubagentCapabilityRegistry.image.toolNames)
+        }
+        if hasReadyVideoModel,
+            videoAvailable(
+                isDefault: isDefault,
+                config: config,
+                perAgentEnabled: snapshot.videoEnabled
+            )
+        {
+            names.formUnion(SubagentCapabilityRegistry.video.toolNames)
         }
         // AppleScript gates like image: the per-agent / global switch can be ON,
         // but the tool is withheld until a curated AppleScript model is installed
@@ -540,18 +614,38 @@ public enum SubagentToolVisibility {
         return isEdit ? settings?.imageEditModelId : settings?.imageGenerationModelId
     }
 
-    /// The configured AppleScript model id for an agent — Default / main chat
-    /// uses the global default; a custom agent uses its own. `nil` falls through
-    /// to the catalog's first-installed fallback (so an agent that enabled
-    /// AppleScript without picking a model still works).
+    static func effectiveVideoTarget(
+        imageToVideo: Bool,
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        settings: AgentSettings?
+    ) -> MediaModelTarget? {
+        if isDefault {
+            return imageToVideo
+                ? config.defaultImageToVideoTarget
+                : config.defaultTextToVideoTarget
+        }
+        return imageToVideo ? settings?.imageToVideoTarget : settings?.textToVideoTarget
+    }
+
+    /// The configured AppleScript model id for an agent. Default / main chat
+    /// uses the global default. A custom agent's explicit model wins, while
+    /// "Choose automatically" inherits that same visible global default before
+    /// falling through to the catalog's first-installed model. This matches the
+    /// Settings contract and keeps an unconfigured custom agent from silently
+    /// loading a different helper than the user selected globally.
     static func effectiveAppleScriptModel(
         isDefault: Bool,
         config: SubagentConfiguration,
         settings: AgentSettings?
     ) -> String? {
-        let raw = isDefault ? config.defaultAppleScriptModelId : settings?.appleScriptModelId
-        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (trimmed?.isEmpty ?? true) ? nil : trimmed
+        func normalized(_ value: String?) -> String? {
+            let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (trimmed?.isEmpty ?? true) ? nil : trimmed
+        }
+        if isDefault { return normalized(config.defaultAppleScriptModelId) }
+        return normalized(settings?.appleScriptModelId)
+            ?? normalized(config.defaultAppleScriptModelId)
     }
 
     /// The AppleScript execution mode for an agent — Default / main chat uses
@@ -603,14 +697,23 @@ public enum SubagentToolVisibility {
     }
 
     /// The effective (clamped) `spawn` budgets for an agent. Default / main chat
-    /// uses the global budgets; a custom agent uses its own.
+    /// uses the global budgets. A custom agent keeps its own token / turn /
+    /// tool / elapsed limits, while parallel fan-out comes from the one shared
+    /// Server + Spawn concurrency setting.
     static func effectiveBudgets(
         isDefault: Bool,
         config: SubagentConfiguration,
-        settings: AgentSettings?
+        settings: AgentSettings?,
+        sharedParallelLimit: Int
     ) -> SubagentBudgets {
-        let budgets = isDefault ? config.budgets : (settings?.subagentBudgets ?? SubagentBudgets())
-        return budgets.normalized
+        let budgets =
+            isDefault
+            ? config.budgets
+            : (settings?.subagentBudgets ?? SubagentBudgets())
+        return SpawnBatchConcurrencyContract.applyingLimit(
+            sharedParallelLimit,
+            to: budgets
+        )
     }
 
     /// The effective child-tool grant for spawn runs launched by an agent.

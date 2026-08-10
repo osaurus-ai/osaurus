@@ -238,6 +238,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// all-agent key. Agent-scoped keys (`false`) are confined to their
         /// own agent's routes.
         var authedScopeIsMaster: Bool = false
+        /// `true` when the caller presented a Bearer token that validated
+        /// against the configured access keys. Set by the global auth gate
+        /// (non-loopback) or by the opportunistic loopback validation, and
+        /// carried into request tasks via `HTTPCallerContext` so credit-spend
+        /// gates (Osaurus Router) can tell keyed callers from key-less
+        /// loopback-trusted ones.
+        var callerHasVerifiedAccessKey: Bool = false
         /// Set when the request arrived as an encrypted `/secure/call`
         /// envelope and was rewritten to its inner request. Routes that
         /// hard-require end-to-end encryption (`/agents/{id}/run`,
@@ -308,9 +315,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let id = UUID()
         let requestTasks = requestTasks
         let operationBox = RequestTaskOperation(operation)
+        // Snapshot the caller's auth proof (event-loop-only state) into a
+        // task-local so downstream gates — ChatEngine's Osaurus Router
+        // credit-spend gate in particular — can tell keyed HTTP callers from
+        // key-less loopback-trusted ones without threading a flag through
+        // every request struct.
+        let callerContext = HTTPCallerContext(
+            hasVerifiedAccessKey: stateRef.value.callerHasVerifiedAccessKey
+        )
         let task = Task(priority: priority) {
             defer { requestTasks.remove(id: id) }
-            await operationBox.run()
+            await HTTPCallerContext.$current.withValue(callerContext) {
+                await operationBox.run()
+            }
         }
         channelCloseFuture.snapshot()?.whenComplete { _ in
             task.cancel()
@@ -330,6 +347,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.isSecureChannel = false
             stateRef.value.authedAudience = nil
             stateRef.value.authedScopeIsMaster = false
+            stateRef.value.callerHasVerifiedAccessKey = false
             // Clear last request's attribution so a keep-alive connection's
             // next (possibly loopback / public) request can't inherit it.
             _inboundConnection.value = nil
@@ -500,6 +518,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     switch result {
                     case .valid(_, let audience, let keyNonce):
                         message = ""
+                        stateRef.value.callerHasVerifiedAccessKey = true
                         // Record the key's scope so agent-addressing routes can
                         // confine an agent-scoped key to its own agent.
                         stateRef.value.authedAudience = audience.lowercased()
@@ -546,6 +565,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     stateRef.value.requestHead = nil
                     stateRef.value.requestBodyBuffer = nil
                     return
+                }
+            }
+
+            // Loopback callers skip the auth gate entirely, but some
+            // downstream gates (Osaurus Router credit spend) require proof of
+            // a valid access key. Validate a volunteered Bearer token
+            // opportunistically — never rejecting the request, and never
+            // setting `authedAudience` (loopback trust must not suddenly gain
+            // agent-scope confinement just because a key was offered).
+            if isLoopback, !stateRef.value.callerHasVerifiedAccessKey {
+                let authHeader = head.headers.first(name: "Authorization") ?? ""
+                if authHeader.hasPrefix("Bearer ") {
+                    let token = String(authHeader.dropFirst(7))
+                    if case .valid = apiKeyValidator.validate(rawKey: token) {
+                        stateRef.value.callerHasVerifiedAccessKey = true
+                    }
                 }
             }
 
@@ -760,6 +795,34 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleImageUpscale(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/images/cancel" {
                 handleImageCancel(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/videos/quote" {
+                handleVideoQuote(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/videos/generations" {
+                handleVideoGeneration(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET,
+                path.hasPrefix("/videos/jobs/"),
+                path.hasSuffix("/content")
+            {
+                handleVideoContent(
+                    path: path,
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path.hasPrefix("/videos/jobs/") {
+                handleVideoJob(
+                    path: path,
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if path.hasPrefix("/plugins/") {
                 handlePluginRoute(
                     head: head,
@@ -820,7 +883,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         runRequestTask(priority: .userInitiated) {
             let cached = await ModelRuntime.shared.cachedModelSummaries(refreshTopology: true)
+            let lastMemorySafetyLoadDecision =
+                await ModelRuntime.shared.lastMemorySafetyLoadDecisionSnapshot()
             let batchDiagnostics = await MLXBatchAdapter.snapshotDiagnostics()
+            let turboQuantTransitions =
+                await MLXBatchAdapter.turboQuantCacheTransitionsSnapshot()
             let lastEffectiveGenerationSettings =
                 await MLXBatchAdapter.lastEffectiveGenerationSettingsSnapshot()
             var aggregate: [String: Int] = [
@@ -881,6 +948,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     mlxPressStatus["cold_fraction"] = NSNull()
                 }
                 row["mlx_press"] = mlxPressStatus
+                if let active = summary.activeCachePolicy {
+                    row["active_cache_policy"] =
+                        [
+                            "max_kv_size": active.maxKVSize as Any? ?? NSNull(),
+                            "long_prompt_multiplier": active.longPromptMultiplier,
+                            "paged_ram_enabled": active.pagedRAMEnabled,
+                            "disk_l2_enabled": active.diskL2Enabled,
+                            "disk_l2_max_gb": active.diskL2MaxGB,
+                        ] as [String: Any]
+                } else {
+                    row["active_cache_policy"] = NSNull()
+                }
                 guard let stats = summary.cacheStats else {
                     row["cache_enabled"] = false
                     return row
@@ -889,34 +968,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 row["cache_enabled"] = true
                 row["is_hybrid"] = stats.isHybrid
                 row["is_paged_incompatible"] = stats.isPagedIncompatible
+                row["requires_paged_boundary_companion"] =
+                    stats.requiresPagedBoundaryCompanion
+                let turboQuantTransition = turboQuantTransitions[summary.name]
+                let effectiveCacheTopology = Self.effectiveCacheTopology(
+                    baseline: summary.cacheTopology,
+                    turboQuantTransition: turboQuantTransition
+                )
                 row["effective_kv_mode"] = ModelRuntime.cacheKVModeTag(
                     for: ServerRuntimeSettingsStore.snapshot().cache,
                     modelName: summary.name,
-                    cacheTopology: summary.cacheTopology
+                    cacheTopology: effectiveCacheTopology
                 )
-                if let topology = summary.cacheTopology {
-                    row["cache_topology"] =
-                        [
-                            "layer_count": topology.layerCount,
-                            "kv_layer_count": topology.kvLayerCount,
-                            "chunked_kv_layer_count": topology.chunkedKVLayerCount,
-                            "quantized_kv_layer_count": topology.quantizedKVLayerCount,
-                            "turbo_quant_kv_layer_count": topology.turboQuantKVLayerCount,
-                            "compilable_kv_layer_count": topology.compilableKVLayerCount,
-                            "compilable_turbo_quant_kv_layer_count": topology.compilableTurboQuantKVLayerCount,
-                            "rotating_kv_layer_count": topology.rotatingKVLayerCount,
-                            "compilable_rotating_kv_layer_count": topology.compilableRotatingKVLayerCount,
-                            "rotating_wrapper_layer_count": topology.rotatingWrapperLayerCount,
-                            "hybrid_pool_layer_count": topology.hybridPoolLayerCount,
-                            "mamba_layer_count": topology.mambaLayerCount,
-                            "compilable_mamba_layer_count": topology.compilableMambaLayerCount,
-                            "arrays_layer_count": topology.arraysLayerCount,
-                            "zaya_cca_layer_count": topology.zayaCCALayerCount,
-                            "cache_list_layer_count": topology.cacheListLayerCount,
-                            "requires_ssm_companion_state": topology.requiresSSMCompanionState,
-                            "requires_disk_backed_restore": topology.requiresDiskBackedCoordinatorRestore,
-                            "tags": topology.topologyTags,
-                        ] as [String: Any]
+                if let topology = effectiveCacheTopology {
+                    row["cache_topology"] = Self.cacheTopologyJSONObject(topology)
+                }
+                if let transition = turboQuantTransition {
+                    row["last_turboquant_cache_transition"] =
+                        Self.turboQuantCacheTransitionJSONObject(transition)
+                } else {
+                    row["last_turboquant_cache_transition"] = NSNull()
                 }
 
                 var paged: [String: Any] = ["enabled": stats.pagedEnabled]
@@ -939,6 +1010,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     disk["hits"] = diskStats.hits
                     disk["misses"] = diskStats.misses
                     disk["stores"] = diskStats.stores
+                    disk["store_skips"] = diskStats.storeSkips
+                    disk["current_payload_bytes"] = diskStats.currentPayloadBytes
+                    disk["current_entry_count"] = diskStats.currentEntryCount
+                    disk["evictions"] = diskStats.evictions
                     disk["max_size_bytes"] = diskStats.maxSizeBytes
                     aggregate["disk_l2_hits", default: 0] += diskStats.hits
                     aggregate["disk_l2_misses", default: 0] += diskStats.misses
@@ -948,12 +1023,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
                 let ssm = stats.ssmStats
                 let companionKinds =
-                    summary.cacheTopology?.topologyTags.filter {
+                    effectiveCacheTopology?.topologyTags.filter {
                         $0.hasPrefix("companion=")
                     } ?? []
                 let hasSSMCompanion = companionKinds.contains("companion=ssm")
                 let hasZayaCCACompanion =
-                    (summary.cacheTopology?.zayaCCALayerCount ?? 0) > 0
+                    (effectiveCacheTopology?.zayaCCALayerCount ?? 0) > 0
                 if hasZayaCCACompanion, let diskStats = stats.diskStats {
                     row["zaya_cca_disk_payload_restore"] =
                         [
@@ -992,10 +1067,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let runtimeSettings = ServerRuntimeSettingsStore.snapshot()
             let memoryStatus = MemoryStatus.snapshot()
-            let memorySafetyPlan = runtimeSettings.resolvedMemorySafetyPlan(
+            let memorySafetyPlan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+                for: runtimeSettings,
                 baseLoadConfiguration: .osaurusProduction,
                 host: memoryStatus
             )
+            let metadataFallbackTokens = await MainActor.run {
+                ChatConfigurationStore.load().contextLength
+            }
 
             var obj: [String: Any] = [
                 "status": "ok",
@@ -1005,8 +1084,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "memory_safety": Self.memorySafetyJSONObject(
                     settings: runtimeSettings,
                     plan: memorySafetyPlan,
-                    memoryStatus: memoryStatus
+                    memoryStatus: memoryStatus,
+                    lastLoadDecision: lastMemorySafetyLoadDecision
                 ),
+                "context_policy": [
+                    "metadata_fallback_tokens":
+                        metadataFallbackTokens as Any? ?? NSNull(),
+                    "conversation_safety_margin":
+                        ContextBudgetManager.safetyMargin,
+                    "saved_kv_retention_override_tokens":
+                        runtimeSettings.cache.defaultMaxKVSize as Any? ?? NSNull(),
+                    "resolved_kv_retention_tokens":
+                        memorySafetyPlan.cache.defaultMaxKVSize as Any? ?? NSNull(),
+                ] as [String: Any],
                 "storage_locations": Self.storageLocationsJSONObject(),
             ]
             if let batchDiagnostics {
@@ -1222,9 +1312,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
 
-            let next: VMLXServerRuntimeSettings
+            let requested: VMLXServerRuntimeSettings
             do {
-                next = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: parsedBody.data)
+                requested = try JSONDecoder().decode(
+                    VMLXServerRuntimeSettings.self,
+                    from: parsedBody.data
+                )
             } catch {
                 let body = Self.errorBody(
                     .openai(type: "invalid_request_error"),
@@ -1251,6 +1344,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 return
             }
+            let next =
+                ServerRuntimeSettingsStore.canonicalizedContextAndKVPolicy(
+                    requested
+                )
 
             if previous.network != next.network {
                 let body = Self.errorBody(
@@ -1318,10 +1415,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 previous.cache != next.cache
                 || previous.multimodal != next.multimodal
                 || previous.mtp != next.mtp
-                // The tied-head codec applies at model construction
-                // (TiedHeadQuantizationPolicy is read while loading the head),
-                // so a change takes effect on the next load — evicting the
-                // resident model makes the toggle live. Compare
+                || previous.memorySafety != next.memorySafety
+                // The tied-head codec and DSV4 activation-QAT choice apply at
+                // model construction, so a change takes effect on the next
+                // load — evicting the resident model makes either toggle live.
+                // Compare
                 // effectivePerformance so a nil<->explicit-default edit
                 // (semantically unchanged) does not force a spurious reload.
                 //
@@ -1428,14 +1526,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private static func memorySafetyJSONObject(
         settings: VMLXServerRuntimeSettings,
         plan: VMLXResolvedMemorySafetyPlan,
-        memoryStatus: MemoryStatus
+        memoryStatus: MemoryStatus,
+        lastLoadDecision: ModelRuntime.MemorySafetyLoadDecision?
     ) -> [String: Any] {
         let memorySafety = settings.memorySafety
         let validationIssues = memorySafety.validationIssues()
         let issues = validationIssues + plan.blockingIssues
-        return [
+        var object: [String: Any] = [
             "mode": memorySafety.mode.rawValue,
             "slider": memorySafety.slider,
+            "automatic_memory_limits_disabled":
+                ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled(for: settings),
             "allowed": plan.blockingIssues.isEmpty,
             "display_summary": plan.displaySummary,
             "resolved_physical_memory_bytes": plan.resolvedPhysicalMemoryBytes,
@@ -1449,6 +1550,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "validation_issues": validationIssues.map(settingsIssueJSONObject),
             "issues": issues.map(settingsIssueJSONObject),
         ]
+        if let decision = lastLoadDecision {
+            object["last_load_decision"] =
+                [
+                    "model": decision.modelName,
+                    "estimated_working_set_bytes":
+                        decision.estimatedWorkingSetBytes as Any? ?? NSNull(),
+                    "resolved_load_budget_bytes":
+                        decision.resolvedLoadBudgetBytes as Any? ?? NSNull(),
+                    "allowed": decision.allowed,
+                    "display_summary": decision.displaySummary,
+                    "use_mmap_safetensors": decision.useMmapSafetensors,
+                    "blocking_issues": decision.blockingIssues,
+                    "timestamp": decision.timestamp.ISO8601Format(),
+                ] as [String: Any]
+        } else {
+            object["last_load_decision"] = NSNull()
+        }
+        return object
     }
 
     private static func loadConfigurationJSONObject(
@@ -1460,6 +1579,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "use_mmap_safetensors": configuration.useMmapSafetensors,
             "jang_press_policy": jangPressPolicyJSONObject(configuration.jangPress),
             "native_mtp": configuration.nativeMTP,
+            "deepseek_v4_activation_qat":
+                configuration.deepseekV4ActivationQAT as Any? ?? NSNull(),
         ]
     }
 
@@ -1695,10 +1816,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let manifest = loaded.plugin.manifest
 
-            // Check for static web serving first
+            // Check for static web serving first. Segment-boundary matching
+            // via the shared helper: mount `/ui` must NOT capture `/ui-other`
+            // (a bare `hasPrefix` did, disagreeing with the load-time
+            // web/route overlap validation in PluginManager).
             if let webSpec = loaded.webConfig {
-                let mountPrefix = webSpec.mount.hasPrefix("/") ? webSpec.mount : "/\(webSpec.mount)"
-                if subpath.hasPrefix(mountPrefix) {
+                if PluginManifest.WebSpec.mountCaptures(subpath: subpath, mount: webSpec.mount) {
                     // Tunnel exposure gate: web UIs are loopback-only by
                     // default. Plugins must opt in via `capabilities.web.tunnel_exposed`
                     // for the static UI to be reachable over the tunnel.
@@ -1735,7 +1858,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
                     // Check for dev proxy configuration
                     if let proxyURL = Self.loadDevProxyURL(for: pluginId) {
-                        let relPath = String(subpath.dropFirst(mountPrefix.count))
+                        let relPath = PluginManifest.WebSpec.relativeSubpath(
+                            subpath: subpath,
+                            mount: webSpec.mount
+                        )
                         let targetPath = relPath.isEmpty ? "/" : relPath
                         // Forward the original method/headers/body so HMR,
                         // POST APIs, and any non-GET dev-server traffic
@@ -1764,7 +1890,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         )
                     }
 
-                    let relPath = String(subpath.dropFirst(mountPrefix.count))
+                    let relPath = PluginManifest.WebSpec.relativeSubpath(
+                        subpath: subpath,
+                        mount: webSpec.mount
+                    )
                     let filePath: String
                     if relPath.isEmpty || relPath == "/" {
                         filePath = webSpec.entry
@@ -2832,7 +2961,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private static func enrichWithAgentContext(
         _ request: ChatCompletionRequest,
         agentId: String?,
-        executionMode: ExecutionMode
+        executionMode: ExecutionMode,
+        modelOverride: String? = nil
     ) async -> ChatCompletionRequest {
         guard let agentId, !agentId.isEmpty,
             let agentUUID = UUID(uuidString: agentId)
@@ -2844,15 +2974,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // `effectiveToolsDisabled` does not read it, so it must be folded
         // in here (the app chat path does the same via `chatCfg.disableTools`).
         let globalToolsDisabled = await MainActor.run { ChatConfigurationStore.load().disableTools }
+        await PluginManager.shared.ensurePromptCatalogReady()
         let composed = await SystemPromptComposer.composeChatContext(
             agentId: agentUUID,
             executionMode: executionMode,
+            model: modelOverride,
             query: query,
             messages: enriched.messages,
             toolsDisabled: globalToolsDisabled
         )
         if !composed.prompt.isEmpty {
             SystemPromptComposer.injectSystemContent(composed.prompt, into: &enriched.messages)
+            enriched.cacheStableSystemPrefix = composed.staticPrefix
         }
         // Session-stable memory injection: when the caller supplies a
         // session_id, previously injected prefixes are replayed onto the
@@ -2866,6 +2999,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             if let recorded = SystemPromptComposer.applyFrozenMemoryPrefixes(
                 memorySection: composed.memorySection,
                 frozen: frozen,
+                timeContext: SystemPromptTemplates.timeContext(now: Date(), timeZone: .current),
                 into: &enriched.messages
             ) {
                 await SessionToolStateStore.shared.recordUserPrefix(
@@ -2877,59 +3011,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         } else {
             SystemPromptComposer.injectMemoryPrefix(composed.memorySection, into: &enriched.messages)
         }
-        // Agent-run / HTTP orchestrators must get the active Subagent
-        // tools as callable SCHEMAS too. `composeChatContext` only surfaces the
-        // built-in image tools as a prompt-hint capability (not the schema), so
-        // without this an agent-run orchestrator is told it can make images /
-        // delegate but `image`/`spawn` never reach its `<tools>` block.
-        // Per-agent gate: only inject the delegation schemas when THIS agent has
-        // actually opted into spawn/image (mirrors the authoritative
-        // `resolveTools` strip). Without this, the explicit injection below would
-        // re-add tools the per-agent gate just stripped.
-        // Mirror the authoritative native-chat `resolveTools` surfacing so the
-        // HTTP agent-run path and the in-app chat agree on which subagent tools
-        // an agent sees: resolve the per-agent visible delegation set through the
-        // shared `SubagentToolVisibility` resolver (the same SSOT the native
-        // `resolveTools` strip reads) — Default → main-chat pool / image switch,
-        // custom → its own per-agent toggles + spawnable allow-list. There is no
-        // global master switch; the per-agent opt-in is the only gate. Without
-        // this parity the `/agents/{id}/run` surface drifts from the chat UI
-        // (BUG E guard). The tool-name set comes from the capability registry,
-        // not a hardcoded list.
-        // Installed-capability gate for `image`, mirroring the native
-        // `resolveTools` strip: the per-agent switch can be on, but the tool is
-        // withheld when no ready image model exists, and narrowed to a
-        // generation-only schema when a gen model is present but no edit model
-        // is (so the agent-run surface never advertises an edit it can't run).
-        let (visibleDelegation, swapImageToGenerationOnly) = await MainActor.run {
-            () -> (Set<String>, Bool) in
-            let snapshot = AgentConfigSnapshot.capture(agentId: agentUUID)
-            let cache = ModelPickerItemCache.shared
-            let names = SubagentToolVisibility.visibleDelegationToolNames(
-                agentId: agentUUID,
-                snapshot: snapshot,
-                config: SubagentConfigurationStore.snapshot(),
-                hasReadyImageModel: cache.hasReadyImageModel,
-                hasReadyAppleScriptModel: cache.hasReadyAppleScriptModel
-            )
-            let swap = names.contains("image") && !cache.hasReadyImageEditModel
-            return (names, swap)
-        }
-        let delegationSpecs =
-            visibleDelegation.isEmpty
-            ? []
-            : await MainActor.run { () -> [Tool] in
-                let raw = ToolRegistry.shared.specs(forTools: Array(visibleDelegation))
-                guard swapImageToGenerationOnly else { return raw }
-                return raw.map {
-                    $0.function.name == "image" ? ImageTool.generationOnlySpec() : $0
-                }
-            }
-        let composedToolNames = Set(composed.tools.map(\.function.name))
-        let contextToolsWithDelegation =
-            composed.tools + delegationSpecs.filter { !composedToolNames.contains($0.function.name) }
+        // `composeChatContext` is the same resolver used by native chat. Its
+        // final toolset already includes only effective built-ins and runnable
+        // spawn targets, with constrained spawn enums and the generation-only
+        // image schema when required. Do not re-inject delegation tools from a
+        // second, configuration-only pass here: doing so re-advertises targets
+        // that the authoritative request resolver classified unavailable.
         let mergedTools = await mergeAgentContextTools(
-            contextToolsWithDelegation,
+            composed.tools,
             clientTools: request.tools
         )
         let resolvedToolChoice: ToolChoiceOption? = {
@@ -2961,18 +3050,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         )
     }
 
-    private static func mergeAgentContextTools(
+    static func mergeAgentContextTools(
         _ agentTools: [Tool],
         clientTools: [Tool]?
     ) async -> [Tool]? {
         let clientTools = clientTools ?? []
         guard !agentTools.isEmpty || !clientTools.isEmpty else { return nil }
-        let clientNames = Set(clientTools.map(\.function.name))
-        let contextTools = agentTools.filter { !clientNames.contains($0.function.name) }
+        let registeredNames = await MainActor.run {
+            Set(ToolRegistry.shared.listTools().map(\.name))
+        }
+        // `/agents/{id}/run` may accept caller-defined function schemas, but a
+        // client schema must never revive or impersonate a registered Osaurus
+        // tool that the authoritative agent composer withheld. Registered
+        // tools come only from `agentTools`; unregistered caller functions
+        // remain available for the API's external function-calling contract.
+        let externalClientTools = clientTools.filter {
+            !registeredNames.contains($0.function.name)
+        }
         // Sort the union into canonical order so appended client tools don't
         // sit at the tail in a different slot than the next recompose would
         // place them — keeps the `<tools>` block byte-stable for KV reuse.
-        return await SystemPromptComposer.canonicalToolOrder(contextTools + clientTools)
+        return await SystemPromptComposer.canonicalToolOrder(agentTools + externalClientTools)
     }
 
     // MARK: - Memory Ingestion
@@ -4760,6 +4858,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 Task { await ModelRuntime.shared.cancelGeneration(name: m) }
             }
         }
+        // Billing dedupe base for Router-bound loop steps: header-supplied or
+        // synthesized. Each loop iteration derives a per-step key from it.
+        let idempotencyBase = Self.httpIdempotencyKey(head: head)
 
         runRequestTask(priority: .userInitiated) {
             defer { admissionToken.release() }
@@ -4851,30 +4952,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 isAuthenticatedRemote
                 ? await Self.resolveAgentHostFolder(agentId: agentId)
                 : nil
-            // Snapshot/restore the process-wide folder-tool registration around
-            // the run (mirrors `AgentLoopEvaluator`) so a concurrent in-app
-            // folder session is restored afterward, serialized via
-            // `HostFolderRunGate` so two host-folder runs can't corrupt the
-            // single global registration.
-            let priorFolderContext: FolderContext? = await { () -> FolderContext? in
-                guard let hostFolder else { return nil }
-                await HostFolderRunGate.shared.acquire()
-                return await MainActor.run {
-                    let prior = FolderToolManager.shared.registeredContext
-                    FolderToolManager.shared.registerFolderTools(for: hostFolder.context)
-                    return prior
+            // Folder tools register process-wide once (idempotent) and resolve
+            // the run's folder from the TaskLocal root bound around the loop
+            // below, so concurrent host-folder runs — and concurrent in-app
+            // folder chats — each work against their own root with no
+            // register/restore swap and no serializing gate.
+            if hostFolder != nil {
+                await MainActor.run {
+                    FolderToolManager.shared.ensureFolderToolsRegistered()
                 }
-            }()
+            }
             let releaseHostFolder: @Sendable () async -> Void = {
                 guard let hostFolder else { return }
-                await MainActor.run {
-                    FolderToolManager.shared.unregisterFolderTools()
-                    if let priorFolderContext {
-                        FolderToolManager.shared.registerFolderTools(for: priorFolderContext)
-                    }
-                }
                 hostFolder.url.stopAccessingSecurityScopedResource()
-                await HostFolderRunGate.shared.release()
             }
 
             let executionMode: ExecutionMode = await MainActor.run {
@@ -4904,7 +4994,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let enrichedReq = await Self.enrichWithAgentContext(
                 req,
                 agentId: agentId.uuidString,
-                executionMode: executionMode
+                executionMode: executionMode,
+                modelOverride: model
             )
             var messages = enrichedReq.messages
             let tools = enrichedReq.tools ?? []
@@ -5072,6 +5163,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // emits; later tool-result iterations are skipped by the
                     // engine's de-dup rule.
                     iterationReq.isAgentRequest = true
+                    // Per-step Router billing dedupe: the message count is
+                    // stable per logical step (tool loops append messages
+                    // between steps), so a re-POST of the same step reuses its
+                    // key. The count alone is not collision-safe — compaction
+                    // can shrink the array back to a count an earlier step
+                    // used, and a client retry re-derives the same counts over
+                    // nondeterministic model/tool output — so the body
+                    // fingerprint suffix keys any changed body as a distinct
+                    // request instead of a router IDEMPOTENCY_CONFLICT (409).
+                    iterationReq.idempotencyKey =
+                        "\(idempotencyBase)-s\(msgs.count)-"
+                        + AgentToolLoop.stepIdempotencyFingerprint(messages: msgs)
 
                     responseContent = ""
                     var contentCoalescer = Self.StreamDeltaCoalescer(
@@ -5140,8 +5243,38 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     } catch let invs as ServiceToolInvocations {
                         // Local models can emit multiple tool calls in a single
                         // completion; ServiceToolInvocations carries the batch.
+                        // Text can still be pending in the coalescer when the tool call
+                        // arrives (tool calls surface by throw, so the loop's own flush
+                        // never runs). Deliver it before the tool frames or the visible
+                        // answer ends mid-word.
+                        if let pending = contentCoalescer.flush() {
+                            hop {
+                                writerBound.value.writeContent(
+                                    pending,
+                                    model: model,
+                                    responseId: responseId,
+                                    created: created,
+                                    context: ctx.value
+                                )
+                            }
+                        }
                         return .toolCalls(invs.invocations)
                     } catch let inv as ServiceToolInvocation {
+                        // Text can still be pending in the coalescer when the tool call
+                        // arrives (tool calls surface by throw, so the loop's own flush
+                        // never runs). Deliver it before the tool frames or the visible
+                        // answer ends mid-word.
+                        if let pending = contentCoalescer.flush() {
+                            hop {
+                                writerBound.value.writeContent(
+                                    pending,
+                                    model: model,
+                                    responseId: responseId,
+                                    created: created,
+                                    context: ctx.value
+                                )
+                            }
+                        }
                         return .toolCalls([inv])
                     }
 
@@ -5287,23 +5420,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 )
                             }
                         }
+                        // History + host logs use the recorded (secret-safe)
+                        // argument view; ToolRegistry.execute still saw the
+                        // original via the batch executor above.
                         assistantToolCalls.append(
-                            ToolCall(
+                            SecretArgumentScrubber.recordedToolCall(
                                 id: outcome.callId,
-                                type: "function",
-                                function: ToolCallFunction(
-                                    name: outcome.invocation.toolName,
-                                    arguments: outcome.invocation.jsonArguments
-                                )
+                                invocation: outcome.invocation
                             )
                         )
                         toolResultsByCallId.append((outcome.callId, outcome.result))
-                        // Host-only: full tool detail (args + result). The peer
-                        // still sees only the sanitized SSE trace emitted above.
+                        // Host-only tool detail (args + result). Args are the
+                        // recorded view so sandbox_secret_set values never
+                        // re-enter Insights / agent-run logs. The peer still
+                        // sees only the sanitized SSE trace emitted above.
                         loggedToolCalls.append(
                             ToolCallLog(
                                 name: outcome.invocation.toolName,
-                                arguments: outcome.invocation.jsonArguments,
+                                arguments: SecretArgumentScrubber.recordedArguments(
+                                    toolName: outcome.invocation.toolName,
+                                    argumentsJSON: outcome.invocation.jsonArguments
+                                ),
                                 result: outcome.result,
                                 isError: outcome.wasError
                             )
@@ -5352,19 +5489,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // relaxation (`isDeniedForCurrentSurface`) and the host file
                 // tools see it; `nil` when no folder is mounted, leaving the
                 // external-surface denial fully intact. Child tasks spawned by
-                // the parallel batch executor inherit the task-local.
-                let runResult = try await ChatExecutionContext.$authenticatedHostFolderRoot
+                // the parallel batch executor inherit the task-locals.
+                // `currentFolderRoot` scopes the folder tools + undo +
+                // change checkpoints to THIS run's granted folder.
+                let runResult = try await ChatExecutionContext.$currentFolderRoot
                     .withValue(hostFolder?.url) {
-                        try await AgentToolLoop.run(
-                            policy: AgentLoopPolicy(
-                                maxIterations: maxIterations,
-                                stopOnToolRejection: false,
-                                dedupeNoticeEnabled: false,
-                                maxDataMovementSteps: min(16, maxIterations)
-                            ),
-                            state: taskState,
-                            hooks: hooks
-                        )
+                        try await ChatExecutionContext.$authenticatedHostFolderRoot
+                            .withValue(hostFolder?.url) {
+                                try await AgentToolLoop.run(
+                                    policy: AgentLoopPolicy(
+                                        maxIterations: maxIterations,
+                                        stopOnToolRejection: false,
+                                        dedupeNoticeEnabled: false,
+                                        maxDataMovementSteps: min(16, maxIterations)
+                                    ),
+                                    state: taskState,
+                                    hooks: hooks
+                                )
+                            }
                     }
                 exitState = runResult.exit
                 RemoteAgentRunLog.server(
@@ -5441,6 +5583,25 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: model,
                     toolCalls: loggedToolCalls.isEmpty ? nil : loggedToolCalls,
                     errorMessage: AgentToolLoop.emptyToolTaskFallback
+                )
+                return
+            }
+            if exitState == .lengthExhausted {
+                hop {
+                    writerBound.value.writeError(AgentToolLoop.lengthExhaustedFallback, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: loggedResponseText.isEmpty ? nil : loggedResponseText,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: model,
+                    toolCalls: loggedToolCalls.isEmpty ? nil : loggedToolCalls,
+                    errorMessage: AgentToolLoop.lengthExhaustedFallback
                 )
                 return
             }
@@ -6169,6 +6330,65 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return Data(base64Encoded: value)
     }
 
+    /// Decode an image that will leave the machine for a remote media
+    /// provider. Unlike the local-engine helper, this intentionally rejects
+    /// `file://` references so an API caller cannot turn Osaurus into a local
+    /// file exfiltration proxy.
+    static func decodeImageInputWithMIME(_ value: String) -> (data: Data, mimeType: String)? {
+        if value.hasPrefix("data:") {
+            guard
+                let comma = value.firstIndex(of: ","),
+                let semicolon = value[..<comma].firstIndex(of: ";"),
+                value[value.index(after: semicolon) ..< comma].lowercased() == "base64"
+            else { return nil }
+            let mime = String(value[value.index(value.startIndex, offsetBy: 5) ..< semicolon]).lowercased()
+            guard ["image/png", "image/jpeg", "image/webp"].contains(mime),
+                let data = Data(base64Encoded: String(value[value.index(after: comma)...])),
+                sniffedImageMIME(data) == mime
+            else { return nil }
+            return (data, mime)
+        }
+        guard !value.hasPrefix("file://"),
+            !value.hasPrefix("http://"),
+            !value.hasPrefix("https://"),
+            let data = Data(base64Encoded: value),
+            let mime = sniffedImageMIME(data)
+        else { return nil }
+        return (data, mime)
+    }
+
+    private static func sniffedImageMIME(_ data: Data) -> String? {
+        let bytes = [UInt8](data.prefix(12))
+        if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+            return "image/png"
+        }
+        if bytes.starts(with: [0xFF, 0xD8, 0xFF]) {
+            return "image/jpeg"
+        }
+        if bytes.count >= 12,
+            Array(bytes[0 ..< 4]) == Array("RIFF".utf8),
+            Array(bytes[8 ..< 12]) == Array("WEBP".utf8)
+        {
+            return "image/webp"
+        }
+        return nil
+    }
+
+    private static func redactedMediaRequestBody(_ body: String?) -> String? {
+        guard let body else { return nil }
+        guard
+            let data = body.data(using: .utf8),
+            var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return body }
+        if object["source_image"] != nil {
+            object["source_image"] = "[REDACTED IMAGE]"
+        }
+        guard
+            let redacted = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        else { return body }
+        return String(decoding: redacted, as: UTF8.self)
+    }
+
     /// Resolve width/height from explicit fields or an OpenAI-style `WxH` size.
     static func resolveImageSize(size: String?, width: Int?, height: Int?) -> (Int?, Int?) {
         if let width, let height { return (width, height) }
@@ -6298,6 +6518,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         userAgent: String?
     ) {
         let (data, bodyString) = requestBodyData()
+        let loggedBody = Self.redactedMediaRequestBody(bodyString)
         guard let req = try? JSONDecoder().decode(ImageGenerationRequestDTO.self, from: data) else {
             sendImageError(
                 head: head,
@@ -6307,19 +6528,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 path: "/images/generations",
                 startTime: startTime,
                 userAgent: userAgent,
-                requestBody: bodyString
+                requestBody: loggedBody
             )
             return
         }
-        // Resolve the model: explicit request value wins; otherwise fall back to
-        // the configured default (Settings → Agent Delegation), matching the
-        // agent `image` tool.
         let trimmedModel = req.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let configuredTarget = SubagentConfigurationStore.snapshot().defaultImageGenerationTarget
+        let selectedTarget =
+            req.target?.target()
+            ?? (trimmedModel?.isEmpty == false
+                ? MediaModelTarget(backend: .local, modelID: trimmedModel!)
+                : configuredTarget)
         guard
-            let modelId =
-                (trimmedModel?.isEmpty == false ? trimmedModel : nil)
-                    ?? SubagentConfigurationStore.snapshot().defaultImageGenerationModelId,
-            !modelId.isEmpty
+            let selectedTarget,
+            selectedTarget.isValid
         else {
             sendImageError(
                 head: head,
@@ -6334,6 +6556,33 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
+        if selectedTarget.backend != .local {
+            guard req.allow_remote_media_spend == true else {
+                sendImageError(
+                    head: head,
+                    context: context,
+                    status: .forbidden,
+                    message:
+                        "Remote image generation requires allow_remote_media_spend=true.",
+                    path: "/images/generations",
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    requestBody: bodyString
+                )
+                return
+            }
+            handleRemoteImageGeneration(
+                request: req,
+                target: selectedTarget,
+                head: head,
+                context: context,
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: bodyString
+            )
+            return
+        }
+        let modelId = selectedTarget.modelID
         let (w, h) = Self.resolveImageSize(size: req.size, width: req.width, height: req.height)
         let params = ImageGenerationParameters(
             model: modelId,
@@ -6364,6 +6613,453 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             responseFormat: req.response_format ?? "url",
             jobID: jobID
         ) { await ImageGenerationService.shared.generate(params, jobID: jobID) }
+    }
+
+    private func handleRemoteImageGeneration(
+        request req: ImageGenerationRequestDTO,
+        target: MediaModelTarget,
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        requestBody: String?
+    ) {
+        let (width, height) = Self.resolveImageSize(
+            size: req.size,
+            width: req.width,
+            height: req.height
+        )
+        let request = MediaImageGenerationRequest(
+            target: target,
+            prompt: req.prompt,
+            negativePrompt: req.negative_prompt,
+            width: width,
+            height: height,
+            aspectRatio: req.aspect_ratio,
+            resolution: req.resolution,
+            quality: req.quality,
+            steps: req.steps,
+            guidance: req.guidance,
+            seed: req.seed.flatMap(Int.init(exactly:)),
+            count: min(4, max(1, req.n ?? 1)),
+            format: Self.imageOutputFormat(req.output_format)
+        )
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            do {
+                let generated = try await MediaGenerationCoordinator.shared.generateImage(request)
+                guard !generated.isEmpty else {
+                    throw MediaGenerationError.invalidResponse
+                }
+                let results = try generated.map { media -> ImageResultDTO in
+                    if req.response_format == "b64_json" {
+                        let bytes = try Data(contentsOf: media.url)
+                        return ImageResultDTO(
+                            url: nil,
+                            b64_json: bytes.base64EncodedString(),
+                            seed: req.seed ?? 0
+                        )
+                    }
+                    return ImageResultDTO(
+                        url: media.url.absoluteString,
+                        b64_json: nil,
+                        seed: req.seed ?? 0
+                    )
+                }
+                let response = ImagesResponseDTO(
+                    created: Int(Date().timeIntervalSince1970),
+                    data: results
+                )
+                let json = String(
+                    decoding: try JSONEncoder.osaurusCanonical().encode(response),
+                    as: UTF8.self
+                )
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .ok,
+                        headers: headers,
+                        body: json
+                    )
+                }
+                self.logRequest(
+                    method: "POST",
+                    path: "/images/generations",
+                    userAgent: userAgent,
+                    requestBody: requestBody,
+                    responseBody: json,
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            } catch {
+                let status = Self.mediaErrorStatus(error)
+                hop {
+                    self.sendImageError(
+                        head: head,
+                        context: ctx.value,
+                        status: status,
+                        message: error.localizedDescription,
+                        path: "/images/generations",
+                        startTime: startTime,
+                        userAgent: userAgent,
+                        requestBody: requestBody
+                    )
+                }
+            }
+        }
+    }
+
+    func handleVideoQuote(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let (data, bodyString) = requestBodyData()
+        let loggedBody = Self.redactedMediaRequestBody(bodyString)
+        guard
+            let dto = try? JSONDecoder().decode(VideoGenerationRequestDTO.self, from: data),
+            let request = dto.request()
+        else {
+            sendImageError(
+                head: head,
+                context: context,
+                status: .badRequest,
+                message: "Invalid video request or target",
+                path: "/videos/quote",
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: bodyString
+            )
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            do {
+                let quote = try await MediaGenerationCoordinator.shared.quoteVideo(request)
+                let receipt = await MediaQuoteStore.shared.issue(for: request, quote: quote)
+                let response = VideoQuoteResponseDTO(
+                    quote_usd: quote.usd,
+                    quote_token: receipt.token,
+                    expires_at: ISO8601DateFormatter().string(from: receipt.expiresAt)
+                )
+                let json = String(
+                    decoding: try JSONEncoder.osaurusCanonical().encode(response),
+                    as: UTF8.self
+                )
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .ok,
+                        headers: headers,
+                        body: json
+                    )
+                }
+                self.logRequest(
+                    method: "POST",
+                    path: "/videos/quote",
+                    userAgent: userAgent,
+                    requestBody: loggedBody,
+                    responseBody: json,
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            } catch {
+                let status = Self.mediaErrorStatus(error)
+                hop {
+                    self.sendImageError(
+                        head: head,
+                        context: ctx.value,
+                        status: status,
+                        message: error.localizedDescription,
+                        path: "/videos/quote",
+                        startTime: startTime,
+                        userAgent: userAgent,
+                        requestBody: loggedBody
+                    )
+                }
+            }
+        }
+    }
+
+    func handleVideoGeneration(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let (data, bodyString) = requestBodyData()
+        let loggedBody = Self.redactedMediaRequestBody(bodyString)
+        guard
+            let dto = try? JSONDecoder().decode(VideoGenerationRequestDTO.self, from: data),
+            let request = dto.request(),
+            let quoteToken = dto.quote_token?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !quoteToken.isEmpty
+        else {
+            sendImageError(
+                head: head,
+                context: context,
+                status: .badRequest,
+                message: "A valid target and prior quote_token are required",
+                path: "/videos/generations",
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: loggedBody
+            )
+            return
+        }
+        guard dto.allow_remote_media_spend == true else {
+            sendImageError(
+                head: head,
+                context: context,
+                status: .forbidden,
+                message: "Remote video generation requires allow_remote_media_spend=true.",
+                path: "/videos/generations",
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: loggedBody
+            )
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            do {
+                let approvedQuote = try await MediaQuoteStore.shared.consume(
+                    token: quoteToken,
+                    for: request
+                )
+                let job = try await MediaGenerationCoordinator.shared.queueVideo(
+                    request,
+                    approvedQuote: approvedQuote
+                )
+                let response = VideoJobResponseDTO(job)
+                let json = String(
+                    decoding: try JSONEncoder.osaurusCanonical().encode(response),
+                    as: UTF8.self
+                )
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .accepted,
+                        headers: headers,
+                        body: json
+                    )
+                }
+                self.logRequest(
+                    method: "POST",
+                    path: "/videos/generations",
+                    userAgent: userAgent,
+                    requestBody: loggedBody,
+                    responseBody: json,
+                    responseStatus: 202,
+                    startTime: startTime
+                )
+            } catch {
+                let status = Self.mediaErrorStatus(error)
+                hop {
+                    self.sendImageError(
+                        head: head,
+                        context: ctx.value,
+                        status: status,
+                        message: error.localizedDescription,
+                        path: "/videos/generations",
+                        startTime: startTime,
+                        userAgent: userAgent,
+                        requestBody: loggedBody
+                    )
+                }
+            }
+        }
+    }
+
+    func handleVideoJob(
+        path: String,
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let rawID = String(path.dropFirst("/videos/jobs/".count))
+        guard !rawID.contains("/"), let id = UUID(uuidString: rawID) else {
+            sendImageError(
+                head: head,
+                context: context,
+                status: .badRequest,
+                message: "Invalid video job id",
+                path: path,
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: nil
+            )
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            guard let job = await MediaGenerationCoordinator.shared.videoJob(id: id) else {
+                hop {
+                    self.sendImageError(
+                        head: head,
+                        context: ctx.value,
+                        status: .notFound,
+                        message: "Video job not found",
+                        path: path,
+                        startTime: startTime,
+                        userAgent: userAgent,
+                        requestBody: nil
+                    )
+                }
+                return
+            }
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(VideoJobResponseDTO(job)))
+                .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .ok,
+                    headers: headers,
+                    body: json
+                )
+            }
+            self.logRequest(
+                method: "GET",
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: json,
+                responseStatus: 200,
+                startTime: startTime
+            )
+        }
+    }
+
+    func handleVideoContent(
+        path: String,
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let prefix = "/videos/jobs/"
+        let suffix = "/content"
+        let rawID = String(path.dropFirst(prefix.count).dropLast(suffix.count))
+        guard !rawID.contains("/"), let id = UUID(uuidString: rawID) else {
+            sendImageError(
+                head: head,
+                context: context,
+                status: .badRequest,
+                message: "Invalid video job id",
+                path: path,
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: nil
+            )
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        runRequestTask(priority: .userInitiated) {
+            guard let job = await MediaGenerationCoordinator.shared.videoJob(id: id) else {
+                self.sendPluginErrorFromTask(
+                    loop: loop,
+                    ctxBound: ctx,
+                    version: head.version,
+                    status: .notFound,
+                    message: "Video job not found",
+                    corsHeaders: cors,
+                    startTime: startTime,
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent
+                )
+                return
+            }
+            guard job.state == .completed, let output = job.outputURL else {
+                self.sendPluginErrorFromTask(
+                    loop: loop,
+                    ctxBound: ctx,
+                    version: head.version,
+                    status: .conflict,
+                    message: "Video content is not available yet",
+                    corsHeaders: cors,
+                    startTime: startTime,
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent
+                )
+                return
+            }
+            do {
+                let data = try Data(contentsOf: output, options: .mappedIfSafe)
+                self.sendBinaryPluginResponse(
+                    loop: loop,
+                    ctxBound: ctx,
+                    version: head.version,
+                    status: .ok,
+                    headers: [("Content-Type", "video/mp4")] + cors,
+                    body: data,
+                    startTime: startTime,
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent
+                )
+            } catch {
+                self.sendPluginErrorFromTask(
+                    loop: loop,
+                    ctxBound: ctx,
+                    version: head.version,
+                    status: .internalServerError,
+                    message: "Stored video content is unavailable",
+                    corsHeaders: cors,
+                    startTime: startTime,
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent
+                )
+            }
+        }
+    }
+
+    private static func mediaErrorStatus(_ error: Error) -> HTTPResponseStatus {
+        guard let media = error as? MediaGenerationError else {
+            return .internalServerError
+        }
+        switch media {
+        case .authenticationRequired: return .unauthorized
+        case .insufficientFunds: return HTTPResponseStatus(statusCode: 402)
+        case .contentPolicy, .invalidRequest, .invalidTarget: return .badRequest
+        case .regionRestricted: return .forbidden
+        case .providerUnavailable, .modelUnavailable: return .notFound
+        case .queuedJobContinues: return .accepted
+        case .unsupported: return .notImplemented
+        case .server(let status, _): return HTTPResponseStatus(statusCode: status)
+        case .invalidResponse, .transport: return .badGateway
+        }
     }
 
     func handleImageEdits(
@@ -7149,6 +7845,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return nil
     }
 
+    /// Resolve the billing idempotency key for an HTTP-origin inference
+    /// request. Honors a client-supplied `Idempotency-Key` header so
+    /// CLI/script retries of the same logical request dedupe Osaurus Router
+    /// billing on a re-POST; otherwise synthesizes a per-request key so the
+    /// provider service's idempotent connect-phase retries still dedupe.
+    /// The key rides only the Router wire (in the signed body — see
+    /// `RemoteProviderService.buildChatRequest`); no other upstream sees it.
+    nonisolated static func httpIdempotencyKey(head: HTTPRequestHead) -> String {
+        if let header = head.headers.first(name: "Idempotency-Key")?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !header.isEmpty, header.count <= 128
+        {
+            return header
+        }
+        return "http-\(UUID().uuidString)"
+    }
+
     private func handleChatCompletions(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -7228,6 +7941,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         #endif
         let httpTrace = HTTPTraceRecorder(ttftTrace)
         req.ttftTrace = ttftTrace
+        // Billing dedupe for Router-bound requests: header-supplied or
+        // synthesized (see `httpIdempotencyKey`). Chat-UI requests set their
+        // own per-step key; HTTP-origin requests previously had none, so a
+        // client retry could double-bill.
+        req.idempotencyKey = Self.httpIdempotencyKey(head: head)
         httpTrace.mark("http_request_decoded")
         httpTrace.set("endpoint", "/chat/completions")
         httpTrace.set("model", model)
@@ -7356,6 +8074,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                     }
                 }
+                var contentCoalescer = Self.StreamDeltaCoalescer(
+                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+                )
                 do {
                     httpTrace.mark("http_task_start")
                     let chatEngine = self.chatEngine
@@ -7393,9 +8114,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     if disconnected.value { throw CancellationError() }
                     var accumulatedContent = ""
                     var accumulatedReasoning = ""
-                    var contentCoalescer = Self.StreamDeltaCoalescer(
-                        interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
-                    )
                     var authoritativeCompletionTokens: Int?
                     var authoritativeTokensPerSecond: Double?
                     var streamFinishReason = "stop"
@@ -7570,6 +8288,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         finishReason: RequestLog.FinishReason(rawValue: finalStreamFinishReason) ?? .stop
                     )
                 } catch let invs as ServiceToolInvocations {
+                    // Text can still be pending in the coalescer when the tool call
+                    // arrives (tool calls surface by throw, so the loop's own flush
+                    // never runs). Deliver it before the tool frames or the visible
+                    // answer ends mid-word.
+                    if let pending = contentCoalescer.flush() {
+                        hop {
+                            writerBound.value.writeContent(
+                                pending,
+                                model: model,
+                                responseId: responseId,
+                                created: created,
+                                context: ctx.value
+                            )
+                        }
+                    }
                     // Multi-tool MLX completion: emit one tool_call delta
                     // per invocation, sharing one finish_reason="tool_calls".
                     // OpenAI clients deduplicate by `index`.
@@ -7634,6 +8367,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         finishReason: .toolCalls
                     )
                 } catch let inv as ServiceToolInvocation {
+                    // Text can still be pending in the coalescer when the tool call
+                    // arrives (tool calls surface by throw, so the loop's own flush
+                    // never runs). Deliver it before the tool frames or the visible
+                    // answer ends mid-word.
+                    if let pending = contentCoalescer.flush() {
+                        hop {
+                            writerBound.value.writeContent(
+                                pending,
+                                model: model,
+                                responseId: responseId,
+                                created: created,
+                                context: ctx.value
+                            )
+                        }
+                    }
                     // Single tool invocation — same emission as above.
                     httpTrace.markFirstSemanticDelta("tool_calls")
                     markSemanticDeltaIfConnected()
@@ -7919,7 +8667,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBodyString = nil
         }
 
-        guard let req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+        guard var decodedReq = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
             sendResponse(
                 context: context,
                 version: head.version,
@@ -7938,6 +8686,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
+        decodedReq.idempotencyKey = Self.httpIdempotencyKey(head: head)
+        let req = decodedReq
 
         guard
             let admissionToken = acquireInferenceAdmissionOrReject(
@@ -8002,14 +8752,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                 }
             }
+            var contentCoalescer = Self.StreamDeltaCoalescer(
+                interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+            )
             do {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
                 let stream = try await chatEngine.streamChat(request: req)
                 if disconnected.value { throw CancellationError() }
-                var contentCoalescer = Self.StreamDeltaCoalescer(
-                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
-                )
                 for try await delta in stream {
                     try Task.checkCancellation()
                     if disconnected.value { throw CancellationError() }
@@ -8069,6 +8819,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .stop
                 )
             } catch let invs as ServiceToolInvocations {
+                // Text can still be pending in the coalescer when the tool call
+                // arrives (tool calls surface by throw, so the loop's own flush
+                // never runs). Deliver it before the tool frames or the visible
+                // answer ends mid-word.
+                if let pending = contentCoalescer.flush() {
+                    hop {
+                        writerBound.value.writeContent(
+                            pending,
+                            model: req.model,
+                            responseId: "",
+                            created: Int(Date().timeIntervalSince1970),
+                            context: ctx.value
+                        )
+                    }
+                }
                 hop {
                     writerBound.value.writeToolCalls(invs.invocations, model: req.model, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
@@ -8090,6 +8855,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .toolCalls
                 )
             } catch let inv as ServiceToolInvocation {
+                // Text can still be pending in the coalescer when the tool call
+                // arrives (tool calls surface by throw, so the loop's own flush
+                // never runs). Deliver it before the tool frames or the visible
+                // answer ends mid-word.
+                if let pending = contentCoalescer.flush() {
+                    hop {
+                        writerBound.value.writeContent(
+                            pending,
+                            model: req.model,
+                            responseId: "",
+                            created: Int(Date().timeIntervalSince1970),
+                            context: ctx.value
+                        )
+                    }
+                }
                 hop {
                     writerBound.value.writeToolCalls([inv], model: req.model, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
@@ -8341,7 +9121,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             messages.append(ChatMessage(role: "system", content: system))
         }
         messages.append(ChatMessage(role: "user", content: ollama.prompt))
-        let chatRequest = ChatCompletionRequest(
+        var chatRequestDraft = ChatCompletionRequest(
             model: ollama.model,
             messages: messages,
             temperature: ollama.options?.temperature,
@@ -8356,6 +9136,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             tool_choice: nil,
             session_id: nil
         )
+        chatRequestDraft.idempotencyKey = Self.httpIdempotencyKey(head: head)
+        let chatRequest = chatRequestDraft
 
         guard
             let admissionToken = acquireInferenceAdmissionOrReject(
@@ -8728,7 +9510,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     nonisolated static func unsupportedSamplerReason(_ req: ChatCompletionRequest) -> String? {
         RequestValidator.unsupportedSamplerReason(
             n: req.n,
-            responseFormatType: req.response_format?.type
+            responseFormatType: req.response_format?.type,
+            logprobs: req.logprobs,
+            topLogprobs: req.top_logprobs
         )
     }
 
@@ -8754,6 +9538,123 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     // MARK: - Health Endpoint
+
+    /// Await `operation`, but give up after `nanoseconds` and return `nil`.
+    ///
+    /// `/health` must answer even when the inference stack is wedged: the
+    /// batch-diagnostics fetch chains awaits through the Registry actor and
+    /// every per-engine actor, so a hung engine would otherwise hang the
+    /// health endpoint (and suppress `LaunchGuard.noteHealthyHealthCheck()`)
+    /// exactly when the process is sick. A structured task group cannot
+    /// express this race — the group scope still waits for the wedged child
+    /// after `cancelAll()` — so the fetch runs as an unstructured task that
+    /// simply loses the race and is abandoned on timeout.
+    static func awaitWithDeadline<T: Sendable>(
+        nanoseconds: UInt64,
+        operation: @escaping @Sendable () async -> T
+    ) async -> T? {
+        let (stream, continuation) = AsyncStream<T?>.makeStream()
+        let work = Task { continuation.yield(await operation()) }
+        let deadline = Task {
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            continuation.yield(nil)
+        }
+        var first: T?
+        for await value in stream {
+            first = value
+            break
+        }
+        continuation.finish()
+        deadline.cancel()
+        // Best-effort: a fetch wedged inside an actor await won't observe
+        // cancellation, but a merely-slow one stops doing work sooner.
+        if first == nil { work.cancel() }
+        return first
+    }
+
+    static func cacheTopologyJSONObject(
+        _ topology: ModelCacheTopologySnapshot
+    ) -> [String: Any] {
+        [
+            "layer_count": topology.layerCount,
+            "kv_layer_count": topology.kvLayerCount,
+            "chunked_kv_layer_count": topology.chunkedKVLayerCount,
+            "quantized_kv_layer_count": topology.quantizedKVLayerCount,
+            "turbo_quant_kv_layer_count": topology.turboQuantKVLayerCount,
+            "compilable_kv_layer_count": topology.compilableKVLayerCount,
+            "compilable_turbo_quant_kv_layer_count": topology.compilableTurboQuantKVLayerCount,
+            "rotating_kv_layer_count": topology.rotatingKVLayerCount,
+            "compilable_rotating_kv_layer_count": topology.compilableRotatingKVLayerCount,
+            "rotating_wrapper_layer_count": topology.rotatingWrapperLayerCount,
+            "hybrid_pool_layer_count": topology.hybridPoolLayerCount,
+            "mamba_layer_count": topology.mambaLayerCount,
+            "compilable_mamba_layer_count": topology.compilableMambaLayerCount,
+            "arrays_layer_count": topology.arraysLayerCount,
+            "zaya_cca_layer_count": topology.zayaCCALayerCount,
+            "cache_list_layer_count": topology.cacheListLayerCount,
+            "requires_ssm_companion_state": topology.requiresSSMCompanionState,
+            "requires_disk_backed_restore": topology.requiresDiskBackedCoordinatorRestore,
+            "tags": topology.topologyTags,
+        ] as [String: Any]
+    }
+
+    /// The container snapshot describes the model's baseline cache shape.
+    /// Request-local TurboQuant conversion happens inside BatchEngine, so the
+    /// admin surface must prefer the transition's post-conversion snapshot or
+    /// it reports FP16 KV layers while the live cache is actually quantized.
+    static func effectiveCacheTopology(
+        baseline: ModelCacheTopologySnapshot?,
+        turboQuantTransition: TurboQuantCacheTransitionSnapshot?
+    ) -> ModelCacheTopologySnapshot? {
+        turboQuantTransition?.after ?? baseline
+    }
+
+    static func turboQuantCacheTransitionJSONObject(
+        _ transition: TurboQuantCacheTransitionSnapshot
+    ) -> [String: Any] {
+        [
+            "converted_turbo_quant_kv_layer_count":
+                transition.convertedTurboQuantKVLayerCount,
+            "before": cacheTopologyJSONObject(transition.before),
+            "after": cacheTopologyJSONObject(transition.after),
+        ] as [String: Any]
+    }
+
+    /// Shape the `/health` `batch_diagnostics` block from a snapshot.
+    /// Pure — extracted from the NIO-embedded endpoint body so the
+    /// nil-snapshot and empty-depth-summary shapes are unit-testable.
+    static func healthBatchDiagnosticsObject(_ snapshot: BatchDiagnosticsSnapshot?) -> Any {
+        guard let d = snapshot else { return NSNull() }
+        // A nil or empty depth summary both mean "no native-MTP models
+        // resolved"; emit JSON null rather than an empty string so consumers
+        // can key off null uniformly.
+        let depths: Any
+        if let summary = d.nativeMTPDepthSummary, !summary.isEmpty {
+            depths = summary
+        } else {
+            depths = NSNull()
+        }
+        return [
+            "pending": d.pendingCount,
+            "active": d.activeCount,
+            "active_high_watermark": d.activeHighWatermark,
+            "configured_engine_capacity": d.configuredEngineCapacity,
+            "nominal_available_capacity": d.nominalAvailableCapacity,
+            "engine_capacity_summary": d.engineCapacitySummary as Any? ?? NSNull(),
+            "accepting_requests": d.isAcceptingRequests,
+            "native_mtp_models": d.nativeMTPModelCount,
+            "native_mtp_depths": depths,
+            "prefix_hits": d.prefixHits,
+            "prefix_misses": d.prefixMisses,
+            "disk_l2_hits": d.diskL2Hits,
+            "disk_l2_misses": d.diskL2Misses,
+            "disk_l2_stores": d.diskL2Stores,
+            "ssm_companion_hits": d.ssmCompanionHits,
+            "ssm_companion_misses": d.ssmCompanionMisses,
+            "ssm_companion_rederives": d.ssmCompanionReDerives,
+            "turboquant_compressions": d.turboQuantCompressions,
+        ] as [String: Any]
+    }
 
     /// `/health` returns liveness plus per-model in-flight counts and the
     /// list of currently-loaded models. External observers can use this to
@@ -8847,16 +9748,46 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         "required_available_bytes": f.requiredAvailableBytes,
                         "soft_limit_bytes": f.softLimitBytes,
                         "hard_limit_bytes": f.hardLimitBytes,
+                        "automatic_memory_limits_disabled":
+                            f.automaticMemoryLimitsDisabled,
+                        // What Metal actually keeps resident. A load past this
+                        // is paged by macOS rather than refused, so support
+                        // needs to see it to explain a "fits but crawls" model.
+                        "gpu_budget_bytes": f.gpuBudgetBytes,
+                        "exceeds_gpu_budget": f.exceedsGPUBudget,
                     ] as [String: Any]
             } else {
                 ramFeasibility = NSNull()
             }
 
+            // Cache-effectiveness and speculation counters, aggregated across
+            // every resolved BatchEngine. The Settings panel already renders
+            // these; exposing them here lets benchmark/regression tooling
+            // attribute a TTFT change to its cause (prefix hit vs miss, MTP
+            // engaged vs fallen back) instead of guessing from timings.
+            //
+            // The fetch is raced against a 1-second deadline: it chains
+            // awaits through the Registry actor and every per-engine actor,
+            // and a wedged engine must not wedge /health (or block
+            // LaunchGuard.noteHealthyHealthCheck) exactly when the process
+            // is sick. On timeout the block is JSON null and
+            // `batch_diagnostics_timeout: true` is added at the top level.
+            let batchDiagFetch: BatchDiagnosticsSnapshot?? = await Self.awaitWithDeadline(
+                nanoseconds: 1_000_000_000
+            ) {
+                await MLXBatchAdapter.snapshotDiagnostics()
+            }
+            let batchDiagTimedOut = (batchDiagFetch == nil)
+            let batchDiagnostics = Self.healthBatchDiagnosticsObject(
+                batchDiagFetch.flatMap { $0 }
+            )
+
             let memoryConfig = MemoryConfigurationStore.load()
             let localModelScan: Any = ModelManager.localModelsScanDiagnosticJSONObject() as Any? ?? NSNull()
-            let obj: [String: Any] = [
+            var obj: [String: Any] = [
                 "status": "healthy",
                 "timestamp": Date().ISO8601Format(),
+                "hardware": ChipProfile.current.healthJSONObject(),
                 "loaded": loaded,
                 "current_model": current,
                 "inflight": inflightObj,
@@ -8872,8 +9803,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "index_failures": indexFailures,
                 "local_model_scan": localModelScan,
                 "ram_feasibility": ramFeasibility,
+                "batch_diagnostics": batchDiagnostics,
                 "persistence": PersistenceHealth.shared.snapshot(),
+                // Descriptor-exhaustion early warning (APPLE-MACOS-19T died
+                // fatally at EMFILE with zero prior signal). A steadily
+                // climbing count across restarts is a leak.
+                "open_file_descriptors": SharedEventLoopGroups.openFileDescriptorCount() as Any? ?? NSNull(),
+                "open_connections": ConnectionLimitHandler.currentCount,
             ]
+            if batchDiagTimedOut {
+                obj["batch_diagnostics_timeout"] = true
+            }
 
             // A served /health means the process is alive and responsive —
             // clear any crash-loop safe mode and bring skipped subsystems back.
@@ -9614,9 +10554,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         try await ToolRegistry.shared.execute(name: toolName, argumentsJSON: argsJSON)
                     }
                 }
+                // MCP transport stays HTTP 200; tool-level failure is signaled
+                // via isError when the body is a non-throwing ToolEnvelope.failure
+                // (or legacy error shape). Compute once for response + log.
+                let isError = ToolEnvelope.isError(result)
                 let payload: [String: Any] = [
                     "content": [["type": "text", "text": result]],
-                    "isError": false,
+                    "isError": isError,
                 ]
                 let d =
                     (try? JSONSerialization.data(withJSONObject: payload, options: .osaurusCanonical))
@@ -9638,7 +10582,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     arguments: argsJSON,
                     result: result,
                     durationMs: Date().timeIntervalSince(toolCallStartTime) * 1000,
-                    isError: false
+                    isError: isError
                 )
                 logSelf.logRequest(
                     method: "POST",
@@ -9738,7 +10682,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         // Convert to internal format
-        let internalReq = anthropicReq.toChatCompletionRequest()
+        var internalReq = anthropicReq.toChatCompletionRequest()
+        internalReq.idempotencyKey = Self.httpIdempotencyKey(head: head)
 
         // Generate response ID
         let messageId = Self.shortId(prefix: "msg_")
@@ -9851,14 +10796,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                 }
             }
+            var contentCoalescer = Self.StreamDeltaCoalescer(
+                interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+            )
             do {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
                 let stream = try await chatEngine.streamChat(request: internalReq)
                 if disconnected.value { throw CancellationError() }
-                var contentCoalescer = Self.StreamDeltaCoalescer(
-                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
-                )
                 for try await delta in stream {
                     try Task.checkCancellation()
                     if disconnected.value { throw CancellationError() }
@@ -9912,6 +10857,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .stop
                 )
             } catch let invs as ServiceToolInvocations {
+                // Text can still be pending in the coalescer when the tool call
+                // arrives (tool calls surface by throw, so the loop's own flush
+                // never runs). Deliver it before the tool frames or the visible
+                // answer ends mid-word.
+                if let pending = contentCoalescer.flush() {
+                    hop {
+                        writerBound.value.writeTextDelta(pending, context: ctx.value)
+                    }
+                }
                 // Multi-tool MLX completion: one `tool_use` content block
                 // per invocation, then a single `tool_use` finish.
                 markSemanticDeltaIfChannelActive()
@@ -9937,6 +10891,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .toolCalls
                 )
             } catch let inv as ServiceToolInvocation {
+                // Text can still be pending in the coalescer when the tool call
+                // arrives (tool calls surface by throw, so the loop's own flush
+                // never runs). Deliver it before the tool frames or the visible
+                // answer ends mid-word.
+                if let pending = contentCoalescer.flush() {
+                    hop {
+                        writerBound.value.writeTextDelta(pending, context: ctx.value)
+                    }
+                }
                 // Single tool invocation — same emission path.
                 markSemanticDeltaIfChannelActive()
                 hop {
@@ -10505,10 +11468,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         // Convert to internal format, preserving local Responses API
         // context when clients chain turns with `previous_response_id`.
-        let internalReq = Self.applyOpenResponsesContext(
+        var internalReq = Self.applyOpenResponsesContext(
             to: openResponsesReq.toChatCompletionRequest(),
             previousResponseId: openResponsesReq.previous_response_id
         )
+        internalReq.idempotencyKey = Self.httpIdempotencyKey(head: head)
 
         // Determine if streaming
         let wantsStream = openResponsesReq.stream ?? false
@@ -10643,14 +11607,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                 }
             }
+            var contentCoalescer = Self.StreamDeltaCoalescer(
+                interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+            )
             do {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
                 let stream = try await chatEngine.streamChat(request: internalReq)
                 if disconnected.value { throw CancellationError() }
-                var contentCoalescer = Self.StreamDeltaCoalescer(
-                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
-                )
                 for try await delta in stream {
                     try Task.checkCancellation()
                     if disconnected.value { throw CancellationError() }
@@ -10755,6 +11719,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .stop
                 )
             } catch let invs as ServiceToolInvocations {
+                // Text can still be pending in the coalescer when the tool call
+                // arrives (tool calls surface by throw, so the loop's own flush
+                // never runs). Deliver it before the tool frames or the visible
+                // answer ends mid-word.
+                if let pending = contentCoalescer.flush() {
+                    hop {
+                        writerBound.value.writeReasoningItemDone(context: ctx.value)
+                        if !messageItemOpen.value {
+                            messageItemOpen.value = true
+                            writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
+                            writerBound.value.writeContentPartAdded(context: ctx.value)
+                        }
+                        writerBound.value.writeTextDelta(pending, context: ctx.value)
+                    }
+                }
                 markSemanticDeltaIfChannelActive()
                 // Multi-tool MLX completion: emit one function_call item
                 // per invocation. Use the lazy `messageItemOpen` flag so
@@ -10794,6 +11773,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .toolCalls
                 )
             } catch let inv as ServiceToolInvocation {
+                // Text can still be pending in the coalescer when the tool call
+                // arrives (tool calls surface by throw, so the loop's own flush
+                // never runs). Deliver it before the tool frames or the visible
+                // answer ends mid-word.
+                if let pending = contentCoalescer.flush() {
+                    hop {
+                        writerBound.value.writeReasoningItemDone(context: ctx.value)
+                        if !messageItemOpen.value {
+                            messageItemOpen.value = true
+                            writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
+                            writerBound.value.writeContentPartAdded(context: ctx.value)
+                        }
+                        writerBound.value.writeTextDelta(pending, context: ctx.value)
+                    }
+                }
                 markSemanticDeltaIfChannelActive()
                 // Single tool invocation — same flow with one item.
                 hop {

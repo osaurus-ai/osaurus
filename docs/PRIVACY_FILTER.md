@@ -183,7 +183,7 @@ A custom rule may override the prefix with its own `placeholderLabel` (e.g. `[CU
 
 ## Fail-Closed Guarantees
 
-The pipeline throws — never silently sends — on five distinct failure modes. `RemoteProviderService` catches the typed `PrivacyFilterPipelineError` and surfaces a non-generic chat-bubble error instead of the standard "Error: …" rendering.
+The pipeline throws — never silently sends — on six distinct failure modes. `RemoteProviderService` catches the typed `PrivacyFilterPipelineError` and surfaces a non-generic chat-bubble error instead of the standard "Error: …" rendering.
 
 | Error case                | When it fires                                                                                          | What the user sees                                                  |
 | ------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
@@ -191,6 +191,7 @@ The pipeline throws — never silently sends — on five distinct failure modes.
 | `.engineUnavailable(d)`   | **AI detection on** but model bundle is missing / failed to load (regex-only sends never hit this — they don't load the model) | Points at **Settings → Privacy** to re-download or turn AI detection off |
 | `.scrubNoOp(count)`       | User approved N entities but the substitution produced zero changes (`entity.original` doesn't match the wire text — almost always a bug) | "N approved redaction(s) didn't apply. Please report."              |
 | `.scrubLeaked(counts)`    | Post-scrub re-scan of the outbound payload found PII the substitution missed. Send is blocked         | Per-category counts of what leaked, no raw values                   |
+| `.reviewRequiresInteractive(count)` | A non-interactive request (HTTP API, plugin, P2P) hit fresh detections with `requireReviewForNonInteractive` on. The review sheet is never presented for non-UI origins — even when a chat window is open — so the send fails closed instead of hanging the client | A 422 (`privacy_filter_review_required`) telling the client to approve in the app chat, flip the setting, or disable the filter for the provider |
 | (review cancel via Cmd-.) | `withTaskCancellationHandler` resolves the suspended continuation as `.canceled`                       | Same as `.reviewCanceled`                                            |
 
 The post-scrub invariant only re-scans categories whose built-in regex is enabled. A user who explicitly turned off `phone` detection won't trip the leak check on a phone number — consistent with the principle that the same toggle controls both halves.

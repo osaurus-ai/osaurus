@@ -136,6 +136,7 @@ enum AgentChannelLiveProofReadiness {
             notes.append("Broadcast mentions are enabled; release proof should confirm this is intentional.")
         }
         appendDiagnosticFailures(diagnostics.failures, to: &blockers)
+        notes.append(contentsOf: diagnostics.warnings)
 
         if diagnostics.writeEnabled {
             manualProof.append("Send one confirmed message to a write-allowlisted Slack channel.")
@@ -148,6 +149,182 @@ enum AgentChannelLiveProofReadiness {
 
         return AgentChannelLiveProofReadinessReport(
             kind: .slack,
+            status: blockers.isEmpty ? .ready : .blocked,
+            blockers: blockers,
+            manualProof: manualProof,
+            notes: notes
+        )
+    }
+
+    static func discord(_ diagnostics: DiscordConnectionDiagnostics) -> AgentChannelLiveProofReadinessReport {
+        var blockers: [String] = []
+        var manualProof: [String] = []
+        var notes: [String] = []
+        let readableChannelIds = nonEmptyEntries(diagnostics.readableChannelIds)
+        let writableChannelIds = nonEmptyEntries(diagnostics.writableChannelIds)
+        let senderAllowlist = nonEmptyEntries(diagnostics.senderAllowlist)
+
+        if !diagnostics.tokenSaved {
+            blockers.append("Save a Discord bot token.")
+        }
+        if diagnostics.bot == nil {
+            blockers.append("Run Test Connection until Discord accepts the bot token.")
+        }
+        if readableChannelIds.isEmpty {
+            blockers.append("Mark at least one Discord channel as readable.")
+        }
+        if senderAllowlist.isEmpty {
+            blockers.append("Add at least one authorized Discord sender.")
+        }
+        if diagnostics.writeEnabled && writableChannelIds.isEmpty {
+            blockers.append("Mark at least one Discord channel as writable or turn writes off.")
+        }
+        appendDiagnosticFailures(diagnostics.failures, to: &blockers)
+        notes.append(contentsOf: diagnostics.warnings)
+
+        if diagnostics.writeEnabled {
+            manualProof.append("Send one confirmed message to a write-allowlisted Discord channel.")
+        } else {
+            notes.append("Discord writes are off; live proof can cover receive/read-only behavior.")
+        }
+        manualProof.append("Receive one Discord message through polling from an authorized sender.")
+        manualProof.append("Confirm an unauthorized sender in the same channel is ignored.")
+        manualProof.append("Restart Osaurus and confirm Discord transport health and configuration persist.")
+
+        return AgentChannelLiveProofReadinessReport(
+            kind: .discord,
+            status: blockers.isEmpty ? .ready : .blocked,
+            blockers: blockers,
+            manualProof: manualProof,
+            notes: notes
+        )
+    }
+
+    static func imessage(_ diagnostics: IMessageConnectionDiagnostics) -> AgentChannelLiveProofReadinessReport {
+        var blockers: [String] = []
+        var manualProof: [String] = []
+        var notes: [String] = diagnostics.notes
+        let readableChatIds = nonEmptyEntries(diagnostics.readableChatIds)
+        let writableChatIds = nonEmptyEntries(diagnostics.writableChatIds)
+        let senderAllowlist = nonEmptyEntries(diagnostics.senderAllowlist)
+
+        if !diagnostics.helperVerified {
+            blockers.append(
+                "Install and verify the imsg helper — bundled or downloaded from iMessage settings (state: \(diagnostics.helperState))."
+            )
+        }
+        if !diagnostics.fullDiskAccess {
+            blockers.append("Grant Full Disk Access so Osaurus can read the Messages database.")
+        }
+        // imsg exposes no sign-in probe; only a future helper release could
+        // report a definite signed-out state.
+        if diagnostics.messagesSignedIn == false {
+            blockers.append("Sign in to Messages.app with an iMessage account on this Mac.")
+        } else if diagnostics.messagesSignedIn == nil {
+            manualProof.append(
+                "Confirm Messages.app is signed in with an Apple Account on this Mac (Osaurus cannot probe this)."
+            )
+        }
+        if !diagnostics.receiveStorageEnabled {
+            blockers.append("Enable Store Incoming Messages for receive proof.")
+        }
+        if !diagnostics.receivePollingEnabled {
+            blockers.append("Enable iMessage receive polling for local desktop receive proof.")
+        }
+        if readableChatIds.isEmpty {
+            blockers.append("Add at least one readable iMessage chat.")
+        }
+        if senderAllowlist.isEmpty {
+            blockers.append("Add at least one authorized iMessage sender.")
+        }
+        if diagnostics.writeEnabled {
+            if writableChatIds.isEmpty {
+                blockers.append("Add at least one writable iMessage chat or turn writes off.")
+            }
+            if !diagnostics.automationMessages {
+                blockers.append("Grant Messages Automation so Osaurus can send through Messages.app.")
+            }
+        }
+        appendDiagnosticFailures(diagnostics.failures, to: &blockers)
+
+        if diagnostics.writeEnabled {
+            manualProof.append("Send one confirmed message to a write-allowlisted iMessage chat.")
+        } else {
+            notes.append("iMessage writes are off; live proof can cover receive/read-only behavior.")
+        }
+        manualProof.append("Receive one inbound iMessage from an authorized sender.")
+        manualProof.append("Confirm an unauthorized sender in the same chat is ignored.")
+        manualProof.append("Restart Osaurus and confirm the iMessage cursor, inbox, and configuration persist.")
+        if diagnostics.advancedActionsEnabled {
+            if diagnostics.bridgeAvailable {
+                manualProof.append(
+                    "Exercise each enabled advanced action (edit, unsend, tapback, typing, attachments) against a write-allowlisted chat."
+                )
+                manualProof.append(
+                    "Restart Messages.app and confirm the bridge re-injects before calling advanced actions again."
+                )
+            } else {
+                notes.append(
+                    "Advanced actions are enabled but the private-API bridge is not active; advanced live proof is blocked until the operator disables SIP and Library Validation on a dedicated Mac."
+                )
+            }
+        }
+
+        return AgentChannelLiveProofReadinessReport(
+            kind: .imessage,
+            status: blockers.isEmpty ? .ready : .blocked,
+            blockers: blockers,
+            manualProof: manualProof,
+            notes: notes
+        )
+    }
+
+    static func whatsApp(_ diagnostics: WhatsAppConnectionDiagnostics) -> AgentChannelLiveProofReadinessReport {
+        var blockers: [String] = []
+        var manualProof: [String] = []
+        var notes: [String] = diagnostics.notes
+        let readableChatIds = nonEmptyEntries(diagnostics.readableChatIds)
+        let writableChatIds = nonEmptyEntries(diagnostics.writableChatIds)
+        let senderAllowlist = nonEmptyEntries(diagnostics.senderAllowlist)
+
+        if !diagnostics.helperVerified {
+            blockers.append(
+                "Build and install the osaurus-wa helper — `make wa-helper` or a verified download (state: \(diagnostics.helperState))."
+            )
+        }
+        if !diagnostics.linked {
+            blockers.append("Link a WhatsApp account by scanning the QR code in WhatsApp settings.")
+        }
+        if !diagnostics.receiveEnabled {
+            blockers.append("Enable WhatsApp receive for local desktop receive proof.")
+        }
+        if readableChatIds.isEmpty {
+            blockers.append("Add at least one readable WhatsApp chat.")
+        }
+        if senderAllowlist.isEmpty {
+            blockers.append("Add at least one authorized WhatsApp sender (E.164 phone number).")
+        }
+        if diagnostics.writeEnabled && writableChatIds.isEmpty {
+            blockers.append("Add at least one writable WhatsApp chat or turn writes off.")
+        }
+        appendDiagnosticFailures(diagnostics.failures, to: &blockers)
+
+        if diagnostics.writeEnabled {
+            manualProof.append("Send one confirmed message to a write-allowlisted WhatsApp chat.")
+        } else {
+            notes.append("WhatsApp writes are off; live proof can cover receive/read-only behavior.")
+        }
+        manualProof.append("Receive one inbound WhatsApp message from an authorized sender.")
+        manualProof.append("Confirm an unauthorized sender in the same chat is ignored.")
+        manualProof.append(
+            "Restart Osaurus and confirm the WhatsApp link, inbox, and configuration persist."
+        )
+        notes.append(
+            "WhatsApp uses the unofficial Web multi-device protocol; the account can be logged out remotely, so re-link readiness is part of live proof."
+        )
+
+        return AgentChannelLiveProofReadinessReport(
+            kind: .whatsapp,
             status: blockers.isEmpty ? .ready : .blocked,
             blockers: blockers,
             manualProof: manualProof,
@@ -186,6 +363,10 @@ enum AgentChannelLiveProofReadiness {
             return "Slack"
         case .telegram:
             return "Telegram"
+        case .imessage:
+            return "iMessage"
+        case .whatsapp:
+            return "WhatsApp"
         case .customHTTP:
             return "Custom HTTP"
         }

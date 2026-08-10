@@ -116,7 +116,11 @@ public struct MCPProviderProbeResult: Codable, Identifiable, Sendable, Equatable
         startedAt: Date,
         tools: [MCP.Tool]
     ) -> MCPProviderProbeResult {
-        MCPProviderProbeResult(
+        let toolCountMessage =
+            tools.count == 1
+            ? L("Probe completed initialize/listTools and found 1 tool.")
+            : L("Probe completed initialize/listTools and found \(tools.count) tools.")
+        return MCPProviderProbeResult(
             providerId: provider.id,
             providerName: provider.name,
             transportSummary: MCPProviderProbeService.transportSummary(for: provider),
@@ -126,8 +130,9 @@ public struct MCPProviderProbeResult: Codable, Identifiable, Sendable, Equatable
             stage: .listTools,
             reasonCode: .succeeded,
             toolCount: tools.count,
-            toolNames: tools.map(\.name).sorted(),
-            message: L("Probe completed initialize/listTools and found \(tools.count) tool(s)."),
+            // Server order, which for a paginated tools/list is page order.
+            toolNames: tools.map(\.name),
+            message: toolCountMessage,
             action: nil
         )
     }
@@ -241,7 +246,73 @@ public enum MCPProviderProbeService {
             discoveryTimeout: discoveryTimeout,
             toolCallTimeout: discoveryTimeout
         )
-        return await runProbe(provider: provider, transport: transport, startedAt: startedAt)
+        let result = await runProbe(provider: provider, transport: transport, startedAt: startedAt)
+
+        // The SDK error text is often too vague to classify (mapFailure falls
+        // back to string matching), so for generically-classified failures
+        // re-probe the endpoint directly and check the HTTP status. A bare
+        // 401/403 — with or without a `WWW-Authenticate` header — becomes an
+        // auth-specific result instead of "connection failed".
+        guard
+            !result.succeeded,
+            result.reasonCode == .connectionFailed
+                || result.reasonCode == .unknownFailure
+                || result.reasonCode == .authRequired
+        else { return result }
+        if let refined = await refineHTTPAuthFailure(
+            provider: provider,
+            endpoint: endpoint,
+            headers: allHeaders,
+            startedAt: startedAt
+        ) {
+            return refined
+        }
+        return result
+    }
+
+    private static func refineHTTPAuthFailure(
+        provider: MCPProvider,
+        endpoint: URL,
+        headers: [String: String],
+        startedAt: Date
+    ) async -> MCPProviderProbeResult? {
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        request.httpBody = MCPAuthFailureProbe.handshakeBody()
+        request.timeoutInterval = 10
+
+        guard
+            let (data, response) = try? await GlobalProxySettings.sharedSession().data(for: request),
+            let http = response as? HTTPURLResponse,
+            let probe = MCPAuthFailureProbe.evaluate(
+                response: http,
+                body: data,
+                sentAuthorization: request.value(forHTTPHeaderField: "Authorization") != nil
+            )
+        else { return nil }
+
+        let action =
+            probe.sentAuthorization
+            ? L(
+                "Check that the token is valid for this server (plan/scope) and pasted without a Bearer prefix or extra whitespace."
+            )
+            : L("Save an API token or sign in, then test again.")
+        return failure(
+            provider: provider,
+            startedAt: startedAt,
+            stage: .connect,
+            reasonCode: .authRequired,
+            message: MCPAuthFailureProbe.failureDescription(
+                authType: provider.authType,
+                probe: probe
+            ),
+            action: action
+        )
     }
 
     public static func probeStdio(provider: MCPProvider) async -> MCPProviderProbeResult {
@@ -299,8 +370,8 @@ public enum MCPProviderProbeService {
             try await withTimeout(seconds: provider.discoveryTimeout) {
                 _ = try await client.connect(transport: transport)
             }
-            let (tools, _) = try await withTimeout(seconds: provider.discoveryTimeout) {
-                try await client.listTools()
+            let tools = try await withTimeout(seconds: provider.discoveryTimeout) {
+                try await client.listAllTools()
             }
             // Probes are short-lived by contract: disconnect the client so
             // HTTP transports invalidate their URLSession (and stop any SSE
@@ -350,7 +421,15 @@ public enum MCPProviderProbeService {
                         )
                     }
                 }
-                let runner = try SandboxStdioRunner(provider: provider)
+                // Probe runs under the same agent scoping as production
+                // connects: the calling agent's Linux user, provisioned
+                // first so user + bridge token exist.
+                let (agentId, agentName): (UUID, String) = await MainActor.run {
+                    let id = ChatExecutionContext.currentAgentId ?? AgentManager.shared.activeAgent.id
+                    return (id, SandboxAgentProvisioner.linuxName(for: id.uuidString))
+                }
+                try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
+                let runner = try SandboxStdioRunner(provider: provider, agentName: agentName)
                 try await runner.start()
                 return (runner.transport, { await runner.stop() })
             #else
@@ -503,23 +582,17 @@ public enum MCPProviderProbeService {
         )
     }
 
+    /// Non-rejoining timeout: an MCP SDK call that ignores cancellation is
+    /// abandoned at the deadline instead of blocking the probe (a task-group
+    /// race would re-join the stuck child at scope exit).
     private static func withTimeout<T: Sendable>(
         seconds: TimeInterval,
         operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask {
-                try await operation()
-            }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                throw MCPProviderError.timeout
-            }
-            guard let result = try await group.next() else {
-                throw MCPProviderError.timeout
-            }
-            group.cancelAll()
-            return result
+        do {
+            return try await valueWithDeadline(seconds: seconds, operationName: "MCP probe", operation: operation)
+        } catch is DeadlineExceededError {
+            throw MCPProviderError.timeout
         }
     }
 }

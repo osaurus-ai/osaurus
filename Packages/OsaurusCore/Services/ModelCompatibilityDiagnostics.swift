@@ -591,8 +591,16 @@ enum ModelCompatibilityDiagnostics {
             || names.contains(where: isDFlashToken)
         if directHints { return true }
 
+        // A DFlash tokenizer identifies a draft-only bundle that this runtime
+        // cannot execute as the selected model. In contrast,
+        // `generation_config.json::speculative_config` on an ordinary target
+        // model is only an optional acceleration recommendation. Blocking the
+        // target because that recommendation names DFlash prevents the fully
+        // supported base model from running even when speculation is Off/Auto
+        // and no draft strategy was selected. Keep reporting DFlash as an
+        // unimplemented feature hook, but do not turn optional generation
+        // metadata into an architecture preflight failure.
         if config?.tokenizer?.hasDFlashReference == true { return true }
-        if config?.generation?.hasDFlashReference == true { return true }
         return false
     }
 

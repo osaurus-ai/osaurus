@@ -109,6 +109,46 @@ struct GenerationEventMapperTests {
         )
     }
 
+    @Test func toolCall_preserves_valid_native_argument_order() async throws {
+        let call = MLXLMCommon.ToolCall(
+            function: MLXLMCommon.ToolCall.Function(
+                name: "ordered",
+                arguments: [
+                    "zeta": .int(7),
+                    "alpha": .string("ready"),
+                ],
+                rawArgumentsJSON: "{\"zeta\": 7, \"alpha\": \"ready\"}"
+            )
+        )
+        let out = try await collect(events: [.toolCall(call)])
+        guard case .toolInvocation(_, let argsJSON) = out.first else {
+            Issue.record("expected toolInvocation")
+            return
+        }
+        #expect(argsJSON == "{\"zeta\": 7, \"alpha\": \"ready\"}")
+    }
+
+    @Test func toolCall_rejects_mismatched_raw_argument_text() async throws {
+        let call = MLXLMCommon.ToolCall(
+            function: MLXLMCommon.ToolCall.Function(
+                name: "ordered",
+                arguments: ["count": .int(2)],
+                rawArgumentsJSON: "{\"count\": 999}"
+            )
+        )
+        let out = try await collect(events: [.toolCall(call)])
+        guard case .toolInvocation(_, let argsJSON) = out.first else {
+            Issue.record("expected toolInvocation")
+            return
+        }
+        let decoded = try JSONDecoder().decode(
+            [String: MLXLMCommon.JSONValue].self,
+            from: Data(argsJSON.utf8)
+        )
+        #expect(decoded == ["count": .int(2)])
+        #expect(argsJSON != "{\"count\": 999}")
+    }
+
     @Test func toolCallProgress_drops_empty_deltas() async throws {
         // Empty envelope deltas carry no preview and must not produce events.
         let events: [Generation] = [.toolCallProgress("")]
@@ -339,6 +379,94 @@ struct GenerationEventMapperTests {
         #expect(stopReason == nil)
     }
 
+    @Test("consumer cancellation directly cancels the owned runtime generation")
+    func consumerCancellationInvokesDirectGenerationCancellation() async {
+        let (events, producer) = AsyncStream<Generation>.makeStream()
+        let probe = MapperCancellationProbe()
+        let mapped = GenerationEventMapper.map(
+            events: events,
+            modelName: "cancel-owned-generation",
+            onConsumerCancellation: {
+                probe.markCancellation()
+            }
+        )
+
+        let consumer = Task {
+            do {
+                for try await _ in mapped {
+                    probe.markEvent()
+                }
+            } catch {
+                // Cancellation is the expected test exit.
+            }
+        }
+
+        producer.yield(.chunk("started"))
+        for _ in 0 ..< 100 where !probe.sawEvent {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(probe.sawEvent)
+
+        consumer.cancel()
+        await consumer.value
+        for _ in 0 ..< 100 where !probe.sawCancellation {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        producer.finish()
+
+        #expect(
+            probe.sawCancellation,
+            "dropping a cancelled consumer must directly cancel its exact ModelRuntime generation wrapper"
+        )
+    }
+
+    @Test("terminal info finishes the surface while upstream cleanup remains open")
+    func terminalInfoFinishesSurfaceBeforeCleanupDrain() async throws {
+        let (events, producer) = AsyncStream<Generation>.makeStream()
+        let cancellationProbe = MapperCancellationProbe()
+        let mapped = GenerationEventMapper.map(
+            events: events,
+            modelName: "slow-cache-store",
+            onConsumerCancellation: { cancellationProbe.markCancellation() }
+        )
+
+        let consumer = Task { () throws -> [ModelRuntimeEvent] in
+            var output: [ModelRuntimeEvent] = []
+            for try await event in mapped { output.append(event) }
+            return output
+        }
+
+        producer.yield(.chunk("ready"))
+        producer.yield(.info(GenerateCompletionInfo(
+            promptTokenCount: 32,
+            generationTokenCount: 1,
+            promptTime: 0.25,
+            generationTime: 0.05,
+            stopReason: .stop
+        )))
+
+        let output = try await withThrowingTaskGroup(
+            of: [ModelRuntimeEvent].self
+        ) { group in
+            group.addTask { try await consumer.value }
+            group.addTask {
+                try await Task.sleep(for: .seconds(2))
+                throw MapperTestTimeout()
+            }
+            let first = try await group.next()!
+            group.cancelAll()
+            return first
+        }
+
+        #expect(output.contains { if case .tokens("ready") = $0 { true } else { false } })
+        #expect(output.contains { if case .completionInfo = $0 { true } else { false } })
+        #expect(!cancellationProbe.sawCancellation)
+
+        // The user-facing consumer has completed even though the producer is
+        // intentionally still open, modelling vmlx's serialized cache drain.
+        producer.finish()
+    }
+
     /// ZAYA1 (Zyphra; `model_type=zaya`) is reasoning-capable. Unlike Ling,
     /// its `.reasoning` stream must stay on the reasoning channel so the UI
     /// can render the Thinking panel when the user opts in.
@@ -420,5 +548,37 @@ struct GenerationEventMapperTests {
         #expect(name == "broken")
         #expect(argsJSON.contains("\"_error\":\"argument_serialization_failed\""))
         #expect(argsJSON.contains("\"_tool\":\"broken\""))
+    }
+}
+
+private struct MapperTestTimeout: Error {}
+
+private final class MapperCancellationProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var event = false
+    private var cancellation = false
+
+    func markEvent() {
+        lock.lock()
+        event = true
+        lock.unlock()
+    }
+
+    func markCancellation() {
+        lock.lock()
+        cancellation = true
+        lock.unlock()
+    }
+
+    var sawEvent: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return event
+    }
+
+    var sawCancellation: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancellation
     }
 }

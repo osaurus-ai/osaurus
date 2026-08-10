@@ -18,6 +18,17 @@ public enum ToolsPaths {
         if let override = overrideRoot {
             return override
         }
+        // Honor the same test-root redirect as `OsaurusPaths.root()` (this
+        // type's documented contract is to mirror it). Without this, CLI
+        // verbs that WRITE config (e.g. `bench --tune-prefill`) target the
+        // real `~/.osaurus` while a test-rooted server process reads its
+        // hermetic root — the sweep then measures the default value for
+        // every candidate.
+        if let envRoot = ProcessInfo.processInfo.environment["OSAURUS_TEST_ROOT"],
+            !envRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return URL(fileURLWithPath: envRoot, isDirectory: true)
+        }
         let fm = FileManager.default
         return fm.homeDirectoryForCurrentUser.appendingPathComponent(".osaurus", isDirectory: true)
     }

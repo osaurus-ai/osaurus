@@ -146,6 +146,9 @@ final class NativeThinkingView: NSView {
         charCountLabel.textColor = NSColor(theme.tertiaryText)
 
         let isSameBlock = configuredBlockId == blockId
+        // Same-block collapsed → expanded: fade the reasoning in instead of
+        // popping (cell recycling and streaming reconfigures must not fade).
+        let expandTransition = isSameBlock && isExpanded && !self.isExpanded
         updateChevron(
             expanded: isExpanded,
             animated: isSameBlock && isExpanded != self.isExpanded
@@ -181,6 +184,11 @@ final class NativeThinkingView: NSView {
             mdv.onHeightChanged = { [weak self] in self?.applyHeight() }
         }
 
+        // After the markdown view exists — on a first-ever expand it is only
+        // created above, and a reveal fired before that would find an empty
+        // container and do nothing.
+        if expandTransition { ExpandFade.run(contentContainer) }
+
         applyHeight()
     }
 
@@ -212,9 +220,11 @@ final class NativeThinkingView: NSView {
         layer?.masksToBounds = false
         layer?.backgroundColor = NSColor.clear.cgColor
 
-        // header button in back - transparent overlay covering the header row for click handling
+        // transparent overlay covering the header row for click handling;
+        // re-ordered to the front once all header views exist (see below)
         headerButton.translatesAutoresizingMaskIntoConstraints = false
         headerButton.title = ""; headerButton.isBordered = false; headerButton.bezelStyle = .inline
+        headerButton.isTransparent = true
         headerButton.target = self; headerButton.action = #selector(headerTapped)
         addSubview(headerButton)
 
@@ -318,8 +328,10 @@ final class NativeThinkingView: NSView {
             contentContainer.topAnchor.constraint(equalTo: separatorView.bottomAnchor, constant: 8),
         ])
 
-        // keep the transparent header control behind expanded content so it cannot steal clicks
-        addSubview(headerButton, positioned: .below, relativeTo: nil)
+        // Front of Z-order so the title and count labels cannot swallow header
+        // clicks. The button is pinned to the 44pt header row, so it never
+        // overlaps expanded content below.
+        addSubview(headerButton, positioned: .above, relativeTo: nil)
     }
 
     private func ensureMarkdownView() -> NativeMarkdownView {
@@ -353,7 +365,7 @@ final class NativeThinkingView: NSView {
     @objc private func headerTapped() { onToggle?() }
 
     private func formatCharCount(_ count: Int) -> String {
-        if count < 1000 { return "\(count) chars" }
+        if count < 1000 { return count == 1 ? "1 char" : "\(count) chars" }
         if count < 10_000 { return String(format: "%.1fk chars", Double(count) / 1000) }
         return "\(count / 1000)k chars"
     }

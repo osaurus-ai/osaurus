@@ -39,4 +39,16 @@ struct OnboardingTelemetryNamingTests {
         #expect(OnboardingTelemetry.Completion.finishButton.rawValue == "finish_button")
         #expect(OnboardingTelemetry.Completion.closeButton.rawValue == "close_button")
     }
+
+    /// `brain_source_selected`'s `source` dimension is a dashboard contract:
+    /// `hosted` (managed Osaurus default), `local`, and `provider_key` must
+    /// stay distinguishable and stable.
+    @Test func brain_source_values_match_the_documented_contract() {
+        #expect(BrainSource.osaurus.telemetryValue == "hosted")
+        #expect(BrainSource.local.telemetryValue == "local")
+        #expect(BrainSource.providerKey(.openai).telemetryValue == "provider_key")
+        #expect(BrainSource.providerKey(.openai).providerTelemetryValue == "openai")
+        #expect(BrainSource.osaurus.providerTelemetryValue == nil)
+        #expect(BrainSource.local.providerTelemetryValue == nil)
+    }
 }

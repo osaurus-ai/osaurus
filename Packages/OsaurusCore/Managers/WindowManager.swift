@@ -145,6 +145,28 @@ public final class WindowManager: NSObject, ObservableObject {
             window.deminiaturize(nil)
         }
 
+        // Recover from a stale autosaved frame BEFORE showing. Callers pass
+        // `center: false` so the frame restored by `setFrameAutosaveName`
+        // wins, but that frame can reference a display region that no longer
+        // exists (external monitor unplugged or rearranged) or have collapsed
+        // to a degenerate size. AppKit still reports such a window as visible,
+        // so every entry point "works" while the user sees nothing (the
+        // "Settings won't open" reports). If the frame is not usably on any
+        // current screen, fall back to the default size and re-center.
+        let frame = window.frame
+        let hasUsableSize = frame.width >= 200 && frame.height >= 200
+        let isReachable = NSScreen.screens.contains { screen in
+            let overlap = screen.visibleFrame.intersection(frame)
+            return overlap.width >= 100 && overlap.height >= 50
+        }
+        if !hasUsableSize || !isReachable {
+            print(
+                "[WindowManager] Recovering \(identifier) from stale frame \(frame) (usableSize: \(hasUsableSize), reachable: \(isReachable))"
+            )
+            window.setContentSize(Self.fallbackSize(for: identifier))
+            centerOnActiveScreen(window)
+        }
+
         // Center on active screen BEFORE showing
         if center {
             centerOnActiveScreen(window)
@@ -156,8 +178,21 @@ public final class WindowManager: NSObject, ObservableObject {
         let originalLevel = isPinned ? NSWindow.Level.floating : NSWindow.Level.normal
         window.level = .screenSaver  // Higher than modalPanel
 
-        // Activate app and yank focus
-        NSApp.activate()
+        // Activate app and yank focus. Force activation (`ignoringOtherApps`)
+        // when Osaurus is backgrounded rather than relying on the cooperative
+        // `NSApp.activate()`: as an `LSUIElement` accessory app whose main
+        // surface is a transient status-bar popover, Osaurus is usually not the
+        // active app when a window is opened from the popover. Sequoia's
+        // stricter cooperative-activation rules then make `NSApp.activate()` a
+        // no-op, so the window is created but never comes to the front (the
+        // "Settings won't open" reports). Gated on `!isActive` so behavior is
+        // unchanged when already frontmost, and safe because the popover is
+        // already closed by the time this runs (`closePopoverAndPerform`).
+        if !NSApp.isActive {
+            NSApp.activate(ignoringOtherApps: true)
+        } else {
+            NSApp.activate()
+        }
         if #available(macOS 14.0, *) {
             _ = NSRunningApplication.current.activate(options: .activateAllWindows)
         } else {
@@ -342,6 +377,16 @@ public final class WindowManager: NSObject, ObservableObject {
     }
 
     // MARK: - Private Helpers
+
+    /// Known-good size to restore a window to when its persisted frame is
+    /// unusable. Mirrors the `WindowConfiguration` defaults.
+    private static func fallbackSize(for identifier: WindowIdentifier) -> NSSize {
+        switch identifier {
+        case .chat: return WindowConfiguration.chat.defaultSize
+        case .management: return WindowConfiguration.management.defaultSize
+        case .permission: return NSSize(width: 800, height: 600)
+        }
+    }
 
     private var activeScreen: NSScreen? {
         let mouse = NSEvent.mouseLocation

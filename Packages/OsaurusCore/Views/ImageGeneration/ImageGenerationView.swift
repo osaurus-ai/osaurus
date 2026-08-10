@@ -8,6 +8,7 @@
 //  downloading on-device image bundles (vMLXFlux / mflux).
 //
 
+import AppKit
 import SwiftUI
 
 // MARK: - Image Generation Tab Enum
@@ -90,7 +91,7 @@ struct ImageGenerationView: View {
 
     private var headerView: some View {
         ManagerHeaderWithTabs(
-            title: L("Images"),
+            title: L("Media"),
             subtitle: headerSubtitle
         ) {
             if selectedTab == .models {
@@ -111,8 +112,8 @@ struct ImageGenerationView: View {
 
     private var headerSubtitle: String {
         installedCount > 0
-            ? L("Generate and edit images with on-device models • \(installedCount) on device")
-            : L("Generate and edit images with on-device models")
+            ? L("Generate images and videos locally or with connected providers • \(installedCount) on device")
+            : L("Generate images and videos locally or with connected providers")
     }
 
     /// Number of image bundles currently downloading, for the Models tab badge.
@@ -150,7 +151,9 @@ private struct ImageGenerationSettingsTab: View {
     @Environment(\.theme) private var theme
 
     @State private var configuration = SubagentConfigurationStore.snapshot()
+    @State private var configurationBaseline = SubagentConfigurationStore.snapshot()
     @State private var pickerItems: [ModelPickerItem] = []
+    @State private var videoJobs: [DurableMediaJob] = []
 
     /// Gates the persist-on-change save until the initial snapshot/re-snapshot
     /// has landed, so loading the tab (which assigns `configuration`) never
@@ -169,9 +172,9 @@ private struct ImageGenerationSettingsTab: View {
                             "The models image jobs fall back to. Each agent can override these in its own Subagents settings."
                         )
 
-                        controlRow("Generation model") {
-                            modelDropdown(
-                                \.defaultImageGenerationModelId,
+                        controlRow("Image generation model") {
+                            targetDropdown(
+                                selection: $configuration.defaultImageGenerationTarget,
                                 candidates: pickerItems.imageGenerationDelegateCandidates
                             )
                         }
@@ -183,6 +186,29 @@ private struct ImageGenerationSettingsTab: View {
                         }
                         if pickerItems.imageEditDelegateCandidates.isEmpty {
                             editModelEmptyStateHint
+                        }
+
+                        SettingsDivider()
+
+                        controlRow("Text-to-video model") {
+                            targetDropdown(
+                                selection: $configuration.defaultTextToVideoTarget,
+                                candidates: videoCandidates(.textToVideo)
+                            )
+                        }
+                        controlRow("Image-to-video model") {
+                            targetDropdown(
+                                selection: $configuration.defaultImageToVideoTarget,
+                                candidates: videoCandidates(.imageToVideo)
+                            )
+                        }
+                        if pickerItems.videoGenerationDelegateCandidates.isEmpty {
+                            Text(
+                                "Connect a Venice API-key provider, or enable Osaurus Cloud when its media catalog is available.",
+                                bundle: .module
+                            )
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
                         }
                     }
                 }
@@ -229,6 +255,38 @@ private struct ImageGenerationSettingsTab: View {
                         }
                     }
                 }
+
+                SettingsSection(title: "Video Jobs", icon: "video") {
+                    VStack(alignment: .leading, spacing: 16) {
+                        sectionBlurb(
+                            "Remote videos are quoted before queueing. A queued paid job keeps being recovered after Stop or relaunch because providers do not offer upstream cancellation."
+                        )
+                        controlRow(
+                            "Permission",
+                            hint: "Ask before each quoted video job, always allow, or deny."
+                        ) {
+                            Picker("", selection: videoPermissionSelection) {
+                                ForEach(SubagentPermissionPolicy.allCases, id: \.self) { policy in
+                                    Text(LocalizedStringKey(policy.displayName), bundle: .module)
+                                        .tag(policy)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .fixedSize()
+                        }
+                        if videoJobs.isEmpty {
+                            Text("No remote video jobs yet.", bundle: .module)
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                        } else {
+                            SettingsDivider()
+                            ForEach(videoJobs.prefix(10)) { job in
+                                videoJobRow(job)
+                            }
+                        }
+                    }
+                }
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 24)
@@ -243,22 +301,81 @@ private struct ImageGenerationSettingsTab: View {
         // and the change-notification re-snapshot — never round-trip back
         // through `save()`.
         .onAppear {
-            configuration = SubagentConfigurationStore.snapshot()
+            let latest = SubagentConfigurationStore.snapshot()
+            configurationBaseline = latest
+            configuration = latest
+            Task { await refreshVideoJobs() }
             DispatchQueue.main.async { hasLoaded = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .mediaJobChanged)) { _ in
+            Task { await refreshVideoJobs() }
         }
         // Persist immediately on edit, mirroring the Settings → Subagents card.
         // Gated on `hasLoaded` so only real user edits write back.
         .onChange(of: configuration) { _, newValue in
             guard hasLoaded else { return }
-            SubagentConfigurationStore.save(newValue)
+            let saved = SubagentConfigurationStore.saveEditorSnapshot(
+                newValue,
+                loadedBaseline: configurationBaseline
+            )
+            configurationBaseline = saved
+            if saved != newValue { configuration = saved }
         }
         // Re-snapshot if another surface mutates the shared store.
         .onReceive(
             NotificationCenter.default.publisher(for: .subagentConfigurationChanged)
         ) { _ in
             let latest = SubagentConfigurationStore.snapshot()
-            if latest != configuration { configuration = latest }
+            let reconciled = SubagentConfiguration.mergingEditorSnapshot(
+                configuration,
+                loadedBaseline: configurationBaseline,
+                live: latest
+            )
+            configurationBaseline = latest
+            if reconciled != configuration { configuration = reconciled }
         }
+    }
+
+    @MainActor
+    private func refreshVideoJobs() async {
+        videoJobs = await MediaGenerationCoordinator.shared.videoJobs()
+    }
+
+    private func videoJobRow(_ job: DurableMediaJob) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: job.state == .completed ? "checkmark.circle.fill" : "clock")
+                .foregroundColor(job.state == .completed ? .green : theme.tertiaryText)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(job.modelID)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                Text(videoJobDetail(job))
+                    .font(.system(size: 10))
+                    .foregroundColor(job.state == .failed ? .red : theme.tertiaryText)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 8)
+            if let output = job.outputURL, job.state == .completed {
+                Button(L("Open")) { NSWorkspace.shared.open(output) }
+                    .buttonStyle(.borderless)
+                Button(L("Reveal")) {
+                    NSWorkspace.shared.activateFileViewerSelecting([output])
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+    }
+
+    private func videoJobDetail(_ job: DurableMediaJob) -> String {
+        var values = [job.state.rawValue.replacingOccurrences(of: "_", with: " ").capitalized]
+        if let quote = job.quoteUSD {
+            values.append(String(format: "$%.4f", quote))
+        }
+        if let error = job.errorMessage, !error.isEmpty {
+            values.append(error)
+        }
+        return values.joined(separator: " · ")
     }
 
     // MARK: - Controls
@@ -344,6 +461,50 @@ private struct ImageGenerationSettingsTab: View {
         )
     }
 
+    private func videoCandidates(_ kind: MediaGenerationKind) -> [ModelPickerItem] {
+        pickerItems.videoGenerationDelegateCandidates.filter { $0.mediaModel?.kind == kind }
+    }
+
+    private func targetDropdown(
+        selection: Binding<MediaModelTarget?>,
+        candidates: [ModelPickerItem]
+    ) -> some View {
+        SettingsMenuDropdown(
+            options: targetOptions(candidates: candidates, current: selection.wrappedValue),
+            selection: selection
+        )
+    }
+
+    private func targetOptions(
+        candidates: [ModelPickerItem],
+        current: MediaModelTarget?
+    ) -> [SettingsMenuDropdown<MediaModelTarget?>.Option] {
+        var options: [SettingsMenuDropdown<MediaModelTarget?>.Option] = [
+            .init(tag: nil, label: Text("Choose automatically", bundle: .module))
+        ]
+        let targets = candidates.map {
+            $0.mediaModel?.target ?? MediaModelTarget(backend: .local, modelID: $0.id)
+        }
+        if let current, !targets.contains(current) {
+            options.append(
+                .init(
+                    tag: current,
+                    label: Text(verbatim: "\(current.modelID) (unavailable)")
+                )
+            )
+        }
+        options += zip(candidates, targets).map { item, target in
+            let price = item.mediaModel?.pricing?.minimumUSD.map {
+                String(format: " · from $%.4f", $0)
+            } ?? ""
+            return .init(
+                tag: Optional(target),
+                label: Text(verbatim: "\(item.displayName) · \(item.source.displayName)\(price)")
+            )
+        }
+        return options
+    }
+
     /// The dropdown rows for a model picker: "Choose automatically" first, a
     /// stale "(unavailable)" row when the stored id is no longer downloaded,
     /// then the live candidates.
@@ -383,6 +544,22 @@ private struct ImageGenerationSettingsTab: View {
         Binding(
             get: { configuration.permissionDefaults.policy(for: imageKindId) },
             set: { configuration.permissionDefaults.setPolicy($0, for: imageKindId) }
+        )
+    }
+
+    private var videoPermissionSelection: Binding<SubagentPermissionPolicy> {
+        Binding(
+            get: {
+                configuration.permissionDefaults.policy(
+                    for: SubagentCapabilityRegistry.video.id
+                )
+            },
+            set: {
+                configuration.permissionDefaults.setPolicy(
+                    $0,
+                    for: SubagentCapabilityRegistry.video.id
+                )
+            }
         )
     }
 

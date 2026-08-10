@@ -1,0 +1,62 @@
+{
+  "cases" : [
+    {
+      "domain" : "cache_proof",
+      "id" : "cache_proof.cross-session-partial-disk-restore",
+      "label" : "cache proof • a new chat restores the longest valid partial prefix from SSD",
+      "latencyMs" : 950.9310324986776,
+      "modelId" : "OsaurusAI/OsaurusAI--gemma-4-12B-it-qat-JANG_4M",
+      "notes" : [
+        "trials: 3/3 passed",
+        "note: True disk-only new-chat proof. Both chats share the same long system/tool boundary but use different user instructions. This is a processor-valid prefix checkpoint, unlike an arbitrary matching substring inside a changed user message. Run with OSAURUS_EVALS_KV_REGIME=disk-l2 and OSAURUS_EVALS_PAGED_KV=off. The score requires vMLX's structured cacheRestore event to report tier=disk, at least 128 restored tokens, and a nonzero remaining prefill. Aggregate hit counters or UI color alone cannot pass this row.",
+        "turns: 2 · topology: full-attention",
+        "deltas: kvHits +0 · kvMisses +0 · ssmHits +0 · ssmReDerives +0 · diskHits +1 · diskStores +9",
+        "turn 1 session 1: restore=none remaining=unknown tier=none ttft=525ms prefill=1059.0 tok/s stop=stop",
+        "turn 2 session 2: restore=240 remaining=21 tier=disk ttft=429ms prefill=2484.5 tok/s stop=stop",
+        "ok: disk-L2 hits +1 ≥ 1",
+        "ok: disk-L2 stores +9 ≥ 1",
+        "ok: structured cache restore 240 tokens ≥ 128",
+        "ok: partial restore proved on turn 2: 240 restored + 21 freshly prefetched",
+        "ok: structured disk restore proved on turn 2",
+        "ok: every turn produced non-empty visible content",
+        "ok: reasoning closed on every turn",
+        "note: requireDiskL2EvidenceOnHybrid skipped — non-hybrid topology",
+        "footprint after each turn (MB): 5733 → 5752",
+        "decode tok/s: 35.9"
+      ],
+      "outcome" : "passed",
+      "query" : "Reply with exactly the words ALPHA REFERENCE STORED.",
+      "telemetry" : {
+        "decodeTokensPerSecond" : 35.8833,
+        "diskL2HitsDelta" : 1,
+        "diskL2MissesDelta" : 11,
+        "diskL2StoresDelta" : 9,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "meanCpuPercent" : 93.50414522032379,
+        "peakCpuPercent" : 121.67464439431266,
+        "peakPhysFootprintMb" : 6313.069480895996,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0
+      },
+      "trials" : 3,
+      "trialsPassed" : 3
+    }
+  ],
+  "environment" : {
+    "caseCount" : 1,
+    "catalogHash" : "309b9fe021ebfb80",
+    "chip" : "Apple M5 Max",
+    "cpuCores" : 18,
+    "judge" : "self-judge",
+    "kvRegime" : "disk-l2",
+    "lowPowerMode" : false,
+    "osVersion" : "26.4.0",
+    "powerSource" : "AC",
+    "runModel" : "OsaurusAI/OsaurusAI--gemma-4-12B-it-qat-JANG_4M",
+    "thermalState" : "nominal",
+    "totalRamMb" : 131072
+  },
+  "modelId" : "OsaurusAI/OsaurusAI--gemma-4-12B-it-qat-JANG_4M",
+  "startedAt" : "2026-07-27T09:16:51Z"
+}

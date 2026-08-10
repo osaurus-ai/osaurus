@@ -69,10 +69,23 @@ struct FileDiff: Equatable {
             !diffText.isEmpty
         else { return nil }
 
-        let path = (payload["path"] as? String) ?? ""
-        let isPreview = (payload["dry_run"] as? Bool) ?? false
-        let truncated = (payload["diff_truncated"] as? Bool) ?? false
+        return fromUnifiedDiff(
+            diffText,
+            path: (payload["path"] as? String) ?? "",
+            isPreview: (payload["dry_run"] as? Bool) ?? false,
+            truncated: (payload["diff_truncated"] as? Bool) ?? false
+        )
+    }
 
+    /// Builds a `FileDiff` from raw unified-diff text (the format produced by
+    /// `WorkspaceWriteSafety.unifiedDiffText`). Shared by the tool-result card
+    /// and the sandbox Changes sheet, which diffs baseline vs. live files.
+    static func fromUnifiedDiff(
+        _ diffText: String,
+        path: String,
+        isPreview: Bool = false,
+        truncated: Bool = false
+    ) -> FileDiff {
         var lines: [Line] = []
         var added = 0
         var removed = 0
@@ -123,10 +136,17 @@ struct FileDiff: Equatable {
     /// `isStreaming: false` builds the same card as a settled, never-applied
     /// preview (badge "preview" instead of "…") — used when a write FAILS so
     /// the content the user watched stream doesn't vanish with the error.
+    /// `fallbackPath` labels the card while the args hold no path yet: some
+    /// models stream `file_edit` arguments as (new_string, old_string, path),
+    /// leaving the header nameless ("Untitled") for the whole stream. The
+    /// caller derives it deterministically (see `inferredEditPath`); the real
+    /// path takes over the moment it streams. Write tools ignore it: a
+    /// brand-new file genuinely has no better name than the placeholder.
     static func streamingPreview(
         toolName: String,
         partialArgs: String,
-        isStreaming: Bool = true
+        isStreaming: Bool = true,
+        fallbackPath: String? = nil
     ) -> FileDiff? {
         guard diffProducingToolNames.contains(toolName) else { return nil }
         guard
@@ -138,10 +158,17 @@ struct FileDiff: Equatable {
         // Models sometimes emit an alias key for the path (`filename`,
         // `file_path`, …); the executed call is rescued by
         // `SchemaValidator.normalizeKeySpelling`, so the live preview must
-        // accept the same spellings or the header shows no name.
-        let pathKeys = ["path", "filename", "file_name", "filepath", "file_path"]
-        let path = pathKeys.lazy.compactMap { partialStringField($0, in: partialArgs) }
+        // accept the same spellings or the header shows no name. The synonym
+        // list is shared with the validator so the two can't drift; the
+        // camelCase forms cover the validator's fold rescue, which accepts
+        // any case/separator variant the raw-text scan here can't.
+        let pathKeys =
+            ["path"] + (SchemaValidator.keySynonyms["path"] ?? []) + ["filePath", "fileName"]
+        var path = pathKeys.lazy.compactMap { partialStringField($0, in: partialArgs) }
             .first(where: { !$0.isEmpty }) ?? ""
+        if path.isEmpty, toolName == "file_edit", let fallback = fallbackPath, !fallback.isEmpty {
+            path = fallback
+        }
         let lines = body.components(separatedBy: "\n").map { Line(kind: .added, text: $0) }
         return FileDiff(
             path: path,
@@ -155,6 +182,35 @@ struct FileDiff: Equatable {
             isStreamingPreview: isStreaming
         )
     }
+
+    /// Identifies which known file a still-streaming `file_edit` targets when
+    /// its `path` argument hasn't streamed yet, by matching the streamed
+    /// `old_string` prefix against the contents of files already seen in the
+    /// conversation (file_read results, file_write contents). `old_string`
+    /// must be an exact unique excerpt of the target file, so a match is
+    /// evidence, not a guess — and the name is only returned when EXACTLY one
+    /// file matches. Ambiguous, too-short, or absent excerpts return nil and
+    /// the header keeps its placeholder, so a multi-file session can never be
+    /// labeled with the wrong file.
+    static func inferredEditPath(
+        partialArgs: String,
+        knownFiles: [(path: String, content: String)]
+    ) -> String? {
+        guard let excerpt = partialStringField("old_string", in: partialArgs),
+            excerpt.count >= inferenceMinExcerptLength
+        else { return nil }
+        var match: String?
+        for (path, content) in knownFiles where content.contains(excerpt) {
+            if match != nil { return nil }  // ambiguous — never label on a coin flip
+            match = path
+        }
+        return match
+    }
+
+    /// Below this many characters an `old_string` prefix is too generic to
+    /// identify a file (e.g. `"    }"` appears everywhere). The card just
+    /// keeps its placeholder until more of the excerpt streams.
+    private static let inferenceMinExcerptLength = 24
 
     /// Best-effort tool name from a partial (still-streaming) tool-call
     /// envelope. Local models stream the raw envelope before any parsed

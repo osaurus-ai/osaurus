@@ -37,10 +37,19 @@ final class AppleScriptTool: OsaurusTool, @unchecked Sendable {
         + "System Events; reading or setting app state; system actions). If the task must insert EXACT "
         + "text (a verbatim transcription, quotes, code, or a long note body), pass that text in "
         + "`content` and keep `task` as the instruction — it is then reproduced character-for-character "
-        + "instead of being re-typed. When the task needs several exact blocks (a subject AND a body, "
-        + "say), pass them in `contents` as a {name: text} map instead. Depending on the user's setting, "
-        + "each script is shown for approval or auto-run with a warning. Do NOT use it for shell, files, "
-        + "or web requests — those have dedicated tools."
+        + "instead of being re-typed. `content` is only for literal text supplied by the user; never put "
+        + "AppleScript or instructions you generated into it. When the task needs several exact blocks, "
+        + "pass them in `contents` as a {name: text} map. This is REQUIRED for text replacement even "
+        + "when the strings are short: pass the old and replacement text as separate named values and "
+        + "phrase `task` to use those provided values. For an existing open document, name the app "
+        + "or exact path that the request or conversation identifies. A request that explicitly says "
+        + "`the file` or `the document` is working-app anaphora: keep that phrase in `task` so the "
+        + "subagent can resolve the tracked frontmost app, and do not ask for a path first. Never tell "
+        + "the subagent to choose, create, or save a file to make up for a missing target. "
+        + "Editing an open document does not imply saving it. Depending on the user's setting, "
+        + "each script is shown for approval or auto-run with a warning. Use AppleScript for documents "
+        + "open in Mac apps. Do NOT use it for shell commands, path-addressed files in a selected "
+        + "folder/sandbox, or web requests — those have dedicated tools."
 
     let description = AppleScriptTool.toolDescription
 
@@ -52,7 +61,11 @@ final class AppleScriptTool: OsaurusTool, @unchecked Sendable {
                 "type": .string("string"),
                 "description": .string(
                     "The complete task to accomplish with AppleScript, in plain language, naming the app "
-                        + "when it matters. Example: \"Get the URL of the front Safari tab.\""
+                        + "when it matters. Existing-document edits must identify the app or exact path "
+                        + "from the request/conversation, except explicit `the file`/`the document` "
+                        + "working-app anaphora, which must be passed through unchanged for tracked-"
+                        + "frontmost resolution. Never invent a file picker or save step. "
+                        + "Example: \"Get the URL of the front Safari tab.\""
                 ),
             ]),
             "content": .object([
@@ -61,9 +74,12 @@ final class AppleScriptTool: OsaurusTool, @unchecked Sendable {
                     "Optional. EXACT verbatim text the task must insert (a transcription, quote block, "
                         + "code, or long note body). Pass it here instead of inside `task` so it is "
                         + "reproduced character-for-character: the subagent inserts it via a `{{content}}` "
-                        + "placeholder and never re-types it. Keep `task` as the instruction, e.g. \"Set "
-                        + "the body of the note 'Quotes' to the provided content.\" For more than one "
-                        + "exact block, use `contents` instead."
+                        + "placeholder and never re-types it. Copy only literal text supplied by the user; "
+                        + "never place AppleScript or instructions you generated in this field. Keep "
+                        + "`task` as the instruction, e.g. \"Set the body of the note 'Quotes' to the "
+                        + "provided content.\" For more than one exact block, including old and "
+                        + "replacement text, use `contents` instead; exact replacement values must not "
+                        + "be left only inside `task`."
                 ),
             ]),
             "contents": .object([
@@ -73,7 +89,9 @@ final class AppleScriptTool: OsaurusTool, @unchecked Sendable {
                     "Optional. Several EXACT verbatim values as a { name: text } map, for a task that "
                         + "must insert more than one exact block (e.g. a subject AND a body) or must "
                         + "match an existing thing by its precise name (a note title, file path, "
-                        + "mailbox, or URL). Each value is inserted character-for-character via its own "
+                        + "mailbox, or URL). For replacement, use names such as `oldText` and `newText` "
+                        + "and tell `task` to replace the provided old text with the provided new text. "
+                        + "Each value is inserted character-for-character via its own "
                         + "`{{name}}` placeholder — never re-typed, so a long or unusual name can't be "
                         + "mistyped. Use short, semantic names. Example: {\"target\": \"Q3 Planning\", "
                         + "\"body\": \"…\"}. For a single block use `content`."
@@ -95,6 +113,10 @@ final class AppleScriptTool: OsaurusTool, @unchecked Sendable {
     // out of the registry's 120s race and relies on its own `RunLimits` + the
     // user's stop control instead.
     var bypassRegistryTimeout: Bool { true }
+
+    func normalizeArgumentsBeforeValidation(_ argumentsJSON: String) -> String {
+        AppleScriptToolDispatch.normalizeAutomationArguments(argumentsJSON)
+    }
 
     init() {}
 

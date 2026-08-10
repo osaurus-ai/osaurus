@@ -2,8 +2,8 @@
 //  OnboardingChoosePluginsView.swift
 //  osaurus
 //
-//  Onboarding step 6 — pick a few starter tools (browser, file access,
-//  calendar, …) before landing in the walkthrough. The list is curated
+//  Onboarding step 6 — pick a few starter tools (calendar, mail,
+//  messages, …) before landing in the walkthrough. The list is curated
 //  locally in `ChoosePluginsState.curated`; we filter against the live
 //  `PluginRepositoryService` so any pick missing from the remote
 //  catalog just doesn't show up.
@@ -51,36 +51,12 @@ final class ChoosePluginsState: ObservableObject {
     /// remote catalog (`PluginRepositoryService.shared.plugins`) are
     /// surfaced; everything else is silently dropped.
     ///
-    /// The browser is the only default-on pick so the first-run agent can
-    /// do something useful out of the box without pre-enabling tools that
-    /// need extra system permissions (Calendar, Messages, …).
-    ///
-    /// Note: there is intentionally no "macOS Use" pick here. Controlling
-    /// Mac apps by clicking/typing is now a CORE Osaurus capability (the
-    /// Computer Use harness), enabled per-agent and configured in its own
-    /// Settings tab — not installed as a standalone plugin.
+    /// Note: there is intentionally no "macOS Use" or "Browser" pick here.
+    /// Controlling Mac apps (the Computer Use harness) and browsing the web
+    /// (Browser Use) are now CORE Osaurus capabilities, enabled per-agent
+    /// and configured in their own Settings tabs — not installed as
+    /// standalone plugins.
     static let curated: [OnboardingPluginPick] = [
-        OnboardingPluginPick(
-            pluginId: "osaurus.browser",
-            displayName: "Browser",
-            blurb: "Open pages and pull text from the web.",
-            icon: "safari.fill",
-            isDefaultOn: true
-        ),
-        OnboardingPluginPick(
-            pluginId: "osaurus.files",
-            displayName: "Files",
-            blurb: "Read and write files in your projects.",
-            icon: "folder.fill",
-            isDefaultOn: false
-        ),
-        OnboardingPluginPick(
-            pluginId: "osaurus.shell",
-            displayName: "Shell",
-            blurb: "Run terminal commands inside the safety net.",
-            icon: "terminal.fill",
-            isDefaultOn: false
-        ),
         OnboardingPluginPick(
             pluginId: "osaurus.calendar",
             displayName: "Calendar",
@@ -100,6 +76,69 @@ final class ChoosePluginsState: ObservableObject {
             displayName: "Messages",
             blurb: "Send iMessages from your Mac.",
             icon: "message.fill",
+            isDefaultOn: false
+        ),
+        OnboardingPluginPick(
+            pluginId: "osaurus.contacts",
+            displayName: "Contacts",
+            blurb: "Look up people and phone numbers.",
+            icon: "person.crop.circle.fill",
+            isDefaultOn: false
+        ),
+        OnboardingPluginPick(
+            pluginId: "osaurus.mail",
+            displayName: "Mail",
+            blurb: "Read, search, and draft Apple Mail.",
+            icon: "envelope.fill",
+            isDefaultOn: false
+        ),
+        OnboardingPluginPick(
+            pluginId: "osaurus.notes",
+            displayName: "Apple Notes",
+            blurb: "Search and create notes.",
+            icon: "note.text",
+            isDefaultOn: false
+        ),
+        OnboardingPluginPick(
+            pluginId: "osaurus.maps",
+            displayName: "Maps",
+            blurb: "Find places and get directions.",
+            icon: "map.fill",
+            isDefaultOn: false
+        ),
+        OnboardingPluginPick(
+            pluginId: "osaurus.vision",
+            displayName: "Vision",
+            blurb: "Read text from images and analyze photos.",
+            icon: "eye.fill",
+            isDefaultOn: false
+        ),
+        OnboardingPluginPick(
+            pluginId: "osaurus.images",
+            displayName: "Images",
+            blurb: "Convert, resize, and optimize images.",
+            icon: "photo.fill",
+            isDefaultOn: false
+        ),
+        OnboardingPluginPick(
+            pluginId: "osaurus.xlsx",
+            displayName: "XLSX",
+            blurb: "Read and create Excel spreadsheets.",
+            icon: "tablecells.fill",
+            isDefaultOn: false
+        ),
+        OnboardingPluginPick(
+            pluginId: "osaurus.pptx",
+            displayName: "PPTX",
+            blurb: "Build PowerPoint decks.",
+            icon: "rectangle.on.rectangle.fill",
+            isDefaultOn: false
+        ),
+        OnboardingPluginPick(
+            pluginId: "osaurus.music",
+            displayName: "Apple Music",
+            blurb: "Control playback and search your library.",
+            icon: "music.note",
             isDefaultOn: false
         ),
     ]

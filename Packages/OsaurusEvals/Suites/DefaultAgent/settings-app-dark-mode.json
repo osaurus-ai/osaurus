@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.settings-app-dark-mode",
+  "domain": "default_agent",
+  "label": "default agent • switch appearance to dark via osaurus_settings",
+  "query": "Turn on dark mode in Osaurus.",
+  "notes": "App-shell scope: action 'set', scope 'app', settings.appearance 'dark'. Pins that everyday app preferences route through osaurus_settings rather than a deflection to the Themes pane.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_settings"],
+      "mustNotCallTools": ["capabilities_discover"],
+      "argsMustContain": [
+        { "tool": "osaurus_settings", "args": { "action": "set", "scope": "app", "settings": "dark" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

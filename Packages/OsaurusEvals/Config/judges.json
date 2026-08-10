@@ -1,0 +1,9 @@
+{
+  "_comment": "Strong-judge candidates for rubric grading, in priority order. When JUDGE_MODEL is unset, EvalJudgeModel auto-selects the first candidate whose API-key env var is exported (skipping a candidate that IS the run model); when none is reachable it falls back to self-judge with a loud warning. Each modelId is a `provider/name` whose routing prefix MUST match an `EvalRemoteProviderBootstrap.presets` key so the ephemeral in-process provider connects — Gemini's preset is keyed `google` (the app's Google provider), so its model id is `google/<model>`, NOT `gemini/<model>` (the latter has no preset, so the bootstrap skips it and the judge silently never resolves). Override the file location with OSAURUS_EVALS_JUDGES_CONFIG; if the file is missing entirely, EvalJudgeModel falls back to a built-in copy of this list.",
+  "candidates": [
+    { "envKey": "XAI_API_KEY", "modelId": "xai/grok-4.3" },
+    { "envKey": "ANTHROPIC_API_KEY", "modelId": "anthropic/claude-sonnet-4-5" },
+    { "envKey": "OPENAI_API_KEY", "modelId": "openai/gpt-5.1" },
+    { "envKey": "GEMINI_API_KEY", "modelId": "google/gemini-2.5-pro" }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "id": "agent_loop.clear-task-no-clarify-stall",
+  "domain": "agent_loop",
+  "label": "agent loop • an unambiguous task must NOT stall on a clarify question",
+  "query": "Create a file named greeting.txt containing exactly the line: Hello, world!",
+  "notes": "The abstention discipline's false-positive guard: the task is fully specified, so a model that calls clarify here is over-cautious and wastes a turn. Pins that clarify is reserved for genuine ambiguity — the deterministic complement to clarify-on-ambiguity. The file assertion proves the work actually got done rather than deferred. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 5,
+      "mustNotCallTools": ["clarify"],
+      "files": [
+        { "path": "greeting.txt", "exists": true, "contains": "Hello, world!" }
+      ],
+      "rubric": [
+        "Creates greeting.txt with the exact requested line.",
+        "Does not ask a clarifying question — the task was unambiguous."
+      ]
+    }
+  }
+}

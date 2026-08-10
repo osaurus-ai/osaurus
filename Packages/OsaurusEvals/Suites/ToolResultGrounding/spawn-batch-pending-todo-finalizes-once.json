@@ -1,0 +1,137 @@
+{
+  "id": "tool_result_grounding.spawn-batch-pending-todo-finalizes-once",
+  "domain": "tool_result_grounding",
+  "label": "spawn_batch • grounded final does not reopen for optional pending Todos",
+  "query": "Track the delegated work and two optional follow-ups, delegate the required work, then finalize while leaving optional items pending.",
+  "notes": "Model-free committed-transcript contract. The terminal Todo result explicitly leaves two optional items incomplete. Exact tool sequence, one final, and final-is-last reject a Todo-driven reopen or duplicate final after the grounded batch result.",
+  "fixtures": {},
+  "expect": {
+    "toolResultGrounding": {
+      "events": [
+        {
+          "kind": "toolCall",
+          "callId": "todo-seed",
+          "tool": "todo",
+          "arguments": "{\"items\":[{\"id\":\"delegated\",\"text\":\"Collect both worker results\",\"completed\":false},{\"id\":\"optional-review\",\"text\":\"Optional review\",\"completed\":false},{\"id\":\"optional-notes\",\"text\":\"Optional notes\",\"completed\":false}]}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "todo-seed",
+          "tool": "todo",
+          "content": "TODO_SEEDED_03"
+        },
+        {
+          "kind": "toolCall",
+          "callId": "batch-1",
+          "tool": "spawn_batch",
+          "arguments": "{\"jobs\":[{\"id\":\"todo-alpha\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000401\",\"input\":\"Return the alpha result.\"},{\"id\":\"todo-beta\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000402\",\"input\":\"Return the beta result.\"}]}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "batch-1",
+          "tool": "spawn_batch",
+          "content": "{\"ok\":true,\"tool\":\"spawn_batch\",\"result\":{\"kind\":\"spawn_batch_result\",\"max_parallel\":2,\"succeeded\":2,\"failed\":0,\"cancelled\":0,\"aggregate_status\":\"succeeded\",\"execution\":{\"configured_max_subagents\":2,\"waves\":[{\"wave\":0,\"jobs\":2,\"remote_jobs\":2,\"local_jobs\":0,\"effective_local_slots\":2,\"local_subwaves\":[2],\"limited_by\":[],\"verdict\":\"admitted\"}],\"cache\":{\"available\":false}},\"results\":[{\"id\":\"todo-alpha\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000401\",\"ok\":true,\"envelope\":{\"ok\":true,\"tool\":\"spawn\",\"result\":{\"kind\":\"spawn_result\",\"model\":\"test/todo-alpha\",\"summary\":\"TODO_BATCH_ALPHA_47\"}}},{\"id\":\"todo-beta\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000402\",\"ok\":true,\"envelope\":{\"ok\":true,\"tool\":\"spawn\",\"result\":{\"kind\":\"spawn_result\",\"model\":\"test/todo-beta\",\"summary\":\"TODO_BATCH_BETA_83\"}}}]}}"
+        },
+        {
+          "kind": "toolCall",
+          "callId": "todo-final",
+          "tool": "todo",
+          "arguments": "{\"items\":[{\"id\":\"delegated\",\"text\":\"Collect both worker results\",\"completed\":true},{\"id\":\"optional-review\",\"text\":\"Optional review\",\"completed\":false},{\"id\":\"optional-notes\",\"text\":\"Optional notes\",\"completed\":false}]}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "todo-final",
+          "tool": "todo",
+          "content": "TODO_DELEGATED_DONE_88; optional-review=false; optional-notes=false"
+        },
+        {
+          "kind": "assistant",
+          "content": "Delegated work finished with TODO_BATCH_ALPHA_47 and TODO_BATCH_BETA_83. TODO_DELEGATED_DONE_88; the two optional items remain pending."
+        }
+      ],
+      "assertions": [
+        {
+          "callId": "batch-1",
+          "answerMustContain": [
+            "TODO_BATCH_ALPHA_47",
+            "TODO_BATCH_BETA_83"
+          ],
+          "argumentsMustNotContain": [
+            "TODO_BATCH_ALPHA_47",
+            "TODO_BATCH_BETA_83"
+          ]
+        },
+        {
+          "callId": "todo-final",
+          "answerMustContain": [
+            "TODO_DELEGATED_DONE_88"
+          ],
+          "resultMustContain": [
+            "optional-review=false",
+            "optional-notes=false"
+          ],
+          "argumentsMustNotContain": [
+            "TODO_DELEGATED_DONE_88"
+          ],
+          "callMustFollowResultOf": "batch-1"
+        }
+      ],
+      "expectedToolSequence": [
+        "todo",
+        "spawn_batch",
+        "todo"
+      ],
+      "requireSingleFinalAssistant": true,
+      "requireFinalAfterAllToolResults": true,
+      "requireFinalIsLastEvent": true,
+      "spawnBatch": {
+        "exactCallCount": 1,
+        "expectedJobIds": [
+          "todo-alpha",
+          "todo-beta"
+        ],
+        "expectedSucceeded": 2,
+        "expectedFailed": 0,
+        "expectedMaxParallel": 2,
+        "requireEveryRowSettled": true,
+        "requireReportedCountsMatchRows": true,
+        "expectedAggregateStatus": "succeeded",
+        "expectedExecutionWaves": [
+          {
+            "wave": 0,
+            "remoteJobs": 2,
+            "effectiveLocalSlots": 2,
+            "localSubwaves": [
+              2
+            ],
+            "limitingFactors": []
+          }
+        ],
+        "requireEveryExecutionWaveWellFormed": true,
+        "expectedCacheAvailable": false,
+        "expectedRows": [
+          {
+            "id": "todo-alpha",
+            "targetType": "agent",
+            "target": "A11CE001-0000-4000-8000-000000000401",
+            "ok": true,
+            "model": "test/todo-alpha",
+            "summaryContains": [
+              "TODO_BATCH_ALPHA_47"
+            ]
+          },
+          {
+            "id": "todo-beta",
+            "targetType": "agent",
+            "target": "A11CE001-0000-4000-8000-000000000402",
+            "ok": true,
+            "model": "test/todo-beta",
+            "summaryContains": [
+              "TODO_BATCH_BETA_83"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

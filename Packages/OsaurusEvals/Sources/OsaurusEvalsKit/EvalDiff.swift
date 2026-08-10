@@ -15,6 +15,7 @@
 //
 
 import Foundation
+import OsaurusCore
 
 /// One case's before→after delta across outcome + perf.
 public struct EvalCaseDelta: Sendable, Codable, Equatable {
@@ -43,6 +44,16 @@ public struct EvalCaseDelta: Sendable, Codable, Equatable {
     public let promptTokensDelta: Int?
     /// Signed percent change in context tokens (negative = cheaper).
     public let promptTokensDeltaPct: Double?
+    /// First-step (cold-prefill) input estimate from the context
+    /// attribution block — the pure surface-size axis, independent of
+    /// iteration count. nil when either side carried no attribution.
+    public let baselineFirstStepTokens: Int?
+    public let currentFirstStepTokens: Int?
+    public let firstStepTokensDelta: Int?
+    /// Largest per-contributor movements (`name +N` / `name -N`) between
+    /// the two attribution blocks, biggest absolute movement first — the
+    /// "WHAT changed inside the prompt" line. nil without attribution.
+    public let topContextMovers: [String]?
     public let notes: [String]
 
     init(
@@ -86,6 +97,19 @@ public struct EvalCaseDelta: Sendable, Codable, Equatable {
             promptTokensDelta = nil
             promptTokensDeltaPct = nil
         }
+        baselineFirstStepTokens = baseline?.context?.firstStepInputTokens
+        currentFirstStepTokens = current?.context?.firstStepInputTokens
+        if let b = baseline?.context?.firstStepInputTokens,
+            let c = current?.context?.firstStepInputTokens
+        {
+            firstStepTokensDelta = c - b
+        } else {
+            firstStepTokensDelta = nil
+        }
+        topContextMovers = EvalDiff.contextMovers(
+            baseline: baseline?.context,
+            current: current?.context
+        )
         notes = current?.notes ?? baseline?.notes ?? []
     }
 }
@@ -281,6 +305,7 @@ public enum EvalDiff {
         let latencyMs: Double?
         let notes: [String]
         let telemetry: EvalCaseTelemetry?
+        let context: ContextAttribution?
         /// Repeat-trial evidence (`--repeat N`), nil for single executions.
         let trials: Int?
         let trialsPassed: Int?
@@ -384,6 +409,7 @@ public enum EvalDiff {
                     latencyMs: row.latencyMs,
                     notes: row.notes,
                     telemetry: row.telemetry,
+                    context: row.context,
                     trials: row.trials,
                     trialsPassed: row.trialsPassed
                 )
@@ -453,6 +479,50 @@ public enum EvalDiff {
             // warning the maintainer reviews against the pass-rate change.
             if pct < 0 { wins.append(line) } else { warnings.append(line) }
         }
+        if let b = delta.baselineFirstStepTokens, b > 0,
+            let c = delta.currentFirstStepTokens
+        {
+            let pct = Double(c - b) / Double(b) * 100
+            if abs(pct) >= margins.promptTokensPct {
+                var line = String(format: "%@: first-step ctx %+.0f%% (%d -> %d)", delta.id, pct, b, c)
+                if let movers = delta.topContextMovers, !movers.isEmpty {
+                    line += " [\(movers.joined(separator: ", "))]"
+                }
+                if pct < 0 { wins.append(line) } else { warnings.append(line) }
+            }
+        }
+    }
+
+    // MARK: - Context attribution movers
+
+    /// Per-contributor token movement between two attribution blocks:
+    /// sections keyed `§id`, tools keyed `tool:name`. A contributor absent
+    /// on one side counts from 0 (dropped section => full negative move).
+    /// Returns nil when neither side carried attribution.
+    static func contextMovers(
+        baseline: ContextAttribution?,
+        current: ContextAttribution?,
+        limit: Int = 5
+    ) -> [String]? {
+        guard baseline != nil || current != nil else { return nil }
+        func tokensByName(_ a: ContextAttribution?) -> [String: Int] {
+            guard let a else { return [:] }
+            var out: [String: Int] = [:]
+            for s in a.sections { out["§\(s.id)", default: 0] += s.tokens }
+            for t in a.tools { out["tool:\(t.name)", default: 0] += t.tokens }
+            return out
+        }
+        let b = tokensByName(baseline)
+        let c = tokensByName(current)
+        let deltas: [(name: String, delta: Int)] = Set(b.keys).union(c.keys)
+            .map { (name: $0, delta: (c[$0] ?? 0) - (b[$0] ?? 0)) }
+            .filter { $0.delta != 0 }
+            .sorted { abs($0.delta) > abs($1.delta) }
+        let movers: [String] = deltas.prefix(limit).map { entry in
+            let sign = entry.delta > 0 ? "+" : ""
+            return "\(entry.name) \(sign)\(entry.delta)"
+        }
+        return movers.isEmpty ? nil : movers
     }
 
     // MARK: - Outcome-transition rules (mirror AgentLoopRegressionLab)

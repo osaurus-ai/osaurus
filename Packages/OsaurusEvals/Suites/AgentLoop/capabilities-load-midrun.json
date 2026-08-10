@@ -1,18 +1,26 @@
 {
   "id": "agent_loop.capabilities-load-midrun",
   "domain": "agent_loop",
-  "label": "agent loop • capabilities_load mid-run, loaded tool callable same run",
-  "query": "First call capabilities_load with ids [\"tool/file_write\"] to make sure the write tool is available. Then write a file named loaded.txt containing exactly: ok",
-  "notes": "Pins the deferred-schema policy end to end: capabilities_load drains into the session bookkeeping WITHOUT rewriting the frozen request schema (KV-prefix stability), the result carries the 'callable now' note, and the loaded tool is dispatchable by name in the SAME run. Loading an already-schema-resident tool is deliberate — the load path's behaviour must not depend on the host's registry state.",
+  "label": "agent loop • capabilities gateway mid-run, loaded tool callable same run",
+  "query": "First call capabilities with ids [\"tool/eval_dynamic_load_probe\"]. Then call eval_dynamic_load_probe with an empty object. Finally write a file named loaded.txt containing exactly: ok",
+  "notes": "Pins the dynamic-schema contract end to end with a real plugin-style fixture: the unified capabilities gateway preserves the initial prompt/schema until a successful load, then publishes the loaded tool schema on the next model iteration so constrained decoders can invoke it in the SAME run. The unrelated channel publisher and legacy capability names are forbidden.",
+  "trials": 3,
   "fixtures": {
+    "enableTools": ["eval_dynamic_load_probe"],
     "workspaceFiles": [
-      { "path": "README.md", "contents": "Write tools may need to be loaded via capabilities_load.\n" }
+      { "path": "README.md", "contents": "Deferred dynamic tools load through the unified capabilities gateway.\n" }
     ]
   },
   "expect": {
     "agentLoop": {
       "maxIterations": 6,
-      "mustCallTools": ["capabilities_load", "file_write"],
+      "mustCallTools": ["capabilities", "eval_dynamic_load_probe", "file_write"],
+      "mustNotCallTools": [
+        "agent_channel_publish",
+        "capabilities_load",
+        "capabilities_discover"
+      ],
+      "finalTextMustNotContain": ["capabilities_load", "capabilities_discover"],
       "files": [
         { "path": "loaded.txt", "contains": "ok" }
       ]

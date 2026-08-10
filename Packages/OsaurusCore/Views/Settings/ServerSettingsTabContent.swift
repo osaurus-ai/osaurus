@@ -25,6 +25,153 @@ import AppKit
 @preconcurrency import MLXLMCommon
 import SwiftUI
 
+struct ServerRuntimeSettingsDraftReconciliation: Equatable {
+    let settings: VMLXServerRuntimeSettings
+    let conflictingSections: Set<String>
+}
+
+/// Three-way merge for a Settings form that remains open while another
+/// authority (for example `/admin/runtime-settings`) saves the canonical
+/// runtime document. Untouched sections adopt the external value, independent
+/// local sections survive, and same-section edits are retained but marked as
+/// conflicts so Save cannot silently overwrite the newer persisted value.
+enum ServerRuntimeSettingsDraftReconciler {
+    static func reconcile(
+        draft: VMLXServerRuntimeSettings,
+        baseline: VMLXServerRuntimeSettings,
+        external: VMLXServerRuntimeSettings,
+        existingConflicts: Set<String> = []
+    ) -> ServerRuntimeSettingsDraftReconciliation {
+        var merged = draft
+        var conflicts = existingConflicts
+
+        merge(
+            \.network,
+            section: "network",
+            draft: draft,
+            baseline: baseline,
+            external: external,
+            merged: &merged,
+            conflicts: &conflicts
+        )
+        merge(
+            \.concurrency,
+            section: "concurrency",
+            draft: draft,
+            baseline: baseline,
+            external: external,
+            merged: &merged,
+            conflicts: &conflicts
+        )
+        merge(
+            \.cache,
+            section: "cache",
+            draft: draft,
+            baseline: baseline,
+            external: external,
+            merged: &merged,
+            conflicts: &conflicts
+        )
+        merge(
+            \.power,
+            section: "power",
+            draft: draft,
+            baseline: baseline,
+            external: external,
+            merged: &merged,
+            conflicts: &conflicts
+        )
+        merge(
+            \.generation,
+            section: "generation",
+            draft: draft,
+            baseline: baseline,
+            external: external,
+            merged: &merged,
+            conflicts: &conflicts
+        )
+        merge(
+            \.tools,
+            section: "tools",
+            draft: draft,
+            baseline: baseline,
+            external: external,
+            merged: &merged,
+            conflicts: &conflicts
+        )
+        merge(
+            \.multimodal,
+            section: "multimodal",
+            draft: draft,
+            baseline: baseline,
+            external: external,
+            merged: &merged,
+            conflicts: &conflicts
+        )
+        merge(
+            \.mtp,
+            section: "mtp",
+            draft: draft,
+            baseline: baseline,
+            external: external,
+            merged: &merged,
+            conflicts: &conflicts
+        )
+        merge(
+            \.memorySafety,
+            section: "memorySafety",
+            draft: draft,
+            baseline: baseline,
+            external: external,
+            merged: &merged,
+            conflicts: &conflicts
+        )
+        merge(
+            \.performance,
+            section: "performance",
+            draft: draft,
+            baseline: baseline,
+            external: external,
+            merged: &merged,
+            conflicts: &conflicts
+        )
+
+        return .init(
+            settings: merged,
+            conflictingSections: conflicts
+        )
+    }
+
+    private static func merge<Value: Equatable>(
+        _ keyPath: WritableKeyPath<VMLXServerRuntimeSettings, Value>,
+        section: String,
+        draft: VMLXServerRuntimeSettings,
+        baseline: VMLXServerRuntimeSettings,
+        external: VMLXServerRuntimeSettings,
+        merged: inout VMLXServerRuntimeSettings,
+        conflicts: inout Set<String>
+    ) {
+        let local = draft[keyPath: keyPath]
+        let original = baseline[keyPath: keyPath]
+        let remote = external[keyPath: keyPath]
+
+        if local == original {
+            merged[keyPath: keyPath] = remote
+            conflicts.remove(section)
+        } else if remote == local {
+            merged[keyPath: keyPath] = local
+            conflicts.remove(section)
+        } else if remote == original {
+            merged[keyPath: keyPath] = local
+        } else {
+            // Preserve the user's unsaved value for inspection, but block
+            // Save until they explicitly Reset/reapply against the new base.
+            merged[keyPath: keyPath] = local
+            conflicts.insert(section)
+        }
+    }
+}
+
 struct ServerSettingsTabContent: View {
     @EnvironmentObject var server: ServerController
     @ObservedObject private var themeManager = ThemeManager.shared
@@ -33,11 +180,18 @@ struct ServerSettingsTabContent: View {
     /// typing in a text field doesn't restart the NIO server every
     /// keystroke.
     @State private var draft: VMLXServerRuntimeSettings = .init()
+    @State private var runtimeBaseline: VMLXServerRuntimeSettings = .init()
+    @State private var runtimeConflictSections: Set<String> = []
 
     /// Companion edit state for legacy fields that still live on
     /// `ServerConfiguration` (model eviction policy, idle residency,
     /// max body sizes).
     @State private var draftLegacy: ServerConfiguration = .default
+    /// Fallback conversation window for models/providers whose metadata does
+    /// not declare a maximum. It is edited beside the KV/cache controls so a
+    /// user cannot mistake it for the loaded model's cache window.
+    @State private var draftMetadataFallbackTokens: Int?
+    @State private var savedMetadataFallbackTokens: Int?
 
     @State private var hasLoaded: Bool = false
     @State private var saving: Bool = false
@@ -76,10 +230,18 @@ struct ServerSettingsTabContent: View {
             || draftLegacy.modelEvictionPolicy != server.configuration.modelEvictionPolicy
             || draftLegacy.maxRequestBodyBytes != server.configuration.maxRequestBodyBytes
             || draftLegacy.maxPairingBodyBytes != server.configuration.maxPairingBodyBytes
+            // Compiled decode is exported to vmlx via `setenv` at model load
+            // and latched into a process-lifetime constant on first read —
+            // a mid-session flip saves cleanly but cannot take effect until
+            // the app restarts. Without the chip the toggle reads ON while
+            // the engine still runs the old policy.
+            || (draft.performance?.compiledDecode ?? false)
+                != (server.runtimeSettings.performance?.compiledDecode ?? false)
     }
 
     private var hasUnsavedChanges: Bool {
         draft != server.runtimeSettings
+            || draftMetadataFallbackTokens != savedMetadataFallbackTokens
             || draftLegacy.modelEvictionPolicy != server.configuration.modelEvictionPolicy
             || draftLegacy.globalProxyURL != server.configuration.globalProxyURL
             || draftLegacy.modelIdleResidencyPolicy != server.configuration.modelIdleResidencyPolicy
@@ -89,12 +251,36 @@ struct ServerSettingsTabContent: View {
 
     private var validationIssues: [VMLXServerSettingsIssue] {
         draft.validationIssues()
+            + runtimeConflictSections.sorted().map { section in
+                .error(
+                    field: "runtimeSettings.\(section)",
+                    message:
+                        "This section changed through another settings writer while the form had unsaved edits. Reset and reapply the edit against the current saved value."
+                )
+            }
     }
 
     /// True when the current draft would force a server-side rebind on
     /// save AND the server is actually running. Drives the inline
     /// "Restart required" chip in `ServerSettingsActionBar`.
     private var requiresRestart: Bool { pendingRestart && server.isRunning }
+
+    /// `.error`-severity issues block Save. Until now the banner showed the
+    /// error while Save proceeded anyway — which is how a 0 GB disk-cache
+    /// cap (silent self-eviction of every entry) could reach the engine.
+    private var hasBlockingIssues: Bool {
+        validationIssues.contains { $0.severity == .error }
+    }
+
+    /// A saved change to settings captured by the loaded container cannot be
+    /// applied in place. Surface the exact lifecycle before the user saves:
+    /// resident models are unloaded, then lazily reloaded on the next request.
+    private var requiresModelReload: Bool {
+        ServerController.loadedModelRuntimeInputsRequireRefresh(
+            previous: server.runtimeSettings,
+            next: ServerRuntimeSettingsStore.canonicalizedContextAndKVPolicy(draft)
+        )
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -109,7 +295,9 @@ struct ServerSettingsTabContent: View {
 
                 ServerSettingsActionBar(
                     hasUnsavedChanges: hasUnsavedChanges,
+                    hasBlockingIssues: hasBlockingIssues,
                     requiresRestart: requiresRestart,
+                    requiresModelReload: requiresModelReload,
                     saving: saving,
                     onSave: { Task { await save() } },
                     onReset: resetToDefaults
@@ -132,13 +320,27 @@ struct ServerSettingsTabContent: View {
             guard !hasLoaded else { return }
             hasLoaded = true
             draft = server.runtimeSettings
+            runtimeBaseline = server.runtimeSettings
             draftLegacy = server.configuration
+            let fallback = ChatConfigurationStore.load().contextLength
+            draftMetadataFallbackTokens = fallback
+            savedMetadataFallbackTokens = fallback
         }
         .onChange(of: managementState.serverSectionRequest) { _, _ in
             applySectionRequest()
         }
         .onChange(of: server.runtimeSettings) { _, newValue in
-            if !hasUnsavedChanges { draft = newValue }
+            guard hasLoaded else { return }
+            let reconciliation =
+                ServerRuntimeSettingsDraftReconciler.reconcile(
+                    draft: draft,
+                    baseline: runtimeBaseline,
+                    external: newValue,
+                    existingConflicts: runtimeConflictSections
+                )
+            draft = reconciliation.settings
+            runtimeBaseline = newValue
+            runtimeConflictSections = reconciliation.conflictingSections
         }
         .onChange(of: server.configuration) { _, newValue in
             if !hasUnsavedChanges { draftLegacy = newValue }
@@ -184,9 +386,14 @@ struct ServerSettingsTabContent: View {
                     ConcurrencySection(draft: $draft)
                         .id(ServerSettingsSection.concurrency)
                         .settingsSearchHighlight(landedSection == .concurrency)
-                    CacheSection(draft: $draft)
-                        .id(ServerSettingsSection.cache)
-                        .settingsSearchHighlight(landedSection == .cache)
+                    CacheSection(
+                        draft: $draft,
+                        metadataFallbackTokens: $draftMetadataFallbackTokens,
+                        savedSettings: server.runtimeSettings,
+                        savedMetadataFallbackTokens: savedMetadataFallbackTokens
+                    )
+                    .id(ServerSettingsSection.cache)
+                    .settingsSearchHighlight(landedSection == .cache)
                     MemorySafetySection(draft: $draft)
                         .id(ServerSettingsSection.memorySafety)
                         .settingsSearchHighlight(landedSection == .memorySafety)
@@ -235,13 +442,11 @@ struct ServerSettingsTabContent: View {
     // MARK: - Actions
 
     private func resetToDefaults() {
-        // Migrate from the current legacy ServerConfiguration so the
-        // user gets predictable defaults that line up with what's
-        // actually persisted today.
-        draft = ServerRuntimeSettingsStore.migratedFromLegacy(
-            serverConfiguration: ServerConfiguration.default,
-            userDefaults: .standard
+        draft = ServerRuntimeSettingsStore.resetDefaults(
+            serverConfiguration: .default
         )
+        runtimeConflictSections = []
+        draftMetadataFallbackTokens = ChatConfiguration.default.contextLength
         let defaults = ServerConfiguration.default
         var reset = draftLegacy
         reset.modelEvictionPolicy = defaults.modelEvictionPolicy
@@ -253,6 +458,10 @@ struct ServerSettingsTabContent: View {
     }
 
     private func save() async {
+        // A same-section external edit must be resolved explicitly. Sending
+        // this stale draft would overwrite a newer API/store value.
+        guard runtimeConflictSections.isEmpty else { return }
+
         saving = true
         defer { saving = false }
 
@@ -269,21 +478,28 @@ struct ServerSettingsTabContent: View {
             server.saveConfiguration()
         }
 
-        await server.saveRuntimeSettings(draft)
-        mirrorMaxBatchSizeToUserDefaults(draft.concurrency.maxConcurrentSequences)
-        showSuccess(L("Settings saved successfully"))
-    }
+        if draftMetadataFallbackTokens != savedMetadataFallbackTokens {
+            var chat = ChatConfigurationStore.load()
+            chat.contextLength = draftMetadataFallbackTokens
+            ChatConfigurationStore.save(chat)
+            savedMetadataFallbackTokens = draftMetadataFallbackTokens
+        }
 
-    /// Mirror BatchEngine concurrency into the legacy UserDefaults key
-    /// so existing readers stay in sync when nothing else consults the
-    /// runtime snapshot.
-    private func mirrorMaxBatchSizeToUserDefaults(_ value: Int?) {
-        let defaults = UserDefaults.standard
-        let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
-        if let value {
-            defaults.set(value, forKey: key)
+        let effects = await server.saveRuntimeSettings(draft)
+        // The controller canonicalizes legacy ownership before persisting
+        // (including old Memory Safety KV overrides). Re-read its published
+        // value so the form cannot remain dirty against a canonical save.
+        draft = server.runtimeSettings
+        runtimeBaseline = server.runtimeSettings
+        runtimeConflictSections = []
+        if effects.unloadedModelCount > 0 {
+            showSuccess(
+                L(
+                    "Settings saved. \(effects.unloadedModelCount) loaded model(s) were unloaded and will reload with the new runtime policy on the next request."
+                )
+            )
         } else {
-            defaults.removeObject(forKey: key)
+            showSuccess(L("Settings saved successfully"))
         }
     }
 

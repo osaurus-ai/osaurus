@@ -110,6 +110,157 @@ struct MLXModel: Identifiable, Codable {
         )
     }
 
+    /// Preserve catalog/editorial metadata while folding in authoritative
+    /// facts from a bundle that is actually present on disk. This keeps a
+    /// curated card's name, description, release data, and use-case badge,
+    /// but replaces stale Hub download size with the installed bundle's real
+    /// weight size and preserves an external bundle path when applicable.
+    /// The caller must pass output from local/external bundle discovery; this
+    /// intentionally does not consult `isDownloaded`, whose process cache may
+    /// have been populated before the background scan completed.
+    func mergingLocalInstallationMetadata(from local: MLXModel) -> MLXModel {
+        guard id.caseInsensitiveCompare(local.id) == .orderedSame,
+              let localBytes = local.downloadSizeBytes,
+              localBytes > 0
+        else { return self }
+        return MLXModel(
+            id: id,
+            name: name,
+            description: description,
+            downloadURL: downloadURL,
+            isTopSuggestion: isTopSuggestion,
+            downloadSizeBytes: localBytes,
+            modelType: local.modelType ?? modelType,
+            releasedAt: releasedAt,
+            downloads: downloads,
+            useCase: useCase,
+            rootDirectory: local.rootDirectory ?? rootDirectory,
+            bundleDirectory: local.bundleDirectory ?? bundleDirectory,
+            externalSource: local.externalSource ?? externalSource
+        )
+    }
+
+    /// Read a local bundle's authoritative weight size without recursively
+    /// walking it. Hugging Face/JANG indexes expose `metadata.total_size`; if
+    /// that is absent, sum the bounded unique shard map, direct weight file,
+    /// or one shallow directory listing. Callers use this only from existing
+    /// off-main model discovery paths, never from SwiftUI rendering.
+    nonisolated static func localBundleWeightSizeBytes(at directory: URL) -> Int64? {
+        let fm = FileManager.default
+        let root = directory.standardizedFileURL
+        let maximumIndexBytes: Int64 = 16 * 1_024 * 1_024
+
+        func positiveInt64(_ value: Any?) -> Int64? {
+            let result: Int64?
+            switch value {
+            case let number as NSNumber:
+                result = number.int64Value
+            case let string as String:
+                result = Int64(string)
+            default:
+                result = nil
+            }
+            guard let result, result > 0 else { return nil }
+            return result
+        }
+
+        func boundedJSONData(at url: URL) -> Data? {
+            guard let attrs = try? fm.attributesOfItem(atPath: url.path),
+                  let size = attrs[.size] as? NSNumber,
+                  size.int64Value > 0,
+                  size.int64Value <= maximumIndexBytes
+            else { return nil }
+            return try? Data(contentsOf: url, options: [.mappedIfSafe])
+        }
+
+        func containedShardURL(_ name: String) -> URL? {
+            guard !name.isEmpty, !name.hasPrefix("/") else { return nil }
+            let candidate = root.appendingPathComponent(name).standardizedFileURL
+            let rootPrefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+            guard candidate.path.hasPrefix(rootPrefix) else { return nil }
+            return candidate
+        }
+
+        for indexName in [
+            "model.safetensors.index.json",
+            "pytorch_model.safetensors.index.json",
+        ] {
+            let indexURL = root.appendingPathComponent(indexName)
+            guard let data = boundedJSONData(at: indexURL),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { continue }
+
+            if let metadata = object["metadata"] as? [String: Any],
+               let total = positiveInt64(metadata["total_size"])
+            {
+                return total
+            }
+
+            if let weightMap = object["weight_map"] as? [String: String] {
+                let shardNames = Set(weightMap.values)
+                guard !shardNames.isEmpty, shardNames.count <= 4_096 else { continue }
+                var total: Int64 = 0
+                var complete = true
+                for shardName in shardNames {
+                    guard let shardURL = containedShardURL(shardName) else {
+                        complete = false
+                        break
+                    }
+                    let path = shardURL.path
+                    guard let attrs = try? fm.attributesOfItem(atPath: path),
+                          let size = attrs[.size] as? NSNumber,
+                          size.int64Value > 0
+                    else {
+                        complete = false
+                        break
+                    }
+                    let addition = total.addingReportingOverflow(size.int64Value)
+                    guard !addition.overflow else {
+                        complete = false
+                        break
+                    }
+                    total = addition.partialValue
+                }
+                if complete, total > 0 { return total }
+            }
+        }
+
+        for name in [
+            "model.safetensors",
+            "weights.safetensors",
+            "model-00001-of-00001.safetensors",
+            "weights-00001-of-00001.safetensors",
+        ] {
+            let path = root.appendingPathComponent(name).path
+            if let attrs = try? fm.attributesOfItem(atPath: path),
+               let size = attrs[.size] as? NSNumber,
+               size.int64Value > 0
+            {
+                return size.int64Value
+            }
+        }
+
+        guard let entries = try? fm.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+        var total: Int64 = 0
+        for entry in entries where entry.pathExtension.lowercased() == "safetensors" {
+            guard let values = try? entry.resourceValues(forKeys: [
+                .isRegularFileKey, .fileSizeKey,
+            ]),
+                values.isRegularFile == true,
+                let size = values.fileSize,
+                size > 0
+            else { continue }
+            let addition = total.addingReportingOverflow(Int64(size))
+            guard !addition.overflow else { return nil }
+            total = addition.partialValue
+        }
+        return total > 0 ? total : nil
+    }
+
     /// Returns a copy with the HF Hub `downloads` count populated. Used to
     /// fold in stats from the OsaurusAI org listing onto curated entries
     /// without rewriting their hand-tuned descriptions / Top Pick flags
@@ -147,6 +298,7 @@ struct MLXModel: Identifiable, Codable {
             // Precision / quantization tokens.
             if t.range(of: #"^mxfp\d+$"#, options: .regularExpression) != nil { return true }
             if t.range(of: #"^\d+-?bit$"#, options: .regularExpression) != nil { return true }
+            if t == "ternary" || t == "jang" { return true }
             if t == "fp16" || t == "bf16" || t == "fp32" { return true }
             if t.range(of: #"^jangtq\d*$"#, options: .regularExpression) != nil { return true }
             if t.range(of: #"^jang_?\d+[a-z]?$"#, options: .regularExpression) != nil { return true }
@@ -202,14 +354,23 @@ struct MLXModel: Identifiable, Codable {
     /// Best estimate of the total model size in bytes.
     /// Uses explicit downloadSizeBytes if available, otherwise estimates based on parameters/quantization.
     var totalSizeEstimateBytes: Int64? {
-        if let bytes = downloadSizeBytes { return bytes }
+        if let bytes = downloadSizeBytes, bytes > 0 { return bytes }
 
         // Estimate based on params and quantization (without the runtime overhead multiplier)
         if let params = parameterCountBillions {
-            return Int64(params * bytesPerParameter * 1024 * 1024 * 1024)
+            let bytes = params * bytesPerParameter * Self.bytesPerGB
+            guard bytes.isFinite, bytes > 0, bytes <= Double(Int64.max) else { return nil }
+            return Int64(bytes.rounded(.up))
         }
 
         return nil
+    }
+
+    /// Whether the size is an authoritative Hub/local measurement or a
+    /// temporary name-derived fallback.
+    var sizeEstimateSource: ModelSizeEstimateSource? {
+        if let bytes = downloadSizeBytes, bytes > 0 { return .measured }
+        return totalSizeEstimateBytes == nil ? nil : .metadataFallback
     }
 
     /// Local directory where this model should be stored.
@@ -502,11 +663,6 @@ struct MLXModel: Identifiable, Codable {
     // MARK: - Memory Estimation & Hardware Compatibility
 
     private static let bytesPerGB: Double = 1024 * 1024 * 1024
-    /// Runtime headroom over raw weight size — covers KV cache, activations,
-    /// and Metal/runtime buffers. Bumped from 1.2 → 1.25 so the onboarding
-    /// default leaves more slack and stops landing users on a model that
-    /// "fits" the estimate but chokes once a long-context KV cache grows.
-    private static let overheadMultiplier: Double = 1.25
 
     /// Numeric parameter count in billions (e.g. "7B" -> 7.0, "270M" -> 0.27)
     var parameterCountBillions: Double? {
@@ -523,9 +679,10 @@ struct MLXModel: Identifiable, Codable {
         // and under-estimated every MXFP8 model at ~half its real footprint.
         if quant.contains("mxfp8") || quant.contains("fp8") { return 1.0 }
         if quant.contains("mxfp4") { return 0.5 }
+        if quant == "ternary" { return 0.25 }
 
         let bitWidths: [(String, Double)] = [
-            ("2-bit", 0.25), ("3-bit", 0.375), ("4-bit", 0.5),
+            ("1-bit", 0.125), ("2-bit", 0.25), ("3-bit", 0.375), ("4-bit", 0.5),
             ("5-bit", 0.625), ("6-bit", 0.75), ("8-bit", 1.0),
         ]
         for (label, bytes) in bitWidths {
@@ -539,8 +696,8 @@ struct MLXModel: Identifiable, Codable {
         }
     }
 
-    /// Estimated memory required to run this model (in GB), including overhead
-    /// for KV cache, activations, and runtime buffers.
+    /// Estimated baseline memory required to run this model (in GB), including
+    /// ordinary chat activations and runtime buffers.
     ///
     /// Prefers the **measured** on-disk size (folded in from `ModelSizeCache`
     /// via `withDownloadSize`) when known — weights dominate the footprint, so
@@ -548,44 +705,58 @@ struct MLXModel: Identifiable, Codable {
     /// the `params × bytesPerParameter` constant heuristic. The heuristic is
     /// only the fallback for entries we haven't sized yet.
     var estimatedMemoryGB: Double? {
-        if let dlBytes = downloadSizeBytes, dlBytes > 0 {
-            return Double(dlBytes) * Self.overheadMultiplier / Self.bytesPerGB
-        }
-        if let params = parameterCountBillions {
-            return params * bytesPerParameter * 1e9 * Self.overheadMultiplier / Self.bytesPerGB
-        }
-        return nil
+        guard let bytes = totalSizeEstimateBytes else { return nil }
+        return GPUMemoryBudget.estimatedChatWorkingSetBytes(onDiskBytes: bytes)
+            .map { Double($0) / Self.bytesPerGB }
     }
 
-    /// Formatted estimated memory string (e.g. "~3.5 GB")
+    /// Formatted estimated running-memory value (e.g. "3.5 GB"). Call sites
+    /// label it as estimated instead of embedding an approximation marker,
+    /// which avoids constructions such as "~~3.5 GB".
     var formattedEstimatedMemory: String? {
         guard let gb = estimatedMemoryGB else { return nil }
         return gb < 1.0
-            ? String(format: "~%.0f MB", gb * 1024)
-            : String(format: "~%.1f GB", gb)
+            ? String(format: "%.0f MB", gb * 1024)
+            : String(format: "%.1f GB", gb)
     }
 
-    /// Assess whether this model can run on the given hardware.
+    /// Complete fit calculation used by every model-selection surface.
+    func memoryAssessment(totalMemoryGB: Double) -> ModelMemoryAssessment {
+        GPUMemoryBudget.assessment(
+            modelSizeBytes: totalSizeEstimateBytes,
+            sizeSource: sizeEstimateSource,
+            physicalMemoryGB: totalMemoryGB
+        )
+    }
+
+    /// Assess whether this model can run on a Mac with `totalMemoryGB` of
+    /// unified memory.
+    ///
+    /// Sized against `GPUMemoryBudget`, not raw RAM. MLX loads weights into
+    /// Metal buffers and macOS silently pages anything past the GPU working
+    /// set, so a model measured against `physicalMemory` can look like it has
+    /// headroom to spare, load without a single error, and then decode at a
+    /// character every few seconds. A 35B MXFP8 bundle needs ~42 GB and a
+    /// 48 GB Mac budgets only ~36 GB to the GPU: 89% of RAM, but 119% of what
+    /// it can actually hold.
     func compatibility(totalMemoryGB: Double) -> ModelCompatibility {
-        guard let required = estimatedMemoryGB, totalMemoryGB > 0 else { return .unknown }
-        let ratio = required / totalMemoryGB
-        if ratio < 0.75 { return .compatible }
-        if ratio < 0.95 { return .tight }
-        return .tooLarge
+        memoryAssessment(totalMemoryGB: totalMemoryGB).compatibility
     }
 
-    /// Compact "MMM yyyy" form of `releasedAt`, e.g. "Apr 2026". Locale
-    /// is pinned to `en_US_POSIX` so the format stays stable; the
-    /// localized prefix ("Released …") lives at the call site.
+    /// Compact month-and-year form of `releasedAt`, e.g. "Apr 2026" in English
+    /// and "2026年4月" in Chinese. The localized prefix ("Released …") lives at
+    /// the call site, so this half has to follow the same locale or the two
+    /// halves disagree.
     var formattedReleaseMonth: String? {
         guard let date = releasedAt else { return nil }
         return MLXModel.releaseMonthFormatter.string(from: date)
     }
 
+    /// Localized template so month name, order and separators follow the locale.
+    /// Mirrors `NativeMessageCellView.timestampFormatter`.
     private static let releaseMonthFormatter: DateFormatter = {
         let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = "MMM yyyy"
+        f.setLocalizedDateFormatFromTemplate("MMMyyyy")
         return f
     }()
 }
@@ -596,6 +767,16 @@ enum ModelCompatibility {
     case tight
     case tooLarge
     case unknown
+
+    /// Shared plain-language verdict used anywhere a user chooses a model.
+    var displayName: String {
+        switch self {
+        case .compatible: return L("Runs well")
+        case .tight: return L("Memory may be tight")
+        case .tooLarge: return L("Not recommended")
+        case .unknown: return L("Not enough information")
+        }
+    }
 }
 
 // MARK: - Use Case

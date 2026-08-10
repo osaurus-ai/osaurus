@@ -1,0 +1,17 @@
+{
+  "id": "reasoning_channel.multi-turn-context-recall",
+  "domain": "reasoning_channel",
+  "label": "reasoning channel • turn 2 recalls a turn-1 codeword on the visible channel",
+  "query": "Remember this codeword for later in our conversation: ZEPHYR-KITE-42. Just acknowledge you have it.",
+  "notes": "Session-context retention through the reasoning pipeline: a reasoning model must not lose (or bury in the hidden channel) a fact from turn 1. The codeword is fixture-unique so the recall can't be a lucky guess. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "reasoning": {
+      "followUpTurns": [
+        "What was the codeword I asked you to remember? Reply with the codeword only."
+      ],
+      "maxTokens": 512,
+      "visibleContains": ["ZEPHYR-KITE-42"]
+    }
+  }
+}

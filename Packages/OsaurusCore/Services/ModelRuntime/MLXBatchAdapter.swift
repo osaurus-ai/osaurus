@@ -44,6 +44,30 @@ struct MLXBatchAdapter {
         await Registry.shared.snapshotDiagnostics()
     }
 
+    /// Exact per-model engine capacity for subagent scheduling diagnostics.
+    /// The returned values come from one vMLX actor turn; callers must not
+    /// treat `nominalAvailableCount` as a reservation because another request
+    /// may submit immediately after this observation.
+    static func capacitySnapshot(
+        for modelName: String,
+        reconcilingTo configuredMaximum: Int? = nil
+    ) async -> ModelBatchCapacitySnapshot? {
+        await Registry.shared.capacitySnapshot(
+            for: modelName,
+            reconcilingTo: configuredMaximum
+        )
+    }
+
+    /// Exact live cache-class transitions keyed by the model name used to
+    /// create each BatchEngine. Unlike the aggregate compression counter,
+    /// these snapshots prove how many layers converted and which mixed-cache
+    /// layers remained native.
+    static func turboQuantCacheTransitionsSnapshot() async
+        -> [String: TurboQuantCacheTransitionSnapshot]
+    {
+        await Registry.shared.turboQuantCacheTransitionsSnapshot()
+    }
+
     static func lastEffectiveGenerationSettingsSnapshot() async -> [String: EffectiveGenerationSettings] {
         await Registry.shared.lastEffectiveGenerationSettingsSnapshot()
     }
@@ -85,6 +109,7 @@ struct MLXBatchAdapter {
         modelDefaults: LocalGenerationDefaults.Defaults,
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
         nativeMTPExplicitSamplingFallback: Bool = false,
+        cacheTopology: ModelCacheTopologySnapshot? = nil,
         stage: String = "resolved"
     ) -> EffectiveGenerationSettings {
         let defaultTemperature: Float? = {
@@ -128,7 +153,8 @@ struct MLXBatchAdapter {
                 ? false
                 : shouldEnableCompiledBatchDecode(
                     modelName: modelName,
-                    maxBatchSize: maxBatchSize
+                    maxBatchSize: maxBatchSize,
+                    cacheTopology: cacheTopology
                 )
         )
     }
@@ -139,6 +165,12 @@ struct MLXBatchAdapter {
         runtimeDefaults: VMLXServerGenerationDefaults,
         maxBatchSize: Int
     ) async {
+        // `last_effective_generation` is user/API request telemetry. Chat
+        // prefill warm-ups deliberately submit `temperature=0, maxTokens=1`
+        // after a visible turn; letting that housekeeping request overwrite
+        // the row makes the admin endpoint describe the warm-up instead of
+        // the generation the user just observed.
+        guard shouldRecordAsLastEffectiveGeneration(generation) else { return }
         let modelDefaults = LocalGenerationDefaults.defaults(forModelId: modelName)
         let effective = Self.effectiveGenerationSettings(
             modelName: modelName,
@@ -152,6 +184,12 @@ struct MLXBatchAdapter {
             modelName: modelName,
             settings: effective
         )
+    }
+
+    static func shouldRecordAsLastEffectiveGeneration(
+        _ generation: GenerationParameters
+    ) -> Bool {
+        !generation.warmupPrefill
     }
 
     static func effectiveDraftStrategy(
@@ -244,7 +282,11 @@ struct MLXBatchAdapter {
     /// encoders are not safe to drive concurrently across solo engines.
     actor SoloGenerationGate {
         private var busy = false
-        private var waiters: [CheckedContinuation<Void, Never>] = []
+        private struct Waiter {
+            let id: UUID
+            let continuation: CheckedContinuation<Bool, Never>
+        }
+        private var waiters: [Waiter] = []
 
         struct Lease: @unchecked Sendable {
             fileprivate let gate: SoloGenerationGate
@@ -254,23 +296,39 @@ struct MLXBatchAdapter {
             }
         }
 
-        func acquire(modelName: String) async -> Lease {
+        func acquire(modelName: String) async -> Lease? {
+            guard !Task.isCancelled else { return nil }
             if !busy {
                 busy = true
                 return Lease(gate: self)
             }
 
-            await withCheckedContinuation { continuation in
-                waiters.append(continuation)
+            let id = UUID()
+            let acquired = await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    if Task.isCancelled {
+                        continuation.resume(returning: false)
+                    } else {
+                        waiters.append(Waiter(id: id, continuation: continuation))
+                    }
+                }
+            } onCancel: {
+                Task { await self.cancelWaiter(id) }
             }
-            return Lease(gate: self)
+            return acquired ? Lease(gate: self) : nil
+        }
+
+        private func cancelWaiter(_ id: UUID) {
+            guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+            let waiter = waiters.remove(at: index)
+            waiter.continuation.resume(returning: false)
         }
 
         private func release() {
             guard busy else { return }
             if !waiters.isEmpty {
                 let next = waiters.removeFirst()
-                next.resume()
+                next.continuation.resume(returning: true)
             } else {
                 busy = false
             }
@@ -301,6 +359,13 @@ struct MLXBatchAdapter {
         private let coalescer = TaskCoalescer<BatchEngine>()
         private var nativeMTPWarmModels: Set<String> = []
         private var lastEffectiveGenerationSettings: [String: EffectiveGenerationSettings] = [:]
+        /// Counters from engines and cache coordinators that have left the
+        /// live resident set. Before this accumulator, switching model A to B
+        /// made process-level diagnostics decrease because A simply vanished
+        /// from the aggregate. Eval and `spawn_batch` before/after subtraction
+        /// then emitted impossible negative cache deltas.
+        private var processLifetimeCounters = ProcessLifetimeBatchCounters()
+        private var hasRetiredDiagnostics = false
 
         /// Returns the cached engine for `modelName`, creating it on first
         /// use from the supplied `ModelContainer`. The container's existing
@@ -354,8 +419,11 @@ struct MLXBatchAdapter {
                     batchAdapterLog.notice(
                         "registry: cached BatchEngine for \(modelName, privacy: .public) is shut down; evicting and rebuilding at maxBatchSize=\(maxBatchSize, privacy: .public)"
                     )
-                    await coalescer.remove(modelName) { engine in
+                    let removed = await coalescer.remove(modelName) { engine in
                         await engine.shutdown()
+                    }
+                    if let removed {
+                        await recordRetiredEngineCounters(removed)
                     }
                     // Rebuild via the same path. The new engine is
                     // constructed with `maxBatchSize` directly, so the
@@ -415,17 +483,94 @@ struct MLXBatchAdapter {
             lastEffectiveGenerationSettings
         }
 
+        func turboQuantCacheTransitionsSnapshot() async
+            -> [String: TurboQuantCacheTransitionSnapshot]
+        {
+            let entries = await coalescer.resolvedEntries()
+            var result: [String: TurboQuantCacheTransitionSnapshot] = [:]
+            for (modelName, engine) in entries {
+                if let transition = await engine.lastTurboQuantCacheTransitionForDiagnostics {
+                    result[modelName] = transition
+                }
+            }
+            return result
+        }
+
+        /// Read one resolved engine's atomic capacity state. Registry keys are
+        /// canonical installed-model names; matching is case-insensitive only
+        /// to tolerate filesystem/product-name casing, never by a potentially
+        /// ambiguous repository tail.
+        func capacitySnapshot(
+            for requestedModelName: String,
+            reconcilingTo requestedMaximum: Int? = nil
+        ) async -> ModelBatchCapacitySnapshot? {
+            let entries = await coalescer.resolvedEntries()
+            guard
+                let entry = entries.first(where: {
+                    $0.0.caseInsensitiveCompare(requestedModelName) == .orderedSame
+                })
+            else {
+                return nil
+            }
+            if let requestedMaximum {
+                let current = await entry.1.maxBatchSize
+                if current != requestedMaximum {
+                    do {
+                        try await entry.1.updateMaxBatchSize(requestedMaximum)
+                    } catch BatchEngineConfigurationError.engineShutdown {
+                        let removed = await coalescer.remove(entry.0) { engine in
+                            await engine.shutdown()
+                        }
+                        if let removed {
+                            await recordRetiredEngineCounters(removed)
+                        }
+                        return nil
+                    } catch {
+                        let detail =
+                            "capacity reconcile: \(entry.0) could not apply "
+                            + "maxBatchSize=\(requestedMaximum): \(String(describing: error))"
+                        batchAdapterLog.error("\(detail, privacy: .public)")
+                    }
+                }
+            }
+            let snapshot = await entry.1.capacitySnapshot
+            if snapshot.isShutdown {
+                let removed = await coalescer.remove(entry.0) { engine in
+                    await engine.shutdown()
+                }
+                if let removed {
+                    await recordRetiredEngineCounters(removed)
+                }
+                return nil
+            }
+            return ModelBatchCapacitySnapshot(
+                modelName: entry.0,
+                configuredMaximum: snapshot.configuredMaximum,
+                activeCount: snapshot.activeCount,
+                pendingCount: snapshot.pendingCount,
+                nominalAvailableCount: snapshot.nominalAvailableCount,
+                activeHighWatermark: snapshot.activeCountHighWatermark,
+                isAcceptingRequests: snapshot.isAcceptingRequests,
+                isShutdown: snapshot.isShutdown
+            )
+        }
+
         /// Aggregate live BatchEngine diagnostics across every resolved
-        /// engine in the registry. Used by the Server → Settings panel
-        /// to render the "Live Diagnostics" subsection. Returns `nil`
-        /// when no engine has been created yet.
+        /// engine in the registry, folding monotonic counters from retired
+        /// engines/model residencies forward for the rest of this process.
+        /// Occupancy, capacity, and loaded-model topology remain live-only.
+        /// Used by the Server → Settings panel, APIs, delegation diagnostics,
+        /// and eval harness. Returns `nil` only before any engine has existed.
         func snapshotDiagnostics() async -> BatchDiagnosticsSnapshot? {
-            let engines = await coalescer.resolvedValues()
-            guard !engines.isEmpty else { return nil }
+            let entries = await coalescer.resolvedEntries()
+            guard !entries.isEmpty || hasRetiredDiagnostics else { return nil }
 
             var pending = 0
             var active = 0
             var highWatermark = 0
+            var configuredCapacity = 0
+            var nominalAvailableCapacity = 0
+            var capacityRows: [String] = []
             var decodeSplit = 0
             var turbo = 0
             var accepting = true
@@ -436,6 +581,7 @@ struct MLXBatchAdapter {
             var pagedIncompatible = 0
             var prefixHits = 0
             var prefixMisses = 0
+            var pagedEvictions = 0
             var diskL2Hits = 0
             var diskL2Misses = 0
             var diskL2Stores = 0
@@ -453,6 +599,7 @@ struct MLXBatchAdapter {
                 if let pagedStats = stats.pagedStats {
                     prefixHits += pagedStats.cacheHits
                     prefixMisses += pagedStats.cacheMisses
+                    pagedEvictions += pagedStats.evictions
                 }
                 if let diskStats = stats.diskStats {
                     diskL2Hits += diskStats.hits
@@ -463,21 +610,30 @@ struct MLXBatchAdapter {
                 ssmMisses += stats.ssmStats.misses
                 ssmReDerives += stats.ssmStats.reDerives
             }
-            for engine in engines {
-                pending += await engine.pendingCount
-                active += await engine.activeCount
-                let watermark = await engine.activeCountHighWatermarkForDiagnostics
-                highWatermark = max(highWatermark, watermark)
+            for (modelName, engine) in entries {
+                let capacity = await engine.capacitySnapshot
+                pending += capacity.pendingCount
+                active += capacity.activeCount
+                highWatermark = max(
+                    highWatermark,
+                    capacity.activeCountHighWatermark
+                )
+                configuredCapacity += capacity.configuredMaximum
+                nominalAvailableCapacity += capacity.nominalAvailableCount
+                capacityRows.append("\(modelName): \(capacity.configuredMaximum)")
                 decodeSplit += await engine.decodeCompatibilitySplitCountForDiagnostics
                 turbo += await engine.turboQuantCompressionCountForDiagnostics
-                if !(await engine.isAcceptingRequests) {
+                if !capacity.isAcceptingRequests {
                     accepting = false
                 }
             }
-            return BatchDiagnosticsSnapshot(
+            let live = BatchDiagnosticsSnapshot(
                 pendingCount: pending,
                 activeCount: active,
                 activeHighWatermark: highWatermark,
+                configuredEngineCapacity: configuredCapacity,
+                nominalAvailableCapacity: nominalAvailableCapacity,
+                engineCapacitySummary: capacityRows.sorted().joined(separator: ", "),
                 decodeSplitCount: decodeSplit,
                 turboQuantCompressions: turbo,
                 isAcceptingRequests: accepting,
@@ -489,6 +645,7 @@ struct MLXBatchAdapter {
                 pagedIncompatibleModelCount: pagedIncompatible,
                 prefixHits: prefixHits,
                 prefixMisses: prefixMisses,
+                pagedEvictions: pagedEvictions,
                 diskL2Hits: diskL2Hits,
                 diskL2Misses: diskL2Misses,
                 diskL2Stores: diskL2Stores,
@@ -496,6 +653,29 @@ struct MLXBatchAdapter {
                 ssmCompanionMisses: ssmMisses,
                 ssmCompanionReDerives: ssmReDerives
             )
+            return processLifetimeCounters.mergingCounters(into: live)
+        }
+
+        /// Fold one container's final cache-coordinator counters into the
+        /// process lifetime after `ModelRuntime` has removed that holder from
+        /// its live dictionary. The call ordering prevents a transient double
+        /// count: until removal the counters are in the live summary; after
+        /// removal they are represented here.
+        func recordRetiredCacheCounters(_ counters: ProcessLifetimeBatchCounters) {
+            processLifetimeCounters.absorb(counters)
+            hasRetiredDiagnostics = true
+        }
+
+        private func recordRetiredEngineCounters(_ engine: BatchEngine) async {
+            let capacity = await engine.capacitySnapshot
+            let counters = ProcessLifetimeBatchCounters(
+                activeHighWatermark: capacity.activeCountHighWatermark,
+                decodeSplitCount: await engine.decodeCompatibilitySplitCountForDiagnostics,
+                turboQuantCompressions:
+                    await engine.turboQuantCompressionCountForDiagnostics
+            )
+            processLifetimeCounters.absorb(counters)
+            hasRetiredDiagnostics = true
         }
 
         /// Shut down and remove the engine for `modelName`. Safe to call
@@ -511,11 +691,14 @@ struct MLXBatchAdapter {
         /// exists to prevent).
         func shutdownEngine(for modelName: String) async {
             nativeMTPWarmModels.remove(modelName)
-            await coalescer.remove(modelName) { engine in
+            let removed = await coalescer.remove(modelName) { engine in
                 await engine.shutdown()
                 batchAdapterLog.info(
                     "registry: shutdown BatchEngine for \(modelName, privacy: .public)"
                 )
+            }
+            if let removed {
+                await recordRetiredEngineCounters(removed)
             }
         }
 
@@ -526,15 +709,18 @@ struct MLXBatchAdapter {
         /// `shutdownEngine(for:)`, applied to every cached entry.
         func shutdownAll() async {
             nativeMTPWarmModels.removeAll()
-            await coalescer.removeAll { modelName, engine in
+            let removed = await coalescer.removeAll { modelName, engine in
                 await engine.shutdown()
                 batchAdapterLog.info(
                     "registry: shutdown BatchEngine for \(modelName, privacy: .public)"
                 )
             }
+            for (_, engine) in removed {
+                await recordRetiredEngineCounters(engine)
+            }
         }
 
-        func acquireSoloLease(for modelName: String) async -> SoloGenerationGate.Lease {
+        func acquireSoloLease(for modelName: String) async -> SoloGenerationGate.Lease? {
             await soloGate.acquire(modelName: modelName)
         }
 
@@ -804,24 +990,27 @@ struct MLXBatchAdapter {
             guard normalizedReasoningEffort != nil || disableThinking != nil else {
                 return context
             }
-            let effort: String
             if let normalizedReasoningEffort {
-                effort = DSV4ReasoningProfile.normalizedEffort(normalizedReasoningEffort)
+                if let effort = DSV4ReasoningProfile.normalizedEffort(normalizedReasoningEffort) {
+                    switch effort {
+                    case "low", "high", "max":
+                        context["enable_thinking"] = true
+                        context["reasoning_effort"] = effort
+                    default:
+                        context["enable_thinking"] = false
+                    }
+                } else {
+                    // Preserve invalid explicit values so vmlx's DSV4 policy
+                    // rejects them with its typed error. Never downgrade an
+                    // unknown effort to Off or silently coerce it to High.
+                    context["enable_thinking"] = true
+                    context["reasoning_effort"] = normalizedReasoningEffort.lowercased()
+                }
             } else if let disableThinking {
-                effort = disableThinking ? "instruct" : "high"
-            } else {
-                return context
-            }
-
-            switch effort {
-            case "max":
-                context["enable_thinking"] = true
-                context["reasoning_effort"] = "max"
-            case "high":
-                context["enable_thinking"] = true
-                context["reasoning_effort"] = "high"
-            default:
-                context["enable_thinking"] = false
+                // The legacy on/off toggle selects the mode only. When it is
+                // on, omit an effort so the bundle's declared default (low for
+                // DSV4-0731) remains authoritative.
+                context["enable_thinking"] = !disableThinking
             }
             return context
         }
@@ -1012,8 +1201,32 @@ struct MLXBatchAdapter {
         }
     }
 
-    static func shouldEnableCompiledBatchDecode(modelName: String, maxBatchSize: Int) -> Bool {
-        maxBatchSize == 1
+    /// Compiled B=1 decode eligibility. Architecture-driven when the REAL
+    /// cache topology is known (the loaded container's per-layer cache list):
+    /// any SSM/Arrays/ZayaCCA companion, DSV4 hybrid-pool layer, or composite
+    /// `CacheList` layer means vmlx's generic compile stages can't trace the
+    /// slot (`CacheFamily` `.mamba` / `.zayaCCA` / `.heterogeneous` are not
+    /// compile-eligible), so requesting it only buys a per-iterator
+    /// `eval(cache)` + failed promotion. DSV4's model-native compiled gate and
+    /// SwiGLU micrographs remain automatic; this policy only rejects the
+    /// incompatible whole-forward cache trace. The
+    /// name matcher remains the fallback for call sites that run before the
+    /// container is loaded (`pending_preload` stage) and as a belt for
+    /// families with known non-topology denials.
+    static func shouldEnableCompiledBatchDecode(
+        modelName: String,
+        maxBatchSize: Int,
+        cacheTopology: ModelCacheTopologySnapshot? = nil
+    ) -> Bool {
+        if let cacheTopology,
+            cacheTopology.requiresSSMCompanionState
+                || cacheTopology.hybridPoolLayerCount > 0
+                || cacheTopology.cacheListLayerCount > 0
+        {
+            return false
+        }
+        return maxBatchSize == 1
+            && !ModelFamilyNames.isDSV4Family(modelName)
             && !Hy3ReasoningProfile.matches(modelId: modelName)
             && !ModelFamilyNames.isMiniMaxFamily(modelName)
             && !ModelFamilyNames.isStepFamily(modelName)
@@ -1067,10 +1280,12 @@ struct MLXBatchAdapter {
         PrefillDebugLog.shared.log(
             "==GEN GENERATE-ENTER model=\(modelName) maxBatch=\(maxBatchSize)"
         )
-        let soloLease =
-            maxBatchSize == 1
-            ? await Registry.shared.acquireSoloLease(for: modelName)
-            : nil
+        let soloLease: SoloGenerationGate.Lease?
+        if maxBatchSize == 1 {
+            soloLease = await Registry.shared.acquireSoloLease(for: modelName)
+        } else {
+            soloLease = nil
+        }
         if Task.isCancelled {
             if let soloLease { await soloLease.release() }
             throw CancellationError()
@@ -1103,10 +1318,18 @@ struct MLXBatchAdapter {
         let prepChat = PrepChatBox(buildRawPrompt == nil ? buildChat() : [])
         let prepIsExclusive = prepChat.hasMedia
         let prepared: PreparedInput
-        if prepIsExclusive {
-            await MetalGate.shared.enterMediaPrep(model: modelName)
-        } else {
-            await MetalGate.shared.enterGeneration(model: modelName)
+        do {
+            // Cancellation-aware: a Stop while another producer holds the GPU
+            // throws here instead of parking this request behind the gate. No
+            // gate is held on the throw path, so only the solo lease unwinds.
+            if prepIsExclusive {
+                try await MetalGate.shared.enterMediaPrep(model: modelName)
+            } else {
+                try await MetalGate.shared.enterGeneration(model: modelName)
+            }
+        } catch {
+            if let soloLease { await soloLease.release() }
+            throw error
         }
         func exitPrepGate() async {
             if prepIsExclusive {
@@ -1124,6 +1347,8 @@ struct MLXBatchAdapter {
                 buildRawPrompt: buildRawPrompt,
                 generation: generation,
                 toolChoice: toolChoice,
+                cacheStableSystemPrefix: buildRawPrompt == nil
+                    ? generation.cacheStableSystemPrefix : nil,
                 trace: trace
             )
             await exitPrepGate()
@@ -1170,6 +1395,11 @@ struct MLXBatchAdapter {
         )
         let nativeMTPExplicitSamplingFallback =
             draftStrategy?.usesNativeMTP == true && effectiveDraftStrategy == nil
+        // Fetched BEFORE the effective settings so compiled-decode
+        // eligibility can key off the container's REAL per-layer cache
+        // shape (hybrid companion slots deny compile) rather than only the
+        // name matcher; also reused for the KV-mode resolution below.
+        let cacheTopology = await container.cacheTopologySnapshot()
         let effective = Self.effectiveGenerationSettings(
             modelName: modelName,
             generation: generation,
@@ -1178,12 +1408,15 @@ struct MLXBatchAdapter {
             modelDefaults: modelDefaults,
             draftStrategy: effectiveDraftStrategy,
             nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback,
+            cacheTopology: cacheTopology,
             stage: "submitted_to_batch_engine"
         )
-        await Registry.shared.recordEffectiveGenerationSettings(
-            modelName: modelName,
-            settings: effective
-        )
+        if Self.shouldRecordAsLastEffectiveGeneration(generation) {
+            await Registry.shared.recordEffectiveGenerationSettings(
+                modelName: modelName,
+                settings: effective
+            )
+        }
         var mlxParams = ModelRuntime.makeGenerateParameters(
             temperature: effective.temperature,
             maxTokens: effective.maxTokens,
@@ -1197,7 +1430,13 @@ struct MLXBatchAdapter {
             stopSequences: stopSequences,
             draftStrategy: effectiveDraftStrategy,
             enableCompiledBatchDecode: effective.compiledBatchDecode,
-            prefillStepSize: runtime.concurrency.prefillStepSize,
+            // Optimal prefill chunking is model-architecture-dependent (a
+            // 4× spread was measured between a small dense model and a 35B
+            // MoE on the same machine), so a per-model measured value from
+            // `osaurus bench --tune-prefill` beats the server-wide setting;
+            // the setting remains the fallback, then vmlx's default.
+            prefillStepSize: ModelPrefillTuningStore.tunedStepSize(for: modelName)
+                ?? runtime.concurrency.prefillStepSize,
             modelName: modelName
         )
         // Block-diffusion speed/quality budget (DiffusionGemma): server
@@ -1206,7 +1445,6 @@ struct MLXBatchAdapter {
         // autoregressive models.
         mlxParams.diffusionMaxDenoisingSteps =
             runtime.generation.diffusionMaxDenoisingSteps
-        let cacheTopology = await container.cacheTopologySnapshot()
         let effectiveKVMode = ModelRuntime.defaultKVMode(
             for: ServerRuntimeSettingsStore.snapshot().cache,
             modelName: modelName,
@@ -1272,12 +1510,11 @@ struct MLXBatchAdapter {
         // reasoning + tool-call extraction handled inside vmlx. We re-wrap
         // it so we can attach a producer `Task` for cancellation.
         //
-        // Important: vmlx emits terminal `.info` before it performs the
-        // post-generation disk-cache store and then finishes its stream. The
-        // solo lease must be held until the upstream stream is actually done;
-        // releasing it at `.info` lets the next solo request enter
-        // `prepareInput` while the previous request is still materializing
-        // cache tensors on Metal.
+        // Important: the solo lease is held until the upstream stream is
+        // actually done. Current vmlx emits terminal `.info` after its
+        // post-generation disk-cache store, but stream completion remains the
+        // ownership boundary; relying on an event's relative order would let
+        // future producer cleanup overlap the next request's `prepareInput`.
         trace?.mark("batch_submit")
         CrashReportingService.recordBreadcrumb(
             category: "inference.generate",
@@ -1290,7 +1527,16 @@ struct MLXBatchAdapter {
         // keep batching; only embedding is exclusive. Released by the producer
         // task once the upstream stream has fully drained, which (per the note
         // above) is AFTER vmlx's post-`.info` cache-store eval.
-        await MetalGate.shared.enterGeneration(model: modelName)
+        //
+        // Cancellation-aware: a Stop while a foreign producer holds the GPU
+        // throws instead of parking this request. No gate is held on the
+        // throw path — only the solo lease needs unwinding.
+        do {
+            try await MetalGate.shared.enterGeneration(model: modelName)
+        } catch {
+            if let soloLease { await soloLease.release() }
+            throw error
+        }
         let upstream = await engine.generate(
             input: prepared.input,
             parameters: mlxParams
@@ -1314,12 +1560,17 @@ struct MLXBatchAdapter {
                     }
                 }
             } onCancel: {
-                // The upstream stream is bound to a single request inside
-                // the engine; cancelling the consumer task closes it
-                // cooperatively (engine emits a final `.info(.cancelled)`
-                // and finishes the stream). Do not finish the wrapper from
-                // here; the operation body gets the chance to drain and
-                // forward that terminal `.info` event first.
+                // Breaking a wrapping AsyncStream's consumer is not itself an
+                // awaited drain boundary. Cancel the direct B=1 producer now;
+                // the operation body awaits the same idempotent drain below
+                // before it releases the process-wide solo/Metal gates.
+                guard soloLease != nil else { return }
+                Task {
+                    await engine.cancelActiveSoloGenerationAndWait()
+                }
+            }
+            if Task.isCancelled, soloLease != nil {
+                await engine.cancelActiveSoloGenerationAndWait()
             }
             // The upstream loop has fully drained (success or cancellation).
             // Finish the wrapper and release the solo lease *inline* —
@@ -1403,6 +1654,7 @@ struct MLXBatchAdapter {
         chat: [MLXLMCommon.Chat.Message],
         toolsSpec: [[String: any Sendable]]?,
         additionalContext: [String: any Sendable],
+        cacheStableSystemPrefix: String?,
         processor: any MLXLMCommon.UserInputProcessor
     ) async -> LMInput? {
         let hasMedia = chat.contains {
@@ -1410,6 +1662,8 @@ struct MLXBatchAdapter {
         }
         guard !hasMedia else { return nil }
 
+        var probeStableBoundaries: [[Int]] = []
+        var probeScopeSalt: String?
         let prefix = await warmupSendInvariantPrefixTokens(chat: chat) { probeText in
             var probeChat = chat
             probeChat.append(.user(probeText))
@@ -1417,11 +1671,14 @@ struct MLXBatchAdapter {
                 chat: probeChat,
                 processing: .init(),
                 tools: toolsSpec,
-                additionalContext: additionalContext
+                additionalContext: additionalContext,
+                cacheStableSystemPrefix: cacheStableSystemPrefix
             )
             guard let prepared = try? await processor.prepare(input: input),
                 !prepared.hasMediaContent
             else { return nil }
+            probeStableBoundaries.append(prepared.cacheStablePrefixTokenCounts)
+            probeScopeSalt = prepared.cacheScopeSalt
             return prepared.text.tokenIds
                 ?? MLXCacheIOLock.withSerializedMLXCacheIO {
                     prepared.text.tokens.asArray(Int.self)
@@ -1435,11 +1692,30 @@ struct MLXBatchAdapter {
             return nil
         }
 
-        // The scope salt is derived from additionalContext alone, so the
-        // probe render's salt matches the real send's.
-        let scopeSalt = MLXLMCommon.cacheScopeSalt(from: additionalContext)
+        // The scope salt must come from the PREPARED probe render, not from
+        // the raw request context: `prepare()` merges the bundle-declared
+        // reasoning defaults (generation_config / chat-config, e.g. DSV4-0731's
+        // enable_thinking=true + effort=low) into additionalContext BEFORE
+        // salting. Recomputing from the raw context here salted the warm-up
+        // as scope=nil while every real send salted as its merged scope —
+        // a different disk content hash over identical token bytes, so the
+        // send could never restore what the warm-up stored and re-prefilled
+        // the same prefix again (the "first turn prefills 2-3x" symptom,
+        // every model family with a declared reasoning default).
+        let scopeSalt = probeScopeSalt ?? MLXLMCommon.cacheScopeSalt(from: additionalContext)
+        let stableBoundaries =
+            probeStableBoundaries.count == 2
+            ? agreedWarmupStableBoundaries(
+                probeA: probeStableBoundaries[0],
+                probeB: probeStableBoundaries[1],
+                invariantPrefixCount: prefix.count
+            )
+            : []
+        let cacheBoundaries = warmupCacheBoundaryLists(
+            stableBoundaries: stableBoundaries
+        )
         batchAdapterLog.info(
-            "warmupPrefill: truncated prompt to send-invariant prefix of \(prefix.count, privacy: .public) tokens"
+            "warmupPrefill: truncated prompt to send-invariant prefix of \(prefix.count, privacy: .public) tokens; stable boundaries \(stableBoundaries, privacy: .public)"
         )
         // Prompt tokens are batch-shaped [1, N] by processor contract (see
         // `truncatingToCanonicalCacheBoundary`).
@@ -1447,9 +1723,36 @@ struct MLXBatchAdapter {
             tokens: MLXArray(prefix).expandedDimensions(axis: 0),
             tokenIds: prefix,
             cacheScopeSalt: scopeSalt,
-            cachePrefixTokenCounts: [],
+            cachePrefixTokenCounts: cacheBoundaries.all,
+            cacheStablePrefixTokenCounts: cacheBoundaries.stable,
+            cachePromptIntent: .reusablePrefixWarmup,
             toolSchemas: toolsSpec
         )
+    }
+
+    /// vMLX stores boundaries by iterating `cachePrefixTokenCounts`; the
+    /// stable list is metadata that selects the safe re-derive path. A stable
+    /// warm-up boundary must therefore be present in both lists or it can be
+    /// preferred for lookup but is never persisted.
+    static func warmupCacheBoundaryLists(
+        stableBoundaries: [Int]
+    ) -> (all: [Int], stable: [Int]) {
+        let stable = Array(Set(stableBoundaries.filter { $0 > 0 })).sorted()
+        return (all: stable, stable: stable)
+    }
+
+    /// Keep only stable cache boundaries independently derived by both probe
+    /// renders and contained strictly inside their send-invariant prefix.
+    /// A one-probe-only boundary is discarded: warm-up must not persist a
+    /// supposedly cross-chat checkpoint unless both template renders agree.
+    static func agreedWarmupStableBoundaries(
+        probeA: [Int],
+        probeB: [Int],
+        invariantPrefixCount: Int
+    ) -> [Int] {
+        guard invariantPrefixCount > 1 else { return [] }
+        let agreed = Set(probeA).intersection(probeB)
+        return agreed.filter { $0 > 0 && $0 < invariantPrefixCount }.sorted()
     }
 
     /// Token-level core of ``prepareWarmupInputAtSendInvariantPrefix``:
@@ -1545,6 +1848,7 @@ struct MLXBatchAdapter {
             tokenIds: prefix,
             cacheScopeSalt: input.cacheScopeSalt,
             cachePrefixTokenCounts: [],
+            cachePromptIntent: .reusablePrefixWarmup,
             toolSchemas: input.toolSchemas
         )
     }
@@ -1622,6 +1926,7 @@ struct MLXBatchAdapter {
         buildRawPrompt: (@Sendable () -> String)? = nil,
         generation: GenerationParameters,
         toolChoice: ToolChoiceOption?,
+        cacheStableSystemPrefix: String?,
         trace: TTFTTrace?
     ) async throws -> PreparedInput {
         // Heap-allocated outbox so the throwing closure can hand a value back
@@ -1703,7 +2008,8 @@ struct MLXBatchAdapter {
                     chat: chat,
                     processing: .init(),
                     tools: toolsSpec,
-                    additionalContext: additionalContext
+                    additionalContext: additionalContext,
+                    cacheStableSystemPrefix: cacheStableSystemPrefix
                 )
 
                 trace?.mark("batch_tokenization_start")
@@ -1723,6 +2029,7 @@ struct MLXBatchAdapter {
                             chat: chat,
                             toolsSpec: toolsSpec,
                             additionalContext: additionalContext,
+                            cacheStableSystemPrefix: cacheStableSystemPrefix,
                             processor: context.processor
                         )
                     {
@@ -1750,6 +2057,10 @@ struct MLXBatchAdapter {
                 }
                 box.processorDoneAt = CFAbsoluteTimeGetCurrent()
                 trace?.mark("batch_tokenization_done")
+            }
+
+            if toolChoiceRequiresLocalCall(toolChoice) {
+                lmInput = lmInput.withCacheRestorePolicy(.freshRequiredToolSelection)
             }
 
             let tokens =

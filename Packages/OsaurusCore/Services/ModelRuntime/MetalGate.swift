@@ -51,21 +51,77 @@ public actor MetalGate {
     /// Suspended acquirers grouped by owner, so a foreign waiter can block new
     /// same-owner admissions and avoid starvation.
     private var waitingByOwner: [String: Int] = [:]
-    /// Condition-variable waiters; woken on every release, each re-checks its
-    /// own predicate (standard actor condition pattern).
-    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    /// A parked acquirer. Woken on every release (each re-checks its own
+    /// predicate — standard actor condition pattern) or, for cancellable
+    /// acquisitions, when its task is cancelled.
+    private struct GateWaiter {
+        let id: UInt64
+        let continuation: CheckedContinuation<Void, Never>
+    }
+
+    private var waiters: [GateWaiter] = []
+    private var nextWaiterID: UInt64 = 0
+    /// IDs whose cancellation fired before the continuation was registered
+    /// (the `onCancel` hop can beat the suspension into the actor).
+    private var preCancelledWaiterIDs: Set<UInt64> = []
 
     private init() {}
 
-    private func suspend() async {
-        await withCheckedContinuation { waiters.append($0) }
+    /// Isolated instance for unit tests. Admission-ordering and
+    /// cancellation tests must not use `shared`: production paths in other
+    /// suites (embedder, PII scans, ChatSession sends, image jobs) acquire
+    /// the singleton concurrently, and this gate's anti-starvation rule — a
+    /// parked foreign waiter blocks new same-owner admissions — lets any
+    /// foreign traffic deadlock a test that holds the gate while awaiting
+    /// an admission it expects to proceed.
+    static func makeForTesting() -> MetalGate {
+        MetalGate()
+    }
+
+    /// Park until the next wake. When `cancellable`, the caller's task
+    /// cancellation also resumes this specific waiter (the acquire loop then
+    /// observes `Task.isCancelled` and gives up).
+    private func suspend(cancellable: Bool) async {
+        let id = nextWaiterID
+        nextWaiterID &+= 1
+        if !cancellable {
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                waiters.append(GateWaiter(id: id, continuation: c))
+            }
+            return
+        }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                if preCancelledWaiterIDs.remove(id) != nil {
+                    c.resume()
+                } else {
+                    waiters.append(GateWaiter(id: id, continuation: c))
+                }
+            }
+        } onCancel: {
+            Task { await self.wakeWaiter(id: id) }
+        }
+    }
+
+    /// Resume one specific (cancelled) waiter without waking the others.
+    private func wakeWaiter(id: UInt64) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else {
+            // Cancellation raced ahead of the suspension; mark it so the
+            // registration path resumes immediately instead of parking a
+            // continuation nothing will ever wake.
+            preCancelledWaiterIDs.insert(id)
+            return
+        }
+        let waiter = waiters.remove(at: index)
+        waiter.continuation.resume()
     }
 
     private func wakeAll() {
         guard !waiters.isEmpty else { return }
         let woken = waiters
         waiters.removeAll()
-        for c in woken { c.resume() }
+        for w in woken { w.continuation.resume() }
     }
 
     private func hasForeignWaiter(_ owner: String) -> Bool {
@@ -79,20 +135,60 @@ public actor MetalGate {
         return false
     }
 
+    private func removeWaiting(_ owner: String) {
+        let remaining = (waitingByOwner[owner] ?? 1) - 1
+        waitingByOwner[owner] = remaining > 0 ? remaining : nil
+    }
+
     // MARK: - Core acquire / release
 
     /// Acquire the GPU gate for `owner`. When `shared` is true, acquisitions for
     /// the same owner overlap; otherwise the owner is exclusive even against
     /// itself. Every distinct owner is mutually exclusive.
+    ///
+    /// NOT cancellation-aware: a cancelled caller keeps waiting and still
+    /// acquires. Reserved for teardown/load sequences that must run to
+    /// completion once started (skipping them would leak weights or free
+    /// buffers without the gate). User-cancellable producers go through
+    /// `acquireCancellable` so Stop doesn't leave tasks parked behind a
+    /// wedged GPU holder.
     public func acquire(_ owner: String, shared: Bool) async {
         if !canAdmit(owner, shared: shared) {
             waitingByOwner[owner, default: 0] += 1
             repeat {
-                await suspend()
+                await suspend(cancellable: false)
             } while !canAdmit(owner, shared: shared)
-            let remaining = (waitingByOwner[owner] ?? 1) - 1
-            waitingByOwner[owner] = remaining > 0 ? remaining : nil
+            removeWaiting(owner)
         }
+        admit(owner, shared: shared)
+    }
+
+    /// Cancellation-aware variant of `acquire`. Throws `CancellationError`
+    /// when the caller's task is cancelled while waiting (or already
+    /// cancelled on entry) — the caller MUST NOT submit GPU work and MUST NOT
+    /// call the paired release when this throws.
+    public func acquireCancellable(_ owner: String, shared: Bool) async throws {
+        try Task.checkCancellation()
+        if !canAdmit(owner, shared: shared) {
+            waitingByOwner[owner, default: 0] += 1
+            while true {
+                await suspend(cancellable: true)
+                if Task.isCancelled {
+                    removeWaiting(owner)
+                    // This waiter may have been the foreign waiter blocking
+                    // same-owner admissions for the current holder; re-wake
+                    // the others so they re-check admissibility.
+                    wakeAll()
+                    throw CancellationError()
+                }
+                if canAdmit(owner, shared: shared) { break }
+            }
+            removeWaiting(owner)
+        }
+        admit(owner, shared: shared)
+    }
+
+    private func admit(_ owner: String, shared: Bool) {
         if currentOwner == nil {
             currentOwner = owner
             currentShared = shared
@@ -113,8 +209,11 @@ public actor MetalGate {
 
     // MARK: - Generation (LLM via BatchEngine) — shared per model
 
-    public func enterGeneration(model: String) async {
-        await acquire("gen:\(model)", shared: true)
+    /// Cancellation-aware: a Stop during the wait throws `CancellationError`
+    /// instead of leaving the generation task parked behind a wedged holder.
+    /// Do NOT call `exitGeneration` when this throws.
+    public func enterGeneration(model: String) async throws {
+        try await acquireCancellable("gen:\(model)", shared: true)
     }
 
     public func exitGeneration(model: String) {
@@ -123,8 +222,9 @@ public actor MetalGate {
 
     // MARK: - Embedding (Model2Vec / capability + memory search) — exclusive
 
-    public func enterEmbedding() async {
-        await acquire("embedding", shared: false)
+    /// Cancellation-aware; do NOT call `exitEmbedding` when this throws.
+    public func enterEmbedding() async throws {
+        try await acquireCancellable("embedding", shared: false)
     }
 
     public func exitEmbedding() {
@@ -142,8 +242,9 @@ public actor MetalGate {
     /// prep) on the shared Metal command queue. Media prep therefore takes
     /// its own exclusive owner; text-only prep does no GPU encode and keeps
     /// the shared generation owner so batching is preserved.
-    public func enterMediaPrep(model: String) async {
-        await acquire("prep:\(model)", shared: false)
+    /// Cancellation-aware; do NOT call `exitMediaPrep` when this throws.
+    public func enterMediaPrep(model: String) async throws {
+        try await acquireCancellable("prep:\(model)", shared: false)
     }
 
     public func exitMediaPrep(model: String) {
@@ -160,8 +261,10 @@ public actor MetalGate {
     /// generation's decode on the shared command queue
     /// (`tryCoalescingPreviousComputeCommandEncoder` abort). Exclusive, like
     /// the embedder.
-    public func enterPIIDetection() async {
-        await acquire("pii", shared: false)
+    ///
+    /// Cancellation-aware; do NOT call `exitPIIDetection` when this throws.
+    public func enterPIIDetection() async throws {
+        try await acquireCancellable("pii", shared: false)
     }
 
     public func exitPIIDetection() {
@@ -204,8 +307,13 @@ public actor MetalGate {
     /// device. Like embedding and model load it must not overlap any other GPU
     /// producer, so it acquires the gate as its own exclusive owner, held across
     /// the entire vMLXFlux event-stream drain (including the terminal VAE decode).
-    public func enterImageGeneration() async {
-        await acquire("image", shared: false)
+    ///
+    /// Cancellation-aware; do NOT call `exitImageGeneration` when this throws.
+    /// Image-model TEARDOWN must not use this — it goes through the
+    /// non-cancellable `enterModelTeardown` instead, because a teardown that
+    /// gives up mid-wait would free weights without the gate.
+    public func enterImageGeneration() async throws {
+        try await acquireCancellable("image", shared: false)
     }
 
     public func exitImageGeneration() {

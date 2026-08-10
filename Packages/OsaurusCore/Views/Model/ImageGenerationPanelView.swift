@@ -453,12 +453,13 @@ struct ImageGenerationPanelView: View {
                 }
                 Spacer()
                 Button(action: {
-                    // `activateFileViewerSelecting` makes a synchronous Launch
-                    // Services round-trip to Finder that can block for
-                    // seconds, hanging the UI if run on the main thread.
-                    Task.detached(priority: .userInitiated) {
-                        NSWorkspace.shared.activateFileViewerSelecting([url])
-                    }
+                    // Must run on the main thread: `activateFileViewerSelecting`
+                    // can present an error alert internally, and building that
+                    // NSWindow off-main crashes (NSInternalInconsistencyException).
+                    // The occasional multi-second LaunchServices stall is the
+                    // lesser evil versus the crash the detached-task version
+                    // caused.
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
                 }) {
                     Label(L("Reveal"), systemImage: "folder")
                         .font(.system(size: 12, weight: .medium))

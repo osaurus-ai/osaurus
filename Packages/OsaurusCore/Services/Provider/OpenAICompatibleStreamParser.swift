@@ -28,23 +28,73 @@ struct OpenAICompatibleStreamFramer {
         private var completedLines: [Data] = []
         private var nextOutputIndex = 0
 
+        /// Bulk newline scan: finds terminators with `memchr` and copies whole
+        /// line spans at once instead of appending byte-by-byte (the previous
+        /// per-byte loop dominated the SSE hot path on large deltas).
+        /// Semantics are identical: LF, CR, and CRLF all terminate a line, a
+        /// CRLF split across chunk boundaries yields one line, and a blank
+        /// line is emitted as an empty `Data` (SSE event boundary).
         mutating func append(_ data: Data) {
-            for byte in data {
-                switch byte {
-                case 0x0D:
-                    completedLines.append(lineBuffer)
-                    lineBuffer = Data()
-                    carriageReturnLast = true
-                case 0x0A:
-                    if carriageReturnLast {
-                        carriageReturnLast = false
+            guard !data.isEmpty else { return }
+            data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+                guard let rawBase = raw.baseAddress else { return }
+                let base = rawBase.assumingMemoryBound(to: UInt8.self)
+                let count = raw.count
+                var offset = 0
+                if carriageReturnLast {
+                    carriageReturnLast = false
+                    if base[0] == 0x0A { offset = 1 }
+                }
+                while offset < count {
+                    let remaining = count - offset
+                    let lfOffset = memchr(base + offset, 0x0A, remaining)
+                        .map { UnsafeRawPointer($0) - rawBase }
+                    let crOffset = memchr(base + offset, 0x0D, remaining)
+                        .map { UnsafeRawPointer($0) - rawBase }
+
+                    let terminatorOffset: Int
+                    let terminatorIsCR: Bool
+                    switch (lfOffset, crOffset) {
+                    case (nil, nil):
+                        // No terminator in the rest of the chunk — stash the
+                        // partial line and wait for more bytes.
+                        lineBuffer.append(base + offset, count: remaining)
+                        return
+                    case (let lf?, nil):
+                        terminatorOffset = lf
+                        terminatorIsCR = false
+                    case (nil, let cr?):
+                        terminatorOffset = cr
+                        terminatorIsCR = true
+                    case (let lf?, let cr?):
+                        terminatorIsCR = cr < lf
+                        terminatorOffset = min(lf, cr)
+                    }
+
+                    let lineLength = terminatorOffset - offset
+                    if lineBuffer.isEmpty {
+                        completedLines.append(Data(bytes: base + offset, count: lineLength))
                     } else {
+                        lineBuffer.append(base + offset, count: lineLength)
                         completedLines.append(lineBuffer)
                         lineBuffer = Data()
                     }
-                default:
-                    carriageReturnLast = false
-                    lineBuffer.append(byte)
+
+                    if terminatorIsCR {
+                        if terminatorOffset + 1 < count {
+                            // Swallow an immediately-following LF (CRLF).
+                            offset =
+                                base[terminatorOffset + 1] == 0x0A
+                                ? terminatorOffset + 2 : terminatorOffset + 1
+                        } else {
+                            // CR is the chunk's last byte: remember it so an
+                            // LF at the head of the next chunk is swallowed.
+                            carriageReturnLast = true
+                            offset = count
+                        }
+                    } else {
+                        offset = terminatorOffset + 1
+                    }
                 }
             }
         }
@@ -188,40 +238,56 @@ struct OpenAICompatibleToolCallAccumulator {
 
     static func resolveAccumulatedToolCall(
         from accumulated: [Int: RemoteProviderService.StreamingState.ToolSlot],
-        finishMarker: String
+        finishMarker: String,
+        emptyArgsAreComplete: Bool = false
     ) -> RemoteProviderService.AccumulatedToolCallResult {
-        guard let (invocation, wasRepaired) = makeToolInvocation(from: accumulated) else {
-            return .none
-        }
-        if wasRepaired {
+        let resolved = makeToolInvocations(
+            from: accumulated,
+            emptyArgsAreComplete: emptyArgsAreComplete
+        )
+        guard !resolved.isEmpty else { return .none }
+        // Repaired args on ANY slot mean the stream was cut mid-argument —
+        // dispatching a partial batch would lock a half-real parallel call
+        // set into history, so the whole set is treated as truncated.
+        if let repaired = resolved.first(where: { $0.wasRepaired }) {
             return .truncated(
                 truncatedToolCallError(
                     from: accumulated,
-                    toolName: invocation.toolName,
+                    toolName: repaired.invocation.toolName,
                     finishMarker: finishMarker
                 )
             )
         }
-        return .ready(invocation)
+        return .ready(resolved.map(\.invocation))
     }
 
-    static func makeToolInvocation(
-        from accumulated: [Int: RemoteProviderService.StreamingState.ToolSlot]
-    ) -> (invocation: ServiceToolInvocation, wasRepaired: Bool)? {
-        guard let first = accumulated.min(by: { $0.key < $1.key }),
-            let name = first.value.name
-        else { return nil }
-
-        let validated = validateToolCallJSON(first.value.args)
-        return (
-            ServiceToolInvocation(
-                toolName: name,
-                jsonArguments: validated.json,
-                toolCallId: first.value.id,
-                geminiThoughtSignature: first.value.thoughtSignature
-            ),
-            validated.wasRepaired
-        )
+    /// Every accumulated tool call in slot order. Parallel tool calling
+    /// (OpenAI `tool_calls[n]`, Anthropic multiple `tool_use` blocks, Gemini
+    /// multiple `functionCall` parts) fills several slots in one completion;
+    /// all of them are dispatched, matching the local vmlx path. Slots that
+    /// never received a function name cannot be dispatched and are skipped.
+    static func makeToolInvocations(
+        from accumulated: [Int: RemoteProviderService.StreamingState.ToolSlot],
+        emptyArgsAreComplete: Bool = false
+    ) -> [(invocation: ServiceToolInvocation, wasRepaired: Bool)] {
+        accumulated
+            .sorted { $0.key < $1.key }
+            .compactMap { _, slot in
+                guard let name = slot.name else { return nil }
+                let validated = validateToolCallJSON(
+                    slot.args,
+                    emptyArgsAreComplete: emptyArgsAreComplete
+                )
+                return (
+                    ServiceToolInvocation(
+                        toolName: name,
+                        jsonArguments: validated.json,
+                        toolCallId: slot.id,
+                        geminiThoughtSignature: slot.thoughtSignature
+                    ),
+                    validated.wasRepaired
+                )
+            }
     }
 
     @inline(__always)
@@ -251,9 +317,24 @@ struct OpenAICompatibleToolCallAccumulator {
         return idx
     }
 
-    static func validateToolCallJSON(_ json: String) -> ValidatedToolCallJSON {
+    static func validateToolCallJSON(
+        _ json: String,
+        emptyArgsAreComplete: Bool = false
+    ) -> ValidatedToolCallJSON {
         let trimmed = json.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return ValidatedToolCallJSON(json: "{}", wasRepaired: false) }
+        // Zero argument bytes on a named slot is ambiguous. On an ABRUPT end
+        // (connection cut before any argument event; `emptyArgsAreComplete`
+        // false) it means truncation — mark it repaired so dispatch
+        // quarantines the call instead of inventing `{}` and producing a
+        // misleading schema error. But when the provider DECLARED the finish
+        // (`finish_reason=tool_calls`, Anthropic `message_stop`, …) it is a
+        // real no-argument call: Anthropic-style upstreams emit a no-input
+        // `tool_use` with no argument deltas at all (observed live: Claude
+        // calling the zero-required-parameter `browser_read_page` failed
+        // every retry with "received 0 bytes" until this distinction).
+        guard !trimmed.isEmpty else {
+            return ValidatedToolCallJSON(json: "{}", wasRepaired: !emptyArgsAreComplete)
+        }
 
         if let data = trimmed.data(using: .utf8),
             (try? JSONSerialization.jsonObject(with: data)) != nil
@@ -315,10 +396,13 @@ struct OpenAICompatibleToolCallAccumulator {
             repaired = String(trimmedForComma.dropLast())
         }
 
-        for _ in 0 ..< bracketCount {
+        // Counts go NEGATIVE when the fragment has more closers than openers
+        // outside strings (garbage or mid-token truncation like `"}]"`), and
+        // `0 ..< negative` traps at runtime (production crash APPLE-MACOS-12S).
+        for _ in 0 ..< max(0, bracketCount) {
             repaired.append("]")
         }
-        for _ in 0 ..< braceCount {
+        for _ in 0 ..< max(0, braceCount) {
             repaired.append("}")
         }
 
@@ -357,7 +441,8 @@ struct OpenAICompatibleToolCallAccumulator {
         )
         return RemoteProviderServiceError.streamingError(
             "Stream ended before tool call '\(toolName)' arguments were complete "
-                + "(finish marker: \(finishMarker)). The provider closed the connection "
+                + "(finish marker: \(finishMarker); \(argsSummary)). "
+                + "The provider closed the connection "
                 + "mid-argument; retry the request."
         )
     }
@@ -440,7 +525,33 @@ struct OpenAICompatibleStreamParser {
     ) throws -> RemoteProviderService.StreamEventOutcome {
         switch options.decodeMode {
         case .strict:
-            let chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData)
+            let chunk: ChatCompletionChunk
+            do {
+                chunk = try state.decoder.decode(ChatCompletionChunk.self, from: jsonData)
+            } catch {
+                // Mostly-compatible providers (DeepSeek among them) emit
+                // occasional frames that miss a strict-envelope field
+                // (`object`, `id`, `created`, `choices[].index`). Those frames
+                // can carry tool-argument deltas, so dropping them corrupts
+                // the accumulated call and failing on them kills the turn.
+                // Re-read well-formed JSON with the lenient schema; only
+                // genuinely corrupt payloads (real truncation) propagate the
+                // decode error.
+                guard
+                    let lenient = try? state.decoder.decode(
+                        LenientChatCompletionChunk.self,
+                        from: jsonData
+                    ),
+                    lenient.hasMeaningfulPayload
+                else { throw error }
+                return processLenientChunk(
+                    lenient,
+                    options: options,
+                    isStrictFallback: true,
+                    state: &state,
+                    yield: yield
+                )
+            }
             // OpenAI emits usage on a dedicated final chunk (empty `choices`)
             // when `stream_options.include_usage` was set; on every other chunk
             // `usage` is null. Capture whatever is present — surfaced at the
@@ -455,26 +566,51 @@ struct OpenAICompatibleStreamParser {
                 yield: yield
             )
         case .lenient:
-            let chunk = try JSONDecoder().decode(LenientChatCompletionChunk.self, from: jsonData)
-            state.captureProviderUsage(chunk.usage)
-            let choice = chunk.choices?.first
-            if let message = choice?.message {
-                return processMessageCompletion(
-                    message,
-                    finishReason: choice?.finish_reason,
+            let chunk = try state.decoder.decode(LenientChatCompletionChunk.self, from: jsonData)
+            return processLenientChunk(chunk, options: options, state: &state, yield: yield)
+        }
+    }
+
+    private static func processLenientChunk(
+        _ chunk: LenientChatCompletionChunk,
+        options: Options,
+        isStrictFallback: Bool = false,
+        state: inout RemoteProviderService.StreamingState,
+        yield: (String) -> Void
+    ) -> RemoteProviderService.StreamEventOutcome {
+        state.captureProviderUsage(chunk.usage)
+        let choice = chunk.choices?.first
+        if let message = choice?.message {
+            // A strict streaming provider may use `message` instead of
+            // `delta` on an intermediate compatibility frame. Missing
+            // `finish_reason` is not a completion signal in that stream:
+            // consume the payload and wait for the provider's real terminal
+            // marker. Keep the long-standing lenient full-body behavior for
+            // router-compatible non-stream responses.
+            if isStrictFallback, choice?.finish_reason == nil {
+                return processChoice(
+                    delta: message,
+                    finishReason: nil,
                     deferToolCallDispatchUntilUsage: options.deferToolCallDispatchUntilUsage,
                     state: &state,
                     yield: yield
                 )
             }
-            return processChoice(
-                delta: choice?.delta,
+            return processMessageCompletion(
+                message,
                 finishReason: choice?.finish_reason,
                 deferToolCallDispatchUntilUsage: options.deferToolCallDispatchUntilUsage,
                 state: &state,
                 yield: yield
             )
         }
+        return processChoice(
+            delta: choice?.delta,
+            finishReason: choice?.finish_reason,
+            deferToolCallDispatchUntilUsage: options.deferToolCallDispatchUntilUsage,
+            state: &state,
+            yield: yield
+        )
     }
 
     private static func processMessageCompletion(
@@ -584,9 +720,21 @@ struct OpenAICompatibleStreamParser {
                     )
                 )
             }
+            if finishReason == "length", !state.accumulatedToolCalls.isEmpty {
+                return .finishWithError(
+                    RemoteProviderService.outputLimitToolCallError(
+                        from: state.accumulatedToolCalls,
+                        finishMarker: "finish_reason=length"
+                    )
+                )
+            }
             switch OpenAICompatibleToolCallAccumulator.resolveAccumulatedToolCall(
                 from: state.accumulatedToolCalls,
-                finishMarker: "finish_reason=\(finishReason)"
+                finishMarker: "finish_reason=\(finishReason)",
+                // The provider declared this finish (length was handled
+                // above), so a zero-byte argument slot is a genuine
+                // no-argument call, not a cut stream.
+                emptyArgsAreComplete: true
             ) {
             case .none: break
             case .ready(let inv):
@@ -629,11 +777,43 @@ struct OpenAICompatibleStreamParser {
         let choices: [Choice]?
         let usage: Usage?
 
+        var hasMeaningfulPayload: Bool {
+            if usage != nil { return true }
+            return choices?.contains { $0.hasMeaningfulPayload } == true
+        }
+
         struct Choice: Decodable {
             let index: Int?
             let delta: DeltaContent?
             let message: DeltaContent?
             let finish_reason: String?
+
+            var hasMeaningfulPayload: Bool {
+                if let finishReason = finish_reason, !finishReason.isEmpty {
+                    return true
+                }
+                return Self.hasMeaningfulPayload(delta)
+                    || Self.hasMeaningfulPayload(message)
+            }
+
+            private static func hasMeaningfulPayload(_ content: DeltaContent?) -> Bool {
+                guard let content else { return false }
+                if content.role?.isEmpty == false
+                    || content.content?.isEmpty == false
+                    || content.refusal?.isEmpty == false
+                    || content.reasoning_content?.isEmpty == false
+                {
+                    return true
+                }
+                return content.tool_calls?.contains { call in
+                    if let id = call.id, !id.isEmpty { return true }
+                    if let name = call.function?.name, !name.isEmpty { return true }
+                    if let arguments = call.function?.arguments, !arguments.isEmpty {
+                        return true
+                    }
+                    return false
+                } == true
+            }
         }
     }
 }

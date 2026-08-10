@@ -45,7 +45,7 @@ enum ToolConfigurationStore {
 
     /// Synchronously drain any pending background write. Call from
     /// `applicationWillTerminate` before `_exit` so a toggle made moments before
-    /// quitting still lands on disk (mirrors `flushGreetingPoolSync`).
+    /// quitting still lands on disk.
     static func flushPendingWrites(timeout: TimeInterval = 1.5) {
         writeCoordinator.flushSync(timeout: timeout)
     }

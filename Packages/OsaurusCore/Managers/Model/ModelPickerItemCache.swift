@@ -44,6 +44,10 @@ final class ModelPickerItemCache: ObservableObject {
         hasReadyImageGenerationModel || hasReadyImageEditModel
     }
 
+    var hasReadyVideoGenerationModel: Bool {
+        items.contains(where: \.isVideoGenerationDelegateCandidate)
+    }
+
     /// Whether at least one curated AppleScript model is installed. AppleScript
     /// bundles are discovered as ordinary `.local` MLX models (so they sit in
     /// `items`) but are hidden from the chat picker via the grouping helpers;
@@ -74,7 +78,11 @@ final class ModelPickerItemCache: ObservableObject {
     private func registerObservers() {
         guard !observersRegistered else { return }
         observersRegistered = true
-        for name: Notification.Name in [.localModelsChanged, .remoteProviderModelsChanged] {
+        for name: Notification.Name in [
+            .localModelsChanged,
+            .remoteProviderModelsChanged,
+            .cloudMediaCatalogChanged,
+        ] {
             NotificationCenter.default.addObserver(
                 forName: name,
                 object: nil,
@@ -86,6 +94,21 @@ final class ModelPickerItemCache: ObservableObject {
                     // (e.g. ChatView.init) could observe an empty list. The
                     // serialized rebuild below atomically replaces `items`
                     // when finished and coalesces concurrent requests.
+                    await self?.buildModelPickerItems()
+                }
+            }
+        }
+        for name: Notification.Name in [
+            .osaurusIdentityChanged,
+            .remoteProviderStatusChanged,
+        ] {
+            NotificationCenter.default.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    await MediaGenerationCoordinator.shared.refreshCloudCatalog()
                     await self?.buildModelPickerItems()
                 }
             }
@@ -208,42 +231,122 @@ final class ModelPickerItemCache: ObservableObject {
         }
 
         let manager = RemoteProviderManager.shared
-        let remoteModels = manager.cachedAvailableModels()
-        for providerInfo in remoteModels {
-            let isOsaurusRouter = providerInfo.providerId == RemoteProviderManager.osaurusRouterProviderId
-            for modelId in providerInfo.models {
-                // Osaurus Router models carry pricing/provider/context metadata;
-                // enrich the picker row when we have it, otherwise fall back to a
-                // plain remote item (e.g. before the catalog has loaded).
-                if isOsaurusRouter,
-                    let metadata = manager.osaurusRouterMetadata(for: unprefixedRouterModelId(modelId))
-                {
-                    options.append(
-                        .fromOsaurusRouterModel(
-                            prefixedId: modelId,
-                            providerName: providerInfo.providerName,
-                            providerId: providerInfo.providerId,
-                            metadata: metadata
-                        )
-                    )
-                } else {
-                    options.append(
-                        .fromRemoteModel(
-                            modelId: modelId,
-                            providerName: providerInfo.providerName,
-                            providerId: providerInfo.providerId
-                        )
-                    )
-                }
+        let remote = Self.remoteModelItems(
+            providers: manager.cachedAvailableModels(),
+            codexMetadata: OpenAICodexOAuthService.lastModelDiscoverySummary?.modelMetadata ?? [:],
+            osaurusRouterProviderId: RemoteProviderManager.osaurusRouterProviderId,
+            routerMetadata: { manager.osaurusRouterMetadata(for: $0) },
+            remoteContextLength: {
+                manager.customProviderContextLength(providerId: $0, unprefixedModelId: $1)
             }
+        )
+        options.append(contentsOf: remote.items)
+        for provider in manager.cachedMediaModels() {
+            options.append(
+                contentsOf: provider.models.map {
+                    .fromMediaModel($0, providerId: provider.providerId)
+                }
+            )
         }
+        options.append(
+            contentsOf: await MediaGenerationCoordinator.shared.cachedCloudModels().map {
+                .fromMediaModel($0, providerId: RemoteProviderManager.osaurusRouterProviderId)
+            }
+        )
+
+        // Atomically replace the dynamic reasoning option catalog BEFORE the
+        // rebuilt items are published, so the option normalizer/UI never see
+        // an item advertising capabilities the catalog can't validate.
+        // Full replacement also clears entries for removed/disconnected
+        // providers.
+        RemoteReasoningCapabilityCatalog.replaceAll(remote.reasoningCapabilities)
 
         return options
     }
 
+    /// Pure remote-item assembly, split from `computeItems()` so the
+    /// provider-scoped enrichment rules are unit-testable without live
+    /// provider state:
+    /// - ChatGPT/Codex providers use the live catalog's display name and
+    ///   per-model reasoning capabilities (keyed by bare slug).
+    /// - The official `api.openai.com` Open Responses (API-key) route
+    ///   attaches the documented GPT-5.6 public reasoning profile.
+    /// - Custom OpenAI-compatible providers are never assumed to support
+    ///   either contract.
+    /// Returns the picker items plus the full-id keyed capability map used to
+    /// replace `RemoteReasoningCapabilityCatalog`.
+    static func remoteModelItems(
+        providers: [RemoteProviderManager.CachedProviderModels],
+        codexMetadata: [String: CodexModelMetadata],
+        osaurusRouterProviderId: UUID,
+        routerMetadata: (String) -> OsaurusRouterModel?,
+        remoteContextLength: (UUID, String) -> Int? = { _, _ in nil }
+    ) -> (items: [ModelPickerItem], reasoningCapabilities: [String: ModelReasoningCapabilities]) {
+        var items: [ModelPickerItem] = []
+        var capabilities: [String: ModelReasoningCapabilities] = [:]
+
+        for providerInfo in providers {
+            let isOsaurusRouter = providerInfo.providerId == osaurusRouterProviderId
+            let isCodex = providerInfo.providerType == .openAICodex
+            let isOfficialOpenAI =
+                providerInfo.providerType == .openResponses
+                && providerInfo.host.lowercased() == officialOpenAIHost
+            for modelId in providerInfo.models {
+                let item: ModelPickerItem
+                // Osaurus Router models carry pricing/provider/context metadata;
+                // enrich the picker row when we have it, otherwise fall back to a
+                // plain remote item (e.g. before the catalog has loaded).
+                if isOsaurusRouter,
+                    let metadata = routerMetadata(unprefixedRouterModelId(modelId))
+                {
+                    item = .fromOsaurusRouterModel(
+                        prefixedId: modelId,
+                        providerName: providerInfo.providerName,
+                        providerId: providerInfo.providerId,
+                        metadata: metadata
+                    )
+                } else if isCodex {
+                    item = .fromCodexRemoteModel(
+                        modelId: modelId,
+                        providerName: providerInfo.providerName,
+                        providerId: providerInfo.providerId,
+                        metadata: codexMetadata[unprefixedRouterModelId(modelId)]
+                    )
+                } else if isOfficialOpenAI {
+                    item = .fromOfficialOpenAIModel(
+                        modelId: modelId,
+                        providerName: providerInfo.providerName,
+                        providerId: providerInfo.providerId
+                    )
+                } else {
+                    item = .fromRemoteModel(
+                        modelId: modelId,
+                        providerName: providerInfo.providerName,
+                        providerId: providerInfo.providerId,
+                        contextLength: remoteContextLength(
+                            providerInfo.providerId,
+                            unprefixedRouterModelId(modelId)
+                        )
+                    )
+                }
+                items.append(item)
+                if let modelCapabilities = item.reasoningCapabilities {
+                    capabilities[modelId] = modelCapabilities
+                }
+            }
+        }
+
+        return (items, capabilities)
+    }
+
+    /// The official OpenAI API host; the documented GPT-5.6 public reasoning
+    /// contract applies only here, never to custom OpenAI-compatible hosts.
+    static let officialOpenAIHost = "api.openai.com"
+
     /// Strip the provider-name prefix that `cachedAvailableModels()` prepends
-    /// (e.g. "osaurus/<upstream>/model-b" -> "<upstream>/model-b") so it matches the
-    /// catalog key, which is the model's unprefixed id.
+    /// (e.g. "osaurus/<upstream>/model-b" -> "<upstream>/model-b", or
+    /// "openai-chatgpt/gpt-5.6-terra" -> "gpt-5.6-terra") so the id matches
+    /// the router/Codex catalog key, which is the model's unprefixed id.
     private static func unprefixedRouterModelId(_ prefixedId: String) -> String {
         guard let slashIndex = prefixedId.firstIndex(of: "/") else { return prefixedId }
         return String(prefixedId[prefixedId.index(after: slashIndex)...])

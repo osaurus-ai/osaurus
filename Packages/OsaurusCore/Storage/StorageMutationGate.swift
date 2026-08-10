@@ -15,6 +15,7 @@
 //
 
 import Foundation
+import os
 
 @MainActor
 public final class StorageMutationGate {
@@ -38,6 +39,19 @@ public final class StorageMutationGate {
     /// (and retry later) rather than park the UI while a rotation runs.
     nonisolated public static var isRotationInFlight: Bool { isMutatingAtomic.load() }
 
+    /// Monotonic count of mutations that have ever *begun*. Lets an open
+    /// path close the check-then-open TOCTOU: snapshot the epoch after the
+    /// gate clears, open, then verify the epoch is unchanged (and no
+    /// mutation is in flight). If it moved, a quiesce/swap/rekey ran while
+    /// the file was being opened and the fresh connection may span the
+    /// swap — close and retry (see `PluginDatabase.open()`).
+    nonisolated private static let mutationEpochAtomic = OSAllocatedUnfairLock<UInt64>(
+        initialState: 0)
+
+    nonisolated public static var mutationEpoch: UInt64 {
+        mutationEpochAtomic.withLock { $0 }
+    }
+
     /// Posted after a key rotation finishes (`endMutating`). Launch paths
     /// that skipped a load while a rotation was in flight observe this to
     /// retry once storage has settled.
@@ -51,6 +65,16 @@ public final class StorageMutationGate {
 
     private init() {}
 
+    /// Isolated instance for unit tests. The park/resume semantics tests
+    /// must not use `shared`: other suites running in parallel (storage
+    /// migration, key rotation) call `endMutating()` on the singleton and
+    /// wake the test's parked probes early. Note the `isMutating` didSet
+    /// still mirrors into the process-wide atomic; harmless under tests,
+    /// where `blockingAwaitNotMutating()` early-returns anyway.
+    static func makeForTesting() -> StorageMutationGate {
+        StorageMutationGate()
+    }
+
     // MARK: - Rotation hooks
 
     /// Called by `StorageExportService.rotateStorageKey` before it
@@ -58,6 +82,7 @@ public final class StorageMutationGate {
     /// `blockingAwaitNotMutating` / `awaitNotMutating` caller until
     /// `endMutating()` runs.
     public func beginMutating() {
+        Self.mutationEpochAtomic.withLock { $0 &+= 1 }
         isMutating = true
     }
 
@@ -87,20 +112,22 @@ public final class StorageMutationGate {
         }
     }
 
+    /// True when `blockingAwaitNotMutating()` is a no-op for this process:
+    /// keychain-disabled processes and test runs (tests use isolated
+    /// temporary databases and don't rotate the real storage key under the
+    /// gate; bypassing prevents Swift Concurrency deadlocks when tests run
+    /// on the MainActor and hit the semaphore wait). Open paths that retry
+    /// on the mutation epoch must not spin when the gate never parks them.
+    nonisolated public static var blockingGateIsBypassed: Bool {
+        StorageKeyManager.disablesKeychainForProcess || RuntimeEnvironment.isUnderTests
+    }
+
     /// Synchronous gate for callers that can't go async (the
     /// `*Database.open()` paths). Fast path is a lock-free atomic
     /// poll. The slow path (only while a rotation is running) spins
     /// the main run loop so the UI keeps painting while it waits.
     nonisolated public static func blockingAwaitNotMutating() {
-        if StorageKeyManager.disablesKeychainForProcess {
-            return
-        }
-
-        if RuntimeEnvironment.isUnderTests {
-            // Tests use isolated temporary databases and don't rotate
-            // the real storage key under the gate. Bypassing this
-            // prevents Swift Concurrency deadlocks when tests run on
-            // the MainActor and hit the semaphore wait.
+        if blockingGateIsBypassed {
             return
         }
 
@@ -117,6 +144,13 @@ public final class StorageMutationGate {
         }
 
         if Thread.isMainThread {
+            // Ledger entry: the run-loop spin keeps the UI painting, but a
+            // rotation that never ends would still be a user-visible stall —
+            // the watchdog should attribute it to the storage gate.
+            let token = MainThreadOperationLedger.shared.begin(
+                subsystem: "storage", operation: "await-key-rotation"
+            )
+            defer { MainThreadOperationLedger.shared.end(token) }
             while semaphore.wait(timeout: .now() + 0.05) == .timedOut {
                 RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
             }

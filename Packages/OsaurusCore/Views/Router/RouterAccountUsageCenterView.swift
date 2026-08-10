@@ -102,7 +102,9 @@ struct RouterAccountUsageCenterView: View {
             metricTile(
                 title: L("Net credits"),
                 value: OsaurusRouter.formatMicroUSDPrecise(snapshot.transactions.netMicro),
-                detail: L("\(snapshot.transactions.transactionCount) transaction(s)"),
+                detail: snapshot.transactions.transactionCount == 1
+                    ? L("1 transaction")
+                    : L("\(snapshot.transactions.transactionCount) transactions"),
                 icon: "plus.forwardslash.minus",
                 color: RouterAccountUsageCenter.microValue(snapshot.transactions.netMicro) >= 0
                     ? theme.successColor : theme.warningColor

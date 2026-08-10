@@ -41,6 +41,25 @@ public final class SandboxPluginManager: ObservableObject {
         guard errors.isEmpty else {
             throw SandboxPluginError.invalidPlugin(errors.joined(separator: "; "))
         }
+        if let dependencies = plugin.dependencies, !dependencies.isEmpty {
+            do {
+                _ = try SandboxPackageRequest.normalize(dependencies)
+            } catch {
+                throw SandboxPluginError.invalidPlugin(
+                    "Invalid system dependencies: \(error.localizedDescription)"
+                )
+            }
+        }
+
+        // Same URL policy as agent registration. `install` is the single
+        // funnel for library imports, `ensureReady` on-demand installs,
+        // `reinstall`, and post-start `repairPlugin` — validating here
+        // closes the gap where a library-imported plugin reached the VM
+        // without the setup/run/daemon commands ever being checked.
+        let urlViolations = SandboxNetworkPolicy.validatePluginCommands(plugin)
+        guard urlViolations.isEmpty else {
+            throw SandboxPluginError.invalidPlugin(urlViolations.joined(separator: "; "))
+        }
 
         let agentName = SandboxAgentProvisioner.linuxName(for: agentId)
         let key = progressKey(plugin: plugin.id, agent: agentId)
@@ -84,7 +103,11 @@ public final class SandboxPluginManager: ObservableObject {
                     )
                 )
             }
-            try await installSystemDependencies(for: plugin, agentName: agentName)
+            try await installSystemDependencies(
+                for: plugin,
+                agentName: agentName,
+                agentId: agentId
+            )
 
             setProgress(
                 key: key,
@@ -275,16 +298,29 @@ public final class SandboxPluginManager: ObservableObject {
         _ = await SandboxManager.shared.awaitNetworkReady()
 
         for (agentId, deps) in depsByAgent {
-            let sortedDeps = deps.sorted().joined(separator: " ")
+            let request: SandboxPackageRequest
+            do {
+                request = try SandboxPackageRequest.normalize(deps.sorted())
+            } catch {
+                NSLog(
+                    "[SandboxPluginManager] Rejected invalid batched dependencies for agent \(agentId): \(error.localizedDescription)"
+                )
+                continue
+            }
             do {
                 let result = try await SandboxManager.shared.execAsRoot(
-                    command: "apk add --no-cache \(sortedDeps)",
+                    command: "apk add --no-cache \(request.shellArguments)",
                     timeout: 300,
                     streamToLogs: true,
                     logSource: "plugin-repair:\(agentId)"
                 )
                 if result.succeeded {
                     agentsWithSeededDeps.insert(agentId)
+                    SandboxPackageManifest.shared.record(
+                        agentId: agentId,
+                        manager: .apk,
+                        packages: request.packages
+                    )
                 } else {
                     NSLog(
                         "[SandboxPluginManager] Batched apk add for agent \(agentId) returned exit \(result.exitCode): \(result.stderr.prefix(200))"
@@ -605,31 +641,58 @@ public final class SandboxPluginManager: ObservableObject {
         installedPlugins[agentId] = list
     }
 
-    private func installSystemDependencies(for plugin: SandboxPlugin, agentName: String) async throws {
-        try await installSystemDependencies(for: plugin, agentName: agentName, agentId: nil)
-    }
-
-    /// `installSystemDependencies` variant that knows the caller's `agentId`
-    /// so it can short-circuit when `batchInstallDependencies` already
-    /// seeded the deps for that agent during the post-start repair pass.
+    /// Install plugin-declared Alpine dependencies and attribute the shared
+    /// container packages to the owning agent's dynamic sandbox state.
     private func installSystemDependencies(
         for plugin: SandboxPlugin,
         agentName: String,
-        agentId: String?
+        agentId: String
     ) async throws {
         guard let deps = plugin.dependencies, !deps.isEmpty else { return }
-        if let agentId, agentsWithSeededDeps.contains(agentId) {
+        let request: SandboxPackageRequest
+        do {
+            request = try SandboxPackageRequest.normalize(deps)
+        } catch {
+            throw SandboxPluginError.dependencyInstallFailed(error.localizedDescription)
+        }
+        // Seatbelt backend: there is no Alpine guest and no `apk` — fail
+        // with a clear message instead of a "command not found" from the
+        // host shell.
+        guard SandboxBackend.current == .virtualMachine else {
+            throw SandboxPluginError.dependencyInstallFailed(
+                "System `dependencies` require the Linux VM sandbox (macOS 26+). "
+                    + "On this macOS sandbox, leave `dependencies` empty and install "
+                    + "Python/Node packages via `setup` (pip/npm) instead.")
+        }
+        if agentsWithSeededDeps.contains(agentId) {
+            SandboxPackageManifest.shared.record(
+                agentId: agentId,
+                manager: .apk,
+                packages: request.packages
+            )
             return
+        }
+        if let uuid = UUID(uuidString: agentId),
+            AgentManager.shared.effectiveAutonomousExec(for: uuid)?.sandboxNetworkEnabled == false
+        {
+            throw SandboxPluginError.dependencyInstallFailed(
+                "Sandbox network access is disabled for this agent. Enable Sandbox Network "
+                    + "and restart the sandbox before installing plugin dependencies."
+            )
         }
         // `apk add` needs the Alpine CDN to resolve. The container's
         // network readiness probe normally finishes before any plugin
         // path reaches here, so this typically falls through immediately;
         // the awaited form just guards against the rare race where a
         // plugin install runs before the post-boot probe is done.
-        _ = await SandboxManager.shared.awaitNetworkReady()
-        let depList = deps.joined(separator: " ")
+        guard await SandboxManager.shared.awaitNetworkReady() else {
+            throw SandboxPluginError.dependencyInstallFailed(
+                "Sandbox network egress is unavailable. Check the network/allowlist settings "
+                    + "and restart the sandbox before retrying."
+            )
+        }
         let result = try await SandboxManager.shared.execAsRoot(
-            command: "apk add --no-cache \(depList)",
+            command: "apk add --no-cache \(request.shellArguments)",
             timeout: 300,
             streamToLogs: true,
             logSource: plugin.id
@@ -637,6 +700,11 @@ public final class SandboxPluginManager: ObservableObject {
         guard result.succeeded else {
             throw SandboxPluginError.dependencyInstallFailed(result.stderr)
         }
+        SandboxPackageManifest.shared.record(
+            agentId: agentId,
+            manager: .apk,
+            packages: request.packages
+        )
     }
 
     private func runSetupCommand(for plugin: SandboxPlugin, agentName: String, agentId: String) async throws {

@@ -1,0 +1,21 @@
+{
+  "id": "memory.identity-override-applies",
+  "domain": "memory",
+  "label": "memory • identity override changes behavior on every turn",
+  "query": "Give me one tip for improving my morning routine.",
+  "notes": "Identity overrides are the always-injected memory layer (no relevance gate). The seeded override instructs the assistant to address the user by a fixture-unique name; the answer containing it proves the override layer flows through composition unconditionally. Off-CI (needs a model).",
+  "fixtures": {
+    "seedMemory": {
+      "identityOverrides": [
+        "Always address the user by their preferred nickname: Captain Marrow."
+      ]
+    }
+  },
+  "expect": {
+    "memory": {
+      "maxTokens": 256,
+      "answerContains": ["Captain Marrow"],
+      "requireMemoryInjected": true
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "id": "memory.multi-turn-carry-forward",
+  "domain": "memory",
+  "label": "memory • seeded fact still grounds the answer two turns later",
+  "query": "Say hello, briefly.",
+  "notes": "Recall must survive conversation, not just the first turn: turn 1 is unrelated small talk, turn 2 asks something also unrelated, and only turn 3 needs the seeded fact — the model has to reach back to injected memory after two turns of distraction. Off-CI (needs a model).",
+  "fixtures": {
+    "seedMemory": {
+      "pinnedFacts": [
+        "The user's home wifi network is called Kelp-Forest-77."
+      ]
+    }
+  },
+  "expect": {
+    "memory": {
+      "followUpTurns": [
+        "What's a good breakfast that takes under five minutes?",
+        "I'm setting up a new smart plug — what wifi network should I connect it to?"
+      ],
+      "maxTokens": 384,
+      "answerContains": ["Kelp-Forest-77"]
+    }
+  }
+}

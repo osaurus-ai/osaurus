@@ -1,0 +1,20 @@
+{
+  "id": "memory.pinned-beats-conflicting-guess",
+  "domain": "memory",
+  "label": "memory • seeded specifics beat plausible-sounding generic answers",
+  "query": "Which slip is my boat moored at? Answer with just the slip.",
+  "notes": "Anti-generic pin: 'slip 14' is arbitrary enough that a model can only get it from memory — a plausible guess (slip 1, A-dock…) fails. Complements pinned-fact-recall by demanding the SPECIFIC detail, not the memorable name. Off-CI (needs a model).",
+  "fixtures": {
+    "seedMemory": {
+      "pinnedFacts": [
+        "The user's sailboat is named Peregrine Dusk and is moored at slip 14 of Greywater Marina."
+      ]
+    }
+  },
+  "expect": {
+    "memory": {
+      "maxTokens": 128,
+      "answerContains": ["14"]
+    }
+  }
+}

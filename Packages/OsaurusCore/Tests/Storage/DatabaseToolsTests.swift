@@ -22,17 +22,12 @@ struct DatabaseToolsTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let context = FolderContext(
-            rootPath: root,
-            projectType: .unknown,
-            tree: "",
-            manifest: nil,
-            gitStatus: nil,
-            isGitRepo: false
-        )
-        FolderToolManager.shared.registerFolderTools(for: context)
-        defer { FolderToolManager.shared.unregisterFolderTools() }
-        return try await body(root)
+        // Folder ownership is per chat session now: the resolver reads the
+        // executing scope's root from the TaskLocal, so bind it here the way
+        // the send path does instead of registering a global folder.
+        return try await ChatExecutionContext.$currentFolderRoot.withValue(root) {
+            try await body(root)
+        }
     }
 
     @Test
@@ -194,10 +189,107 @@ struct DatabaseToolsTests {
     }
 
     @Test
+    func importCsvParsesCRLFAndQuotedMultilineFields() throws {
+        let csv = "id,note\r\n1,\"first\r\nsecond\"\r\n2,\"quoted \"\"value\"\"\"\r\n"
+        let parsed = try DatabaseImport.parse(
+            data: Data(csv.utf8),
+            format: .csv,
+            hasHeader: true,
+            explicitColumns: nil,
+            maxRows: nil
+        )
+
+        #expect(parsed.columns == ["id", "note"])
+        #expect(parsed.rows.count == 2)
+        #expect(parsed.rows[0]["id"] == .integer(1))
+        #expect(parsed.rows[0]["note"] == .text("first\r\nsecond"))
+        #expect(parsed.rows[1]["note"] == .text("quoted \"value\""))
+    }
+
+    @Test
+    func importCsvParsesBareCarriageReturns() throws {
+        let parsed = try DatabaseImport.parse(
+            data: Data("id,name\r1,alpha\r2,beta\r".utf8),
+            format: .csv,
+            hasHeader: true,
+            explicitColumns: nil,
+            maxRows: nil
+        )
+
+        #expect(parsed.rows.count == 2)
+        #expect(parsed.rows[0]["name"] == .text("alpha"))
+        #expect(parsed.rows[1]["name"] == .text("beta"))
+    }
+
+    @Test
+    func importCsvParses1304CRLFRows() throws {
+        let body = (1 ... 1_304)
+            .map { "\($0),asset-\($0)" }
+            .joined(separator: "\r\n")
+        let csv = "asset_id,asset_name\r\n\(body)\r\n"
+        let parsed = try DatabaseImport.parse(
+            data: Data(csv.utf8),
+            format: .csv,
+            hasHeader: true,
+            explicitColumns: nil,
+            maxRows: nil
+        )
+
+        #expect(parsed.rows.count == 1_304)
+        #expect(parsed.rows.first?["asset_id"] == .integer(1))
+        #expect(parsed.rows.last?["asset_id"] == .integer(1_304))
+        #expect(parsed.rows.last?["asset_name"] == .text("asset-1304"))
+    }
+
+    @Test
     func validateReadOnlyQueryRejectsInsert() {
         #expect(throws: AgentDatabaseError.self) {
             try AgentDatabase.validateReadOnlyQuery("INSERT INTO t VALUES (1)")
         }
+    }
+
+    // MARK: - Tool contract pins (import mode + saved-view routing)
+
+    @Test
+    func dbImportModeSchemaPinsEnum() {
+        // The published JSON schema must constrain `mode` so schema-strict
+        // models can't invent values like `append` in the first place.
+        let tool = DBImportTool()
+        guard case .object(let root)? = tool.parameters,
+            case .object(let props) = root["properties"],
+            case .object(let mode) = props["mode"],
+            case .array(let allowed) = mode["enum"]
+        else {
+            Issue.record("db_import.mode is missing an enum in its schema")
+            return
+        }
+        #expect(allowed == [.string("insert"), .string("upsert")])
+    }
+
+    @Test
+    func dbImportRejectsAppendModeAtRuntime() async throws {
+        // Regression for the transcript failure: `mode: "append"` must be
+        // rejected as invalid_args (with the canonical values named) before
+        // any file I/O happens. `insert` is the append.
+        let tool = DBImportTool()
+        let envelope = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+            try await tool.execute(
+                argumentsJSON: #"{"table": "t", "path": "data.csv", "mode": "append"}"#
+            )
+        }
+        #expect(envelope.contains("invalid_args"))
+        #expect(envelope.contains("insert | upsert"))
+    }
+
+    @Test
+    func savedViewQueryabilityIsPinnedInToolDescriptions() {
+        // Both tools must describe the native SQL path so a model can compose
+        // a saved result instead of receiving an avoidable no-such-table error.
+        #expect(DBQueryTool().description.contains("FROM/JOIN"))
+        let runView = DBRunViewTool().description
+        #expect(runView.contains("stored SELECT"))
+        #expect(runView.contains("db_query"))
+        #expect(DBDefineViewTool().description.contains("FROM and JOIN"))
     }
 
     @Test

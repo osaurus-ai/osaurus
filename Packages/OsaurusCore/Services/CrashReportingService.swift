@@ -144,11 +144,148 @@ public final class CrashReportingService {
     /// `static` and `nonisolated` so hot, off-main paths (such as plugin tool invocation) can
     /// annotate without hopping to the main actor, which can deadlock when the main thread is
     /// busy. A no-op when crash reporting isn't running (Sentry drops breadcrumbs with no SDK).
+    ///
+    /// Each breadcrumb is also mirrored as a structured Sentry Log row. Breadcrumbs only
+    /// travel attached to a captured event, so a release with few events has almost no
+    /// queryable timeline — the 0.22.6 triage had zero Logs rows to correlate hangs against.
+    /// The mirror gives release triage a searchable stream (same category/message contract:
+    /// identifiers only) without instrumenting every call site twice.
     public nonisolated static func recordBreadcrumb(category: String, message: String) {
         guard SentrySDK.isEnabled else { return }
-        let crumb = Breadcrumb(level: .info, category: category)
-        crumb.message = message
-        SentrySDK.addBreadcrumb(crumb)
+        // Serialize/record off the caller's thread: `addBreadcrumb` serializes
+        // the crumb (including an ICU date-format of its timestamp), which has
+        // stalled the main thread for seconds under memory pressure. The
+        // serial queue preserves breadcrumb ordering; the timestamp is stamped
+        // at `Breadcrumb` init inside the block, a few ms after the call.
+        breadcrumbQueue.async {
+            let crumb = Breadcrumb(level: .info, category: category)
+            crumb.message = message
+            SentrySDK.addBreadcrumb(crumb)
+            SentrySDK.logger.info(message, attributes: ["category": category])
+        }
+    }
+
+    private nonisolated static let breadcrumbQueue = DispatchQueue(
+        label: "com.dinoki.osaurus.crash-breadcrumbs", qos: .utility)
+
+    // MARK: - Main-thread stall reporting
+
+    /// Privacy-safe description of one operation in flight during a stall
+    /// (identifiers only — never content, paths, or account names).
+    public struct StallOperation: Sendable {
+        public let subsystem: String
+        public let operation: String
+        public let ageSeconds: TimeInterval
+
+        public init(subsystem: String, operation: String, ageSeconds: TimeInterval) {
+            self.subsystem = subsystem
+            self.operation = operation
+            self.ageSeconds = ageSeconds
+        }
+    }
+
+    /// Report a `MainThreadWatchdog` breach to Sentry as a first-class event.
+    ///
+    /// The event is fingerprinted on the longest-running instrumented
+    /// operation, so a Keychain stall, a database stall, and an AX stall
+    /// become separate, individually-actionable issue groups instead of
+    /// collapsing into one omnibus "app hang" bucket. The watchdog throttles
+    /// calls (one per stall episode, minimum interval between reports);
+    /// this method assumes that and always records.
+    ///
+    /// `static`/`nonisolated`: called from the watchdog's background queue
+    /// while the main thread is — by definition — blocked. Must never hop
+    /// to the main actor.
+    public nonisolated static func recordMainThreadStall(
+        thresholdSeconds: TimeInterval,
+        operations: [StallOperation]
+    ) {
+        guard SentrySDK.isEnabled else { return }
+        breadcrumbQueue.async {
+            let primary = operations.max(by: { $0.ageSeconds < $1.ageSeconds })
+            let opsSummary =
+                operations.isEmpty
+                ? "none"
+                : operations
+                    .map { "\($0.subsystem).\($0.operation)(\(Int($0.ageSeconds))s)" }
+                    .joined(separator: ",")
+
+            let event = Event(level: .warning)
+            event.message = SentryMessage(
+                formatted:
+                    "Main thread blocked >\(Int(thresholdSeconds))s — \(primary.map { "\($0.subsystem).\($0.operation)" } ?? "uninstrumented")"
+            )
+            // Stable, operation-based grouping. Uninstrumented stalls share
+            // one group ("uninstrumented") — a signal that ledger coverage
+            // is missing where users actually hang.
+            event.fingerprint = [
+                "main-thread-stall",
+                primary?.subsystem ?? "uninstrumented",
+                primary?.operation ?? "unknown",
+            ]
+            // Machine-condition tags so the (deliberately coarse)
+            // "uninstrumented" group can still be segmented in Sentry:
+            // production data (APPLE-MACOS-1BV) shows these stalls cluster
+            // on memory-starved / low-power machines, and tags — unlike the
+            // SDK's device context — are filterable and aggregatable.
+            let thermal: String
+            switch ProcessInfo.processInfo.thermalState {
+            case .nominal: thermal = "nominal"
+            case .fair: thermal = "fair"
+            case .serious: thermal = "serious"
+            case .critical: thermal = "critical"
+            @unknown default: thermal = "unknown"
+            }
+            let availableMemory = currentAvailableMemoryBytes()
+
+            event.tags = [
+                "stall.subsystem": primary?.subsystem ?? "uninstrumented",
+                "stall.operation": primary?.operation ?? "unknown",
+                "stall.available_memory": availableMemory.map(availableMemoryBucket) ?? "unknown",
+                "stall.low_power": ProcessInfo.processInfo.isLowPowerModeEnabled ? "yes" : "no",
+                "stall.thermal": thermal,
+            ]
+            var stallContext: [String: Any] = [
+                "threshold_seconds": thresholdSeconds,
+                "operations": opsSummary,
+            ]
+            if let availableMemory {
+                stallContext["available_memory_bytes"] = availableMemory
+            }
+            event.context = ["main_thread_stall": stallContext]
+            SentrySDK.capture(event: event)
+        }
+    }
+
+    /// Reclaimable-now memory (free + inactive pages), the closest cheap
+    /// proxy for "how much headroom did this machine have when the main
+    /// thread stalled". Called off the main thread (the main thread is, by
+    /// definition, blocked).
+    private nonisolated static func currentAvailableMemoryBytes() -> UInt64? {
+        var stats = vm_statistics64_data_t()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<vm_statistics64_data_t>.stride / MemoryLayout<integer_t>.stride
+        )
+        let result = withUnsafeMutablePointer(to: &stats) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        let pageSize = UInt64(getpagesize())
+        return (UInt64(stats.free_count) + UInt64(stats.inactive_count)) &* pageSize
+    }
+
+    /// Coarse buckets keep the tag's cardinality Sentry-friendly while still
+    /// separating "genuinely starved" from "plenty of headroom".
+    private nonisolated static func availableMemoryBucket(_ bytes: UInt64) -> String {
+        switch bytes {
+        case ..<(512 << 20): return "<512MB"
+        case ..<(1 << 30): return "512MB-1GB"
+        case ..<(2 << 30): return "1-2GB"
+        case ..<(4 << 30): return "2-4GB"
+        default: return ">=4GB"
+        }
     }
 
     // MARK: - DSN resolution
@@ -221,6 +358,17 @@ public final class CrashReportingService {
             options.enableAutoPerformanceTracing = false
             options.tracesSampleRate = 0.0
 
+            // Release health: sessions are what turn raw event counts into
+            // "N of M users affected" and crash-free rates per release. On by
+            // default in the SDK, but pinned explicitly because triage depends
+            // on it — 0.22.6 had to be triaged from bare event counts.
+            options.enableAutoSessionTracking = true
+
+            // Structured logs (mirrored from `recordBreadcrumb`): gives each
+            // release a queryable operation timeline in Sentry → Logs. Same
+            // privacy contract as breadcrumbs — identifiers only, no content.
+            options.enableLogs = true
+
             // Don't turn transient network failures into issues, and don't log
             // outgoing request URLs as breadcrumbs — both are on by default,
             // both are out of scope (a failed HTTP response isn't a crash), and
@@ -234,11 +382,19 @@ public final class CrashReportingService {
             // and don't exist on the macOS SDK, so there's nothing to disable.)
             options.sendDefaultPii = false
             options.beforeSend = { event in
-                // Defense-in-depth on top of `sendDefaultPii = false`: drop the
-                // user object and the device hostname (often "<Name>'s MacBook")
-                // from every event before it leaves the machine.
-                event.user = nil
+                // Defense-in-depth on top of `sendDefaultPii = false`: strip
+                // the device hostname (often "<Name>'s MacBook") and every
+                // identifying user field from the event before it leaves the
+                // machine. Keep ONLY the SDK's anonymous installation id — a
+                // random UUID stored locally, attached by the SDK as `user.id`
+                // when no user is set. Blanking the whole user (as 0.22.6 did)
+                // made Sentry report "Users Impacted: 0" on every issue, so
+                // release triage couldn't tell one broken machine from a fleet.
+                let anonymous = User()
+                anonymous.userId = event.user?.userId
+                event.user = anonymous
                 event.serverName = nil
+                annotateAppHangEvent(event)
                 return event
             }
 
@@ -246,5 +402,43 @@ public final class CrashReportingService {
                 options.debug = true
             #endif
         }
+    }
+
+    /// Enrich the SDK's own AppHang events with the operation the
+    /// `MainThreadOperationLedger` says was in flight when the hang fired.
+    ///
+    /// Without this, every hang groups purely by sampled stack — and since a
+    /// blocked main thread is usually sampled somewhere inside AppKit/SwiftUI
+    /// plumbing rather than at the blocking call, unrelated hangs collapsed
+    /// into one un-actionable omnibus issue (APPLE-MACOS-5, 13k events). With
+    /// an instrumented operation active, the event is re-fingerprinted on
+    /// `subsystem.operation`, splitting Keychain stalls from database stalls
+    /// from AX stalls into individually-triageable groups. Hangs with no
+    /// instrumented operation keep the SDK's default stack grouping (there is
+    /// nothing better to group on — and their volume tells us where ledger
+    /// coverage is still missing).
+    ///
+    /// `nonisolated`: `beforeSend` runs on the SDK's ANR-monitor thread while
+    /// the main thread is blocked; the ledger is lock-protected and safe.
+    private nonisolated static func annotateAppHangEvent(_ event: Event) {
+        let isAppHang =
+            event.exceptions?.contains { $0.type?.hasPrefix("App Hang") == true } ?? false
+        guard isAppHang else { return }
+
+        let operations = MainThreadOperationLedger.shared.snapshot()
+        guard let primary = operations.first else {
+            event.tags = (event.tags ?? [:]).merging(
+                ["stall.subsystem": "uninstrumented"], uniquingKeysWith: { _, new in new }
+            )
+            return
+        }
+        event.tags = (event.tags ?? [:]).merging(
+            [
+                "stall.subsystem": primary.subsystem,
+                "stall.operation": primary.operation,
+            ],
+            uniquingKeysWith: { _, new in new }
+        )
+        event.fingerprint = ["app-hang", primary.subsystem, primary.operation]
     }
 }

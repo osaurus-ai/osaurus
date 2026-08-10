@@ -61,6 +61,49 @@ struct RuntimePolicySourceTests {
         }
     }
 
+    @Test("production prompt entry points wait for the initial plugin catalog")
+    func promptCompositionWaitsForPluginCatalog() throws {
+        let manager = try Self.source("Managers/Plugin/PluginManager.swift")
+        #expect(manager.contains("private var isPromptCatalogReady = false"))
+        #expect(manager.contains("func ensurePromptCatalogReady() async"))
+        #expect(manager.contains("if let task = activeReloadTask"))
+        #expect(manager.contains("isPromptCatalogReady = true"))
+
+        for path in [
+            "Services/Chat/ChatSessionWarmup.swift",
+            "Views/Chat/ChatView.swift",
+            "Networking/HTTPHandler.swift",
+            "Services/Plugin/PluginHostAPI.swift",
+        ] {
+            let source = try Self.source(path)
+            let readiness = try #require(
+                source.range(of: "await PluginManager.shared.ensurePromptCatalogReady()")
+            )
+            let compose = try #require(
+                source.range(
+                    of: "SystemPromptComposer.composeChatContext",
+                    range: readiness.upperBound ..< source.endIndex
+                )
+            )
+            #expect(
+                readiness.lowerBound < compose.lowerBound,
+                "\(path) must await plugin readiness before composing a cacheable prompt"
+            )
+        }
+    }
+
+    @Test("chat warm-up uses atomic background load intent instead of a stale load probe")
+    func chatWarmupDoesNotSkipSameModelLoadInFlight() throws {
+        let warmup = try Self.source("Services/Chat/ChatWarmupController.swift")
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+
+        #expect(!warmup.contains("ModelRuntime.shared.hasLoadInFlight()"))
+        #expect(warmup.contains("request.backgroundModelLoad = !userIntent"))
+        #expect(runtime.contains("Diagnostics only. Do **not** gate a load on this"))
+        #expect(runtime.contains("if let existingRecord = loadingTasks[name]"))
+        #expect(runtime.contains("refuseBackgroundLoadIfItWouldDisturb"))
+    }
+
     @Test("Makefile builds through workspace resolver mirrors")
     func makefileUsesWorkspaceResolver() throws {
         let source = try Self.source("../../Makefile")
@@ -121,8 +164,13 @@ struct RuntimePolicySourceTests {
         let registerBody = String(toolIndex[registerStart.lowerBound ..< registerEnd.lowerBound])
         #expect(registerBody.contains("ToolDatabase.shared.upsertEntry(entry)"))
         #expect(
-            !registerBody.contains("ToolSearchService.shared.indexEntry"),
-            "live tool registration must update the SQL/BM25 catalog without loading the embedding model on the launch path"
+            registerBody.contains("ToolSearchService.shared.indexEntry"),
+            "live dynamic-tool registration must incrementally update the vector catalog"
+        )
+        #expect(
+            !registerBody.contains("ToolSearchService.shared.initialize")
+                && !registerBody.contains("ToolSearchService.shared.rebuildIndex"),
+            "live registration may queue/index one entry but must not initialize or rebuild the embedding index"
         )
     }
 
@@ -306,6 +354,20 @@ struct RuntimePolicySourceTests {
         #expect(!serverView.contains("if OsaurusIdentity.exists()"))
         #expect(!serverView.contains(".onAppear {\n            reloadAccessKeys()"))
         #expect(serverView.contains("reloadAccessKeys(readKeychain: true)"))
+    }
+
+    @Test("automatic relay identity assignment keeps Keychain work off the main actor")
+    func automaticRelayIdentityAssignmentKeepsKeychainWorkOffMainActor() throws {
+        let agentManager = try Self.source("Managers/AgentManager.swift")
+        let serverView = try Self.source("Views/Settings/ServerView.swift")
+        let relayManager = try Self.source("Networking/RelayTunnelManager.swift")
+
+        #expect(agentManager.contains("func assignAddressInBackground(to agent: Agent)"))
+        #expect(agentManager.contains("Task.detached(priority: .userInitiated)"))
+        #expect(serverView.contains("agentManager.assignAddressInBackground(to: agent)"))
+        #expect(!serverView.contains("try? agentManager.assignAddress(to: agent)"))
+        #expect(relayManager.contains("AgentManager.shared.assignAddressInBackground(to: agent)"))
+        #expect(!relayManager.contains("try? AgentManager.shared.assignAddress(to: agent)"))
     }
 
     @Test("plugin host inference carries agent memory like HTTP chat")
@@ -543,6 +605,7 @@ struct RuntimePolicySourceTests {
     @Test("vmlx pin uses consolidated package with runtime hardening")
     func vmlxPinIncludesRuntimeHardening() throws {
         let manifest = try Self.source("Package.swift")
+        let coreResolved = try Self.source("Package.resolved")
         let workspaceResolved = try Self.source(
             "../../osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved"
         )
@@ -685,15 +748,55 @@ struct RuntimePolicySourceTests {
         // SSM/hybrid mixer (vmlx-swift#126), and the ZAYA tool-aware template
         // activation from source_model.architecture (vmlx-swift#127) that
         // stops JANGTQ ZAYA bundles leaking raw tool-call XML.
-        let expectedRuntimeHardenedRevision = "0d3444cad48f658103789cbf8fc9b13f4b7a80d4"
+        //
+        // Now also carries the cache-store memory budget on all four KV store
+        // paths and the Hunyuan bare-marker aliases (vmlx-swift#139), the
+        // host-scaled store margin plus the Hy3 reasoning-stamp demotion pin
+        // (#140), and the memory-safety level actually reaching the prefix-cache
+        // store (#141) -- the "Safety Level" slider used to be a stored field no
+        // resolver read, so it moved nothing.
+        //
+        // Now also carries native schema-2 affine1 JANG loading and Metal
+        // execution, Qwen3-VL tool-schema preservation, bounded media-cache
+        // cleanup (vmlx-swift#149), and the Nemotron Omni projector,
+        // bounded-media-prefill, and safe hybrid media-prefix fixes (#156),
+        // plus the paged-cache chain pinning, leaf-first release order, and
+        // bounded hybrid companion-state replay proven in vmlx-swift#161,
+        // followed by recurrent prompt-snapshot detachment and caller-cache
+        // reset after an unverified coordinator miss in vmlx-swift#163.
+        //
+        // vmlx-swift#175 preserves integer-valued JSON tool arguments as
+        // integers across the Foundation bridge (instead of silently turning
+        // `1` into `true`) and keeps nested Qwen XML argument marks lossless.
+        // vmlx-swift#177 adds the awaited direct-generation cancellation/drain
+        // boundary required before Osaurus can admit the next solo request.
+        // vmlx-swift#179 adds schema-bound recovery for Qwen XML
+        // array<string> arguments emitted as plain bracket lists and routes
+        // Gemma's decoded thought-channel opener into the reasoning stream.
+        // The static-prefix cache-hint revision lets Osaurus seed an SSD
+        // boundary from the byte-stable leading system prompt even when a
+        // mutable DB/tool section later changes inside the same rendered
+        // system message.
+        //
+        // This assertion is a repin tripwire, and it earned its keep: PR #1986
+        // shipped titled "(+ vmlx repin)" carrying no repin at all, and the live
+        // gate run against that build proved only the osaurus-side change while
+        // appearing to bless the engine work too. Note the checked-in pin
+        // lives in FOUR files -- Package.swift, OsaurusCore Package.resolved,
+        // and both xcworkspace Package.resolved files. Miss one and a release
+        // surface resolves a revision nobody proved. OsaurusEvals resolves
+        // this manifest transitively and its local Package.resolved is ignored.
+        let expectedRuntimeHardenedRevision = "fd7ce91cde0be283c817142d96c9b3f87efcc5e5"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
+        let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
+        #expect(manifestRevision == coreResolvedRevision)
         #expect(manifestRevision == workspaceRevision)
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the pushed vmlx-swift revision proven for this Gemma QAT correctness checkpoint: Gemma 4 QAT loader/parser fixes, paged-cache default policy, prefill progress wiring, Model2Vec static embedding APIs, and the post-merge pin/readiness proof. An internally-consistent older pin is still not wired"
+            "Osaurus must consume the proven vmlx-swift revision with schema-bound Qwen XML string-array recovery, Gemma reasoning routing, scalar text-only Gemma system prompts, static system-prefix SSD cache boundaries, Nanbeige 4.2 looped-transformer runtime support, and actor-consistent atomic BatchEngine capacity snapshots together with the existing runtime checkpoints. An internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
@@ -713,7 +816,7 @@ struct RuntimePolicySourceTests {
         let source = try Self.source("Services/ModelRuntime.swift")
         let taskStart = try #require(source.range(of: "let task = Task<SessionHolder, Error>"))
         let taskStore = try #require(
-            source.range(of: "loadingTasks[name] = LoadingTaskRecord(id: loadID, task: task)")
+            source.range(of: "loadingTasks[name] = LoadingTaskRecord(")
         )
         let success = try #require(
             source.range(of: "return try await finishLoadedContainer", range: taskStore.upperBound ..< source.endIndex)
@@ -970,7 +1073,7 @@ struct RuntimePolicySourceTests {
         )
         #expect(
             store.contains("liveKVCodec: .engineSelected"),
-            "ServerRuntimeSettingsStore.migratedFromLegacy must use engine-selected live KV so proven full-KV rows default to TurboQuant"
+            "ServerRuntimeSettingsStore.migratedFromLegacy must preserve the engine-selected native-KV default"
         )
         #expect(
             store.contains("pagedKV: VMLXPagedKVCacheSettings(\n                enabled: false"),
@@ -985,8 +1088,8 @@ struct RuntimePolicySourceTests {
             "Legacy cache migration must not overwrite explicit existing live-KV choices"
         )
         #expect(
-            store.contains("Engine-selected live KV is resolved by ModelRuntime per"),
-            "ServerRuntimeSettingsStore must document that engine-selected is topology-gated by ModelRuntime"
+            store.contains("Engine-selected live KV stays native/fp16 for every"),
+            "ServerRuntimeSettingsStore must document that engine-selected keeps TurboQuant off by default"
         )
         #expect(
             store.contains("shouldRepairLegacyCacheDefaults"),
@@ -1032,8 +1135,13 @@ struct RuntimePolicySourceTests {
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
 
         #expect(httpHandler.contains(#""paged_cache""#))
+        #expect(httpHandler.contains(#""requires_paged_boundary_companion""#))
         #expect(httpHandler.contains(#""block_disk_store""#))
         #expect(httpHandler.contains(#""disk_l2_hits""#))
+        #expect(httpHandler.contains(#""current_payload_bytes""#))
+        #expect(httpHandler.contains(#""current_entry_count""#))
+        #expect(httpHandler.contains(#""store_skips""#))
+        #expect(httpHandler.contains(#""evictions""#))
         #expect(httpHandler.contains(#""prefix_hits""#))
         #expect(httpHandler.contains(#""companion_cache""#))
         #expect(httpHandler.contains(#""zaya_cca_disk_payload_restore""#))
@@ -1055,8 +1163,57 @@ struct RuntimePolicySourceTests {
         #expect(!adapter.contains("prefixMisses += diskStats.misses"))
 
         let cacheSection = try Self.source("Views/Settings/ServerSettings/CacheSection.swift")
+        #expect(cacheSection.contains(#"isOn: $draft.cache.blockDisk.enabled"#))
         #expect(cacheSection.contains(#"value: $draft.cache.blockDisk.directory"#))
-        #expect(cacheSection.contains(#"value: $draft.cache.legacyDisk.directory"#))
+        #expect(!cacheSection.contains(#"isOn: $draft.cache.legacyDisk.enabled"#))
+        #expect(!cacheSection.contains(#"value: $draft.cache.legacyDisk.directory"#))
+        #expect(cacheSection.contains("Works with paged RAM cache off"))
+        #expect(cacheSection.contains("SSD cache can still restore prefixes"))
+        #expect(!cacheSection.contains("Required for cross-request sharing"))
+    }
+
+    @Test("chat-composed static prompt prefix reaches local MLX as a runtime-only cache hint")
+    func chatComposedStaticPromptPrefixReachesLocalMLXCacheHint() throws {
+        let api = try Self.source("Models/API/OpenAIAPI.swift")
+        let chatEngine = try Self.source("Services/Chat/ChatEngine.swift")
+        let chatView = try Self.source("Views/Chat/ChatView.swift")
+        let chatWarmup = try Self.source("Services/Chat/ChatSessionWarmup.swift")
+        let warmupController = try Self.source("Services/Chat/ChatWarmupController.swift")
+        let httpHandler = try Self.source("Networking/HTTPHandler.swift")
+        let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
+
+        #expect(api.contains("var cacheStableSystemPrefix: String? = nil"))
+        #expect(api.contains("copy.cacheStableSystemPrefix = cacheStableSystemPrefix"))
+        #expect(!api.contains("case cacheStableSystemPrefix"))
+        #expect(chatEngine.contains("cacheStableSystemPrefix: request.cacheStableSystemPrefix"))
+        #expect(chatView.contains("req.cacheStableSystemPrefix ="))
+        #expect(chatView.contains("finalReq.cacheStableSystemPrefix ="))
+        #expect(chatView.contains("self.isRemoteAgentTarget ? nil : context.staticPrefix"))
+        #expect(chatWarmup.contains("cacheStableSystemPrefix: context.staticPrefix"))
+        #expect(
+            warmupController.contains(
+                "request.cacheStableSystemPrefix = payload.cacheStableSystemPrefix"
+            )
+        )
+        #expect(httpHandler.contains("enriched.cacheStableSystemPrefix = composed.staticPrefix"))
+        #expect(adapter.contains("cacheStableSystemPrefix: buildRawPrompt == nil"))
+        #expect(adapter.contains("cacheStableSystemPrefix: cacheStableSystemPrefix"))
+        #expect(!adapter.contains(#""cacheStableSystemPrefix""#))
+    }
+
+    @Test("near-limit wrap-up notice stages only on a mid-run tool tail")
+    func nearLimitNoticeStagesOnlyMidRun() throws {
+        // The "Context is nearly full — wrap up" notice is a mid-run nudge.
+        // Staging it on a fresh user question appends it as the trailing
+        // user-role message and displaces the real query (observed live:
+        // the model reasoned about the notice instead of the question), and
+        // staging it on a non-tool tail also breaks the byte-identical
+        // rebuild contract of reasoning-continuation retries.
+        let chatView = try Self.source("Views/Chat/ChatView.swift")
+        #expect(chatView.contains(#"let midRunToolTail = msgs.last?.role == "tool""#))
+        #expect(
+            chatView.contains("!tokenBudgetNoticeFired,\n                                midRunToolTail,")
+        )
     }
 
     @Test("Server settings cache changes clear loaded model runtime")
@@ -1065,15 +1222,67 @@ struct RuntimePolicySourceTests {
 
         #expect(controller.contains("loadedModelRuntimeInputsRequireRefresh"))
         #expect(controller.contains("previous.cache != next.cache"))
+        #expect(controller.contains("previous.memorySafety != next.memorySafety"))
         #expect(controller.contains("previous.multimodal != next.multimodal"))
         #expect(controller.contains("previous.mtp != next.mtp"))
         #expect(controller.contains("await ModelRuntime.shared.clearAll()"))
     }
 
-    @Test("Server settings concurrency UI does not advertise false restart or runtime wiring")
-    func serverSettingsConcurrencyUIDoesNotAdvertiseFalseRestartOrRuntimeWiring() throws {
+    @Test("Context and KV settings have one editable owner and report saved versus active policy")
+    func contextAndKVSettingsHaveOneTruthfulOwner() throws {
+        let chat = try Self.source("Views/Settings/ChatSettingsView.swift")
+        let cache = try Self.source(
+            "Views/Settings/ServerSettings/CacheSection.swift"
+        )
+        let memorySafety = try Self.source(
+            "Views/Settings/ServerSettings/MemorySafetySection.swift"
+        )
+        let tab = try Self.source(
+            "Views/Settings/ServerSettingsTabContent.swift"
+        )
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let http = try Self.source("Networking/HTTPHandler.swift")
+
+        #expect(!chat.contains(#"label: "Context Length""#))
+        #expect(!chat.contains("tempChatContextLength"))
+        #expect(
+            chat.contains(#"label: "Default Agent Max Output Tokens""#)
+        )
+        #expect(
+            chat.contains(
+                "This is not the model context window or KV retention."
+            )
+        )
+        #expect(
+            cache.contains(
+                #"label: "Unknown-Model Metadata Fallback (tokens)""#
+            )
+        )
+        #expect(
+            cache.contains(
+                #"label: "KV Retention Override (tokens)""#
+            )
+        )
+        #expect(cache.contains("Usable conversation budget"))
+        #expect(cache.contains("Active loaded policy"))
+        #expect(cache.contains("$draft.cache.defaultMaxKVSize"))
+        #expect(!memorySafety.contains("$draft.memorySafety.customDefaultMaxKVSize"))
+        #expect(tab.contains("requiresModelReload"))
+        #expect(tab.contains("unloadedModelCount"))
+        #expect(runtime.contains("activeCachePolicy"))
+        #expect(http.contains(#""active_cache_policy""#))
+        #expect(http.contains(#""context_policy""#))
+        #expect(http.contains(#""metadata_fallback_tokens""#))
+        #expect(http.contains(#""resolved_kv_retention_tokens""#))
+    }
+
+    @Test("Server settings concurrency UI exposes only runtime-wired controls")
+    func serverSettingsConcurrencyUIExposesOnlyRuntimeWiredControls() throws {
         let tab = try Self.source("Views/Settings/ServerSettingsTabContent.swift")
         let concurrency = try Self.source("Views/Settings/ServerSettings/ConcurrencySection.swift")
+        let store = try Self.source(
+            "Models/Configuration/ServerRuntimeSettingsStore.swift"
+        )
 
         guard let restartStart = tab.range(of: "private var pendingRestart: Bool"),
             let restartEnd = tab.range(
@@ -1088,11 +1297,22 @@ struct RuntimePolicySourceTests {
         #expect(!pendingRestart.contains("concurrency.maxConcurrentSequences"))
 
         #expect(concurrency.contains("`maxConcurrentSequences` hot-resizes"))
-        #expect(concurrency.contains("runtime consumers for these fields are not yet implemented"))
-        #expect(concurrency.contains("pins the BatchEngine to one active slot"))
+        #expect(concurrency.contains("pins each local model to one active job"))
         #expect(concurrency.contains("Concurrent Sessions"))
+        #expect(concurrency.contains("Shared with Main Chat Spawn"))
+        #expect(concurrency.contains("SpawnBatchConcurrencyContract.bounds"))
         #expect(concurrency.contains("Continuous Batching"))
         #expect(concurrency.contains("Prompt Prefill Chunk Size"))
+        #expect(!concurrency.contains("Planned Batching Controls"))
+        #expect(!concurrency.contains("Prefill Batch Size"))
+        #expect(!concurrency.contains("Completion Batch Size"))
+        #expect(!concurrency.contains("SMELT Mode"))
+        #expect(!concurrency.contains("$draft.concurrency.prefillBatchSize"))
+        #expect(!concurrency.contains("$draft.concurrency.completionBatchSize"))
+        #expect(!concurrency.contains("$draft.concurrency.smeltMode"))
+        #expect(store.contains("canonical.concurrency.smeltMode = .disabled"))
+        #expect(concurrency.contains("if trimmed.isEmpty"))
+        #expect(concurrency.contains("draft.concurrency.maxConcurrentSequences = nil"))
     }
 
     @Test("Tools settings panel separates wired parser overrides from planned host bridges")
@@ -1132,7 +1352,7 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("flexibleResidentBudgetBytes"))
         #expect(serverConfig.contains("defaultModelLoadRAMSoftThreshold"))
         #expect(serverConfig.contains("defaultModelLoadRAMHardThreshold"))
-        #expect(runtimeSettings.contains("modelLoadRAMThresholds()"))
+        #expect(runtimeSettings.contains("modelLoadRAMThresholds("))
         #expect(runtime.contains("unloadForFlexibleResidentBudget"))
         #expect(runtime.contains("policy == .manualMultiModel"))
         #expect(runtime.contains("flexible budget eviction"))
@@ -1174,10 +1394,10 @@ struct RuntimePolicySourceTests {
     /// With the default `maxBatchSize == 1`, vmlx can use its solo
     /// TokenIterator-backed fast path. Osaurus must not let a second solo
     /// request run prompt tokenization / `MLXArray.asArray(...)` while that
-    /// decode is still active. vmlx emits `.info` before its post-generation
-    /// cache store finishes, so Osaurus also must not release the solo lease
-    /// at `.info`; otherwise a second request can enter `prepareInput` while
-    /// the first one is still materializing safetensors cache tensors on Metal.
+    /// decode is still active. Osaurus must release the solo lease only after
+    /// the upstream stream completes, never from one event's relative order;
+    /// otherwise a second request can enter `prepareInput` while the first one
+    /// is still draining GPU or cache work.
     @Test("MLXBatchAdapter gates solo generation and propagates stream cancellation")
     func mlxBatchAdapterGatesSoloGenerationAndCancelsProducer() throws {
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
@@ -1205,6 +1425,27 @@ struct RuntimePolicySourceTests {
                 && adapter.contains("producerTask.cancel()"),
             "adapter stream termination must cancel the producer so UI Stop reaches vmlx's upstream AsyncStream termination handler"
         )
+        #expect(
+            adapter.contains("await engine.cancelActiveSoloGenerationAndWait()"),
+            "adapter cancellation must explicitly cancel and await the underlying vmlx solo producer before releasing its gate"
+        )
+    }
+
+    @Test("chat classifies tool rejection as errored cleanup")
+    func chatClassifiesToolRejectionAsErroredCleanup() throws {
+        let chat = try Self.source("Views/Chat/ChatView.swift")
+        let marker = try #require(chat.range(of: "if runResult.exit == .toolRejected"))
+        let cleanup = try #require(chat.range(of: "completeRunCleanup()"))
+        #expect(marker.lowerBound < cleanup.lowerBound || chat[marker.lowerBound...].contains("lastStreamError"))
+
+        let end =
+            chat.range(
+                of: "if runResult.exit == .overBudget",
+                range: marker.upperBound ..< chat.endIndex
+            )?.lowerBound ?? chat.endIndex
+        let block = String(chat[marker.lowerBound ..< end])
+        #expect(block.contains("lastStreamError = \"Tool call failed.\""))
+        #expect(block.contains("hidden completed-transcript warm-up"))
     }
 
     /// The terminal `.info` event carries stopReason, token counts, and
@@ -1257,6 +1498,28 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("iteration-cap wrap-up uses the typed chat stream decoder")
+    func iterationCapWrapUpCannotLeakStreamingSentinels() throws {
+        let chat = try Self.source("Views/Chat/ChatView.swift")
+        let start = try #require(
+            chat.range(of: "if runResult.exit == .iterationCapReached && isRunActive(runId)")
+        )
+        let end = try #require(
+            chat.range(
+                of: "} catch is CancellationError {",
+                range: start.upperBound ..< chat.endIndex
+            )
+        )
+        let block = String(chat[start.lowerBound ..< end.lowerBound])
+
+        #expect(block.contains("try await processStreamDeltas("))
+        #expect(block.contains("assistantTurn = finalTurn"))
+        #expect(block.contains("AgentLoopBudget.appendingTransientNotices("))
+        #expect(block.contains("AgentToolLoop.iterationCapWrapUpNotice"))
+        #expect(!block.contains("let processor = StreamingDeltaProcessor("))
+        #expect(!block.contains("processor.receiveDelta(delta)"))
+    }
+
     @Test("ChatEngine honors tool choice none by bypassing local tool dispatch")
     func chatEngineHonorsToolChoiceNoneBypassingLocalToolDispatch() throws {
         let chatEngine = try Self.source("Services/Chat/ChatEngine.swift")
@@ -1295,7 +1558,6 @@ struct RuntimePolicySourceTests {
     @Test("Background fallback LLM does not force no-think model options")
     func backgroundFallbackLLMDoesNotForceNoThinkOptions() throws {
         let coreModel = try Self.source("Services/Inference/CoreModelService.swift")
-        let greeting = try Self.source("Services/Chat/GenerativeGreetingService.swift")
 
         #expect(
             coreModel.contains("modelOptions: [String: ModelOptionValue]"),
@@ -1306,26 +1568,51 @@ struct RuntimePolicySourceTests {
             "CoreModelService.generate must thread modelOptions into GenerationParameters before routing to MLX/remote services"
         )
         #expect(
-            !greeting.contains("modelOptions: [\"reasoningEffort\": .string(\"no_think\")]"),
-            "GenerativeGreetingService must not force no_think for internal greeting calls; model generation_config/runtime defaults remain authoritative"
+            coreModel.contains("modelOptions: [:]"),
+            "CoreModelService's public generation path must default to no synthetic model options so model generation_config/runtime defaults remain authoritative"
+        )
+        #expect(
+            !coreModel.contains("modelOptions: [\"reasoningEffort\": .string(\"no_think\")]"),
+            "CoreModelService must not force no_think for background calls"
         )
     }
 
-    @Test("Thinking chip toggles semantic thinking state, not raw inverted booleans")
-    func thinkingChipTogglesSemanticThinkingState() throws {
+    @Test("Thinking control persists semantic thinking state, not raw inverted booleans")
+    func thinkingControlPersistsSemanticThinkingState() throws {
         let floatingInput = try Self.source("Views/Chat/FloatingInputCard.swift")
+        let modelPicker = try Self.source("Views/Model/ModelPickerView.swift")
 
         #expect(
-            floatingInput.contains("ModelProfileRegistry.thinkingEnabled(for: $0, values: activeModelOptions)"),
-            "FloatingInputCard.toggleThinking must derive the current semantic thinking state from the registry so inverted options like disableThinking do not flip the wrong way"
+            floatingInput.contains("ModelProfileRegistry.thinkingEnabled("),
+            "FloatingInputCard's picker Thinking control must derive the effective semantic thinking state from the registry so inverted options like disableThinking do not flip the wrong way"
         )
         #expect(
-            floatingInput.contains("let newVal = thinkingOpt?.inverted == true ? !newEnabled : newEnabled"),
-            "FloatingInputCard.toggleThinking must write the profile-specific stored value from the semantic enabled state"
+            floatingInput.contains("ModelProfileRegistry.thinkingStoredOption("),
+            "FloatingInputCard must persist thinking through the registry's single semantic-to-stored conversion point instead of re-deriving the inverted bool at the call site"
+        )
+        #expect(
+            !floatingInput.contains("inverted == true ?"),
+            "The semantic-to-stored conversion lives in ModelProfileRegistry.thinkingStoredOption; call sites must not re-implement the inversion"
         )
         #expect(
             !floatingInput.contains("let current = activeModelOptions[id]?.boolValue ?? false"),
-            "Thinking chip must not toggle the raw stored bool directly; that reintroduces first-click explicit no-thinking for inverted profiles"
+            "The Thinking control must not toggle the raw stored bool directly; that reintroduces first-click explicit no-thinking for inverted profiles"
+        )
+        #expect(
+            !floatingInput.contains("thinkingToggleChip"),
+            "The ordinary chat footer must not render a second Thinking toggle; the user-facing switch lives in the model picker's Model Options section"
+        )
+        #expect(
+            modelPicker.contains("Text(\"Model Options\", bundle: .module)"),
+            "ModelPickerView must visibly label the per-model option section where Thinking is controlled"
+        )
+        #expect(
+            modelPicker.contains("thinkingOptionRow(thinking)"),
+            "The model picker must render the semantic Thinking row in Model Options"
+        )
+        #expect(
+            floatingInput.contains("persistThinkingOverride(enabled, for: model)"),
+            "The picker Thinking control must persist through the semantic registry path"
         )
     }
 
@@ -1455,6 +1742,35 @@ struct RuntimePolicySourceTests {
         #expect(!chatCompletions.contains("composeChatContext("))
         #expect(!chatCompletions.contains("injectMemoryPrefix("))
         #expect(!chatCompletions.contains("mergeAgentContextTools("))
+    }
+
+    @Test("HTTP agent context uses the native composed toolset without re-injection")
+    func httpAgentContextUsesNativeComposedToolset() throws {
+        let handler = try Self.source("Networking/HTTPHandler.swift")
+        let enrichment = try Self.functionBody(
+            "private static func enrichWithAgentContext(",
+            in: handler
+        )
+
+        #expect(enrichment.contains("SystemPromptComposer.composeChatContext("))
+        #expect(enrichment.contains("mergeAgentContextTools(\n            composed.tools,"))
+        #expect(!enrichment.contains("visibleDelegationToolNames("))
+        #expect(!enrichment.contains("specs(forTools: Array(visibleDelegation))"))
+    }
+
+    @Test("Capability controls show readiness and expose Default Image and AppleScript")
+    func capabilityControlsExposeReadiness() throws {
+        let agents = try Self.source("Views/Agent/AgentsView.swift")
+        let mainChat = try Self.source("Views/Settings/SubagentSettingsSection.swift")
+        let browser = try Self.source("Views/Settings/BrowserSettingsView.swift")
+
+        #expect(agents.contains("private func subagentReadiness("))
+        #expect(agents.contains(#"\(callableSubagentCount) \(L("callable"))"#))
+        #expect(agents.contains("readiness.statusMessage"))
+        #expect(mainChat.contains("$configuration.imageDelegationEnabled"))
+        #expect(mainChat.contains("$configuration.appleScriptDelegationEnabled"))
+        #expect(mainChat.contains("mainSpawnReadiness"))
+        #expect(browser.contains("can only be enabled per custom agent"))
     }
 
     @Test("Open Responses endpoint has v1 alias and does not inject agent context")
@@ -1706,6 +2022,72 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("explicit model unload drains its generation wrapper before waiting for the lease")
+    func explicitModelUnloadDrainsGenerationBeforeLease() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let start = try #require(runtime.range(of: "private func unloadClaimed("))
+        let end = try #require(
+            runtime.range(
+                of: "private func finishResidencyUnloadClaim(",
+                range: start.upperBound ..< runtime.endIndex
+            )
+        )
+        let unloadBody = String(runtime[start.lowerBound ..< end.lowerBound])
+
+        let shutdown = try #require(
+            unloadBody.range(of: "await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)")
+        )
+        let cancel = try #require(
+            unloadBody.range(
+                of: "await cancelActiveGeneration(for: name)",
+                range: shutdown.upperBound ..< unloadBody.endIndex
+            )
+        )
+        let leaseWait = try #require(
+            unloadBody.range(
+                of: "await ModelLease.shared.waitForZero(",
+                range: cancel.upperBound ..< unloadBody.endIndex
+            )
+        )
+
+        #expect(shutdown.lowerBound < cancel.lowerBound)
+        #expect(cancel.lowerBound < leaseWait.lowerBound)
+        #expect(
+            unloadBody.components(separatedBy: "await cancelActiveGeneration(for: name)").count == 2,
+            "Explicit unload must cancel the selected model exactly once"
+        )
+    }
+
+    @Test("model cache unload UI exposes progress and fail-closed result")
+    func modelCacheUnloadUIExposesProgressAndFailure() throws {
+        let service = try Self.source("Services/Inference/MLXService.swift")
+        let windows = try Self.source("Managers/Chat/ChatWindowManager.swift")
+        let chat = try Self.source("Views/Chat/ChatView.swift")
+        let warmup = try Self.source("Services/Chat/ChatWarmupController.swift")
+        let view = try Self.source("Views/Model/ModelCacheInspectorView.swift")
+
+        #expect(service.contains("leaseDrainTimeoutSeconds: Double = 5"))
+        #expect(service.contains(") async -> Bool"))
+        #expect(service.contains("leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds"))
+        #expect(
+            service.contains(
+                "ChatWindowManager.shared.prepareSessionsForExplicitModelUnload(named: name)"
+            )
+        )
+        #expect(windows.contains("func prepareSessionsForExplicitModelUnload(named name: String)"))
+        #expect(windows.contains("session.prepareForExplicitModelUnload()"))
+        #expect(chat.contains("func prepareForExplicitModelUnload()"))
+        #expect(chat.contains("if isSendActiveForComposer"))
+        #expect(chat.contains("stop()"))
+        #expect(warmup.contains("func cancelPendingWorkForExplicitModelUnload()"))
+        #expect(view.contains("isUnloading: unloadingNames.contains(item.name)"))
+        #expect(view.contains("Text(isUnloading ? \"Unloading…\" : \"Unload\", bundle: .module)"))
+        #expect(view.contains(".disabled(isUnloading)"))
+        #expect(view.contains("guard didUnload else"))
+        #expect(view.contains("model-cache-unload-failure"))
+        #expect(view.contains(".modelRuntimeResidencyChanged"))
+    }
+
     /// Lock the cold-load drain discipline. Swift task cancellation is
     /// cooperative; a cancelled `loadModelContainer` can still be inside MLX
     /// weight materialization. Starting a replacement load before the old task
@@ -1804,6 +2186,19 @@ struct RuntimePolicySourceTests {
             ensureShutdown.lowerBound < clearRuntime.lowerBound,
             "network/VM teardown must run before the abandonable MLX clearAll tail"
         )
+
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let clearAllBody = try Self.functionBody("func clearAll(quit:", in: runtime)
+        let clearCancel = try #require(
+            clearAllBody.range(of: "await cancelAllGenerations()")
+        )
+        let awaitIdleTeardown = try #require(
+            clearAllBody.range(of: "let idleTeardownTasks = idleResidencyTeardowns.values.map")
+        )
+        #expect(
+            clearCancel.lowerBound < awaitIdleTeardown.lowerBound,
+            "clearAll must cancel generations before awaiting pre-commit idle teardown tasks"
+        )
     }
 
     @Test("NIO server stop reports completion so the group isn't dropped mid-shutdown")
@@ -1822,15 +2217,19 @@ struct RuntimePolicySourceTests {
         )
         let body = String(controller[start.lowerBound ..< end.lowerBound])
 
-        // On timeout the actor (and its EventLoopGroup) must stay rooted — only
-        // drop it when shutdown actually completed (issue #860).
+        // Quit-path drain must be bounded (`gracefully: false`) so a
+        // lingering SSE child channel can't stall quit. Server lifecycles
+        // now run on the process-wide shared EventLoopGroup which is never
+        // shut down, so there is no mid-shutdown group to keep rooted (the
+        // issue #860 "stay rooted on timeout" contract no longer applies)
+        // and the actor is always released.
         #expect(
-            body.contains("let completed = await server.stop(gracefully: false)"),
-            "ensureShutdown must capture whether the bounded NIO shutdown completed"
+            body.contains("await server.stop(gracefully: false)"),
+            "ensureShutdown must run a bounded (non-graceful) NIO drain on the quit path"
         )
         #expect(
-            body.contains("if completed {") && body.contains("serverActor = nil"),
-            "ensureShutdown must only release serverActor when the group fully shut down"
+            body.contains("serverActor = nil"),
+            "ensureShutdown must release the server actor after the bounded drain"
         )
         #expect(
             body.contains("BonjourAdvertiser.shared.stopAdvertising()"),
@@ -1861,7 +2260,10 @@ struct RuntimePolicySourceTests {
         let serverBind = try #require(launchBody.range(of: "await serverStartupTask.value"))
         let keychainBranch = try #require(launchBody.range(of: "if keychainDisabledTestMode {"))
         let safeModeBranch = try #require(
-            launchBody.range(of: "} else if !shouldLoadPluginsAtStartup {", range: keychainBranch.upperBound ..< launchBody.endIndex)
+            launchBody.range(
+                of: "} else if !shouldLoadPluginsAtStartup {",
+                range: keychainBranch.upperBound ..< launchBody.endIndex
+            )
         )
         let keychainStartupComplete = try #require(
             launchBody.range(of: startupCompleteCall, range: keychainBranch.upperBound ..< safeModeBranch.lowerBound)
@@ -1869,7 +2271,10 @@ struct RuntimePolicySourceTests {
         let runningCheck = try #require(launchBody.range(of: "if serverController.isRunning {"))
         let completionHook = try #require(launchBody.range(of: "completeFirstSuccessfulServerStart()"))
         let handledStartupErrorComplete = try #require(
-            launchBody.range(of: "LaunchGuard.markStartupComplete()", range: completionHook.upperBound ..< launchBody.endIndex)
+            launchBody.range(
+                of: "LaunchGuard.markStartupComplete()",
+                range: completionHook.upperBound ..< launchBody.endIndex
+            )
         )
         let isRunningSink = try #require(observerBody.range(of: "serverController.$isRunning"))
         let runningObserverHook = try #require(
@@ -1883,7 +2288,9 @@ struct RuntimePolicySourceTests {
             successfulStartBody.range(of: "guard !hasCompletedFirstServerStartWork else { return }")
         )
         let startupComplete = try #require(successfulStartBody.range(of: startupCompleteCall))
-        let pluginLoad = try #require(successfulStartBody.range(of: "await PluginManager.shared.loadAll()"))
+        let pluginLoad = try #require(
+            successfulStartBody.range(of: "await PluginManager.shared.ensurePromptCatalogReady()")
+        )
         let pluginRepositoryRefresh = try #require(
             successfulStartBody.range(of: "PluginRepositoryService.shared.startBackgroundRefresh()")
         )
@@ -1986,11 +2393,28 @@ struct RuntimePolicySourceTests {
         #expect(appDelegate.contains("OSAURUS_KEYCHAIN_FREE_SHOW_UI"))
         #expect(appDelegate.contains("Keychain disabled by OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1"))
         #expect(appDelegate.contains("if keychainDisabledTestMode {"))
-        #expect(
-            appDelegate.contains(
-                "if !keychainDisabledTestMode {\n                await MCPProviderManager.shared.connectEnabledProviders()"
+        // The provider connects stay behind the keychain-disabled gate and
+        // run concurrently (one slow MCP server must not delay every model
+        // provider).
+        let mcpConnect = try #require(
+            appDelegate.range(
+                of: "async let mcpConnects: Void = MCPProviderManager.shared.connectEnabledProviders()"
             )
         )
+        let remoteConnect = try #require(
+            appDelegate.range(
+                of:
+                    "async let remoteConnects: Void =\n                    RemoteProviderManager.shared.connectEnabledProviders()"
+            )
+        )
+        let connectGate = try #require(
+            appDelegate.range(
+                of:
+                    "if !keychainDisabledTestMode {\n                // MCP and remote-provider startup connects run concurrently:"
+            )
+        )
+        #expect(connectGate.lowerBound < mcpConnect.lowerBound)
+        #expect(mcpConnect.lowerBound < remoteConnect.lowerBound)
         #expect(
             appDelegate.contains(
                 "if !keychainDisabledTestMode && !LaunchGuard.shouldSkip(.sandbox) {\n            SandboxToolRegistrar.shared.start()"
@@ -2012,9 +2436,13 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("loadConfiguration: mtpPlan.loadConfiguration"))
         #expect(runtime.contains("resolvedLoadConfiguration("))
         #expect(runtime.contains("resolveMemorySafetyLoadPlan("))
-        #expect(runtime.contains("settings.resolvedMemorySafetyPlan("))
+        #expect(runtime.contains("ServerRuntimeSettingsStore.resolvedMemorySafetyPlan("))
         #expect(runtime.contains("baseLoadConfiguration: loadConfiguration"))
-        #expect(runtime.contains("request: nil"))
+        #expect(runtime.contains("request: request"))
+        #expect(runtime.contains("VMLXMemoryRequestEstimate("))
+        #expect(runtime.contains("estimatedMemorySafetyWorkingSetBytes("))
+        #expect(runtime.contains("lastMemorySafetyLoadDecision = MemorySafetyLoadDecision("))
+        #expect(runtime.contains("if !blockingIssueMessages.isEmpty"))
         #expect(runtime.contains("memorySafetySummary: memorySafetyPlan.displaySummary"))
         #expect(runtime.contains("base: .osaurusProduction"))
         #expect(runtime.contains("baseLoadConfiguration: .osaurusProduction"))
@@ -2063,7 +2491,11 @@ struct RuntimePolicySourceTests {
             "Weight-size preflight must count known numbered shards and fall back to a shallow safetensors sum so unknown layouts cannot report 0 bytes."
         )
 
-        let loadStart = try #require(runtime.range(of: "func loadContainer(id: String, name: String)"))
+        // Anchor on the name only — the parameter list grows (it gained
+        // `intent:` for residency safety) and pinning the full signature makes
+        // this preflight-ordering test fail for reasons that have nothing to do
+        // with preflight ordering.
+        let loadStart = try #require(runtime.range(of: "func loadContainer("))
         let loadEnd = try #require(
             runtime.range(of: "let loadID = allocateLoadingTaskID()", range: loadStart.upperBound ..< runtime.endIndex)
         )
@@ -2078,8 +2510,30 @@ struct RuntimePolicySourceTests {
             loadPreflight.contains("let weightsBytes = Self.computeWeightsSizeBytes(at: localURL, modelName: name)")
         )
         #expect(
-            loadPreflight.contains("let loadFootprintBytes = Self.effectiveLoadFootprintBytes("),
-            "Routed mmap/JANGTQ loads must feed the RAM gate with vMLX's effective hot working set, not the whole safetensors shard total."
+            loadPreflight.contains("? weightsBytes")
+                && loadPreflight.contains(": Self.effectiveLoadFootprintBytes("),
+            "Routed mmap/JANGTQ loads must feed the RAM gate with vMLX's effective hot working set; materialized near-RAM-scale loads must budget the full weight size instead."
+        )
+        #expect(
+            loadPreflight.contains(
+                "let preliminaryMemorySafetyPlan = Self.resolveMemorySafetyLoadPlan("
+            )
+                && loadPreflight.contains(
+                    "!preliminaryMemorySafetyPlan.loadConfiguration.useMmapSafetensors"
+                )
+                && loadPreflight.contains(
+                    "refuseOnShortfall: willMaterialize && !automaticMemoryLimitsDisabled"
+                )
+                && loadPreflight.contains(
+                    "ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled("
+                ),
+            "Materialization and load refusal must follow the same resolved Memory Safety plan and explicit No Automatic Limits setting as the settings UI."
+        )
+        #expect(
+            loadPreflight.contains("request: VMLXMemoryRequestEstimate(")
+                && loadPreflight.contains("workingSetBytes: estimatedWorkingSetBytes")
+                && loadPreflight.contains("throw NSError("),
+            "Strict/custom-budget blocking issues must be enforced from the real pre-load working-set estimate before vMLX begins loading."
         )
         // Feasibility gate + concurrent-load reservation must run before the
         // load task is allocated, so a cold load can't bypass RAM accounting.
@@ -2100,7 +2554,7 @@ struct RuntimePolicySourceTests {
             "All policies must record the pre-load RAM feasibility assessment before vmlx starts loading."
         )
         #expect(
-            runtime.contains("ServerRuntimeSettingsStore.modelLoadRAMThresholds()")
+            runtime.contains("ServerRuntimeSettingsStore.modelLoadRAMThresholds(")
                 && !runtime.contains("ramHardThreshold = 0.90")
                 && !runtime.contains("ramSoftThreshold = 0.70")
                 && !runtime.contains("* 0.70"),
@@ -2144,6 +2598,53 @@ struct RuntimePolicySourceTests {
         #expect(health.contains("\"available_memory_bytes\": f.availableMemoryBytes"))
         #expect(health.contains("\"required_available_bytes\": f.requiredAvailableBytes"))
         #expect(health.contains("\"incoming_load_footprint_bytes\": f.incomingLoadFootprintBytes"))
+        #expect(
+            health.contains("\"automatic_memory_limits_disabled\":")
+                && health.contains("f.automaticMemoryLimitsDisabled")
+        )
+    }
+
+    @Test("coalesced model load installs cache policy before publishing its holder")
+    func modelLoadInstallsCacheCoordinatorBeforePublication() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let taskStart = try #require(
+            runtime.range(of: "let task = Task<SessionHolder, Error>")
+        )
+        let taskEnd = try #require(
+            runtime.range(
+                of: "loadingTasks[name] = LoadingTaskRecord",
+                range: taskStart.upperBound ..< runtime.endIndex
+            )
+        )
+        let taskBody = String(runtime[taskStart.lowerBound ..< taskEnd.lowerBound])
+        let install = try #require(
+            taskBody.range(of: "await Self.installCacheCoordinator(on: holder)")
+        )
+        let returnHolder = try #require(
+            taskBody.range(of: "return holder", range: install.upperBound ..< taskBody.endIndex)
+        )
+
+        #expect(install.lowerBound < returnHolder.lowerBound)
+        #expect(
+            runtime.contains(
+                "private nonisolated static func installCacheCoordinator(on holder: SessionHolder) async"
+            )
+        )
+
+        let finishStart = try #require(
+            runtime.range(of: "private func finishLoadedContainer(")
+        )
+        let finishEnd = try #require(
+            runtime.range(
+                of: "/// Unload `name`",
+                range: finishStart.upperBound ..< runtime.endIndex
+            )
+        )
+        let finishBody = String(runtime[finishStart.lowerBound ..< finishEnd.lowerBound])
+        #expect(
+            !finishBody.contains("installCacheCoordinator"),
+            "Actor-reentrant post-load finalization must not publish a holder before its cache coordinator is attached."
+        )
     }
 
     @Test("MiMo and N2 text runtime metadata avoids VLM bundle reads")
@@ -2234,12 +2735,17 @@ struct RuntimePolicySourceTests {
 
         let diagnosticsSnapshot = try Self.source("Services/ModelRuntime/BatchDiagnosticsSnapshot.swift")
         #expect(diagnosticsSnapshot.contains("nativeMTPDepthSummary"))
+        #expect(diagnosticsSnapshot.contains("configuredEngineCapacity"))
+        #expect(diagnosticsSnapshot.contains("engineCapacitySummary"))
         #expect(diagnosticsSnapshot.contains("prefixHits"))
+        #expect(diagnosticsSnapshot.contains("pagedEvictions"))
         #expect(diagnosticsSnapshot.contains("ssmCompanionReDerives"))
 
         let diagnosticsView = try Self.source("Views/Settings/ServerSettings/BatchDiagnosticsView.swift")
         #expect(diagnosticsView.contains("\"Native MTP\""))
+        #expect(diagnosticsView.contains("\"Configured engine capacity\""))
         #expect(diagnosticsView.contains("\"Prefix hits / misses\""))
+        #expect(diagnosticsView.contains("\"Paged evictions\""))
         #expect(diagnosticsView.contains("\"SSM hits / misses / re-derives\""))
 
         let httpHandler = try Self.source("Networking/HTTPHandler.swift")
@@ -2265,7 +2771,7 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("MLXBatchAdapter.recordPendingEffectiveGenerationSettings("))
     }
 
-    @Test("admin cache stats exposes resolved memory safety status without load refusal")
+    @Test("admin cache stats exposes resolved and per-load memory safety status")
     func adminCacheStatsExposesResolvedMemorySafetyStatus() throws {
         let httpHandler = try Self.source("Networking/HTTPHandler.swift")
         let runtimeSettingsTests = try Self.source("Tests/Networking/ServerRuntimeSettingsStoreTests.swift")
@@ -2273,15 +2779,19 @@ struct RuntimePolicySourceTests {
         #expect(httpHandler.contains("@preconcurrency import MLXLMCommon"))
         #expect(httpHandler.contains("let runtimeSettings = ServerRuntimeSettingsStore.snapshot()"))
         #expect(httpHandler.contains("let memoryStatus = MemoryStatus.snapshot()"))
-        #expect(httpHandler.contains("resolvedMemorySafetyPlan("))
+        #expect(httpHandler.contains("ServerRuntimeSettingsStore.resolvedMemorySafetyPlan("))
         #expect(httpHandler.contains("\"memory_safety\""))
         #expect(httpHandler.contains("\"mode\": memorySafety.mode.rawValue"))
         #expect(httpHandler.contains("\"slider\": memorySafety.slider"))
         #expect(httpHandler.contains("\"allowed\": plan.blockingIssues.isEmpty"))
         #expect(httpHandler.contains("\"load_configuration\": loadConfigurationJSONObject(plan.loadConfiguration)"))
+        #expect(httpHandler.contains("\"deepseek_v4_activation_qat\""))
         #expect(httpHandler.contains("\"memory_status\": memoryStatusJSONObject(memoryStatus)"))
         #expect(httpHandler.contains("\"warnings\": plan.warnings"))
         #expect(httpHandler.contains("\"blocking_issues\": plan.blockingIssues.map(settingsIssueJSONObject)"))
+        #expect(httpHandler.contains("lastMemorySafetyLoadDecisionSnapshot()"))
+        #expect(httpHandler.contains("\"last_load_decision\""))
+        #expect(httpHandler.contains("\"estimated_working_set_bytes\""))
         #expect(httpHandler.contains("case .disabled:"))
         #expect(httpHandler.contains("case .enabled(let coldFraction):"))
         #expect(httpHandler.contains("case .auto(let envFallback):"))
@@ -2419,9 +2929,8 @@ struct RuntimePolicySourceTests {
     func modelRuntimeWiresIdleResidencyAroundLeases() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
         let manager = try Self.source("Services/ModelRuntime/ModelResidencyManager.swift")
-
         #expect(runtime.contains("ModelResidencyManager.shared.markActive(modelName: modelName)"))
-        #expect(runtime.contains("ModelResidencyManager.shared.markActive(modelName: holder.name)"))
+        #expect(runtime.contains("await markModelActiveForResidency(holder.name)"))
         #expect(runtime.contains("private func scheduleIdleResidency(for modelName: String) async"))
         #expect(runtime.contains("ServerConfigurationStore.load()?.modelIdleResidencyPolicy"))
         #expect(runtime.contains("ModelResidencyManager.shared.scheduleIdleUnload"))
@@ -2430,6 +2939,47 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("await ModelResidencyManager.shared.cancelAll()"))
         #expect(manager.contains("guard await leaseCount(modelName) == 0"))
         #expect(manager.contains("guard await isResident(modelName)"))
+
+        // Exact/owned teardown lives in the claimed helper so handoff ABA
+        // guards and idle-decision commit ordering share one destructive path.
+        let unloadBody = try Self.functionBody("private func unloadClaimed(", in: runtime)
+        let idleBranch = try #require(unloadBody.range(of: "if reason == .idlePolicy, let idleDecisionID"))
+        let finalDecisionGate = try #require(
+            unloadBody.range(
+                of: "guard inFlightIdleResidencyDecisions[name] == idleDecisionID else {",
+                range: idleBranch.upperBound ..< unloadBody.endIndex
+            )
+        )
+        let commit = try #require(
+            unloadBody.range(
+                of: "committedIdleResidencyDecisions[name] = idleDecisionID",
+                range: finalDecisionGate.upperBound ..< unloadBody.endIndex
+            )
+        )
+        let idleShutdown = try #require(
+            unloadBody.range(
+                of: "await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)",
+                range: commit.upperBound ..< unloadBody.endIndex
+            )
+        )
+        #expect(finalDecisionGate.lowerBound < commit.lowerBound)
+        #expect(commit.lowerBound < idleShutdown.lowerBound)
+
+        let markActiveBody = try Self.functionBody(
+            "private func markModelActiveForResidency(",
+            in: runtime
+        )
+        let committedWait = try #require(markActiveBody.range(of: "await teardown.task.value"))
+        let cancelPrecommit = try #require(
+            markActiveBody.range(
+                of: "inFlightIdleResidencyDecisions.removeValue(forKey: modelName)"
+            )
+        )
+        let managerMark = try #require(
+            markActiveBody.range(of: "await ModelResidencyManager.shared.markActive")
+        )
+        #expect(committedWait.lowerBound < managerMark.lowerBound)
+        #expect(cancelPrecommit.lowerBound < managerMark.lowerBound)
     }
 
     @Test("RuntimeConfig snapshot does not hop to MainActor before model load")
@@ -2459,18 +3009,221 @@ struct RuntimePolicySourceTests {
         #expect(health.contains("\"idle_unload_at\""))
         #expect(health.contains("\"idle_seconds_remaining\""))
         #expect(windows.contains("modelIdleResidencyPolicy"))
+        let focusBody = try Self.functionBody(
+            "fileprivate func windowDidBecomeKey(id: UUID)",
+            in: windows
+        )
+        #expect(focusBody.contains("windowStates[id]?.session.notifySessionBecameActive()"))
+        let activationBody = try Self.functionBody(
+            "func notifySessionBecameActive()",
+            in: try Self.source("Services/Chat/ChatSessionWarmup.swift")
+        )
+        #expect(activationBody.contains("handleSessionBecameActive(session: self)"))
+        let warmup = try Self.source("Services/Chat/ChatWarmupController.swift")
+        let activationRearmBody = try Self.functionBody(
+            "func handleSessionBecameActive(",
+            in: warmup
+        )
+        #expect(activationRearmBody.contains("sessionActivation = Task"))
+        #expect(
+            activationRearmBody.contains(
+                "let activation = await self.chatActivationResidencySnapshot(selectedModel)"
+            )
+        )
+        #expect(activationRearmBody.contains("self.sessionActivationID == id"))
+        #expect(activationRearmBody.contains("self.switchEpoch == epoch"))
+        #expect(activationRearmBody.contains("activation.residency"))
+        #expect(activationRearmBody.contains("allowDuplicateRevision: true"))
+        #expect(activationRearmBody.contains("activation.recoverableIdleDecisionID"))
+        #expect(activationRearmBody.contains("activationRecovery = ActivationRecovery("))
+        #expect(
+            activationRearmBody.contains(
+                "revalidateResidencyAfterDebounce: true"
+            )
+        )
+        let removalRecoveryBody = try Self.functionBody(
+            "func handleRuntimeResidencyChanged(",
+            in: warmup
+        )
+        #expect(removalRecoveryBody.contains("snapshot: ModelRuntimeResidencySnapshot"))
+        #expect(
+            removalRecoveryBody.contains(
+                "guard acceptResidencySnapshot(snapshot, selectedModel: selectedModel) else { return }"
+            )
+        )
+        #expect(removalRecoveryBody.contains("snapshot.reason == .idlePolicy"))
+        #expect(removalRecoveryBody.contains("recovery?.idleDecisionID == snapshot.idleDecisionID"))
+        #expect(removalRecoveryBody.contains("let matchesActivationIdleDecision = isSessionActive"))
+        #expect(
+            removalRecoveryBody.contains(
+                "if matchesActivationIdleDecision,\n            state == .warming,\n            scheduledActivationID != nil"
+            )
+        )
+        #expect(
+            removalRecoveryBody.contains(
+                "revalidateResidencyAfterDebounce: true"
+            )
+        )
+        let revisionGateBody = try Self.functionBody(
+            "private func acceptResidencySnapshot(",
+            in: warmup
+        )
+        #expect(revisionGateBody.contains("snapshot.revision < lastResidencyRevision"))
+        #expect(
+            revisionGateBody.contains(
+                "snapshot.revision == lastResidencyRevision, !allowDuplicateRevision"
+            )
+        )
+        #expect(revisionGateBody.contains("lastResidencyRevision = max("))
+        let activeWindowBody = try Self.functionBody(
+            "func isChatWindowActive(id: UUID)",
+            in: windows
+        )
+        #expect(activeWindowBody.contains("NSApp.isActive"))
+        #expect(activeWindowBody.contains("window.isVisible && window.isKeyWindow"))
+        let chatView = try Self.source("Views/Chat/ChatView.swift")
+        #expect(chatView.contains("ChatWindowManager.shared.isChatWindowActive"))
+        #expect(chatView.contains("warmupController.handleRuntimeResidencyChanged("))
         // Window close must branch on the full policy: immediate GC for
         // `.immediately`, short-grace acceleration for `.afterSeconds`
         // (chat-sourced models only, with a fire-time reopen guard), and no
         // action for `.never`.
         #expect(windows.contains("case .immediately:"))
+        #expect(windows.contains("await ModelRuntime.shared.unloadModelsNotIn(active)"))
         #expect(windows.contains("case .afterSeconds:"))
         #expect(windows.contains("accelerateIdleUnloadAfterChatClose"))
         #expect(
-            windows.contains("let found = ModelManager.findInstalledModel(named: model)")
+            windows.contains("let found = ModelManager.findInstalledModelFromCache(named: model)")
                 && windows.contains("return found.name"),
-            "Chat UI active-model cleanup must use ModelRuntime's canonical repo-tail cache key, not the raw picker id."
+            "Chat UI active-model cleanup must use ModelRuntime's canonical repo-tail cache key, not the raw picker id (cache-only lookup: this runs on the main actor)."
         )
+    }
+
+    /// A dispatched background run (schedule, plugin, HTTP dispatch, watcher)
+    /// must release its residency claim when it reaches a terminal state and
+    /// re-arm warm-up on the active chat window. Without this, the finished
+    /// run's model sat resident until the full idle policy expired while every
+    /// speculative chat warm-up was refused ("a different model is resident"),
+    /// leaving an open chat cold indefinitely.
+    @Test("background task completion releases residency and re-arms chat warm-up")
+    func backgroundTaskCompletionReleasesResidencyAndRearmsWarmup() throws {
+        let tasks = try Self.source("Managers/BackgroundTaskManager.swift")
+
+        // Both terminal funnels must trigger the release: completion/failure
+        // and cancellation.
+        let completedBody = try Self.functionBody(
+            "private func markCompleted(",
+            in: tasks
+        )
+        #expect(completedBody.contains("releaseResidencyAndRearmChatWarmup(after: state)"))
+        let cancelBody = try Self.functionBody(
+            "public func cancelTask(",
+            in: tasks
+        )
+        #expect(cancelBody.contains("releaseResidencyAndRearmChatWarmup(after: state)"))
+
+        let releaseBody = try Self.functionBody(
+            "private func releaseResidencyAndRearmChatWarmup(",
+            in: tasks
+        )
+        #expect(releaseBody.contains("state.source.inferenceSource"))
+        #expect(releaseBody.contains("taskSource != .chatUI"))
+        #expect(releaseBody.contains("accelerateIdleUnloadAfterBackgroundTaskCompleted"))
+        #expect(releaseBody.contains("ChatWindowManager.shared.activeLocalModelNames()"))
+        #expect(releaseBody.contains("rearmChatWarmupAfterBackgroundWork()"))
+
+        // The runtime side keeps every chat-close protection: policy gate,
+        // source-class ownership, keep-set, lease drain, pending idle
+        // decision, and the fire-time re-check.
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let acceleratedReleaseBody = try Self.functionBody(
+            "func accelerateIdleUnloadAfterBackgroundTaskCompleted(",
+            in: runtime
+        )
+        #expect(acceleratedReleaseBody.contains("guard taskSource != .chatUI else { return }"))
+        #expect(acceleratedReleaseBody.contains("guard case .afterSeconds = policy else { return }"))
+        #expect(acceleratedReleaseBody.contains("guard !activeNames.contains(name) else { return }"))
+        #expect(
+            acceleratedReleaseBody.contains("guard lastUseSource[name] == taskSource else { return }")
+        )
+        #expect(acceleratedReleaseBody.contains("ModelLease.shared.count(for: name) == 0"))
+        #expect(acceleratedReleaseBody.contains("pendingIdleResidencyDecisions[name]"))
+        #expect(acceleratedReleaseBody.contains("shouldStillUnload"))
+
+        // Only the visible key chat re-arms; hidden windows warm on focus.
+        let windows = try Self.source("Managers/Chat/ChatWindowManager.swift")
+        let rearmBody = try Self.functionBody(
+            "func rearmChatWarmupAfterBackgroundWork()",
+            in: windows
+        )
+        #expect(rearmBody.contains("isChatWindowActive(id: id)"))
+        #expect(rearmBody.contains("notifySessionBecameActive()"))
+
+        // The freed-slot rewarm closes the different-model race (rearm can
+        // fire before the release unload lands): the residency notification
+        // for the idle removal that empties the runtime schedules the
+        // warm-up, and only when the removed model was not the chat's own.
+        let warmup = try Self.source("Services/Chat/ChatWarmupController.swift")
+        let removalBody = try Self.functionBody(
+            "func handleRuntimeResidencyChanged(",
+            in: warmup
+        )
+        #expect(removalBody.contains("guard !wasSelectedModelResident,"))
+        #expect(removalBody.contains("snapshot.names.isEmpty"))
+    }
+
+    /// Management-window deeplink reuse swaps the hosting controller of a
+    /// live NSWindow. A SwiftUI `.sheet`'s presentation window stays attached
+    /// through that swap and keeps observing parent frame changes; when the
+    /// new hosting view resizes the window, the orphaned sheet re-enters its
+    /// torn-down graph and traps inside SwiftUI (Sentry APPLE-MACOS-EF).
+    /// Pin the two mitigations: end attached sheets before the swap, and
+    /// clear `sizingOptions` on the replacement controller so it can't push
+    /// content-size extrema frame changes onto the reused window.
+    @Test("Management window deeplink reuse detaches sheets before swapping the hosting controller")
+    func managementDeeplinkReuseDetachesSheetsBeforeControllerSwap() throws {
+        let appDelegate = try Self.source("AppDelegate.swift")
+
+        let reuseStart = try #require(
+            appDelegate.range(of: "if let existingWindow = windowManager.window(for: .management)")
+        )
+        let reuseWindow = String(
+            appDelegate[
+                reuseStart.lowerBound
+                    ..< appDelegate.index(
+                        reuseStart.lowerBound,
+                        offsetBy: 2400,
+                        limitedBy: appDelegate.endIndex
+                    )!
+            ]
+        )
+
+        let endSheets = try #require(
+            reuseWindow.range(of: "while let sheet = existingWindow.attachedSheet")
+        )
+        let swap = try #require(
+            reuseWindow.range(of: "existingWindow.contentViewController = replacement")
+        )
+        #expect(
+            endSheets.lowerBound < swap.lowerBound,
+            "attached sheets must be ended before the hosting controller swap"
+        )
+        #expect(reuseWindow.contains("existingWindow.endSheet(sheet)"))
+        #expect(reuseWindow.contains("replacement.sizingOptions = []"))
+    }
+
+    @Test("Settings sidebar keeps bounded navigation rows accessibility-stable")
+    func settingsSidebarUsesEagerRowsForAccessibility() throws {
+        let sidebar = try Self.source("Views/Management/SidebarNavigation.swift")
+        let start = try #require(sidebar.range(of: "var itemList: some View"))
+        let end = try #require(
+            sidebar.range(of: "func sectionHeader(", range: start.upperBound ..< sidebar.endIndex)
+        )
+        let itemList = String(sidebar[start.lowerBound ..< end.lowerBound])
+
+        #expect(itemList.contains("VStack("))
+        #expect(!itemList.contains("LazyVStack("))
+        #expect(itemList.contains("proxy.scrollTo(newValue, anchor: .center)"))
     }
 
     @Test("Local bundle config readers preserve discovered bundle paths")
@@ -2482,12 +3235,14 @@ struct RuntimePolicySourceTests {
         #expect(manager.contains("findInstalledMLXModel(named name: String) -> MLXModel?"))
         #expect(manager.contains("MLXModel.localDirectory"))
         #expect(defaults.contains("ModelManager.findInstalledMLXModel(named: modelId)"))
-        #expect(defaults.contains("return found.localDirectory"))
+        #expect(defaults.contains("ModelManager.findInstalledMLXModelFromCache(named: modelId)"))
+        #expect(defaults.contains("return found?.localDirectory"))
         #expect(defaults.contains("readSmallConfigFile"))
         #expect(!defaults.contains("Data(contentsOf:"))
         #expect(!defaults.contains("parts.reduce(base)"))
         #expect(reasoning.contains("ModelManager.findInstalledMLXModel(named: modelId)"))
-        #expect(reasoning.contains("return found.localDirectory"))
+        #expect(reasoning.contains("ModelManager.findInstalledMLXModelFromCache(named: modelId)"))
+        #expect(reasoning.contains("return found?.localDirectory"))
         #expect(reasoning.contains("readSmallConfigFile"))
         #expect(!reasoning.contains("Data(contentsOf:"))
         #expect(!reasoning.contains("String(contentsOf:"))
@@ -2498,7 +3253,11 @@ struct RuntimePolicySourceTests {
     func residentSameModelTurnsDoNotFlashModelLoadingUI() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
 
-        #expect(runtime.contains("let shouldReportModelLoad = modelCache[modelName] == nil && !parameters.suppressProgressUI"))
+        #expect(
+            runtime.contains(
+                "let shouldReportModelLoad = modelCache[modelName] == nil && !parameters.suppressProgressUI"
+            )
+        )
         #expect(
             runtime.contains(
                 "if shouldReportModelLoad {\n            InferenceProgressManager.shared.modelLoadWillStartAsync()"
@@ -2512,6 +3271,38 @@ struct RuntimePolicySourceTests {
         #expect(
             runtime.contains("must not flash the UI back to\n        // \"Loading Model...\" on every message"),
             "Hot resident chat turns must not emit the model-loading phase; users read that as a reload."
+        )
+    }
+
+    @Test("Agent-loop evals preserve bundle-native sampling defaults")
+    func agentLoopEvalsPreserveBundleNativeSamplingDefaults() throws {
+        let evaluator = try Self.source("Services/Context/AgentLoopEvaluator.swift")
+
+        #expect(
+            evaluator.contains("temperature: nil"),
+            "Agent-loop evals must leave temperature unspecified so the active bundle config wins."
+        )
+        #expect(
+            evaluator.contains("request.samplingParametersAreImplicit = true"),
+            "Agent-loop evals must mark omitted sampling parameters as implicit, matching real chat."
+        )
+        #expect(
+            !evaluator.contains("temperature: 0.0"),
+            "The eval harness must not silently force greedy decoding for bundles tuned for sampling."
+        )
+        #expect(
+            evaluator.contains("ChatExecutionContext.$currentModelName.withValue(resolvedModel)"),
+            "Agent-loop tools must see the exact invoking parent model so residency handoff stays production-equivalent."
+        )
+        #expect(
+            evaluator.contains("let sessionSource: SessionSource = .chat")
+                && evaluator.contains("ChatEngine(source: sessionSource.inferenceSource)")
+                && evaluator.contains("ChatExecutionContext.$currentSessionSource.withValue("),
+            "Agent-loop eval inference and tool dispatch must share Chat provenance so parent residency ownership matches the live UI."
+        )
+        #expect(
+            evaluator.contains("ChatExecutionContext.$currentEnableThinking.withValue(enableThinking)"),
+            "Agent-loop spawned work must inherit the explicit Thinking setting exercised by the eval row."
         )
     }
 
@@ -2552,8 +3343,10 @@ struct RuntimePolicySourceTests {
             "The UI may pass the agent/profile temperature, but implicit sampling must be preserved by the runtime rather than rewritten to greedy native-MTP defaults."
         )
         #expect(
-            chatView.contains("tools: toolSpecs.isEmpty ? nil : toolSpecs"),
-            "Chat UI should only send tool schemas when the composer resolved a non-empty tool set."
+            chatView.contains(
+                "tools: iterationToolSpecs.isEmpty ? nil : iterationToolSpecs"
+            ),
+            "Chat UI should send the current run schema, including tools loaded for the next iteration."
         )
         #expect(
             chatView.contains("let requestedToolChoice = ChatToolChoicePolicy.resolve(")
@@ -2561,14 +3354,26 @@ struct RuntimePolicySourceTests {
             "Chat UI should route explicit tool-use prompts through the shared policy instead of hard-coding auto for every tool-enabled turn."
         )
         #expect(
-            chatView.contains("tools: toolSpecs,")
+            chatView.contains("tools: iterationToolSpecs,")
                 && chatView.contains("userText: trimmed,")
                 && chatView.contains("attempt: attempt"),
-            "Chat UI tool-choice policy must see the resolved tools, original user text, and attempt count so first-turn required routing cannot become a repeated tool loop."
+            "Chat UI tool-choice policy must see the current iteration tools, original user text, and attempt count so first-turn required routing cannot become a repeated tool loop."
         )
         #expect(
             chatView.contains("finalReq.samplingParametersAreImplicit = true"),
             "Tool-budget wrap-up calls use the same implicit-sampling contract as normal UI turns."
+        )
+        #expect(
+            chatView.contains("let turnGenerationControls = ChatTurnGenerationControls.capture("),
+            "Chat UI must freeze prompt-affecting model controls once at send time instead of rereading mutable UI state between tool iterations."
+        )
+        #expect(
+            chatView.contains("turnGenerationControls.apply(to: &req)"),
+            "Every normal agent-loop reconstruction must carry the turn's explicit Thinking choice."
+        )
+        #expect(
+            chatView.contains("turnGenerationControls.apply(to: &finalReq)"),
+            "The post-budget finalizer must carry the same explicit Thinking choice as the tool loop it closes."
         )
     }
 
@@ -2586,23 +3391,20 @@ struct RuntimePolicySourceTests {
             "Tools settings must source runtime-managed and built-in sandbox tools from ToolRegistry, not plugin/provider catalogs."
         )
         #expect(
-            toolsView.contains("Runtime Tools")
-                && toolsView.contains("Built-in Sandbox Tools"),
-            "Tools settings must render explicit rows for chat-visible runtime tools."
+            toolsView.contains("builtInNativeToolEntries + runtimeManagedToolEntries"),
+            "Runtime-managed tools must render inside the Built-in catalog group so chat-visible folder/sandbox tools never look missing."
         )
         #expect(
             toolsView.contains("RuntimeManagedToolEntryRow")
-                && toolsView.contains("badge: runtimeBadge(for: entry)")
-                && (toolsView.contains("badge: \"Sandbox\"")
-                    || toolsView.contains("badge: L(\"Sandbox\")")),
-            "Runtime-managed tools must be visible as operational rows without pretending they are normal plugin toggle rows."
+                && toolsView.contains("badge: sourceBadge(for: entry)")
+                && toolsView.contains("return L(\"Sandbox\")")
+                && toolsView.contains("return L(\"Folder\")"),
+            "Runtime-managed tools must be visible as operational rows with concrete Folder/Sandbox origin badges, without pretending they are normal plugin toggle rows."
         )
         #expect(
-            toolsView.contains(".available: availableShown + runtimeShown")
-                && toolsView.contains(
-                    ".sandbox: SandboxPluginLibrary.shared.plugins.count + builtInSandboxToolEntries.count"
-                ),
-            "Tools tab badges must count the runtime rows they render so Settings cannot show 0 while chat has folder/sandbox tools."
+            toolsView.contains("rowsByName[$0.name]?.source == .sandboxPlugin")
+                && toolsView.contains("union(customTools.map(\\.name))"),
+            "The All tab must give custom (sandbox-plugin) tools their own group and exclude them from the built-in fallback so every registered tool has exactly one home."
         )
     }
 
@@ -2616,22 +3418,21 @@ struct RuntimePolicySourceTests {
         )
         #expect(
             toolsView.contains("private func cappedGroup<Row: View>"),
-            "Flat built-in/runtime tool groups should use the shared capped renderer."
+            "Flat built-in/custom tool groups should use the shared capped renderer."
         )
         #expect(
             toolsView.contains("private var visibleTools: [ToolRegistry.ToolEntry]")
                 && toolsView.contains("ShowAllToolsButton("),
-            "Plugin and remote provider cards should cap expanded rows and expose an explicit show-all control."
+            "Plugin and connection cards should cap expanded rows and expose an explicit show-all control."
         )
 
         let sandboxCardStart = try #require(toolsView.range(of: "private struct SandboxPluginToolCard"))
-        let hoverBackgroundStart = try #require(
+        let sandboxCardEnd =
             toolsView.range(
-                of: "private struct HoverableCardBackground",
+                of: "// MARK: - Tool Plugin Card",
                 range: sandboxCardStart.upperBound ..< toolsView.endIndex
-            )
-        )
-        let sandboxCard = String(toolsView[sandboxCardStart.lowerBound ..< hoverBackgroundStart.lowerBound])
+            )?.lowerBound ?? toolsView.endIndex
+        let sandboxCard = String(toolsView[sandboxCardStart.lowerBound ..< sandboxCardEnd])
 
         #expect(
             sandboxCard.contains("@State private var showAllTools = false")
@@ -2639,7 +3440,7 @@ struct RuntimePolicySourceTests {
                 && sandboxCard.contains("toolGroupRenderCapValue")
                 && sandboxCard.contains("ForEach(visibleToolSpecs, id: \\.id)")
                 && sandboxCard.contains("ShowAllToolsButton("),
-            "Sandbox plugin cards must use the same capped expansion path as other tool cards; otherwise a large JSON tool recipe can freeze the Tools page."
+            "Custom tool cards must use the same capped expansion path as other tool cards; otherwise a large JSON tool recipe can freeze the Tools page."
         )
     }
 
@@ -2710,8 +3511,8 @@ struct RuntimePolicySourceTests {
         )
     }
 
-    @Test("local streamWithTools terminates on parsed tool invocation before leaking post-tool prose")
-    func localStreamWithToolsTerminatesOnParsedToolInvocationBeforePostToolProseLeak() throws {
+    @Test("local streamWithTools dispatches parsed tool invocation without waiting for optional stats")
+    func localStreamWithToolsDispatchesParsedToolInvocationWithoutWaitingForOptionalStats() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
         let streamStart = try #require(
             runtime.range(of: "func streamWithTools("),
@@ -2729,25 +3530,21 @@ struct RuntimePolicySourceTests {
         let afterToolCase = streamWithTools[toolCase.lowerBound...]
 
         #expect(
-            afterToolCase.contains("ServiceToolInvocation(")
+            streamWithTools.contains("A trailing `.completionInfo`")
+                && streamWithTools.contains("complete-looking")
+                && afterToolCase.contains("ServiceToolInvocation(")
                 && afterToolCase.contains("toolName: name")
                 && afterToolCase.contains("jsonArguments: argsJSON")
                 && afterToolCase.contains("continuation.finish(throwing: tool)"),
-            "streamWithTools must capture the parsed vMLX tool call (name + args) into the pending ServiceToolInvocation and finish the stream by throwing it so the Chat UI dispatches the tool."
+            "streamWithTools must treat parsed vMLX toolInvocation as terminal for dispatch; waiting for optional completion stats can leave the UI stuck after a complete tool call."
         )
         #expect(
             afterToolCase.contains("return"),
             "After surfacing the parsed tool invocation the producer task must return rather than run on."
         )
-        // The real no-leak invariant: once a tool call is pending, model text is
-        // gated on `pendingTool == nil` and never yielded, so DSV4 pseudo-tool
-        // prose emitted after the tool event cannot reach the UI/consumer. The
-        // producer keeps draining only to forward the terminal `.completionInfo`
-        // decode stats (tok/s + token count) before throwing — tool-call turns
-        // must not drop their telemetry.
         #expect(
-            streamWithTools.contains("if pendingTool == nil, !s.isEmpty { continuation.yield(s) }"),
-            "Post-tool model text must be gated on `pendingTool == nil` so pseudo-tool prose is suppressed once a tool call is parsed, even while draining for end-of-step stats."
+            !streamWithTools.contains("var pendingTool: ServiceToolInvocation?"),
+            "The local streaming path must not hold a parsed tool invocation in pending state while draining for a later completionInfo event."
         )
         #expect(
             !afterToolCase.contains("pendingTools.append"),
@@ -2871,13 +3668,16 @@ struct RuntimePolicySourceTests {
         let featuresDoc = try Self.source("../../docs/FEATURES.md")
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
 
-        #expect(flags.contains("Defaults to **1**"))
-        #expect(flags.contains("return raw > 0 ? min(raw, 32) : 1"))
-        #expect(runtimeDoc.contains("Defaults to `1`, clamped to `[1, 32]`"))
+        #expect(flags.contains("server-runtime.json"))
+        #expect(flags.contains("resolvedBatchEngineMaxBatchSize"))
+        #expect(runtimeDoc.contains("Performance/Balanced resolve to `2`"))
+        #expect(runtimeDoc.contains("Safe Auto/Strict to `1`"))
+        #expect(runtimeDoc.contains("clamped to `[1, 32]`"))
         #expect(runtimeDoc.contains("mutable at runtime"))
         #expect(runtimeDoc.contains("updateMaxBatchSize"))
-        #expect(featuresDoc.contains("default `1`, clamped to `[1, 32]`"))
-        #expect(featuresDoc.contains("hot-resized via `BatchEngine.updateMaxBatchSize(_:)`"))
+        #expect(featuresDoc.contains("Performance/Balanced automatically resolve to `2`"))
+        #expect(featuresDoc.contains("Safe Auto/Strict to `1`"))
+        #expect(featuresDoc.contains("hot-resizes the cached engine"))
         #expect(!runtimeDoc.contains("Defaults to `4`"))
         #expect(!featuresDoc.contains("default `4`"))
         #expect(adapter.contains("hot-resized BatchEngine"))
@@ -2951,6 +3751,20 @@ struct RuntimePolicySourceTests {
         #expect(runtimeDoc.contains("AGX::ComputeContext::endComputePass"))
         #expect(lingDoc.contains("EXC_BAD_ACCESS"))
         #expect(lingDoc.contains("BatchEngine.stepPrefill"))
+    }
+
+    @Test("No Automatic Limits clears stale physical load cap from both controls")
+    func noAutomaticLimitsClearsStalePhysicalLoadCap() throws {
+        let source = try Self.source("Views/Settings/ServerSettings/MemorySafetySection.swift")
+
+        #expect(source.contains("Picker(\"\", selection: memorySafetyModeBinding)"))
+        #expect(source.contains("if level == 4"))
+        #expect(source.contains("if newMode == .diagnosticDangerous"))
+        #expect(
+            source.components(separatedBy: "draft.memorySafety.customPhysicalMemoryFraction = nil")
+                .count == 3,
+            "Both the slider and mode picker must clear the stale custom fraction."
+        )
     }
 
     @Test("SwiftUI previews are gated out of CLI SwiftPM builds")
@@ -3041,5 +3855,30 @@ struct RuntimePolicySourceTests {
             "Sentry scrubs breadcrumbs containing prompt-like fields as content; token counts must remain visible for OOM/context-growth triage"
         )
         #expect(adapter.contains("submit model=\\(modelName) batch=\\(maxBatchSize)"))
+    }
+
+    /// Pins the release-observability wiring added after the 0.22.6 triage,
+    /// which had no structured Logs rows, no usable users-affected counts, and
+    /// no commit/deploy association to attribute regressions against.
+    @Test("Sentry release telemetry keeps sessions, logs, and the anonymous install id")
+    func sentryReleaseTelemetryWiring() throws {
+        let crashReporting = try Self.source("Services/CrashReportingService.swift")
+
+        // Release health sessions and structured logs must stay enabled.
+        #expect(crashReporting.contains("options.enableAutoSessionTracking = true"))
+        #expect(crashReporting.contains("options.enableLogs = true"))
+
+        // Breadcrumbs mirror into Sentry Logs so releases have a queryable
+        // timeline even when few events are captured.
+        #expect(crashReporting.contains("SentrySDK.logger.info(message, attributes: [\"category\": category])"))
+
+        // beforeSend must keep ONLY the SDK's anonymous installation id —
+        // blanking the whole user (`event.user = nil`, as 0.22.6 shipped)
+        // makes every issue report "Users Impacted: 0"; attaching anything
+        // more would break the "nothing is tied to you" consent promise.
+        #expect(crashReporting.contains("anonymous.userId = event.user?.userId"))
+        #expect(!crashReporting.contains("event.user = nil"))
+        #expect(crashReporting.contains("event.serverName = nil"))
+        #expect(crashReporting.contains("options.sendDefaultPii = false"))
     }
 }

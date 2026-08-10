@@ -1,0 +1,41 @@
+{
+  "id": "browseruse.select-dropdown",
+  "domain": "subagent",
+  "label": "BrowserUse • pick a dropdown option and save",
+  "query": "Go to https://fixtures.local/settings, set the timezone dropdown to 'Europe/Berlin', and click Save.",
+  "notes": "LIVE. Exercises browser_select (the only child tool that mutates a select's value — typing into it is wrong) followed by the save click. The world stores the selected values joined verbatim, so the equals predicate catches both a missed select and a mangled option string. The notifications checkbox is a distractor that must stay untouched.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "browser_use",
+      "maxSteps": 10,
+      "pages": [
+        {
+          "url": "https://fixtures.local/settings",
+          "title": "Preferences",
+          "bodyText": "Preferences. Choose your timezone from the dropdown, then press Save to apply.",
+          "elements": [
+            { "id": "timezone", "type": "select", "text": "Timezone", "value": "UTC" },
+            { "id": "notifications", "type": "checkbox", "text": "Email notifications" },
+            { "id": "save", "type": "button", "text": "Save", "goto": "https://fixtures.local/settings/saved" }
+          ]
+        },
+        {
+          "url": "https://fixtures.local/settings/saved",
+          "title": "Preferences Saved",
+          "bodyText": "Your preferences were saved.",
+          "elements": []
+        }
+      ],
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "browser_use",
+      "successValues": [
+        { "id": "timezone", "equals": "Europe/Berlin" }
+      ],
+      "successClicked": ["save"],
+      "failIfClicked": ["notifications"],
+      "expectVerbsInOrder": ["navigate", "select", "click"]
+    }
+  }
+}

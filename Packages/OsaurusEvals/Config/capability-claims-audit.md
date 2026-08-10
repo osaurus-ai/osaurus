@@ -18,7 +18,7 @@ rationale written into each case's `notes`:
 
 | case | before | after | why |
 |---|---|---|---|
-| `capability_claims.discover` | `mustCallTools:[capabilities_discover]` + rubric | rubric only | The browser capability is installed **and named in the Enabled-capabilities manifest** (`requirePlugins`+`enableSkills`+`enableTools`). The suite's own `no-spurious-discover` and `by-intent` cases *forbid* `capabilities_discover` for that same grounded capability, so forcing it here was self-contradictory and failed correct manifest-grounded answers. |
+| `capability_claims.discover` | `mustCallTools:[capabilities_discover]` + rubric | rubric only | The browser capability is installed **and named in the Enabled-capabilities manifest** (`requirePlugins`+`enableTools`; the plugin's governing skill is universally available). The suite's own `no-spurious-discover` and `by-intent` cases *forbid* `capabilities_discover` for that same grounded capability, so forcing it here was self-contradictory and failed correct manifest-grounded answers. |
 | `capability_claims.honest-absence` | `mustCallTools:[capabilities_discover]` + `mustNotCallTools` + rubric | `mustNotCallTools` + rubric | No fax capability exists anywhere in the catalog/manifest. The contract is honest refusal + no fabrication (both preserved). Forcing a discovery round-trip for an obviously-absent capability is exactly the over-tooling we want small models to *avoid*. |
 
 The discovery/load **mechanism** stays covered by:

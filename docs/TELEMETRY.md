@@ -101,6 +101,15 @@ are skipped. Only the message *role* is inspected — never the content.)
 | `model_hash` | string | **Remote only.** Salted, truncated hash of the remote model id (see "Remote identifiers"). Omitted otherwise. |
 | `is_agent` | bool | Whether the turn came from an autonomous agent run (the `/agents/{id}/run` endpoint) vs a plain completion |
 | `stream` | bool | Whether a streaming response was requested |
+| `capability` | string | What the request asked the model to do: `chat`, or `embedding` when a chat request resolved to a local encoder-only bundle. Classified from the bundle's `config.json` model type (never a model-name list), so new embedding models are bucketed automatically. Reserved for future API families (e.g. `search`). |
+| `brain_source` | string | **Chat-UI sends only** (omitted for `http_api`/`plugin`). The onboarding brain choice joined to activation: `local`, `hosted`, `provider_key` — or an explicit fallback: `none` (onboarding ended without committing a brain), `pre_choice` (install completed onboarding before the choice existed), `unknown` (defensive; should not occur). Always present on chat-UI sends, so coverage of this dimension is total by construction. |
+
+**Note on `brain_source` history.** Before the fallback tokens existed, the
+property was simply omitted whenever no choice had been persisted, which left
+an unattributable gap (roughly 20% of chat-UI messages on 0.22.x). Events from
+those older versions cannot be backfilled; from the version introducing the
+tokens onward, every chat-UI send carries a named bucket and the historical
+gap is explained by the `none` / `pre_choice` composition.
 
 ### `chat_session_started`
 
@@ -131,6 +140,18 @@ Emitted once when an agent run is initiated.
 
 Emitted when the local server transitions to running. No properties. (No port
 or bind address is attached.)
+
+### `sandbox_boot`
+
+Emitted once per successful sandbox VM boot, when provisioning reaches the
+running state. Full-fidelity phase timings stay in a local file
+(`~/.osaurus/container/startup-metrics.json`); only the coarse dimensions
+below are sent.
+
+| Property | Type | Values / meaning |
+|----------|------|------------------|
+| `kind` | string | `cold` (full image unpack), `warm` (reused rootfs), `warmFallback` (warm attempt failed, cold rebuild succeeded), or `template` (rootfs cloned copy-on-write from the immutable base template) |
+| `duration_bucket` | string | Coarse total-boot latency bucket: `lt_1s`, `1_5s`, `5_15s`, `15_60s`, `1_5m`, `gte_5m` |
 
 ### `app_launched`
 
@@ -169,12 +190,31 @@ Emitted when a user configures an MCP (tool) provider.
 Emitted when a user creates an agent. Built-in agents seeded by the app are
 excluded. No properties — count only, with no name or configuration.
 
+### `settings_opened`
+
+Emitted when the Settings (management) window is opened, and again on each
+tab switch while it is open. The hidden launch-time window prewarm never
+emits. Exists to measure whether early detours into settings correlate with
+lower activation. No setting names or values are ever attached.
+
+| Property | Type | Values / meaning |
+|----------|------|------------------|
+| `tab` | string | Stable token for the settings tab (closed enum): `general`, `chat`, `voice`, `themes`, `models`, `providers`, `image_generation`, `agents`, `agent_channels`, `memory`, `knowledge`, `tools`, `search`, `skills`, `commands`, `plugins`, `schedules`, `watchers`, `sandbox`, `computer_use`, `browser`, `server`, `privacy`, `permissions`, `identity`, `storage`, `credits`, `insights` |
+| `before_first_message` | bool | Whether this install has never sent a chat-UI message yet — separates pre-activation settings visits from post-activation ones |
+
 ### Onboarding funnel
 
 The onboarding funnel events — `onboarding_started`, `onboarding_step_viewed`,
 `onboarding_step_skipped`, `onboarding_completed` — carry only a stable step
 name/index and a completion reason. They are defined in
 [`OnboardingTelemetry`](../Packages/OsaurusCore/Views/Onboarding/OnboardingTelemetry.swift).
+
+The Configure AI step adds `brain_source_selected` when the user chooses
+Osaurus Cloud, downloads a local model, or connects a provider. Its
+low-cardinality `source` is `hosted`, `local`, or `provider_key`; the provider
+path adds the closed-enum `provider` type and the local path adds boolean
+`download_started` — whether committing kicked off a background model
+download. No key, model id, or URL is ever attached.
 
 ## Remote identifiers
 

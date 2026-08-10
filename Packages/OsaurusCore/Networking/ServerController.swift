@@ -38,6 +38,85 @@ final class ServerController: ObservableObject {
         }
     }
 
+    /// Agent-detail views are not constructed with the Server environment
+    /// object. Route their explicit Spawn fan-out edits through the live
+    /// controller so persistence, RuntimeConfig invalidation, and every open
+    /// Server / Spawn settings surface observe one atomic value.
+    static func applyAgentSpawnBatchLimit(_ requested: Int) async {
+        let normalized = SpawnBatchConcurrencyContract.normalized(requested)
+        guard let controller = ServerControllerHolder.shared.controller else {
+            var settings = ServerRuntimeSettingsStore.snapshot()
+            settings.concurrency.maxConcurrentSequences = normalized
+            ServerRuntimeSettingsStore.save(settings)
+            SubagentConfigurationStore.mutate { configuration in
+                configuration.budgets.maxParallelSpawns = normalized
+            }
+            return
+        }
+        await controller.applySpawnBatchLimit(normalized)
+    }
+
+    /// Applies runtime settings on behalf of the `osaurus_settings`
+    /// configure tool. Routes through the live controller when one is
+    /// wired (restart-aware: port/expose/CORS changes restart the NIO
+    /// socket, cache/multimodal changes unload models). Returns `nil`
+    /// when no controller exists yet — the settings are persisted and
+    /// take effect when the server starts.
+    static func applyRuntimeSettingsFromConfigureTool(
+        _ settings: VMLXServerRuntimeSettings
+    ) async -> RuntimeSettingsApplyEffects? {
+        guard let controller = ServerControllerHolder.shared.controller else {
+            ServerRuntimeSettingsStore.save(settings)
+            return nil
+        }
+        return await controller.saveRuntimeSettings(settings)
+    }
+
+    /// Current runtime settings + server liveness for the
+    /// `osaurus_settings` configure tool. Prefers the live controller's
+    /// published value (identical to the store snapshot after every
+    /// save, but authoritative mid-flight).
+    static func runtimeSettingsForConfigureTool() -> (
+        settings: VMLXServerRuntimeSettings, isRunning: Bool
+    ) {
+        if let controller = ServerControllerHolder.shared.controller {
+            return (controller.runtimeSettings, controller.isRunning)
+        }
+        return (ServerRuntimeSettingsStore.snapshot(), false)
+    }
+
+    /// Current app-shell configuration for the `osaurus_settings`
+    /// configure tool `get` action. Prefers the live controller's
+    /// published value.
+    static func appShellSettingsForConfigureTool() -> ServerConfiguration {
+        ServerControllerHolder.shared.controller?.configuration
+            ?? ServerConfigurationStore.load()
+            ?? .default
+    }
+
+    /// Applies app-shell settings (start at login / hide dock icon) on
+    /// behalf of the `osaurus_settings` configure tool, mirroring the
+    /// General settings pane: persist, sync the live controller's
+    /// published configuration, and (re)register the login item.
+    static func applyAppShellSettingsFromConfigureTool(
+        startAtLogin: Bool?,
+        hideDockIcon: Bool?
+    ) {
+        let controller = ServerControllerHolder.shared.controller
+        var configuration =
+            controller?.configuration
+            ?? ServerConfigurationStore.load()
+            ?? .default
+        let previousStartAtLogin = configuration.startAtLogin
+        if let startAtLogin { configuration.startAtLogin = startAtLogin }
+        if let hideDockIcon { configuration.hideDockIcon = hideDockIcon }
+        ServerConfigurationStore.save(configuration)
+        controller?.configuration = configuration
+        if let startAtLogin, startAtLogin != previousStartAtLogin {
+            LoginItemService.shared.applyStartAtLogin(startAtLogin)
+        }
+    }
+
     /// Convenience property for accessing port
     var port: Int {
         get { configuration.port }
@@ -46,10 +125,9 @@ final class ServerController: ObservableObject {
 
     // MARK: - Private Properties
 
-    private var eventLoopGroup: MultiThreadedEventLoopGroup?
-    private var serverChannel: Channel?
     private var serverActor: OsaurusServer?
     private var agentsCancellable: AnyCancellable?
+    private var runtimeSettingsCancellable: AnyCancellable?
 
     /// Flipped once `applicationDidFinishLaunching` finishes its server
     /// wiring. The Bonjour-expose Combine sink consults this so it never
@@ -137,6 +215,21 @@ final class ServerController: ObservableObject {
             lastErrorMessage = nil
             FeatureTelemetry.serverStarted()
             print("[Osaurus] NIO server started successfully on port \(configuration.port)")
+            // One-line record of the effective inference policy so any
+            // benchmark or bug report can state exactly which knobs were in
+            // force without scraping Settings. Values here are the resolved
+            // ones (after Settings/UserDefaults precedence), not the raw keys.
+            let idleResidency: String
+            switch configuration.modelIdleResidencyPolicy {
+            case .immediately: idleResidency = "immediately"
+            case .afterSeconds(let seconds): idleResidency = "after_seconds(\(seconds))"
+            case .never: idleResidency = "never"
+            }
+            print(
+                "[Osaurus] inference policy: maxBatchSize=\(InferenceFeatureFlags.mlxBatchEngineMaxBatchSize) "
+                    + "eviction=\(configuration.modelEvictionPolicy.rawValue) "
+                    + "idleResidency=\(idleResidency)"
+            )
 
             if configuration.exposeToNetwork {
                 BonjourAdvertiser.shared.startAdvertising(port: configuration.port)
@@ -146,7 +239,6 @@ final class ServerController: ObservableObject {
             RelayTunnelManager.shared.reconnectIfNeeded(port: configuration.port)
         } catch {
             handleServerError(error)
-            await cleanupRuntime()
         }
     }
 
@@ -155,7 +247,7 @@ final class ServerController: ObservableObject {
         isRestarting = true
         serverHealth = .restarting
         defer { isRestarting = false }
-        if serverChannel != nil || eventLoopGroup != nil || isRunning {
+        if serverActor != nil || isRunning {
             await stopServer()
         }
         await startServer()
@@ -164,7 +256,7 @@ final class ServerController: ObservableObject {
     /// Stops the running server
     func stopServer() async {
         // If nothing to stop, return
-        guard serverActor != nil || serverChannel != nil || eventLoopGroup != nil else { return }
+        guard serverActor != nil else { return }
         if !isRestarting { serverHealth = .stopping }
         print("[Osaurus] Stopping NIO server...")
 
@@ -172,14 +264,15 @@ final class ServerController: ObservableObject {
         BonjourAdvertiser.shared.stopAdvertising()
         isRunning = false
 
-        // Stop the actor-backed server if present
+        // Stop the actor-backed server if present. The event-loop group is
+        // process-shared (`SharedEventLoopGroups.server`), so stop only
+        // closes channels — no thread/descriptor churn on restart.
         if let server = serverActor {
             await server.stop(gracefully: true)
             serverActor = nil
         }
 
         localNetworkAddress = "127.0.0.1"
-        await cleanupRuntime()
 
         if !isRestarting { serverHealth = .stopped }
         print("[Osaurus] Server stopped successfully")
@@ -187,7 +280,7 @@ final class ServerController: ObservableObject {
 
     /// Ensures the server is properly shut down before app termination
     func ensureShutdown() async {
-        guard serverActor != nil || serverChannel != nil || eventLoopGroup != nil else { return }
+        guard serverActor != nil else { return }
 
         print("[Osaurus] Ensuring NIO server shutdown before app termination")
         RelayTunnelManager.shared.disconnectAll()
@@ -199,25 +292,16 @@ final class ServerController: ObservableObject {
         serverHealth = .stopping
 
         if let server = serverActor {
-            // Termination path: use the bounded (`gracefully: false`) shutdown
-            // so a lingering SSE child channel can't stall quit.
-            let completed = await server.stop(gracefully: false)
-            // Only drop our reference when the EventLoopGroup actually shut
-            // down. On timeout the group is still running; releasing the actor
-            // here would let it (and its group) deinit mid-shutdown and trip
-            // NIO's `EventLoopGroup is still running` precondition (issue
-            // #860). Keep it rooted — the process is exiting anyway.
-            if completed {
-                serverActor = nil
-            } else {
-                print(
-                    "[Osaurus] NIO group still draining at quit; keeping serverActor rooted to avoid mid-shutdown dealloc"
-                )
-            }
+            // Termination path: bounded (`gracefully: false`) drain so a
+            // lingering SSE child channel can't stall quit. The shared
+            // event-loop group is never shut down, so there is no
+            // mid-shutdown group to keep rooted (issue #860 no longer
+            // applies).
+            _ = await server.stop(gracefully: false)
+            serverActor = nil
         }
 
         localNetworkAddress = "127.0.0.1"
-        await cleanupRuntime()
 
         print("[Osaurus] Server shutdown completed")
     }
@@ -232,8 +316,33 @@ final class ServerController: ObservableObject {
         // `~/.osaurus/config/`) is intentionally deferred to
         // `bootstrapRuntimeSettings()` so a fresh install stays pristine
         // until the AppDelegate explicitly runs it during launch.
-        if let existing = ServerRuntimeSettingsStore.load() {
+        let existingRuntimeSettings = ServerRuntimeSettingsStore.load()
+        if let existing = existingRuntimeSettings {
             self.runtimeSettings = existing
+        }
+        // `server-runtime.json` is also writable through the admin HTTP
+        // endpoint. Observe every successful store save so the published
+        // controller value and any open Settings form follow the exact
+        // snapshot consumed by runtime code.
+        runtimeSettingsCancellable = NotificationCenter.default.publisher(
+            for: ServerRuntimeSettingsStore.didSaveNotification
+        )
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                // Read only after reaching the owning actor. Capturing a
+                // snapshot before this hop can replay an older notification
+                // over a newer explicit Server or Spawn editor save.
+                let latest = ServerRuntimeSettingsStore.snapshot()
+                if self.runtimeSettings != latest {
+                    self.runtimeSettings = latest
+                }
+                self.synchronizeSpawnBatchLimit(from: latest)
+            }
+        }
+        if let existingRuntimeSettings {
+            synchronizeSpawnBatchLimit(from: existingRuntimeSettings)
         }
         // Keep exposeToNetwork in sync with Bonjour-enabled agents.
         // Only turn ON when a Bonjour agent requires it — never force
@@ -277,6 +386,53 @@ final class ServerController: ObservableObject {
     /// is fully up.
     func bootstrapRuntimeSettings() {
         self.runtimeSettings = ServerRuntimeSettingsStore.loadOrMigrate()
+        synchronizeSpawnBatchLimit(from: runtimeSettings)
+    }
+
+    /// Applies an explicit edit from General -> Main Chat Spawn to the shared
+    /// Server concurrency setting. Keeping this an origin-aware call avoids
+    /// treating asynchronous persistence notifications as fresh user edits,
+    /// which could otherwise replay an older value over a newer Server save.
+    func applyMainChatBatchLimit(
+        from configuration: SubagentConfiguration
+    ) async {
+        await applySpawnBatchLimit(
+            SpawnBatchConcurrencyContract.configuredLimit(for: configuration)
+        )
+    }
+
+    /// Origin-aware shared edit used by both the built-in and custom-agent
+    /// Spawn editors. Runtime RAM admission and active occupancy may still
+    /// execute a smaller wave, but no second configured fan-out value remains.
+    func applySpawnBatchLimit(_ value: Int) async {
+        let requested = SpawnBatchConcurrencyContract.normalized(value)
+        // An explicit Spawn-editor action owns the value even when Automatic
+        // currently resolves to the same number. Compare the persisted raw
+        // override, not the resolved effective capacity, so nil -> requested
+        // materializes the user's edit while an existing identical explicit
+        // value remains a true no-op.
+        guard runtimeSettings.concurrency.maxConcurrentSequences != requested else {
+            synchronizeSpawnBatchLimit(from: runtimeSettings)
+            return
+        }
+        var updated = runtimeSettings
+        updated.concurrency.maxConcurrentSequences = requested
+        _ = await saveRuntimeSettings(updated)
+    }
+
+    private func synchronizeSpawnBatchLimit(
+        from settings: VMLXServerRuntimeSettings
+    ) {
+        let current = SubagentConfigurationStore.snapshot()
+        let updated = SpawnBatchConcurrencyContract.applyingServerLimit(
+            settings,
+            to: current
+        )
+        guard updated != current else { return }
+        SubagentConfigurationStore.mutate { configuration in
+            configuration.budgets.maxParallelSpawns =
+                updated.budgets.maxParallelSpawns
+        }
     }
 
     /// Checks if the server is responsive
@@ -308,7 +464,20 @@ final class ServerController: ObservableObject {
     /// Fields that only need a runtime-config invalidate: generation and
     /// concurrency defaults consumed by `RuntimeConfig.snapshot()` on the next
     /// request.
-    func saveRuntimeSettings(_ settings: VMLXServerRuntimeSettings) async {
+    struct RuntimeSettingsApplyEffects: Equatable, Sendable {
+        let unloadedModelCount: Int
+        let restartedServer: Bool
+        let invalidatedRuntimeConfig: Bool
+    }
+
+    @discardableResult
+    func saveRuntimeSettings(
+        _ requestedSettings: VMLXServerRuntimeSettings
+    ) async -> RuntimeSettingsApplyEffects {
+        let settings =
+            ServerRuntimeSettingsStore.canonicalizedContextAndKVPolicy(
+                requestedSettings
+            )
         let previousRuntimeSettings = runtimeSettings
         let previousConfig = configuration
         let projected = ServerRuntimeSettingsStore.projectIntoLegacy(
@@ -322,6 +491,7 @@ final class ServerController: ObservableObject {
 
         runtimeSettings = settings
         ServerRuntimeSettingsStore.save(settings)
+        synchronizeSpawnBatchLimit(from: settings)
 
         let configChanged = projected != previousConfig
         let restartNeeded =
@@ -334,21 +504,31 @@ final class ServerController: ObservableObject {
                 next: settings
             )
             || previousConfig.genTopP != projected.genTopP
+        let restartWasRequested = restartNeeded && isRunning
 
         if configChanged {
             configuration = projected
             saveConfiguration()
         }
 
+        let unloadedModelCount =
+            loadedModelRefreshNeeded
+            ? await ModelRuntime.shared.cachedModelSummaries().count
+            : 0
         if loadedModelRefreshNeeded {
             await ModelRuntime.shared.clearAll()
         }
-        if restartNeeded, isRunning {
+        if restartWasRequested {
             await restartServer()
         }
         if runtimeConfigChanged {
             await ModelRuntime.shared.invalidateConfig()
         }
+        return RuntimeSettingsApplyEffects(
+            unloadedModelCount: unloadedModelCount,
+            restartedServer: restartWasRequested,
+            invalidatedRuntimeConfig: runtimeConfigChanged
+        )
     }
 
     /// Settings that are captured by a loaded `ModelContainer` or the
@@ -361,6 +541,18 @@ final class ServerController: ObservableObject {
         previous.cache != next.cache
             || previous.multimodal != next.multimodal
             || previous.mtp != next.mtp
+            // These values are consumed while constructing the model graph.
+            // Compare effective settings so nil versus an explicit default
+            // does not unload a resident model unnecessarily.
+            || previous.effectivePerformance.tiedHeadCodec
+                != next.effectivePerformance.tiedHeadCodec
+            || previous.effectivePerformance.deepseekV4ActivationQAT
+                != next.effectivePerformance.deepseekV4ActivationQAT
+            // Memory Safety resolves the live KV cap, prefix-memory budget,
+            // allocator cap, and companion-cache entry limit at model load.
+            // Persisting a new profile while retaining the old container makes
+            // the settings panel lie until a manual reload.
+            || previous.memorySafety != next.memorySafety
     }
 
     /// Settings captured by `RuntimeConfig.snapshot()` but not by a loaded
@@ -374,18 +566,6 @@ final class ServerController: ObservableObject {
     }
 
     // MARK: - Private Helpers
-
-    /// Sets up channel closure handler
-    private func setupChannelClosureHandler(_ channel: Channel) {
-        channel.closeFuture.whenComplete { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
-                self.isRunning = false
-                if !self.isRestarting { self.serverHealth = .stopped }
-                self.serverChannel = nil
-            }
-        }
-    }
 
     /// Handles server startup errors
     private func handleServerError(_ error: Error) {
@@ -404,7 +584,7 @@ final class ServerController: ObservableObject {
     }
 
     private func stopServerIfNeeded() async throws {
-        if serverActor != nil || serverChannel != nil || eventLoopGroup != nil {
+        if serverActor != nil {
             await stopServer()
         }
     }
@@ -449,20 +629,5 @@ final class ServerController: ObservableObject {
 
         freeifaddrs(ifaddr)
         return address
-    }
-
-    private func cleanupRuntime() async {
-        // Shutdown the event loop group gracefully
-        if let group = eventLoopGroup {
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                group.shutdownGracefully { error in
-                    if let error {
-                        print("[Osaurus] Error shutting down EventLoopGroup: \(error)")
-                    }
-                    continuation.resume()
-                }
-            }
-            eventLoopGroup = nil
-        }
     }
 }

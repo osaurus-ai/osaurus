@@ -1,0 +1,22 @@
+{
+  "id": "agent_loop.cancel-midloop-clean-stop",
+  "domain": "agent_loop",
+  "label": "agent loop • cancellation after the first tool call exits cleanly with no later writes",
+  "query": "Do these steps in order, one tool call at a time: (1) read step1.txt, (2) create done-a.txt containing A, (3) create done-b.txt containing B, (4) create done-c.txt containing C. Do them strictly one per turn.",
+  "notes": "Interruption non-negotiable: cancelAfterToolCalls flips the loop's isCancelled hook true once ONE tool call has been processed, so the run must exit 'cancelled' cleanly (allowedExits) and — critically — none of the later writes may land. The file assertions are the teeth: whatever the first processed call was, done-c.txt must never exist because the run was cancelled before reaching it. Off-CI (needs a model).",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "step1.txt", "contents": "start here\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "cancelAfterToolCalls": 1,
+      "allowedExits": ["cancelled"],
+      "files": [
+        { "path": "done-c.txt", "exists": false }
+      ]
+    }
+  }
+}

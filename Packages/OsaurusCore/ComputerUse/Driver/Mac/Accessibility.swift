@@ -316,7 +316,15 @@ final class AccessibilityManager: @unchecked Sendable {
         preparedPids.insert(pid)
         lock.unlock()
 
-        let app = AXUIElementCreateApplication(pid)
+        // `axApp` (NOT a raw app element): the messaging timeout does not
+        // propagate from the system-wide element, so a raw element makes the
+        // two sets below UNBOUNDED. They are the most
+        // dangerous AX calls we make — flipping `AXEnhancedUserInterface` /
+        // `AXManualAccessibility` forces the target to build its entire
+        // accessibility tree synchronously, and an app that is still launching
+        // can sit on the reply indefinitely. This is the open-app path, so an
+        // unbounded block here wedges the driver queue for the whole session.
+        let app = Self.axApp(pid)
         AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, true as CFTypeRef)
         AXUIElementSetAttributeValue(
             app,
@@ -1312,48 +1320,60 @@ struct MacAppError: Error, Sendable {
 ///
 /// Pass `background: false` only when the agent genuinely needs the user
 /// to look at the target window (e.g. an interactive demo capture).
+///
+/// Isolation contract: each phase pins its own executor, so this function
+/// is UI-safe no matter which actor awaits it. AppKit lookup/activation
+/// runs on the main actor (quick, main-thread-only calls); AX preparation
+/// and the readiness poll run on `AccessibilityManager`'s off-main serial
+/// queue — flipping `AXManualAccessibility` and polling a still-launching
+/// app are blocking cross-process IPC that must never occupy the UI run
+/// loop (repeated bounded AX reads can otherwise beachball for the whole
+/// open budget). The poll honors task cancellation.
 func openApplication(
     identifier: String,
     background: Bool = true
 ) async -> Result<MacAppInfo, MacAppError> {
-    let workspace = NSWorkspace.shared
-    let runningApps = workspace.runningApplications
     let lowerId = identifier.lowercased()
 
-    if let app = runningApps.first(where: {
-        $0.localizedName?.lowercased() == lowerId || $0.bundleIdentifier?.lowercased() == lowerId
-    }) {
+    // Phase 1 — AppKit on the main actor: match an already-running app and
+    // activate it for foreground opens. Only Sendable fields cross back.
+    let runningMatch: MacAppInfo? = await MainActor.run {
+        guard
+            let app = NSWorkspace.shared.runningApplications.first(where: {
+                $0.localizedName?.lowercased() == lowerId
+                    || $0.bundleIdentifier?.lowercased() == lowerId
+            })
+        else { return nil }
         if !background {
             app.activate()
         }
-        // Flip Chromium/Electron into exposing its full tree BEFORE we wait, so
-        // the readiness poll can block until that tree actually populates.
-        AccessibilityManager.shared.prepareForAccessibility(pid: app.processIdentifier)
-        await waitUntilReady(app: app, requireFrontmost: !background)
-        return .success(
-            MacAppInfo(
-                pid: app.processIdentifier,
-                bundleId: app.bundleIdentifier,
-                name: app.localizedName ?? identifier
-            )
+        return MacAppInfo(
+            pid: app.processIdentifier,
+            bundleId: app.bundleIdentifier,
+            name: app.localizedName ?? identifier
         )
     }
 
+    if let info = runningMatch {
+        // Flip Chromium/Electron into exposing its full tree BEFORE we wait, so
+        // the readiness poll can block until that tree actually populates.
+        await AccessibilityManager.runOffMain {
+            AccessibilityManager.shared.prepareForAccessibility(pid: info.pid)
+        }
+        await waitUntilReady(pid: info.pid, requireFrontmost: !background)
+        return .success(info)
+    }
+
     do {
-        let app = try await launchApplication(
+        let info = try await launchApplication(
             identifier: identifier,
-            workspace: workspace,
             background: background
         )
-        AccessibilityManager.shared.prepareForAccessibility(pid: app.processIdentifier)
-        await waitUntilReady(app: app, isNewLaunch: true, requireFrontmost: !background)
-        return .success(
-            MacAppInfo(
-                pid: app.processIdentifier,
-                bundleId: app.bundleIdentifier,
-                name: app.localizedName ?? identifier
-            )
-        )
+        await AccessibilityManager.runOffMain {
+            AccessibilityManager.shared.prepareForAccessibility(pid: info.pid)
+        }
+        await waitUntilReady(pid: info.pid, isNewLaunch: true, requireFrontmost: !background)
+        return .success(info)
     } catch {
         return .failure(
             MacAppError(message: "Failed to open application: \(error.localizedDescription)")
@@ -1362,39 +1382,62 @@ func openApplication(
 }
 
 private func waitUntilReady(
-    app: NSRunningApplication,
+    pid: Int32,
     isNewLaunch: Bool = false,
     requireFrontmost: Bool = false,
     timeoutSeconds: Double = 5.0
 ) async {
     let pollInterval: UInt64 = 100_000_000
-    let maxAttempts = Int(timeoutSeconds * 10)
 
     let initialDelay: UInt64 = isNewLaunch ? 500_000_000 : 200_000_000
     try? await Task.sleep(nanoseconds: initialDelay)
 
-    for _ in 0 ..< maxAttempts {
+    // Wall-clock deadline rather than an attempt count: every AX read below
+    // can itself take up to the messaging timeout against a still-launching
+    // app, so counting attempts would multiply the intended budget.
+    let deadline = Date().addingTimeInterval(timeoutSeconds)
+    while Date() < deadline {
+        // A cancelled run (user hit Stop, tool deadline fired) must release
+        // its caller immediately instead of finishing the readiness budget.
+        if Task.isCancelled { return }
+
         // In background mode we only need the AX tree to be queryable; the app
         // can stay hidden, occluded, or behind another Space.
-        let frontmostOK = !requireFrontmost || app.isActive
+        let frontmostOK: Bool
+        if requireFrontmost {
+            frontmostOK = await MainActor.run {
+                NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+            }
+        } else {
+            frontmostOK = true
+        }
 
-        let axApp = AXUIElementCreateApplication(app.processIdentifier)
-        var windowValue: CFTypeRef?
-        let windowResult = AXUIElementCopyAttributeValue(
-            axApp,
-            kAXWindowsAttribute as CFString,
-            &windowValue
-        )
-        let windows = (windowValue as? [AXUIElement]) ?? []
-        let hasWindow = windowResult == .success && !windows.isEmpty
-        // Chromium/Electron builds its subtree asynchronously once
-        // `AXManualAccessibility` is set, so a window can exist while its
-        // children are still empty. Wait until at least one window actually has
-        // children, otherwise the first capture is just the menu bar. Cocoa apps
-        // populate immediately, so this only adds latency for Electron's build.
-        let treePopulated = windows.contains { axElementHasChildren($0) }
+        // All AX IPC runs on the driver's serial queue, never on the awaiting
+        // actor. Bounded app element (see `AccessibilityManager.axApp`): a raw
+        // app element inherits no messaging timeout, so this poll — which by
+        // construction runs against an app that is still coming up — could
+        // block forever on a single read instead of failing and retrying
+        // within the budget above.
+        let treeReady = await AccessibilityManager.runOffMain { () -> Bool in
+            let axApp = AccessibilityManager.axApp(pid)
+            var windowValue: CFTypeRef?
+            let windowResult = AXUIElementCopyAttributeValue(
+                axApp,
+                kAXWindowsAttribute as CFString,
+                &windowValue
+            )
+            let windows = (windowValue as? [AXUIElement]) ?? []
+            guard windowResult == .success, !windows.isEmpty else { return false }
+            // Chromium/Electron builds its subtree asynchronously once
+            // `AXManualAccessibility` is set, so a window can exist while its
+            // children are still empty. Wait until at least one window actually
+            // has children, otherwise the first capture is just the menu bar.
+            // Cocoa apps populate immediately, so this only adds latency for
+            // Electron's build.
+            return windows.contains { axElementHasChildren($0) }
+        }
 
-        if frontmostOK && hasWindow && treePopulated {
+        if frontmostOK && treeReady {
             try? await Task.sleep(nanoseconds: 200_000_000)
             return
         }
@@ -1422,11 +1465,14 @@ private func axElementHasChildren(_ element: AXUIElement) -> Bool {
     !axChildren(element).isEmpty
 }
 
+/// Launch `identifier` and return its Sendable identity. Runs off the main
+/// actor: `urlForApplication` is a synchronous LaunchServices database query
+/// that can stall, and `openApplication(at:configuration:)` is the async
+/// AppKit launch API (safe from any executor). Only Sendable fields leave.
 private func launchApplication(
     identifier: String,
-    workspace: NSWorkspace,
     background: Bool
-) async throws -> NSRunningApplication {
+) async throws -> MacAppInfo {
     let config = NSWorkspace.OpenConfiguration()
     config.activates = !background
     // Background launches should not pollute the user's recent files menu
@@ -1435,8 +1481,18 @@ private func launchApplication(
     config.addsToRecentItems = !background
     config.hides = background
 
+    let workspace = NSWorkspace.shared
+
+    func info(_ app: NSRunningApplication) -> MacAppInfo {
+        MacAppInfo(
+            pid: app.processIdentifier,
+            bundleId: app.bundleIdentifier,
+            name: app.localizedName ?? identifier
+        )
+    }
+
     if let url = workspace.urlForApplication(withBundleIdentifier: identifier) {
-        return try await workspace.openApplication(at: url, configuration: config)
+        return info(try await workspace.openApplication(at: url, configuration: config))
     }
 
     let searchPaths = [
@@ -1447,9 +1503,11 @@ private func launchApplication(
     ]
 
     for path in searchPaths where FileManager.default.fileExists(atPath: path) {
-        return try await workspace.openApplication(
-            at: URL(fileURLWithPath: path),
-            configuration: config
+        return info(
+            try await workspace.openApplication(
+                at: URL(fileURLWithPath: path),
+                configuration: config
+            )
         )
     }
 

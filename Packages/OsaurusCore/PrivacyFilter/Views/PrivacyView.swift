@@ -1345,12 +1345,9 @@ private struct PrivacyDryRunTester: View {
 
     private var summaryText: String {
         let count = uniqueResults.count
-        let format = String(
-            localized: "\(count) item(s) would be redacted",
-            bundle: .module,
-            comment: "Dry-run match count"
-        )
-        return format
+        return count == 1
+            ? L("1 item would be redacted", comment: "Dry-run match count")
+            : L("\(count) items would be redacted", comment: "Dry-run match count")
     }
 
     private func runTest() {

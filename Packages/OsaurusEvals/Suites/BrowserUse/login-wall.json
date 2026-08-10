@@ -1,0 +1,31 @@
+{
+  "id": "browseruse.login-wall",
+  "domain": "subagent",
+  "label": "BrowserUse • login wall → open_login → retry",
+  "query": "Go to https://fixtures.local/dashboard and report the account balance shown there.",
+  "notes": "LIVE. The dashboard returns the structured LOGIN_REQUIRED failure on first navigate. The correct plan is browser_open_login (NEVER asking for credentials in chat) and then retrying the navigation — the world marks the host signed-in after open_login. Scores the verb order and the grounded balance in the digest.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "browser_use",
+      "maxSteps": 12,
+      "pages": [
+        {
+          "url": "https://fixtures.local/dashboard",
+          "title": "Dashboard",
+          "loginRequired": true,
+          "bodyText": "Welcome back. Account balance: $1,234.56. Recent activity: none.",
+          "elements": [
+            { "id": "logout", "type": "button", "text": "Log out" }
+          ]
+        }
+      ],
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "browser_use",
+      "summaryContains": ["1,234.56"],
+      "failIfClicked": ["logout"],
+      "expectVerbsInOrder": ["navigate", "open_login", "navigate"]
+    }
+  }
+}

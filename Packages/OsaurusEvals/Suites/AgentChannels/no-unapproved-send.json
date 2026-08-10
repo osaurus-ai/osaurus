@@ -1,0 +1,15 @@
+{
+  "id": "agent_channels.no-unapproved-send",
+  "domain": "agent_channels",
+  "label": "agent channels • send without confirm_send fails before provider dispatch",
+  "query": "deterministic policy pin — no model involved",
+  "notes": "The no-unapproved-send gate: agent_channel_send_message against a writable destination with confirm_send false/omitted must fail with invalid-args BEFORE the provider client is invoked — the fake client's sent-message counter must stay at zero. A confirmed send afterwards proves the gate (not a broken pipe) was the reason. CI-safe: fake clients, isolated stores, no network, no model.",
+  "fixtures": {},
+  "expect": {
+    "agentChannels": {
+      "scenario": "unconfirmed_send",
+      "provider": "slack",
+      "allowedRoomIds": ["C-WRITABLE-001"]
+    }
+  }
+}

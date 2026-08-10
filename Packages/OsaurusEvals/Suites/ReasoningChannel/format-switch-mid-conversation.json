@@ -1,0 +1,18 @@
+{
+  "id": "reasoning_channel.format-switch-mid-conversation",
+  "domain": "reasoning_channel",
+  "label": "reasoning channel • mid-conversation format switch keeps the channel boundary intact",
+  "query": "Name three primary colors, as a short comma-separated list.",
+  "notes": "Format-switch stressor: prose turn → JSON turn → prose turn in one session. Template-fragile models drop or double their reasoning envelope exactly at output-format switches; the marker sweep, unclosed-span check, and per-turn visible-answer requirement must hold on all three turns. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "reasoning": {
+      "followUpTurns": [
+        "Now give me the same three colors as a JSON array of strings, and nothing else.",
+        "Back to plain prose: which of those three is your favorite and why, in one sentence?"
+      ],
+      "maxTokens": 1024,
+      "visibleContains": ["favorite"]
+    }
+  }
+}

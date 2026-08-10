@@ -37,13 +37,13 @@ struct HostPathRedirectTests {
         // the broad heuristic, but with the generic (non-workspace) wording.
         ChatExecutionContext.$hostReadOnlyScope.withValue(URL(fileURLWithPath: "/Users/tpae/Desktop")) {
             let hint = hostPathRedirectHint(path: "/Users/tpae/Documents/x")
-            #expect(hint?.contains("macOS host path") == true)
+            #expect(hint?.contains("host path outside the sandbox") == true)
         }
     }
 
     @Test func broadMacPathRedirectsWithoutScope() {
         let hint = hostPathRedirectHint(path: "/Users/tpae/Desktop")
-        #expect(hint?.contains("macOS host path") == true)
+        #expect(hint?.contains("host path outside the sandbox") == true)
         #expect(hint?.contains("file_read") == true)
     }
 
@@ -68,14 +68,16 @@ struct HostPathRedirectTests {
 
     // MARK: - sandboxDirectoryReadHint
     //
-    // `sandbox_read_file` on a directory: the model wanted to *list*, not
-    // read. Catches the "read my Desktop with sandbox_read_file" slip that
-    // hostPathRedirectHint misses (the path is a valid sandbox directory).
+    // A file read on a directory means the model wanted to list, not read.
+    // Recovery guidance must use the same public workspace vocabulary the
+    // request schema exposes rather than private sandbox adapters.
 
     @Test func directoryReadSuggestsListingInSandbox() {
         let hint = sandboxDirectoryReadHint(stderr: "cat: /workspace/agents/abc/: Is a directory")
         #expect(hint?.contains("is a directory") == true)
-        #expect(hint?.contains("sandbox_search_files") == true)
+        #expect(hint?.contains("file_read") == true)
+        #expect(hint?.contains("file_search") == true)
+        #expect(hint?.contains("sandbox_search_files") == false)
     }
 
     @Test func directoryReadInCombinedModeAlsoSuggestsFileRead() {
@@ -85,11 +87,13 @@ struct HostPathRedirectTests {
         }
     }
 
-    @Test func directoryReadOutsideCombinedModeDoesNotMentionHost() {
-        // No host workspace bound → don't dangle a file_read reference at a
-        // pure-sandbox session where the host tools don't exist.
+    @Test func directoryReadOutsideCombinedModeUsesPublicWorkspaceTools() {
+        // Public file tools are available in pure-sandbox sessions too, but
+        // the recovery hint must not imply that a host workspace is mounted.
         let hint = sandboxDirectoryReadHint(stderr: "cat: /workspace/agents/abc/: Is a directory")
-        #expect(hint?.contains("file_read") == false)
+        #expect(hint?.contains("file_read") == true)
+        #expect(hint?.contains("file_search") == true)
+        #expect(hint?.contains("host workspace") == false)
     }
 
     @Test func nonDirectoryReadErrorGetsNoDirectoryHint() {

@@ -95,6 +95,10 @@ public actor StorageMaintenance {
         if !force, let last = state.lastCheckpoint, now.timeIntervalSince(last) < checkpointInterval {
             return
         }
+        if !force, !(await Self.isIdleForHeavyMaintenance()) {
+            log.info("storage maintenance: WAL checkpoint deferred (app busy)")
+            return
+        }
         for db in OsaurusDatabaseHandle.allOpenHandles {
             db.executeMaintenance("PRAGMA wal_checkpoint(TRUNCATE)")
         }
@@ -108,12 +112,29 @@ public actor StorageMaintenance {
         if !force, let last = state.lastVacuum, now.timeIntervalSince(last) < vacuumInterval {
             return
         }
+        if !force, !(await Self.isIdleForHeavyMaintenance()) {
+            log.info("storage maintenance: VACUUM deferred (app busy)")
+            return
+        }
         for db in OsaurusDatabaseHandle.allOpenHandles {
             db.executeMaintenance("VACUUM")
         }
         state.lastVacuum = now
         persistState()
         log.info("storage maintenance: VACUUM")
+    }
+
+    /// Heavy maintenance (checkpoint TRUNCATE, VACUUM) runs on each
+    /// database's serial queue — the same queue UI paths hit with
+    /// `queue.sync`. A multi-minute VACUUM under an active chat therefore
+    /// turns the next transcript read into a main-thread stall. Only run
+    /// heavy passes when no inference or chat work is in flight; a deferred
+    /// pass retries on the next 30-minute tick (the state timestamp is not
+    /// advanced), so it still happens — just not under load.
+    private static func isIdleForHeavyMaintenance() async -> Bool {
+        if HTTPInferenceAdmission.shared.inflightCount > 0 { return false }
+        if await InferenceLoadCoordinator.shared.activeCount > 0 { return false }
+        return true
     }
 
     // MARK: - Persistent state

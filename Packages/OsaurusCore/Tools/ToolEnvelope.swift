@@ -254,11 +254,26 @@ public enum ToolEnvelope {
                 )
             case .binaryContent(let path, let ext, let detail):
                 let extLabel = ext.map { " (.\($0))" } ?? ""
-                let pivotTail = detail.pivotHint.map { " \($0)" } ?? ""
+                // Combined mode has no `shell_run` — the fail-forward path
+                // is `file_copy` into the sandbox, then `sandbox_exec`.
+                // Without this the model dead-ends on binaries (observed
+                // live: a PDF-to-PNG request flailed for turns).
+                let combinedMode = ChatExecutionContext.hostReadOnlyScope != nil
+                let pivot =
+                    combinedMode
+                    ? "copy it into the sandbox with `file_copy` (a `/workspace/...` destination), then process it there with `sandbox_exec` (e.g. `unzip`, `pdftotext`, `file`)"
+                    : "pivot to shell_run with an appropriate tool (e.g. `unzip`, `pdftotext`, `file`)"
+                var pivotTail = detail.pivotHint.map { " \($0)" } ?? ""
+                if combinedMode {
+                    pivotTail = pivotTail.replacingOccurrences(
+                        of: "shell_run",
+                        with: "`file_copy` + `sandbox_exec`"
+                    )
+                }
                 return failure(
                     kind: .executionError,
                     message:
-                        "file_read only supports text. '\(path)' looks like a binary file\(extLabel) — pivot to shell_run with an appropriate tool (e.g. `unzip`, `pdftotext`, `file`) instead of retrying.\(pivotTail)",
+                        "file_read only supports text. '\(path)' looks like a binary file\(extLabel) — \(pivot) instead of retrying.\(pivotTail)",
                     tool: tool,
                     retryable: false
                 )
@@ -433,6 +448,19 @@ public enum ToolEnvelope {
     /// opaque text.
     public static func successPayload(_ result: String) -> Any? {
         guard isSuccess(result),
+            let data = result.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return dict["result"]
+    }
+
+    /// Extract a structured `result` payload from either a success envelope
+    /// or a failure envelope that intentionally carries partial/aggregate
+    /// result metadata. Unlike `successPayload`, this does not change the
+    /// caller's success classification; it only preserves useful child rows
+    /// for evaluation and UI surfaces when an aggregate operation fails.
+    public static func resultPayload(_ result: String) -> Any? {
+        guard (isSuccess(result) || isError(result)),
             let data = result.data(using: .utf8),
             let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }

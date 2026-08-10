@@ -11,6 +11,8 @@ enum AgentChannelKind: String, Codable, CaseIterable, Sendable {
     case discord
     case slack
     case telegram
+    case imessage
+    case whatsapp
     case customHTTP = "custom_http"
 }
 
@@ -19,10 +21,16 @@ enum AgentChannelAction: String, Codable, CaseIterable, Sendable {
     case listSpaces = "list_spaces"
     case listRooms = "list_rooms"
     case readMessages = "read_messages"
+    case readThread = "read_thread"
     case searchMessages = "search_messages"
     case draftMessage = "draft_message"
     case sendMessage = "send_message"
     case replyThread = "reply_thread"
+    case editMessage = "edit_message"
+    case deleteMessage = "delete_message"
+    case addReaction = "add_reaction"
+    case removeReaction = "remove_reaction"
+    case sendTyping = "send_typing"
 }
 
 enum AgentChannelActionEffect: String, Codable, CaseIterable, Sendable {
@@ -336,20 +344,20 @@ public struct AgentChannelInboundAuthorizationDecision: Equatable, Sendable {
 extension AgentChannelAction {
     var baseEffect: AgentChannelActionEffect {
         switch self {
-        case .diagnostics, .listSpaces, .listRooms, .readMessages, .searchMessages:
+        case .diagnostics, .listSpaces, .listRooms, .readMessages, .readThread, .searchMessages:
             return .readOnly
         case .draftMessage:
             return .draft
-        case .sendMessage, .replyThread:
+        case .sendMessage, .replyThread, .editMessage, .deleteMessage, .addReaction, .removeReaction, .sendTyping:
             return .confirmedWrite
         }
     }
 
     var requiresSendConfirmation: Bool {
         switch self {
-        case .sendMessage, .replyThread:
+        case .sendMessage, .replyThread, .editMessage, .deleteMessage, .addReaction, .removeReaction, .sendTyping:
             return true
-        case .diagnostics, .listSpaces, .listRooms, .readMessages, .searchMessages, .draftMessage:
+        case .diagnostics, .listSpaces, .listRooms, .readMessages, .readThread, .searchMessages, .draftMessage:
             return false
         }
     }
@@ -362,11 +370,11 @@ extension AgentChannelAction {
             return ["provider_credentials"]
         case .listRooms:
             return ["provider_credentials", "space_allowlist"]
-        case .readMessages, .searchMessages:
+        case .readMessages, .readThread, .searchMessages:
             return ["provider_credentials", "read_room_allowlist"]
         case .draftMessage:
             return ["write_room_allowlist", "no_provider_write"]
-        case .sendMessage, .replyThread:
+        case .sendMessage, .replyThread, .editMessage, .deleteMessage, .addReaction, .removeReaction, .sendTyping:
             return ["write_enabled", "write_room_allowlist", "confirm_send_true"]
         }
     }
@@ -572,6 +580,8 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
     static let nativeDiscordConnectionId = "discord"
     static let nativeSlackConnectionId = "slack"
     static let nativeTelegramConnectionId = "telegram"
+    static let nativeIMessageConnectionId = "imessage"
+    static let nativeWhatsAppConnectionId = "whatsapp"
 
     var id: String
     var name: String
@@ -701,22 +711,306 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+// MARK: - Proactive outbound bindings
+
+/// Outbound behavior of one agent→destination binding. This is the
+/// per-destination policy that decides what `agent_channel_publish` may do:
+/// `off` refuses, `draft` records a local draft with no provider I/O,
+/// `confirm` requires an interactive approval (or queues a pending outbound
+/// item on unattended runs), and `autonomous` sends without a prompt while
+/// still passing every host gate (allowlists, rate policy, kill switch).
+enum AgentChannelBindingOutboundMode: String, Codable, CaseIterable, Sendable {
+    case off
+    case draft
+    case confirm
+    case autonomous
+}
+
+/// Run provenance a binding may be used from. Deliberately narrower than
+/// `SessionSource`: plugin/HTTP/channel-triggered runs are external or
+/// lateral surfaces and can never publish proactively, so they have no
+/// representation here.
+enum AgentChannelBindingRunSource: String, Codable, CaseIterable, Sendable {
+    case chat
+    case schedule
+    case watcher
+    case selfSchedule = "self_schedule"
+
+    /// Map a session source onto the binding vocabulary. Returns nil for
+    /// sources that are never allowed to publish proactively (plugin,
+    /// HTTP, inbound channel dispatch).
+    init?(sessionSource: SessionSource) {
+        switch sessionSource {
+        case .chat: self = .chat
+        case .schedule: self = .schedule
+        case .watcher: self = .watcher
+        case .selfSchedule: self = .selfSchedule
+        case .plugin, .http, .channel, .imported: return nil
+        }
+    }
+}
+
+/// Simple per-binding outbound rate policy, enforced against the durable
+/// outbound-intent ledger at send time.
+struct AgentChannelBindingRatePolicy: Codable, Equatable, Sendable {
+    static let defaultMaxSendsPerHour = 10
+    static let defaultMinSecondsBetweenSends = 30
+
+    var maxSendsPerHour: Int
+    var minSecondsBetweenSends: Int
+
+    init(
+        maxSendsPerHour: Int = Self.defaultMaxSendsPerHour,
+        minSecondsBetweenSends: Int = Self.defaultMinSecondsBetweenSends
+    ) {
+        self.maxSendsPerHour = min(max(maxSendsPerHour, 1), 120)
+        self.minSecondsBetweenSends = min(max(minSecondsBetweenSends, 0), 3_600)
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            maxSendsPerHour: try container.decodeIfPresent(Int.self, forKey: .maxSendsPerHour)
+                ?? Self.defaultMaxSendsPerHour,
+            minSecondsBetweenSends: try container.decodeIfPresent(
+                Int.self,
+                forKey: .minSecondsBetweenSends
+            ) ?? Self.defaultMinSecondsBetweenSends
+        )
+    }
+}
+
+/// One approved agent→destination route for proactive publishing.
+///
+/// The model never supplies a raw connection/room pair for proactive sends;
+/// it references a binding by id and the host resolves (and re-validates)
+/// the destination. Bindings are provider-neutral: `connectionId` may point
+/// at a native connection (`discord`/`slack`/`telegram`) or a custom
+/// connection from `agent-channels.json`. Credentials and transport
+/// settings stay in their existing stores.
+struct AgentChannelBinding: Codable, Equatable, Identifiable, Sendable {
+    /// Cap for the operator-authored "when to use" guidance surfaced to the
+    /// model. Past this the guidance is prompt bloat, not routing signal.
+    static let maxGuidanceLength = 500
+    static let maxLabelLength = 80
+
+    /// Stable operator-chosen identifier (slug-like, trimmed + lowercased).
+    /// Surfaced to the model as `binding_id`.
+    var id: String
+    var agentId: UUID
+    var connectionId: String
+    var roomId: String
+    /// Optional provider thread to publish into (thread reply instead of a
+    /// room message).
+    var threadId: String?
+    var label: String
+    /// Operator-facing "when to use" guidance, injected into the agent's
+    /// prompt context. Bounded at `maxGuidanceLength`.
+    var guidance: String
+    /// Run sources this binding may be used from. Empty decodes/normalizes
+    /// to the safe default of `[.chat]`.
+    var allowedSources: [AgentChannelBindingRunSource]
+    var outboundMode: AgentChannelBindingOutboundMode
+    var ratePolicy: AgentChannelBindingRatePolicy
+    var enabled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case agentId
+        case connectionId
+        case roomId
+        case threadId
+        case label
+        case guidance
+        case allowedSources
+        case outboundMode
+        case ratePolicy
+        case enabled
+    }
+
+    init(
+        id: String,
+        agentId: UUID,
+        connectionId: String,
+        roomId: String,
+        threadId: String? = nil,
+        label: String = "",
+        guidance: String = "",
+        allowedSources: [AgentChannelBindingRunSource] = [.chat],
+        outboundMode: AgentChannelBindingOutboundMode = .off,
+        ratePolicy: AgentChannelBindingRatePolicy = AgentChannelBindingRatePolicy(),
+        enabled: Bool = true
+    ) {
+        self.id = Self.normalizedBindingId(id)
+        self.agentId = agentId
+        self.connectionId = AgentChannelConnection.normalizedId(connectionId)
+        self.roomId = AgentChannelConnection.normalizedId(roomId)
+        let trimmedThread = threadId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.threadId = (trimmedThread?.isEmpty ?? true) ? nil : trimmedThread
+        self.label = String(
+            label.trimmingCharacters(in: .whitespacesAndNewlines).prefix(Self.maxLabelLength)
+        )
+        self.guidance = String(
+            guidance.trimmingCharacters(in: .whitespacesAndNewlines).prefix(Self.maxGuidanceLength)
+        )
+        let sources = Self.normalizedSources(allowedSources)
+        self.allowedSources = sources.isEmpty ? [.chat] : sources
+        self.outboundMode = outboundMode
+        self.ratePolicy = ratePolicy
+        self.enabled = enabled
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(String.self, forKey: .id),
+            agentId: try container.decode(UUID.self, forKey: .agentId),
+            connectionId: try container.decode(String.self, forKey: .connectionId),
+            roomId: try container.decode(String.self, forKey: .roomId),
+            threadId: try container.decodeIfPresent(String.self, forKey: .threadId),
+            label: try container.decodeIfPresent(String.self, forKey: .label) ?? "",
+            guidance: try container.decodeIfPresent(String.self, forKey: .guidance) ?? "",
+            allowedSources: try container.decodeIfPresent(
+                [AgentChannelBindingRunSource].self,
+                forKey: .allowedSources
+            ) ?? [.chat],
+            outboundMode: try container.decodeIfPresent(
+                AgentChannelBindingOutboundMode.self,
+                forKey: .outboundMode
+            ) ?? .off,
+            ratePolicy: try container.decodeIfPresent(
+                AgentChannelBindingRatePolicy.self,
+                forKey: .ratePolicy
+            ) ?? AgentChannelBindingRatePolicy(),
+            enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        )
+    }
+
+    var normalized: AgentChannelBinding {
+        AgentChannelBinding(
+            id: id,
+            agentId: agentId,
+            connectionId: connectionId,
+            roomId: roomId,
+            threadId: threadId,
+            label: label,
+            guidance: guidance,
+            allowedSources: allowedSources,
+            outboundMode: outboundMode,
+            ratePolicy: ratePolicy,
+            enabled: enabled
+        )
+    }
+
+    /// Display label with a deterministic fallback so UI and prompt rows
+    /// never render blank.
+    var displayLabel: String {
+        label.isEmpty ? "\(connectionId) · \(roomId)" : label
+    }
+
+    /// Whether this binding can be surfaced to (and used by) an agent run:
+    /// enabled and not switched off.
+    var isUsable: Bool {
+        enabled && outboundMode != .off
+    }
+
+    func allows(source: AgentChannelBindingRunSource) -> Bool {
+        allowedSources.contains(source)
+    }
+
+    static func normalizedBindingId(_ id: String) -> String {
+        id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    static func normalizedSources(
+        _ sources: [AgentChannelBindingRunSource]
+    ) -> [AgentChannelBindingRunSource] {
+        var seen = Set<AgentChannelBindingRunSource>()
+        return sources.filter { seen.insert($0).inserted }
+    }
+}
+
 struct AgentChannelConfiguration: Codable, Equatable, Sendable {
+    /// v1: connections only. v2: adds top-level `bindings` (proactive
+    /// outbound destinations). Decoding is additive — a v1 file decodes with
+    /// empty bindings, so existing installs remain proactive-off by default.
+    static let currentSchemaVersion = 2
+
     var schemaVersion: Int
     var connections: [AgentChannelConnection]
+    var bindings: [AgentChannelBinding]
 
-    init(schemaVersion: Int = 1, connections: [AgentChannelConnection] = []) {
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case connections
+        case bindings
+    }
+
+    init(
+        schemaVersion: Int = AgentChannelConfiguration.currentSchemaVersion,
+        connections: [AgentChannelConnection] = [],
+        bindings: [AgentChannelBinding] = []
+    ) {
         self.schemaVersion = schemaVersion
         self.connections = Self.normalizedConnections(connections)
+        self.bindings = Self.normalizedBindings(bindings)
+    }
+
+    init(from decoder: Decoder) throws {
+        // Assign raw arrays WITHOUT the memberwise init's normalization:
+        // decoding must preserve duplicates so import validation can REJECT
+        // a file with duplicate connection/binding ids instead of silently
+        // dropping the extras. Normalization happens at the load/save
+        // boundaries via `.normalized`.
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        connections =
+            try container.decodeIfPresent(
+                [AgentChannelConnection].self,
+                forKey: .connections
+            ) ?? []
+        bindings =
+            try container.decodeIfPresent(
+                [AgentChannelBinding].self,
+                forKey: .bindings
+            ) ?? []
     }
 
     var normalized: AgentChannelConfiguration {
-        AgentChannelConfiguration(schemaVersion: max(schemaVersion, 1), connections: connections)
+        AgentChannelConfiguration(
+            schemaVersion: max(schemaVersion, Self.currentSchemaVersion),
+            connections: connections,
+            bindings: bindings
+        )
     }
 
     func connection(id: String) -> AgentChannelConnection? {
         let normalized = AgentChannelConnection.normalizedId(id)
         return connections.first { $0.id == normalized }
+    }
+
+    func binding(id: String) -> AgentChannelBinding? {
+        let normalized = AgentChannelBinding.normalizedBindingId(id)
+        return bindings.first { $0.id == normalized }
+    }
+
+    /// All bindings owned by `agentId`, regardless of enablement/mode.
+    func bindings(agentId: UUID) -> [AgentChannelBinding] {
+        bindings.filter { $0.agentId == agentId }
+    }
+
+    /// Bindings the agent can actually surface/use (enabled, mode != off).
+    func usableBindings(agentId: UUID) -> [AgentChannelBinding] {
+        bindings(agentId: agentId).filter(\.isUsable)
+    }
+
+    /// Bindings usable by this agent from the exact run provenance. A missing
+    /// or lateral/external source is not authorized to publish proactively.
+    func usableBindings(agentId: UUID, source: SessionSource?) -> [AgentChannelBinding] {
+        guard let source,
+            let runSource = AgentChannelBindingRunSource(sessionSource: source)
+        else { return [] }
+        return usableBindings(agentId: agentId).filter { $0.allows(source: runSource) }
     }
 
     private static func normalizedConnections(
@@ -728,6 +1022,28 @@ struct AgentChannelConfiguration: Codable, Equatable, Sendable {
             .map(\.normalized)
             .filter { !$0.id.isEmpty && seen.insert($0.id).inserted }
     }
+
+    private static func normalizedBindings(
+        _ bindings: [AgentChannelBinding]
+    ) -> [AgentChannelBinding] {
+        var seen = Set<String>()
+        return
+            bindings
+            .map(\.normalized)
+            .filter { !$0.id.isEmpty && !$0.connectionId.isEmpty && !$0.roomId.isEmpty
+                && seen.insert($0.id).inserted
+            }
+    }
+}
+
+extension Notification.Name {
+    /// Posted after every successful `AgentChannelConfigurationStore.save`.
+    /// Connection/binding edits rewrite the channel-destinations prompt
+    /// section (a dynamic section, invisible to the static-prefix hash), so
+    /// open chat windows subscribe to re-price their context preview and
+    /// invalidate a warm-up prefilled with the old destination bytes.
+    static let agentChannelConfigurationChanged =
+        Notification.Name("AgentChannelConfigurationChanged")
 }
 
 enum AgentChannelConfigurationStore {
@@ -756,6 +1072,24 @@ enum AgentChannelConfigurationStore {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(configuration.normalized).write(to: url, options: [.atomic])
+        // Deliver on main: subscribers (ChatSession's budget-signal pipeline)
+        // attach MainActor-isolated closures that Combine invokes synchronously
+        // on the posting thread, and runtime isolation checks SIGTRAP the
+        // process when a background save (publish service, tests) posts
+        // directly. Every other signal in that pipeline is main-posted.
+        if Thread.isMainThread {
+            NotificationCenter.default.post(
+                name: .agentChannelConfigurationChanged,
+                object: nil
+            )
+        } else {
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .agentChannelConfigurationChanged,
+                    object: nil
+                )
+            }
+        }
     }
 
     static func configurationFileURL() -> URL {

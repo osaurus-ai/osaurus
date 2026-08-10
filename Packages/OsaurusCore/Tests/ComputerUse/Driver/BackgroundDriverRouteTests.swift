@@ -3,11 +3,10 @@
 //  OsaurusCoreTests — Computer Use
 //
 //  Regression guard for the SkyLight + CGEvent.postToPid double-delivery:
-//  SLEventPostToPid returns a non-zero status (0xB0000000) on success, so the
-//  old `postEvent` `== 0` check always reported failure and `route` ALSO posted
-//  via postToPid — delivering every keystroke and click twice. These tests pin
-//  each synthesized event to exactly one transport via injected spies (no live
-//  app or Accessibility permission required).
+//  SkyLight's status is not a delivery acknowledgement: a completed call can
+//  deliver even when it returns zero. These tests pin each synthesized event to
+//  exactly one app-class-selected transport via injected spies (no live app or
+//  Accessibility permission required).
 //
 
 import CoreGraphics
@@ -28,13 +27,14 @@ final class BackgroundDriverRouteTests: XCTestCase {
     private func makeDriver(
         spy: TransportSpy,
         skyLightAvailable: Bool,
-        chromium: Bool = false
+        chromium: Bool = false,
+        skyLightAccepted: Bool = true
     ) -> BackgroundDriver {
         var t = BackgroundDriver.Transports.live
         t.isWindowServerVisible = { _ in true }
         t.skyLightAvailable = { skyLightAvailable }
         t.skyLightPost = { _, _ in
-            spy.skyLight += 1; return true
+            spy.skyLight += 1; return skyLightAccepted
         }
         t.postToPid = { _, _ in spy.postToPid += 1 }
         t.hidPost = { _ in spy.hid += 1 }
@@ -43,48 +43,46 @@ final class BackgroundDriverRouteTests: XCTestCase {
         return BackgroundDriver(transports: t)
     }
 
-    func testKeyPressPostsViaSkyLightExactlyOncePerEvent() {
+    func testCocoaKeyPressUsesOnlyPublicPerPidEvenWhenSkyLightExists() {
         let spy = TransportSpy()
         let driver = makeDriver(spy: spy, skyLightAvailable: true)
 
         let result = driver.pressKey(pid: 4242, keyCode: 0)
 
         XCTAssertTrue(result.success)
-        // keyDown + keyUp, each delivered through SkyLight only.
-        XCTAssertEqual(spy.skyLight, 2)
-        XCTAssertEqual(spy.postToPid, 0, "SkyLight is terminal — postToPid must not double-deliver")
+        XCTAssertEqual(spy.skyLight, 0, "Cocoa must not receive a private transport attempt")
+        XCTAssertEqual(spy.postToPid, 2, "keyDown + keyUp use public CoreGraphics once each")
         XCTAssertEqual(spy.hid, 0)
-        XCTAssertEqual(driver.lastRoute, .skyLight)
+        XCTAssertEqual(driver.lastRoute, .perPid)
     }
 
-    func testTypePostsEachCharacterExactlyOnceViaSkyLight() {
+    func testCocoaTypePostsEachCharacterExactlyOnceViaPublicPerPid() {
         let spy = TransportSpy()
         let driver = makeDriver(spy: spy, skyLightAvailable: true)
 
         let result = driver.type(pid: 4242, text: "hello world")
 
         XCTAssertTrue(result.success)
-        // 11 characters × (keyDown + keyUp) = 22 posts, with no duplication.
-        XCTAssertEqual(spy.skyLight, 22)
-        XCTAssertEqual(spy.postToPid, 0, "the doubling bug would make this 44")
+        // 11 characters × (keyDown + keyUp) = 22 posts on one transport.
+        XCTAssertEqual(spy.skyLight, 0)
+        XCTAssertEqual(spy.postToPid, 22, "the double-delivery bug would also call SkyLight")
         XCTAssertEqual(spy.hid, 0)
     }
 
-    func testClickPostsDownUpViaSkyLightWithoutDuplication() {
+    func testCocoaClickPostsDownUpViaPublicPerPidWithoutPrivateAttempt() {
         let spy = TransportSpy()
         let driver = makeDriver(spy: spy, skyLightAvailable: true)
 
         let result = driver.click(pid: 4242, point: CGPoint(x: 10, y: 10))
 
         XCTAssertTrue(result.success)
-        // mouseDown + mouseUp via SkyLight only.
-        XCTAssertEqual(spy.skyLight, 2)
-        XCTAssertEqual(spy.postToPid, 0)
+        XCTAssertEqual(spy.skyLight, 0)
+        XCTAssertEqual(spy.postToPid, 2)
         XCTAssertEqual(spy.hid, 0)
-        XCTAssertEqual(driver.lastRoute, .skyLight)
+        XCTAssertEqual(driver.lastRoute, .perPid)
     }
 
-    func testFallsBackToPostToPidOnlyWhenSkyLightUnavailable() {
+    func testCocoaPerPidRouteDoesNotDependOnSkyLightAvailability() {
         let spy = TransportSpy()
         let driver = makeDriver(spy: spy, skyLightAvailable: false)
 
@@ -95,6 +93,43 @@ final class BackgroundDriverRouteTests: XCTestCase {
         XCTAssertEqual(spy.postToPid, 2, "keyDown + keyUp via the CoreGraphics fallback")
         XCTAssertEqual(spy.hid, 0)
         XCTAssertEqual(driver.lastRoute, .perPid)
+    }
+
+    func testCocoaNeverCallsSkyLightEvenWhenItsStubWouldReturnFalse() {
+        let spy = TransportSpy()
+        let driver = makeDriver(
+            spy: spy,
+            skyLightAvailable: true,
+            skyLightAccepted: false
+        )
+
+        let result = driver.pressKey(pid: 4242, keyCode: 0)
+
+        XCTAssertTrue(result.success)
+        XCTAssertEqual(spy.skyLight, 0)
+        XCTAssertEqual(spy.postToPid, 2)
+        XCTAssertEqual(spy.hid, 0)
+        XCTAssertEqual(driver.lastRoute, .perPid)
+    }
+
+    func testChromiumSkyLightCallIsTerminalEvenWhenStatusIsFalse() {
+        let spy = TransportSpy()
+        let driver = makeDriver(
+            spy: spy,
+            skyLightAvailable: true,
+            chromium: true,
+            skyLightAccepted: false
+        )
+
+        let result = driver.pressKey(pid: 4242, keyCode: 0)
+
+        XCTAssertTrue(result.success)
+        // Primer down/up plus key down/up each use SkyLight exactly once. The
+        // returned Bool is deliberately not used for a same-event fallback.
+        XCTAssertEqual(spy.skyLight, 4)
+        XCTAssertEqual(spy.postToPid, 0)
+        XCTAssertEqual(spy.hid, 0)
+        XCTAssertEqual(driver.lastRoute, .skyLight)
     }
 
     // MARK: - Chromium / Electron HID escalation

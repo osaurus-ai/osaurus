@@ -10,7 +10,7 @@ WORKSPACE := osaurus.xcworkspace
 DERIVED := build/DerivedData
 XCODEBUILD_FLAGS ?=
 
-.PHONY: help cli app install-cli serve status test ci-test computer-use-evidence clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-capture-screen evals-loop evals-matrix evals-diff evals-contribute evals-compat
+.PHONY: help cli app install-cli serve status test ci-test computer-use-evidence clean wa-helper wa-helper-release bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-deterministic evals-capture-screen evals-loop evals-matrix evals-diff evals-contribute evals-compat evals-pr-report evals-pr-report-baseline evals-watcher-report evals-scoreboard
 
 help:
 	@echo "Targets:"
@@ -30,16 +30,23 @@ help:
 	@echo "  evals-all           Run every suite under Packages/OsaurusEvals/Suites/* (MODEL=, FILTER=)"
 	@echo "  evals-all-verbose   Same as 'evals-all' plus per-case raw LLM response"
 	@echo "  evals-all-report    Same as 'evals-all' but writes per-suite JSON to EVALS_OUT_DIR (build/evals/)"
+	@echo "  evals-deterministic Run the token-free suites with the floors gate (CI-safe, no model)"
 	@echo "  evals-capture-screen Capture a real app's screen context into a (gitignored) fixture (APP=, OUT=)"
 	@echo "  evals-loop          Optimization loop: run all suites per model + scoreboard + diff (MODELS=, BASELINE=, RECORD=1 LABEL= to commit reports/SNAPSHOT+history)"
 	@echo "  evals-matrix        Cross-model scoreboard from a reports dir (DIR=, HISTORY= LABEL= to append a trend row)"
 	@echo "  evals-diff          All-domain before/after diff (BASELINE=, CURRENT=)"
-	@echo "  evals-contribute    Crowdsource: run one model on your Mac -> reports/community/<file>.json (MODEL=)"
+	@echo "  evals-contribute    Crowdsource: run one model on your Mac -> reports/community/<file>.json (MODEL=, PR=1 auto-PRs; see COMMUNITY_EVALS.md)"
 	@echo "  evals-compat        Fold reports/community/* into the COMPATIBILITY.md leaderboard (COMPAT_DIR=)"
+	@echo "  evals-pr-report     Generate local+frontier eval artifact bundle for PR review"
+	@echo "  evals-pr-report-baseline  Same as evals-pr-report plus BASELINE_DIR comparison"
+	@echo "  evals-watcher-report  Store a watcher eval report bundle and refresh its scoreboard"
+	@echo "  evals-scoreboard    Aggregate stored eval report bundles into scoreboard artifacts"
 	@echo "  test           Run OsaurusCore package tests via 'swift test'"
 	@echo "  evals-test     Run the OsaurusEvals harness unit tests (deterministic, token-free)"
 	@echo "  ci-test        Reproduce the CI test-core job locally (xcodebuild + xcbeautify)"
 	@echo "  computer-use-evidence Run local Computer Use proof lane into build/computer-use-evidence/"
+	@echo "  wa-helper      Build the WhatsApp bridge helper (osaurus-wa) into build/ (needs Go)"
+	@echo "  wa-helper-release  Package build/osaurus-wa-macos.zip and print pin digests"
 	@echo "  clean          Remove DerivedData build output"
 
 cli:
@@ -54,6 +61,14 @@ app: cli
 	mkdir -p "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers"
 	cp "$(DERIVED)/Build/Products/$(CONFIG)/osaurus-cli" "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus"
 	chmod +x "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus"
+	@echo "Building plugin host helper (osaurus-plugin-host)…"
+	xcodebuild -workspace $(WORKSPACE) -scheme osaurus-plugin-host -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet $(XCODEBUILD_FLAGS)
+	@echo "Embedding plugin host helper into App Bundle (Helpers)…"
+	# Killable out-of-process native plugin host (see PluginProcessHost.swift).
+	cp "$(DERIVED)/Build/Products/$(CONFIG)/osaurus-plugin-host" "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-plugin-host"
+	chmod +x "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-plugin-host"
+	@echo "Bundling sandbox kernel (Resources/SandboxRuntime)…"
+	./scripts/build/fetch_sandbox_kernel.sh "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Resources/SandboxRuntime"
 
 install-cli: cli
 	@echo "Installing CLI symlink…"
@@ -72,6 +87,36 @@ serve: install-cli
 status:
 	osaurus status
 
+# WhatsApp Web bridge helper (whatsmeow). Dev lane: build locally and point
+# the app at it with OSAURUS_WA_PATH (DEBUG builds only), mirroring the imsg
+# helper's OSAURUS_IMSG_PATH override. Release distribution uses a pinned
+# download manifest instead (scripts/build/wa-helper-manifest.json).
+wa-helper:
+	@command -v go >/dev/null 2>&1 || { \
+		echo "Go toolchain not found. Install with: brew install go"; \
+		exit 1; \
+	}
+	@echo "Building osaurus-wa (WhatsApp bridge helper)…"
+	@mkdir -p build
+	cd helpers/osaurus-wa && go build -trimpath -o ../../build/osaurus-wa .
+	@echo "Built build/osaurus-wa ($$(build/osaurus-wa version))"
+
+# Reproducible release archive for the pinned-helper download lane. Produces
+# build/osaurus-wa-macos.zip plus the SHA-256 digests to copy into
+# scripts/build/wa-helper-manifest.json and WhatsAppRuntimeAssets.swift when
+# rotating pins (see docs/CHANNEL_RELEASE_RUNBOOK_WHATSAPP.md).
+wa-helper-release: wa-helper
+	@echo "Packaging osaurus-wa release archive…"
+	@rm -f build/osaurus-wa-macos.zip
+	cd build && /usr/bin/ditto -c -k osaurus-wa osaurus-wa-macos.zip
+	@echo ""
+	@echo "executableSHA256: $$(shasum -a 256 build/osaurus-wa | cut -d' ' -f1)"
+	@echo "archiveSHA256:    $$(shasum -a 256 build/osaurus-wa-macos.zip | cut -d' ' -f1)"
+	@echo ""
+	@echo "Upload build/osaurus-wa-macos.zip to the wa-helper-v$$(build/osaurus-wa version) release tag,"
+	@echo "then pin both digests in scripts/build/wa-helper-manifest.json and"
+	@echo "Packages/OsaurusCore/Services/WhatsApp/WhatsAppRuntimeAssets.swift."
+
 test:
 	@echo "Running OsaurusCore tests…"
 	swift test --package-path Packages/OsaurusCore
@@ -83,8 +128,9 @@ evals-test:
 	@echo "Running OsaurusEvals harness tests…"
 	OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 swift test --package-path Packages/OsaurusEvals
 
-# Mirrors the CI `test-core` job: same xcodebuild flags, same xcbeautify
-# pipe, same xcresult bundle. Run this locally to repro a failed CI run.
+# Mirrors the CI `test-core` execution policy: one xctest worker, the same
+# timeout allowances, xcbeautify pipe, and xcresult bundle. Run this locally
+# to reproduce a failed CI run without Xcode's parallel-worker starvation.
 # After it finishes (pass or fail) you can `open build/Tests.xcresult` to
 # get the same Test Navigator UI as Xcode.
 ci-test:
@@ -102,9 +148,12 @@ ci-test:
 		-skipPackagePluginValidation \
 		-skipMacroValidation \
 		-enableCodeCoverage NO \
+		-parallel-testing-enabled NO \
+		-parallel-testing-worker-count 1 \
+		-maximum-parallel-testing-workers 1 \
 		-test-timeouts-enabled YES \
-		-default-test-execution-time-allowance 60 \
-		-maximum-test-execution-time-allowance 120 \
+		-default-test-execution-time-allowance 180 \
+		-maximum-test-execution-time-allowance 300 \
 		COMPILER_INDEX_STORE_ENABLE=NO \
 		SWIFT_COMPILATION_MODE=incremental \
 		| xcbeautify --renderer terminal
@@ -175,6 +224,27 @@ EVALS_ROOT := Packages/OsaurusEvals/Suites
 EVALS_SUITE ?= $(EVALS_ROOT)/CapabilitySearch
 EVALS_OUT ?= build/evals.json
 EVALS_OUT_DIR ?= build/evals
+# Floors gate (Config/floors.json) is on by default: per-suite pass-rate
+# floors apply only to the deterministic suites listed in the file, and
+# per-case recall floors apply only when the suite contains that domain,
+# so the flag is a no-op for everything else. Disable with
+# `make evals EVALS_FLOOR_FLAG=`.
+EVALS_FLOOR_FLAG ?= --fail-on-floor
+LOCAL_MODEL ?= foundation
+FRONTIER_MODEL ?= openai/gpt-4o-mini
+EVALS_PR_REPORT_OUT ?= build/evals/pr-report/$(shell date -u +%Y%m%dT%H%M%SZ)
+EVALS_PR_REPORT_OUT := $(EVALS_PR_REPORT_OUT)
+EVALS_WATCHER_CHANNEL ?= main
+EVALS_WATCHER_OUT ?= build/evals/watcher
+EVALS_REPORT_PRESET ?= local-frontier
+EVALS_WATCHER_ARTIFACT_ID ?=
+EVALS_MAX_REGRESSIONS ?= 0
+EVALS_SCOREBOARD_ROOT ?= $(EVALS_WATCHER_OUT)/$(EVALS_WATCHER_CHANNEL)
+EVALS_SCOREBOARD_OUT ?= build/evals/scoreboard/$(shell date -u +%Y%m%dT%H%M%SZ)
+EVALS_SCOREBOARD_OUT := $(EVALS_SCOREBOARD_OUT)
+ifeq ($(strip $(EVALS_FROM_REPORTS)$(PLAN_ONLY)),)
+EVALS_WATCHER_PREP := evals-prep
+endif
 # Auto-discovered list of every subdirectory under Suites/. Adding a new
 # `Suites/MyDomain/` automatically picks it up here — no Makefile edit
 # required when a new suite lands.
@@ -194,6 +264,7 @@ evals: evals-prep
 	@echo "Running OsaurusEvals against $(EVALS_SUITE)…"
 	swift run --package-path Packages/OsaurusEvals osaurus-evals run \
 		--suite $(EVALS_SUITE) \
+		$(EVALS_FLOOR_FLAG) \
 		$(if $(MODEL),--model $(MODEL),) \
 		$(if $(FILTER),--filter $(FILTER),)
 
@@ -202,6 +273,7 @@ evals-verbose: evals-prep
 	swift run --package-path Packages/OsaurusEvals osaurus-evals run \
 		--suite $(EVALS_SUITE) \
 		--verbose \
+		$(EVALS_FLOOR_FLAG) \
 		$(if $(MODEL),--model $(MODEL),) \
 		$(if $(FILTER),--filter $(FILTER),)
 
@@ -209,6 +281,7 @@ evals-report: evals-prep
 	@mkdir -p $(dir $(EVALS_OUT))
 	swift run --package-path Packages/OsaurusEvals osaurus-evals run \
 		--suite $(EVALS_SUITE) \
+		$(EVALS_FLOOR_FLAG) \
 		$(if $(MODEL),--model $(MODEL),) \
 		$(if $(FILTER),--filter $(FILTER),) \
 		--out $(EVALS_OUT)
@@ -225,6 +298,7 @@ evals-all: evals-prep
 		echo "── $$suite ──"; \
 		swift run --package-path Packages/OsaurusEvals osaurus-evals run \
 			--suite $$suite \
+			$(EVALS_FLOOR_FLAG) \
 			$(if $(MODEL),--model $(MODEL),) \
 			$(if $(FILTER),--filter $(FILTER),) \
 			|| rc=$$?; \
@@ -239,6 +313,7 @@ evals-all-verbose: evals-prep
 		swift run --package-path Packages/OsaurusEvals osaurus-evals run \
 			--suite $$suite \
 			--verbose \
+			$(EVALS_FLOOR_FLAG) \
 			$(if $(MODEL),--model $(MODEL),) \
 			$(if $(FILTER),--filter $(FILTER),) \
 			|| rc=$$?; \
@@ -256,6 +331,7 @@ evals-all-report: evals-prep
 		echo "── $$suite → $$out ──"; \
 		swift run --package-path Packages/OsaurusEvals osaurus-evals run \
 			--suite $$suite \
+			$(EVALS_FLOOR_FLAG) \
 			$(if $(MODEL),--model $(MODEL),) \
 			$(if $(FILTER),--filter $(FILTER),) \
 			--out $$out \
@@ -263,6 +339,26 @@ evals-all-report: evals-prep
 	done; \
 	echo ""; \
 	echo "Wrote per-suite reports to $(EVALS_OUT_DIR)/"; \
+	exit $$rc
+
+# Deterministic token-free suites: pure-data scorers with no model load, no
+# embedder, no network — every row is a code contract, so any failure is a
+# regression (floors.json pins their pass rate at 1.0). Safe on hosted CI
+# runners; the CI `test-evals` job runs this after the harness unit tests.
+# No `evals-prep` dependency: these lanes never touch MLX or the embedder.
+EVALS_DETERMINISTIC_SUITES := Schema ToolEnvelope PrefixHash ArgumentCoercion \
+	ToolResultGrounding AgentChannels ComputerUse ScreenContext
+
+evals-deterministic:
+	@rc=0; for name in $(EVALS_DETERMINISTIC_SUITES); do \
+		echo ""; \
+		echo "── $(EVALS_ROOT)/$$name ──"; \
+		swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+			--suite $(EVALS_ROOT)/$$name \
+			--fail-on-floor \
+			$(if $(FILTER),--filter $(FILTER),) \
+			|| rc=$$?; \
+	done; \
 	exit $$rc
 
 # Capture a real app's screen context into a ScreenContextFixture JSON for the
@@ -317,10 +413,12 @@ evals-diff:
 # Crowdsource model compatibility: run the per-model LLM suites for ONE model on
 # your hardware and emit a single contribution file under reports/community/.
 # Export a strong judge key (e.g. XAI_API_KEY) or JUDGE_MODEL to avoid a
-# self-judged (weaker) run. See reports/community/README.md.
+# self-judged (weaker) run. PR=1 auto-submits (branch -> push -> gh pr create).
+# Contributor guide: COMMUNITY_EVALS.md.
 #   MODEL=mlx-community/Qwen3-4B-4bit make evals-contribute
+#   PR=1 MODEL=mlx-community/Qwen3-4B-4bit make evals-contribute
 evals-contribute:
-	@MODEL="$(MODEL)" bash scripts/evals/contribute.sh $(MODEL)
+	@MODEL="$(MODEL)" PR="$(PR)" bash scripts/evals/contribute.sh $(MODEL)
 
 # Fold every contribution under reports/community/ into the committed
 # COMPATIBILITY.{md,json} leaderboard. Run VALIDATE=1 for the PR gate (verify
@@ -331,6 +429,62 @@ COMPAT_DIR ?= reports/community
 evals-compat:
 	@swift run --package-path Packages/OsaurusEvals osaurus-evals compat $(COMPAT_DIR) \
 		$(if $(VALIDATE),--validate,--out reports/COMPATIBILITY.json --markdown reports/COMPATIBILITY.md)
+
+# Review-oriented artifact bundle for PRs that affect agent-loop behavior.
+# Defaults to the required local+frontier lanes and AgentLoop,
+# AgentLoopFrontier, and Subagent suites. SandboxFrontier is opt-in because it
+# needs host sandbox prerequisites.
+evals-pr-report: evals-prep
+	@mkdir -p "$(EVALS_PR_REPORT_OUT)"
+	swift run --package-path Packages/OsaurusEvals osaurus-evals report \
+		--local-model "$(LOCAL_MODEL)" \
+		--frontier-model "$(FRONTIER_MODEL)" \
+		--out-dir "$(EVALS_PR_REPORT_OUT)" \
+		$(if $(JUDGE_MODEL),--judge-model "$(JUDGE_MODEL)",) \
+		$(if $(FILTER),--filter "$(FILTER)",) \
+		$(if $(INCLUDE_SANDBOX_FRONTIER),--include-sandbox-frontier,)
+	@echo "Wrote eval PR report to $(EVALS_PR_REPORT_OUT)"
+
+evals-pr-report-baseline: evals-prep
+	@if [[ -z "$(BASELINE_DIR)" ]]; then \
+		echo "BASELINE_DIR is required, e.g. make evals-pr-report-baseline BASELINE_DIR=build/evals/main-report"; \
+		exit 2; \
+	fi
+	@mkdir -p "$(EVALS_PR_REPORT_OUT)"
+	swift run --package-path Packages/OsaurusEvals osaurus-evals report \
+		--local-model "$(LOCAL_MODEL)" \
+		--frontier-model "$(FRONTIER_MODEL)" \
+		--baseline "$(BASELINE_DIR)" \
+		--out-dir "$(EVALS_PR_REPORT_OUT)" \
+		$(if $(JUDGE_MODEL),--judge-model "$(JUDGE_MODEL)",) \
+		$(if $(FILTER),--filter "$(FILTER)",) \
+		$(if $(INCLUDE_SANDBOX_FRONTIER),--include-sandbox-frontier,)
+	@echo "Wrote eval PR report with baseline comparison to $(EVALS_PR_REPORT_OUT)"
+
+evals-watcher-report: $(EVALS_WATCHER_PREP)
+	scripts/evals/eval-watcher-report.sh \
+		--channel "$(EVALS_WATCHER_CHANNEL)" \
+		--out-root "$(EVALS_WATCHER_OUT)" \
+		$(if $(EVALS_WATCHER_ARTIFACT_ID),--artifact-id "$(EVALS_WATCHER_ARTIFACT_ID)",) \
+		--preset "$(EVALS_REPORT_PRESET)" \
+		--local-model "$(LOCAL_MODEL)" \
+		--frontier-model "$(FRONTIER_MODEL)" \
+		--max-regressions "$(EVALS_MAX_REGRESSIONS)" \
+		$(if $(BASELINE_DIR),--baseline "$(BASELINE_DIR)",) \
+		$(if $(JUDGE_MODEL),--judge-model "$(JUDGE_MODEL)",) \
+		$(if $(FILTER),--filter "$(FILTER)",) \
+		$(if $(INCLUDE_SANDBOX_FRONTIER),--include-sandbox-frontier,) \
+		$(if $(EVALS_FROM_REPORTS),--from-reports "$(EVALS_FROM_REPORTS)",) \
+		$(if $(OSAURUS_EVALS_STARTUP_TIMEOUT_SECONDS),--startup-timeout "$(OSAURUS_EVALS_STARTUP_TIMEOUT_SECONDS)",) \
+		$(if $(PLAN_ONLY),--plan-only,)
+
+evals-scoreboard:
+	@mkdir -p "$(EVALS_SCOREBOARD_OUT)"
+	swift run --package-path Packages/OsaurusEvals osaurus-evals scoreboard \
+		--reports-root "$(EVALS_SCOREBOARD_ROOT)" \
+		--out-dir "$(EVALS_SCOREBOARD_OUT)" \
+		--max-regressions "$(EVALS_MAX_REGRESSIONS)"
+	@echo "Wrote eval scoreboard to $(EVALS_SCOREBOARD_OUT)"
 
 ## ── Housekeeping ─────────────────────────────────────────────────
 

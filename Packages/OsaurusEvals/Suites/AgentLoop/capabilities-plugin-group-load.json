@@ -1,0 +1,35 @@
+{
+  "id": "agent_loop.capabilities-plugin-group-load",
+  "domain": "agent_loop",
+  "label": "agent loop • load a deferred plugin group through the gateway",
+  "query": "Use your enabled deferred grouped acknowledgement capability to confirm it executes, then report the result.",
+  "notes": "Regression for compact manifests that list one plugin/<id> capability value. The model must pass that id to the unified capabilities gateway, call the loaded member tool, and continue the task. Calling either the prefixed or bare group id as a function is forbidden.",
+  "trials": 3,
+  "fixtures": {
+    "enableTools": ["eval_grouped_load_probe"],
+    "useHostFolder": false
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "mustCallTools": ["capabilities", "eval_grouped_load_probe"],
+      "mustNotCallTools": [
+        "plugin/osaurus.eval.capability-group",
+        "osaurus.eval.capability-group",
+        "capabilities_load",
+        "capabilities_discover"
+      ],
+      "finalTextContains": ["executed"],
+      "finalTextMustNotContain": ["capabilities_load", "capabilities_discover"],
+      "toolUsageAudit": [
+        {
+          "tool": "capabilities",
+          "maxCalls": 1,
+          "maxErrors": 0,
+          "argsMustContain": "plugin/osaurus.eval.capability-group",
+          "argsMustNotContain": "query"
+        }
+      ]
+    }
+  }
+}

@@ -266,7 +266,8 @@ public final class NextRunScheduler {
             return
         }
 
-        let request = await Self.makeDispatchRequest(for: entry)
+        // The agent woke itself on a timer. Nobody is waiting.
+        let request = await Self.makeDispatchRequest(for: entry, loadIntent: .background)
         guard let handle = await TaskDispatcher.shared.dispatch(request) else {
             print(
                 "[NextRunScheduler] dispatch failed for agent \(entry.agentId.uuidString.prefix(8))"
@@ -299,14 +300,23 @@ public final class NextRunScheduler {
 
     /// Build the dispatch request for a wake, including the previous-run
     /// pointer looked up from `agent_runs`.
-    public static func makeDispatchRequest(for entry: NextRunEntry) async -> DispatchRequest {
+    /// - Parameter loadIntent: `.background` for the automatic wake (nobody is
+    ///   waiting on it, so it must not evict the user's model), `.interactive`
+    ///   for the "Run now" button in the Next Run panel, which shares this
+    ///   builder but has a human watching it. Defaults to `.interactive` so a
+    ///   new caller fails safe -- toward loading, not toward refusing.
+    public static func makeDispatchRequest(
+        for entry: NextRunEntry,
+        loadIntent: ModelLoadIntent = .interactive
+    ) async -> DispatchRequest {
         let previousRun = await latestCompletedRun(for: entry.agentId)
         return DispatchRequest(
             prompt: composeDispatchPrompt(entry: entry, previousRun: previousRun),
             agentId: entry.agentId,
             title: sessionTitle(for: entry),
             source: .selfSchedule,
-            externalSessionKey: nil
+            externalSessionKey: nil,
+            loadIntent: loadIntent
         )
     }
 

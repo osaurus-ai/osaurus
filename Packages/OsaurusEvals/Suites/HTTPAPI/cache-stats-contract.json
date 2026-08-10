@@ -1,0 +1,14 @@
+{
+  "id": "http_api.cache-stats-contract",
+  "domain": "http_api",
+  "label": "http api • /admin/cache-stats exposes the required contract fields",
+  "query": "unused",
+  "notes": "Shape-only admin contract: GET /admin/cache-stats must return 200 with the documented fields (prefix hit counters, disk-L2 block, cache topology, memory-safety and storage-location blocks). No model generation involved — the cheapest live-server row in the lane.",
+  "fixtures": {},
+  "expect": {
+    "httpAPI": {
+      "scenario": "cache_stats",
+      "prefixProbe": false
+    }
+  }
+}

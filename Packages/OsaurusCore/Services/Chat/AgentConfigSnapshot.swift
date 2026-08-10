@@ -19,6 +19,21 @@
 
 import Foundation
 
+/// Effective spawn settings frozen with the rest of one chat turn.
+///
+/// The Default agent reads these values from `SubagentConfiguration`; custom
+/// agents read their own `AgentSettings`. Capturing the resolved values here
+/// keeps prompt guidance and JSON schemas on one immutable view even when the
+/// settings editor saves while context composition is suspended.
+public struct AgentSpawnConfigSnapshot: Sendable, Equatable {
+    let agentIDs: [UUID]
+    let modelNames: [String]
+    let modelNotes: [String: String]
+    let budgets: SubagentBudgets
+    let toolAccess: SpawnToolAccess
+    let launcherModelOverride: String?
+}
+
 public struct AgentConfigSnapshot: Sendable, Equatable {
 
     /// Agent id this snapshot was captured for. Used by gates that
@@ -64,6 +79,11 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// been picked yet.
     public let model: String?
 
+    /// Canonical local-bundle `config.json.model_type` captured alongside the
+    /// selected model. This keeps family guidance architecture-derived and
+    /// session-deterministic instead of re-reading a changing scan cache.
+    public let modelType: String?
+
     /// User-selected manual tool names, or nil when not in manual mode.
     public let manualToolNames: [String]?
 
@@ -107,23 +127,33 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// `resolveTools` — `computer_use` is stripped in BOTH auto and manual
     /// mode unless the agent has opted in.
     public let computerUseEnabled: Bool
+    /// Per-agent opt-in for Browser Use. Enforced authoritatively in
+    /// `resolveTools` like `computer_use` — `browser_use` is stripped in BOTH
+    /// auto and manual mode unless the custom agent has opted in. The built-in
+    /// Default agent is hard-off for Browser Use.
+    public let browserUseEnabled: Bool
     /// Per-agent opt-in for `spawn`. Enforced authoritatively in `resolveTools`
     /// — stripped unless the agent has opted in AND has at least one spawnable
-    /// agent (`spawnableAgentNames`), ANDed with the global master gate. The
-    /// Default agent is governed by the global pool instead.
+    /// agent or model. There is no global master gate; the Default agent is
+    /// governed by its own global pool instead.
     public let spawnDelegationEnabled: Bool
     /// Per-agent opt-in for `image`. Enforced in `resolveTools` — stripped
     /// unless the agent opted in (custom agents) / the global image switch is on
     /// (Default agent).
     public let imageEnabled: Bool
+    /// Per-agent opt-in for billable remote `video`.
+    public let videoEnabled: Bool
     /// Per-agent opt-in for `applescript`. Enforced in `resolveTools` — stripped
     /// unless the agent opted in (custom agents) / the global AppleScript switch
     /// is on (Default agent), AND a curated AppleScript model is installed.
     public let appleScriptEnabled: Bool
-    /// Agents this agent may launch via `spawn_agent`. Drives the "is there
+    /// Stable IDs of agents this agent may launch via `spawn_agent`. Drives the "is there
     /// anything to spawn?" half of the `spawn_agent` visibility gate for custom
     /// agents.
-    public let spawnableAgentNames: [String]
+    public let spawnableAgentIDs: [UUID]
+    /// Transitional legacy payload. It must be resolved uniquely against the
+    /// live descriptor catalog before use and is never itself an auth key.
+    let legacySpawnableAgentNames: [String]
     /// Raw model ids this agent may hand a task to via `spawn_model`. Drives the
     /// "is there anything to spawn?" half of the `spawn_model` visibility gate
     /// for custom agents.
@@ -131,6 +161,30 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// Optional "when/how to use" note per spawnable model id, surfaced in the
     /// spawn guidance descriptor (gate stays on `spawnableModelNames`).
     public let spawnableModelNotes: [String: String]
+    /// Effective Default-vs-custom spawn settings captured with this turn. Nil
+    /// exists only for source-compatible hand-built test snapshots;
+    /// production `capture(...)` always supplies it.
+    let spawnConfiguration: AgentSpawnConfigSnapshot?
+    /// Per-agent opt-in for the knowledge tools, pre-folded with "has at
+    /// least one granted collection" — false strips `search_knowledge` /
+    /// `read_knowledge` / `list_knowledge` from the model-visible schema.
+    /// Execution-time scoping happens in the tools themselves.
+    public let knowledgeEnabled: Bool
+    /// Curator role, pre-folded like `knowledgeEnabled` — false strips
+    /// `propose_knowledge_update` from the model-visible schema. The tool
+    /// re-checks the role at execution time.
+    public let knowledgeCuratorEnabled: Bool
+    /// Granted collections resolved to enabled ones at capture time
+    /// (name + summary only). Feeds the `## Knowledge` prompt section —
+    /// `knowledgeEnabled` alone only gates the tools into the schema; this
+    /// is what tells the model WHAT the granted corpora contain.
+    public let knowledgeCollections: [KnowledgeGrantDescriptor]
+
+    /// True when this agent owns at least one proactive channel destination
+    /// that is usable from the current run source. Gates the narrow
+    /// `agent_channel_publish` tool into the schema; the broad
+    /// `agent_channel_*` catalog stays deferred behind capability loading.
+    public let hasChannelPublishDestinations: Bool
 
     public init(
         agentId: UUID,
@@ -140,6 +194,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         autonomousConfig: AutonomousExecConfig?,
         toolMode: ToolSelectionMode,
         model: String?,
+        modelType: String? = nil,
         manualToolNames: [String]?,
         systemPrompt: String,
         dbEnabled: Bool,
@@ -149,12 +204,20 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         webSearchEnabled: Bool = true,
         selfSchedulingEnabled: Bool = false,
         computerUseEnabled: Bool = false,
+        browserUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
+        videoEnabled: Bool = false,
         appleScriptEnabled: Bool = false,
+        spawnableAgentIDs: [UUID] = [],
         spawnableAgentNames: [String] = [],
         spawnableModelNames: [String] = [],
-        spawnableModelNotes: [String: String] = [:]
+        spawnableModelNotes: [String: String] = [:],
+        spawnConfiguration: AgentSpawnConfigSnapshot? = nil,
+        knowledgeEnabled: Bool = false,
+        knowledgeCuratorEnabled: Bool = false,
+        knowledgeCollections: [KnowledgeGrantDescriptor] = [],
+        hasChannelPublishDestinations: Bool = false
     ) {
         self.agentId = agentId
         self.toolsDisabled = toolsDisabled
@@ -163,6 +226,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.autonomousConfig = autonomousConfig
         self.toolMode = toolMode
         self.model = model
+        self.modelType = modelType
         self.manualToolNames = manualToolNames
         self.systemPrompt = systemPrompt
         self.dbEnabled = dbEnabled
@@ -172,12 +236,20 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.webSearchEnabled = webSearchEnabled
         self.selfSchedulingEnabled = selfSchedulingEnabled
         self.computerUseEnabled = computerUseEnabled
+        self.browserUseEnabled = browserUseEnabled
         self.spawnDelegationEnabled = spawnDelegationEnabled
         self.imageEnabled = imageEnabled
+        self.videoEnabled = videoEnabled
         self.appleScriptEnabled = appleScriptEnabled
-        self.spawnableAgentNames = spawnableAgentNames
+        self.spawnableAgentIDs = SpawnableAgentIdentity.normalizedIDs(spawnableAgentIDs)
+        self.legacySpawnableAgentNames = spawnableAgentNames
         self.spawnableModelNames = spawnableModelNames
         self.spawnableModelNotes = spawnableModelNotes
+        self.spawnConfiguration = spawnConfiguration
+        self.knowledgeEnabled = knowledgeEnabled
+        self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
+        self.knowledgeCollections = knowledgeCollections
+        self.hasChannelPublishDestinations = hasChannelPublishDestinations
     }
 
     /// Read every `effective*` field in one MainActor batch.
@@ -194,12 +266,55 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     public static func capture(
         agentId: UUID,
         requestToolsDisabled: Bool = false,
-        modelOverride: String? = nil
+        modelOverride: String? = nil,
+        modelTypeOverride: String? = nil
     ) -> AgentConfigSnapshot {
         let mgr = AgentManager.shared
         // One resolve services every capability gate (positive polarity),
         // closing the mid-fan-out race the old per-field calls risked.
         let caps = mgr.effectiveCapabilities(for: agentId)
+        let subagentConfig = SubagentConfigurationStore.snapshot()
+        let isDefault = agentId == Agent.defaultId
+        let settings = mgr.agent(for: agentId)?.settings
+        let sharedParallelLimit =
+            SpawnBatchConcurrencyContract.configuredLimit(
+                for: ServerRuntimeSettingsStore.snapshot()
+            )
+        let spawnConfiguration = AgentSpawnConfigSnapshot(
+            agentIDs: SubagentToolVisibility.effectiveSpawnableAgents(
+                isDefault: isDefault,
+                config: subagentConfig,
+                perAgentEnabled: caps.spawnDelegationEnabled,
+                perAgentTargets: caps.spawnableAgentIDs
+            ).filter { $0 != agentId },
+            modelNames: SubagentToolVisibility.effectiveSpawnableModels(
+                isDefault: isDefault,
+                config: subagentConfig,
+                perAgentEnabled: caps.spawnDelegationEnabled,
+                perAgentModelTargets: caps.spawnableModelNames
+            ),
+            modelNotes:
+                isDefault
+                ? subagentConfig.spawnableModelNotes
+                : caps.spawnableModelNotes,
+            budgets: SubagentToolVisibility.effectiveBudgets(
+                isDefault: isDefault,
+                config: subagentConfig,
+                settings: settings,
+                sharedParallelLimit: sharedParallelLimit
+            ),
+            toolAccess: SubagentToolVisibility.effectiveSpawnToolAccess(
+                isDefault: isDefault,
+                config: subagentConfig,
+                settings: settings
+            ),
+            launcherModelOverride: SubagentToolVisibility.effectiveSubagentModel(
+                capabilityId: SubagentCapabilityRegistry.spawn.id,
+                isDefault: isDefault,
+                config: subagentConfig,
+                settings: settings
+            )
+        )
         return AgentConfigSnapshot(
             agentId: agentId,
             toolsDisabled: requestToolsDisabled || !caps.toolsEnabled,
@@ -208,6 +323,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             autonomousConfig: mgr.effectiveAutonomousExec(for: agentId),
             toolMode: mgr.effectiveToolSelectionMode(for: agentId),
             model: modelOverride ?? mgr.effectiveModel(for: agentId),
+            modelType: modelTypeOverride,
             manualToolNames: mgr.effectiveManualToolNames(for: agentId),
             systemPrompt: mgr.effectiveSystemPrompt(for: agentId),
             dbEnabled: caps.dbEnabled,
@@ -217,12 +333,38 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             webSearchEnabled: caps.webSearchEnabled,
             selfSchedulingEnabled: caps.selfSchedulingEnabled,
             computerUseEnabled: caps.computerUseEnabled,
+            browserUseEnabled: caps.browserUseEnabled,
             spawnDelegationEnabled: caps.spawnDelegationEnabled,
             imageEnabled: caps.imageEnabled,
+            videoEnabled: caps.videoEnabled,
             appleScriptEnabled: caps.appleScriptEnabled,
-            spawnableAgentNames: caps.spawnableAgentNames,
+            spawnableAgentIDs: caps.spawnableAgentIDs,
+            spawnableAgentNames: caps.legacySpawnableAgentNames,
             spawnableModelNames: caps.spawnableModelNames,
-            spawnableModelNotes: caps.spawnableModelNotes
+            spawnableModelNotes: caps.spawnableModelNotes,
+            spawnConfiguration: spawnConfiguration,
+            // Pre-fold the "anything to search?" half of the gate, like the
+            // spawn tools: enabled with zero grants keeps the tools hidden.
+            knowledgeEnabled: caps.knowledgeEnabled && !caps.knowledgeCollectionIds.isEmpty,
+            knowledgeCuratorEnabled: caps.knowledgeCuratorEnabled
+                && !caps.knowledgeCollectionIds.isEmpty,
+            // Same grant resolution the tools use at execution time
+            // (`effectiveKnowledgeCollections`), captured here so the
+            // prompt section can't race a mid-compose grant edit.
+            knowledgeCollections: mgr.effectiveKnowledgeCollections(for: agentId)
+                .map(\.grantDescriptor),
+            // Source-usable = enabled, outbound mode != off, and explicitly
+            // allowed from this run provenance. Keep the tool out when no
+            // matching Channel Destinations section can be rendered; otherwise
+            // the model has no valid binding_id and may mistake a capability id
+            // (for example plugin/osaurus.calendar) for a channel binding.
+            hasChannelPublishDestinations: !AgentChannelAutoDestinationResolver
+                .effectiveConfiguration()
+                .usableBindings(
+                    agentId: agentId,
+                    source: ChatExecutionContext.currentSessionSource
+                )
+                .isEmpty
         )
     }
 }

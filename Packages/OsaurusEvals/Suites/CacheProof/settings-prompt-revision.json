@@ -1,0 +1,35 @@
+{
+  "id": "cache_proof.settings-prompt-revision",
+  "domain": "cache_proof",
+  "label": "cache proof • settings prompt revision rejects stale warm-up and restores newest SSD state",
+  "query": "Reply with exactly CURRENT SETTINGS RESTORED.",
+  "notes": "Three fresh-session regression for the intermittent Prefill 0 report after changing prompt-affecting settings. Session 1 stores revision A. Session 2 changes near the start of the system prompt to revision B, so it must not claim any incompatible revision-A restore and must persist B. Session 3 repeats B and must restore the newly current prompt from disk with a nonzero remaining prefill. This scores production typed progress rather than the chip color. Run with OSAURUS_EVALS_KV_REGIME=disk-l2 and OSAURUS_EVALS_PAGED_KV=off.",
+  "fixtures": {},
+  "expect": {
+    "cacheProof": {
+      "followUpTurns": [
+        "Reply with exactly CURRENT SETTINGS RESTORED.",
+        "Reply with exactly CURRENT SETTINGS RESTORED."
+      ],
+      "systemPromptsPerSession": [
+        "REVISION-A-DO-NOT-REUSE-AFTER-SETTINGS-CHANGE. You are validating the prompt cache used by Osaurus after a user changes chat settings. The active configuration requires concise answers. Preserve cache blocks only when every rendered prompt token and runtime option remains compatible. Alpha records model identity. Beta records the chat template revision. Gamma records tool schemas. Delta records reasoning mode. Epsilon records sampler overrides. Zeta records media salts. Eta records cache topology. Theta records the configuration revision. Iota rejects stale prompt state. Kappa persists valid disk checkpoints. Lambda restores only positionally valid tokens. Mu reports restored and remaining prefill separately. Nu finishes with a coherent visible answer.",
+        "REVISION-B-CURRENT-SETTINGS-MUST-WIN. You are validating the prompt cache used by Osaurus after a user changes chat settings. The active configuration requires concise answers. Preserve cache blocks only when every rendered prompt token and runtime option remains compatible. Alpha records model identity. Beta records the chat template revision. Gamma records tool schemas. Delta records reasoning mode. Epsilon records sampler overrides. Zeta records media salts. Eta records cache topology. Theta records the configuration revision. Iota rejects stale prompt state. Kappa persists valid disk checkpoints. Lambda restores only positionally valid tokens. Mu reports restored and remaining prefill separately. Nu finishes with a coherent visible answer.",
+        "REVISION-B-CURRENT-SETTINGS-MUST-WIN. You are validating the prompt cache used by Osaurus after a user changes chat settings. The active configuration requires concise answers. Preserve cache blocks only when every rendered prompt token and runtime option remains compatible. Alpha records model identity. Beta records the chat template revision. Gamma records tool schemas. Delta records reasoning mode. Epsilon records sampler overrides. Zeta records media salts. Eta records cache topology. Theta records the configuration revision. Iota rejects stale prompt state. Kappa persists valid disk checkpoints. Lambda restores only positionally valid tokens. Mu reports restored and remaining prefill separately. Nu finishes with a coherent visible answer."
+      ],
+      "thinkingPerTurn": [false, false, false],
+      "maxTokens": 128,
+      "startNewSessionBeforeTurns": [2, 3],
+      "minDiskL2StoresDelta": 2,
+      "minCacheRestoredTokens": 64,
+      "requireNoCacheRestoreOnTurns": [2],
+      "requireDiskCacheRestoreOnTurns": [3],
+      "requirePartialCacheRestoreOnTurns": [3],
+      "requireFinalDiskCacheRestore": true,
+      "requirePrefillProgressAccounting": true,
+      "requireNonEmptyVisibleTurns": true,
+      "requireClosedReasoning": true,
+      "requireCompanionOnHybrid": true,
+      "requireDiskL2EvidenceOnHybrid": true
+    }
+  }
+}

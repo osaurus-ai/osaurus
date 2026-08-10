@@ -16,7 +16,7 @@ loop (real tools, real workspaces, no mocks):
 - **AgentLoop** (17 cases) — loop mechanics: dedupe/replay, error recovery,
   budget wrap-up, clarification, rejection handling, batch isolation.
 - **SandboxFrontier** (13 cases, off-CI) — the live Linux-VM sandbox lane:
-  code execution (`sandbox_write_file` + `sandbox_exec`), debugging seeded
+  code execution (`file_write` + `shell_run`), debugging seeded
   test failures, `sandbox_install`, combined host-folder mode and path
   routing, host-secret refusal, plugin authoring + same-run invocation,
   secrets round-trip with output scrubbing, `sandbox_reduce` digestion,
@@ -569,6 +569,43 @@ harness bugs; they're scored honestly and tracked across model versions.
   blocked by the provider). Headless/automated secret seeding with gpt-5.5
   is unreliable; store secrets via the UI prompt flow instead.
 
+## PR eval evidence
+
+Agent-loop-impacting changes should attach a standard eval report bundle rather
+than ad hoc terminal output. From the repo root:
+
+```bash
+make evals-pr-report \
+  LOCAL_MODEL=foundation \
+  FRONTIER_MODEL=openai/gpt-4o-mini
+
+make evals-pr-report-baseline \
+  BASELINE_DIR=build/evals/main-report \
+  LOCAL_MODEL=foundation \
+  FRONTIER_MODEL=openai/gpt-4o-mini
+```
+
+The bundle writes `manifest.json`, `summary.md`, `summary.json`, raw
+`reports/<model>/<suite>.json`, and baseline `compare.md` / `compare.json` when
+`BASELINE_DIR` is supplied. Required default suites are `AgentLoop`,
+`AgentLoopFrontier`, and `Subagent` for both local and frontier lanes.
+`SandboxFrontier` remains off by default because it needs sandbox host
+prerequisites.
+
+Use this rule:
+
+- No report: docs-only changes, UI-only inspection, isolated storage, and
+  non-agent diagnostics.
+- Focused report: eval harness, provider bootstrap, or scoring changes.
+- Local + frontier report: default tools, tool schemas, prompt/tool
+  interaction, agent-loop routing, memory/tool routing, and model-facing
+  defaults.
+
+The short PR evidence block should include the local model result, frontier
+model result, baseline regression count, and artifact path. Full all-model
+scoreboards are a later compute-backed workflow; per-PR review evidence should
+stay small enough to run intentionally.
+
 ## Testing a new model
 
 ```bash
@@ -591,12 +628,12 @@ scripts/evals/agent-loop-regression-lab.sh \
   --out-dir build/eval-reports/<model>-agent-loop-lab
 ```
 
-The lab runs `AgentLoop` and `AgentLoopFrontier` by default, captures raw
-per-suite JSON under `reports/`, and writes `regression-summary.json` plus
-`regression-summary.md`. Use the Markdown summary as the short proof block for
-new rows; keep the JSON paths for failure attribution and later comparisons. To
-compare already-captured reports without rerunning a model, pass `--current
-<path>` alongside `--baseline <path>`.
+The lab runs `AgentLoop`, `AgentLoopFrontier`, and `Subagent` by default,
+captures raw per-suite JSON under `reports/`, and writes
+`regression-summary.json` plus `regression-summary.md`. Use the Markdown summary
+as the short proof block for new rows; keep the JSON paths for failure
+attribution and later comparisons. To compare already-captured reports without
+rerunning a model, pass `--current <path>` alongside `--baseline <path>`.
 
 Keys ride in ephemeral in-memory providers — never written to disk or
 Keychain. New providers need a preset in

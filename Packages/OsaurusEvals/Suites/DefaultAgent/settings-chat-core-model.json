@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.settings-chat-core-model",
+  "domain": "default_agent",
+  "label": "default agent • change the core (memory distillation) model",
+  "query": "Change the core model Osaurus uses for memory distillation and background work to foundation.",
+  "notes": "Gap-closure settings key: chat scope gained core_model. Pins action 'set', scope 'chat', with core_model in the settings object. The value is free-form (provider/name or a bare id), so only the key is probed.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_settings"],
+      "mustNotCallTools": ["capabilities_discover"],
+      "argsMustContain": [
+        { "tool": "osaurus_settings", "args": { "action": "set", "scope": "chat", "settings": "core_model" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

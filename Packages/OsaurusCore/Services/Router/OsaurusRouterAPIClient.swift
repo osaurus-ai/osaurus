@@ -5,6 +5,11 @@ actor OsaurusRouterAPIClient {
 
     private let baseURL: URL
     private let session: URLSession
+    /// Session for hosted `/v1/search` and `/v1/contents`: its request timeout
+    /// sits slightly above the router's ~30s upstream budget so the router —
+    /// not the local URLSession — decides timeout outcomes and can refund the
+    /// hold before responding.
+    private let searchSession: URLSession
     private let signer: OsaurusRouterAuthSigner
     private let authOverride: (@Sendable (inout URLRequest, Data?) async throws -> Void)?
     private let decoder: JSONDecoder
@@ -12,6 +17,7 @@ actor OsaurusRouterAPIClient {
     init(
         baseURL: URL = OsaurusRouter.defaultBaseURL,
         session: URLSession? = nil,
+        searchSession: URLSession? = nil,
         signer: OsaurusRouterAuthSigner = OsaurusRouterAuthSigner(),
         authOverride: (@Sendable (inout URLRequest, Data?) async throws -> Void)? = nil
     ) {
@@ -19,12 +25,23 @@ actor OsaurusRouterAPIClient {
         self.signer = signer
         self.authOverride = authOverride
         self.session = session ?? Self.makeSession()
+        // An injected plain `session` (tests) also serves search calls unless
+        // a dedicated search session is provided.
+        self.searchSession = searchSession ?? session ?? Self.makeSearchSession()
         self.decoder = JSONDecoder()
     }
 
     static func makeSession() -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 120
+        config.waitsForConnectivity = false
+        return GlobalProxySettings.makeSession(base: config)
+    }
+
+    static func makeSearchSession() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 35
         config.timeoutIntervalForResource = 120
         config.waitsForConnectivity = false
         return GlobalProxySettings.makeSession(base: config)
@@ -48,9 +65,94 @@ actor OsaurusRouterAPIClient {
         return try await post("/credits/checkout", body: Body(amount_micro: amountMicro))
     }
 
+    /// Claim the one-time welcome credit for brand-new users. Signed like
+    /// every other route (the wallet proves ownership); `deviceId` is the
+    /// stable per-Mac hash from `WelcomeCreditDeviceID` — never the raw
+    /// hardware UUID. Idempotent server-side: a retry of the same claim
+    /// succeeds with `already_granted: true`.
+    func claimWelcomeCredit(deviceId: String) async throws -> OsaurusRouterWelcomeClaimResponse {
+        struct Body: Encodable { let device_id: String }
+        return try await post("/credits/welcome/claim", body: Body(device_id: deviceId))
+    }
+
+    /// Redeem a promotion or referral code. The canonical encoder produces the
+    /// exact bytes used for both EIP-191 signing and the HTTP request body.
+    func redeemCode(_ code: String) async throws -> OsaurusRouterRedeemCodeResponse {
+        struct Body: Encodable { let code: String }
+        return try await post("/credits/redeem", body: Body(code: code))
+    }
+
     func models() async throws -> [OsaurusRouterModel] {
         let response: OsaurusRouterModelListResponse = try await get("/models")
         return response.data
+    }
+
+    // MARK: - Cloud media
+
+    func cloudMediaCatalog() async throws -> CloudMediaCatalogResponse {
+        try await get("/v1/media/models")
+    }
+
+    func cloudGenerateImage(
+        _ body: CloudImageGenerationBody
+    ) async throws -> CloudImageGenerationResponse {
+        try await post(
+            "/v1/media/images/generations",
+            body: body,
+            idempotencyKey: body.idempotencyKey
+        )
+    }
+
+    func cloudQuoteVideo(_ body: CloudVideoQuoteBody) async throws -> CloudVideoQuoteResponse {
+        try await post("/v1/media/videos/quote", body: body)
+    }
+
+    func cloudQueueVideo(_ body: CloudVideoJobBody) async throws -> CloudVideoJobResponse {
+        try await post(
+            "/v1/media/videos/jobs",
+            body: body,
+            idempotencyKey: body.idempotencyKey
+        )
+    }
+
+    func cloudVideoJob(id: String) async throws -> CloudVideoJobResponse {
+        try await get("/v1/media/videos/jobs/\(try mediaJobIDPathComponent(id))")
+    }
+
+    func cloudVideoContent(jobID: String) async throws -> URL {
+        let id = try mediaJobIDPathComponent(jobID)
+        let url = try url(path: "/v1/media/videos/jobs/\(id)/content")
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("video/mp4", forHTTPHeaderField: "Accept")
+        try await sign(request: &request, body: Data())
+        let temporaryURL: URL
+        let response: URLResponse
+        do {
+            (temporaryURL, response) = try await session.download(for: request)
+        } catch {
+            throw OsaurusRouterAPIError.transport(error.localizedDescription)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw OsaurusRouterAPIError.invalidResponse
+        }
+        guard (200 ..< 300).contains(http.statusCode) else {
+            let data = (try? Data(contentsOf: temporaryURL)) ?? Data()
+            try ensureOK(data: data, response: response)
+            throw OsaurusRouterAPIError.invalidResponse
+        }
+        return temporaryURL
+    }
+
+    func cloudDeleteVideoContent(jobID: String) async throws {
+        let id = try mediaJobIDPathComponent(jobID)
+        let url = try url(path: "/v1/media/videos/jobs/\(id)/content")
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        try await sign(request: &request, body: Data())
+        let (data, response) = try await perform(request)
+        try ensureOK(data: data, response: response)
     }
 
     func estimate(model: String, inputTokens: Int, maxTokens: Int) async throws -> OsaurusRouterEstimateResponse {
@@ -81,6 +183,33 @@ actor OsaurusRouterAPIClient {
         return try await get("/credits/transactions", queryItems: queryItems)
     }
 
+    // MARK: - Hosted web search
+
+    func webSearch(_ body: OsaurusRouterWebSearchRequestBody) async throws -> OsaurusRouterWebSearchResponse {
+        try await post("/v1/search", body: body, session: searchSession)
+    }
+
+    func webContents(_ body: OsaurusRouterWebContentsRequestBody) async throws -> OsaurusRouterWebContentsResponse {
+        try await post("/v1/contents", body: body, session: searchSession)
+    }
+
+    func webSettings() async throws -> OsaurusRouterWebSettingsResponse {
+        try await get("/credits/web-settings")
+    }
+
+    func updateWebSettings(autoPayEnabled: Bool) async throws -> OsaurusRouterWebSettingsResponse {
+        struct Body: Encodable { let auto_pay_enabled: Bool }
+        return try await post("/credits/web-settings", body: Body(auto_pay_enabled: autoPayEnabled))
+    }
+
+    func webUsage(limit: Int = 50, cursor: String? = nil) async throws -> OsaurusRouterWebUsageResponse {
+        var queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+        if let cursor, !cursor.isEmpty {
+            queryItems.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+        return try await get("/credits/web-usage", queryItems: queryItems)
+    }
+
     func signedJSONRequest(method: String, path: String, body: Data? = nil) async throws -> URLRequest {
         let url = try url(path: path)
         return try await signedJSONRequest(method: method, url: url, body: body)
@@ -107,18 +236,31 @@ actor OsaurusRouterAPIClient {
         return try decoder.decode(T.self, from: data)
     }
 
-    private func post<Body: Encodable, T: Decodable>(_ path: String, body: Body) async throws -> T {
+    private func post<Body: Encodable, T: Decodable>(
+        _ path: String,
+        body: Body,
+        idempotencyKey: String? = nil,
+        session: URLSession? = nil
+    ) async throws -> T {
+        // Encode once with the canonical encoder: these exact bytes are both
+        // signed (body hash binding) and sent.
         let bodyData = try JSONEncoder.osaurusCanonical(prettyPrinted: false).encode(body)
         var request = try await signedJSONRequest(method: "POST", path: path, body: bodyData)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        let (data, response) = try await perform(request)
+        if let idempotencyKey {
+            request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
+        }
+        let (data, response) = try await perform(request, session: session)
         try ensureOK(data: data, response: response)
         return try decoder.decode(T.self, from: data)
     }
 
-    private func perform(_ request: URLRequest) async throws -> (Data, URLResponse) {
+    private func perform(
+        _ request: URLRequest,
+        session overrideSession: URLSession? = nil
+    ) async throws -> (Data, URLResponse) {
         do {
-            return try await session.data(for: request)
+            return try await (overrideSession ?? session).data(for: request)
         } catch {
             throw OsaurusRouterAPIError.transport(error.localizedDescription)
         }
@@ -164,5 +306,13 @@ actor OsaurusRouterAPIClient {
             throw OsaurusRouterAPIError.invalidURL
         }
         return url
+    }
+
+    private func mediaJobIDPathComponent(_ value: String) throws -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        guard !value.isEmpty, value.unicodeScalars.allSatisfy(allowed.contains) else {
+            throw OsaurusRouterAPIError.invalidURL
+        }
+        return value
     }
 }

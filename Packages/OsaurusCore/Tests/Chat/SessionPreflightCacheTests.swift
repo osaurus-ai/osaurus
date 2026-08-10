@@ -41,11 +41,122 @@ struct SessionPreflightCacheTests {
             fallbackAlwaysLoadedNames: nil
         )
 
+        let baselineSpecs = ToolRegistry.shared.specs(forTools: ["capabilities_load"])
+        await SessionToolStateStore.shared.setInitial(
+            sessionId,
+            alwaysLoadedNames: ["capabilities_load"],
+            toolSpecs: baselineSpecs,
+            fingerprint: "none/auto",
+            manifest: "frozen manifest"
+        )
+
         let state = await SessionToolStateStore.shared.get(sessionId)
         #expect(state?.loadedToolNames == ["miyo_search", "calendar_lookup"])
         #expect(state?.initialAlwaysLoadedNames == ["capabilities_load"])
+        #expect(state?.initialToolSpecs?.map(\.function.name) == ["capabilities_load"])
+        #expect(state?.sessionFingerprint == "none/auto")
+        #expect(state?.frozenManifest == "frozen manifest")
 
         await SessionToolStateStore.shared.invalidate(sessionId)
+    }
+
+    @Test
+    func fingerprintFlip_preservesModeIndependentLoadedTools() async {
+        let sessionId = "fingerprint-flip-\(UUID().uuidString)"
+        await SessionToolStateStore.shared.appendLoadedTools(
+            sessionId,
+            names: ["runalyze_mcp_get_activities", "sandbox_only_tool"],
+            fallbackAlwaysLoadedNames: ["capabilities"]
+        )
+        await SessionToolStateStore.shared.setInitial(
+            sessionId,
+            alwaysLoadedNames: ["capabilities"],
+            toolSpecs: nil,
+            fingerprint: "none/auto",
+            manifest: "frozen manifest"
+        )
+
+        let invalidated = await SessionToolStateStore.shared.invalidateIfFingerprintChanged(
+            sessionId,
+            liveFingerprint: "sandbox/auto",
+            preservingLoadedToolNames: ["runalyze_mcp_get_activities"]
+        )
+        #expect(invalidated)
+
+        let state = await SessionToolStateStore.shared.get(sessionId)
+        // The mode-independent load survives; everything mode-owned resets.
+        #expect(state?.loadedToolNames == ["runalyze_mcp_get_activities"])
+        #expect(state?.sessionFingerprint == "sandbox/auto")
+        #expect(state?.initialAlwaysLoadedNames == nil)
+        #expect(state?.initialToolSpecs == nil)
+        #expect(state?.frozenManifest == nil)
+
+        await SessionToolStateStore.shared.invalidate(sessionId)
+    }
+
+    @Test
+    func fingerprintFlip_withNothingToPreserveDropsEntry() async {
+        let sessionId = "fingerprint-flip-drop-\(UUID().uuidString)"
+        await SessionToolStateStore.shared.appendLoadedTools(
+            sessionId,
+            names: ["sandbox_only_tool"],
+            fallbackAlwaysLoadedNames: nil
+        )
+        await SessionToolStateStore.shared.setInitial(
+            sessionId,
+            alwaysLoadedNames: [],
+            toolSpecs: nil,
+            fingerprint: "none/auto",
+            manifest: nil
+        )
+
+        let invalidated = await SessionToolStateStore.shared.invalidateIfFingerprintChanged(
+            sessionId,
+            liveFingerprint: "sandbox/auto"
+        )
+        #expect(invalidated)
+        let state = await SessionToolStateStore.shared.get(sessionId)
+        #expect(state == nil)
+    }
+
+    @Test
+    func toolCatalogInvalidation_refreshesSchemasWithoutDroppingUnrelatedState() async {
+        let sessionId = "tool-catalog-refresh-\(UUID().uuidString)"
+        let store = SessionToolStateStore()
+        await store.appendLoadedTools(
+            sessionId,
+            names: ["saved_mcp_tool"],
+            fallbackAlwaysLoadedNames: ["capabilities_load"]
+        )
+        await store.setInitial(
+            sessionId,
+            alwaysLoadedNames: ["capabilities_load", "saved_mcp_tool"],
+            toolSpecs: ToolRegistry.shared.specs(forTools: ["capabilities_load"]),
+            fingerprint: "none/auto",
+            manifest: "stale tool manifest",
+            soul: "stable soul"
+        )
+        await store.recordUserPrefix(
+            sessionId,
+            key: "message-key",
+            prefix: "stable memory prefix"
+        )
+        _ = await store.recordSend(
+            sessionId: sessionId,
+            cacheHint: "old-tool-catalog",
+            trace: nil
+        )
+
+        await store.invalidateToolCatalog()
+
+        let state = await store.get(sessionId)
+        #expect(state?.loadedToolNames == ["saved_mcp_tool"])
+        #expect(state?.sessionFingerprint == "none/auto")
+        #expect(state?.initialAlwaysLoadedNames == nil)
+        #expect(state?.initialToolSpecs == nil)
+        #expect(state?.frozenManifest == nil)
+        #expect(state?.frozenSoul == "stable soul")
+        #expect(state?.frozenUserPrefixes["message-key"] == "stable memory prefix")
     }
 
     @Test

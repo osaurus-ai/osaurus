@@ -1,0 +1,14 @@
+{
+  "id": "reasoning_channel.code-output-not-confused",
+  "domain": "reasoning_channel",
+  "label": "reasoning channel • angle-bracket-heavy code output doesn't trip the parser",
+  "query": "Write a tiny Swift function named makePair that takes two Int values and returns a tuple (Int, Int). Show only the code in a fenced code block.",
+  "notes": "Adversarial-vocabulary row: generic/angle-bracket-heavy code is the closest legitimate output to parser protocol tokens. The visible channel must carry the code (visibleContains pins the function name) while the built-in marker sweep proves the parser did not misfire on or inject think/tool tokens around it. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "reasoning": {
+      "maxTokens": 1024,
+      "visibleContains": ["makePair", "func"]
+    }
+  }
+}

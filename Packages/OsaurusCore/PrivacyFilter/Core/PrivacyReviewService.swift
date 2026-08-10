@@ -29,6 +29,13 @@ enum PrivacyReviewOutcome: Sendable {
     case approved([DetectedEntity])
     /// User canceled — the send should be aborted upstream.
     case canceled
+    /// Fail-closed block for a non-interactive caller: the request
+    /// origin can't drive the review sheet (HTTP API, plugin, P2P — or
+    /// no presenter is registered at all) and
+    /// `requireReviewForNonInteractive` is on. Distinct from
+    /// `.canceled` so the pipeline can surface a typed, actionable
+    /// error to the API client instead of an ambiguous cancel.
+    case blockedNonInteractive
 }
 
 /// Opaque handle returned by `registerPresenter`. The chat window
@@ -88,9 +95,19 @@ final class PrivacyReviewService {
     /// Auto-approves when no presenter is registered, when the global
     /// "always approve" config flag is on, or when the session has
     /// opted into always-approve.
+    ///
+    /// `allowInteractive` is the request-origin gate: HTTP API,
+    /// plugin, and P2P callers pass `false` so a registered chat-window
+    /// presenter is NEVER used for a request the user didn't send from
+    /// that window. Without this, a server-origin request would pop
+    /// the review sheet over an unrelated chat and suspend the HTTP
+    /// response until the user notices — the client just hangs. Those
+    /// callers take the same fail-closed / opt-out branch as the
+    /// no-presenter case.
     func review(
         detections: [DetectedEntity],
-        sessionId: String
+        sessionId: String,
+        allowInteractive: Bool = true
     ) async -> PrivacyReviewOutcome {
         // Short circuit: nothing to review.
         if detections.isEmpty {
@@ -122,25 +139,32 @@ final class PrivacyReviewService {
             }
         }
 
-        guard let presenter = current?.closure else {
-            // No UI attached. Two paths:
+        guard allowInteractive, let presenter = current?.closure else {
+            // No usable UI — either the caller is non-interactive
+            // (HTTP API, plugin, P2P: `allowInteractive == false`) or
+            // no presenter is registered. Two paths:
             //
             //   * `requireReviewForNonInteractive == true` (default): a
             //     background caller (HTTP `/chat/completions`, plugin
             //     agent, headless tool) tried to ship PII through the
-            //     filter. With no UI to confirm, treat this as
-            //     `.canceled` so the pipeline aborts the send instead
-            //     of silently auto-approving. This is the fail-closed
-            //     posture documented in `docs/PRIVACY_FILTER.md`.
+            //     filter. With no UI to confirm, block the send with
+            //     `.blockedNonInteractive` — the pipeline lifts it into
+            //     a typed error instead of silently auto-approving.
+            //     This is the fail-closed posture documented in
+            //     `docs/PRIVACY_FILTER.md`.
             //
             //   * otherwise (power user opt-out): auto-approve so the
             //     send proceeds — same legacy behaviour as before this
             //     flag landed.
             if configSnapshot.requireReviewForNonInteractive {
+                let cause =
+                    allowInteractive
+                    ? "no review presenter is registered"
+                    : "request origin is non-interactive"
                 print(
-                    "[PrivacyFilter] BLOCKING non-interactive send: \(detections.count) detection(s) but no review presenter is registered."
+                    "[PrivacyFilter] BLOCKING non-interactive send: \(detections.count) detection(s) but \(cause)."
                 )
-                return .canceled
+                return .blockedNonInteractive
             }
             return .approved(detections)
         }

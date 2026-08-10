@@ -1,0 +1,21 @@
+{
+  "id": "http_api.typed-error-json-schema",
+  "domain": "http_api",
+  "label": "http api • response_format json_schema returns a typed 400 pointing at json_object",
+  "query": "Give me a JSON object describing a cat.",
+  "notes": "The documented response_format contract: json_schema is unsupported and must be rejected with a 400 whose error text steers the client to 'json_object' (the supported JSON mode) — never silently ignored, never a 500. Deterministic, rejected pre-generation.",
+  "fixtures": {},
+  "expect": {
+    "httpAPI": {
+      "scenario": "typed_error",
+      "body": {
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": { "name": "cat", "schema": { "type": "object" } }
+        }
+      },
+      "expectStatus": 400,
+      "errorContains": ["json_object"]
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "id": "cache_proof.disk-l2-lane-persists",
+  "domain": "cache_proof",
+  "label": "cache proof • the disk-L2 lane actively persists entries during a session",
+  "query": "Write a four-line poem about a lighthouse keeper who collects sea glass.",
+  "notes": "Disk-lane liveness: within one multi-turn session the L2 lane must record at least one store (diskL2Stores delta ≥ 1). This row intentionally FAILS when the disk cache lane is disabled or silently broken — that is the point of scoring it; a host that deliberately runs with the lane off should exclude the case, not weaken it. Restore-side (diskL2Hits) is cross-run behavior and is trended via telemetry rather than floored here. Off-CI (needs a local model).",
+  "fixtures": {},
+  "expect": {
+    "cacheProof": {
+      "followUpTurns": [
+        "Now rewrite it so every line starts with the letter S."
+      ],
+      "maxTokens": 160,
+      "minDiskL2StoresDelta": 1
+    }
+  }
+}

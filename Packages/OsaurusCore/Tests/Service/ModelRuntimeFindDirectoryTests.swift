@@ -171,6 +171,81 @@ struct ModelRuntimeFindDirectoryTests {
         #expect(topology >= 512 * 1024 * 1024)
     }
 
+    @Test("Architecture KV RAM preflight uses the resolved retention policy")
+    func architectureKVHeadroomUsesResolvedRetentionCap() throws {
+        let dir = try makeIsolatedDir()
+        let config = """
+            {
+              "model_type": "qwen3_5",
+              "num_hidden_layers": 48,
+              "num_attention_heads": 32,
+              "num_key_value_heads": 8,
+              "head_dim": 128,
+              "max_position_embeddings": 262144,
+              "torch_dtype": "bfloat16"
+            }
+            """
+        try Data(config.utf8).write(to: dir.appendingPathComponent("config.json"))
+
+        let weights: Int64 = 20 * 1024 * 1024 * 1024
+        let strictCap = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: weights,
+            modelDirectory: dir,
+            kvRetentionCap: 16_384
+        )
+        let safeAutoCap = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: weights,
+            modelDirectory: dir,
+            kvRetentionCap: 65_536
+        )
+        let uncapped = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: weights,
+            modelDirectory: dir,
+            kvRetentionCap: nil
+        )
+
+        #expect(safeAutoCap == strictCap * 4)
+        #expect(uncapped == strictCap * 16)
+    }
+
+    @Test("Nanbeige KV RAM preflight counts every loop-layer cache slot")
+    func nanbeigeKVHeadroomUsesLoopedCacheTopology() throws {
+        let oneLoop = try makeIsolatedDir()
+        let twoLoops = try makeIsolatedDir()
+        let base = """
+            {
+              "model_type": "nanbeige",
+              "num_hidden_layers": 22,
+              "num_attention_heads": 48,
+              "num_key_value_heads": 8,
+              "head_dim": 128,
+              "max_position_embeddings": 262144,
+              "torch_dtype": "bfloat16",
+              "num_loops": %d
+            }
+            """
+        try Data(String(format: base, 1).utf8)
+            .write(to: oneLoop.appendingPathComponent("config.json"))
+        try Data(String(format: base, 2).utf8)
+            .write(to: twoLoops.appendingPathComponent("config.json"))
+
+        let weights: Int64 = 8 * 1024 * 1024 * 1024
+        let single = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: weights,
+            modelDirectory: oneLoop,
+            kvRetentionCap: 65_536
+        )
+        let looped = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: weights,
+            modelDirectory: twoLoops,
+            kvRetentionCap: 65_536
+        )
+
+        #expect(single == 7_381_975_040)
+        #expect(looped == 14_763_950_080)
+        #expect(looped == single * 2)
+    }
+
     @Test("Routed JANGTQ pre-load RAM gate uses MLXPress hot working set")
     func routedJANGTQLoadFootprintUsesCompressionHotSet() throws {
         let dir = try makeIsolatedDir()
@@ -574,42 +649,15 @@ struct ModelRuntimeFindDirectoryTests {
         try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "DSV4-bf16-dense")
     }
 
-    @Test("Plain affine DeepSeek V4 JANG is blocked before shard load")
-    func dsv4_plainAffineJANG_throwsBeforeLoad() throws {
+    @Test("Plain affine DeepSeek V4 JANG passes normal JANG preflight")
+    func dsv4_plainAffineJANG_passesNormalPreflight() throws {
         let dir = try makeIsolatedDir()
         try writeConfig(modelType: "deepseek_v4", routedExperts: 256, at: dir)
         try writeJangConfig(weightFormat: "affine", at: dir)
 
-        #expect(throws: MLXService.RuntimePolicyError.self) {
-            try ModelRuntime.validateUnsupportedPlainDSV4AffineJANG(
-                at: dir,
-                name: "DeepSeek-V4-Flash-JANG"
-            )
-        }
-    }
-
-    @Test("DeepSeek V4 JANGTQ sidecar is not blocked by plain-affine guard")
-    func dsv4_jangtqSidecar_passesPlainAffineGuard() throws {
-        let dir = try makeIsolatedDir()
-        try writeConfig(modelType: "deepseek_v4", routedExperts: 256, at: dir)
-        try writeJangConfig(weightFormat: "mxtq", at: dir)
-        try Data("dummy".utf8).write(to: dir.appendingPathComponent("jangtq_runtime.safetensors"))
-
-        try ModelRuntime.validateUnsupportedPlainDSV4AffineJANG(
+        try ModelRuntime.validateJANGTQSidecarIfRequired(
             at: dir,
-            name: "DeepSeek-V4-Flash-JANGTQ2"
-        )
-    }
-
-    @Test("Small affine fixtures are not blocked by DeepSeek V4 JANG guard")
-    func dsv4_smallAffineFixture_passesPlainAffineGuard() throws {
-        let dir = try makeIsolatedDir()
-        try writeConfig(modelType: "deepseek_v4", routedExperts: 8, at: dir)
-        try writeJangConfig(weightFormat: "affine", at: dir)
-
-        try ModelRuntime.validateUnsupportedPlainDSV4AffineJANG(
-            at: dir,
-            name: "Tiny-DSV4-fixture"
+            name: "DeepSeek-V4-Flash-JANG"
         )
     }
 

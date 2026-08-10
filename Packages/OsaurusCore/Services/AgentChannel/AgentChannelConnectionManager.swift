@@ -22,6 +22,9 @@ enum AgentChannelConnectionManagerError: LocalizedError, Equatable, Sendable {
     case invalidSecretReference(String)
     case duplicateConnectionId(String)
     case importFailed(String)
+    case emptyBindingId
+    case duplicateBindingId(String)
+    case invalidBinding(String)
 
     var errorDescription: String? {
         switch self {
@@ -53,6 +56,12 @@ enum AgentChannelConnectionManagerError: LocalizedError, Equatable, Sendable {
             return "Agent channel connection id `\(id)` appears more than once."
         case .importFailed(let message):
             return "Agent channel configuration import failed: \(message)"
+        case .emptyBindingId:
+            return "Agent destination binding id is required."
+        case .duplicateBindingId(let id):
+            return "Agent destination binding id `\(id)` appears more than once."
+        case .invalidBinding(let message):
+            return "Agent destination binding is invalid: \(message)"
         }
     }
 }
@@ -64,8 +73,26 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
         AgentChannelConnection.nativeDiscordConnectionId,
         AgentChannelConnection.nativeSlackConnectionId,
         AgentChannelConnection.nativeTelegramConnectionId,
+        AgentChannelConnection.nativeIMessageConnectionId,
+        AgentChannelConnection.nativeWhatsAppConnectionId,
     ])
     private static let supportedHTTPMethods = Set(["GET", "POST", "PUT", "PATCH", "DELETE"])
+
+    /// Agent existence check for binding reference validation, injectable
+    /// so tests don't need real agent files on disk. `AgentStore.exists` is
+    /// nonisolated (pure filesystem), so validation never has to hop onto
+    /// the main thread — the old `DispatchQueue.main.sync` bridge here was
+    /// a deadlock vector whenever the main thread was itself waiting on
+    /// background work.
+    private let agentExists: @Sendable (UUID) -> Bool
+
+    init(
+        agentExists: @escaping @Sendable (UUID) -> Bool = { id in
+            AgentStore.exists(id: id)
+        }
+    ) {
+        self.agentExists = agentExists
+    }
 
     func configurationFileURL() -> URL {
         AgentChannelConfigurationStore.configurationFileURL()
@@ -128,7 +155,122 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
         }
         var configuration = loadConfiguration()
         configuration.connections.removeAll { $0.id == normalizedId }
+        // Cascade-disable bindings that pointed at the deleted connection.
+        // Disabled (not deleted) so the operator sees what broke — and so a
+        // LATER connection recreated under the same id can never silently
+        // reactivate an old autonomous route without an explicit re-enable.
+        configuration.bindings = configuration.bindings.map { binding in
+            guard binding.connectionId == normalizedId else { return binding }
+            var disabled = binding
+            disabled.enabled = false
+            return disabled
+        }
         try AgentChannelConfigurationStore.save(configuration)
+    }
+
+    // MARK: - Proactive outbound bindings
+
+    func bindings() -> [AgentChannelBinding] {
+        loadConfiguration().bindings
+            .sorted { lhs, rhs in
+                lhs.displayLabel.localizedCaseInsensitiveCompare(rhs.displayLabel)
+                    == .orderedAscending
+            }
+    }
+
+    func binding(id: String) -> AgentChannelBinding? {
+        loadConfiguration().binding(id: id)
+    }
+
+    func upsertBinding(
+        _ binding: AgentChannelBinding,
+        replacingOriginalId originalId: String? = nil
+    ) throws {
+        let validated = try validatedBinding(binding)
+        // Referential integrity at save time: the agent must exist and the
+        // connection must be native or currently configured. Import takes a
+        // softer path (disable instead of reject) in `validatedConfiguration`.
+        guard agentExists(validated.agentId) else {
+            throw AgentChannelConnectionManagerError.invalidBinding(
+                "agent `\(validated.agentId.uuidString)` does not exist"
+            )
+        }
+        guard Self.isKnownConnectionId(validated.connectionId, in: loadConfiguration()) else {
+            throw AgentChannelConnectionManagerError.invalidBinding(
+                "connection `\(validated.connectionId)` does not exist"
+            )
+        }
+        let normalizedOriginalId =
+            originalId
+            .map(AgentChannelBinding.normalizedBindingId)
+            .flatMap { $0.isEmpty ? nil : $0 }
+        var configuration = loadConfiguration()
+        if normalizedOriginalId != validated.id,
+            configuration.bindings.contains(where: { $0.id == validated.id }) {
+            throw AgentChannelConnectionManagerError.duplicateBindingId(validated.id)
+        }
+        configuration.bindings.removeAll { existing in
+            if let normalizedOriginalId {
+                return existing.id == validated.id || existing.id == normalizedOriginalId
+            }
+            return existing.id == validated.id
+        }
+        configuration.bindings.append(validated)
+        try AgentChannelConfigurationStore.save(configuration)
+    }
+
+    func deleteBinding(id: String) throws {
+        let normalizedId = AgentChannelBinding.normalizedBindingId(id)
+        var configuration = loadConfiguration()
+        configuration.bindings.removeAll { $0.id == normalizedId }
+        try AgentChannelConfigurationStore.save(configuration)
+    }
+
+    /// Remove every binding owned by a deleted agent. Agent UUIDs are never
+    /// reused, so deletion (not disablement) is safe and keeps the
+    /// configuration free of permanent orphans. Called by
+    /// `AgentManager.delete`.
+    func deleteBindings(agentId: UUID) throws {
+        var configuration = loadConfiguration()
+        let before = configuration.bindings.count
+        configuration.bindings.removeAll { $0.agentId == agentId }
+        guard configuration.bindings.count != before else { return }
+        try AgentChannelConfigurationStore.save(configuration)
+    }
+
+    /// Whether `connectionId` resolves to a native provider connection or a
+    /// custom connection present in `configuration`.
+    static func isKnownConnectionId(
+        _ connectionId: String,
+        in configuration: AgentChannelConfiguration
+    ) -> Bool {
+        let normalized = AgentChannelConnection.normalizedId(connectionId)
+        if reservedConnectionIds.contains(normalized.lowercased()) { return true }
+        return configuration.connection(id: normalized) != nil
+    }
+
+    private func validatedBinding(_ binding: AgentChannelBinding) throws -> AgentChannelBinding {
+        let normalized = binding.normalized
+        guard !normalized.id.isEmpty else {
+            throw AgentChannelConnectionManagerError.emptyBindingId
+        }
+        guard !normalized.id.containsLineBreak else {
+            throw AgentChannelConnectionManagerError.invalidBinding(
+                "binding id must not contain line breaks"
+            )
+        }
+        guard !normalized.connectionId.isEmpty else {
+            throw AgentChannelConnectionManagerError.invalidBinding("connection id is required")
+        }
+        guard !normalized.roomId.isEmpty else {
+            throw AgentChannelConnectionManagerError.invalidBinding("room id is required")
+        }
+        guard !normalized.allowedSources.isEmpty else {
+            throw AgentChannelConnectionManagerError.invalidBinding(
+                "at least one allowed run source is required"
+            )
+        }
+        return normalized
     }
 
     func exportConfigurationData() throws -> Data {
@@ -160,9 +302,34 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
             }
             return try validatedConnection(connection)
         }
+        var seenBindings = Set<String>()
+        let knownConnectionIds = AgentChannelConfiguration(connections: validatedConnections)
+        let validatedBindings = try configuration.bindings.map { binding -> AgentChannelBinding in
+            let normalizedId = AgentChannelBinding.normalizedBindingId(binding.id)
+            guard seenBindings.insert(normalizedId).inserted else {
+                throw AgentChannelConnectionManagerError.duplicateBindingId(normalizedId)
+            }
+            var validated = try validatedBinding(binding)
+            // Import safety: an imported file is a claim, not an approval.
+            // Autonomous bindings arrive DISABLED so this machine's operator
+            // must explicitly re-acknowledge unprompted sending, and any
+            // binding whose references don't resolve here (unknown agent or
+            // connection) is disabled instead of rejected wholesale.
+            if validated.outboundMode == .autonomous
+                || !agentExists(validated.agentId)
+                || !Self.isKnownConnectionId(validated.connectionId, in: knownConnectionIds)
+            {
+                validated.enabled = false
+            }
+            return validated
+        }
         return AgentChannelConfiguration(
-            schemaVersion: max(configuration.schemaVersion, 1),
-            connections: validatedConnections
+            schemaVersion: max(
+                configuration.schemaVersion,
+                AgentChannelConfiguration.currentSchemaVersion
+            ),
+            connections: validatedConnections,
+            bindings: validatedBindings
         )
     }
 

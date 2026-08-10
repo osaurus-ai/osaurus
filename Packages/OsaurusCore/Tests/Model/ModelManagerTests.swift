@@ -10,6 +10,23 @@ import Testing
 
 @testable import OsaurusCore
 
+private final class LocalModelsScanNotificationProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = 0
+
+    func record() {
+        lock.lock()
+        storage += 1
+        lock.unlock()
+    }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+}
+
 @Suite(.serialized)
 struct ModelManagerTests {
 
@@ -18,6 +35,72 @@ struct ModelManagerTests {
     /// or trigger Combine emissions while the test is still asserting.
     init() {
         ModelManager.skipBackgroundOrgFetchForTests = true
+    }
+
+    @Test("on-demand size resolution refreshes every in-memory catalog surface")
+    @MainActor
+    func resolvedDownloadSizeRefreshesCatalog() {
+        let model = MLXModel(
+            id: "mlx-community/gemma-3-27b-it-qat-4bit",
+            name: "Gemma 3 27B QAT 4-bit",
+            description: "",
+            downloadURL: "https://example.com/gemma"
+        )
+        let manager = ModelManager()
+        manager.availableModels = [model]
+        manager.suggestedModels = [model]
+
+        manager.applyResolvedDownloadSize(16_870_000_000, for: model.id.uppercased())
+
+        #expect(manager.availableModels.first?.downloadSizeBytes == 16_870_000_000)
+        #expect(manager.suggestedModels.first?.downloadSizeBytes == 16_870_000_000)
+        #expect(
+            manager.availableModels.first?.memoryAssessment(totalMemoryGB: 96).compatibility
+                == .compatible
+        )
+    }
+
+    @Test("installed matcher prefers full ids and rejects ambiguous short aliases")
+    func installedMatcherUsesStableIdentity() {
+        let models = [
+            MLXModel(
+                id: "Org-A/Shared-Bundle",
+                name: "Shared A",
+                description: "",
+                downloadURL: "https://example.com/a"
+            ),
+            MLXModel(
+                id: "Org-B/Shared-Bundle",
+                name: "Shared B",
+                description: "",
+                downloadURL: "https://example.com/b"
+            ),
+        ]
+
+        #expect(
+            ModelManager.matchInstalledMLXModel(
+                named: "org-a/shared-bundle",
+                in: models
+            )?.id == "Org-A/Shared-Bundle"
+        )
+        #expect(
+            ModelManager.matchInstalledMLXModel(
+                named: "ORG-B/SHARED-BUNDLE",
+                in: models
+            )?.id == "Org-B/Shared-Bundle"
+        )
+        #expect(
+            ModelManager.matchInstalledMLXModel(
+                named: "Shared-Bundle",
+                in: [models[0]]
+            )?.id == "Org-A/Shared-Bundle"
+        )
+        #expect(
+            ModelManager.matchInstalledMLXModel(
+                named: "Shared-Bundle",
+                in: models
+            ) == nil
+        )
     }
 
     @Test func loadAvailableModels_initializesStates() async throws {
@@ -218,6 +301,24 @@ struct ModelManagerTests {
         #expect(detected.count == 4)
     }
 
+    @Test func scanLocalModels_preservesModelTypeForComposerMediaGating() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("osu-media-type-\(UUID().uuidString)")
+        let bundle = root.appendingPathComponent("Bonsai-27b-1bit-JANG")
+        try fm.createDirectory(at: bundle, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        try Data(#"{"model_type":"qwen3_5","vision_config":{}}"#.utf8)
+            .write(to: bundle.appendingPathComponent("config.json"))
+        try Data("{}".utf8).write(to: bundle.appendingPathComponent("tokenizer.json"))
+        try Data().write(to: bundle.appendingPathComponent("model.safetensors"))
+
+        let detected = ModelManager.scanLocalModels(at: root)
+        let model = try #require(detected.first)
+        #expect(model.id == "Bonsai-27b-1bit-JANG")
+        #expect(model.modelType == "qwen3_5")
+    }
+
     @Test func scanLocalModels_detectsFlatAndNestedLayouts() async throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("osu-scan-\(UUID().uuidString)")
@@ -282,10 +383,15 @@ struct ModelManagerTests {
         try fm.createDirectory(at: repo, withIntermediateDirectories: true)
         try Data("{}".utf8).write(to: repo.appendingPathComponent("config.json"))
         try Data("{}".utf8).write(to: repo.appendingPathComponent("tokenizer.json"))
-        try Data("{}".utf8).write(to: repo.appendingPathComponent("model.safetensors.index.json"))
+        try Data(#"{"metadata":{"total_size":44298536392}}"#.utf8)
+            .write(to: repo.appendingPathComponent("model.safetensors.index.json"))
 
         let detected = ModelManager.scanLocalModels(at: root)
         #expect(detected.map(\.id).contains("JANGQ-AI/Step-3.7-Flash-JANGTQ_K"))
+        #expect(
+            detected.first { $0.id == "JANGQ-AI/Step-3.7-Flash-JANGTQ_K" }?
+                .downloadSizeBytes == 44_298_536_392
+        )
     }
 
     @Test func scanLocalModels_detectsHighShardCountWithoutFixedMissLoop() async throws {
@@ -395,7 +501,16 @@ struct ModelManagerTests {
                     )
                 ]
             }
+            let completionNotifications = LocalModelsScanNotificationProbe()
+            let completionObserver = NotificationCenter.default.addObserver(
+                forName: .localModelsChanged,
+                object: nil,
+                queue: nil
+            ) { _ in
+                completionNotifications.record()
+            }
             defer {
+                NotificationCenter.default.removeObserver(completionObserver)
                 ModelManager.scanLocalModelsOverrideForTests = previousOverride
                 ModelManager.localModelsScanWaitLimitOverrideForTests = previousWait
                 ExternalModelLocator.testRootsOverride = previousExternalOverride
@@ -417,6 +532,19 @@ struct ModelManagerTests {
                 try await Task.sleep(nanoseconds: 25_000_000)
             }
             #expect(second.map(\.id) == ["gemma-4-E2B-it-qat-MXFP4"])
+
+            // The discovery loop above exits as soon as `discoverLocalModels()`
+            // returns the model, but `.localModelsChanged` is delivered through
+            // NotificationCenter and therefore lands independently. Asserting
+            // the count immediately makes this a race: under runner load the
+            // observer has not fired yet and the count reads 0. Wait for the
+            // notification itself, with a deadline, instead of assuming the
+            // preceding sleep covered it.
+            let notificationDeadline = Date().addingTimeInterval(2)
+            while completionNotifications.count < 1, Date() < notificationDeadline {
+                try await Task.sleep(nanoseconds: 5_000_000)
+            }
+            #expect(completionNotifications.count == 1)
         }
     }
 

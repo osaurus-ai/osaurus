@@ -254,6 +254,124 @@ struct RemoteProviderModelDiscoveryTests {
         #expect(models == ["Flux-2-Klein-4B", "Lemonade Medium", "Whisper-Large-v3-Turbo"])
     }
 
+    @Test func vllmModelsResponse_capturesMaxModelLenAsContextLength() throws {
+        let provider = makeProvider()
+        let body = Data(
+            """
+            {
+              "object": "list",
+              "data": [
+                {
+                  "id": "DeepSeek4-Flash",
+                  "object": "model",
+                  "created": 1234567890,
+                  "owned_by": "vllm",
+                  "root": "DeepSeek4-Flash",
+                  "max_model_len": 524288
+                },
+                {
+                  "id": "no-window-model",
+                  "object": "model",
+                  "created": 1234567890,
+                  "owned_by": "vllm"
+                }
+              ]
+            }
+            """.utf8
+        )
+
+        let discovery = try RemoteProviderService.decodeOpenAICompatibleModelsDiscovery(
+            data: body,
+            statusCode: 200,
+            provider: provider
+        )
+
+        #expect(discovery.models == ["DeepSeek4-Flash", "no-window-model"])
+        #expect(discovery.contextLengths == ["DeepSeek4-Flash": 524288])
+    }
+
+    @Test func openAICompatibleDiscovery_prefersVendorContextKeysInOrder() throws {
+        let provider = makeProvider()
+        let body = Data(
+            """
+            {
+              "data": [
+                {"id": "both-keys", "max_model_len": 32768, "context_length": 131072},
+                {"id": "openrouter-style", "context_length": 131072},
+                {"id": "llamacpp-style", "max_context_length": 8192},
+                {"id": "gateway-style", "context_window": 200000},
+                {"id": "window-loses-to-len", "context_window": 200000, "max_model_len": 32768},
+                {"id": "zero-window", "context_length": 0}
+              ]
+            }
+            """.utf8
+        )
+
+        let discovery = try RemoteProviderService.decodeOpenAICompatibleModelsDiscovery(
+            data: body,
+            statusCode: 200,
+            provider: provider
+        )
+
+        #expect(
+            discovery.contextLengths == [
+                "both-keys": 32768,
+                "openrouter-style": 131072,
+                "llamacpp-style": 8192,
+                "gateway-style": 200_000,
+                "window-loses-to-len": 32768,
+            ]
+        )
+    }
+
+    @Test func offSpecContextValues_degradeToNilWithoutFailingDiscovery() throws {
+        let provider = makeProvider()
+        let body = Data(
+            """
+            {
+              "data": [
+                {"id": "float-window", "max_model_len": 131072.0},
+                {"id": "string-window", "context_length": "32768"},
+                {"id": "garbage-window", "max_model_len": "unlimited"},
+                {"id": "null-window", "context_length": null}
+              ]
+            }
+            """.utf8
+        )
+
+        let discovery = try RemoteProviderService.decodeOpenAICompatibleModelsDiscovery(
+            data: body,
+            statusCode: 200,
+            provider: provider
+        )
+
+        #expect(
+            discovery.models == [
+                "float-window", "string-window", "garbage-window", "null-window",
+            ]
+        )
+        #expect(
+            discovery.contextLengths == [
+                "float-window": 131072,
+                "string-window": 32768,
+            ]
+        )
+    }
+
+    @Test func manualModelFallback_reportsNoContextLengths() throws {
+        let provider = makeProvider(manualModelIds: ["manual-model"])
+        let body = Data(#"{"error":{"message":"not found"}}"#.utf8)
+
+        let discovery = try RemoteProviderService.decodeOpenAICompatibleModelsDiscovery(
+            data: body,
+            statusCode: 404,
+            provider: provider
+        )
+
+        #expect(discovery.models == ["manual-model"])
+        #expect(discovery.contextLengths.isEmpty)
+    }
+
     private func makeProvider(
         providerProtocol: RemoteProviderProtocol = .https,
         port: Int? = nil,

@@ -1,0 +1,26 @@
+{
+  "id": "frontier.constraint-retention-carry-token",
+  "domain": "agent_loop",
+  "label": "frontier • a specific value from turn 1 must reappear in the final artifact after compaction",
+  "query": "Remember this build tag for the end of the task: BUILD-TAG-Zephyr-931. You will need to write it into a file later. Now read these four large data files in order (data1.csv, data2.csv, data3.csv, data4.csv), one at a time, never re-reading. When done, create release.txt whose first line is the build tag I gave you, followed by a one-sentence summary of the data.",
+  "notes": "Retention of a SPECIFIC seeded value across compaction: the build tag is fixture-unique so it can't be guessed, and it is stated before four large reads that force the sticky trim. The final artifact must contain the exact tag — proving the value survived compaction rather than being summarized away or hallucinated. This is the hardest of the retention trio because a lossy compaction silently drops the token. Off-CI (needs a model).",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "data1.csv", "contentsFromFixture": "commits-500.csv" },
+      { "path": "data2.csv", "contentsFromFixture": "commits-500.csv" },
+      { "path": "data3.csv", "contentsFromFixture": "commits-500.csv" },
+      { "path": "data4.csv", "contentsFromFixture": "commits-500.csv" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 12,
+      "contextWindowOverride": 24000,
+      "expectCompaction": true,
+      "files": [
+        { "path": "release.txt", "exists": true, "contains": "BUILD-TAG-Zephyr-931" }
+      ],
+      "finalTextContains": ["BUILD-TAG-Zephyr-931"]
+    }
+  }
+}

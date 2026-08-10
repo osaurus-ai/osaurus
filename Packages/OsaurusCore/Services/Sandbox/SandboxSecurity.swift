@@ -29,15 +29,65 @@ public enum SandboxNetworkPolicy {
 
     /// Validates that a plugin's setup command doesn't attempt to reach
     /// non-allowed domains. Returns a list of violations.
-    public static func validateSetupCommand(_ command: String) -> [String] {
+    /// `extraAllowedHosts` extends the registry allowlist with hosts the
+    /// plugin explicitly declared (its sanitized `permissions.network`
+    /// domain list) — those are user-visible and, in allowlist egress
+    /// mode, runtime-enforced by the host proxy.
+    public static func validateSetupCommand(
+        _ command: String,
+        extraAllowedHosts: Set<String> = []
+    ) -> [String] {
         var violations: [String] = []
         // Check for curl/wget with non-allowed hosts
         let urlPattern = /https?:\/\/([^\/\s:]+)/
         let matches = command.matches(of: urlPattern)
         for match in matches {
-            let host = String(match.1)
-            if !setupAllowlist.contains(host) {
+            let host = String(match.1).lowercased()
+            if !setupAllowlist.contains(host), !extraAllowedHosts.contains(host) {
                 violations.append("Setup references non-allowed host: \(host)")
+            }
+        }
+        return violations
+    }
+
+    /// Parse a plugin's `permissions.network` value into the set of hosts
+    /// it explicitly declares. "outbound" / "none" / nil declare nothing.
+    public static func declaredHosts(from permission: String?) -> Set<String> {
+        guard let permission, permission != "outbound", permission != "none" else { return [] }
+        return Set(
+            permission.split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+                .filter { !$0.isEmpty }
+        )
+    }
+
+    /// Full URL-policy validation for a plugin: `setup`, every tool `run`,
+    /// and the daemon command all ride the same allowlist. Single shared
+    /// implementation so the registration path (`sandbox_plugin_register`,
+    /// `POST /api/plugin/create`) and the install/reinstall/repair path
+    /// (`SandboxPluginManager.install`) cannot drift apart — previously
+    /// library-imported plugins skipped this entirely.
+    public static func validatePluginCommands(_ plugin: SandboxPlugin) -> [String] {
+        let extra = declaredHosts(from: plugin.permissions?.network)
+        var violations: [String] = []
+        if let setup = plugin.setup {
+            let found = validateSetupCommand(setup, extraAllowedHosts: extra)
+            if !found.isEmpty {
+                violations.append("Setup command rejected: \(found.joined(separator: "; "))")
+            }
+        }
+        for tool in plugin.tools ?? [] {
+            let found = validateSetupCommand(tool.run, extraAllowedHosts: extra)
+            if !found.isEmpty {
+                violations.append(
+                    "Tool `\(tool.id)` run command rejected: \(found.joined(separator: "; "))"
+                )
+            }
+        }
+        if let daemon = plugin.daemon {
+            let found = validateSetupCommand(daemon.command, extraAllowedHosts: extra)
+            if !found.isEmpty {
+                violations.append("Daemon command rejected: \(found.joined(separator: "; "))")
             }
         }
         return violations

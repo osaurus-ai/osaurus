@@ -20,6 +20,14 @@ struct SystemStatusBar: View {
     let availableStorageGB: Double
     let totalStorageGB: Double
 
+    /// Formats a GB value as "512 GB" or "1.5 TB" once it crosses 1000 GB.
+    private func formatCapacity(_ gigabytes: Double) -> String {
+        if gigabytes >= 1000 {
+            return String(format: L("%.1f TB"), gigabytes / 1000)
+        }
+        return String(format: L("%.0f GB"), gigabytes)
+    }
+
     var body: some View {
         HStack(spacing: 20) {
             ResourceGauge(
@@ -27,9 +35,9 @@ struct SystemStatusBar: View {
                 icon: "memorychip",
                 usedFraction: totalMemoryGB > 0 ? usedMemoryGB / totalMemoryGB : 0,
                 detail: String(
-                    format: L("%.0f GB free / %.0f GB"),
-                    max(0, totalMemoryGB - usedMemoryGB),
-                    totalMemoryGB
+                    format: L("%@ free / %@"),
+                    formatCapacity(max(0, totalMemoryGB - usedMemoryGB)),
+                    formatCapacity(totalMemoryGB)
                 )
             )
 
@@ -39,9 +47,9 @@ struct SystemStatusBar: View {
                 usedFraction: totalStorageGB > 0
                     ? (totalStorageGB - availableStorageGB) / totalStorageGB : 0,
                 detail: String(
-                    format: L("%.0f GB free / %.0f GB"),
-                    availableStorageGB,
-                    totalStorageGB
+                    format: L("%@ free / %@"),
+                    formatCapacity(availableStorageGB),
+                    formatCapacity(totalStorageGB)
                 )
             )
         }

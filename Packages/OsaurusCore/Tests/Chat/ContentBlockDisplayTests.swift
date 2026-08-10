@@ -222,6 +222,98 @@ struct ContentBlockDisplayTests {
         #expect(artifact?.hostPath == "/tmp/green-apple.png")
     }
 
+    @Test
+    func rollupActivity_groupsConsecutiveThinkingAndToolRuns() {
+        let turn1 = UUID()
+        let turn2 = UUID()
+        let thinking = ContentBlock.thinking(
+            turnId: turn1, index: 0, text: "reasoning", isStreaming: false,
+            duration: 1.2, position: .middle
+        )
+        let tools = ContentBlock.toolCallGroup(
+            turnId: turn2, calls: [Self.toolCallItem(id: "call-1")], position: .middle
+        )
+        let answer = ContentBlock.paragraph(
+            turnId: turn2, index: 0, text: "answer", isStreaming: false,
+            role: .assistant, position: .last
+        )
+
+        let rolled = ContentBlock.rollupActivityBlocks([thinking, tools, answer])
+
+        #expect(rolled.count == 2)
+        guard case let .activityGroup(children) = rolled[0].kind else {
+            Issue.record("expected leading activityGroup, got \(rolled[0].kind)")
+            return
+        }
+        #expect(children.map(\.id) == [thinking.id, tools.id])
+        #expect(rolled[0].id == ContentBlock.activityGroupId(firstChildId: thinking.id))
+        #expect(rolled[0].turnId == turn1)
+        #expect(rolled[1].id == answer.id)
+        #expect(
+            ContentBlock.enclosingActivityGroupId(forChildId: thinking.id, in: rolled)
+                == rolled[0].id
+        )
+    }
+
+    @Test
+    func rollupActivity_leavesSingleBlocksAndOtherKindsBare() {
+        let turnId = UUID()
+        let thinking = ContentBlock.thinking(
+            turnId: turnId, index: 0, text: "reasoning", isStreaming: true,
+            duration: nil, position: .middle
+        )
+        let answer = ContentBlock.paragraph(
+            turnId: turnId, index: 0, text: "answer", isStreaming: false,
+            role: .assistant, position: .last
+        )
+
+        let rolled = ContentBlock.rollupActivityBlocks([thinking, answer])
+
+        #expect(rolled.map(\.id) == [thinking.id, answer.id])
+        #expect(ContentBlock.enclosingActivityGroupId(forChildId: thinking.id, in: rolled) == nil)
+    }
+
+    @Test
+    func rollupActivity_groupsLoneToolGroupByStepCount() {
+        // Loaded chats coalesce a whole tool run into one block; the rollup
+        // threshold counts steps, so a lone multi-call group still rolls up
+        // while a lone single-call group stays bare.
+        let turnId = UUID()
+        let multi = ContentBlock.toolCallGroup(
+            turnId: turnId,
+            calls: [Self.toolCallItem(id: "call-1"), Self.toolCallItem(id: "call-2")],
+            position: .middle
+        )
+        let single = ContentBlock.toolCallGroup(
+            turnId: turnId, calls: [Self.toolCallItem(id: "call-3")], position: .middle
+        )
+        let answer = ContentBlock.paragraph(
+            turnId: turnId, index: 0, text: "answer", isStreaming: false,
+            role: .assistant, position: .last
+        )
+
+        let rolledMulti = ContentBlock.rollupActivityBlocks([multi, answer])
+        guard case .activityGroup = rolledMulti[0].kind else {
+            Issue.record("expected multi-call group to roll up, got \(rolledMulti[0].kind)")
+            return
+        }
+
+        let rolledSingle = ContentBlock.rollupActivityBlocks([single, answer])
+        #expect(rolledSingle.map(\.id) == [single.id, answer.id])
+    }
+
+    private static func toolCallItem(id: String) -> ToolCallItem {
+        ToolCallItem(
+            call: ToolCall(
+                id: id,
+                type: "function",
+                function: ToolCallFunction(name: "web_search", arguments: "{}")
+            ),
+            result: "{}",
+            duration: 0.2
+        )
+    }
+
     private static func enrichedArtifactMarker(
         filename: String,
         mimeType: String,

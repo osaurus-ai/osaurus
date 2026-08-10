@@ -51,6 +51,14 @@ public final class ThemedAlertCenter: ObservableObject {
         activeByScope[scope]
     }
 
+    /// True when ANY scope currently owns an alert. Read-only occupancy
+    /// signal for callers that must not stack a new dialog on top of an
+    /// existing one anywhere in the app (e.g. the one-time Product Hunt
+    /// launch dialog defers to the next activation instead).
+    public var hasAnyActiveAlert: Bool {
+        !activeByScope.isEmpty
+    }
+
     /// Cancel the active alert for `scope` as if its cancel-role button
     /// was clicked. Returns true when an alert was active (the event is
     /// considered handled even when the alert has no cancel button, so
@@ -99,6 +107,15 @@ public struct ThemedAlertRequest: Identifiable {
     public let title: String
     /// Optional message displayed below the title
     public let message: String?
+    /// Optional asset-catalog images (module bundle) rendered side by side
+    /// above the title in place of the standard SF Symbol circle. Use for
+    /// announcement-style dialogs that carry their own artwork (e.g. the
+    /// Product Hunt launch dinosaur + kitty). Empty keeps the existing icon
+    /// header for every other alert.
+    public let headerImageNames: [String]
+    /// Accessibility description for the header artwork as a whole. Ignored
+    /// when no header images are set.
+    public let headerImageAccessibilityLabel: String?
     /// Optional accessory view rendered between the message and the button row.
     /// Use for extras like a "Don't ask again" toggle.
     public let accessory: AnyView?
@@ -125,6 +142,8 @@ public struct ThemedAlertRequest: Identifiable {
         id: UUID = UUID(),
         title: String,
         message: String?,
+        headerImageNames: [String] = [],
+        headerImageAccessibilityLabel: String? = nil,
         accessory: AnyView? = nil,
         buttons: [AlertButtonConfig],
         showsCloseButton: Bool = false,
@@ -135,6 +154,8 @@ public struct ThemedAlertRequest: Identifiable {
         self.id = id
         self.title = title
         self.message = message
+        self.headerImageNames = headerImageNames
+        self.headerImageAccessibilityLabel = headerImageAccessibilityLabel
         self.accessory = accessory
         self.buttons = buttons
         self.showsCloseButton = showsCloseButton
@@ -193,6 +214,8 @@ private struct ThemedAlertDialogContent: View {
 
     let title: String
     let message: String?
+    var headerImageNames: [String] = []
+    var headerImageAccessibilityLabel: String? = nil
     let accessory: AnyView?
     let buttons: [AlertButtonConfig]
     let showsCloseButton: Bool
@@ -303,26 +326,23 @@ private struct ThemedAlertDialogContent: View {
 
     private var headerSection: some View {
         VStack(spacing: 12) {
-            // Icon
-            ZStack {
-                Circle()
-                    .fill(iconBackgroundColor.opacity(0.15))
-                    .frame(width: 48, height: 48)
-
-                // Pulsing ring for attention
-                Circle()
-                    .stroke(iconBackgroundColor.opacity(0.3), lineWidth: 2)
-                    .frame(width: 48, height: 48)
-                    .scaleEffect(isAppearing ? 1.2 : 1)
-                    .opacity(isAppearing ? 0 : 0.8)
-                    .animation(
-                        .easeOut(duration: 1.5).repeatForever(autoreverses: false),
-                        value: isAppearing
-                    )
-
-                Image(systemName: iconName)
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(iconBackgroundColor)
+            if !headerImageNames.isEmpty {
+                // Custom artwork header (announcement-style dialogs). Kept
+                // small and static — no pulsing ring — so it reads as a
+                // friendly mark, not an attention grab.
+                HStack(alignment: .bottom, spacing: 12) {
+                    ForEach(headerImageNames, id: \.self) { name in
+                        Image(name, bundle: .module)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(height: 84)
+                    }
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(headerImageAccessibilityLabel ?? "")
+                .accessibilityHidden(headerImageAccessibilityLabel == nil)
+            } else {
+                iconHeader
             }
 
             // Title
@@ -330,6 +350,29 @@ private struct ThemedAlertDialogContent: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundColor(theme.primaryText)
                 .multilineTextAlignment(.center)
+        }
+    }
+
+    private var iconHeader: some View {
+        ZStack {
+            Circle()
+                .fill(iconBackgroundColor.opacity(0.15))
+                .frame(width: 48, height: 48)
+
+            // Pulsing ring for attention
+            Circle()
+                .stroke(iconBackgroundColor.opacity(0.3), lineWidth: 2)
+                .frame(width: 48, height: 48)
+                .scaleEffect(isAppearing ? 1.2 : 1)
+                .opacity(isAppearing ? 0 : 0.8)
+                .animation(
+                    .easeOut(duration: 1.5).repeatForever(autoreverses: false),
+                    value: isAppearing
+                )
+
+            Image(systemName: iconName)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundColor(iconBackgroundColor)
         }
     }
 
@@ -518,6 +561,7 @@ private struct ThemedAlertModifier: ViewModifier {
     let message: String?
     let accessory: AnyView?
     let buttons: [AlertButtonConfig]
+    let width: CGFloat?
     let presentationStyle: ThemedAlertPresentationStyle
 
     func body(content: Content) -> some View {
@@ -531,7 +575,7 @@ private struct ThemedAlertModifier: ViewModifier {
                         buttons: buttons,
                         showsCloseButton: false,
                         customContent: nil,
-                        width: nil,
+                        width: width,
                         presentationStyle: presentationStyle,
                         onDismiss: {
                             isPresented = false
@@ -619,6 +663,8 @@ public struct ThemedAlertHost: View {
                 ThemedAlertDialogContent(
                     title: request.title,
                     message: request.message,
+                    headerImageNames: request.headerImageNames,
+                    headerImageAccessibilityLabel: request.headerImageAccessibilityLabel,
                     accessory: request.accessory,
                     buttons: request.buttons,
                     showsCloseButton: request.showsCloseButton,
@@ -643,6 +689,8 @@ public struct ThemedAlertHost: View {
 extension View {
     /// Present a themed alert dialog with glass effects and spring animations.
     /// Supports 1–3 (or more) buttons; when 3+, buttons stack vertically for better ergonomics.
+    /// `width` overrides the standard 340pt dialog width (honoured by the
+    /// `.contained` style only) — use when button labels would otherwise wrap.
     @ViewBuilder
     func themedAlert(
         _ title: String,
@@ -650,6 +698,7 @@ extension View {
         message: String? = nil,
         accessory: AnyView? = nil,
         buttons: [AlertButtonConfig],
+        width: CGFloat? = nil,
         presentationStyle: ThemedAlertPresentationStyle = .window
     ) -> some View {
         if presentationStyle == .contained {
@@ -660,6 +709,7 @@ extension View {
                     message: message,
                     accessory: accessory,
                     buttons: buttons,
+                    width: width,
                     presentationStyle: .contained
                 )
             )

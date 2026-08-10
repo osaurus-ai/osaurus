@@ -1,0 +1,19 @@
+{
+  "id": "prompt_surface.manifest-replacement-saves",
+  "domain": "prompt_surface",
+  "label": "legacy capabilities • discover list mode can replace the enabled manifest",
+  "query": "",
+  "notes": "Compatibility coverage for the legacy capabilities_discover list-mode replacement. This is intentionally outside the production PromptSurface market lane because the compact default contract no longer depends on that gateway.",
+  "fixtures": {},
+  "expect": {
+    "promptSurface": {
+      "profile": {
+        "name": "arch-manifest-replacement",
+        "dropSections": ["enabledManifest"]
+      },
+      "mustExcludeSections": ["enabledManifest"],
+      "requireSavingsVsBaseline": true,
+      "expectDeterministic": true
+    }
+  }
+}

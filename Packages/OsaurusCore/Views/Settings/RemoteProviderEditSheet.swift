@@ -164,6 +164,9 @@ private struct AddProviderFlow: View {
     @State private var oauthTokens: RemoteProviderOAuthTokens?
     @State private var isTesting = false
     @State private var testResult: ProviderTestResult?
+    /// The connect test found an MCP server at the entered URL; offer to move
+    /// the setup to Tools > Connections instead of leaving a dead-end error.
+    @State private var showMCPRedirectPrompt = false
     @State private var hasAppeared = false
     /// Guards against saving twice: a successful test auto-finalizes the add,
     /// but the footer button is also still tappable during the brief green
@@ -271,6 +274,21 @@ private struct AddProviderFlow: View {
                 .cancel("Cancel"),
                 .destructive("Disable Timeout") { disableTimeout = true },
             ],
+            presentationStyle: .contained
+        )
+        .themedAlert(
+            L("This looks like an MCP server"),
+            isPresented: $showMCPRedirectPrompt,
+            message: L(
+                "This URL answers like an MCP server, not a chat completions API. Osaurus can add it as an MCP connection instead — the URL and token you entered will be carried over."
+            ),
+            buttons: [
+                .cancel(L("Cancel")),
+                .primary(L("Add as MCP Connection")) { redirectToMCPConnections() },
+            ],
+            // Wide enough that the CTA label stays on one line and both
+            // buttons keep the same height.
+            width: 420,
             presentationStyle: .contained
         )
     }
@@ -1497,13 +1515,62 @@ private struct AddProviderFlow: View {
                 try? await Task.sleep(nanoseconds: 450_000_000)
                 await MainActor.run { saveCustomProvider() }
             } catch {
+                let isMCPEndpoint: Bool
+                if let serviceError = error as? RemoteProviderServiceError,
+                    case .mcpEndpointDetected = serviceError
+                {
+                    isMCPEndpoint = true
+                } else {
+                    isMCPEndpoint = false
+                }
                 await MainActor.run {
                     withAnimation {
                         testResult = .failure(error.localizedDescription); isTesting = false
                     }
+                    if isMCPEndpoint {
+                        showMCPRedirectPrompt = true
+                    }
                 }
             }
         }
+    }
+
+    /// Hand the entered endpoint off to the MCP connections flow: navigate to
+    /// Tools > Connections and open the add sheet prefilled with the URL and
+    /// (when present) the API key as a bearer token.
+    private func redirectToMCPConnections() {
+        let trimmedName = customName.trimmingCharacters(in: .whitespaces)
+        let trimmedHost = customHost.trimmingCharacters(in: .whitespaces)
+        let trimmedBasePath = customBasePath.trimmingCharacters(in: .whitespaces)
+        // Reuse RemoteProvider's URL normalization (host-with-path splitting,
+        // port handling) rather than re-deriving the string here.
+        let endpoint = RemoteProvider(
+            name: "Draft",
+            host: trimmedHost,
+            providerProtocol: customProtocol,
+            port: Int(customPort),
+            // Mirror the fallback the failed test used, so the hand-off
+            // carries the exact URL that answered like an MCP server.
+            basePath: trimmedBasePath.isEmpty ? "/v1" : trimmedBasePath,
+            authType: customAuthType,
+            providerType: .openaiLegacy
+        )
+        guard let url = endpoint.baseURL?.absoluteString else { return }
+        // Match the test's auth gating: only carry the key when the user
+        // actually selected API-key auth, not stale text behind "No Auth".
+        let trimmedKey =
+            customAuthType == .apiKey
+            ? apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            : ""
+        let management = ManagementStateManager.shared
+        management.pendingMCPProviderDraft = MCPProviderDraft(
+            name: trimmedName,
+            url: url,
+            bearerToken: trimmedKey.isEmpty ? nil : trimmedKey
+        )
+        management.pendingToolsSubTab = ToolsTab.connections.rawValue
+        management.selectedTab = .tools
+        dismiss()
     }
 
     private func saveCustomProvider() {
@@ -1538,7 +1605,9 @@ private struct AddProviderFlow: View {
 
     private func saveSecretHeaders(for providerId: UUID) {
         for header in customHeaders where header.isSecret && !header.key.isEmpty && !header.value.isEmpty {
-            RemoteProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: providerId)
+            if !RemoteProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: providerId) {
+                NSLog("RemoteProviderEditSheet: failed to save secret header to Keychain")
+            }
         }
     }
 
@@ -2378,7 +2447,8 @@ private struct EditProviderFlow: View {
         if isTesting { return L("Testing...") }
         if let result = testResult {
             switch result {
-            case .success(let models): return L("\(models.count) models")
+            case .success(let models):
+                return models.count == 1 ? L("1 model") : L("\(models.count) models")
             case .failure: return L("Retry")
             }
         }
@@ -2518,7 +2588,8 @@ private struct EditProviderFlow: View {
             authType: authType,
             providerType: providerType,
             enabled: provider.enabled,
-            autoConnect: true,
+            // Editing must not overwrite the user's auto-connect choice.
+            autoConnect: provider.autoConnect,
             timeout: timeout,
             disableTimeout: disableTimeout,
             manualModelIds: parseManualModelIds(manualModelIdsText),
@@ -2526,7 +2597,9 @@ private struct EditProviderFlow: View {
         )
 
         for header in customHeaders where header.isSecret && !header.key.isEmpty && !header.value.isEmpty {
-            RemoteProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: updatedProvider.id)
+            if !RemoteProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: updatedProvider.id) {
+                NSLog("RemoteProviderEditSheet: failed to save secret header to Keychain")
+            }
         }
 
         onSave(updatedProvider, apiKey.isEmpty ? nil : apiKey, nil)
@@ -2639,21 +2712,35 @@ struct HeaderEntry: Identifiable {
     var value: String
     var isSecret: Bool
 
-    /// Build a flat dictionary of non-empty headers.
+    /// Build a flat dictionary of non-empty headers. Entries whose name or
+    /// value contains CR/LF or other control characters are dropped so a
+    /// malformed header can't be persisted (and later crash or split the
+    /// upstream request); the wire layer enforces the same rule.
     static func buildHeaders(from entries: [HeaderEntry]) -> [String: String] {
         var headers: [String: String] = [:]
-        for entry in entries where !entry.key.isEmpty && !entry.value.isEmpty {
+        for entry in entries
+        where !entry.key.isEmpty && !entry.value.isEmpty
+            && RemoteProviderService.isSafeHeader(name: entry.key, value: entry.value)
+        {
             headers[entry.key] = entry.value
         }
         return headers
     }
 
     /// Partition entries into regular headers dict and secret key names.
+    /// Secret values live in Keychain, so only the name is validated for
+    /// secret entries; regular entries validate both name and value.
     static func partition(_ entries: [HeaderEntry]) -> (regular: [String: String], secretKeys: [String]) {
         var regular: [String: String] = [:]
         var secretKeys: [String] = []
         for entry in entries where !entry.key.isEmpty {
-            if entry.isSecret { secretKeys.append(entry.key) } else { regular[entry.key] = entry.value }
+            if entry.isSecret {
+                if RemoteProviderService.isSafeHeader(name: entry.key, value: "") {
+                    secretKeys.append(entry.key)
+                }
+            } else if RemoteProviderService.isSafeHeader(name: entry.key, value: entry.value) {
+                regular[entry.key] = entry.value
+            }
         }
         return (regular, secretKeys)
     }

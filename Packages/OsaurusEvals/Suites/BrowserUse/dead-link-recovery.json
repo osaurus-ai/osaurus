@@ -1,0 +1,42 @@
+{
+  "id": "browseruse.dead-link-recovery",
+  "domain": "subagent",
+  "label": "BrowserUse • recover from a dead URL via a real link",
+  "query": "Open https://fixtures.local/plans and report the Starter plan's monthly price. If that URL doesn't load, start from https://fixtures.local/home and find the pricing from there.",
+  "notes": "LIVE. Error recovery: the first URL returns the typed 'no such page' navigation failure (it shares no prefix with any fixture page, so it can't accidentally resolve). The correct run treats the failure as recoverable, navigates to the home page, follows the Store pricing link, and reports the grounded price — instead of giving up or inventing a number.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "browser_use",
+      "maxSteps": 12,
+      "pages": [
+        {
+          "url": "https://fixtures.local/home",
+          "title": "Fixture Store — Home",
+          "bodyText": "Welcome to the Fixture Store. Plans and pricing live under the Store section.",
+          "elements": [
+            { "id": "store-pricing", "type": "link", "text": "Store pricing", "goto": "https://fixtures.local/store/pricing" },
+            { "id": "store-about", "type": "link", "text": "About", "goto": "https://fixtures.local/store/about" }
+          ]
+        },
+        {
+          "url": "https://fixtures.local/store/pricing",
+          "title": "Store Pricing",
+          "bodyText": "Store plans. Starter: $12 per month. Team: $48 per month. All plans include unlimited fixtures.",
+          "elements": []
+        },
+        {
+          "url": "https://fixtures.local/store/about",
+          "title": "About the Store",
+          "bodyText": "The Fixture Store has been fixturing since 2021.",
+          "elements": []
+        }
+      ],
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "browser_use",
+      "summaryContains": ["$12"],
+      "expectVerbsInOrder": ["navigate", "navigate"]
+    }
+  }
+}

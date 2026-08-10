@@ -1,0 +1,17 @@
+{
+  "id": "micro_perf.cancel-cold-load",
+  "domain": "micro_perf",
+  "label": "micro perf • cancel during a cold model load: prompt termination, no zombie, clean recovery",
+  "query": "List the numbers from one to two hundred as digits separated by spaces. Output only the digits.",
+  "notes": "The startup-cancellation reliability row (AGENTS.md: 'if the user stops generation, closes chat, or exits during first load, startup must cancel and cleanup must prevent zombie loads and OOM growth'). Every resident model is evicted, a generation is dispatched, and the cancel fires 750 ms after dispatch — inside the multi-second cold load for a 27B-class bundle. Pass requires the stream to terminate within the cancel-latency ceiling AND a full recovery generation to succeed afterwards (no zombie load, no wedged engine). Footprint before/after-cancel/after-recovery is recorded for growth triage. reps/maxTokens shape the recovery generation. Off-CI (needs a local model).",
+  "fixtures": {},
+  "expect": {
+    "microPerf": {
+      "reps": 2,
+      "maxTokens": 64,
+      "lifecycle": "cold_load_cancel",
+      "cancelAfterMs": 750,
+      "maxCancelLatencyMs": 20000
+    }
+  }
+}

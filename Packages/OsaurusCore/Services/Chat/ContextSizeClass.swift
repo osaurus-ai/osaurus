@@ -115,8 +115,8 @@ public struct ContextWindowInfo: Sendable, Equatable {
     public let contextLength: Int?
 
     /// Whether the prompt should render in its compact form (ids-only
-    /// manifest, small SOUL budget, compact family guidance, no plugin-creator
-    /// recipe). True for small/tiny windows (existing behaviour) AND for local
+    /// manifest, small SOUL budget, compact family guidance, reduced
+    /// plugin-creator recipe). True for small/tiny windows AND for local
     /// models small enough that the per-step tokenization cost of a verbose
     /// prompt outweighs the prose — even when their window is large. Kept on
     /// the SAME resolver as `sizeClass` (not a parallel classifier) but
@@ -185,6 +185,16 @@ public enum ContextSizeResolver {
     ///   doesn't know the budget, so we conservatively return
     ///   `.normal` to avoid hiding tools speculatively.
     public static func resolve(modelId: String?) -> ContextWindowInfo {
+        // Eval-scoped ablation hook: a compact/full override from the active
+        // experiment (nil in production) is applied to every return below via
+        // this single chokepoint, so all read sites (toolset, manifest, SOUL
+        // cap, templates) stay mutually consistent — a KV-cache requirement.
+        PromptComposerExperimentScope.applyCompactOverride(to: resolveUnadjusted(modelId: modelId))
+    }
+
+    /// The production resolver body, pre-experiment. Split out so the
+    /// override applies uniformly to every early return.
+    private static func resolveUnadjusted(modelId: String?) -> ContextWindowInfo {
         guard let modelId, !modelId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return .unknown }
 

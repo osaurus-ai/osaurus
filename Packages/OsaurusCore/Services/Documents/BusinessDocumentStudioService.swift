@@ -437,12 +437,14 @@ public struct BusinessDocumentStudioService: Sendable {
             try rejectTextExportPackageTarget(url)
             let delimiter: CSVDelimiter = normalizedTarget == "tsv" ? .tab : .comma
             let result = try await CSVTableWorkflowService.export(document, to: url, delimiter: delimiter)
+            let rowLabel = result.rowCount == 1 ? "1 row" : "\(result.rowCount) rows"
+            let columnLabel = result.columnCount == 1 ? "1 column" : "\(result.columnCount) columns"
             return BusinessDocumentStudioExportResult(
                 url: result.url,
                 sourceFormatId: document.formatId,
                 targetFormatId: result.formatId,
                 bytesWritten: result.bytesWritten,
-                message: "Exported \(result.rowCount) row(s) and \(result.columnCount) column(s)."
+                message: "Exported \(rowLabel) and \(columnLabel)."
             )
 
         case "xlsx":
@@ -538,7 +540,9 @@ public struct BusinessDocumentStudioService: Sendable {
             let message =
                 canExport
                 ? "CSV/TSV table can be exported through the delimited-text emitter."
-                : "CSV/TSV export is blocked by \(issues.count) validation issue(s)."
+                : (issues.count == 1
+                    ? "CSV/TSV export is blocked by 1 validation issue."
+                    : "CSV/TSV export is blocked by \(issues.count) validation issues.")
             options.append(
                 BusinessDocumentStudioExportOption(
                     targetFormatId: "csv",

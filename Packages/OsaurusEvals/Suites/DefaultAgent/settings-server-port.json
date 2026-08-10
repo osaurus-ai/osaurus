@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.settings-server-port",
+  "domain": "default_agent",
+  "label": "default agent • change the server port via osaurus_settings",
+  "query": "Change the Osaurus server port to 8080.",
+  "notes": "Canonical osaurus_settings write: action 'set', scope 'server', settings.port 8080. Before the settings domain existed this request dead-ended in 'change it in the Settings window'. The matcher probes the re-encoded settings object for the port value.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_settings"],
+      "mustNotCallTools": ["capabilities_discover"],
+      "argsMustContain": [
+        { "tool": "osaurus_settings", "args": { "action": "set", "scope": "server", "settings": "8080" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

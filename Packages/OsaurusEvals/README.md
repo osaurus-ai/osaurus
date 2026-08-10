@@ -11,7 +11,7 @@ Packages/OsaurusEvals/
   Package.swift
   README.md (this file)
   Config/
-    recall_floors.json  — opt-in `--fail-on-floor` gate config
+    floors.json         — `--fail-on-floor` gate config (suite pass rates + case recall floors)
   Sources/
     OsaurusEvalsKit/    — library (case schema, runner, scorers, model override)
     OsaurusEvalsCLI/    — `osaurus-evals` executable
@@ -19,25 +19,28 @@ Packages/OsaurusEvals/
     OsaurusEvalsKitTests/ — harness unit tests (fixture decode, scorers, labs; token-free)
   Suites/
     AgentDB/            — E2E db_* tool workflows against an isolated agent DB (LLM)
+    AgentChannels/      — deterministic agent/MCP channel and tool-policy fixtures
     AgentLoop/          — E2E agentic outcomes in a seeded workspace (LLM)
     AgentLoopFrontier/  — harder agent-loop tasks for the local-vs-frontier proof lane (LLM)
     AppleScript/        — AppleScript tool discipline: scripted CI lane + live lane (LLM or scripted)
     ArgumentCoercion/   — ArgumentCoercion.{stringArray,int,bool} pinning
     CapabilityClaims/   — agent-loop "do you have X" behaviour + LLM judge (LLM)
     CapabilitySearch/   — index-only recall measurements (no LLM)
+    CacheProof/         — live prefix/KV/L2 cache behavior and telemetry (LLM)
     ComputerUse/        — single-action gate / effect classification (no LLM)
     ComputerUseLoop/    — E2E Computer Use over a scripted screen (LLM or scripted)
     DefaultAgent/       — built-in "Configuring Osaurus" agent: read/write config tools + judge (LLM)
+    HTTPAPI/            — live HTTP chat/agent-run request behavior (LLM)
     JudgeCalibration/   — known-verdict fixtures that grade the JUDGE itself (judge LLM only)
+    Memory/             — multi-turn memory injection and recall behavior (LLM)
     MicroPerf/          — fixed-shape decode/TTFT/prefill micro-benchmarks, median ± stdev (LLM)
     PrefixHash/         — KV-cache prefix-hash stability
     PromptInjection/    — indirect-injection resistance over seeded agent_loop fixtures (LLM)
-    RequestValidation/  — RequestValidator.unsupportedSamplerReason
+    ReasoningChannel/   — visible-answer/reasoning-boundary behavior (LLM)
     SandboxDiagnostics/ — sandbox self-heal hint layer over canned stderr (no LLM, no VM)
     SandboxFrontier/    — live Linux-VM sandbox tools; skips without Apple Containerization (LLM)
     ScreenContext/      — deterministic AX-text screen-context distillation (no LLM)
     Schema/             — SchemaValidator.validate pinning
-    StreamingHint/      — StreamingToolHint encode/decode round-trips
     Subagent/           — SubagentSession host: scripted model-free + live spawn/image/computer_use
     ToolEnvelope/       — ToolEnvelope.{success,failure} JSON shape
     ToolResultGrounding/ — transcript fixtures checking final-answer grounding against tool results
@@ -60,6 +63,10 @@ make evals FILTER=browser-amazon                    # single case while iteratin
 make evals-report                                   # also writes build/evals.json
 make evals-report EVALS_OUT=reports/today.json      # custom output path
 make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/AgentLoop  # other suite
+make evals-pr-report LOCAL_MODEL=foundation FRONTIER_MODEL=openai/gpt-4o-mini
+make evals-pr-report-baseline BASELINE_DIR=build/evals/main-report
+make evals-watcher-report EVALS_WATCHER_CHANNEL=main EVALS_REPORT_PRESET=local-frontier
+make evals-scoreboard EVALS_SCOREBOARD_ROOT=build/evals/watcher/main EVALS_MAX_REGRESSIONS=0
 ```
 
 ### Asset prerequisites (handled automatically)
@@ -83,12 +90,11 @@ once both assets are in place. Skip it with `OSAURUS_EVALS_SKIP_PREP=1` (or run
 directly, the CLI falls back to colocating the metallib at startup and logs a
 loud warning if the embedder is missing.
 
-The `CapabilityClaims` browser cases additionally need the `osaurus.browser`
-native plugin installed. Because installing it mutates `~/.osaurus`, the prep
-step does it only when you opt in with `OSAURUS_EVALS_INSTALL_BROWSER=1`
-(`osaurus` CLI required); otherwise those cases skip as "missing plugins". When
-a selected case declares `fixtures.requirePlugins`, the runner now
-auto-bootstraps installed plugins (no `--bootstrap-plugins` needed); pass
+The `CapabilityClaims` browser cases run against the built-in `browser_use`
+tool (the browser is now a native Osaurus capability; the `osaurus.browser`
+plugin is superseded), so no plugin install is needed for them. When a
+selected case declares `fixtures.requirePlugins`, the runner auto-bootstraps
+installed plugins (no `--bootstrap-plugins` needed); pass
 `--no-plugin-bootstrap` to force-skip them.
 
 Or call the CLI directly if you need flags the Makefile doesn't expose:
@@ -118,7 +124,144 @@ swift run osaurus-evals run --suite Suites/AgentLoop --out report.json --resume
 # JSON per failing case under report.transcripts/. Off by default (transcripts
 # carry the whole composed prompt; shared reports shouldn't).
 swift run osaurus-evals run --suite Suites/AgentLoop --out report.json --transcripts
+
+# Build a maintainer-facing PR report bundle.
+swift run osaurus-evals report --local-model foundation --frontier-model openai/gpt-4o-mini
 ```
+
+### Context optimization harness (`optimize-context`)
+
+The staged search that answers "where do the tokens go, and what can we
+remove without losing quality":
+
+1. **Census (no model)** — composes the REAL preview surface (same gates as
+   the send path) for the production baseline, then every one-factor
+   ablation the validator allows: each droppable prompt section, each
+   deferrable tool, the compact-prompt toggle.
+2. **Prune** — axes that compose invalid or save less than `--min-savings`
+   (default 25 estimated tokens) are recorded in `plan.json` but never cost
+   a model run.
+3. **Combine** — survivors merge into combination candidates
+   (`combo-sections`, `combo-tools`, `combo-all`) plus the named
+   architecture candidates such as `arch-hot-set`, `arch-lean-guidance`,
+   `arch-five-tool-only`, `arch-no-lifecycle`, `arch-no-gateway`, and
+   `arch-single-gateway`. Zero-surface candidates are no longer scheduled
+   automatically; legacy discovery/load profiles remain available for
+   explicit compatibility runs.
+   Architecture and combo candidates always earn a model run;
+   `--max-candidates` caps how many single-axis candidates join them
+   (largest surface savers first).
+4. **Quality runs** — baseline FIRST, then every candidate, over the same
+   scoped suites in ONE process (the model loads and warms once; profiles
+   swap through the eval-only experiment scope between runs). Each
+   candidate is diffed against the in-process baseline with the flake-aware
+   `EvalDiff` gate.
+5. **Pareto** — gate-passing candidates rank on pass rate, first-step
+   context, cumulative context, peak context, TTFT, throughput, and RAM;
+   `pareto.md` marks the non-dominated frontier.
+6. **Finalists + strict promotion gate** — the baseline and every frontier
+   candidate rerun at `--finalist-repeat` trials (default 5), then
+   `PromotionGate` applies the STRICT rules: no baseline pass→fail
+   transitions (no flake amnesty), no new failures/errors/skips, no lower
+   per-case pass rate on repeat-trial rows, judge-calibration lane must
+   pass, unchanged case catalog, and the optional `--context-budget`
+   ceiling on mean first-step tokens. Verdicts land in `promotion.md`.
+
+#### Exact Bonsai Ternary commands
+
+The xAI key is supplied ONLY via the environment (`XAI_API_KEY`); it is
+never written to config, scripts, reports, or logs, and should be rotated
+after a shared run. With the key set, the judge auto-resolves to
+`xai/grok-4.3`.
+
+```bash
+cd Packages/OsaurusEvals
+
+# Deterministic plan only (seconds, no model):
+XAI_API_KEY=... swift run osaurus-evals optimize-context \
+  --suite Suites/AgentLoop \
+  --model "OsaurusAI/Bonsai-27b-Ternary-JANG" \
+  --out-dir build/ctxopt-bonsai --census-only
+
+# The full search (hours on a 27B local model — resumable):
+XAI_API_KEY=... swift run osaurus-evals optimize-context \
+  --suite Suites/AgentLoop --suite Suites/CapabilityClaims \
+  --model "OsaurusAI/Bonsai-27b-Ternary-JANG" \
+  --out-dir build/ctxopt-bonsai \
+  --repeat 3 --finalist-repeat 5 --max-candidates 8 --resume
+
+# Or through the loop script (artifacts under the stamped run dir):
+CTX_OPTIMIZE=1 MODELS="OsaurusAI/Bonsai-27b-Ternary-JANG" \
+CTX_SUITES="AgentLoop" CTX_REPEAT=3 XAI_API_KEY=... \
+scripts/evals/optimization-loop.sh
+```
+
+#### Reading the artifacts
+
+- `plan.json` — the census: baseline surface tokens, every candidate with
+  its `kind` and `surfaceSavings`, and every pruned axis with the reason.
+- `baseline.json` / `candidate-<name>.json` — merged env-stamped reports;
+  profiled reports carry `experimentProfile` + `experimentProfileHash` in
+  their environment, so they can never silently read as production.
+- `pareto.md` — the ranking table; `★` rows are the gate-passing,
+  non-dominated frontier. A candidate missing from the frontier is
+  dominated or gate-failed (see the Gate Failures section).
+- `finalist-*.json` + `promotion.md` — the strict verdicts. Only a
+  `PROMOTABLE` finalist may be promoted to production composition.
+
+#### Promotion rules (never weaken these)
+
+- Promote only `PROMOTABLE` finalists, and only when the finalist run used
+  ≥5 trials per case against a same-process baseline.
+- A pass→fail flip on a flaky row means MORE trials, not promotion.
+- Never weaken case expectations, inject model-family coercion, repair
+  parser output, or hide failures to make a candidate pass.
+- The prompt manifest stays in production until `arch-manifest-replacement`
+  passes CapabilityClaims and tool-use gates — the exact
+  `capabilities_discover {"list": "enabled"}` listing exists precisely so
+  that experiment is honest.
+- Per-case context ceilings (`expect.agentLoop.scoredMaxPromptTokens` /
+  `scoredMaxTotalTokens`) should be added to representative agent-loop
+  cases only AFTER a stable baseline exists, set from observed baseline +
+  margin — they are regression tripwires, not targets.
+
+#### Bonsai 27B Ternary JANG results (2026-07-22)
+
+Full staged run: 10 representative AgentLoop cases + CapabilityClaims +
+JudgeCalibration, 3 trials per case in search, 5 in finalists, judge
+`xai/grok-4.3`. Baseline surface 4984 tok; baseline quality 29/32.
+
+| Profile | Search (3×) | 1st-step | cum/task | Verdict |
+| --- | --- | ---: | ---: | --- |
+| `arch-compact-loaded-results` | 27/32 | ±0% | −12% | **PROMOTABLE** (clean 5-trial pass) |
+| `arch-lean-guidance` | 28/32 | −13% | −17% | BLOCKED (one flaky claims row 4/5→1/5 — rerun with more trials) |
+| `arch-hot-set` | 27/32 | −18% | −12% | gate FAIL (`no-clarify` regression) |
+| `arch-manifest-replacement` | 27/32 | −30% | −37% | gate FAIL (claims honesty + `no-spurious-discover` regress) |
+| `combo-sections` / `combo-tools` / `combo-all` | ≤27/32 | up to −73% | up to −50% | gate FAIL (multiple hard regressions) |
+
+Conclusions the evidence supports:
+
+- **Winning profile: [`Profiles/arch-compact-loaded-results.json`](Profiles/arch-compact-loaded-results.json)**
+  — the only candidate to survive the strict promotion gate. Its savings
+  are history-side (−12% cumulative on capability-loading tasks), not
+  surface-side, and cost zero quality.
+- **Best trade, pending evidence:
+  [`Profiles/arch-lean-guidance.json`](Profiles/arch-lean-guidance.json)**
+  — beat baseline in the 5-trial finalist aggregate (26/29 vs 25/29,
+  −17% first-step, −22% cumulative in finalists, two claims rows
+  IMPROVED) but is blocked, correctly, on a single flaky-row pass→fail
+  flip. Next action: rerun finalists at higher trials
+  (`--finalist-repeat 9`); do not promote over the gate.
+- **Keep the enabled manifest and the full tool schema.** The manifest
+  replacement (even with the exact `{"list": "enabled"}` mode available)
+  and the hot-set/deferral architectures all produced real regressions on
+  Bonsai Ternary — grounding-by-prompt is what this model's honesty
+  depends on. These are documented negative results, not failures of the
+  harness.
+
+Artifacts for this run live under `build/ctxopt-bonsai/run1/`
+(`plan.json`, `pareto.md`, `promotion.md`, per-profile reports with full
+context attribution).
 
 ### Screen Context capture lab
 
@@ -151,7 +294,111 @@ commit hand-reviewed synthetic or sanitized fixtures. The promotion helper keeps
 roles, geometry, actions, and focus shape, but redacts captured strings, drops
 secure-field values, removes AX paths, and rewrites element ids.
 
-For maintainer proof on agent-loop changes, use the regression lab. It runs
+For maintainer proof on agent-loop changes, use the PR report bundle when you
+need local + frontier evidence in one artifact:
+
+```bash
+make evals-pr-report \
+  LOCAL_MODEL=foundation \
+  FRONTIER_MODEL=openai/gpt-4o-mini
+
+make evals-pr-report-baseline \
+  BASELINE_DIR=build/evals/main-report \
+  LOCAL_MODEL=foundation \
+  FRONTIER_MODEL=openai/gpt-4o-mini
+```
+
+The default report runs `AgentLoop`, `AgentLoopFrontier`, and `Subagent` for
+both the local and frontier lanes. It writes
+`build/evals/pr-report/<timestamp>/` unless
+`EVALS_PR_REPORT_OUT` or `--out-dir` is set:
+
+- `manifest.json` — commit, branch, date, runner version, suites, models,
+  command provenance, and environment summary.
+- `summary.md` — maintainer-readable totals, failures, skips, regressions, and
+  the exact commands used.
+- `summary.json` — machine-readable aggregate summary.
+- `evidence-registry.json` — unified evidence registry snapshot pointing at
+  the report `summary.json` artifact.
+- `reports/<role>/<model>/<suite>.json` — raw `EvalReport` output for each lane.
+- `compare.md` / `compare.json` — baseline-vs-current diff when a baseline is
+  supplied.
+
+Use this evidence rule for PRs:
+
+- No eval report needed: docs-only changes, UI-only inspection, isolated
+  storage changes, and non-agent diagnostics.
+- Focused eval report needed: eval harness, provider bootstrap, or scoring
+  changes.
+- Local + frontier eval report required: default tools, tool schemas,
+  prompt/tool interaction, agent-loop routing, memory/tool routing, and
+  model-facing defaults.
+
+PR evidence block:
+
+```text
+Eval evidence:
+- Local: <model>, AgentLoop X/Y, AgentLoopFrontier X/Y
+- Frontier: <model>, AgentLoop X/Y, AgentLoopFrontier X/Y
+- Regressions vs baseline: <none/list>
+- Artifact: <path or uploaded artifact>
+```
+
+The `--from-reports <dir>` flag builds the bundle from existing `EvalReport`
+JSON files without model calls, which is useful for CLI smoke tests and docs
+examples.
+
+For mainline and release-candidate watcher runs, use the stored artifact
+workflow:
+
+```bash
+make evals-watcher-report \
+  EVALS_WATCHER_CHANNEL=main \
+  EVALS_WATCHER_ARTIFACT_ID=main-$(date -u +%Y%m%dT%H%M%SZ) \
+  LOCAL_MODEL=foundation \
+  FRONTIER_MODEL=openai/gpt-4o-mini
+
+make evals-watcher-report \
+  EVALS_WATCHER_CHANNEL=release-candidate \
+  EVALS_WATCHER_ARTIFACT_ID=rc-agent-loop-20260621 \
+  BASELINE_DIR=build/evals/watcher/main/20260621T120000Z/report
+```
+
+Each run stores a report bundle under
+`build/evals/watcher/<channel>/<timestamp>/report/` and refreshes
+`build/evals/watcher/<channel>/scoreboard/latest/scoreboard.json` plus
+`scoreboard.md`. Report and scoreboard directories also write
+`evidence-registry.json`; the scoreboard rebuild discovers eval report bundles
+through those registry snapshots and then reads their registered `summary.json`
+artifacts. The manifest carries the artifact ID, and the scoreboard summarizes
+the latest release-candidate run, local/frontier model presets, baseline
+comparison counts, and the no-regression threshold
+(`EVALS_MAX_REGRESSIONS`, default `0`). Reused registry IDs follow the evidence
+registry's newest-registration precedence. The watcher verifies that the
+current report is the selected release candidate and preserves report failures
+in its final exit status. The scoreboard can also be rebuilt from existing
+registry-backed bundles without running a model:
+
+```bash
+make evals-scoreboard \
+  EVALS_SCOREBOARD_ROOT=build/evals/watcher/main \
+  EVALS_SCOREBOARD_OUT=build/evals/scoreboard/main \
+  EVALS_MAX_REGRESSIONS=0
+
+swift run --package-path Packages/OsaurusEvals osaurus-evals scoreboard \
+  --reports-root build/evals/watcher/main \
+  --out-dir build/evals/scoreboard/main \
+  --max-regressions 0
+```
+
+Use `EVALS_REPORT_PRESET=local-only` for fixture or local-only validation that
+must not require frontier credentials; the default remains `local-frontier` for
+release evidence.
+
+See `docs/EVAL_WATCHER.md` for the maintainer loop, optional dedicated Mac
+runner notes, and cost controls.
+
+For lower-level agent-loop baseline work, use the regression lab. It runs
 selected `agent_loop` suites, writes per-suite JSON artifacts, compares the
 current run against a saved baseline report or report directory, and emits a
 concise JSON + Markdown summary:
@@ -168,8 +415,9 @@ swift run --package-path Packages/OsaurusEvals osaurus-evals agent-loop-lab \
   --out-dir build/evals/lab-smoke
 ```
 
-The default run selection is `Suites/AgentLoop` plus `Suites/AgentLoopFrontier`.
-Pass `--suite <dir>` repeatedly to narrow or expand it. Artifacts land under
+The default run selection is `Suites/AgentLoop`, `Suites/AgentLoopFrontier`,
+and `Suites/Subagent`. Pass `--suite <dir>` repeatedly to narrow or expand it.
+Artifacts land under
 `build/evals/agent-loop-regression-lab/<timestamp>/` unless `--out-dir` is set:
 
 - `reports/<Suite>.json` — raw `EvalReport` output for each suite run.
@@ -199,9 +447,11 @@ The loop batches each model's suites into ONE process (the model loads and
 warms once, not once per suite), and when `MODELS` mixes local and
 remote-provider ids it runs the remote models in a parallel background lane —
 remote decode is network-bound, so it doesn't contend with local MLX GPU work.
-The remote lane runs config-isolated (it can't race the local lane on
-`~/.osaurus`) and the sandbox-VM suite is serialized across lanes with a lock.
-Set `PARALLEL_REMOTE=0` to restore the fully sequential order.
+Every eval process runs in its own hermetic throwaway storage root (see
+"Hermetic run storage" below), so parallel lanes can never race each other —
+or a live Osaurus app — on `~/.osaurus`; the sandbox-VM suite is serialized
+across lanes with a lock (the VM itself is host-global). Set
+`PARALLEL_REMOTE=0` to restore the fully sequential order.
 
 Each run lands in `build/evals/loop/<timestamp>/` (also symlinked as
 `build/evals/loop/latest`) with:
@@ -263,10 +513,17 @@ underlying primitive.
 Anyone can contribute a model-compatibility result from their own Mac — the
 long tail of models/quants/hardware no single maintainer can cover. Each
 contribution is one conflict-free file under `reports/community/`; a maintainer
-folds them into `reports/COMPATIBILITY.md`. See `reports/community/README.md`.
+folds them into `reports/COMPATIBILITY.md`, which also tracks **device
+coverage** (every chip × RAM shape that has reported). The end-to-end
+contributor guide — written for humans and coding agents — is
+[`COMMUNITY_EVALS.md`](../../COMMUNITY_EVALS.md) at the repo root; format
+details live in `reports/community/README.md`.
 
 ```bash
-# Contributor: run ONE model on your hardware, then PR the single file it writes.
+# Contributor: run ONE model on your hardware and auto-open the PR (gh).
+PR=1 MODEL=mlx-community/Qwen3-4B-4bit make evals-contribute
+
+# Same, but stop after writing the file (PR/issue it yourself).
 MODEL=mlx-community/Qwen3-4B-4bit make evals-contribute
 
 # Maintainer: rebuild the leaderboard (or gate a PR's contributions).
@@ -304,11 +561,29 @@ requests `stream_options.include_usage` and surfaces the provider's `usage` as
 the same in-band stats hint the local runtime emits (decode tok/s stays nil when
 the provider omits it, rather than being fabricated).
 
+**Hermetic run storage.** Every `osaurus-evals run` (and `agent-loop-lab`)
+process — pure data suites included — runs against a disposable
+`$TMPDIR/osaurus-evals-<uuid>/` storage root
+(`EvalBootstrap.configureIsolatedRunStorage`). Fixture agents, providers,
+schedules, memory rows, methods, skills, chat state, and KV caches an eval
+creates all land in that throwaway root and **can never touch the user's real
+`~/.osaurus` contexts**. The isolated root is seeded with the few host
+resources a run must still see: read-only symlinks for `Tools/` (installed
+plugins, only when the plan loads them), `cache/external-models.json`
+(HF-cache / LM-Studio model resolution), and `container/` (the host-global
+sandbox VM runtime — boot costs minutes and the container is shared with the
+host app, so it is the one deliberate exception); plus **copies** of
+`config/chat.json` (keeps `--model auto` resolvable) and `config/sandbox.json`
+(keeps provisioned-sandbox detection) so any write a run triggers mutates the
+copy, not the user's file. On normal exit the process deletes its root; roots
+leaked by watchdog `_exit` / crashes are collected by the next run's orphan
+sweep (dead `.owner.pid`).
+
 Startup bootstrap is domain-aware. Suites that require installed native plugins
 load them and rebuild search indices so they mirror the host app. `capability_search`
 suites initialize only the selected tool / method / skill index lanes without
-loading native plugins; those index-only runs use isolated temporary storage so
-fixtures never touch the user's real databases. Debug builds also use
+loading native plugins; index fixtures build fresh inside the isolated root so
+they never touch the user's real databases. Debug builds also use
 a deterministic in-process storage key; release builds still use OsaurusCore's
 normal noninteractive storage-key path against the isolated database files
 (used only when a run opts in to encrypted fixtures; plaintext fixtures need no key).
@@ -343,10 +618,8 @@ Every case file shares a top-level shape: `id`, `domain`, optional `label` and `
 | `schema` | no | `runSchemaCase` | `expect.schema` |
 | `tool_envelope` | no | `runToolEnvelopeCase` | `expect.toolEnvelope` |
 | `tool_result_grounding` | no | `runToolResultGroundingCase` | `expect.toolResultGrounding` |
-| `streaming_hint` | no | `runStreamingHintCase` | `expect.streamingHint` |
 | `prefix_hash` | no | `runPrefixHashCase` | `expect.prefixHash` |
 | `argument_coercion` | no | `runArgumentCoercionCase` | `expect.argumentCoercion` |
-| `request_validation` | no | `runRequestValidationCase` | `expect.requestValidation` |
 | `sandbox_diagnostics` | no | `runSandboxDiagnosticsCase` | `expect.sandboxDiagnostics` |
 
 ¹ `computer_use_loop` drives a live model by default, but a case that supplies `scriptedActions` runs **model-free** (deterministic, CI-safe) via the loop's `AgentStepProvider` seam.
@@ -364,6 +637,19 @@ Every case file shares a top-level shape: `id`, `domain`, optional `label` and `
 The non-LLM domains are pure-data and run in single-digit ms each — safe to keep growing. The LLM-driven domains (`agent_loop`, `capability_claims`, `default_agent`, `judge_calibration`, `micro_perf`, and the live lanes of the mixed domains) burn tokens; keep them off CI.
 
 A case with empty `expect: {}` is a valid smoke test — it records what the runner observed without scoring. Useful while bootstrapping.
+
+### `tool_result_grounding` domain
+
+This model-free lane scores a frozen ordered transcript. In addition to
+per-result grounding assertions, cases can pin an exact `expectedToolSequence`,
+require one assistant final with `requireSingleFinalAssistant`, require that
+final to follow every result and remain the last event, and require a later
+tool call to follow a named result via `callMustFollowResultOf`. A `spawnBatch`
+assertion reuses the typed AgentLoop aggregate parser/scorer, so committed
+fixtures can check exact job IDs and UUID targets, settled child rows, reported
+counts, aggregate status, execution waves, and cache diagnostics without a
+model call. These fixtures prove transcript/scorer contracts; they do not
+replace a live AgentLoop or app-UI run.
 
 ### `capability_search` domain
 
@@ -392,7 +678,7 @@ Index-only recall measurements over the tools / methods / skills lanes. No LLM, 
 Field notes:
 
 - `fixtures.seedMethods` — methods to insert into `MethodDatabase` before the case runs (and remove after). Each entry is `{ id, name, description, triggerText?, body? }`. Methods have no built-in seed so a fixture has to bring its own. Prefer `eval-<slug>` ids — the runner skips inserts when the id already exists, so a real user method on disk won't get clobbered if your slug collides.
-- `fixtures.enableSkills` — array of skill **display names** to flip `enabled = true` on for the duration of the case (and restore after). Built-in skills ship disabled-by-default and the search post-filters disabled skills out, so a recall fixture against e.g. `"Debug Assistant"` silently returns 0 unless we toggle it on first. Restoration is best-effort, not crash-safe — re-running any case that names the same skill converges back.
+- Skills need no fixture setup: every installed skill (built-ins included) is universally searchable, so a recall fixture against e.g. `"Mac Automator"` runs against the live library directly.
 - `expect.capabilitySearch.expectedTools` / `expectedMethods` / `expectedSkills` — `{ anyOf: [...names], minMatches: N }` matchers. Each matched name must appear in the **accepted** hit set for its lane (i.e. above the lane's threshold).
 - `expect.capabilitySearch.maxAccepted` — caps total accepted hits across all three lanes. `0` is the abstain-style assertion: any accepted hit fails the case.
 - `expect.capabilitySearch.thresholdOverride` — per-case sweep value. **Tools-lane only** (RRF fused-score scale, max ≈ 0.033). Methods + skills lanes always use their own production embed-cosine constants — sweeping a fused-score value into the cosine lane would silently disable the cosine quality gate.
@@ -409,9 +695,7 @@ Agent-loop behaviour evals for the "do you have X" problem. Drives `CapabilityCl
   "label": "capability claims • confirm an enabled-but-unloaded tool",
   "query": "Do you have a tool that can open and navigate web pages?",
   "fixtures": {
-    "requirePlugins": ["osaurus.browser"],
-    "enableSkills": ["Osaurus Browser"],
-    "enableTools": ["browser_navigate"]
+    "enableTools": ["browser_use"]
   },
   "expect": {
     "capabilityClaims": {
@@ -419,7 +703,7 @@ Agent-loop behaviour evals for the "do you have X" problem. Drives `CapabilityCl
         "Confirms that it has a tool or capability for opening / navigating web pages.",
         "Does not claim it lacks any web-browsing capability."
       ],
-      "mustNotCallTools": ["browser_navigate"],
+      "mustNotCallTools": ["browser_use"],
       "maxIterations": 4
     }
   }
@@ -430,7 +714,7 @@ Field notes:
 
 - `fixtures.enableTools` — tool names to grant the agent for the run window (and restore after). The enabled-capabilities manifest is built from the agent's enabled set, so a "confirm you have X" case has to enable X first. No-op when the agent is in legacy global-enabled mode (a nil allowlist already grants everything).
 - `fixtures.ensureToolsDisabled` — tool names that must be **absent** for the case to be valid (honest-absence / impossible cases). The runner can't safely disable a globally-enabled tool, so it **skips** the case (with a note) when any of these are currently enabled, rather than silently changing what the case proves.
-- `fixtures.enableSkills` / `fixtures.requirePlugins` — same semantics as `capability_search`.
+- `fixtures.requirePlugins` — same semantics as `capability_search`. Skills need no grant: every installed skill is universally available.
 - `expect.capabilityClaims.rubric` — natural-language conditions graded by the LLM judge against the final answer. **All must pass.** Set `JUDGE_MODEL` to grade with a stronger model than the run model.
 - `expect.capabilityClaims.mustCallTools` / `mustNotCallTools` — deterministic assertions over the flattened tool-call transcript.
 - `expect.capabilityClaims.loadSkillFirst` — `{ skill, beforeTools }` ordering check: a `capabilities_load` carrying `skill/<skill>` must precede the first call to any tool in `beforeTools`.
@@ -440,7 +724,7 @@ The suite covers eleven scenarios under `Suites/CapabilityClaims/`: `confirm` (c
 
 > **Why this suite measures claims, not actions.** `capability_claims` runs the real loop but **auto-denies tool execution** (a headless run has no approval surface; auto-allowing state-mutating tools risks a deadlock or real side effects). So the honest signal here is what the model *claims and loads*, not what it *does*. Cases that drove execution (open a page, fill a form) were removed: under auto-deny a model either loops on `capabilities_load` (REMOTE function-calling models, see the deferred-schema note below) or stalls, which is a harness artifact, not a capability signal. The execution behaviour those cases targeted — `capabilities_load` a tool mid-run and then *call* it — is covered where execution is actually allowed, by `agent_loop`'s `capabilities-load-midrun` case.
 >
-> **Positive cases run against an isolated `auto`-mode agent.** A case that enables a capability (`enableTools` / `enableSkills` / `requirePlugins`) is scored against a fresh isolated agent whose enabled set advertises that capability in the system-prompt manifest — not the default configuration agent, which honestly disclaims non-config abilities and would (correctly, for *it*) deny the browser. This keeps "do you have X?" a measure of manifest grounding, not of which agent happened to answer.
+> **Positive cases run against an isolated `auto`-mode agent.** A case that enables a capability (`enableTools` / `requirePlugins`) is scored against a fresh isolated agent. Dynamic tools are granted through its allow-list and advertised in the loadable-capabilities manifest; authoritatively gated built-ins such as Browser Use are enabled through their real `AgentSettings` flag and injected directly into the schema. The Default configuration agent would correctly deny Browser Use. This keeps “do you have X?” a measure of shipped capability grounding, not of which agent happened to answer.
 
 The judge model defaults to the run `--model`; export `JUDGE_MODEL=...` to grade small-model output with a stronger evaluator. The runner re-ensures the ephemeral remote judge provider before each judge call, so a suite that runs a provider-mutating config tool mid-run (e.g. `default_agent`'s `osaurus_provider`, which reloads the provider registry from disk and evicts the in-memory judge) can't silently fall back to an unresolved judge.
 
@@ -506,10 +790,16 @@ The runner seeds a fresh temp workspace from `fixtures.workspaceFiles`, drives `
 Field notes:
 
 - `fixtures.workspaceFiles` — `{ path, contents }` entries written into the per-case temp workspace (intermediate directories created). `path` is workspace-relative.
+- `fixtures.runtimeConcurrency` — optional, `agent_loop`-only process-local
+  mirror of Server → Concurrency (`continuousBatching`,
+  `maxConcurrentSequences`). The runner applies it before parent/worker
+  generation and restores the prior runtime snapshot on every exit; it never
+  writes the contributor's saved settings. Use it when a batching assertion
+  must prove exact effective slots instead of inheriting host state.
 - `expect.agentLoop.files` — `{ path, exists?, contains?, equals? }` assertions on the workspace after the loop ends. `exists` defaults to true; set `false` to pin that a file was NOT created.
 - `expect.agentLoop.commands` — `{ command, expectExitCode }` verification commands run in the workspace after the loop ends (e.g. `grep`, a test runner).
 - `expect.agentLoop.mustCallTools` / `mustNotCallTools` / `maxToolCalls` — deterministic transcript assertions. `maxToolCalls` counts processed calls (executed + deduped) and pins navigation discipline.
-- `expect.agentLoop.mustCallAnyTools` — OR semantics: at least one of the listed tools must be called. Use when several tools legitimately satisfy the same contract (e.g. `shell_run` curl vs `browser_navigate` for a fetch attempt) so the case doesn't over-pin one surface.
+- `expect.agentLoop.mustCallAnyTools` — OR semantics: at least one of the listed tools must be called. Use when several tools legitimately satisfy the same contract (e.g. `shell_run` curl vs `browser_use` for a fetch attempt) so the case doesn't over-pin one surface.
 - `expect.agentLoop.noDuplicateExecutedCalls` — no identical `(name, arguments)` pair may *execute* twice; dedupe replays are fine (that's the loop's dedupe working). Duplicate keys use the loop's own argument canonicalisation (sorted-key JSON), so the scorer and the dedupe agree on what "identical" means.
 - `expect.agentLoop.minDedupedReplays` — minimum number of dedupe replays (`wasDeduped`) the transcript must contain. Asserts the replay mechanism actually FIRED, not just that nothing executed twice.
 - `expect.agentLoop.noToolErrors` — opt-in: no processed call may return an error envelope. Off by default; recovery cases legitimately route through tool errors.
@@ -519,6 +809,14 @@ Field notes:
 - `expect.agentLoop.contextWindowOverride` — build the loop's budget manager against this window instead of the model's real one. The compaction-stress lever: long tool outputs on a tight override force the sticky-watermark trimming path mid-run. Size it so the protected tail still fits the history budget — an override that can't even fit the tail ends the run with the `overBudget` exit before compaction fires (which is its own case).
 - `expect.agentLoop.stopOnToolRejection` — loop policy: `true` runs the chat surface's policy (first error envelope ends the run with `toolRejected`); default `false` keeps the headless policy (the model gets the error and keeps looping). Lets cases pin BOTH behaviours.
 - `expect.agentLoop.todoUpdatedBeforeComplete` — todo discipline: some `todo` call with at least one checked (`[x]`) box must appear before the first `complete` call (or before the run ends). A single list creation with all boxes unchecked does not pass.
+- `expect.agentLoop.todoCompletedBeforeFinal` — stronger opt-in Todo outcome: the last successful parseable checklist before `complete`/run end must be non-empty and fully checked. This does **not** change runtime termination; Todo remains advisory so an incomplete list cannot reopen a final response.
+- `expect.agentLoop.enableThinking` — optional explicit mirror of the chat model dropdown's Thinking choice, copied to every model step. Omit it to exercise the production unspecified-agent default; use `true`/`false` only when the row intentionally tests that visible user choice.
+- `expect.agentLoop.spawnBatch` — structured `spawn_batch` proof over ordered
+  job ids, nested child truth, aggregate counts/status, configured
+  `max_parallel`, execution waves (`effectiveLocalSlots`, `localSubwaves`,
+  limiting factors), and cache availability. A configured parallel ceiling is
+  not concurrency proof by itself; pin an execution wave such as
+  `{ "effectiveLocalSlots": 2, "localSubwaves": [2] }`.
 - `expect.agentLoop.finalTextContains` / `rubric` — cheap substring checks vs. LLM-judge grading of the final answer (same `JUDGE_MODEL` override as `capability_claims`).
 - `expect.agentLoop.scoredMaxPromptTokens` / `scoredMaxTotalTokens` — optional context-cost ceilings for the "saving context" lane. `scoredMaxPromptTokens` **fails the case** when `promptTokensTotal` (input summed across steps, including the frozen tool schema) exceeds the budget, so a later prompt/tool regression that re-bloats context can't pass while silently burning tokens; `scoredMaxTotalTokens` gates input + output. Both are omitted by default (reported via telemetry, not scored), and only bite a live model — scripted/deterministic runs spend `0`.
 
@@ -532,8 +830,8 @@ make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/AgentLoop MODEL=mlx-communit
 make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/AgentLoop MODEL=openai/gpt-4o-mini JUDGE_MODEL=openai/gpt-4o
 ```
 
-For release or PR proof against a known-good row, prefer the regression lab so
-the raw reports and summary stay together:
+For release proof against a known-good row, the regression lab is still useful
+when you want only one model lane:
 
 ```bash
 scripts/evals/agent-loop-regression-lab.sh \
@@ -542,6 +840,32 @@ scripts/evals/agent-loop-regression-lab.sh \
   --suite Packages/OsaurusEvals/Suites/AgentLoopFrontier \
   --model <prefix>/<model-id>
 ```
+
+### `cache_proof` domain
+
+`cache_proof` drives the real local chat stream and scores typed vMLX
+prefill-progress events plus runtime cache counters. The structured gates are
+tier-neutral: they work when paged RAM is off and disk L2 is the only prefix
+tier, while topology-specific raw RAM/SSM counters remain available for cases
+that explicitly target those tiers.
+
+- `systemPromptsPerSession` must contain one prompt per configured session and
+  enables short-prefix → extended-prefix → longest-match three-chat proofs.
+- `minStructuredCacheRestoreTurns` counts post-first turns with a nonzero typed
+  restore event; it does not infer reuse from aggregate counters or UI color.
+- `requirePrefillProgressAccounting` requires a stable prompt total, bounded and
+  monotonic completed counts, restore-to-prefill continuity, and a terminal
+  `complete == total` frame on every turn.
+- `requireFinalDiskCacheRestore` pins the final turn to the SSD tier.
+- `requireNoCacheRestoreOnTurns` pins incompatible prompt/config revisions to
+  zero restored tokens instead of accepting a stale checkpoint.
+- `requireDiskCacheRestoreOnTurns` and
+  `requirePartialCacheRestoreOnTurns` identify the exact turns that must
+  restore the newest compatible SSD state and still prefill their divergent
+  tail.
+- `minFinalRestoreGainTokens` compares the final two typed restore counts so a
+  test can prove the runtime chose a newly stored longer valid prefix instead
+  of repeatedly restoring an older shorter candidate.
 
 ### `computer_use_loop` domain
 
@@ -742,20 +1066,21 @@ The design rule that makes these cases trustworthy: **the deterministic guard ta
 
 ### Other domains
 
-The pure-data domains (`schema`, `tool_envelope`, `streaming_hint`, `prefix_hash`, `argument_coercion`, `request_validation`) follow the same shape — pick one of the existing `Suites/<domain>/*.json` cases as a template and copy it.
+The pure-data domains (`schema`, `tool_envelope`, `prefix_hash`, `argument_coercion`) follow the same shape — pick one of the existing `Suites/<domain>/*.json` cases as a template and copy it.
 
-## Recall floors gate
+## Floors gate
 
-`Config/recall_floors.json` lists per-case `minMatches` floors for `--fail-on-floor`. The flag is opt-in (not yet wired into CI) and lets contributors dry-run a stricter recall gate locally before it becomes authoritative. Cases intentionally omitted from the floor map are documented in the file's `_comment` (today: indexer-side exclusions, abstain cases blocked by RRF saturation, and embedder-miss cases that need a description audit).
+`Config/floors.json` carries two floor families for `--fail-on-floor` (which the `make evals*` targets now pass by default; disable with `EVALS_FLOOR_FLAG=`):
 
-When a case in the floor map's accepted-hit count drops below `minMatches`, the run exits non-zero even if the case itself "passes" by softer criteria. The gate is independent of pass/fail outcome so it can catch silent recall slippage that the case-level matcher wouldn't.
+- **`suitePassRates`** — per-suite minimum pass rate over scoreable rows (skipped rows excluded). The deterministic token-free suites are pinned at `1.0`: any failing row there is a code regression, never model flake. Suites not listed are unaffected, which is what makes the default-on flag safe for LLM suites. CI runs these suites with the gate via `make evals-deterministic` (the `test-evals` job).
+- **`caseFloors`** — per-case `minMatches` recall floors (today: `capability_search`). When a floored case's accepted-hit count drops below `minMatches`, the run exits non-zero even if the case itself "passes" by softer criteria — the gate is independent of pass/fail outcome so it catches silent recall slippage the case-level matcher wouldn't. A `caseFloors` domain is skipped when the running suite has no cases of that domain; within a matching suite, a missing floored id still breaches (typo guard). Cases intentionally omitted from the floor map are documented in the file's `_comment`.
 
 ## Adding a new case
 
 1. Drop `Suites/<Domain>/my-case.json` with the schema above (pick a sibling case as a template).
 2. `swift run osaurus-evals run --suite Suites/<Domain> --filter my-case` to iterate.
 3. Once green, run the whole suite to make sure you didn't break a sibling.
-4. If your case asserts a recall floor, add it to `Config/recall_floors.json` so `--fail-on-floor` covers it.
+4. If your case asserts a recall floor, add it to `caseFloors` in `Config/floors.json` so `--fail-on-floor` covers it. New deterministic suites should also be listed under `suitePassRates` (and in the Makefile's `EVALS_DETERMINISTIC_SUITES` if CI-safe).
 
 ## Adding a new domain
 
@@ -766,7 +1091,18 @@ When a case in the floor map's accepted-hit count drops below `minMatches`, the 
 
 ## CI isolation
 
-This package is a **separate Swift package** — the eval *suites* never run on CI (they burn tokens and need local models). The harness's own unit tests DO run on CI: `Tests/OsaurusEvalsKitTests` covers fixture decode, scorer contracts, the regression/scorecard labs, and judge resolution — all deterministic and token-free (no LLM calls, no model loads). Run them locally with `make evals-test` (plain `swift test --package-path Packages/OsaurusEvals` works too); the `test-evals` job in `.github/workflows/ci.yml` runs the same thing on every PR. Tests that need live resources stay behind env-var gates (`OSAURUS_EVALS_ENABLED=1`, `OSAURUS_RUN_SANDBOX_INTEGRATION_TESTS=1`) so nothing burns tokens unintentionally. Suite decode smokes assert **floor** counts (`>=`), so adding cases never breaks them — only deletions or schema drift do.
+This package is a **separate Swift package** — the eval *suites* never run on
+CI because they burn tokens and need local models. The harness's own unit tests
+do run on CI: `Tests/OsaurusEvalsKitTests` covers fixture decode, scorer
+contracts, regression/scorecard labs, report/scoreboard rendering, and judge
+resolution. Those tests are deterministic and token-free: no LLM calls and no
+model loads. Run them locally with `make evals-test` or plain
+`swift test --package-path Packages/OsaurusEvals`; the `test-evals` job in
+`.github/workflows/ci.yml` runs the same thing on every PR. Tests that need
+live resources stay behind env-var gates (`OSAURUS_EVALS_ENABLED=1`,
+`OSAURUS_RUN_SANDBOX_INTEGRATION_TESTS=1`) so nothing burns tokens
+unintentionally. Suite decode smokes assert **floor** counts (`>=`), so adding
+cases never breaks them — only deletions or schema drift do.
 
 ## Future hooks (deliberately stubbed)
 

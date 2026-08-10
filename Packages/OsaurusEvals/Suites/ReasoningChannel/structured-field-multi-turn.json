@@ -1,0 +1,18 @@
+{
+  "id": "reasoning_channel.structured-field-multi-turn",
+  "domain": "reasoning_channel",
+  "label": "reasoning channel • boundary holds on EVERY turn of a reasoning-heavy exchange",
+  "query": "Alice is twice as old as Bob was when Alice was as old as Bob is now. Alice is 30 and Bob is 24. How old was Alice when she was as old as Bob is now? Reason carefully.",
+  "notes": "Two consecutive reasoning-heavy turns: age-riddle setup then a follow-up computation on top of it. Pins that the reasoning field keeps landing structured across turns (reasoningFieldExpected yes — SKIPs on channel-less models) and that the visible boundary never degrades on turn 2, where template state is most fragile. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "reasoning": {
+      "followUpTurns": [
+        "Now, how many years ago was that? Reason it through and give a number."
+      ],
+      "maxTokens": 2048,
+      "reasoningFieldExpected": "yes",
+      "visibleContains": ["6"]
+    }
+  }
+}

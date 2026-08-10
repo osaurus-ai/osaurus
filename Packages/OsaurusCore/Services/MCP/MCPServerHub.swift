@@ -88,6 +88,27 @@ public struct MCPServerHubProviderReport: Identifiable, Sendable {
         status == .needsAttention
             || (provider.enabled && (highestSeverity == .blocked || highestSeverity == .warning))
     }
+
+    /// Keeps blocked and warning rows at the top of the expanded card while
+    /// retaining every informational row for full-detail disclosure/copying.
+    public var prioritizedDiagnostics: ProviderDiagnosticReport {
+        let prioritizedRows = diagnostics.rows.enumerated().sorted { lhs, rhs in
+            let lhsRank = diagnosticPresentationRank(lhs.element.severity)
+            let rhsRank = diagnosticPresentationRank(rhs.element.severity)
+            return lhsRank == rhsRank ? lhs.offset < rhs.offset : lhsRank < rhsRank
+        }.map(\.element)
+        return ProviderDiagnosticReport(
+            title: diagnostics.title,
+            subtitle: diagnostics.subtitle,
+            rows: prioritizedRows
+        )
+    }
+}
+
+public struct MCPServerHubCompactSummary: Sendable, Equatable {
+    public let connected: Int
+    public let attention: Int
+    public let tools: Int
 }
 
 public struct MCPServerHubSnapshot: Sendable {
@@ -109,6 +130,13 @@ public struct MCPServerHubSnapshot: Sendable {
         reports.filter { $0.provider.transport == .stdio && $0.provider.executionHost == .sandbox }.count
     }
     public var toolCount: Int { reports.reduce(0) { $0 + $1.toolCount } }
+    public var compactSummary: MCPServerHubCompactSummary {
+        MCPServerHubCompactSummary(
+            connected: connectedCount,
+            attention: attentionCount,
+            tools: toolCount
+        )
+    }
 
     public var highestSeverity: ProviderDiagnosticSeverity {
         let actionableReports = reports.filter(\.hasAttention)
@@ -123,10 +151,13 @@ public struct MCPServerHubSnapshot: Sendable {
     }
 
     public var pasteboardText: String {
+        let toolLabel = toolCount == 1 ? L("1 tool") : L("\(toolCount) tools")
+        let providerLabel =
+            stdioCount == 1 ? L("1 stdio provider") : L("\(stdioCount) stdio providers")
         var lines = [
             L("MCP Server Hub diagnostics"),
             L(
-                "\(connectedCount)/\(totalCount) connected, \(attentionCount) attention, \(toolCount) tools, \(stdioCount) stdio provider(s)"
+                "\(connectedCount)/\(totalCount) connected, \(attentionCount) attention, \(toolLabel), \(providerLabel)"
             ),
             L("Global proxy: \(proxy.summaryText)"),
         ]
@@ -248,6 +279,17 @@ private func mcpSeverityRank(_ severity: ProviderDiagnosticSeverity) -> Int {
         return 2
     case .blocked:
         return 3
+    }
+}
+
+private func diagnosticPresentationRank(_ severity: ProviderDiagnosticSeverity) -> Int {
+    switch severity {
+    case .blocked:
+        return 0
+    case .warning:
+        return 1
+    case .ok, .info:
+        return 2
     }
 }
 

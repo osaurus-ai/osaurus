@@ -1,0 +1,18 @@
+{
+  "id": "agent_loop.cancel-immediate-first-call",
+  "domain": "agent_loop",
+  "label": "agent loop • cancelling at the very first tool call writes nothing at all",
+  "query": "Create three files one per turn: one.txt with 1, two.txt with 2, three.txt with 3.",
+  "notes": "The earliest-possible cancel: cancelAfterToolCalls 1 with a task whose very first action is a write means the run should stop right after that first processed call. The strongest zombie-write guard is that the LAST planned file (three.txt) never exists. Exit must be 'cancelled'. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "cancelAfterToolCalls": 1,
+      "allowedExits": ["cancelled"],
+      "files": [
+        { "path": "three.txt", "exists": false }
+      ]
+    }
+  }
+}

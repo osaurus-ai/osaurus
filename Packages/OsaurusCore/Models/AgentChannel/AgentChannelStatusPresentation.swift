@@ -114,7 +114,7 @@ extension AgentChannelStatusPresentation {
         case .healthy:
             return .init(label: L("Healthy"), tone: .success)
         case .degraded:
-            return .init(label: L("Backing off"), tone: .warning)
+            return .init(label: L("Retrying"), tone: .warning)
         case .conflict:
             return .init(label: L("Conflict"), tone: .error)
         case .failed:

@@ -204,6 +204,8 @@ private extension ManagementView {
             SlashCommandsView()
         case .memory:
             MemoryView()
+        case .knowledge:
+            KnowledgeView()
         case .schedules:
             SchedulesView()
         case .watchers:
@@ -220,6 +222,8 @@ private extension ManagementView {
             PermissionsView()
         case .computerUse:
             ComputerUseSettingsView()
+        case .browser:
+            BrowserSettingsView()
         case .privacy:
             PrivacyView()
         case .identity:
@@ -302,6 +306,12 @@ private extension ManagementView {
             category: "navigation",
             message: "management.tab \(newTab.rawValue)"
         )
+
+        // Settings-engagement signal for tab switches while the window is
+        // open; window opens themselves are counted in
+        // `AppDelegate.showManagementWindow`. The hidden launch prewarm
+        // realizes the view but never changes tabs, so it can't reach this.
+        FeatureTelemetry.settingsOpened(tab: newTab)
 
         // Changing tabs exits search so the chosen tab shows in full (the
         // cross-tab results pane only stands in while a query is active).

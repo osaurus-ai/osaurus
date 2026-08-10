@@ -2,9 +2,9 @@
 //  ABI.swift
 //  OsaurusPluginTestKit
 //
-//  Swift mirror of the v4 `osr_host_api` C struct and the function-
-//  pointer typealiases the plugin compiles against. Kept in sync with
-//  `Packages/OsaurusCore/Tools/PluginABI/osaurus_plugin.h`.
+//  Swift mirror of the current (v6) `osr_host_api` C struct and the
+//  function-pointer typealiases the plugin compiles against. Kept in
+//  sync with `Packages/OsaurusCore/Tools/PluginABI/osaurus_plugin.h`.
 //
 //  The struct layout is FROZEN per the ABI contract — fields are only
 //  ever appended. If a future host bump introduces v5+ slots, append
@@ -56,7 +56,7 @@ public typealias OsrLogStructured =
     ) -> Void
 public typealias OsrHostFreeString = @convention(c) (UnsafePointer<CChar>?) -> Void
 
-/// Swift mirror of `osr_host_api` (v4). Field order is FROZEN. Future
+/// Swift mirror of `osr_host_api` (current: v6). Field order is FROZEN. Future
 /// host versions append new optional slots at the end; the synthesized
 /// memberwise init lets older mock hosts keep working because trailing
 /// optionals default to nil.

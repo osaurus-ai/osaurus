@@ -1,0 +1,38 @@
+{
+  "id": "tool_result_grounding.quote-exact-string-from-result",
+  "domain": "tool_result_grounding",
+  "label": "tool result grounding: a quoted identifier must come from the result, not the request",
+  "query": "Create the ticket and tell me its ID so I can reference it.",
+  "fixtures": {},
+  "notes": "Identifier-provenance pin: the ticket ID is generated server-side and appears only in the RESULT, never in the call arguments. argumentsMustNotContain the ID proves the answer copied it from the tool output — the exact anti-pattern where a model echoes an argument-shaped guess instead of the returned value.",
+  "expect": {
+    "toolResultGrounding": {
+      "events": [
+        {
+          "kind": "toolCall",
+          "callId": "ticket-1",
+          "tool": "create_ticket",
+          "arguments": "{\"title\":\"Fix login redirect\",\"priority\":\"high\"}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "ticket-1",
+          "tool": "create_ticket",
+          "content": "{\"id\":\"OSU-4821\",\"title\":\"Fix login redirect\",\"status\":\"open\"}"
+        },
+        {
+          "kind": "assistant",
+          "content": "Created the ticket — its ID is OSU-4821."
+        }
+      ],
+      "assertions": [
+        {
+          "callId": "ticket-1",
+          "answerMustContain": ["OSU-4821"],
+          "resultMustContain": ["\"id\":\"OSU-4821\""],
+          "argumentsMustNotContain": ["OSU-4821"]
+        }
+      ]
+    }
+  }
+}

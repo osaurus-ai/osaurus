@@ -22,21 +22,76 @@ import Foundation
 
 public enum EvalJudgeModel {
 
-    /// Strong-judge candidates in priority order: (API-key env var, model
-    /// id). Each model id is a `provider/name` that
-    /// `EvalRemoteProviderBootstrap` already knows how to connect in-process
-    /// from the matching `<PREFIX>_API_KEY`.
-    static let strongJudgeCandidates: [(envKey: String, modelId: String)] = [
+    /// Built-in fallback for the strong-judge candidate list, used only
+    /// when `Config/judges.json` cannot be located (e.g. the kit runs
+    /// outside a repo checkout). The JSON file is the source of truth —
+    /// edit the judge roster there, and keep this copy in sync as the
+    /// last-resort default. Each model id is a `provider/name` that
+    /// `EvalRemoteProviderBootstrap` already knows how to connect
+    /// in-process from the matching `<PREFIX>_API_KEY` (see the file's
+    /// `_comment` for the Gemini `google/` prefix gotcha).
+    static let builtInJudgeCandidates: [(envKey: String, modelId: String)] = [
         ("XAI_API_KEY", "xai/grok-4.3"),
         ("ANTHROPIC_API_KEY", "anthropic/claude-sonnet-4-5"),
         ("OPENAI_API_KEY", "openai/gpt-5.1"),
-        // Routing prefix MUST match an `EvalRemoteProviderBootstrap.presets`
-        // key so the ephemeral provider connects. Gemini's preset is keyed
-        // `google` (the app's Google provider), so the model id is
-        // `google/<model>`, NOT `gemini/<model>` — the latter has no preset,
-        // so the bootstrap skips it and the judge silently never resolves.
         ("GEMINI_API_KEY", "google/gemini-2.5-pro"),
     ]
+
+    /// Strong-judge candidates in priority order: (API-key env var, model
+    /// id). Loaded once per process from `Config/judges.json` — resolved
+    /// via `OSAURUS_EVALS_JUDGES_CONFIG`, the conventional cwd-relative
+    /// checkout path, then a source-anchored path (covers `swift test`
+    /// runs from the package dir) — falling back to the built-in list.
+    static var strongJudgeCandidates: [(envKey: String, modelId: String)] {
+        candidatesLock.withLock {
+            if let cached = _cachedCandidates { return cached }
+            let loaded = loadJudgeCandidates() ?? builtInJudgeCandidates
+            _cachedCandidates = loaded
+            return loaded
+        }
+    }
+
+    private static let candidatesLock = NSLock()
+    nonisolated(unsafe) private static var _cachedCandidates:
+        [(envKey: String, modelId: String)]?
+
+    /// Parse `judges.json` (`{"candidates": [{"envKey", "modelId"}]}`)
+    /// from the first resolvable location. Returns nil (→ built-in
+    /// fallback) when no file parses to a non-empty list.
+    static func loadJudgeCandidates(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> [(envKey: String, modelId: String)]? {
+        var urls: [URL] = []
+        if let override = environment["OSAURUS_EVALS_JUDGES_CONFIG"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !override.isEmpty
+        {
+            urls.append(URL(fileURLWithPath: override))
+        }
+        urls.append(URL(fileURLWithPath: "Packages/OsaurusEvals/Config/judges.json"))
+        urls.append(
+            URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()  // OsaurusEvalsKit
+                .deletingLastPathComponent()  // Sources
+                .deletingLastPathComponent()  // OsaurusEvals
+                .appendingPathComponent("Config/judges.json")
+        )
+        for url in urls {
+            guard let data = try? Data(contentsOf: url),
+                let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                let rawCandidates = root["candidates"] as? [[String: Any]]
+            else { continue }
+            let parsed: [(envKey: String, modelId: String)] = rawCandidates.compactMap { entry in
+                guard let envKey = entry["envKey"] as? String,
+                    let modelId = entry["modelId"] as? String,
+                    !envKey.isEmpty, !modelId.isEmpty
+                else { return nil }
+                return (envKey, modelId)
+            }
+            if !parsed.isEmpty { return parsed }
+        }
+        return nil
+    }
 
     /// Outcome of judge resolution.
     public struct Resolution: Sendable {

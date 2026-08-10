@@ -7,6 +7,7 @@ struct CreditsView: View {
     @ObservedObject private var accountService = OsaurusRouterAccountService.shared
     @ObservedObject private var insightsService = InsightsService.shared
     @ObservedObject private var providerManager = RemoteProviderManager.shared
+    @ObservedObject private var searchManager = SearchProviderManager.shared
 
     private static let activityPageSize = 10
     private static let ledgerMatchLimit = 500
@@ -14,7 +15,7 @@ struct CreditsView: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var hasAppeared = false
-    @State private var usagePageIndex = 0
+    @State private var timelinePageIndex = 0
     @State private var ledgerEntries: [RouterBillingEntry] = []
     @State private var ledgerTotalCount = 0
     @State private var isLoadingLedger = false
@@ -23,6 +24,7 @@ struct CreditsView: View {
     @State private var showTopUpSheet = false
     @State private var showDisableRouterConfirm = false
     @State private var showRouterUsageCenter = false
+    @State private var allowUnkeyedLoopbackSpend = OsaurusRouter.allowsUnkeyedLoopbackSpend
 
     /// User master switch state. When off, the Credits screen hides the
     /// balance/activity cards (the router is no longer polled) and shows the
@@ -44,11 +46,16 @@ struct CreditsView: View {
                             identityRequiredCard
                         }
                         balanceCard
+                        CreditsRedeemCodeCard(isEnabled: canAddCredits)
+                        webSearchCard
                         activityCard
                     } else {
                         routerOffCard
                     }
                     routerToggleFooter
+                    if routerEnabled {
+                        localAPISpendFooter
+                    }
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 24)
@@ -111,7 +118,7 @@ struct CreditsView: View {
     private var headerView: some View {
         ManagerHeaderWithActions(
             title: L("Credits"),
-            subtitle: L("Add credits and see what each Osaurus Router request costs.")
+            subtitle: L("Your wallet for Osaurus-routed services - add credits and track every request and top-up.")
         ) {
             HeaderIconButton(
                 "arrow.clockwise",
@@ -185,7 +192,7 @@ struct CreditsView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.secondaryText)
                 Text(
-                    "Runs cloud models and provider load-balancing; requests spend credits. Keeping it on helps support Osaurus development - thank you.",
+                    "Lets Osaurus transact on your behalf - cloud models, provider load-balancing, and future routed services; requests spend credits. Keeping it on helps support Osaurus development - thank you.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
@@ -202,6 +209,44 @@ struct CreditsView: View {
                 .tint(theme.accentColor)
         }
         .padding(.top, 8)
+    }
+
+    /// Opt-in for key-less loopback Router spend. Off by default so a local
+    /// process can't spend credits through the unauthenticated loopback API;
+    /// callers with a valid access key are always allowed regardless.
+    private var localAPISpendFooter: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Allow local API access without a key", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                Text(
+                    "Lets local processes route requests through the Osaurus Router (spending credits) via the HTTP API without an access key. Keep this off unless you trust every process on this Mac.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
+
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { allowUnkeyedLoopbackSpend },
+                    set: { newValue in
+                        allowUnkeyedLoopbackSpend = newValue
+                        OsaurusRouter.setAllowsUnkeyedLoopbackSpend(newValue)
+                    }
+                )
+            )
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .tint(theme.accentColor)
+        }
+        .padding(.top, 4)
     }
 
     /// Drives the footer switch. Enabling is immediate; disabling defers to the
@@ -246,73 +291,308 @@ struct CreditsView: View {
         }
     }
 
+    /// The wallet card: same visual language as the composer wallet panel
+    /// (uppercase eyebrow, monospaced hero balance, "Available balance"
+    /// microcopy, soft accent wash) scaled up for the management page.
     private var balanceCard: some View {
-        card {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Credit balance", bundle: .module)
-                            .font(.system(size: 13, weight: .semibold))
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "creditcard.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(theme.accentColor.opacity(0.85))
+                        Text("Wallet", bundle: .module)
+                            .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(theme.secondaryText)
-                        HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            Text(verbatim: accountService.formattedBalance)
-                                .font(.system(size: 34, weight: .bold, design: .rounded))
-                                .foregroundColor(theme.primaryText)
-                            if accountService.isLoadingBalance {
-                                ProgressView()
-                                    .scaleEffect(0.7)
-                            }
+                            .textCase(.uppercase)
+                            .kerning(0.8)
+                    }
+                    .padding(.bottom, 6)
+
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text(verbatim: accountService.formattedBalance)
+                            .font(.system(size: 32, weight: .semibold, design: .monospaced))
+                            .foregroundColor(
+                                accountService.isFrozen ? theme.warningColor : theme.primaryText
+                            )
+                            .contentTransition(.numericText())
+                        if accountService.isLoadingBalance {
+                            ProgressView()
+                                .scaleEffect(0.7)
                         }
                     }
 
-                    Spacer()
-
                     if accountService.isFrozen {
-                        statusPill(L("On hold"), icon: "pause.circle.fill", color: theme.warningColor)
+                        Text("Account paused - add credits to resume.", bundle: .module)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
                     } else {
-                        statusPill(L("Active"), icon: "checkmark.circle.fill", color: theme.successColor)
+                        Text("Available balance", bundle: .module)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
                     }
                 }
 
-                Text(
-                    "Credits pay for cloud models and provider load-balancing routed through Osaurus.",
-                    bundle: .module
+                Spacer()
+
+                if accountService.isFrozen {
+                    statusPill(L("Paused"), icon: "pause.circle.fill", color: theme.warningColor)
+                } else {
+                    statusPill(L("Active"), icon: "checkmark.circle.fill", color: theme.successColor)
+                }
+            }
+
+            Text(
+                "Credits let Osaurus transact on your behalf - cloud model access today, with more routed services to come.",
+                bundle: .module
+            )
+            .font(.system(size: 12))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Divider()
+
+            HStack(spacing: 12) {
+                Label(localized: "Minimum top-up is $5.00", systemImage: "info.circle")
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+
+                Spacer()
+
+                if accountService.isCreatingCheckout {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                }
+                Button {
+                    showTopUpSheet = true
+                } label: {
+                    Label(localized: "Add credits", systemImage: "creditcard.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(!OsaurusIdentity.exists() || accountService.isCreatingCheckout)
+            }
+
+            if let error = accountService.lastError, !error.isEmpty {
+                Text(error)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(walletCardBackground)
+    }
+
+    /// Card chrome with the wallet panel's accent wash fading from the top.
+    private var walletCardBackground: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(theme.cardBackground)
+            .overlay(
+                LinearGradient(
+                    colors: [theme.accentColor.opacity(0.08), theme.accentColor.opacity(0.01)],
+                    startPoint: .top,
+                    endPoint: .bottom
                 )
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(theme.cardBorder, lineWidth: 1)
+            )
+    }
 
-                Divider()
+    // MARK: - Web search
 
-                HStack(spacing: 12) {
-                    Label(localized: "Minimum top-up is $5.00", systemImage: "info.circle")
+    /// Dedicated premium web search section: the premium on/off preference,
+    /// search credit balances, the auto-pay switch, and the graceful
+    /// fallback state when credits ran out.
+    private var webSearchCard: some View {
+        card {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text("Web search", bundle: .module)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(theme.primaryText)
+                            if accountService.webSearchNeedsTopUp {
+                                statusPill(
+                                    L("Using built-in sources"),
+                                    icon: "exclamationmark.circle.fill",
+                                    color: theme.warningColor
+                                )
+                            } else if searchManager.hostedSearchEnabled {
+                                statusPill(
+                                    L("Premium"),
+                                    icon: "magnifyingglass.circle.fill",
+                                    color: theme.accentColor
+                                )
+                            }
+                        }
+                        Text(
+                            "Premium search runs the `web_search` tool through Osaurus - better results with zero setup. Search credits cover requests first; after that, requests bill this wallet. If credits run out, search continues on the built-in sources automatically.",
+                            bundle: .module
+                        )
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
 
                     Spacer()
 
-                    if accountService.isCreatingCheckout {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                    }
-                    Button {
-                        showTopUpSheet = true
-                    } label: {
-                        Label(localized: "Add credits", systemImage: "creditcard.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { searchManager.hostedSearchEnabled },
+                            set: { searchManager.setHostedSearchEnabled($0) }
+                        )
+                    )
+                    .labelsHidden()
+                    .toggleStyle(.switch)
                     .controlSize(.small)
-                    .disabled(!OsaurusIdentity.exists() || accountService.isCreatingCheckout)
+                    .tint(theme.accentColor)
                 }
 
-                if let error = accountService.lastError, !error.isEmpty {
-                    Text(error)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.errorColor)
+                if searchManager.hasActiveUserProviderSetup, !searchManager.hostedSearchEnabled {
+                    Label {
+                        Text(
+                            "You have your own search providers configured - they keep handling searches while premium is off.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
                         .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "curlybraces")
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                }
+
+                if searchManager.hostedSearchEnabled {
+                    if accountService.webSearchNeedsTopUp {
+                        Label {
+                            Text(
+                                "Premium search ran out of credits and is quietly using the built-in sources. Add credits to resume - nothing else to reset.",
+                                bundle: .module
+                            )
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(theme.warningColor)
+                        }
+                    }
+
+                    if let grants = accountService.webSettings?.grants {
+                        HStack(spacing: 10) {
+                            if let search = grants.search, search.includedTotal > 0 {
+                                grantMeter(
+                                    title: L("Search credits"),
+                                    allowance: search,
+                                    icon: "magnifyingglass"
+                                )
+                            }
+                            if let contents = grants.contents, contents.includedTotal > 0 {
+                                grantMeter(
+                                    title: L("Extract credits"),
+                                    allowance: contents,
+                                    icon: "doc.text.magnifyingglass"
+                                )
+                            }
+                            if (grants.search?.includedTotal ?? 0) == 0
+                                && (grants.contents?.includedTotal ?? 0) == 0
+                            {
+                                Text(
+                                    "Searches bill your balance at cost.",
+                                    bundle: .module
+                                )
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                            }
+                            Spacer()
+                        }
+                    }
+
+                    if let settings = accountService.webSettings {
+                        Divider()
+                        HStack(alignment: .center, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(
+                                    "Use Osaurus balance when search credits run out",
+                                    bundle: .module
+                                )
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(theme.secondaryText)
+                                Text(
+                                    "Off means premium search stops at your remaining credits; everything else uses the built-in sources.",
+                                    bundle: .module
+                                )
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                            }
+
+                            Spacer(minLength: 12)
+
+                            if accountService.isUpdatingWebSettings {
+                                ProgressView().scaleEffect(0.6)
+                            }
+                            Toggle(
+                                "",
+                                isOn: Binding(
+                                    get: { settings.autoPayEnabled },
+                                    set: { newValue in
+                                        Task { await accountService.setWebAutoPay(newValue) }
+                                    }
+                                )
+                            )
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .tint(theme.accentColor)
+                            .disabled(accountService.isUpdatingWebSettings)
+                        }
+                    }
                 }
             }
         }
+    }
+
+    /// Remaining-credit balance for one bucket, styled like the wallet's
+    /// dollar balance — a single number, not a coupon-style "X of Y" counter.
+    /// Credits never refill, so an exhausted bucket reads as spent rather
+    /// than erroring.
+    private func grantMeter(
+        title: String,
+        allowance: OsaurusRouterWebAllowance,
+        icon: String
+    ) -> some View {
+        let exhausted = allowance.remainingTotal <= 0
+        return HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(exhausted ? theme.tertiaryText : theme.accentColor)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(verbatim: title)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                Text(verbatim: "\(allowance.remainingTotal)")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundColor(exhausted ? theme.tertiaryText : theme.primaryText)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill((exhausted ? theme.tertiaryText : theme.accentColor).opacity(0.08))
+        )
     }
 
     // MARK: - Credits activity
@@ -326,7 +606,7 @@ struct CreditsView: View {
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundColor(theme.primaryText)
                         Text(
-                            "Requests routed through Osaurus, newest first. Open the chat or Insights when this Mac has the matching copy.",
+                            "Model requests and balance changes, newest first. Open the chat or Insights when this Mac has the matching copy.",
                             bundle: .module
                         )
                         .font(.system(size: 12))
@@ -350,7 +630,7 @@ struct CreditsView: View {
                     .disabled(isExportingDiagnostics || ledgerTotalCount == 0)
                 }
 
-                if currentActivityRows.isEmpty {
+                if pagedTimelineEntries.isEmpty {
                     emptyActivityState
                 } else {
                     activityList
@@ -368,11 +648,20 @@ struct CreditsView: View {
     }
 
     private var activityList: some View {
-        let rows = currentActivityRows
+        let entries = pagedTimelineEntries
         return VStack(spacing: 0) {
-            ForEach(rows) { row in
-                activityRow(row)
-                if row.id != rows.last?.id {
+            ForEach(entries) { entry in
+                Group {
+                    switch entry {
+                    case .request(let row, _):
+                        activityRow(row)
+                    case .transaction(let row):
+                        transactionRow(row)
+                    case .webUsage(let row):
+                        webUsageRow(row)
+                    }
+                }
+                if entry.id != entries.last?.id {
                     Divider()
                 }
             }
@@ -394,11 +683,11 @@ struct CreditsView: View {
                     .font(.system(size: 24))
                     .foregroundColor(theme.tertiaryText)
             }
-            Text("No requests yet", bundle: .module)
+            Text("No activity yet", bundle: .module)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(theme.primaryText)
             Text(
-                "When you use an Osaurus Router model, each request shows up here with its cost and tokens. If this Mac made the request, you can jump to the chat or Insights.",
+                "When you add credits or use an Osaurus Router model, it shows up here with its amount. If this Mac made a request, you can jump to the chat or Insights.",
                 bundle: .module
             )
             .font(.system(size: 12))
@@ -412,7 +701,7 @@ struct CreditsView: View {
 
     private var activityPaginationControls: some View {
         HStack(spacing: 10) {
-            Text(verbatim: usageRangeLabel)
+            Text(verbatim: timelineRangeLabel)
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
 
@@ -428,7 +717,7 @@ struct CreditsView: View {
             .disabled(!canGoToPreviousActivityPage || isLoadingCurrentActivity)
 
             Button {
-                goToNextUsagePage()
+                goToNextTimelinePage()
             } label: {
                 if isLoadingCurrentActivity {
                     ProgressView().scaleEffect(0.7)
@@ -444,50 +733,74 @@ struct CreditsView: View {
         }
     }
 
-    private var currentActivityRows: [CreditsActivityRow] {
-        CreditsActivityProjector(
+    /// The full merged timeline: billed model requests (with ledger matching
+    /// and chat/Insights references) interleaved with wallet-visible ledger
+    /// transactions (top-ups, grants, refunds — later agent purchases), newest
+    /// first. Uses the same visibility filter as the composer wallet panel so
+    /// per-request debit mirrors never double-count spend.
+    private var mergedTimeline: [CreditsTimelineEntry] {
+        let usageItems = accountService.usage
+        let requestRows = CreditsActivityProjector(
             hasInsightsLogForRequestId: { insightsService.hasLog(requestId: $0) },
             hasInsightsLogForTurnId: { insightsService.hasLog(turnId: $0) }
         )
-        .rows(usageItems: pagedUsageRows, ledgerEntries: ledgerEntries)
+        .rows(usageItems: usageItems, ledgerEntries: ledgerEntries)
+        let requests = zip(requestRows, usageItems).map { row, item in
+            CreditsTimelineEntry.request(
+                row,
+                date: CreditsActivityProjector.date(fromRouterTimestamp: item.createdAt)
+            )
+        }
+        let transactions = accountService.transactions
+            .filter(WalletActivityRow.isWalletVisible)
+            .map { CreditsTimelineEntry.transaction(WalletActivityRow(transaction: $0)) }
+        let webRequests = accountService.webUsage
+            .map { CreditsTimelineEntry.webUsage(WalletActivityRow(webUsage: $0)) }
+        return (requests + transactions + webRequests)
+            .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
     }
 
-    private var pagedUsageRows: [OsaurusRouterUsageItem] {
-        let start = usagePageIndex * Self.activityPageSize
-        guard start < accountService.usage.count else { return [] }
-        let end = min(start + Self.activityPageSize, accountService.usage.count)
-        return Array(accountService.usage[start ..< end])
+    private var pagedTimelineEntries: [CreditsTimelineEntry] {
+        let timeline = mergedTimeline
+        let start = timelinePageIndex * Self.activityPageSize
+        guard start < timeline.count else { return [] }
+        let end = min(start + Self.activityPageSize, timeline.count)
+        return Array(timeline[start ..< end])
     }
 
     private var isLoadingCurrentActivity: Bool {
-        accountService.isLoadingUsage || isLoadingLedger
+        accountService.isLoadingUsage || accountService.isLoadingTransactions || isLoadingLedger
     }
 
     private var canGoToPreviousActivityPage: Bool {
-        usagePageIndex > 0
+        timelinePageIndex > 0
     }
 
     private var canGoToNextActivityPage: Bool {
-        let nextStart = (usagePageIndex + 1) * Self.activityPageSize
-        return nextStart < accountService.usage.count || accountService.nextUsageCursor != nil
+        let nextStart = (timelinePageIndex + 1) * Self.activityPageSize
+        return nextStart < mergedTimeline.count || hasMoreOnServer
+    }
+
+    private var hasMoreOnServer: Bool {
+        accountService.nextUsageCursor != nil || accountService.nextTransactionsCursor != nil
     }
 
     /// True only when the next page isn't already loaded but the server says more
     /// rows exist — i.e. the advance button should fetch instead of just paging.
     private var canLoadMoreFromServer: Bool {
-        let nextStart = (usagePageIndex + 1) * Self.activityPageSize
-        return nextStart >= accountService.usage.count && accountService.nextUsageCursor != nil
+        let nextStart = (timelinePageIndex + 1) * Self.activityPageSize
+        return nextStart >= mergedTimeline.count && hasMoreOnServer
     }
 
     /// Honest range over what we've actually loaded. The router never returns a
     /// true total, so "loaded" makes clear more may exist behind "Load more"
     /// rather than implying a misleading grand total.
-    private var usageRangeLabel: String {
-        let loaded = accountService.usage.count
+    private var timelineRangeLabel: String {
+        let loaded = mergedTimeline.count
         guard loaded > 0 else { return "" }
-        let start = usagePageIndex * Self.activityPageSize
-        let end = min(start + currentActivityRows.count, loaded)
-        if accountService.nextUsageCursor != nil {
+        let start = timelinePageIndex * Self.activityPageSize
+        let end = min(start + pagedTimelineEntries.count, loaded)
+        if hasMoreOnServer {
             return L("Showing \(start + 1)-\(end) of \(loaded) loaded")
         }
         return L("Showing \(start + 1)-\(end) of \(loaded)")
@@ -495,10 +808,10 @@ struct CreditsView: View {
 
     private func activityRow(_ row: CreditsActivityRow) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            Circle()
-                .fill(stateColor(row.stateKind))
-                .frame(width: 8, height: 8)
-                .padding(.top, 5)
+            timelineBadge(
+                icon: "sparkles",
+                tint: requestBadgeTint(row.stateKind)
+            )
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
@@ -523,14 +836,136 @@ struct CreditsView: View {
 
             Spacer(minLength: 12)
 
-            Text(verbatim: OsaurusRouter.formatMicroUSDPrecise(row.costMicro))
-                .font(.system(size: 14, weight: .semibold, design: .rounded))
-                .foregroundColor(theme.primaryText)
-                .monospacedDigit()
+            Text(verbatim: signedCostLabel(row.costMicro))
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .foregroundColor(theme.secondaryText)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(theme.cardBackground)
+    }
+
+    /// A balance-changing ledger transaction (top-up, grant, refund — later
+    /// agent purchases): the wallet panel's row vocabulary at timeline scale.
+    private func transactionRow(_ row: WalletActivityRow) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            timelineBadge(
+                icon: row.isCredit ? "arrow.down.left" : "arrow.up.right",
+                tint: row.isCredit ? theme.successColor : theme.secondaryText
+            )
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(LocalizedStringKey(row.title), bundle: .module)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                if let date = row.date {
+                    Text(verbatim: date.formatted(date: .abbreviated, time: .shortened))
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                }
+            }
+
+            Spacer(minLength: 12)
+
+            Text(verbatim: row.amountLabel)
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .foregroundColor(row.isCredit ? theme.successColor : theme.secondaryText)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(theme.cardBackground)
+    }
+
+    /// A billed hosted web search/contents request. The premium (accent)
+    /// family distinguishes it from model spend — full strength when the
+    /// request used a search credit, softened when it billed the balance.
+    private func webUsageRow(_ row: WalletActivityRow) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            timelineBadge(
+                icon: "magnifyingglass",
+                tint: webUsageTint(row)
+            )
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(LocalizedStringKey(row.title), bundle: .module)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(
+                        row.isIncludedWebRequest ? "Credit" : "Premium",
+                        bundle: .module
+                    )
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(webUsageTint(row))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(webUsageTint(row).opacity(0.12)))
+                    .fixedSize()
+                }
+                if let date = row.date {
+                    Text(verbatim: date.formatted(date: .abbreviated, time: .shortened))
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                }
+            }
+
+            Spacer(minLength: 12)
+
+            Group {
+                if row.isIncludedWebRequest {
+                    Text("Included", bundle: .module)
+                } else {
+                    Text(verbatim: row.amountLabel)
+                }
+            }
+            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+            .foregroundColor(theme.secondaryText)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(theme.cardBackground)
+    }
+
+    private func webUsageTint(_ row: WalletActivityRow) -> Color {
+        switch row.stateKind {
+        case .warning: return theme.warningColor
+        case .error: return theme.errorColor
+        case .success, .secondary:
+            return row.isIncludedWebRequest ? theme.accentColor : theme.accentColor.opacity(0.7)
+        }
+    }
+
+    /// Tinted circular icon badge shared by both timeline row types, matching
+    /// the composer wallet panel's row treatment.
+    private func timelineBadge(icon: String, tint: Color) -> some View {
+        ZStack {
+            Circle()
+                .fill(tint.opacity(0.13))
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(tint)
+        }
+        .frame(width: 26, height: 26)
+    }
+
+    /// Spends stay neutral (the outcome pill already carries status); only
+    /// attention states color the badge, mirroring the wallet panel.
+    private func requestBadgeTint(_ kind: CreditsActivityStateKind) -> Color {
+        switch kind {
+        case .warning: return theme.warningColor
+        case .error: return theme.errorColor
+        case .success, .secondary: return theme.secondaryText
+        }
+    }
+
+    /// Request costs render signed ("-$0.09") so the timeline reads like a
+    /// statement next to "+$5.00" transaction rows.
+    private func signedCostLabel(_ costMicro: String) -> String {
+        let formatted = OsaurusRouter.formatMicroUSDPrecise(costMicro)
+        if (Int64(costMicro) ?? 0) > 0 {
+            return "-" + formatted
+        }
+        return formatted
     }
 
     @ViewBuilder
@@ -610,23 +1045,28 @@ struct CreditsView: View {
     }
 
     private func goToPreviousActivityPage() {
-        usagePageIndex = max(0, usagePageIndex - 1)
+        timelinePageIndex = max(0, timelinePageIndex - 1)
     }
 
-    private func goToNextUsagePage() {
-        let nextIndex = usagePageIndex + 1
+    private func goToNextTimelinePage() {
+        let nextIndex = timelinePageIndex + 1
         let nextStart = nextIndex * Self.activityPageSize
-        if nextStart < accountService.usage.count {
-            usagePageIndex = nextIndex
+        if nextStart < mergedTimeline.count {
+            timelinePageIndex = nextIndex
             return
         }
-        guard accountService.nextUsageCursor != nil else { return }
+        guard hasMoreOnServer else { return }
         Task {
-            let previousCount = accountService.usage.count
-            await accountService.loadMoreUsage()
-            if accountService.usage.count > previousCount {
+            let previousCount = mergedTimeline.count
+            if accountService.nextUsageCursor != nil {
+                await accountService.loadMoreUsage()
+            }
+            if accountService.nextTransactionsCursor != nil {
+                await accountService.loadMoreTransactions()
+            }
+            if mergedTimeline.count > previousCount {
                 await reloadLedger()
-                usagePageIndex = nextIndex
+                timelinePageIndex = nextIndex
             }
         }
     }
@@ -695,9 +1135,16 @@ struct CreditsView: View {
 
     private func refreshCredits(resetPages: Bool) async {
         if resetPages {
-            usagePageIndex = 0
+            timelinePageIndex = 0
         }
         await accountService.refreshAll()
+        // Transactions feed the merged timeline (top-ups, grants, refunds)
+        // alongside the usage rows `refreshAll` already fetched.
+        await accountService.refreshTransactions(reset: true)
+        // Web search settings (grants + auto-pay) and billed web requests
+        // feed the Web search card and the merged timeline.
+        await accountService.refreshWebSettings()
+        await accountService.refreshWebUsage(reset: true)
         await reloadLedger()
     }
 
@@ -755,13 +1202,39 @@ struct CreditsView: View {
         do {
             let data = try encoder.encode(diagnostics)
             try data.write(to: url, options: .atomic)
-            diagnosticsMessage = String(
-                localized: "Exported \(diagnostics.entries.count) row(s) to \(url.lastPathComponent).",
-                bundle: .module
-            )
+            let count = diagnostics.entries.count
+            diagnosticsMessage = count == 1
+                ? L("Exported 1 row to \(url.lastPathComponent).")
+                : L("Exported \(count) rows to \(url.lastPathComponent).")
         } catch {
             diagnosticsMessage = error.localizedDescription
         }
     }
 
+}
+
+/// One row in the merged Credits timeline: a billed model request (projected
+/// with ledger matching and chat/Insights references) or a balance-changing
+/// ledger transaction reusing the composer wallet panel's row model.
+private enum CreditsTimelineEntry: Identifiable {
+    case request(CreditsActivityRow, date: Date?)
+    case transaction(WalletActivityRow)
+    /// A billed hosted web search/contents request (metadata-only).
+    case webUsage(WalletActivityRow)
+
+    var id: String {
+        switch self {
+        case .request(let row, _): return row.id
+        case .transaction(let row): return row.id
+        case .webUsage(let row): return row.id
+        }
+    }
+
+    var date: Date? {
+        switch self {
+        case .request(_, let date): return date
+        case .transaction(let row): return row.date
+        case .webUsage(let row): return row.date
+        }
+    }
 }

@@ -1,0 +1,13 @@
+{
+  "id": "agent_channels.external-mcp-denial",
+  "domain": "agent_channels",
+  "label": "agent channels • agent_channel_* tools are never exposed on external surfaces",
+  "query": "deterministic policy pin — no model involved",
+  "notes": "External-surface denial: every registered agent_channel_* tool must be in the externally-denied set (the gate behind /mcp/tools omission and the 403 tool_not_exposable on /mcp/call). Pinned via the same ToolRegistry policy the HTTP surface consults, so a future tool added to the family without the denial marking fails this case immediately. CI-safe: registry-only, no network, no model.",
+  "fixtures": {},
+  "expect": {
+    "agentChannels": {
+      "scenario": "mcp_denial"
+    }
+  }
+}

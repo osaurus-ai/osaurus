@@ -11,6 +11,9 @@ import SwiftUI
 struct ThemedBackgroundLayer: View {
     let cachedBackgroundImage: NSImage?
     let showSidebar: Bool
+    /// Square corners in native full screen, where the window has no
+    /// rounded corners and rounding would expose the backing behind.
+    var isFullScreen: Bool = false
 
     @Environment(\.theme) private var theme
 
@@ -21,10 +24,10 @@ struct ThemedBackgroundLayer: View {
 
     private var backgroundShape: UnevenRoundedRectangle {
         UnevenRoundedRectangle(
-            topLeadingRadius: showSidebar ? 0 : 24,
-            bottomLeadingRadius: showSidebar ? 0 : 24,
-            bottomTrailingRadius: 24,
-            topTrailingRadius: 24,
+            topLeadingRadius: (showSidebar || isFullScreen) ? 0 : 24,
+            bottomLeadingRadius: (showSidebar || isFullScreen) ? 0 : 24,
+            bottomTrailingRadius: isFullScreen ? 0 : 24,
+            topTrailingRadius: isFullScreen ? 0 : 24,
             style: .continuous
         )
     }

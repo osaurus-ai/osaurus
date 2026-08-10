@@ -150,4 +150,27 @@ struct ThemeFilterTests {
         // Matches the filter but not the search.
         #expect(!match(imported, .imported, search: "winter"))
     }
+
+    // MARK: - System card
+
+    @Test("system card rides the all and built-in filters only")
+    func systemCardFilterBuckets() {
+        #expect(systemThemeCardMatches(filter: .all, search: ""))
+        #expect(systemThemeCardMatches(filter: .builtIn, search: ""))
+        #expect(!systemThemeCardMatches(filter: .local, search: ""))
+        #expect(!systemThemeCardMatches(filter: .imported, search: ""))
+        #expect(!systemThemeCardMatches(filter: .shared, search: ""))
+        #expect(!systemThemeCardMatches(filter: .needsReview, search: ""))
+        #expect(!systemThemeCardMatches(filter: .duplicates, search: ""))
+    }
+
+    @Test("system card search matches its display name case-insensitively")
+    func systemCardSearch() {
+        #expect(systemThemeCardMatches(filter: .all, search: "sys"))
+        #expect(systemThemeCardMatches(filter: .builtIn, search: "SYSTEM"))
+        #expect(systemThemeCardMatches(filter: .all, search: "   "))
+        #expect(!systemThemeCardMatches(filter: .all, search: "sunrise"))
+        // Search alone can't resurrect it under an excluded filter.
+        #expect(!systemThemeCardMatches(filter: .local, search: "system"))
+    }
 }

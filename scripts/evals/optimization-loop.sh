@@ -72,18 +72,33 @@ set -uo pipefail
 #                  dir is git-ignored, so nothing sensitive can land in a
 #                  commit; RECORD=1 snapshots never copy sidecars. "0" turns
 #                  it off.
+#   OSAURUS_EVALS_SIM_RAM_GB  simulate a smaller target machine's memory
+#                  policy (e.g. 16 for the 16 GB Mac profile). The eval CLI
+#                  scales memorySafety.customPhysicalMemoryFraction through
+#                  the production resolver so the resolved ABSOLUTE load
+#                  budget equals the target machine's, and defaults the
+#                  disk-L2 cap to a safe 2 GB (an explicit
+#                  OSAURUS_EVALS_DISK_L2_CAP_GB still wins). Artifacts carry
+#                  BOTH the real host RAM and the simulated value, labelled
+#                  SIMULATED — this proves the policy budget and footprint
+#                  ceiling only, never real paging/thermal/memory-pressure
+#                  behavior on the target machine. Values ≥ host RAM are
+#                  ignored (label stays provenance-only).
+#   CTX_OPTIMIZE   "1" → run the staged context-optimization search
+#                  (`osaurus-evals optimize-context`) instead of the
+#                  scoreboard matrix. See the mode block below for its
+#                  CTX_* knobs; artifacts land under
+#                  <run dir>/context-optimize/<model>/.
 #   PARALLEL_REMOTE "1" (default) → when MODELS mixes local and remote-provider
 #                  ids, run the remote models' LLM pass in a background lane
 #                  concurrent with the local lane (remote decode is
-#                  network-bound — no GPU contention). The remote lane runs
-#                  with config storage force-isolated so it can never race the
-#                  local lane on the real ~/.osaurus chat config. The
-#                  sandbox-VM suite is the one exception: it is serialized
-#                  across lanes with a lock (Apple Containerization is
-#                  host-global) and runs WITHOUT forced isolation — the host's
-#                  provisioned sandbox.json lives in the real root, and an
-#                  isolated root would read setupComplete=false and skip every
-#                  case. "0" restores the fully sequential order.
+#                  network-bound — no GPU contention). Every eval process runs
+#                  in its own hermetic throwaway storage root (with copied
+#                  chat/sandbox config snapshots), so concurrent lanes can
+#                  never race each other — or the developer's live app — on
+#                  the real ~/.osaurus. The sandbox-VM suite is still
+#                  serialized across lanes with a lock (Apple Containerization
+#                  is host-global). "0" restores the fully sequential order.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -100,6 +115,7 @@ LABEL="${LABEL:-}"
 SNAPSHOT_DIR="${SNAPSHOT_DIR:-${REPO_ROOT}/reports}"
 SKIP_DET="${SKIP_DET:-0}"
 SUITE_TIMEOUT_SEC="${SUITE_TIMEOUT_SEC:-2700}"
+EVALS_BUILD_CONFIGURATION="${EVALS_BUILD_CONFIGURATION:-debug}"
 
 # Resolve a `timeout`-compatible command once (GNU coreutils ships `gtimeout`
 # on macOS via Homebrew; Linux/CI has `timeout`). Empty when neither exists,
@@ -118,7 +134,7 @@ fi
 # `read -ra` is the robust, SC2206-clean way to split the space-separated
 # override/default into the array (and is bash 3.2-safe). The `${VAR:-...}`
 # default is expanded before `read` reassigns the same name.
-read -ra DET_SUITES <<< "${DET_SUITES:-ArgumentCoercion CapabilitySearch ComputerUse PrefixHash RequestValidation SandboxDiagnostics Schema ScreenContext StreamingHint ToolEnvelope}"
+read -ra DET_SUITES <<< "${DET_SUITES:-AgentChannels ArgumentCoercion CapabilitySearch ComputerUse PrefixHash SandboxDiagnostics Schema ScreenContext ToolEnvelope ToolResultGrounding}"
 # Suites that drive a model (or the sandbox VM) — run PER model.
 # `Subagent` runs all subagent flows through the one SubagentSession host:
 # its scripted cases are model-independent (identical per model) while the live
@@ -131,9 +147,35 @@ read -ra DET_SUITES <<< "${DET_SUITES:-ArgumentCoercion CapabilitySearch Compute
 # (real-model + mock/real executor) vary with the run model, so it lands real
 # `apple_script` rows in the cross-model matrix (same rationale as `Subagent`).
 # `read -ra` splits the override/default into the array (SC2206-clean, bash 3.2-safe).
-read -ra LLM_SUITES <<< "${LLM_SUITES:-AgentLoop AgentLoopFrontier AgentDB AppleScript CapabilityClaims ComputerUseLoop DefaultAgent MicroPerf PromptInjection SandboxFrontier Subagent}"
+read -ra LLM_SUITES <<< "${LLM_SUITES:-AgentDB AgentLoop AgentLoopFrontier AppleScript CacheProof CapabilityClaims ComputerUseLoop DefaultAgent HTTPAPI Memory MicroPerf PromptInjection ReasoningChannel SandboxFrontier Subagent}"
 
 log() { printf '[opt-loop] %s\n' "$*"; }
+
+# Fail before a long build/model load when a configured suite was renamed or
+# removed. A stale name previously produced only a late "no report" warning,
+# silently shrinking the optimization gate.
+validate_suite_list() {
+  local missing=0 suite
+  if [[ "${SKIP_DET}" != "1" ]]; then
+    for suite in "${DET_SUITES[@]}"; do
+      if [[ ! -d "${EVALS_PKG}/Suites/${suite}" ]]; then
+        log "ERROR: configured suite does not exist: Suites/${suite}"
+        missing=1
+      fi
+    done
+  fi
+  for suite in "${LLM_SUITES[@]}"; do
+    if [[ ! -d "${EVALS_PKG}/Suites/${suite}" ]]; then
+      log "ERROR: configured suite does not exist: Suites/${suite}"
+      missing=1
+    fi
+  done
+  [[ ${missing} -eq 0 ]]
+}
+
+if ! validate_suite_list; then
+  exit 2
+fi
 
 # ── 1. Prep + build ──────────────────────────────────────────────────────
 if [[ "${OSAURUS_EVALS_SKIP_PREP:-0}" != "1" ]]; then
@@ -142,8 +184,8 @@ if [[ "${OSAURUS_EVALS_SKIP_PREP:-0}" != "1" ]]; then
 fi
 
 log "Building osaurus-evals…"
-swift build --package-path "${EVALS_PKG}" >/dev/null
-BIN="$(swift build --package-path "${EVALS_PKG}" --show-bin-path)/osaurus-evals"
+swift build --package-path "${EVALS_PKG}" -c "${EVALS_BUILD_CONFIGURATION}" >/dev/null
+BIN="$(swift build --package-path "${EVALS_PKG}" -c "${EVALS_BUILD_CONFIGURATION}" --show-bin-path)/osaurus-evals"
 if [[ ! -x "${BIN}" ]]; then
   log "ERROR: osaurus-evals binary not found at ${BIN}"
   exit 2
@@ -169,6 +211,67 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 OUT="${LOOP_OUT_ROOT}/${STAMP}"
 mkdir -p "${OUT}"
 log "Run dir: ${OUT}"
+
+# ── Context-optimization mode (CTX_OPTIMIZE=1) ───────────────────────────
+# Runs the staged `optimize-context` search instead of the scoreboard
+# matrix: deterministic surface census → one-factor ablations → pruning →
+# combination candidates → sequential warm-model quality runs (baseline
+# first, one process per model so the model loads once) → flake-aware
+# no-regression gate vs the in-process baseline → Pareto artifacts
+# (plan.json, baseline.json, candidate-*.json, pareto.{json,md}) under
+# <run dir>/context-optimize/<model>/.
+#
+#   CTX_SUITES     suites for the quality lane. Default "AgentLoop".
+#   CTX_REPEAT     trials per case (default 3 — the search phase floor).
+#   CTX_MIN_SAVINGS surface-token prune floor (default 25).
+#   CTX_MAX_CANDIDATES model-tested candidate cap (default 10).
+#   CTX_CENSUS_ONLY "1" → stop after the deterministic plan (no model runs).
+#
+# The judge stays whatever JUDGE_MODEL/XAI_API_KEY resolve to — pin it for
+# comparable runs (see Packages/OsaurusEvals/README.md).
+if [[ "${CTX_OPTIMIZE:-0}" == "1" ]]; then
+  read -ra CTX_SUITES <<< "${CTX_SUITES:-AgentLoop}"
+  ctx_suite_args=()
+  for suite in "${CTX_SUITES[@]}"; do
+    if [[ ! -d "${EVALS_PKG}/Suites/${suite}" ]]; then
+      log "ERROR: CTX_SUITES entry does not exist: Suites/${suite}"
+      exit 2
+    fi
+    ctx_suite_args+=(--suite "${EVALS_PKG}/Suites/${suite}")
+  done
+  ctx_filter_args=()
+  [[ -n "${FILTER}" ]] && ctx_filter_args=(--filter "${FILTER}")
+  ctx_census_args=()
+  [[ "${CTX_CENSUS_ONLY:-0}" == "1" ]] && ctx_census_args=(--census-only)
+  ctx_exit=0
+  for model in ${MODELS}; do
+    model_label="$(printf '%s' "${model}" | tr '/' '-')"
+    ctx_out="${OUT}/context-optimize/${model_label}"
+    mkdir -p "${ctx_out}"
+    log "optimize-context: ${model} → ${ctx_out}"
+    "${BIN}" optimize-context \
+      "${ctx_suite_args[@]}" \
+      --model "${model}" \
+      --out-dir "${ctx_out}" \
+      --repeat "${CTX_REPEAT:-3}" \
+      --min-savings "${CTX_MIN_SAVINGS:-25}" \
+      --max-candidates "${CTX_MAX_CANDIDATES:-10}" \
+      --resume \
+      "${ctx_filter_args[@]}" \
+      "${ctx_census_args[@]}" \
+      || ctx_exit=$?
+    [[ -f "${ctx_out}/pareto.md" ]] && log "pareto: ${ctx_out}/pareto.md"
+  done
+  exit "${ctx_exit}"
+fi
+
+# Surface the simulated target-RAM profile loudly at the top of the run so a
+# reader of the log can never mistake a policy-budget simulation for a real
+# constrained-hardware run. The eval CLI applies (and re-logs) the actual
+# runtime override per process; values ≥ host RAM are ignored there.
+if [[ -n "${OSAURUS_EVALS_SIM_RAM_GB:-}" ]]; then
+  log "SIMULATED target-RAM profile: ${OSAURUS_EVALS_SIM_RAM_GB} GB (policy budget only — NOT real hardware proof)"
+fi
 
 filter_args=()
 [[ -n "${FILTER}" ]] && filter_args=(--filter "${FILTER}")
@@ -351,16 +454,12 @@ run_model_lane() {
   done
   run_suites_batch "${model}" "llm-${label}" "batch" ${batch_suites[@]+"${batch_suites[@]}"}
   for s in ${vm_suites[@]+"${vm_suites[@]}"}; do
-    # VM suites must NOT inherit forced config isolation (the remote lane
-    # sets OSAURUS_EVALS_ISOLATE_CONFIG=1 for its whole model pass): an
-    # isolated root hides the host's provisioned sandbox.json, so
-    # setupComplete reads false and every case silently skips with
-    # "sandbox setup incomplete on this host". The sandbox VM and its
-    # provisioning config are host-global by design, and cross-lane
-    # contention is already serialized by with_sandbox_lock — the same
-    # real-root regime the local lane always used for this suite.
-    OSAURUS_EVALS_ISOLATE_CONFIG=0 with_sandbox_lock \
-      run_suite "${model}" "llm-${label}" "${s}"
+    # VM suites run hermetically like every other suite: the eval process's
+    # isolated root carries a COPY of the host's provisioned sandbox.json
+    # (so setupComplete reads true) and a `container/` symlink to the real
+    # host-global VM runtime. Cross-lane contention on that shared VM is
+    # serialized by with_sandbox_lock.
+    with_sandbox_lock run_suite "${model}" "llm-${label}" "${s}"
   done
 }
 
@@ -403,15 +502,14 @@ for model in ${MODELS}; do
 done
 
 remote_lane() {
-  # Remote models never need the real ~/.osaurus chat config (the model id is
-  # explicit and the provider is bootstrapped from env keys), so force config
-  # isolation: the lane cannot race the local lane — or the developer's live
-  # app — on shared config state.
+  # Each eval process already runs in its own hermetic storage root, so the
+  # remote lane cannot race the local lane — or the developer's live app —
+  # on shared config state.
   local model label
   for model in ${REMOTE_MODELS[@]+"${REMOTE_MODELS[@]}"}; do
     label="$(label_for "${model}")"
     log "LLM suites for model=${model} (label=${label}) [remote lane]:"
-    OSAURUS_EVALS_ISOLATE_CONFIG=1 run_model_lane "${model}" "${label}"
+    run_model_lane "${model}" "${label}"
   done
 }
 

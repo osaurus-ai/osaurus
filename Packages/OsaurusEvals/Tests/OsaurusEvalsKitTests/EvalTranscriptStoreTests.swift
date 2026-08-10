@@ -38,6 +38,23 @@ struct EvalTranscriptStoreTests {
             iterations: 2,
             exit: "finalResponse",
             notices: ["budget warning"],
+            stepDiagnostics: [
+                .init(
+                    step: 1,
+                    stopReason: "length",
+                    contentCharacterCount: 0,
+                    reasoningCharacterCount: 128,
+                    contentPreview: nil,
+                    reasoningPreview: "partial reasoning",
+                    sawToolCallProgress: true,
+                    pendingToolName: "file_write",
+                    toolArgumentCharacters: 9_100,
+                    completionTokens: 4_096,
+                    decodeThroughputAttribution:
+                        "unavailable_tool_call_before_vmlx_info",
+                    requestedEnableThinking: false
+                )
+            ],
             error: nil
         )
     }
@@ -90,7 +107,30 @@ struct EvalTranscriptStoreTests {
             #expect(decoded.toolCalls[0].resultPreview == "hello")
             #expect(decoded.exit == "finalResponse")
             #expect(decoded.notices == ["budget warning"])
+            #expect(decoded.stepDiagnostics?.first?.stopReason == "length")
+            #expect(decoded.stepDiagnostics?.first?.pendingToolName == "file_write")
+            #expect(decoded.stepDiagnostics?.first?.toolArgumentCharacters == 9_100)
+            #expect(decoded.stepDiagnostics?.first?.completionTokens == 4_096)
+            #expect(decoded.stepDiagnostics?.first?.decodeTokensPerSecond == nil)
+            #expect(
+                decoded.stepDiagnostics?.first?.decodeThroughputAttribution
+                    == "unavailable_tool_call_before_vmlx_info"
+            )
+            #expect(decoded.stepDiagnostics?.first?.thinkingState == "explicitDisabled")
         }
+    }
+
+    @Test
+    func legacyStepEventDecodesWithExplicitUnavailableAttribution() throws {
+        let legacy = Data(
+            #"{"step":1,"stopReason":"tool_calls","contentCharacterCount":0,"reasoningCharacterCount":32,"contentPreview":null,"reasoningPreview":"thinking","sawToolCallProgress":true,"pendingToolName":"file_read","toolArgumentCharacters":48,"completionTokens":null,"requestedEnableThinking":true,"thinkingState":"explicitEnabled"}"#.utf8
+        )
+        let decoded = try JSONDecoder().decode(
+            EvalCaseTranscript.StepEvent.self,
+            from: legacy
+        )
+        #expect(decoded.decodeTokensPerSecond == nil)
+        #expect(decoded.decodeThroughputAttribution == "unavailable_legacy_transcript")
     }
 
     @Test
@@ -101,6 +141,26 @@ struct EvalTranscriptStoreTests {
             )
             let files = try FileManager.default.contentsOfDirectory(atPath: dir.path)
             #expect(files == ["ns-sub-case.json"])
+        }
+    }
+
+    @Test
+    func repeatedFailuresKeepDistinctTrialForensics() throws {
+        try withTempStore { dir in
+            for ordinal in 1 ... 2 {
+                EvalTrialExecutionContext.$current.withValue(
+                    EvalTrialIdentity(ordinal: ordinal, total: 2)
+                ) {
+                    EvalTranscriptStore.persistIfEnabled(makeTranscript(outcome: "failed"))
+                }
+            }
+
+            let files = try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted()
+            #expect(files == ["case-a.trial-1.json", "case-a.trial-2.json"])
+            let data = try Data(contentsOf: dir.appendingPathComponent(files[1]))
+            let decoded = try JSONDecoder().decode(EvalCaseTranscript.self, from: data)
+            #expect(decoded.trial == 2)
+            #expect(decoded.trialCount == 2)
         }
     }
 

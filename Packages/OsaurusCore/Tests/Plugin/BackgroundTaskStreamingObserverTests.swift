@@ -27,7 +27,7 @@ struct BackgroundTaskStreamingObserverTests {
         let context = ExecutionContext(agentId: Agent.defaultId)
         // Mock engine yields nothing — guarantees `isStreaming` only changes
         // when the test sets it explicitly, so we control the timeline.
-        context.chatSession.chatEngineFactory = { MockChatEngine() }
+        context.chatSession.chatEngineFactory = { _ in MockChatEngine() }
 
         let state = BackgroundTaskState(
             id: UUID(),
@@ -71,11 +71,31 @@ struct BackgroundTaskStreamingObserverTests {
         state.chatSession?.isStreaming = false
         try await Task.sleep(for: .milliseconds(10))
 
-        #expect(state.status == .completed(success: true, summary: "Chat completed"))
+        #expect(state.status == .completed(summary: "Chat completed"))
+    }
+
+    /// A completed headless task must schedule its own eviction (mirroring
+    /// the cancel path) so it doesn't linger in the registry. Without this a
+    /// later schedule reattaching by `externalSessionKey` collides with the
+    /// stale `.completed` state: `awaitCompletion` short-circuits on old data
+    /// and leaked runs eventually saturate the execution slots — the "runs
+    /// forever" bug.
+    @Test
+    func observeChatTask_schedulesAutoFinalizeAfterCompletion() async throws {
+        let (state, mgr) = makeObservedState()
+        defer { mgr.finalizeTask(state.id) }
+
+        state.chatSession?.isStreaming = true
+        try await Task.sleep(for: .milliseconds(10))
+        state.chatSession?.isStreaming = false
+        try await Task.sleep(for: .milliseconds(10))
+
+        #expect(state.status == .completed(summary: "Chat completed"))
+        #expect(mgr.hasPendingAutoFinalizeForTesting(state.id))
     }
 
     /// A stream error before completion must transition the task to
-    /// `.completed(success: false, summary: <error>)`.
+    /// `.failed(summary: <error>)`.
     @Test
     func observeChatTask_marksFailedWhenStreamErrorPresent() async throws {
         let (state, mgr) = makeObservedState()
@@ -87,6 +107,6 @@ struct BackgroundTaskStreamingObserverTests {
         state.chatSession?.isStreaming = false
         try await Task.sleep(for: .milliseconds(10))
 
-        #expect(state.status == .completed(success: false, summary: "boom"))
+        #expect(state.status == .failed(summary: "boom"))
     }
 }

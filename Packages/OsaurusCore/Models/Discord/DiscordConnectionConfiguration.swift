@@ -11,21 +11,27 @@ struct DiscordConnectionConfiguration: Codable, Equatable, Sendable {
     var configuredGuildIds: [String]
     var readableChannelIds: [String]
     var writableChannelIds: [String]
+    var senderAllowlist: [String]
     var writeEnabled: Bool
     var defaultReadLimit: Int
+    var inboundDispatch: AgentChannelInboundDispatchConfiguration
 
     init(
         configuredGuildIds: [String] = [],
         readableChannelIds: [String] = [],
         writableChannelIds: [String] = [],
+        senderAllowlist: [String] = [],
         writeEnabled: Bool = false,
-        defaultReadLimit: Int = 50
+        defaultReadLimit: Int = 50,
+        inboundDispatch: AgentChannelInboundDispatchConfiguration = AgentChannelInboundDispatchConfiguration()
     ) {
         self.configuredGuildIds = Self.normalizedIds(configuredGuildIds)
         self.readableChannelIds = Self.normalizedIds(readableChannelIds)
         self.writableChannelIds = Self.normalizedIds(writableChannelIds)
+        self.senderAllowlist = Self.normalizedIds(senderAllowlist)
         self.writeEnabled = writeEnabled
         self.defaultReadLimit = Self.clampReadLimit(defaultReadLimit)
+        self.inboundDispatch = inboundDispatch
     }
 
     var normalized: DiscordConnectionConfiguration {
@@ -33,8 +39,36 @@ struct DiscordConnectionConfiguration: Codable, Equatable, Sendable {
             configuredGuildIds: configuredGuildIds,
             readableChannelIds: readableChannelIds,
             writableChannelIds: writableChannelIds,
+            senderAllowlist: senderAllowlist,
             writeEnabled: writeEnabled,
-            defaultReadLimit: defaultReadLimit
+            defaultReadLimit: defaultReadLimit,
+            inboundDispatch: inboundDispatch
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case configuredGuildIds
+        case readableChannelIds
+        case writableChannelIds
+        case senderAllowlist
+        case writeEnabled
+        case defaultReadLimit
+        case inboundDispatch
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            configuredGuildIds: try container.decodeIfPresent([String].self, forKey: .configuredGuildIds) ?? [],
+            readableChannelIds: try container.decodeIfPresent([String].self, forKey: .readableChannelIds) ?? [],
+            writableChannelIds: try container.decodeIfPresent([String].self, forKey: .writableChannelIds) ?? [],
+            senderAllowlist: try container.decodeIfPresent([String].self, forKey: .senderAllowlist) ?? [],
+            writeEnabled: try container.decodeIfPresent(Bool.self, forKey: .writeEnabled) ?? false,
+            defaultReadLimit: try container.decodeIfPresent(Int.self, forKey: .defaultReadLimit) ?? 50,
+            inboundDispatch: try container.decodeIfPresent(
+                AgentChannelInboundDispatchConfiguration.self,
+                forKey: .inboundDispatch
+            ) ?? AgentChannelInboundDispatchConfiguration()
         )
     }
 
@@ -111,14 +145,19 @@ enum DiscordCredentialStore {
 
     @discardableResult
     static func saveBotToken(_ token: String) -> Bool {
+        saveBotTokenOutcome(token).isSuccess
+    }
+
+    static func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome {
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        return ToolSecretsKeychain.saveSecret(
+        guard !trimmed.isEmpty else { return .emptyValue }
+        let outcome = ToolSecretsKeychain.saveSecretOutcome(
             trimmed,
             id: botTokenKey,
             for: pluginId,
             agentId: Agent.defaultId
         )
+        return outcome == .success ? .success : .keychainFailure(outcome)
     }
 
     static func botToken() -> String? {
@@ -152,11 +191,24 @@ protocol DiscordCredentialStorage: Sendable {
     func botToken() -> String?
     func hasBotToken() -> Bool
     func deleteBotToken() -> Bool
+    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome
+}
+
+extension DiscordCredentialStorage {
+    // Bool-only stores (test doubles) fall back to an undetailed outcome; the
+    // Keychain-backed store overrides this with the real failure reason.
+    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome {
+        saveBotToken(token) ? .success : .unknownFailure
+    }
 }
 
 struct KeychainDiscordCredentialStorage: DiscordCredentialStorage {
     func saveBotToken(_ token: String) -> Bool {
         DiscordCredentialStore.saveBotToken(token)
+    }
+
+    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome {
+        DiscordCredentialStore.saveBotTokenOutcome(token)
     }
 
     func botToken() -> String? {

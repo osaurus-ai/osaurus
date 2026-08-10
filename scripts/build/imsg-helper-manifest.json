@@ -1,0 +1,18 @@
+{
+  "artifact": "imsg",
+  "version": "0.13.4",
+  "upstreamRepository": "https://github.com/openclaw/imsg",
+  "license": "MIT",
+  "archiveURL": "https://github.com/openclaw/imsg/releases/download/v0.13.4/imsg-macos.zip",
+  "archiveSHA256": "e2fcac341363b5d53d16d28e61df981c4585bcc6b7fa8fdc77ec41f14e87c468",
+  "executableName": "imsg",
+  "executableSHA256": "3de325ab7e2c7940c6edb8fd1402296b3842f3e00119872588355bce85b28c97",
+  "executableRequiredArchitectures": ["arm64"],
+  "bridgeDylibName": "imsg-bridge-helper.dylib",
+  "bridgeDylibSHA256": "3942ca55ce148f013ff35136ddf3422d6e74df54aecef9a2ab2dc6fe27674213",
+  "bridgeDylibRequiredArchitectures": ["arm64", "arm64e"],
+  "resourceBundles": [
+    "PhoneNumberKit_PhoneNumberKit.bundle",
+    "SQLite.swift_SQLite.bundle"
+  ]
+}

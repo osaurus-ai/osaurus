@@ -27,7 +27,7 @@ struct ModelFamilyGuidanceObedienceTests {
         // action half, so the imperative must stay in the family block even
         // though the anti-invention rule itself was deduped into
         // `groundingDirective` (see toolGroundingRuleIsOwnedByGroundingDirective).
-        #expect(guidance?.contains("fetch it yourself") == true)
+        #expect(guidance?.contains("use a listed shell/network tool") == true)
         #expect(guidance?.contains("do not decline") == true)
     }
 
@@ -50,6 +50,66 @@ struct ModelFamilyGuidanceObedienceTests {
         )
         #expect(ModelFamilyGuidance.guidance(forModelId: "qwen3-32b") == ModelFamilyGuidance.glmQwenGuidance)
         #expect(ModelFamilyGuidance.guidance(forModelId: "deepseek-v4") == ModelFamilyGuidance.deepSeekGuidance)
+    }
+
+    @Test("Ornith and Bonsai aliases receive their Qwen-backbone guidance")
+    func qwenBackboneAliasesResolveOnTokenBoundaries() {
+        for id in [
+            "OsaurusAI/Ornith-1.0-35B-MXFP8",
+            "JANGQ-AI/ornith_9b_jang-4m",
+            "dealignai/Bonsai-27b-Ternary-JANG",
+            "bonsai",
+        ] {
+            #expect(ModelFamilyGuidance.family(for: id) == .glmQwen, "\(id) should be glmQwen")
+            #expect(
+                ModelFamilyGuidance.guidance(forModelId: id)
+                    == ModelFamilyGuidance.glmQwenGuidance
+            )
+        }
+
+        // Aliases are exact tokens, not arbitrary substrings.
+        for id in ["notornith-7b", "ornithology-3b", "bonsaified-8b", "mybonsai2"] {
+            #expect(ModelFamilyGuidance.family(for: id) == .other, "\(id) should remain other")
+        }
+        #expect(ModelFamilyGuidance.family(for: "ornith/Llama-3.2-8B") == .other)
+    }
+
+    @Test("bundle architecture takes precedence over repository branding")
+    func bundleArchitectureWinsOverIdentifier() {
+        #expect(
+            ModelFamilyGuidance.family(
+                for: "misleading/gemma-ornith-mashup",
+                modelType: "qwen3_5_moe"
+            ) == .glmQwen
+        )
+        #expect(
+            ModelFamilyGuidance.family(
+                for: "qwen-owner/not-a-qwen-model",
+                modelType: "gemma4"
+            ) == .googleGemma
+        )
+        #expect(
+            ModelFamilyGuidance.guidance(
+                forModelId: "renamed/backbone-hidden",
+                modelType: "qwen3_5"
+            ) == ModelFamilyGuidance.glmQwenGuidance
+        )
+        #expect(
+            ModelFamilyGuidance.family(
+                for: "qwen-owner/Llama-3.2-8B",
+                modelType: "llama"
+            ) == .other
+        )
+        #expect(
+            ModelFamilyGuidance.family(
+                for: "misleading/gemma-coder",
+                modelType: "mistral3"
+            ) == .other
+        )
+
+        // Only genuinely absent metadata uses the repository-id fallback.
+        #expect(ModelFamilyGuidance.family(for: "qwen3-32b", modelType: nil) == .glmQwen)
+        #expect(ModelFamilyGuidance.family(for: "gemma-4-12b", modelType: "  ") == .googleGemma)
     }
 
     @Test("Gemini resolves to its own frontier block, not Gemma's brevity clamp")
@@ -147,6 +207,15 @@ struct ModelFamilyGuidanceObedienceTests {
             ("default", ModelFamilyGuidance.defaultGuidance),
         ]
         for (label, block) in allBlocks {
+            for privateName in [
+                "sandbox_read_file", "sandbox_search_files", "sandbox_write_file",
+                "sandbox_exec",
+            ] {
+                #expect(
+                    !block.contains(privateName),
+                    "\(label) names private adapter \(privateName)"
+                )
+            }
             #expect(
                 !block.contains("Only call tools that exist in your schema"),
                 "\(label) restates the deduped tool-grounding rule"

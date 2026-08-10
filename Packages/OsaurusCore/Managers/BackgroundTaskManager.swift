@@ -10,6 +10,65 @@
 import Combine
 import Foundation
 
+/// Durable metadata for a user-owned terminal notch tab. The live chat
+/// session is deliberately not encoded; `ChatSessionStore` remains the
+/// canonical transcript store and is hydrated on demand.
+private struct RetainedNotchTabRecord: Codable {
+    enum TerminalKind: String, Codable {
+        case completed
+        case failed
+        case cancelled
+    }
+
+    let id: UUID
+    let title: String
+    let agentId: UUID
+    let kind: TerminalKind
+    let summary: String?
+    let createdAt: Date
+    let source: SessionSource
+    let sourcePluginId: String?
+    let externalSessionKey: String?
+    let contextPreview: [BackgroundTaskContextMessage]
+
+    @MainActor
+    init?(state: BackgroundTaskState) {
+        let kind: TerminalKind
+        let summary: String?
+        switch state.status {
+        case .completed(let value):
+            kind = .completed
+            summary = value
+        case .failed(let value):
+            kind = .failed
+            summary = value
+        case .cancelled:
+            kind = .cancelled
+            summary = nil
+        case .queued, .running, .waitingForInput:
+            return nil
+        }
+        self.id = state.id
+        self.title = state.taskTitle
+        self.agentId = state.agentId
+        self.kind = kind
+        self.summary = summary
+        self.createdAt = state.createdAt
+        self.source = state.source
+        self.sourcePluginId = state.sourcePluginId
+        self.externalSessionKey = state.externalSessionKey
+        self.contextPreview = state.contextPreview
+    }
+
+    var status: BackgroundTaskStatus {
+        switch kind {
+        case .completed: return .completed(summary: summary ?? "Chat completed")
+        case .failed: return .failed(summary: summary ?? "Chat failed")
+        case .cancelled: return .cancelled
+        }
+    }
+}
+
 // MARK: - Background Task Manager
 
 /// Single owner of all backgrounded chat tasks (dispatched).
@@ -45,6 +104,18 @@ public final class BackgroundTaskManager: ObservableObject {
     /// Scheduled auto-finalize timers for completed/cancelled tasks
     private var autoFinalizeTasks: [UUID: Task<Void, Never>] = [:]
 
+    /// Production managers persist terminal notch tabs across relaunches.
+    /// Isolated test managers disable this so suites never read or mutate the
+    /// user's retained-tab defaults.
+    private let persistsRetainedTabs: Bool
+    private let retainedTabsDefaults: UserDefaults
+    private static let retainedTabsDefaultsKey = "retainedNotchTabs.v1"
+
+    /// Production managers hold an idle-sleep assertion while work is
+    /// running or queued. Isolated test managers inject nil so unit tests
+    /// never alter the host machine's power state.
+    private let powerManager: AgentRunPowerManager?
+
     /// Tasks whose dispatch() hasn't returned to the plugin yet; events are
     /// buffered in `heldTaskEvents` until `releaseEventsForDispatch` flushes them.
     private var dispatchHoldTasks: Set<UUID> = []
@@ -58,11 +129,21 @@ public final class BackgroundTaskManager: ObservableObject {
     private var streamingObserved: Set<UUID> = []
 
     /// Background-task id keyed by the chat window currently bound to it.
-    /// Populated by `detachChatWindow` and by `openTaskWindow`; consulted
-    /// by `ChatWindowManager` in `windowWillClose` to decide whether to
-    /// skip `cleanup()` (which would otherwise call `session.stop()` and
-    /// kill the in-flight stream).
+    /// Populated by `detachChatWindow`, `openTaskWindow`, and
+    /// `bindWindow(_:toTask:)`; consulted by `ChatWindowManager` in
+    /// `windowWillClose` to decide whether to skip `cleanup()` (which would
+    /// otherwise call `session.stop()` and kill the in-flight stream).
+    /// Window attachment is pure view state — it never affects execution.
     private var taskIdByWindow: [UUID: UUID] = [:]
+
+    /// FIFO admission queue: task ids accepted while the configured
+    /// concurrency limits were saturated, in submission order. Each id has a
+    /// matching deferred start closure in `pendingStarts`. Promoted by
+    /// `pumpQueue()` whenever a running task stops consuming its slot.
+    private var queuedOrder: [UUID] = []
+
+    /// Deferred start work for queued tasks, keyed by task id.
+    private var pendingStarts: [UUID: @MainActor () async -> Void] = [:]
 
     /// Subject for batching view updates with throttling
     private let viewUpdateSubject = PassthroughSubject<Void, Never>()
@@ -70,7 +151,14 @@ public final class BackgroundTaskManager: ObservableObject {
 
     // MARK: - Initialization
 
-    private init() {
+    private init(
+        persistsRetainedTabs: Bool = true,
+        retainedTabsDefaults: UserDefaults = .standard,
+        powerManager: AgentRunPowerManager? = .shared
+    ) {
+        self.persistsRetainedTabs = persistsRetainedTabs
+        self.retainedTabsDefaults = retainedTabsDefaults
+        self.powerManager = powerManager
         viewUpdateCancellable =
             viewUpdateSubject
             .throttle(for: .milliseconds(50), scheduler: DispatchQueue.main, latest: true)
@@ -82,18 +170,21 @@ public final class BackgroundTaskManager: ObservableObject {
                 self.recomputeSortedToastTasks()
                 self.objectWillChange.send()
             }
+        restoreRetainedTabs()
     }
 
     // MARK: - Toast Ordering
 
     /// Status ordering for the notch: awaiting input first, then running,
-    /// then terminal states. Lower sorts earlier.
+    /// then queued, then terminal states. Lower sorts earlier.
     private static func statusSortPriority(_ status: BackgroundTaskStatus) -> Int {
         switch status {
-        case .awaitingClarification: return 0
+        case .waitingForInput: return 0
         case .running: return 1
-        case .completed: return 2
-        case .cancelled: return 3
+        case .queued: return 2
+        case .completed: return 3
+        case .failed: return 3
+        case .cancelled: return 4
         }
     }
 
@@ -107,14 +198,31 @@ public final class BackgroundTaskManager: ObservableObject {
             // notch by setting `showToast = false`. The task is still tracked
             // for completion signaling — it just doesn't render.
             .filter { $0.showToast }
+            // A task attached to a live chat window surfaces its state in
+            // that window; the notch/toast only reports detached work so
+            // completion/failure never double-announces (or leaks into) the
+            // chat the user is currently looking at.
+            .filter { !isTaskAttachedToWindow($0.id) }
             .sorted { a, b in
                 let ap = Self.statusSortPriority(a.status), bp = Self.statusSortPriority(b.status)
                 if ap != bp { return ap < bp }
                 return a.createdAt > b.createdAt
             }
+        refreshPowerAssertion()
     }
 
     // MARK: - Public API
+
+    /// Re-evaluate idle-sleep prevention after task state or the user
+    /// preference changes. Waiting-for-input sessions intentionally do not
+    /// keep the Mac awake indefinitely.
+    func refreshPowerAssertion() {
+        powerManager?.update(for: backgroundTasks.values.map(\.status))
+    }
+
+    var isPreventingIdleSystemSleep: Bool {
+        powerManager?.isPreventingIdleSystemSleep ?? false
+    }
 
     /// Check if a task ID corresponds to a background task
     public func isBackgroundTask(_ id: UUID) -> Bool {
@@ -124,6 +232,49 @@ public final class BackgroundTaskManager: ObservableObject {
     /// Get background task state by ID
     public func taskState(for id: UUID) -> BackgroundTaskState? {
         backgroundTasks[id]
+    }
+
+    /// Resolve a still-retained channel conversation so an inbound follow-up
+    /// can answer a clarification or continue the same task without creating
+    /// a second session.
+    public func replyableTaskId(
+        source: SessionSource,
+        externalSessionKey: String,
+        agentId: UUID
+    ) -> UUID? {
+        backgroundTasks.values.first { state in
+            guard state.source == source,
+                  state.externalSessionKey == externalSessionKey,
+                  state.agentId == agentId
+            else { return false }
+            switch state.status {
+            case .waitingForInput, .completed:
+                return true
+            case .queued, .running, .failed, .cancelled:
+                return false
+            }
+        }?.id
+    }
+
+    /// Rename a notch session and its canonical persisted conversation.
+    /// There is intentionally no notch-only alias: the same title appears in
+    /// the notch, Chat window, and conversation sidebar.
+    @discardableResult
+    public func renameTask(_ id: UUID, title: String) -> Bool {
+        guard let state = backgroundTasks[id] else { return false }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        state.taskTitle = trimmed
+        if let session = state.chatSession {
+            session.title = trimmed
+            session.save()
+        }
+        ChatSessionsManager.shared.rename(id: id, title: trimmed)
+        persistRetainedTabs()
+        recomputeSortedToastTasks()
+        objectWillChange.send()
+        return true
     }
 
     /// Background-task id (if any) the given window is bound to. Returns
@@ -139,18 +290,87 @@ public final class BackgroundTaskManager: ObservableObject {
         return backgroundTasks[id] != nil
     }
 
-    /// Detach a streaming chat window's session into a background task so
-    /// the user can close the window without killing the in-flight stream.
-    /// The detached task surfaces in `NotchView` and can be re-opened via
-    /// `openTaskWindow(_:)`.
+    /// Whether any live chat window is currently bound to (viewing) this
+    /// task. Attached tasks surface their state in the window instead of
+    /// the notch/toast.
+    func isTaskAttachedToWindow(_ taskId: UUID) -> Bool {
+        taskIdByWindow.contains { windowId, boundTask in
+            boundTask == taskId && ChatWindowManager.shared.windowExists(id: windowId)
+        }
+    }
+
+    /// Bind a window to a task so closing/switching that window is treated
+    /// as detaching the view rather than stopping execution, and so the
+    /// notch/toast stops double-reporting a chat the user can already see.
+    public func bindWindow(_ windowId: UUID, toTask taskId: UUID) {
+        taskIdByWindow[windowId] = taskId
+        recomputeSortedToastTasks()
+        viewUpdateSubject.send()
+    }
+
+    /// Remove a window's task binding (window closed or switched to another
+    /// chat). The task itself is untouched; if it is still active it
+    /// resurfaces in the notch/toast.
+    public func unbindWindow(_ windowId: UUID) {
+        guard taskIdByWindow.removeValue(forKey: windowId) != nil else { return }
+        recomputeSortedToastTasks()
+        viewUpdateSubject.send()
+    }
+
+    /// The live (active) registry task currently driving the given persisted
+    /// session id, if any. Used by chat windows to re-attach the exact
+    /// in-memory `ChatSession` when the user reopens a running chat instead
+    /// of hydrating a stale copy from disk.
+    public func liveTask(forSessionId sessionId: UUID) -> BackgroundTaskState? {
+        backgroundTasks.values.first { state in
+            state.status.isActive && state.chatSession?.sessionId == sessionId
+        }
+    }
+
+    /// Sessions of all still-active registry tasks. Residency GC uses this
+    /// so a detached run's model counts as "still wanted" exactly like a
+    /// model selected in an open window.
+    func activeTaskSessions() -> [ChatSession] {
+        backgroundTasks.values.compactMap { state in
+            guard state.status.isActive else { return nil }
+            return state.chatSession
+        }
+    }
+
+    /// True when any registry-owned session is mid-stream on a local model.
+    /// Feeds the "one local generation at a time" admission check so a run
+    /// detached from its window still blocks a competing local send — the
+    /// shared inference context can only run one, and loading a second
+    /// would evict the first and cancel its stream. Sessions currently
+    /// attached to a window are excluded (the window-scan side of the check
+    /// already counts those).
+    func isAnyDetachedTaskStreamingLocalModel(excludingSession excluded: ChatSession? = nil) -> Bool {
+        backgroundTasks.values.contains { state in
+            guard let session = state.chatSession, session !== excluded else { return false }
+            guard !isTaskAttachedToWindow(state.id) else { return false }
+            return session.isStreamingLocalModel
+        }
+    }
+
+    /// Adopt a live in-flight `ChatSession` into the registry so its
+    /// execution lifecycle is owned here, independent of any window. Reuses
+    /// the existing instance verbatim (no new session, no disk hydration) so
+    /// all publishers keep firing uninterrupted.
     ///
-    /// No-op if the window doesn't exist, isn't streaming, or was already
-    /// detached.
-    public func detachChatWindow(windowId: UUID) {
-        guard taskIdByWindow[windowId] == nil,
-            let session = ChatWindowManager.shared.windowState(id: windowId)?.session,
-            session.isStreaming
-        else { return }
+    /// Returns the task id, or nil if the session isn't streaming. If the
+    /// session is already registry-owned, returns the existing task id.
+    @discardableResult
+    func adoptSession(_ session: ChatSession, windowId: UUID? = nil) -> UUID? {
+        // Already tracked? Just (re)bind the window.
+        if let existing = backgroundTasks.values.first(where: { $0.chatSession === session }) {
+            if let windowId { taskIdByWindow[windowId] = existing.id }
+            return existing.id
+        }
+        // Adoptable while executing OR paused on a clarify prompt — a run
+        // waiting for input is still alive and must survive the view going
+        // away. (The clarify observer installed below immediately replays
+        // the pause into `.waitingForInput`.)
+        guard session.isStreaming || session.awaitingClarify != nil else { return nil }
 
         // Persist before adopting so the sidebar and `openTaskWindow` reload
         // path both see a real saved row for this session.
@@ -172,19 +392,37 @@ public final class BackgroundTaskManager: ObservableObject {
         )
         registerTask(state)
         observeChatTask(state, session: session)
-        taskIdByWindow[windowId] = state.id
-        print("[BackgroundTaskManager] Detached chat window \(windowId) as task \(state.id)")
+        if let windowId { taskIdByWindow[windowId] = state.id }
+        recomputeSortedToastTasks()
+        return state.id
+    }
+
+    /// Detach a streaming chat window's session into a background task so
+    /// the user can close the window without killing the in-flight stream.
+    /// The detached task surfaces in `NotchView` and can be re-opened via
+    /// `openTaskWindow(_:)`.
+    ///
+    /// No-op if the window doesn't exist, isn't streaming, or was already
+    /// detached.
+    public func detachChatWindow(windowId: UUID) {
+        guard taskIdByWindow[windowId] == nil,
+            let session = ChatWindowManager.shared.windowState(id: windowId)?.session
+        else { return }
+        if let taskId = adoptSession(session, windowId: windowId) {
+            print("[BackgroundTaskManager] Detached chat window \(windowId) as task \(taskId)")
+        }
     }
 
     /// Open a window for a background task
     public func openTaskWindow(_ backgroundId: UUID) {
         guard let state = backgroundTasks[backgroundId] else { return }
 
-        if let context = state.executionContext {
+        if let context = state.executionContext ?? hydrateRetainedTask(state) {
             let windowId = ChatWindowManager.shared.createWindowForContext(context, showImmediately: true)
             // Bind window→task so closing this window doesn't kill the
-            // still-running task — gated in `ChatWindowManager.windowWillClose`.
-            taskIdByWindow[windowId] = backgroundId
+            // still-running task — gated in `ChatWindowManager.windowWillClose` —
+            // and so the notch/toast stops reporting a chat that's now visible.
+            bindWindow(windowId, toTask: backgroundId)
         }
 
         if !state.status.isActive {
@@ -231,16 +469,27 @@ public final class BackgroundTaskManager: ObservableObject {
         // Drop any window→task bindings pointing here so a still-open
         // window's close path stops thinking the task is alive.
         taskIdByWindow = taskIdByWindow.filter { $0.value != backgroundId }
+        // Drop any deferred start so a finalized queued task can't launch.
+        queuedOrder.removeAll { $0 == backgroundId }
+        pendingStarts.removeValue(forKey: backgroundId)
 
         state.releaseReferences()
 
         backgroundTasks.removeValue(forKey: backgroundId)
+        persistRetainedTabs()
         recomputeSortedToastTasks()
+        pumpQueue()
     }
 
     /// Cancel all active background tasks. Called during app termination.
+    /// Queued requests are cancelled FIRST: cancelling a running task frees
+    /// its slot and pumps the queue, so doing it the other way around would
+    /// briefly promote (and start) queued work mid-shutdown.
     public func cancelAllTasks() {
-        for id in backgroundTasks.keys {
+        for queuedId in queuedOrder {
+            cancelTask(queuedId)
+        }
+        for (id, state) in backgroundTasks where state.status.isActive {
             cancelTask(id)
         }
     }
@@ -270,12 +519,18 @@ public final class BackgroundTaskManager: ObservableObject {
         }
     }
 
-    /// Cancel a background task
+    /// Cancel a background task (queued or running)
     public func cancelTask(_ backgroundId: UUID) {
         guard let state = backgroundTasks[backgroundId] else { return }
 
+        // A queued task never started — drop its deferred start so a later
+        // pump can't resurrect it.
+        queuedOrder.removeAll { $0 == backgroundId }
+        pendingStarts.removeValue(forKey: backgroundId)
+
         state.chatSession?.stop()
         state.status = .cancelled
+        state.captureContextPreview()
         // Mirror the markCompleted finalisation for the agent_runs row
         // so cancelled runs don't sit in `running` forever in the
         // Activity tab.
@@ -308,7 +563,92 @@ public final class BackgroundTaskManager: ObservableObject {
             type: .cancelled,
             json: PluginHostContext.serializeCancelledEvent(taskTitle: state.taskTitle)
         )
+        releaseResidencyAndRearmChatWarmup(after: state)
         scheduleAutoFinalize(backgroundId)
+        persistRetainedTabs()
+        recomputeSortedToastTasks()
+        pumpQueue()
+    }
+
+    /// Close a notch agent tab: cancel every active (running / queued /
+    /// waiting) notch-visible task for the agent and finalize the whole
+    /// group atomically. Terminal tasks in the group are finalized without
+    /// a cancel pass.
+    ///
+    /// The group's deferred queued starts are dropped up front:
+    /// `cancelTask` pumps the queue after each cancellation, and a running
+    /// task's freed slot must not briefly promote (and start) this agent's
+    /// own queued work mid-close.
+    public func closeAgentTaskGroup(agentId: UUID) {
+        let ids = sortedToastTasks.filter { $0.agentId == agentId }.map(\.id)
+        guard !ids.isEmpty else { return }
+
+        for id in ids {
+            queuedOrder.removeAll { $0 == id }
+            pendingStarts.removeValue(forKey: id)
+        }
+        for id in ids where backgroundTasks[id]?.status.isActive == true {
+            cancelTask(id)
+        }
+        for id in ids {
+            finalizeTask(id)
+        }
+    }
+
+    /// Submit a quick reply from the notch straight into a task's retained
+    /// `ChatSession`, using the same canonical send path as the chat
+    /// window. For a `.waitingForInput` task this answers the pending
+    /// clarify prompt (`send` clears `awaitingClarify` and resumes the
+    /// loop); for a `.completed` task it starts a follow-up turn and
+    /// revives the session before terminal cleanup dehydrates it.
+    ///
+    /// Returns false when the task is missing, its session is gone, the
+    /// text is empty, or the task is not in a replyable state (running /
+    /// queued work takes input via the chat window; failed / cancelled
+    /// runs are view-only).
+    @discardableResult
+    public func submitQuickReply(_ backgroundId: UUID, text: String) -> Bool {
+        guard let state = backgroundTasks[backgroundId] else { return false }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        switch state.status {
+        case .waitingForInput, .completed:
+            break
+        case .queued, .running, .failed, .cancelled:
+            return false
+        }
+
+        // A completed task is already on its terminal-cleanup timer; a
+        // follow-up revives the run, so stop dehydration before dispatching.
+        cancelAutoFinalize(backgroundId)
+        let wasRetained = state.chatSession == nil
+        guard let context = state.executionContext ?? hydrateRetainedTask(state),
+            let session = state.chatSession
+        else { return false }
+        if taskObservers[backgroundId] == nil {
+            observeChatTask(state, session: session)
+        }
+        if wasRetained {
+            state.status = .running
+            state.currentStep = "Preparing follow-up..."
+            persistRetainedTabs()
+            recomputeSortedToastTasks()
+            Task { @MainActor in
+                await context.prepare()
+                session.send(trimmed)
+            }
+            return true
+        }
+        // Headless conversations follow the agent's current default model
+        // on every turn (no-op for window chats); the retained branch above
+        // gets the same treatment via `context.prepare()`.
+        session.applyAgentDefaultModelForDispatch()
+        // `send` clears any clarify pause / stale prompt overlay and starts
+        // the next run; the streaming observer transitions the task back to
+        // `.running`, so no status write is needed here.
+        session.send(trimmed)
+        return true
     }
 
     /// Soft-stop a running task by cancelling its current stream.
@@ -368,7 +708,7 @@ public final class BackgroundTaskManager: ObservableObject {
             return nil
         }
 
-        guard canDispatchNewTask(source: request.source, agentId: request.agentId) else { return nil }
+        guard isDispatchRequestValid(source: request.source, agentId: request.agentId) else { return nil }
 
         // KPI: an agent run accepted via background dispatch (HTTP dispatch
         // endpoint, plugin, or schedule).
@@ -411,15 +751,20 @@ public final class BackgroundTaskManager: ObservableObject {
             )
         }
 
-        // Register state before starting so awaitCompletion always finds the task
+        // Admission: capacity available → start immediately; saturated →
+        // register as `.queued` and defer the start until `pumpQueue()`
+        // promotes it (FIFO). Either way the request is registered before
+        // execution so `awaitCompletion` always finds the task.
+        let startsImmediately = hasExecutionCapacity(agentId: request.agentId)
+
         let state = BackgroundTaskState(
             id: context.id,
             taskTitle: context.title ?? "Chat",
             agentId: context.agentId,
             chatSession: context.chatSession,
             executionContext: context,
-            status: .running,
-            currentStep: "Running...",
+            status: startsImmediately ? .running : .queued,
+            currentStep: startsImmediately ? "Running..." : "Queued",
             source: request.source,
             sourcePluginId: request.sourcePluginId,
             externalSessionKey: request.externalSessionKey,
@@ -437,76 +782,106 @@ public final class BackgroundTaskManager: ObservableObject {
         registerTask(state)
         observeChatTask(state, session: context.chatSession)
 
-        // Agent DB run logging (spec §1.4 + §8). Only DB-enabled agents
-        // get an `agent_runs` row + a bound `currentRunId`; for the
-        // default agent and any user-created agent that hasn't opted
-        // in, this is a no-op so the existing dispatch surface keeps
-        // the same behavior and the same overhead.
-        let agentMgr = AgentManager.shared
-        let dbEnabled = agentMgr.effectiveDBEnabled(for: context.agentId)
         // Pre-seed the per-run budget caps from `Agent.settings.limits`
         // (spec §11.3). `tokensIn/Out` and `costUSD` start at 0 and are
         // updated mid-stream by `recordUsage(...)`; the dispatcher
         // cancels the task once either threshold is crossed.
-        if let agent = agentMgr.agent(for: context.agentId) {
+        if let agent = AgentManager.shared.agent(for: context.agentId) {
             state.runTokensLimit = agent.settings.limits.runTokensLimit
             state.runCostUSDLimit = agent.settings.limits.runCostUSDLimit
         }
-        var boundRunId: UUID? = nil
-        var boundActor: String = "user"
-        if dbEnabled {
-            let triggerKind = Self.triggerKind(for: request.source)
-            // `triggerPayload` is intentionally minimal: persisting the
-            // full prompt here would duplicate ChatHistoryDatabase data
-            // and inflate the scheduler DB. We surface the dispatch
-            // source + external key so the Activity tab can tag the
-            // row with what woke it.
-            let triggerPayload = Self.triggerPayload(for: request)
-            do {
-                try SchedulerDatabase.shared.open()
-                let runId = try SchedulerDatabase.shared.recordRunStart(
-                    agentId: context.agentId,
-                    triggerKind: triggerKind,
-                    triggerPayload: triggerPayload,
-                    instructions: request.prompt
-                )
-                boundRunId = runId
-                state.agentRunId = runId
-                boundActor = "agent"
-            } catch {
-                print(
-                    "[BackgroundTaskManager] recordRunStart failed for agent "
-                        + "\(context.agentId): \(error)"
-                )
-            }
-        }
 
-        // Bind the run-id + actor + background-task id for the entire
-        // chat task. `chatSession.send` creates an unstructured
-        // `Task { @MainActor in ... }` inside `ExecutionContext.start`
-        // — unstructured Tasks inherit task locals captured at the
-        // moment of creation, so any `db_*` tool call or streaming
-        // producer dispatched from the inference loop picks these up
-        // without needing per-call wiring. `currentBackgroundId` is
-        // the same `BackgroundTaskState.id` we just registered, so
-        // streaming layers can call `recordUsage(backgroundId:)` for
-        // mid-stream budget enforcement (spec §11.3).
-        //
-        // `isExternalSurface` is rebound here from request metadata so the
-        // externally-denied tool policy holds at the dispatcher layer even if
-        // an upstream task-local binding (e.g. the HTTP handler's wrapper)
-        // were lost across the dispatch pipeline. External-ness can only be
-        // widened, never narrowed: an inherited external context stays
-        // external for loopback/plugin/schedule requests too.
-        let externalSurface = Self.resolvedExternalSurface(for: request)
-        await ChatExecutionContext.$isExternalSurface.withValue(externalSurface) {
-            await ChatExecutionContext.$currentRunId.withValue(boundRunId) {
-                await ChatExecutionContext.$currentRunActor.withValue(boundActor) {
-                    await ChatExecutionContext.$currentBackgroundId.withValue(context.id) {
-                        await context.start(prompt: request.prompt)
+        // The actual execution start. Runs immediately when a slot is
+        // available, or later from `pumpQueue()` when queued. Everything
+        // that marks a run as "started" (the `agent_runs` row, the
+        // task-local bindings, `context.start`) lives here so a queued
+        // request has no execution side effects until promoted.
+        let startWork: @MainActor () async -> Void = { [weak state] in
+            guard let state else { return }
+
+            // Agent DB run logging (spec §1.4 + §8). Only DB-enabled agents
+            // get an `agent_runs` row + a bound `currentRunId`; for the
+            // default agent and any user-created agent that hasn't opted
+            // in, this is a no-op so the existing dispatch surface keeps
+            // the same behavior and the same overhead.
+            var boundRunId: UUID? = nil
+            var boundActor: String = "user"
+            if AgentManager.shared.effectiveDBEnabled(for: context.agentId) {
+                let triggerKind = Self.triggerKind(for: request.source)
+                // `triggerPayload` is intentionally minimal: persisting the
+                // full prompt here would duplicate ChatHistoryDatabase data
+                // and inflate the scheduler DB. We surface the dispatch
+                // source + external key so the Activity tab can tag the
+                // row with what woke it.
+                let triggerPayload = Self.triggerPayload(for: request)
+                do {
+                    try SchedulerDatabase.shared.open()
+                    let runId = try SchedulerDatabase.shared.recordRunStart(
+                        agentId: context.agentId,
+                        triggerKind: triggerKind,
+                        triggerPayload: triggerPayload,
+                        instructions: request.prompt
+                    )
+                    boundRunId = runId
+                    state.agentRunId = runId
+                    boundActor = "agent"
+                } catch {
+                    print(
+                        "[BackgroundTaskManager] recordRunStart failed for agent "
+                            + "\(context.agentId): \(error)"
+                    )
+                }
+            }
+            // Bind the run-id + actor + background-task id for the entire
+            // chat task. `chatSession.send` creates an unstructured
+            // `Task { @MainActor in ... }` inside `ExecutionContext.start`
+            // — unstructured Tasks inherit task locals captured at the
+            // moment of creation, so any `db_*` tool call or streaming
+            // producer dispatched from the inference loop picks these up
+            // without needing per-call wiring. `currentBackgroundId` is
+            // the same `BackgroundTaskState.id` we just registered, so
+            // streaming layers can call `recordUsage(backgroundId:)` for
+            // mid-stream budget enforcement (spec §11.3).
+            //
+            // `isExternalSurface` is rebound here from request metadata so the
+            // externally-denied tool policy holds at the dispatcher layer even if
+            // an upstream task-local binding (e.g. the HTTP handler's wrapper)
+            // were lost across the dispatch pipeline. External-ness can only be
+            // widened, never narrowed: an inherited external context stays
+            // external for loopback/plugin/schedule requests too.
+            let externalSurface = Self.resolvedExternalSurface(for: request)
+            // An unattended, app-authored trigger (recurring schedule, self-
+            // scheduled wake-up, or watcher) fires with no interactive user to
+            // answer an approval card. Marked only when NOT external, so the
+            // narrow `.ask` auto-approval it unlocks can never be reached from a
+            // loopback/HTTP/MCP/plugin dispatch.
+            let unattended =
+                !externalSurface
+                && (request.source == .schedule
+                    || request.source == .selfSchedule
+                    || request.source == .watcher)
+            await ChatExecutionContext.$currentSessionSource.withValue(request.source) {
+                await ChatExecutionContext.$isUnattendedDispatch.withValue(unattended) {
+                    await ChatExecutionContext.$isExternalSurface.withValue(externalSurface) {
+                        await ChatExecutionContext.$currentRunId.withValue(boundRunId) {
+                            await ChatExecutionContext.$currentRunActor.withValue(boundActor) {
+                                await ChatExecutionContext.$currentBackgroundId.withValue(context.id) {
+                                    await context.start(prompt: request.prompt)
+                                }
+                            }
+                        }
                     }
                 }
             }
+        }
+
+        if startsImmediately {
+            await startWork()
+        } else {
+            queuedOrder.append(context.id)
+            pendingStarts[context.id] = startWork
+            state.appendActivity(kind: .info, title: "Queued — waiting for a free slot")
+            print("[BackgroundTaskManager] Queued chat task \(context.id) (capacity saturated)")
         }
 
         let reattachNote = reattach == nil ? "" : " (reattached to session \(context.id))"
@@ -594,56 +969,159 @@ public final class BackgroundTaskManager: ObservableObject {
 
     private static let maxTasksPerAgent = 5
 
-    /// Check whether a new task can be dispatched without exceeding the global
-    /// limit or the per-agent limit. The global limit is user-configurable via
-    /// settings; the per-agent limit prevents a single agent from monopolizing
-    /// all slots in multi-agent scenarios.
-    private func canDispatchNewTask(source: SessionSource, agentId: UUID?) -> Bool {
+    /// Structural validity of a dispatch request. Capacity is NOT checked
+    /// here — a valid request that arrives while the limits are saturated is
+    /// accepted and queued rather than rejected.
+    private func isDispatchRequestValid(source: SessionSource, agentId: UUID?) -> Bool {
         // Plugin / sandbox callers must supply an agentId. Without one, the
-        // per-agent cap below would be silently skipped — letting a single
+        // per-agent cap would be silently skipped — letting a single
         // sandboxed plugin saturate every slot. The bridge always provides
         // an id post-fix, so a nil here is a programmer error.
         if source == .plugin, agentId == nil {
             print("[BackgroundTaskManager] Refusing plugin dispatch without agentId")
             return false
         }
+        return true
+    }
 
+    /// Whether an execution slot is free under both the user-configurable
+    /// global limit and the per-agent limit. Only slot-consuming statuses
+    /// count: queued tasks haven't started, and tasks waiting for input
+    /// released their slot.
+    private func hasExecutionCapacity(agentId: UUID?) -> Bool {
         let globalLimit = ToastManager.shared.configuration.maxConcurrentTasks
-        let activeTasks = backgroundTasks.values.filter { $0.status.isActive }
+        let slotted = backgroundTasks.values.filter { $0.status.consumesExecutionSlot }
 
-        guard activeTasks.count < globalLimit else {
-            print("[BackgroundTaskManager] Global task limit reached (\(globalLimit)), rejecting dispatch")
-            return false
-        }
+        guard slotted.count < globalLimit else { return false }
 
         if let agentId {
-            let agentCount = activeTasks.filter { $0.agentId == agentId }.count
-            guard agentCount < Self.maxTasksPerAgent else {
-                print(
-                    "[BackgroundTaskManager] Per-agent task limit reached (\(Self.maxTasksPerAgent)) for agent \(agentId), rejecting dispatch"
-                )
-                return false
-            }
+            let agentCount = slotted.filter { $0.agentId == agentId }.count
+            guard agentCount < Self.maxTasksPerAgent else { return false }
         }
 
         return true
     }
 
+    /// Promote queued tasks into free execution slots, oldest first. A task
+    /// whose agent is still at its per-agent cap is skipped so it doesn't
+    /// head-of-line block work for other agents; it stays queued in place.
+    private func pumpQueue() {
+        while true {
+            // Drop stale entries (cancelled/finalized while queued).
+            queuedOrder.removeAll { backgroundTasks[$0]?.status != .queued }
+
+            guard
+                let nextId = queuedOrder.first(where: { id in
+                    guard let state = backgroundTasks[id] else { return false }
+                    return hasExecutionCapacity(agentId: state.agentId)
+                }),
+                let state = backgroundTasks[nextId],
+                let startWork = pendingStarts.removeValue(forKey: nextId)
+            else { return }
+
+            queuedOrder.removeAll { $0 == nextId }
+            // Claim the slot synchronously so a second pump in the same
+            // runloop tick can't over-admit past the limit.
+            state.status = .running
+            state.currentStep = "Running..."
+            state.appendActivity(kind: .info, title: "Started")
+            recomputeSortedToastTasks()
+            print("[BackgroundTaskManager] Promoted queued task \(nextId)")
+            Task { @MainActor in
+                await startWork()
+            }
+        }
+    }
+
     /// Register a new task state and log an initial activity entry.
     private func registerTask(_ state: BackgroundTaskState) {
         backgroundTasks[state.id] = state
+        persistRetainedTabs()
         recomputeSortedToastTasks()
         state.appendActivity(kind: .info, title: "Running in background")
         emitPluginEvent(state, type: .started, json: PluginHostContext.serializeStartedEvent(state: state))
     }
 
     #if DEBUG
+        /// Test-only: a fully isolated manager instance. Scheduler tests —
+        /// especially ones exercising `cancelAllTasks` (app shutdown) —
+        /// must not run against `.shared`, where they would cancel tasks
+        /// registered by other concurrently-running suites.
+        static func makeForTesting() -> BackgroundTaskManager {
+            BackgroundTaskManager(
+                persistsRetainedTabs: false,
+                powerManager: nil
+            )
+        }
+
+        static func makeForTesting(powerManager: AgentRunPowerManager) -> BackgroundTaskManager {
+            BackgroundTaskManager(
+                persistsRetainedTabs: false,
+                powerManager: powerManager
+            )
+        }
+
+        static func makeForTestingRetaining(defaults: UserDefaults) -> BackgroundTaskManager {
+            BackgroundTaskManager(
+                persistsRetainedTabs: true,
+                retainedTabsDefaults: defaults,
+                powerManager: nil
+            )
+        }
+
         /// Test-only: insert a pre-built `BackgroundTaskState` directly so
         /// regression tests can exercise `observeChatTask` without spinning up
         /// a real `ExecutionContext` + MLX-backed engine.
         func registerTaskForTesting(_ state: BackgroundTaskState) {
             backgroundTasks[state.id] = state
             recomputeSortedToastTasks()
+        }
+
+        /// Test-only: register a task through the same admission gate
+        /// `dispatchChat` uses — it starts immediately when capacity is
+        /// available, or lands in the FIFO queue with its start deferred
+        /// until `pumpQueue()` promotes it. Lets scheduler tests exercise
+        /// queueing, promotion order, and cancellation without a real
+        /// dispatch pipeline.
+        func admitTaskForTesting(
+            _ state: BackgroundTaskState,
+            start: @escaping @MainActor () async -> Void
+        ) {
+            if hasExecutionCapacity(agentId: state.agentId) {
+                state.status = .running
+                backgroundTasks[state.id] = state
+                recomputeSortedToastTasks()
+                Task { @MainActor in await start() }
+            } else {
+                state.status = .queued
+                state.currentStep = "Queued"
+                backgroundTasks[state.id] = state
+                queuedOrder.append(state.id)
+                pendingStarts[state.id] = start
+                recomputeSortedToastTasks()
+            }
+        }
+
+        /// Test-only: run a queue promotion pass.
+        func pumpQueueForTesting() {
+            pumpQueue()
+        }
+
+        /// Test-only: whether terminal cleanup is pending. Visible tasks
+        /// dehydrate into durable tabs; headless tasks finalize completely.
+        func hasPendingAutoFinalizeForTesting(_ id: UUID) -> Bool {
+            autoFinalizeTasks[id] != nil
+        }
+
+        /// Test-only: run the terminal resource-release path immediately
+        /// instead of sleeping for the production cleanup delay.
+        func dehydrateTaskForTesting(_ id: UUID) {
+            dehydrateTerminalTask(id)
+        }
+
+        func isTaskDehydratedForTesting(_ id: UUID) -> Bool {
+            guard let state = backgroundTasks[id] else { return false }
+            return state.chatSession == nil && state.executionContext == nil
         }
     #endif
 
@@ -666,7 +1144,8 @@ public final class BackgroundTaskManager: ObservableObject {
             folderBookmark: request.folderBookmark,
             source: request.source,
             sourcePluginId: request.sourcePluginId,
-            externalSessionKey: request.externalSessionKey
+            externalSessionKey: request.externalSessionKey,
+            loadIntent: request.loadIntent
         )
     }
 
@@ -676,6 +1155,8 @@ public final class BackgroundTaskManager: ObservableObject {
         switch state.status {
         case .completed:
             return .completed(sessionId: state.executionContext?.chatSession.sessionId)
+        case .failed(let summary):
+            return .failed(summary)
         case .cancelled:
             return .cancelled
         default:
@@ -692,7 +1173,7 @@ public final class BackgroundTaskManager: ObservableObject {
     /// is the minimal mapping that's stable for Phase 1.
     private static func triggerKind(for source: SessionSource) -> AgentRunTriggerKind {
         switch source {
-        case .chat, .plugin, .http: return .user
+        case .chat, .plugin, .http, .channel, .imported: return .user
         case .schedule: return .recurringSchedule
         case .watcher: return .watcher
         case .selfSchedule: return .schedule
@@ -720,8 +1201,9 @@ public final class BackgroundTaskManager: ObservableObject {
     /// Mark a task as completed and signal callers.
     /// The toast persists until the user views it or dismisses manually.
     private func markCompleted(_ state: BackgroundTaskState, success: Bool, summary: String) {
-        state.status = .completed(success: success, summary: summary)
+        state.status = success ? .completed(summary: summary) : .failed(summary: summary)
         state.currentStep = nil
+        state.captureContextPreview()
         state.executionContext?.chatSession.save()
         // Close out the scheduler `agent_runs` row, if one was opened
         // for this task. `recordRunEnd` is a single UPDATE so the cost
@@ -766,6 +1248,62 @@ public final class BackgroundTaskManager: ObservableObject {
             outputText: outputText
         )
         emitPluginEvent(state, type: eventType, json: json)
+        releaseResidencyAndRearmChatWarmup(after: state)
+        // Schedule terminal cleanup. Toast-visible sessions become lightweight
+        // durable tabs (observers and live session released); truly headless
+        // runs finalize completely. Both paths prevent stale observers from
+        // colliding with a later external-session reattach.
+        scheduleAutoFinalize(state.id)
+        persistRetainedTabs()
+        recomputeSortedToastTasks()
+        pumpQueue()
+    }
+
+    /// A dispatched run that reached a terminal state no longer needs its
+    /// model, but nothing released it: the run's generations carry a
+    /// non-chat request source, so the chat-close acceleration skips the
+    /// model by design and it sat resident until the full idle policy
+    /// expired — while every speculative chat warm-up refused to displace
+    /// it ("a different model is resident"). Release the finished run's
+    /// residency claim, then re-arm warm-up on the active chat window.
+    ///
+    /// Eviction protections all stay in place: the runtime releases only a
+    /// resident owned by this task's source class, keeps anything an open
+    /// window or still-active task references (this task itself is already
+    /// terminal, so it no longer pins its model), re-checks wants and leases
+    /// at fire time, and the re-armed warm-up still loads with background
+    /// intent — it fills the freed slot and can never evict.
+    private func releaseResidencyAndRearmChatWarmup(after state: BackgroundTaskState) {
+        let taskSource = state.source.inferenceSource
+        let modelName = state.chatSession?.selectedModel
+        Task { @MainActor in
+            // The terminal transition can observably fire before the run's
+            // engine teardown releases its model lease and schedules the
+            // idle decision the acceleration below shortens. Give that
+            // teardown a beat; if it still hasn't settled, the guards
+            // no-op the release and the model simply follows the full idle
+            // policy (the freed-slot rewarm covers the chat either way).
+            try? await Task.sleep(for: .milliseconds(300))
+            if let modelName, !modelName.isEmpty, taskSource != .chatUI {
+                await ModelRuntime.shared.accelerateIdleUnloadAfterBackgroundTaskCompleted(
+                    modelName: modelName,
+                    taskSource: taskSource,
+                    keeping: ChatWindowManager.shared.activeLocalModelNames(),
+                    isModelStillWanted: { name in
+                        await MainActor.run {
+                            ChatWindowManager.shared.activeLocalModelNames().contains(name)
+                        }
+                    }
+                )
+            }
+            // Re-arm regardless of source (a detached chat-owned run blocks
+            // other windows' warm-ups the same way while it streams). The
+            // same-model window coalesces onto the still-resident model; a
+            // different-model window warms once the release lands — the
+            // freed-slot path in ChatWarmupController covers the case where
+            // this re-arm still races the unload.
+            ChatWindowManager.shared.rearmChatWarmupAfterBackgroundWork()
+        }
     }
 
     // MARK: - Private: Run-Trace Persistence
@@ -868,11 +1406,90 @@ public final class BackgroundTaskManager: ObservableObject {
         }
     }
 
-    // MARK: - Private: Auto-Finalize
+    // MARK: - Private: Retained Notch Tabs
 
-    /// Schedule automatic toast removal after 15 seconds.
-    /// Called when a task completes or is cancelled. If the user opens the
-    /// task window before the timer fires, `finalizeTask` cancels it.
+    private func restoreRetainedTabs() {
+        guard persistsRetainedTabs,
+            let data = retainedTabsDefaults.data(forKey: Self.retainedTabsDefaultsKey),
+            let records = try? JSONDecoder().decode([RetainedNotchTabRecord].self, from: data)
+        else { return }
+
+        for record in records {
+            backgroundTasks[record.id] = BackgroundTaskState(
+                retainedId: record.id,
+                taskTitle: record.title,
+                agentId: record.agentId,
+                status: record.status,
+                createdAt: record.createdAt,
+                source: record.source,
+                sourcePluginId: record.sourcePluginId,
+                externalSessionKey: record.externalSessionKey,
+                contextPreview: record.contextPreview
+            )
+        }
+        recomputeSortedToastTasks()
+    }
+
+    private func persistRetainedTabs() {
+        guard persistsRetainedTabs else { return }
+        let records =
+            backgroundTasks.values
+            .filter { $0.showToast && $0.status.isTerminal }
+            .compactMap(RetainedNotchTabRecord.init(state:))
+            .sorted { $0.createdAt < $1.createdAt }
+        guard !records.isEmpty else {
+            retainedTabsDefaults.removeObject(forKey: Self.retainedTabsDefaultsKey)
+            return
+        }
+        if let data = try? JSONEncoder().encode(records) {
+            retainedTabsDefaults.set(data, forKey: Self.retainedTabsDefaultsKey)
+        }
+    }
+
+    /// Rebuild a live execution context from the canonical chat-history row.
+    /// Called only after an explicit reply/open action on a dehydrated tab.
+    private func hydrateRetainedTask(_ state: BackgroundTaskState) -> ExecutionContext? {
+        if let context = state.executionContext { return context }
+        guard var sessionData = ChatSessionStore.load(id: state.id) else { return nil }
+        // The retained record is the user's latest explicit rename. If a
+        // storage-key transition deferred the original DB rename, reconcile
+        // it before hydration so opening/replying cannot resurrect an old
+        // sidebar title.
+        if sessionData.title != state.taskTitle {
+            sessionData.title = state.taskTitle
+            // Title-only reconciliation: a targeted async update instead of a
+            // full synchronous saveSession (encode + transaction of the whole
+            // transcript on the calling thread).
+            ChatSessionStore.renameTitleAsync(id: state.id, title: state.taskTitle)
+        }
+        let context = ExecutionContext(reattaching: sessionData)
+        state.restoreReferences(context: context)
+        state.taskTitle = sessionData.title
+        return context
+    }
+
+    /// Release the expensive live session and Combine observers while leaving
+    /// a lightweight, persisted terminal tab in the notch.
+    private func dehydrateTerminalTask(_ taskId: UUID) {
+        guard let state = backgroundTasks[taskId], state.status.isTerminal else { return }
+        state.captureContextPreview()
+        cancelAutoFinalize(taskId)
+        taskObservers[taskId]?.forEach { $0.cancel() }
+        taskObservers.removeValue(forKey: taskId)
+        chatTurnCounts.removeValue(forKey: taskId)
+        streamingObserved.remove(taskId)
+        taskIdByWindow = taskIdByWindow.filter { $0.value != taskId }
+        state.releaseReferences()
+        persistRetainedTabs()
+        recomputeSortedToastTasks()
+        objectWillChange.send()
+    }
+
+    // MARK: - Private: Terminal Cleanup
+
+    /// After 15 seconds, release live resources for a terminal task. Visible
+    /// notch tabs remain as durable lightweight records until the user closes
+    /// them; headless tasks still finalize completely.
     private func scheduleAutoFinalize(_ taskId: UUID) {
         cancelAutoFinalize(taskId)
         autoFinalizeTasks[taskId] = Task { @MainActor in
@@ -880,7 +1497,11 @@ public final class BackgroundTaskManager: ObservableObject {
             guard !Task.isCancelled else { return }
             guard let state = backgroundTasks[taskId], !state.status.isActive else { return }
             guard !dispatchHoldTasks.contains(taskId) else { return }
-            finalizeTask(taskId)
+            if state.showToast {
+                dehydrateTerminalTask(taskId)
+            } else {
+                finalizeTask(taskId)
+            }
         }
     }
 
@@ -951,6 +1572,7 @@ public final class BackgroundTaskManager: ObservableObject {
             state.status = .running
             state.currentStep = "Running..."
         } else if state.status == .running, streamingObserved.contains(taskId) {
+            defer { pumpQueue() }
             // Belt-and-suspenders: if the streaming-end tick somehow
             // races ahead of the clarify sink, inspect the live session
             // before tripping the terminal branch. The `.running` guard
@@ -966,18 +1588,21 @@ public final class BackgroundTaskManager: ObservableObject {
 
     /// Bridge `ChatSession.awaitingClarify` into the per-task plugin event
     /// surface. Setting a payload transitions the task to
-    /// `.awaitingClarification` and emits `OSR_TASK_EVENT_CLARIFICATION`.
+    /// `.waitingForInput` and emits `OSR_TASK_EVENT_CLARIFICATION`.
     /// Clearing it is a no-op here — the next streaming tick is the
     /// single writer for the `.running` transition.
     private func handleChatClarifyChange(taskId: UUID, payload: ClarifyPayload?) {
         guard let state = backgroundTasks[taskId], let payload else { return }
-        state.status = .awaitingClarification
+        state.status = .waitingForInput
         state.currentStep = "Waiting for clarification"
         emitPluginEvent(
             state,
             type: .clarification,
             json: PluginHostContext.serializeClarificationEvent(payload: payload)
         )
+        // Waiting requests stay alive but release their execution slot so
+        // queued work isn't starved by a task idling on the user.
+        pumpQueue()
     }
 
     /// Scan newly added turns for tool calls and record them as activity.

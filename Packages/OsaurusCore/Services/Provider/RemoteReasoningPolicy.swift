@@ -272,6 +272,18 @@ struct RemoteReasoningPolicy {
             return (normalized, nil)
         }
 
+        // The official OpenAI API likewise documents `none` as a real
+        // GPT-5.6 reasoning effort (`none` … `max`); stripping it here would
+        // silently re-enable the model's default reasoning. Only `none` is
+        // exempted, and only for GPT-5.6 on the official host — older OpenAI
+        // models and the other direct-rail aliases stay local-only.
+        if normalized == "none",
+            host.lowercased().contains("openai.com"),
+            ModelPickerItem.isPublicGPT56ModelId(model)
+        {
+            return (normalized, nil)
+        }
+
         let isDirectRailEffort: Bool
         switch normalized {
         case "instruct", "chat", "none", "no_think", "nothink", "off", "disabled", "false":

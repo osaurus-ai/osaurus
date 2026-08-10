@@ -308,6 +308,9 @@ struct AnthropicTool: Codable, Sendable {
     let name: String
     let description: String?
     let input_schema: JSONValue?
+    /// Anthropic's GA per-tool opt-in for streaming argument values as they
+    /// are generated instead of buffering each complete value server-side.
+    let eager_input_streaming: Bool?
 }
 
 /// Tool choice specification
@@ -544,11 +547,11 @@ struct ContentBlockStartEvent: Codable, Sendable {
             let name: String
             let input: [String: AnyCodableValue]
 
-            init(id: String, name: String) {
+            init(id: String, name: String, input: [String: AnyCodableValue] = [:]) {
                 self.type = "tool_use"
                 self.id = id
                 self.name = name
-                self.input = [:]
+                self.input = input
             }
         }
 
@@ -577,7 +580,12 @@ struct ContentBlockStartEvent: Codable, Sendable {
             case "tool_use":
                 let id = try container.decode(String.self, forKey: .id)
                 let name = try container.decode(String.self, forKey: .name)
-                self = .toolUse(ToolUseBlockStart(id: id, name: name))
+                let input =
+                    try container.decodeIfPresent(
+                        [String: AnyCodableValue].self,
+                        forKey: .input
+                    ) ?? [:]
+                self = .toolUse(ToolUseBlockStart(id: id, name: name, input: input))
             case "thinking":
                 self = .thinking(ThinkingBlockStart())
             default:

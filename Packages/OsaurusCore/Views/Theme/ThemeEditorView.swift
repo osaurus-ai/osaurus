@@ -439,6 +439,14 @@ struct ThemeEditorView: View {
     private var bordersAndEffectsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             editorSection(L("Borders & Effects")) {
+                Picker("Input Box", selection: $editingTheme.inputStyle) {
+                    Text("Gradient", bundle: .module).tag(ThemeInputStyle.gradient)
+                    Text("Shadow", bundle: .module).tag(ThemeInputStyle.shadow)
+                }
+                .pickerStyle(.segmented)
+
+                Divider().opacity(0.3)
+
                 Text("Borders", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
                 )
@@ -1568,16 +1576,28 @@ struct ThemeChatPreview: View {
             .overlay(
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                .white.opacity(theme.isDark ? 0.2 : 0.3),
-                                c(theme.colors.primaryBorder).opacity(0.12),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 0.5
+                        theme.inputStyle == .shadow
+                            ? AnyShapeStyle(c(theme.colors.primaryBorder).opacity(theme.isDark ? 0.8 : 0.7))
+                            : AnyShapeStyle(
+                                LinearGradient(
+                                    colors: [
+                                        .white.opacity(theme.isDark ? 0.2 : 0.3),
+                                        c(theme.colors.primaryBorder).opacity(0.12),
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            ),
+                        lineWidth: theme.inputStyle == .shadow ? 0.75 : 0.5
                     )
+            )
+            .shadow(
+                color: theme.inputStyle == .shadow
+                    ? c(theme.isDark ? theme.colors.accentColor : theme.colors.shadowColor).opacity(0.07)
+                    : .clear,
+                radius: theme.inputStyle == .shadow ? 4 : 0,
+                x: 0,
+                y: theme.inputStyle == .shadow && !theme.isDark ? 1 : 0
             )
         }
     }

@@ -226,55 +226,61 @@ enum DatabaseImport {
         var field = ""
         var record: [String] = []
         var inQuotes = false
-        var iterator = text.makeIterator()
-        var pending: Character? = nil
+        let scalars = text.unicodeScalars
+        let delimiterScalar = delimiter.unicodeScalars.first
+        let quote = UnicodeScalar("\"")
+        let carriageReturn = UnicodeScalar("\r")
+        let lineFeed = UnicodeScalar("\n")
+        var index = scalars.startIndex
 
-        func nextChar() -> Character? {
-            if let p = pending { pending = nil; return p }
-            return iterator.next()
-        }
-
-        while let ch = nextChar() {
+        while index != scalars.endIndex {
+            let scalar = scalars[index]
             if inQuotes {
-                if ch == "\"" {
-                    if let following = nextChar() {
-                        if following == "\"" {
-                            field.append("\"")  // escaped quote
+                if scalar == quote {
+                    let nextIndex = scalars.index(after: index)
+                    if nextIndex != scalars.endIndex {
+                        if scalars[nextIndex] == quote {
+                            field.unicodeScalars.append(quote)  // escaped quote
+                            index = scalars.index(after: nextIndex)
                         } else {
                             inQuotes = false
-                            pending = following
+                            index = nextIndex
                         }
                     } else {
                         inQuotes = false
+                        index = nextIndex
                     }
                 } else {
-                    field.append(ch)
+                    field.unicodeScalars.append(scalar)
+                    scalars.formIndex(after: &index)
                 }
                 continue
             }
 
-            switch ch {
-            case "\"":
+            if scalar == quote {
                 inQuotes = true
-            case delimiter:
+                scalars.formIndex(after: &index)
+            } else if scalar == delimiterScalar {
                 record.append(field)
                 field = ""
-            case "\n":
-                record.append(field)
-                records.append(record)
-                field = ""
-                record = []
-            case "\r":
-                // Treat CR / CRLF as a single record break.
+                scalars.formIndex(after: &index)
+            } else if scalar == carriageReturn || scalar == lineFeed {
                 record.append(field)
                 records.append(record)
                 field = ""
                 record = []
-                if let following = nextChar() {
-                    if following != "\n" { pending = following }
+                let nextIndex = scalars.index(after: index)
+                if scalar == carriageReturn,
+                    nextIndex != scalars.endIndex,
+                    scalars[nextIndex] == lineFeed
+                {
+                    index = scalars.index(after: nextIndex)
+                } else {
+                    index = nextIndex
                 }
-            default:
-                field.append(ch)
+            } else {
+                field.unicodeScalars.append(scalar)
+                scalars.formIndex(after: &index)
             }
         }
         // Flush the final field / record (no trailing newline).

@@ -56,7 +56,7 @@ struct ChatHistoryDatabaseTests {
     func saveAndLoadSession_roundtripsAllFields() throws {
         let db = try openInMemory()
         let agentId = UUID()
-        let session = makeSession(
+        var session = makeSession(
             agentId: agentId,
             source: .plugin,
             sourcePluginId: "com.example.telegram",
@@ -64,6 +64,7 @@ struct ChatHistoryDatabaseTests {
             dispatchTaskId: UUID(),
             turnCount: 3
         )
+        session.turns[1].terminalStopReason = "length"
         try db.saveSession(session)
 
         let loaded = db.loadSession(id: session.id)
@@ -80,7 +81,71 @@ struct ChatHistoryDatabaseTests {
         #expect(loaded?.turns[0].role == .user)
         #expect(loaded?.turns[0].content == "turn 0")
         #expect(loaded?.turns[1].role == .assistant)
+        #expect(loaded?.turns[1].terminalStopReason == "length")
         #expect(loaded?.turns[2].content == "turn 2")
+    }
+
+    @Test
+    func terminalStopReasonUpdateInvalidatesContentHash() throws {
+        let db = try openInMemory()
+        let id = UUID()
+        var session = makeSession(id: id, turnCount: 2)
+        try db.saveSession(session)
+
+        session.turns[1].terminalStopReason = "length"
+        try db.saveSession(session)
+
+        #expect(db.loadSession(id: id)?.turns[1].terminalStopReason == "length")
+    }
+
+    @Test
+    func modelContextExclusionRoundTripsAndInvalidatesContentHash() throws {
+        let db = try openInMemory()
+        let id = UUID()
+        var session = makeSession(id: id, turnCount: 2)
+        session.turns[1].modelContextExcluded = true
+        try db.saveSession(session)
+
+        #expect(db.loadSession(id: id)?.turns[1].modelContextExcluded == true)
+
+        // The incremental saver must rewrite the same turn when only the
+        // transcript-only marker changes.
+        session.turns[1].modelContextExcluded = false
+        try db.saveSession(session)
+        #expect(db.loadSession(id: id)?.turns[1].modelContextExcluded == false)
+    }
+
+    @Test
+    func sharedArtifactsRoundTripAndInvalidateContentHash() throws {
+        let db = try openInMemory()
+        let id = UUID()
+        var session = makeSession(id: id, turnCount: 2)
+        try db.saveSession(session)
+
+        let artifacts = [
+            SharedArtifact(
+                contextId: id.uuidString,
+                contextType: .chat,
+                filename: "generated-image.png",
+                mimeType: "image/png",
+                fileSize: 123,
+                hostPath: "/tmp/generated-image.png",
+                description: "Generated image"
+            ),
+            SharedArtifact(
+                contextId: id.uuidString,
+                contextType: .chat,
+                filename: "generated-video.mp4",
+                mimeType: "video/mp4",
+                fileSize: 456,
+                hostPath: "/tmp/generated-video.mp4",
+                description: "Generated video"
+            ),
+        ]
+        session.turns[1].sharedArtifacts = artifacts
+        try db.saveSession(session)
+
+        #expect(db.loadSession(id: id)?.turns[1].sharedArtifacts == artifacts)
     }
 
     @Test
@@ -263,5 +328,91 @@ struct ChatHistoryDatabaseTests {
         // Re-saving with the same id should start with no turns from the cascade.
         try db.saveSession(makeSession(id: session.id, turnCount: 0))
         #expect(db.loadSession(id: session.id)?.turns.count == 0)
+    }
+
+    // MARK: - Sandbox changes (v9)
+
+    private func makeSandboxChange(
+        sessionId: String,
+        relativePath: String = "notes/todo.md",
+        kind: SandboxChangeKind = .modified
+    ) -> SandboxWorkspaceChange {
+        SandboxWorkspaceChange(
+            sessionId: sessionId,
+            agentName: "tester",
+            root: .agentHome,
+            relativePath: relativePath,
+            entryType: .file,
+            kind: kind,
+            state: .pending,
+            baselineSignature: "sha256:aaaa",
+            currentSignature: "sha256:bbbb",
+            sourceTool: "sandbox_write_file",
+            firstChangedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            lastChangedAt: Date(timeIntervalSince1970: 1_700_000_100)
+        )
+    }
+
+    @Test
+    func sandboxChanges_roundtripAllFields() throws {
+        let db = try openInMemory()
+        let sessionId = UUID().uuidString
+        let change = makeSandboxChange(sessionId: sessionId)
+        try db.upsertSandboxChange(change)
+
+        let loaded = db.loadSandboxChanges(sessionId: sessionId)
+        #expect(loaded.count == 1)
+        #expect(loaded.first == change)
+    }
+
+    @Test
+    func sandboxChanges_upsertCoalescesByPathKey() throws {
+        let db = try openInMemory()
+        let sessionId = UUID().uuidString
+        try db.upsertSandboxChange(makeSandboxChange(sessionId: sessionId))
+
+        // Same (session, agent, root, path) with a NEW row id must replace,
+        // not duplicate — the unique path key wins over the id.
+        var replacement = makeSandboxChange(sessionId: sessionId, kind: .deleted)
+        replacement.currentSignature = nil
+        try db.upsertSandboxChange(replacement)
+
+        let loaded = db.loadSandboxChanges(sessionId: sessionId)
+        #expect(loaded.count == 1)
+        #expect(loaded.first?.id == replacement.id)
+        #expect(loaded.first?.kind == .deleted)
+        #expect(loaded.first?.currentSignature == nil)
+    }
+
+    @Test
+    func sandboxChanges_deleteByIdAndBySession() throws {
+        let db = try openInMemory()
+        let sessionId = UUID().uuidString
+        let a = makeSandboxChange(sessionId: sessionId, relativePath: "a.txt")
+        let b = makeSandboxChange(sessionId: sessionId, relativePath: "b.txt")
+        try db.upsertSandboxChange(a)
+        try db.upsertSandboxChange(b)
+
+        try db.deleteSandboxChange(id: a.id)
+        #expect(db.loadSandboxChanges(sessionId: sessionId).map(\.relativePath) == ["b.txt"])
+
+        try db.deleteSandboxChanges(sessionId: sessionId)
+        #expect(db.loadSandboxChanges(sessionId: sessionId).isEmpty)
+    }
+
+    @Test
+    func deleteSession_cascadesToSandboxChanges() throws {
+        let db = try openInMemory()
+        let session = makeSession(turnCount: 1)
+        try db.saveSession(session)
+        try db.upsertSandboxChange(makeSandboxChange(sessionId: session.id.uuidString))
+        let other = makeSession(turnCount: 0)
+        try db.saveSession(other)
+        try db.upsertSandboxChange(makeSandboxChange(sessionId: other.id.uuidString))
+
+        try db.deleteSession(id: session.id)
+        #expect(db.loadSandboxChanges(sessionId: session.id.uuidString).isEmpty)
+        // Other sessions' rows are untouched.
+        #expect(db.loadSandboxChanges(sessionId: other.id.uuidString).count == 1)
     }
 }

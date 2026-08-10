@@ -25,6 +25,18 @@ final class WelcomeState: ObservableObject {
     /// send everything that follows live; unchecking it leaves telemetry
     /// undecided so `finishOnboarding` finalizes a decline.
     @Published var shareUsageData: Bool = true
+    @Published var isShowingRedeemCode = false
+
+    let redeemCode = RedeemCodeService(context: .onboarding)
+
+    func openRedeemCode() {
+        isShowingRedeemCode = true
+    }
+
+    func closeRedeemCode() {
+        guard !redeemCode.isSubmitting else { return }
+        isShowingRedeemCode = false
+    }
 }
 
 // MARK: - Welcome Body
@@ -157,6 +169,54 @@ struct WelcomeLegalNotice: View {
             alignment: .center
         )
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+// MARK: - Redeem Code Link
+
+/// Compact first-run affordance that sits above the usage checkbox. An
+/// accent-tinted capsule keeps it visible at rest without competing with the
+/// Get Started CTA, so it reads as an optional perk, not another required
+/// onboarding step.
+struct WelcomeRedeemCodeLink: View {
+    let action: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Text("Have a code?", bundle: .module)
+                    .font(theme.font(size: 12, weight: .medium))
+                    .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
+                HStack(spacing: 2) {
+                    Text("Enter it", bundle: .module)
+                        .font(theme.font(size: 12, weight: .semibold))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                }
+                .foregroundColor(theme.accentColor)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(theme.accentColor.opacity(isHovered ? 0.15 : 0.08))
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(
+                        theme.accentColor.opacity(isHovered ? 0.38 : 0.22),
+                        lineWidth: 1
+                    )
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(theme.animationQuick()) { isHovered = hovering }
+        }
     }
 }
 

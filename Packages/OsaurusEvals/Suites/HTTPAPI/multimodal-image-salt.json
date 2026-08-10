@@ -1,0 +1,14 @@
+{
+  "id": "http_api.multimodal-image-salt",
+  "domain": "http_api",
+  "label": "http api • real image payload answers correctly and the media-salted cache never crosses images",
+  "query": "multimodal image contract",
+  "notes": "Real-media proof (AGENTS.md: 'VL/video rows require real media payloads, media cache salts, and cache-hit validation; text-path evidence does not prove media-path correctness'). Three live requests against the in-process server: (1) a generated red-background/blue-square PNG — the answer must say red; (2) the byte-identical request again — replay may hit the media-salted cache but must stay correct; (3) the inverted twin (blue background/red square) — the answer must flip to blue. A 'red' answer for image B is exactly the stale cross-media cache hit that media salts exist to prevent. Mirrors the Bonsai bundle's own runtime-verification image fixture, so this row is directly comparable to the bundle's upstream proof. SKIPs with the server's typed reason on non-multimodal routes. Off-CI (needs a local vision model).",
+  "fixtures": {},
+  "expect": {
+    "httpAPI": {
+      "scenario": "multimodal_image",
+      "maxTokens": 512
+    }
+  }
+}

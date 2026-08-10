@@ -159,6 +159,49 @@ struct NativeImageToolArtifactBridgeTests {
     }
 
     @Test
+    func videoResult_copiesMP4IntoChatArtifactStore() async throws {
+        try await Self.runLocked { tmp in
+            let generatedDir = tmp.appendingPathComponent("generated", isDirectory: true)
+            try FileManager.default.createDirectory(at: generatedDir, withIntermediateDirectories: true)
+            let generated = generatedDir.appendingPathComponent("clip.mp4")
+            let bytes = Data("mock-mp4".utf8)
+            try bytes.write(to: generated)
+
+            let toolResult = ToolEnvelope.success(
+                tool: "video",
+                result: [
+                    "kind": "generated_media_job",
+                    "media_type": "video",
+                    "job_id": "video-job-1",
+                    "model": "video-model",
+                    "status": "completed",
+                    "already_displayed": true,
+                    "media": [
+                        "path": generated.path,
+                        "url": generated.absoluteString,
+                        "mime_type": "video/mp4",
+                    ],
+                ] as [String: Any]
+            )
+
+            let outcome = GeneratedMediaToolArtifactBridge.processFirstMediaArtifact(
+                toolName: "video",
+                toolResult: toolResult,
+                contextId: "chat-video"
+            )
+
+            switch try #require(outcome) {
+            case .success(let processed):
+                #expect(processed.artifact.filename == "clip.mp4")
+                #expect(processed.artifact.mimeType == "video/mp4")
+                #expect(try Data(contentsOf: URL(fileURLWithPath: processed.artifact.hostPath)) == bytes)
+            case .failure(let reason):
+                Issue.record("expected success, got failure: \(reason)")
+            }
+        }
+    }
+
+    @Test
     func nonImageToolResult_isIgnored() {
         let outcome = NativeImageToolArtifactBridge.processFirstImageArtifact(
             toolName: "file_read",

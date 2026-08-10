@@ -239,8 +239,37 @@ public final class OsaurusProviderTool: OsaurusTool, PermissionedTool, @unchecke
             )
         }
 
-        let hostOverride = args["host"] as? String
-        let request = makeRequest(resolution: resolution, displayName: displayName)
+        // A tool-supplied `host` must be shown to the user (and tested)
+        // before it becomes the endpoint their credentials are sent to —
+        // otherwise the model could steer a preset vendor's key to an
+        // attacker host after the user approves the sheet against the
+        // preset default. We only honor the override for presets that
+        // actually render a `host` field in the sheet (custom, Azure).
+        // For fixed-endpoint presets (Anthropic, OpenAI, Gemini, OAuth
+        // vendors) the sheet has no place to surface it, so we reject
+        // rather than apply it invisibly.
+        let hostOverride = (args["host"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var request = makeRequest(resolution: resolution, displayName: displayName)
+        if let hostOverride, !hostOverride.isEmpty {
+            let acceptsHostField = request.instructions.extraFields.contains { $0.key == "host" }
+            guard acceptsHostField else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "`host` cannot be overridden for the `\(raw)` provider — its endpoint is "
+                        + "fixed. Use `provider: \"custom\"` to add an OpenAI-compatible server at a "
+                        + "specific host.",
+                    field: "host",
+                    tool: name
+                )
+            }
+            request = makeRequest(
+                resolution: resolution,
+                displayName: displayName,
+                prefilledExtraFields: ["host": hostOverride]
+            )
+        }
         let outcome = await ProviderCredentialPromptService.requestCredentials(request)
 
         if Task.isCancelled {
@@ -274,7 +303,6 @@ public final class OsaurusProviderTool: OsaurusTool, PermissionedTool, @unchecke
                     displayName: displayName,
                     resolution: resolution,
                     storageAuthType: storageAuthType,
-                    hostOverride: hostOverride,
                     extraHeaders: headers,
                     apiKey: resolvedKey,
                     oauthTokens: nil
@@ -298,7 +326,6 @@ public final class OsaurusProviderTool: OsaurusTool, PermissionedTool, @unchecke
                     displayName: displayName,
                     resolution: resolution,
                     storageAuthType: request.instructions.storageAuthType,
-                    hostOverride: hostOverride,
                     extraHeaders: nil,
                     apiKey: nil,
                     oauthTokens: tokens
@@ -338,16 +365,29 @@ public final class OsaurusProviderTool: OsaurusTool, PermissionedTool, @unchecke
         let newManualModelIds = (args["manual_model_ids"] as? String)
             .map(OsaurusProviderTool.parseManualModelIds)
 
-        return await MainActor.run {
+        // Phase 1 (MainActor): resolve the provider, apply the patch to a
+        // local copy, and decide whether the change retargets the endpoint
+        // while a Keychain secret is stored. We do NOT persist yet — an
+        // endpoint move on a secret-bearing provider must be user-confirmed
+        // first so the model can't silently redirect a stored key/token to
+        // an attacker host on reconnect.
+        struct UpdatePlan: Sendable {
+            var provider: RemoteProvider
+            var requiresConfirmation: Bool
+            var oldEndpoint: String
+            var newEndpoint: String
+        }
+        enum PlanOutcome: Sendable {
+            case notFound
+            case plan(UpdatePlan)
+        }
+
+        let outcome: PlanOutcome = await MainActor.run {
             let mgr = RemoteProviderManager.shared
-            guard var provider = mgr.configuration.providers.first(where: { $0.id == id }) else {
-                return ToolEnvelope.failure(
-                    kind: .invalidArgs,
-                    message: "No provider found with id \(idStr).",
-                    field: "id",
-                    tool: name
-                )
+            guard let existing = mgr.configuration.providers.first(where: { $0.id == id }) else {
+                return .notFound
             }
+            var provider = existing
             if let v = newName { provider.name = v }
             if let v = newHost { provider.host = v }
             if let b = newEnabled { provider.enabled = b }
@@ -356,7 +396,57 @@ public final class OsaurusProviderTool: OsaurusTool, PermissionedTool, @unchecke
             if let v = newBasePath { provider.basePath = v }
             if let t = newTimeout { provider.timeout = TimeInterval(t) }
             if let ids = newManualModelIds { provider.manualModelIds = ids }
-            mgr.updateProvider(provider, apiKey: nil, oauthTokens: nil)
+
+            let endpointChanged =
+                provider.host != existing.host
+                || provider.port != existing.port
+                || provider.basePath != existing.basePath
+                || provider.providerProtocol != existing.providerProtocol
+            let hasSecret = existing.hasAPIKey || existing.hasOAuthTokens
+            return .plan(
+                UpdatePlan(
+                    provider: provider,
+                    requiresConfirmation: endpointChanged && hasSecret,
+                    oldEndpoint: existing.displayEndpoint,
+                    newEndpoint: provider.displayEndpoint
+                )
+            )
+        }
+
+        guard case .plan(let plan) = outcome else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "No provider found with id \(idStr).",
+                field: "id",
+                tool: name
+            )
+        }
+
+        if plan.requiresConfirmation {
+            let approved = await ToolPermissionPromptService.requestApproval(
+                toolName: name,
+                description:
+                    "Move the stored credentials for “\(plan.provider.name)” to a new endpoint?\n\n"
+                    + "From: \(plan.oldEndpoint)\n"
+                    + "To: \(plan.newEndpoint)\n\n"
+                    + "The existing API key / sign-in stored in Keychain will be sent to the new "
+                    + "endpoint. Only approve if you recognize it.",
+                argumentsJSON: ""
+            )
+            if !approved {
+                return ToolEnvelope.failure(
+                    kind: .executionError,
+                    message:
+                        "Endpoint change declined. The provider still points at \(plan.oldEndpoint) "
+                        + "and its credentials were not moved.",
+                    tool: name,
+                    retryable: false
+                )
+            }
+        }
+
+        return await MainActor.run {
+            RemoteProviderManager.shared.updateProvider(plan.provider, apiKey: nil, oauthTokens: nil)
             return ToolEnvelope.success(
                 tool: name,
                 result: ["provider_id": id.uuidString, "status": "updated"]
@@ -454,15 +544,31 @@ public final class OsaurusProviderTool: OsaurusTool, PermissionedTool, @unchecke
 
     private func makeRequest(
         resolution: ProviderToolResolution,
-        displayName: String
+        displayName: String,
+        prefilledExtraFields: [String: String] = [:]
     ) -> ProviderCredentialRequest {
         switch resolution {
         case .preset(let preset):
-            return ProviderCredentialRequest(preset: preset, providerName: displayName, mode: .addNew)
+            return ProviderCredentialRequest(
+                preset: preset,
+                providerName: displayName,
+                mode: .addNew,
+                prefilledExtraFields: prefilledExtraFields
+            )
         case .codexOAuth:
-            return ProviderCredentialRequest(providerType: .openAICodex, providerName: displayName, mode: .addNew)
+            return ProviderCredentialRequest(
+                providerType: .openAICodex,
+                providerName: displayName,
+                mode: .addNew,
+                prefilledExtraFields: prefilledExtraFields
+            )
         case .osaurusAgent:
-            return ProviderCredentialRequest(providerType: .osaurus, providerName: displayName, mode: .addNew)
+            return ProviderCredentialRequest(
+                providerType: .osaurus,
+                providerName: displayName,
+                mode: .addNew,
+                prefilledExtraFields: prefilledExtraFields
+            )
         }
     }
 
@@ -471,7 +577,6 @@ public final class OsaurusProviderTool: OsaurusTool, PermissionedTool, @unchecke
         displayName: String,
         resolution: ProviderToolResolution,
         storageAuthType: RemoteProviderAuthType,
-        hostOverride: String?,
         extraHeaders: [String: String]?,
         apiKey: String?,
         oauthTokens: RemoteProviderOAuthTokens?
@@ -495,15 +600,15 @@ public final class OsaurusProviderTool: OsaurusTool, PermissionedTool, @unchecke
         // …) keyed by the catalog field id. Reserved keys map onto explicit
         // `RemoteProvider` fields below — anything else passes through as a
         // custom header for `.openaiLegacy` providers.
+        //
+        // A tool-supplied `host` override is prefilled into this same field
+        // before the sheet opens (see `handleAdd`), so whatever the user
+        // saw, edited, and tested is exactly what we persist here. There is
+        // deliberately no separate post-sheet override path — that was the
+        // bait-and-switch where a preset key could be pointed at an
+        // attacker host after approval.
         let sheetHost = extras["host"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let host: String
-        if let override = hostOverride, !override.isEmpty {
-            host = override
-        } else if !sheetHost.isEmpty {
-            host = sheetHost
-        } else {
-            host = defaults.host
-        }
+        let host = sheetHost.isEmpty ? defaults.host : sheetHost
 
         var headers: [String: String] = [:]
         if providerType == .openaiLegacy {

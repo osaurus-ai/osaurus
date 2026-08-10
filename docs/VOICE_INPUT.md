@@ -16,6 +16,8 @@ Voice features in Osaurus include:
 
 All transcription happens locally on your Mac using Apple's Neural Engine — no audio is sent to the cloud.
 
+For the reverse direction — having Osaurus read replies aloud — see the [Text-to-Speech Guide](TEXT_TO_SPEECH.md).
+
 ---
 
 ## Setup

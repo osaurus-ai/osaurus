@@ -1,6 +1,6 @@
 // osaurus_plugin.h
 //
-// Osaurus Plugin ABI — current documented surface is v5.
+// Osaurus Plugin ABI — current documented surface is v6.
 //
 // COMPATIBILITY
 // =============
@@ -9,9 +9,9 @@
 //   - osaurus_plugin_entry      (v1 — never received the host API)
 //   - osaurus_plugin_entry_v2   (current — receives `osr_host_api*`)
 //
-// New plugins should target v5 by exporting `osaurus_plugin_entry_v2`
-// and reading `host->version >= 5`. Plugins compiled against an older
-// version (v3 / v4) keep working — `host->version` advertises the
+// New plugins should target v6 by exporting `osaurus_plugin_entry_v2`
+// and reading `host->version >= 6`. Plugins compiled against an older
+// version (v3 / v4 / v5) keep working — `host->version` advertises the
 // highest documented surface the host implements; new slots present
 // on a newer host are simply unused by older plugins. Plugins
 // compiled against a newer ABI than the host implements should
@@ -20,7 +20,7 @@
 //
 // See `docs/plugins/ABI_VERSIONS.md` for the per-version evolution
 // (v1 base, v2 host injection, v3 streaming cancel, v4 agent
-// introspection, v5 structured logging).
+// introspection, v5 structured logging, v6 host-side free_string).
 //
 // The struct layout is FROZEN —
 // position of every callback is preserved across versions. Two slots

@@ -27,8 +27,8 @@ struct SkillEditorSheet: View {
     @State private var version: String = "1.0.0"
     @State private var author: String = ""
     @State private var category: String = ""
+    @State private var keywords: String = ""
     @State private var instructions: String = ""
-    @State private var enabled: Bool = true
 
     @State private var hasAppeared = false
 
@@ -74,8 +74,16 @@ struct SkillEditorSheet: View {
                 != original.author
             || (category.isEmpty ? nil : category.trimmingCharacters(in: .whitespacesAndNewlines))
                 != original.category
+            || Self.parseKeywords(keywords) != original.keywords
             || instructions.trimmingCharacters(in: .whitespacesAndNewlines) != original.instructions
-            || enabled != original.enabled
+    }
+
+    /// Comma-separated keywords field → keyword list, dropping empties.
+    /// Nonisolated: pure string work, callable (and testable) off the main actor.
+    nonisolated static func parseKeywords(_ raw: String) -> [String] {
+        raw.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 
     var body: some View {
@@ -210,7 +218,7 @@ struct SkillEditorSheet: View {
                                 .foregroundColor(themeManager.currentTheme.secondaryText)
 
                             SkillStyledTextField(
-                                placeholder: L("e.g., Research Analyst"),
+                                placeholder: L("e.g., Web Researcher"),
                                 text: $name,
                                 icon: nil
                             )
@@ -280,53 +288,33 @@ struct SkillEditorSheet: View {
                             )
                             .disabled(isBuiltIn)
                         }
-                    }
-                }
 
-                // Status Section
-                SkillEditorSection(title: L("Status"), icon: "checkmark.circle.fill") {
-                    HStack {
-                        HStack(spacing: 8) {
-                            Image(systemName: enabled ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(
-                                    enabled
-                                        ? themeManager.currentTheme.successColor
-                                        : themeManager.currentTheme.tertiaryText
-                                )
+                        // Keywords — the discovery signal capabilities_discover
+                        // searches. Built-in skills ship rich keyword lists;
+                        // custom skills without them are only found by name +
+                        // description.
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Keywords", bundle: .module)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(themeManager.currentTheme.secondaryText)
 
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Enabled", bundle: .module)
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(themeManager.currentTheme.primaryText)
-                                Text(enabled ? L("Skill is available for use") : L("Skill is hidden"))
-                                    .font(.system(size: 11))
-                                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                            }
-                        }
-
-                        Spacer()
-
-                        Toggle("", isOn: $enabled)
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                            .labelsHidden()
-                    }
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(themeManager.currentTheme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(
-                                        enabled
-                                            ? themeManager.currentTheme.successColor.opacity(0.3)
-                                            : themeManager.currentTheme.inputBorder,
-                                        lineWidth: 1
-                                    )
+                            SkillStyledTextField(
+                                placeholder: L("Comma-separated, e.g. research, web, citations"),
+                                text: $keywords,
+                                icon: nil
                             )
-                    )
+                            .disabled(isBuiltIn)
+
+                            Text(
+                                "Help the AI find this skill: add words users would say when they need it.",
+                                bundle: .module
+                            )
+                            .font(.system(size: 10))
+                            .foregroundColor(themeManager.currentTheme.tertiaryText)
+                        }
+                    }
                 }
+
             }
             .padding(20)
         }
@@ -350,7 +338,7 @@ struct SkillEditorSheet: View {
 
                 Spacer()
 
-                Text("\(instructions.count) characters", bundle: .module)
+                Text(instructions.count == 1 ? L("1 character") : L("\(instructions.count) characters"))
                     .font(.system(size: 11))
                     .foregroundColor(themeManager.currentTheme.tertiaryText)
             }
@@ -470,8 +458,8 @@ struct SkillEditorSheet: View {
         version = skill.version
         author = skill.author ?? ""
         category = skill.category ?? ""
+        keywords = skill.keywords.joined(separator: ", ")
         instructions = skill.instructions
-        enabled = skill.enabled
     }
 
     private func saveSkill() {
@@ -479,6 +467,10 @@ struct SkillEditorSheet: View {
         let trimmedInstructions = instructions.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty, !trimmedInstructions.isEmpty else { return }
 
+        // Fields the editor does not expose (references, assets, directory,
+        // plugin association) pass through from the edited skill unchanged.
+        // Rebuilding with defaults here erased imported keywords from
+        // SKILL.md on every edit — a permanent discovery regression.
         let skill = Skill(
             id: existingId ?? UUID(),
             name: trimmedName,
@@ -486,11 +478,15 @@ struct SkillEditorSheet: View {
             version: version.trimmingCharacters(in: .whitespacesAndNewlines),
             author: author.isEmpty ? nil : author.trimmingCharacters(in: .whitespacesAndNewlines),
             category: category.isEmpty ? nil : category.trimmingCharacters(in: .whitespacesAndNewlines),
-            enabled: enabled,
+            keywords: Self.parseKeywords(keywords),
             instructions: trimmedInstructions,
             isBuiltIn: false,
             createdAt: existingCreatedAt ?? Date(),
-            updatedAt: Date()
+            updatedAt: Date(),
+            references: editingSkill?.references ?? [],
+            assets: editingSkill?.assets ?? [],
+            directoryName: editingSkill?.directoryName,
+            pluginId: editingSkill?.pluginId
         )
 
         onSave(skill)
@@ -787,8 +783,21 @@ private struct ThemedNSTextView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ThemedNSTextView
 
+        /// Undo state scoped to this editor's lifetime — keeps stale undo
+        /// actions targeting a deallocated text view out of the window's
+        /// undo manager (production crash APPLE-MACOS-TG). Created lazily in
+        /// the delegate callback because `UndoManager` is main-actor-bound.
+        private var editorUndoManager: UndoManager?
+
         init(_ parent: ThemedNSTextView) {
             self.parent = parent
+        }
+
+        func undoManager(for view: NSTextView) -> UndoManager? {
+            if let editorUndoManager { return editorUndoManager }
+            let manager = UndoManager()
+            editorUndoManager = manager
+            return manager
         }
 
         func textDidChange(_ notification: Notification) {

@@ -144,14 +144,39 @@ public enum GlobalProxySettings {
     /// immediately because the mtime changes.
     private static let configCacheBox = OSAllocatedUnfairLock<ConfigCacheState?>(initialState: nil)
 
+    /// Resolved config-file URL, memoized because `resolvePath` performs two
+    /// `fileExists` stats per call and proxy lookups run on the main thread
+    /// (session builds, tunnel connects). Legacy-vs-new resolution is a
+    /// one-time migration decision per storage root, so the memo is keyed on
+    /// the un-resolved path — cheap pure path math — which also keeps tests
+    /// honest when they repoint `OsaurusPaths.overrideRoot` between runs.
+    private static let resolvedConfigURLBox =
+        OSAllocatedUnfairLock<(key: String, path: String)?>(initialState: nil)
+
     static func diskBackedServerConfiguration() -> ServerConfiguration? {
-        let url = OsaurusPaths.resolvePath(
-            new: OsaurusPaths.serverConfigFile(),
-            legacy: "ServerConfiguration.json"
-        )
+        let newPath = OsaurusPaths.serverConfigFile()
+        let resolvedPath = resolvedConfigURLBox.withLock { cached in
+            if let cached, cached.key == newPath.path { return cached.path }
+            let resolved = OsaurusPaths.resolvePath(
+                new: newPath,
+                legacy: "ServerConfiguration.json"
+            )
+            cached = (key: newPath.path, path: resolved.path)
+            return resolved.path
+        }
+        // A FRESH URL per lookup is load-bearing: Foundation caches resource
+        // values per URL instance, so statting a memoized URL can return a
+        // stale modification date and pin the decoded-config cache to an old
+        // file — observed as proxy changes never being picked up.
+        let url = URL(fileURLWithPath: resolvedPath)
+        // Only the mtime is needed for cache validation. `attributesOfItem`
+        // builds the full attribute dictionary, whose owner/group-name fields
+        // resolve through an opendirectoryd XPC round-trip (getgrgid_r) that
+        // has hung the main thread at launch. `resourceValues` stats the file
+        // without that lookup.
         let modified =
-            (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate]
-            as? Date
+            (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+            .contentModificationDate
         return configCacheBox.withLock { state in
             if let state, state.path == url.path, state.modified == modified {
                 return state.configuration

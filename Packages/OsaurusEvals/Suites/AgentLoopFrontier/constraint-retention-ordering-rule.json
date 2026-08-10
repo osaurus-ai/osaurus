@@ -1,0 +1,26 @@
+{
+  "id": "frontier.constraint-retention-ordering-rule",
+  "domain": "agent_loop",
+  "label": "frontier • a procedural ordering constraint is still obeyed after compaction",
+  "query": "Procedure you must follow for this task: always create notes.txt BEFORE creating final.txt — never the other way around. First read these four large data files in order (data1.csv, data2.csv, data3.csv, data4.csv), one at a time, never re-reading. Then create notes.txt containing the word NOTES, and only after that create final.txt containing the word FINAL.",
+  "notes": "Procedural-constraint retention: the ordering rule ('notes.txt before final.txt') is stated up front, then four large reads force compaction before the write phase. Both files must exist at the end, which — together with the run completing via a normal exit rather than an error — shows the procedure survived the trim. The ordering itself is narrated in the transcript for the judge; the file existence assertions are the deterministic floor. Off-CI (needs a model).",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "data1.csv", "contentsFromFixture": "commits-500.csv" },
+      { "path": "data2.csv", "contentsFromFixture": "commits-500.csv" },
+      { "path": "data3.csv", "contentsFromFixture": "commits-500.csv" },
+      { "path": "data4.csv", "contentsFromFixture": "commits-500.csv" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 12,
+      "contextWindowOverride": 24000,
+      "expectCompaction": true,
+      "files": [
+        { "path": "notes.txt", "exists": true, "contains": "NOTES" },
+        { "path": "final.txt", "exists": true, "contains": "FINAL" }
+      ]
+    }
+  }
+}

@@ -9,6 +9,47 @@
 
 import Foundation
 
+/// Mutable marker shared by every tool execution in one canonical agent-loop
+/// run. The visible Todo remains session-scoped, but terminal semantics must
+/// not be: an unchecked checklist from a previous user turn cannot turn an
+/// unrelated later `complete` call into a blocked completion.
+///
+/// `AgentToolLoop` creates one scope per `run(...)` and binds it around both
+/// serial and batched tool execution. Task-group children inherit the TaskLocal
+/// reference, and the lock makes simultaneous sibling calls safe.
+final class AgentTodoRunScope: @unchecked Sendable {
+    private let lock = NSLock()
+    private var wroteTodo = false
+
+    var hasCurrentRunTodo: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return wroteTodo
+    }
+
+    func markTodoWritten() {
+        lock.lock()
+        wroteTodo = true
+        lock.unlock()
+    }
+}
+
+/// User-granted approval lease scoped to one canonical agent-loop run.
+/// A choice such as “Allow for this task” avoids repeated shell panels while
+/// expiring automatically before the next user message.
+final class ToolPermissionRunScope: @unchecked Sendable {
+    private let lock = NSLock()
+    private var allowedToolNames: Set<String> = []
+
+    func allows(_ toolName: String) -> Bool {
+        lock.withLock { allowedToolNames.contains(toolName) }
+    }
+
+    func allow(_ toolName: String) {
+        lock.withLock { _ = allowedToolNames.insert(toolName) }
+    }
+}
+
 /// TaskLocal storage carrying the active chat session / agent / batch ids
 /// down through tool execution. The chat engine seeds these in
 /// `ChatSession.send` (and equivalent headless paths) so any tool reading
@@ -19,11 +60,38 @@ public enum ChatExecutionContext {
     /// telemetry) key off this.
     @TaskLocal public static var currentSessionId: String?
 
+    /// One logical AgentToolLoop run's Todo marker. Nil outside the canonical
+    /// loop preserves direct/bare tool-call compatibility.
+    @TaskLocal static var agentTodoRunScope: AgentTodoRunScope?
+
+    /// One logical agent run's interactive approval lease.
+    @TaskLocal static var toolPermissionRunScope: ToolPermissionRunScope?
+
     /// The current batch ID for grouped operations (nil for non-batch operations).
     @TaskLocal public static var currentBatchId: UUID?
 
     /// The agent ID whose context is active for the current execution.
     @TaskLocal public static var currentAgentId: UUID?
+
+    /// Exact model selected for the parent turn that dispatched the current
+    /// tool. Residency handoff uses this identity instead of treating every
+    /// chat-owned resident in the process as the invoking orchestrator.
+    @TaskLocal public static var currentModelName: String?
+
+    /// Explicit Thinking choice frozen for the logical parent turn. Nested
+    /// Computer Use, AppleScript, Browser Use, and spawn loops reconstruct their
+    /// own requests, so they read this value through `SubagentScope` instead of
+    /// falling back to a different bundle default midway through one user turn.
+    /// `nil` means the user made no explicit choice and the target bundle keeps
+    /// ownership of its own template/config default.
+    @TaskLocal public static var currentEnableThinking: Bool?
+
+    /// Exact user text that owns the scope of the current logical turn. A
+    /// parent model may choose and parameterize a tool, but it may not silently
+    /// broaden that request with new side effects. Desktop subagents use this
+    /// frozen value as their task when it is available; non-chat/programmatic
+    /// calls that do not publish a request retain their explicit tool argument.
+    @TaskLocal public static var currentUserRequest: String?
 
     /// Assistant turn dispatching the current tool call. Used by `speak`
     /// to bind TTS playback to the right message bubble
@@ -32,6 +100,15 @@ public enum ChatExecutionContext {
     /// Specific tool invocation id. Used by `speak` so the inline card
     /// can swap its check for a spinner while its audio plays
     @TaskLocal public static var currentToolCallId: String?
+
+    /// What this request is allowed to EXECUTE, as opposed to what it merely exposed.
+    ///
+    /// See ``ToolExecutionScope``. `nil` means no scope was published — the surface gates its own
+    /// tools and the registry behaves exactly as it did before. That is deliberately permissive:
+    /// binding it on every entrypoint at once would risk breaking a surface we cannot gate live,
+    /// and a guard that breaks working features is not an improvement. The chat/agent loop — where
+    /// an unexposed tool was actually observed executing — publishes one.
+    @TaskLocal static var toolExecutionScope: ToolExecutionScope?
 
     /// The current `agent_runs.id` row (`SchedulerDatabase`) so every
     /// mutation done by `db.*` tools or scheduling tools can stamp its
@@ -60,6 +137,16 @@ public enum ChatExecutionContext {
     /// enforcement (spec §11.3). Bound by
     /// `BackgroundTaskManager.dispatchChat` alongside `currentRunId`.
     @TaskLocal public static var currentBackgroundId: UUID?
+
+    /// Root of the working folder owned by the chat session driving the
+    /// current execution. Bound by every send/run surface (chat run task,
+    /// HTTP `/agents/{id}/run`, plugin tool loop, eval harness) from that
+    /// surface's OWN folder state, so folder tools, undo, combined-mode
+    /// policy, and change checkpoints all resolve against the executing
+    /// chat's folder — never a process-wide one. `nil` means the execution
+    /// has no working folder; folder tools return a typed `unavailable`
+    /// envelope in that case.
+    @TaskLocal public static var currentFolderRoot: URL?
 
     /// Root of the read-only host workspace when the current execution
     /// is in combined sandbox + host-read mode
@@ -111,6 +198,15 @@ public enum ChatExecutionContext {
     /// when `hostReadOnlyScope` is non-nil.
     @TaskLocal public static var allowHostSecretReads: Bool = false
 
+    /// Combined-mode write grant: `true` when the active agent's
+    /// `allowHostFolderWrites` opt-in is on for the current execution.
+    /// Bound by `ToolRegistry.execute` alongside `hostReadOnlyScope` so
+    /// tool BODIES that route by path (`file_copy`) can gate host-bound
+    /// destinations at execute time — schema visibility alone can't,
+    /// because the same tool serves both directions. `false` in every
+    /// other mode (and in read-only combined mode).
+    @TaskLocal public static var allowHostFolderWrites: Bool = false
+
     /// Sandbox identity for combined mode, letting the unified host
     /// `file_*` tools serve an absolute `/workspace/...` path from the
     /// Linux sandbox (path-routed file access). Bound by
@@ -154,4 +250,54 @@ public enum ChatExecutionContext {
     /// relaxation can't be reached from an untrusted surface. Module-internal
     /// so out-of-module callers cannot bind it.
     @TaskLocal static var authenticatedHostFolderRoot: URL?
+
+    /// Typed provenance of the session driving the current execution —
+    /// chat UI, plugin, HTTP, inbound channel dispatch, recurring schedule,
+    /// watcher, or self-scheduled wake-up. Bound by
+    /// `BackgroundTaskManager.dispatchChat` (from the dispatch request) and
+    /// re-bound by `ChatSession.send` (from the session's own persisted
+    /// source), so tools that make source-scoped authorization decisions
+    /// (e.g. proactive channel publishing) read a typed value instead of
+    /// inferring provenance from `isExternalSurface` / `isUnattendedDispatch`
+    /// alone. `nil` means no surface published a source; source-gated
+    /// capabilities must treat that as "not authorized" rather than
+    /// defaulting to a permissive value. Module-internal so out-of-module
+    /// callers cannot rebind provenance.
+    @TaskLocal static var currentSessionSource: SessionSource?
+
+    /// True when the current execution is an UNATTENDED, app-authored
+    /// background dispatch — a recurring schedule, a self-scheduled
+    /// wake-up, or a file-system watcher trigger — fired with no
+    /// interactive user present to answer an approval card. Bound `true`
+    /// by `BackgroundTaskManager.dispatchChat` for those sources only, and
+    /// only when the run is NOT an external surface (loopback/HTTP/MCP/
+    /// plugin dispatches never set it). `ToolRegistry.runPermissionGate`
+    /// consults it to auto-approve the narrow set of `.ask` tools in
+    /// `ToolRegistry.unattendedAutoApprovableToolNames` — today only the
+    /// curator's `propose_knowledge_update`, whose output is an inert
+    /// draft that still requires a separate human diff-approval in the
+    /// Knowledge tab before anything is written. Every other `.ask` tool
+    /// is unaffected. Module-internal so out-of-module callers cannot bind
+    /// it.
+    @TaskLocal static var isUnattendedDispatch: Bool = false
+
+    /// Identity a spawned subagent's KNOWLEDGE tools resolve grants and the
+    /// curator role against. A spawned worker keeps `currentAgentId` inherited
+    /// from its launcher for the surrounding model run, admission, handoff, and
+    /// usage accounting. `TextSubagentKind` temporarily binds `currentAgentId`
+    /// to a configured target agent only while one of that child's tool
+    /// operations crosses the registry boundary. Knowledge is a separate
+    /// access-control boundary that must follow the agent actually running even
+    /// outside a tool body — otherwise a spawned helper would silently inherit
+    /// its launcher's collection grants and curator role. `TextSubagentKind`
+    /// binds this override to the target agent's id for the duration of the child
+    /// run; knowledge tools read `knowledgeAgentId` (this when set, else
+    /// `currentAgentId`).
+    /// Module-internal so out-of-module callers cannot rebind the boundary.
+    @TaskLocal static var knowledgeGrantAgentIdOverride: UUID? = nil
+
+    /// The agent identity knowledge tools use for grant / curator-role
+    /// resolution: the subagent override when a spawned worker is running, else
+    /// the normal `currentAgentId`.
+    static var knowledgeAgentId: UUID? { knowledgeGrantAgentIdOverride ?? currentAgentId }
 }

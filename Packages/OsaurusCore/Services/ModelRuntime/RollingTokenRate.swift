@@ -166,17 +166,26 @@ struct RollingTokenRate: Sendable {
     }
 
     /// Final steady-state rate at the end of stream — same as `currentRate`
-    /// at the moment of `lastAt`. Caller stamps this on `ChatTurn` once
-    /// the stream finishes. Falls back to `totalTokens / wallTime` ONLY
-    /// if the warm-up never elapsed (response was too short to converge).
+    /// at the moment of `lastAt`. Caller stamps this on `ChatTurn` once the
+    /// stream finishes.
+    ///
+    /// Returns `nil` when the response was too short for the warm-up to elapse.
+    /// It does NOT invent a number for that case, and the previous fallback --
+    /// `totalTokens / (lastAt - firstAt)` -- is exactly why: `firstAt` is when
+    /// the first token *arrived*, not when decoding began, so the span omits all
+    /// the decode time that produced it. When a short reply is delivered in one
+    /// coalesced burst, first and last observation land ~3ms apart and the
+    /// "average" reads as thousands of tok/s. That is the `2397.3 tok/s • 7
+    /// tokens` in the chat stats card, and it is the same burst artifact
+    /// `currentRate` already documents and floors against just above.
+    ///
+    /// There is no honest denominator to reach for here: this type only sees
+    /// arrival timestamps. The caller has the engine's real decode wall-clock
+    /// (`GenerateCompletionInfo.generateTime`, measured from the end of prefill)
+    /// and should prefer that when this returns `nil`.
     func finalRate() -> Double? {
-        guard let firstAt, let lastAt else { return nil }
-        if let rolling = currentRate(at: lastAt) { return rolling }
-        // Fallback: full-generation average. Better than no number at all
-        // for ultra-short responses — same as the pre-rolling behavior.
-        let wall = lastAt.timeIntervalSince(firstAt)
-        guard wall > 0, totalTokens > 0 else { return nil }
-        return Double(totalTokens) / wall
+        guard lastAt != nil else { return nil }
+        return currentRate(at: lastAt!)
     }
 
     // MARK: - Internal

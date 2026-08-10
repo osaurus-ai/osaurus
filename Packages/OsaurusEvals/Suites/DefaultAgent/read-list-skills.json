@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.read-list-skills",
+  "domain": "default_agent",
+  "label": "default agent • list installed skills (new read scope)",
+  "query": "What skills do I have installed?",
+  "notes": "Gap-closure read scope: the motivating query for expanding osaurus_list beyond the original six scopes. Pins scope 'skills' — a model that answers from the guide (osaurus_help) instead of live state is the exact failure the scope closes.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_list"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_list", "args": { "scope": "skills" } }
+      ],
+      "maxIterations": 3
+    }
+  }
+}

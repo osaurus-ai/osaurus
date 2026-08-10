@@ -81,12 +81,10 @@ struct FolderToolsResilienceTests {
         #expect(failureField(result) == "path")
     }
 
-    /// Pins the `.docx` / `.pdf` / `.rtf` fix: rich-document extensions
-    /// route through `DocumentParser` instead of the raw UTF-8 decode
-    /// that used to surface `NSCocoaErrorDomain` code 264 ("isn't in
-    /// the correct format"). We use RTF here because `NSAttributedString`
-    /// can synthesise it inline without checking in a binary fixture.
-    @Test @MainActor func fileRead_richDocumentExtractsText() async throws {
+    /// RTF is authored UTF-8 source in a workspace. Attachment ingestion may
+    /// render it, but file_read must preserve the control words needed for
+    /// exact verification and file_edit.
+    @Test @MainActor func fileRead_rtfPreservesRawSource() async throws {
         let root = tmpRoot()
         let body = "Hello rich world — extracted via DocumentParser."
         let attributed = NSAttributedString(string: body)
@@ -107,7 +105,9 @@ struct FolderToolsResilienceTests {
         )
         #expect(ToolEnvelope.isSuccess(result))
         let text = EnvelopeAssertions.successText(result) ?? ""
-        #expect(text.contains(body), "extracted text missing the body: \(text)")
+        #expect(text.contains(#"{\rtf"#))
+        #expect(text.contains("Hello rich world"))
+        #expect(text.contains(#"\f0"#))
     }
 
     /// Pins the binary-sniff branch: a non-rich file whose first 4KB
@@ -174,6 +174,69 @@ struct FolderToolsResilienceTests {
         #expect(payload["partial_line"] as? Int == 1)
         #expect(payload["truncated"] as? Bool == true)
         #expect(payload["raw_bytes_truncated"] as? Bool == false)
+        // No continuation offer: re-reading from the same start line cannot
+        // advance past a single line longer than the cap — advertising one
+        // would send the model into a same-args loop.
+        #expect(payload["next_start_line"] == nil)
+        #expect(payload["next_end_line"] == nil)
+    }
+
+    /// Issue #2098 regression: a ~14KB, 499-line source file is fully read
+    /// from disk, but the line-number gutters push the RENDERED output past
+    /// the 15K character cap, so the model only sees a prefix (~line 426).
+    /// The payload must report truthful truncation plus an exact
+    /// continuation range, and the suggested second ranged read must reach
+    /// the end of the file.
+    @Test func fileRead_renderedCapTruncationCarriesExactContinuation() async throws {
+        let root = tmpRoot()
+        // 498 content lines with unicode (the reporter's file had unicode
+        // characters) + a final sentinel line. ~28 chars/line ≈ 14K chars,
+        // rendered at +8 chars/line of gutter ≈ 18K > the 15K cap.
+        var lines = (1 ... 498).map { String(format: "línea %03d — carga de la tira", $0) }
+        lines.append("FINAL_SENTINEL_LINE_499 ✓")
+        let content = lines.joined(separator: "\n")
+        let path = root.appendingPathComponent("BeatStrip.ino")
+        try content.write(to: path, atomically: true, encoding: .utf8)
+
+        let tool = FileReadTool(rootPath: root)
+        let first = try await tool.execute(argumentsJSON: #"{"path": "BeatStrip.ino"}"#)
+        #expect(ToolEnvelope.isSuccess(first))
+        let payload = try #require(EnvelopeAssertions.successPayload(first))
+
+        // The whole file was loaded — only the render was cut.
+        #expect(payload["raw_bytes_truncated"] as? Bool == false)
+        #expect(payload["total_lines"] as? Int == 499)
+        #expect(payload["total_lines_exact"] as? Bool == true)
+        #expect(payload["truncated"] as? Bool == true)
+
+        // Exact, range-safe continuation boundary.
+        let nextStart = try #require(payload["next_start_line"] as? Int)
+        let nextEnd = try #require(payload["next_end_line"] as? Int)
+        #expect(nextEnd == 499)
+        let endLine = try #require(payload["end_line"] as? Int)
+        if let partial = payload["partial_line"] as? Int {
+            #expect(nextStart == partial)
+        } else {
+            #expect(nextStart == endLine + 1)
+        }
+        // The truncation notice names the exact next range, not just a
+        // generic "use start_line/end_line" hint.
+        let text = try #require(payload["text"] as? String)
+        #expect(text.contains("start_line=\(nextStart), end_line=\(nextEnd)"))
+        #expect(text.contains("FINAL_SENTINEL_LINE_499") == false)
+
+        // The suggested continuation read reaches the end of the file.
+        let second = try await tool.execute(
+            argumentsJSON:
+                #"{"path": "BeatStrip.ino", "start_line": \#(nextStart), "end_line": \#(nextEnd)}"#
+        )
+        #expect(ToolEnvelope.isSuccess(second))
+        let secondPayload = try #require(EnvelopeAssertions.successPayload(second))
+        #expect(secondPayload["truncated"] as? Bool == false)
+        #expect(secondPayload["end_line"] as? Int == 499)
+        #expect(secondPayload["next_start_line"] == nil)
+        let secondText = try #require(secondPayload["text"] as? String)
+        #expect(secondText.contains("FINAL_SENTINEL_LINE_499"))
     }
 
     /// Raw text / CSV reads are part of the prompt-building hot path. A
@@ -204,6 +267,10 @@ struct FolderToolsResilienceTests {
         #expect(payload["total_lines_exact"] as? Bool == false)
         #expect(payload["truncated"] as? Bool == true)
         #expect(text.contains("raw read capped at 5 MiB"))
+        // A byte-capped read must NOT advertise a line continuation: line
+        // numbers cannot reach bytes that were never loaded.
+        #expect(payload["next_start_line"] == nil)
+        #expect(payload["next_end_line"] == nil)
     }
 
     /// The success payload carries a single line-numbered `text` field — no
@@ -297,11 +364,16 @@ struct FolderToolsResilienceTests {
         #expect(written == "month,total\nJan,1200\n")
     }
 
-    @Test func fileWrite_rejectsPDFAndPresentationPackagesWithoutTouchingExistingFile() async throws {
+    @Test func fileWrite_rejectsBinaryDocumentPackagesWithoutTouchingExistingFile() async throws {
         let root = tmpRoot()
         let cases: [(name: String, bytes: [UInt8])] = [
             ("report.pdf", [0x25, 0x50, 0x44, 0x46]),
+            ("report.docx", [0x50, 0x4B, 0x03, 0x04]),
+            ("legacy.doc", [0xD0, 0xCF, 0x11, 0xE0]),
+            ("bundle.rtfd", [0x50, 0x4B, 0x03, 0x04]),
             ("deck.pptx", [0x50, 0x4B, 0x03, 0x04]),
+            ("document.pages", [0x50, 0x4B, 0x03, 0x04]),
+            ("document.odt", [0x50, 0x4B, 0x03, 0x04]),
         ]
 
         let tool = FileWriteTool(rootPath: root)
@@ -363,6 +435,10 @@ struct FolderToolsResilienceTests {
             let writePayload = try #require(EnvelopeAssertions.successPayload(writeResult))
             #expect(writePayload["kind"] as? String == "workspace_write_result")
             #expect(writePayload["operation_id"] as? String != nil)
+            let reference = try #require(writePayload["file_reference"] as? [String: Any])
+            #expect(reference["kind"] as? String == "workspace_file")
+            #expect(reference["path"] as? String == "nested/report.md")
+            #expect(reference["exportable"] as? Bool == false)
             #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("nested/report.md").path))
 
             let history = FileOperationHistoryTool(rootPath: root)
@@ -375,6 +451,57 @@ struct FolderToolsResilienceTests {
             #expect(entries.first?["type"] as? String == "create")
             #expect(entries.first?["path"] as? String == "nested/report.md")
         }
+    }
+
+    @Test func fileWrite_appendBuildsLargeFilesAcrossBoundedCalls() async throws {
+        let root = tmpRoot()
+        let path = root.appendingPathComponent("index.html")
+        let tool = FileWriteTool(rootPath: root)
+
+        let first = try await tool.execute(
+            argumentsJSON: #"{"path":"index.html","content":"<html>\n"}"#
+        )
+        let second = try await tool.execute(
+            argumentsJSON:
+                #"{"path":"index.html","content":"<body>done</body>\n</html>","mode":"append"}"#
+        )
+
+        #expect(ToolEnvelope.isSuccess(first))
+        #expect(ToolEnvelope.isSuccess(second))
+        let payload = try #require(EnvelopeAssertions.successPayload(second))
+        #expect(payload["mode"] as? String == "append")
+        #expect(
+            try String(contentsOf: path, encoding: .utf8)
+                == "<html>\n<body>done</body>\n</html>"
+        )
+    }
+
+    @Test func fileWrite_runnableArtifactReportsVerificationAndDiffScope() async throws {
+        let root = tmpRoot()
+        let content = (1 ... 100)
+            .map { "<div data-row=\"\($0)\"></div>" }
+            .joined(separator: "\n")
+        let arguments = try JSONSerialization.data(withJSONObject: [
+            "path": "index.html",
+            "content": content,
+        ])
+
+        let result = try await FileWriteTool(rootPath: root).execute(
+            argumentsJSON: String(decoding: arguments, as: UTF8.self)
+        )
+
+        let payload = try #require(EnvelopeAssertions.successPayload(result))
+        #expect(payload["content_write_complete"] as? Bool == true)
+        #expect(payload["content_sha256"] as? String == WorkspaceWriteSafety.contentSHA256(content))
+        #expect(payload["before_content_sha256"] == nil)
+        #expect(payload["diff_truncated"] as? Bool == true)
+        #expect(
+            (payload["diff_truncation_note"] as? String)?
+                .contains("full content was applied") == true
+        )
+        let verification = try #require(payload["verification"] as? [String: Any])
+        #expect(verification["status"] as? String == "not_run")
+        #expect((verification["next_action"] as? String)?.contains("before claiming") == true)
     }
 
     @Test func fileWrite_rejectsExistingNonUTF8TextTarget() async throws {
@@ -414,6 +541,52 @@ struct FolderToolsResilienceTests {
         }
     }
 
+    @Test @MainActor func fileWrite_schemaBoundsEachChunk() throws {
+        let tool = FileWriteTool(rootPath: tmpRoot())
+        guard case .some(.object(let schema)) = tool.parameters,
+            case .some(.object(let properties)) = schema["properties"],
+            case .some(.object(let content)) = properties["content"]
+        else {
+            Issue.record("file_write should expose an object content schema")
+            return
+        }
+        #expect(
+            content["maxLength"]
+                == .number(Double(WorkspaceToolContract.maxWriteContentCharacters))
+        )
+        #expect(WorkspaceToolContract.maxWriteContentCharacters >= 30_000)
+        #expect(
+            content["description"]
+                == .string(
+                    "Content to write (maximum \(WorkspaceToolContract.maxWriteContentCharacters) characters per call; use append for more)"
+                )
+        )
+        #expect(
+            WorkspaceToolContract.recommendedWriteChunkCharacters
+                < WorkspaceToolContract.maxWriteContentCharacters
+        )
+
+        let oversized = String(
+            repeating: "x",
+            count: WorkspaceToolContract.maxWriteContentCharacters + 1
+        )
+        let data = try JSONSerialization.data(withJSONObject: [
+            "path": "large.txt",
+            "content": oversized,
+        ])
+        let outcome = ToolRegistry.shared.preflightForTest(
+            argumentsJSON: String(decoding: data, as: UTF8.self),
+            schema: tool.parameters,
+            toolName: tool.name
+        )
+        guard case .rejected(let envelope) = outcome else {
+            Issue.record("preflight should reject a write chunk beyond the schema limit")
+            return
+        }
+        #expect(failureKind(envelope) == "invalid_args")
+        #expect(failureField(envelope) == "content")
+    }
+
     // MARK: - file_edit
 
     @Test func fileEdit_emptyOldStringIsRejected() async throws {
@@ -437,6 +610,15 @@ struct FolderToolsResilienceTests {
             argumentsJSON: #"{"path": "f.txt", "old_string": "world", "new_string": ""}"#
         )
         #expect(ToolEnvelope.isSuccess(result))
+        let payload = try #require(EnvelopeAssertions.successPayload(result))
+        let reference = try #require(payload["file_reference"] as? [String: Any])
+        #expect(reference["path"] as? String == "f.txt")
+        #expect(payload["risk_level"] as? String == "low")
+        let envelope = try #require(
+            JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any]
+        )
+        let warnings = envelope["warnings"] as? [String] ?? []
+        #expect(!warnings.contains { $0.contains("overwrite an existing file") })
         let after = try String(contentsOf: path, encoding: .utf8)
         #expect(after == "hello ")
     }
@@ -502,9 +684,8 @@ struct FolderToolsResilienceTests {
     @Test func fileUndo_operationIdWithAgreeingPathUndoes() async throws {
         await FileOperationLog.shared.clearAll()
         let root = tmpRoot()
-        // performUndo resolves relative paths against the log's root (set by
-        // folder-context activation in the app).
-        await FileOperationLog.shared.setRootPath(root)
+        // performUndo resolves relative paths against the root recorded on
+        // the operation itself (written by the mutating tool at log time).
         let file = root.appendingPathComponent("CHANGELOG.md")
         try "original\n".write(to: file, atomically: true, encoding: .utf8)
 
@@ -527,7 +708,6 @@ struct FolderToolsResilienceTests {
             let after = try String(contentsOf: file, encoding: .utf8)
             #expect(after == "original\n")
         }
-        await FileOperationLog.shared.setRootPath(nil)
     }
 
     /// A genuine DISAGREEMENT (id belongs to one file, path names another)

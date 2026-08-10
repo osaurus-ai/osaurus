@@ -22,6 +22,14 @@ import os
 
 /// Centralized persistence for `VMLXServerRuntimeSettings`.
 public enum ServerRuntimeSettingsStore {
+    /// Emitted after `server-runtime.json` and the hot snapshot have both been
+    /// updated successfully. `ServerController` observes this so non-UI
+    /// writers (notably `/admin/runtime-settings`) publish the same live value
+    /// the runtime consumes.
+    static let didSaveNotification = Notification.Name(
+        "ai.osaurus.serverRuntimeSettings.didSave"
+    )
+
     /// When set, configuration reads/writes use this directory instead
     /// of the default. Used by tests.
     /// Note: nonisolated(unsafe) since this is only set during test
@@ -55,6 +63,10 @@ public enum ServerRuntimeSettingsStore {
         ".server-runtime-cache-defaults-v2-migrated"
     private static let pagedCacheDefaultOffMigrationMarkerName =
         ".server-runtime-paged-cache-default-off-v3-migrated"
+    private static let memorySafetyOwnedCacheDefaultsMigrationMarkerName =
+        ".server-runtime-memory-safety-cache-defaults-v4-migrated"
+    private static let legacyConcurrencyMigrationMarkerName =
+        ".server-runtime-legacy-concurrency-migrated"
 
     // MARK: - Load / Save
 
@@ -70,6 +82,7 @@ public enum ServerRuntimeSettingsStore {
             if decoded != raw {
                 save(decoded)
             }
+            writeLegacyConcurrencyMigrationMarker()
             cachedSnapshot = decoded
             return decoded
         } catch {
@@ -83,17 +96,22 @@ public enum ServerRuntimeSettingsStore {
     /// returned value is always non-nil. `ServerConfigurationStore` is
     /// `@MainActor`, so this helper must be called from the main actor.
     @MainActor
-    public static func loadOrMigrate() -> VMLXServerRuntimeSettings {
+    public static func loadOrMigrate(
+        userDefaults: UserDefaults = .standard
+    ) -> VMLXServerRuntimeSettings {
         if let existing = load() { return existing }
         // Brand-new install (no settings file): run the freshly-migrated
         // settings through the same normalization as a loaded file so the
         // product defaults (q6 tied head, diffusion denoising budget, cache
         // repairs) are seeded on the very first launch, not only on reload.
+        let serverConfiguration = ServerConfigurationStore.load() ?? .default
         let migrated = normalizeLoadedSettings(
-            migratedFromLegacy(
-                serverConfiguration: ServerConfigurationStore.load() ?? .default,
-                userDefaults: .standard
-            )
+            legacyConcurrencyMigrationCompleted
+                ? resetDefaults(serverConfiguration: serverConfiguration)
+                : migratedFromLegacy(
+                    serverConfiguration: serverConfiguration,
+                    userDefaults: userDefaults
+                )
         )
         save(migrated)
         return migrated
@@ -102,13 +120,19 @@ public enum ServerRuntimeSettingsStore {
     /// Persists the settings to disk and updates the nonisolated
     /// snapshot consumed by `ModelRuntime`.
     public nonisolated static func save(_ settings: VMLXServerRuntimeSettings) {
+        let settings = canonicalizedContextAndKVPolicy(settings)
         let url = fileURL()
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(settings).write(to: url, options: [.atomic])
+            writeLegacyConcurrencyMigrationMarker()
             cachedSnapshot = settings
+            NotificationCenter.default.post(
+                name: didSaveNotification,
+                object: nil
+            )
         } catch {
             print("[Osaurus] Failed to save ServerRuntimeSettings: \(error)")
         }
@@ -136,10 +160,14 @@ public enum ServerRuntimeSettingsStore {
             cachedSnapshot = normalized
             return normalized
         }
-        let fallback = migratedFromLegacy(
-            serverConfiguration: diskBackedServerConfiguration() ?? .default,
-            userDefaults: .standard
-        )
+        let serverConfiguration = diskBackedServerConfiguration() ?? .default
+        let fallback =
+            legacyConcurrencyMigrationCompleted
+            ? resetDefaults(serverConfiguration: serverConfiguration)
+            : migratedFromLegacy(
+                serverConfiguration: serverConfiguration,
+                userDefaults: .standard
+            )
         cachedSnapshot = fallback
         return fallback
     }
@@ -160,7 +188,25 @@ public enum ServerRuntimeSettingsStore {
         cachedSnapshot = settings
     }
 
-    public nonisolated static func modelLoadRAMThresholds() -> (soft: Double, hard: Double) {
+    /// Whether the user explicitly selected the dangerous profile with no
+    /// replacement physical-memory ceiling. This is the shared switch for
+    /// Osaurus-owned load refusal/send/eviction gates; keeping it here prevents
+    /// the settings UI and runtime from assigning different meanings to the
+    /// final slider position.
+    public nonisolated static func automaticMemoryLimitsDisabled(
+        for settings: VMLXServerRuntimeSettings? = nil
+    ) -> Bool {
+        let settings = settings ?? snapshot()
+        return settings.memorySafety.mode == .diagnosticDangerous
+            && settings.memorySafety.customPhysicalMemoryFraction == nil
+    }
+
+    public nonisolated static func modelLoadRAMThresholds(
+        for settings: VMLXServerRuntimeSettings? = nil
+    ) -> (soft: Double, hard: Double) {
+        if automaticMemoryLimitsDisabled(for: settings) {
+            return (soft: 1.0, hard: 1.0)
+        }
         let configuration = diskBackedServerConfiguration() ?? .default
         return ServerConfiguration.normalizedModelLoadRAMThresholds(
             soft: configuration.modelLoadRAMSoftThreshold,
@@ -168,10 +214,135 @@ public enum ServerRuntimeSettingsStore {
         )
     }
 
+    /// The one Osaurus-owned memory-plan resolver used by settings,
+    /// diagnostics, cache construction, and model loads. In the explicit No
+    /// Automatic Limits mode, blank custom fields remove Osaurus percentage
+    /// caps while explicit advanced/cache/concurrency overrides remain in
+    /// force. Engine/platform allocation failures can still occur.
+    public nonisolated static func resolvedMemorySafetyPlan(
+        for settings: VMLXServerRuntimeSettings,
+        baseLoadConfiguration: LoadConfiguration = .default,
+        bundleFacts: LoadBundleFacts? = nil,
+        host: MemoryStatus? = nil,
+        request: VMLXMemoryRequestEstimate? = nil
+    ) -> VMLXResolvedMemorySafetyPlan {
+        let settings = canonicalizedContextAndKVPolicy(settings)
+        var plan = settings.resolvedMemorySafetyPlan(
+            baseLoadConfiguration: baseLoadConfiguration,
+            bundleFacts: bundleFacts,
+            host: host,
+            request: request
+        )
+        if settings.memorySafety.mode == .diagnosticDangerous {
+            if settings.memorySafety.customPhysicalMemoryFraction == nil {
+                plan.loadConfiguration.memoryLimit = .unlimited
+                plan.resolvedLoadBudgetBytes = nil
+            }
+            if settings.memorySafety.customMaxConcurrentSequences == nil,
+                settings.concurrency.maxConcurrentSequences == nil
+            {
+                plan.concurrency.maxConcurrentSequences = nil
+            }
+            plan.warnings.append(
+                "No automatic Osaurus memory caps, load refusals, or percentage-based evictions are applied. Explicit advanced/cache/concurrency overrides remain in force; physical and Metal working-set guidance stays visible, and engine/platform allocations can still fail."
+            )
+        } else {
+            plan.resolvedLoadBudgetBytes = plan.loadConfiguration.memoryLimit.resolve(
+                physicalMemory: plan.resolvedPhysicalMemoryBytes
+            )
+        }
+        plan.displaySummary = memorySafetyDisplaySummary(settings: settings, plan: plan)
+        return plan
+    }
+
+    /// Effective resident `BatchEngine` capacity. This deliberately resolves
+    /// through the same Memory Safety plan displayed by Server Settings, so
+    /// profile defaults and explicit overrides cannot disagree with the
+    /// engine allocation:
+    ///
+    /// Memory Safety custom override → Server concurrency override → profile.
+    ///
+    /// Continuous Batching off always pins the engine to one slot. A profile
+    /// with no automatic concurrency cap (the dangerous diagnostic mode)
+    /// likewise uses the compile-friendly one-slot floor until the user sets
+    /// an explicit value.
+    public nonisolated static func resolvedBatchEngineMaxBatchSize(
+        for settings: VMLXServerRuntimeSettings? = nil
+    ) -> Int {
+        let settings = settings ?? snapshot()
+        guard settings.concurrency.continuousBatching else { return 1 }
+        let resolved =
+            resolvedMemorySafetyPlan(for: settings)
+            .concurrency.maxConcurrentSequences
+            ?? 1
+        return min(max(resolved, 1), 32)
+    }
+
+    /// Canonicalize Osaurus-owned runtime policy.
+    ///
+    /// Older builds exposed the same effective cap in two places:
+    /// `cache.defaultMaxKVSize` and
+    /// `memorySafety.customDefaultMaxKVSize`. vMLX gave the latter
+    /// precedence, so two independently editable values could disagree while
+    /// the UI showed only one resolved number. Cache settings now own the
+    /// explicit override. Preserve the old effective behavior by moving the
+    /// higher-precedence legacy value into the cache field, then clearing the
+    /// legacy field.
+    public nonisolated static func canonicalizedContextAndKVPolicy(
+        _ settings: VMLXServerRuntimeSettings
+    ) -> VMLXServerRuntimeSettings {
+        var canonical = settings
+        // Osaurus does not currently expose or execute a SMELT path. Persist
+        // an explicit disabled value rather than the vMLX contract's
+        // forward-compatible engine-selected default, so a future engine pin
+        // cannot silently activate it behind the absent UI.
+        canonical.concurrency.smeltMode = .disabled
+        if let legacyCap = settings.memorySafety.customDefaultMaxKVSize {
+            canonical.cache.defaultMaxKVSize = legacyCap
+            canonical.memorySafety.customDefaultMaxKVSize = nil
+        }
+        return canonical
+    }
+
+    /// The saved settings' effective KV-retention cap after Memory Safety
+    /// profile resolution. This is the exact cap used to build a newly loaded
+    /// model's `CacheCoordinator`; callers must not inspect the raw cache
+    /// override and invent their own fallback.
+    public nonisolated static func resolvedKVRetentionCap(
+        for settings: VMLXServerRuntimeSettings? = nil,
+        host: MemoryStatus? = nil
+    ) -> Int? {
+        resolvedMemorySafetyPlan(
+            for: settings ?? snapshot(),
+            host: host
+        ).cache.defaultMaxKVSize
+    }
+
+    private nonisolated static func memorySafetyDisplaySummary(
+        settings: VMLXServerRuntimeSettings,
+        plan: VMLXResolvedMemorySafetyPlan
+    ) -> String {
+        let concurrency = plan.concurrency.maxConcurrentSequences.map(String.init) ?? "default"
+        let kv = plan.cache.defaultMaxKVSize.map(String.init) ?? "unlimited"
+        return
+            "mode=\(settings.memorySafety.mode.rawValue) slider=\(settings.memorySafety.slider) load_cap=\(residentCapSummary(plan.loadConfiguration.memoryLimit)) allocator_cap=\(residentCapSummary(plan.loadConfiguration.maxResidentBytes)) max_concurrent=\(concurrency) kv_cap=\(kv)"
+    }
+
+    private nonisolated static func residentCapSummary(_ cap: ResidentCap) -> String {
+        switch cap {
+        case .unlimited:
+            return "unlimited"
+        case .fraction(let fraction):
+            return String(format: "%.2f", fraction)
+        case .absolute(let bytes):
+            return String(bytes)
+        }
+    }
+
     private nonisolated static func normalizeLoadedSettings(
         _ settings: VMLXServerRuntimeSettings
     ) -> VMLXServerRuntimeSettings {
-        var normalized = settings
+        var normalized = canonicalizedContextAndKVPolicy(settings)
         // vmlx-swift e095d0f changed the engine default from "MTP off" to
         // "auto". Existing Osaurus installs persisted the old default exactly,
         // so without this repair tuned MXFP8/MTP bundles still never reach the
@@ -215,16 +386,19 @@ public enum ServerRuntimeSettingsStore {
         }
         if shouldRepairLegacyCacheDefaults(normalized.cache) {
             // Keep companion-cache repair independent from the live KV codec.
-            // Engine-selected is the default policy now, but ModelRuntime
-            // only resolves it to TurboQuant for proven full-KV rows and
-            // leaves hybrid/rotating/CCA/DSV4 rows on fp16 unless explicitly
-            // overridden.
+            // Engine-selected is the default policy and resolves to native
+            // KV. TurboQuant remains available only through an explicit
+            // user-selected codec with explicit bit widths.
             normalized.cache.enableSSMReDerive = true
             writeCacheDefaultsMigrationMarker()
         }
         if shouldRepairPagedCacheDefault(normalized.cache) {
             normalized.cache.pagedKV.enabled = false
             writePagedCacheDefaultOffMigrationMarker()
+        }
+        if shouldRepairMemorySafetyOwnedCacheDefaults(normalized.cache) {
+            normalized.cache.prefix.memoryPercent = nil
+            writeMemorySafetyOwnedCacheDefaultsMigrationMarker()
         }
         return normalized
     }
@@ -297,6 +471,36 @@ public enum ServerRuntimeSettingsStore {
         try? Data().write(to: url, options: [.atomic])
     }
 
+    private nonisolated static func shouldRepairMemorySafetyOwnedCacheDefaults(
+        _ cache: VMLXServerCacheSettings
+    ) -> Bool {
+        guard
+            !FileManager.default.fileExists(
+                atPath: memorySafetyOwnedCacheDefaultsMigrationMarkerURL().path
+            )
+        else { return false }
+        return cache.prefix.enabled
+            && cache.prefix.legacyEntryCountCache == false
+            && cache.prefix.memoryLimitMB == nil
+            && cache.prefix.memoryPercent == 15.0
+            && cache.prefix.ttlMinutes == nil
+            && cache.pagedKV.enabled == false
+            && (cache.liveKVCodec == .engineSelected || cache.liveKVCodec == .none)
+            && cache.turboQuantKeyBits == nil
+            && cache.turboQuantValueBits == nil
+            && (cache.defaultMaxKVSize == nil || cache.defaultMaxKVSize == 65536)
+            && cache.longPromptMultiplier == 2.0
+            && cache.legacyDisk.enabled == false
+            && cache.blockDisk.enabled
+            && cache.enableSSMReDerive
+    }
+
+    private nonisolated static func writeMemorySafetyOwnedCacheDefaultsMigrationMarker() {
+        let url = memorySafetyOwnedCacheDefaultsMigrationMarkerURL()
+        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
+        try? Data().write(to: url, options: [.atomic])
+    }
+
     // MARK: - Migration
 
     /// Builds a settings value from the legacy `ServerConfiguration`
@@ -305,6 +509,32 @@ public enum ServerRuntimeSettingsStore {
     public nonisolated static func migratedFromLegacy(
         serverConfiguration: ServerConfiguration,
         userDefaults: UserDefaults
+    ) -> VMLXServerRuntimeSettings {
+        let rawMaxBatch = userDefaults.integer(
+            forKey: "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
+        )
+        return initialSettings(
+            serverConfiguration: serverConfiguration,
+            legacyMaxBatchSize: rawMaxBatch > 0 ? min(rawMaxBatch, 32) : nil
+        )
+    }
+
+    /// Product defaults for an explicit Settings-panel reset. Unlike the
+    /// one-time missing-file migration, reset never consults the retired
+    /// BatchEngine `UserDefaults` key and therefore cannot resurrect an old
+    /// pre-`server-runtime.json` override.
+    public nonisolated static func resetDefaults(
+        serverConfiguration: ServerConfiguration = .default
+    ) -> VMLXServerRuntimeSettings {
+        initialSettings(
+            serverConfiguration: serverConfiguration,
+            legacyMaxBatchSize: nil
+        )
+    }
+
+    private nonisolated static func initialSettings(
+        serverConfiguration: ServerConfiguration,
+        legacyMaxBatchSize: Int?
     ) -> VMLXServerRuntimeSettings {
         var settings = VMLXServerRuntimeSettings()
 
@@ -341,34 +571,30 @@ public enum ServerRuntimeSettingsStore {
         settings.generation.diffusionMaxDenoisingSteps = 16
         writeDiffusionDefaultsMigrationMarker()
 
-        // Concurrency: legacy UserDefaults key for BatchEngine max
-        // batch size. Falls back to nil so vmlx's coordinator chooses
-        // the default when the user never set anything.
-        let rawMaxBatch = userDefaults.integer(
-            forKey: "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
-        )
+        // Concurrency: the legacy UserDefaults key is supplied only by the
+        // first-run migration above. All normal runtime reads and explicit
+        // resets use `server-runtime.json` plus Memory Safety profile
+        // resolution.
         settings.concurrency = VMLXServerConcurrencySettings(
-            maxConcurrentSequences: rawMaxBatch > 0 ? min(rawMaxBatch, 32) : nil,
+            maxConcurrentSequences: legacyMaxBatchSize,
             prefillBatchSize: nil,
             prefillStepSize: nil,
             completionBatchSize: nil,
             continuousBatching: true,
-            smeltMode: .engineSelected
+            smeltMode: .disabled
         )
 
         // Cache: seed the engine-owned topology with automatic policy.
         // Prefix, block-disk L2, and SSM rederive are on by default; paged
         // RAM KV is opt-in because it only helps materially for multibatch
-        // workloads. Engine-selected live KV is resolved by ModelRuntime per
-        // model family/topology: proven full-KV rows get TurboQuant, while
-        // hybrid/rotating/CCA/DSV4 rows stay native/fp16 unless explicitly
-        // overridden.
+        // workloads. Engine-selected live KV stays native/fp16 for every
+        // family. TurboQuant remains an explicit user opt-in with bit widths.
         settings.cache = VMLXServerCacheSettings(
             prefix: VMLXPrefixCacheSettings(
                 enabled: true,
                 legacyEntryCountCache: false,
                 memoryLimitMB: nil,
-                memoryPercent: 15,
+                memoryPercent: nil,
                 ttlMinutes: nil
             ),
             pagedKV: VMLXPagedKVCacheSettings(
@@ -402,6 +628,10 @@ public enum ServerRuntimeSettingsStore {
             ),
             enableSSMReDerive: true
         )
+        // A fresh install already uses the profile-owned nil default. Mark the
+        // migration complete now so a later user-selected 15% cap is not
+        // mistaken for the historical implicit 15% default.
+        writeMemorySafetyOwnedCacheDefaultsMigrationMarker()
 
         // Multimodal: keep media-salt requirement on (paired with any
         // reuse tier) and default to vmlx auto behavior.
@@ -497,6 +727,30 @@ public enum ServerRuntimeSettingsStore {
 
     private nonisolated static func pagedCacheDefaultOffMigrationMarkerURL() -> URL {
         directoryURL().appendingPathComponent(pagedCacheDefaultOffMigrationMarkerName)
+    }
+
+    private nonisolated static func memorySafetyOwnedCacheDefaultsMigrationMarkerURL() -> URL {
+        directoryURL().appendingPathComponent(memorySafetyOwnedCacheDefaultsMigrationMarkerName)
+    }
+
+    private nonisolated static var legacyConcurrencyMigrationCompleted: Bool {
+        FileManager.default.fileExists(atPath: legacyConcurrencyMigrationMarkerURL().path)
+    }
+
+    private nonisolated static func legacyConcurrencyMigrationMarkerURL() -> URL {
+        directoryURL().appendingPathComponent(legacyConcurrencyMigrationMarkerName)
+    }
+
+    private nonisolated static func writeLegacyConcurrencyMigrationMarker() {
+        // Called from every `load()` and `save(_:)`, both of which can run
+        // on the main thread. The marker is write-once by design, so skip
+        // the disk touch when it already exists — re-writing an empty file
+        // on every settings save stalled the main thread on contended disks
+        // (production hang APPLE-MACOS-1B7).
+        guard !legacyConcurrencyMigrationCompleted else { return }
+        let url = legacyConcurrencyMigrationMarkerURL()
+        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
+        try? Data().write(to: url, options: [.atomic])
     }
 
     private nonisolated static func legacyConfigurationFileURL() -> URL {

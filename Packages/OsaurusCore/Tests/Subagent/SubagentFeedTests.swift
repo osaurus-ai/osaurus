@@ -14,6 +14,42 @@ import Testing
 
 @testable import OsaurusCore
 
+private final class FeedPublicationGate: @unchecked Sendable {
+    private let firstSnapshotCaptured = DispatchSemaphore(value: 0)
+    private let releaseFirstSnapshot = DispatchSemaphore(value: 0)
+
+    func pauseFirstSnapshot(revision: UInt64) {
+        guard revision == 1 else { return }
+        firstSnapshotCaptured.signal()
+        _ = releaseFirstSnapshot.wait(timeout: .now() + 5)
+    }
+
+    func waitUntilFirstSnapshotCaptured() -> Bool {
+        firstSnapshotCaptured.wait(timeout: .now() + 2) == .success
+    }
+
+    func releaseFirst() {
+        releaseFirstSnapshot.signal()
+    }
+}
+
+private final class FeedSnapshotRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var snapshots: [[SubagentActivityEvent]] = []
+
+    func append(_ snapshot: [SubagentActivityEvent]) {
+        lock.lock()
+        snapshots.append(snapshot)
+        lock.unlock()
+    }
+
+    func latest() -> [SubagentActivityEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+        return snapshots.last ?? []
+    }
+}
+
 @Suite("Subagent feed + registry + interrupt")
 struct SubagentFeedTests {
 
@@ -66,6 +102,98 @@ struct SubagentFeedTests {
         feed.emitPhase("loading model")
         feed.emitProgress("generating", fraction: 0.2)
         #expect(feed.currentEvents().count == 4)
+    }
+
+    @Test("real reasoning and response deltas preserve channel order")
+    func streamedChannelsCoalesceWithoutCrossingBoundaries() {
+        let feed = SubagentFeed(
+            toolCallId: "call-streamed-channels",
+            kindId: "spawn",
+            title: "research"
+        )
+
+        feed.emitStreamDelta(kind: .reasoning, title: "reasoning", delta: "first ")
+        let firstReasoningID = feed.currentEvents().first?.id
+        feed.emitStreamDelta(kind: .reasoning, title: "reasoning", delta: "second")
+
+        var events = feed.currentEvents()
+        #expect(events.count == 1)
+        #expect(events[0].id == firstReasoningID)
+        #expect(events[0].kind == .reasoning)
+        #expect(events[0].detail == "first second")
+
+        feed.emitStreamDelta(kind: .response, title: "response", delta: "answer")
+        feed.emitPhase("tool call", detail: "lookup")
+        feed.emitStreamDelta(kind: .reasoning, title: "reasoning", delta: "after tool")
+
+        events = feed.currentEvents()
+        #expect(events.map(\.kind) == [.reasoning, .response, .phase, .reasoning])
+        #expect(events.map(\.detail) == ["first second", "answer", "lookup", "after tool"])
+        #expect(events.last?.id != firstReasoningID)
+    }
+
+    @Test("relayed event snapshots update by stable identity")
+    func upsertReplacesInsteadOfDuplicating() {
+        let feed = SubagentFeed(toolCallId: "call-upsert", kindId: "spawn", title: "batch")
+        let id = UUID()
+        let timestamp = Date(timeIntervalSince1970: 42)
+
+        feed.upsert(
+            SubagentActivityEvent(
+                id: id,
+                timestamp: timestamp,
+                kind: .reasoning,
+                title: "job alpha · reasoning",
+                detail: "one"
+            )
+        )
+        feed.upsert(
+            SubagentActivityEvent(
+                id: id,
+                timestamp: timestamp,
+                kind: .reasoning,
+                title: "job alpha · reasoning",
+                detail: "one two"
+            )
+        )
+
+        #expect(feed.currentEvents().count == 1)
+        #expect(feed.currentEvents().first?.id == id)
+        #expect(feed.currentEvents().first?.detail == "one two")
+    }
+
+    @Test("a delayed older mutation cannot replace the latest published snapshot")
+    func concurrentPublicationNeverRegressesCurrentValue() {
+        let gate = FeedPublicationGate()
+        let recorder = FeedSnapshotRecorder()
+        let feed = SubagentFeed(
+            toolCallId: "call-publication-order",
+            kindId: "spawn",
+            title: "batch",
+            beforeEventPublicationForTesting: { revision in
+                gate.pauseFirstSnapshot(revision: revision)
+            }
+        )
+        let subscription = feed.eventsPublisher.sink {
+            recorder.append($0)
+        }
+        let firstMutationFinished = DispatchSemaphore(value: 0)
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            feed.emitPhase("first")
+            firstMutationFinished.signal()
+        }
+
+        #expect(gate.waitUntilFirstSnapshotCaptured())
+        // The first mutation has captured `[first]` but cannot publish yet.
+        // Publish `[first, second]` first, then release the stale snapshot.
+        feed.emitPhase("second")
+        gate.releaseFirst()
+        #expect(firstMutationFinished.wait(timeout: .now() + 2) == .success)
+
+        #expect(recorder.latest().map(\.title) == ["first", "second"])
+        #expect(feed.currentEvents().map(\.title) == ["first", "second"])
+        withExtendedLifetime(subscription) {}
     }
 
     @Test("the registry resolves a registered feed by tool-call id")

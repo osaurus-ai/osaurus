@@ -99,6 +99,19 @@ struct SettingsSearchIndexTests {
         #expect(encryptionHits.contains { $0.id == "storage.encryption" && $0.tab == .storage })
     }
 
+    @Test func searchFindsAgentEntries() {
+        // Both entries land on the Agents tab, whose header / agent grid
+        // carry the matching `settingsLandingAnchor` ids.
+        let agentHits = SettingsSearchIndex.search("agents")
+        #expect(agentHits.contains { $0.id == "agents.overview" && $0.tab == .agents })
+
+        let databaseHits = SettingsSearchIndex.search("agent database")
+        #expect(databaseHits.contains { $0.id == "agents.database" && $0.tab == .agents })
+
+        let tableHits = SettingsSearchIndex.search("saved views")
+        #expect(tableHits.contains { $0.id == "agents.database" })
+    }
+
     @Test func searchFindsAgentChannelIntegrationEntries() {
         let integrationHits = SettingsSearchIndex.search("integrations")
         #expect(integrationHits.contains { $0.id == "agentChannels.overview" && $0.tab == .agentChannels })
@@ -108,6 +121,9 @@ struct SettingsSearchIndexTests {
 
         let telegramHits = SettingsSearchIndex.search("telegram bot token")
         #expect(telegramHits.contains { $0.id == "agentChannels.telegram" && $0.tab == .agentChannels })
+
+        let whatsappHits = SettingsSearchIndex.search("whatsapp qr code")
+        #expect(whatsappHits.contains { $0.id == "agentChannels.whatsapp" && $0.tab == .agentChannels })
 
         let killSwitchHits = SettingsSearchIndex.search("kill switch")
         #expect(killSwitchHits.contains { $0.id == "agentChannels.globalWrites" && $0.tab == .agentChannels })

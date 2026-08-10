@@ -130,6 +130,21 @@ final class NativeMarkdownView: NSView {
     /// removes exactly what it added — never a background the markdown
     /// renderer itself owns (e.g. inline-code chips).
     private var appliedSearchRanges: [NSRange] = []
+    /// Occurrence index (local to this view's subtree, counting this view's
+    /// own text first, then mixed-segment children in display order) that
+    /// should be painted as the *current* find match. Nil when the current
+    /// match lives in another cell / earlier sibling.
+    private var searchCurrentLocalIndex: Int?
+    /// Query occurrences found in this view's own textStorage on the last
+    /// highlight pass — including occurrences that were skipped for painting
+    /// because they already carry a background (inline-code chips). Used to
+    /// distribute the current-match index across mixed-segment children.
+    private var searchOwnOccurrenceCount: Int = 0
+    /// Character range of every occurrence found on the last highlight pass
+    /// (painted or skipped), in textStorage coordinates. Backs
+    /// `rectOfSearchOccurrence` so the find bar can scroll *within* a tall
+    /// message instead of just to its row.
+    private var searchAllOccurrenceRanges: [NSRange] = []
     /// cancels stale loads when segment id is reused with a new URL or view is removed
     private var imageLoadTasks: [String: (UUID, Task<Void, Never>)] = [:]
     /// Per-image height constraint, updated to match the loaded image's
@@ -219,27 +234,112 @@ final class NativeMarkdownView: NSView {
         }
     }
 
-    /// Set the active find query (Cmd+F). Repaints when the query changed
-    /// and propagates into mixed-segment children like the redaction path.
-    func setSearchHighlight(query: String, theme: any ThemeProtocol) {
-        let changed = query != searchHighlightQuery
+    /// Set the active find query (Cmd+F). Repaints when the query or the
+    /// current-match index changed and propagates into mixed-segment
+    /// children like the redaction path. `currentIndex` is the occurrence
+    /// (zero-based, local to this view's subtree) to paint as the current
+    /// match; nil means no occurrence in this subtree is current. Returns
+    /// the total number of occurrences in the subtree so callers can keep
+    /// distributing the index across ordered siblings.
+    @discardableResult
+    func setSearchHighlight(
+        query: String, currentIndex: Int? = nil, theme: any ThemeProtocol
+    ) -> Int {
+        let changed = query != searchHighlightQuery || currentIndex != searchCurrentLocalIndex
         searchHighlightQuery = query
+        searchCurrentLocalIndex = currentIndex
         if changed {
             applySearchHighlightsIfNeeded(theme: theme)
         }
+        // Hand the remainder of the current-match index to children in
+        // display order: this view's own text counts first, then each
+        // child consumes its own occurrence count.
+        var consumed = searchOwnOccurrenceCount
         for entry in segmentViews {
             if let child = entry.view as? NativeMarkdownView {
-                child.setSearchHighlight(query: query, theme: theme)
+                let childCurrent = currentIndex.flatMap { index -> Int? in
+                    let local = index - consumed
+                    return local >= 0 ? local : nil
+                }
+                consumed += child.setSearchHighlight(
+                    query: query, currentIndex: childCurrent, theme: theme)
             }
         }
+        return consumed
+    }
+
+    /// Bounding rect (in this view's coordinate space) of the occurrence at
+    /// `index`, distributing across mixed-segment children the same way
+    /// `setSearchHighlight` does. Nil when the index is out of range or the
+    /// view isn't in a window yet (rects come from first-rect geometry,
+    /// which needs live layout). Lets the find bar scroll to the exact line
+    /// of the current match inside a message taller than the viewport.
+    func rectOfSearchOccurrence(_ index: Int) -> NSRect? {
+        // The upper bound was checked here; the lower bound was not, and this
+        // subscript trapped in production (Sentry APPLE-MACOS-10V: Array._checkSubscript,
+        // reached from the find bar's scroll-to-match). `searchAllOccurrenceRanges` is
+        // rebuilt on every highlight pass while the find bar navigates against counts
+        // taken from the *model's* text, so the index arriving here is not something this
+        // view can vouch for. Treat it as untrusted and answer "no such occurrence"
+        // rather than crashing the app mid-search.
+        guard index >= 0 else {
+            assertionFailure("negative search occurrence index \(index)")
+            return nil
+        }
+        if index < searchAllOccurrenceRanges.count {
+            guard let tv = textView, tv.window != nil else { return nil }
+            let range = searchAllOccurrenceRanges[index]
+            // firstRect works across TextKit 1/2 without forcing a layout-
+            // manager downgrade; it returns screen coordinates.
+            let screenRect = tv.firstRect(forCharacterRange: range, actualRange: nil)
+            guard screenRect.height > 0, let window = tv.window else { return nil }
+            let windowRect = window.convertFromScreen(screenRect)
+            let tvRect = tv.convert(windowRect, from: nil)
+            return tv.convert(tvRect, to: self)
+        }
+        var consumed = searchAllOccurrenceRanges.count
+        for entry in segmentViews {
+            guard let child = entry.view as? NativeMarkdownView else { continue }
+            let childCount = child.searchOccurrenceTotal
+            if index - consumed < childCount {
+                // This child owns the occurrence: return its answer, even when
+                // that answer is nil (text view not in a window yet, zero-height
+                // rect). Falling through here handed later siblings an
+                // already-consumed index — negative after the next `consumed`
+                // bump — which passed their upper-bound-only check and trapped
+                // in Array.subscript (Sentry APPLE-MACOS-10V).
+                guard let rect = child.rectOfSearchOccurrence(index - consumed) else {
+                    return nil
+                }
+                return child.convert(rect, to: self)
+            }
+            consumed += childCount
+        }
+        return nil
+    }
+
+    /// Total occurrences in this view's subtree on the last highlight pass.
+    var searchOccurrenceTotal: Int {
+        var total = searchAllOccurrenceRanges.count
+        for entry in segmentViews {
+            if let child = entry.view as? NativeMarkdownView {
+                total += child.searchOccurrenceTotal
+            }
+        }
+        return total
     }
 
     /// Repaint search-match backgrounds on the current textStorage. Always
     /// removes the previously painted ranges first so a query change or
     /// storage rebuild can't leave stale backgrounds behind. Occurrences
     /// that already carry a background attribute (inline-code chips) are
-    /// skipped rather than clobbered.
+    /// skipped rather than clobbered. The occurrence whose index equals
+    /// `searchCurrentLocalIndex` gets a distinct, stronger background so
+    /// the current match reads differently from the rest (browser-style
+    /// orange vs. yellow).
     private func applySearchHighlightsIfNeeded(theme: any ThemeProtocol) {
+        searchOwnOccurrenceCount = 0
+        searchAllOccurrenceRanges = []
         guard let tv = textView, let storage = tv.textStorage else {
             appliedSearchRanges = []
             return
@@ -258,8 +358,13 @@ final class NativeMarkdownView: NSView {
             return
         }
         let color = NSColor(theme.accentColor).withAlphaComponent(0.3)
+        // Current match: same treatment browsers use — clearly warmer and
+        // more opaque than the surrounding matches, readable on both light
+        // and dark themes.
+        let currentColor = NSColor.systemOrange.withAlphaComponent(0.55)
         let string = storage.string as NSString
         var searchRange = NSRange(location: 0, length: string.length)
+        var occurrenceIndex = 0
         storage.beginEditing()
         while searchRange.length > 0 {
             let found = string.range(of: query, options: [.caseInsensitive], range: searchRange)
@@ -272,14 +377,19 @@ final class NativeMarkdownView: NSView {
                 }
             }
             if !hasExistingBackground {
-                storage.addAttribute(.backgroundColor, value: color, range: found)
+                let isCurrent = occurrenceIndex == searchCurrentLocalIndex
+                storage.addAttribute(
+                    .backgroundColor, value: isCurrent ? currentColor : color, range: found)
                 appliedSearchRanges.append(found)
             }
+            searchAllOccurrenceRanges.append(found)
+            occurrenceIndex += 1
             let next = found.location + max(found.length, 1)
             if next >= string.length { break }
             searchRange = NSRange(location: next, length: string.length - next)
         }
         storage.endEditing()
+        searchOwnOccurrenceCount = occurrenceIndex
         tv.needsDisplay = true
     }
 
@@ -419,6 +529,12 @@ final class NativeMarkdownView: NSView {
         }
         ChatPerfTrace.shared.count("markdown.configure.applied")
 
+        // Fonts live in the attributed-string attributes, and the incremental
+        // text-storage path diffs blocks only — it would no-op on a theme-only
+        // change (e.g. font zoom). Drop the block memo so the apply path takes
+        // the full rebuild branch and re-derives every attribute.
+        if themeChanged { lastBlocks = [] }
+
         invalidateHeightMemo()
         // Content is changing — any width observed by a previous tenancy of
         // this (possibly recycled) view no longer counts as "already measured".
@@ -480,6 +596,10 @@ final class NativeMarkdownView: NSView {
         let streamingChanged = isStreaming != lastIsStreaming
 
         guard textChanged || widthChanged || themeChanged || streamingChanged else { return }
+
+        // Same as configure(): a theme-only change must not take the
+        // incremental path, whose block diff would no-op and keep stale fonts.
+        if themeChanged { lastBlocks = [] }
 
         invalidateHeightMemo()
         lastLayoutWidthForHeight = -1
@@ -653,6 +773,30 @@ final class NativeMarkdownView: NSView {
         theme: any ThemeProtocol,
         isStreaming: Bool
     ) {
+        // Traced: this runs per streaming tick and is the entry point of the
+        // markdown streaming app-hang cluster.
+        ChatPerfTrace.shared.time("markdown.applySegments") {
+            applySegmentsImpl(
+                segments,
+                cacheKey: cacheKey,
+                textChanged: textChanged,
+                widthChanged: widthChanged,
+                width: width,
+                theme: theme,
+                isStreaming: isStreaming
+            )
+        }
+    }
+
+    private func applySegmentsImpl(
+        _ segments: [ContentSegment],
+        cacheKey: String?,
+        textChanged: Bool,
+        widthChanged: Bool,
+        width: CGFloat,
+        theme: any ThemeProtocol,
+        isStreaming: Bool
+    ) {
         let isPureText = segments.allSatisfy {
             if case .textGroup = $0.kind { return true }; return false
         }
@@ -680,6 +824,31 @@ final class NativeMarkdownView: NSView {
     // MARK: - Private: Pure Text Path
 
     private func applyPureTextBlocks(
+        _ blocks: [SelectableTextBlock],
+        cacheKey: String?,
+        textChanged: Bool,
+        widthChanged: Bool,
+        width: CGFloat,
+        theme: any ThemeProtocol,
+        isStreaming: Bool
+    ) {
+        // Traced separately from the enclosing `markdown.applySegments`
+        // window so the report splits the pure-text path out of the
+        // segment total.
+        ChatPerfTrace.shared.time("markdown.applyPureTextBlocks") {
+            applyPureTextBlocksImpl(
+                blocks,
+                cacheKey: cacheKey,
+                textChanged: textChanged,
+                widthChanged: widthChanged,
+                width: width,
+                theme: theme,
+                isStreaming: isStreaming
+            )
+        }
+    }
+
+    private func applyPureTextBlocksImpl(
         _ blocks: [SelectableTextBlock],
         cacheKey: String?,
         textChanged: Bool,
@@ -923,13 +1092,15 @@ final class NativeMarkdownView: NSView {
                     lv = NSTextField(labelWithString: "")
                     lv.translatesAutoresizingMaskIntoConstraints = false
                     lv.isEditable = false; lv.isSelectable = true; lv.isBordered = false; lv.drawsBackground = false
-                    lv.font = NSFont.monospacedSystemFont(ofSize: CGFloat(theme.codeSize), weight: .regular)
-                    lv.textColor = NSColor(theme.primaryText)
                     lv.maximumNumberOfLines = 0
                     lv.lineBreakMode = .byWordWrapping
                     addSubview(lv)
                     register(lv)
                 }
+                // Set on every pass, not just creation, so reused labels pick
+                // up theme/font-zoom changes.
+                lv.font = NSFont.monospacedSystemFont(ofSize: CGFloat(theme.codeSize), weight: .regular)
+                lv.textColor = NSColor(theme.primaryText)
                 if case .math(let latex) = seg.kind { lv.stringValue = latex }
                 segView = lv
 
@@ -1025,8 +1196,11 @@ final class NativeMarkdownView: NSView {
     }
 
     private func updateTextViewColors(_ tv: SelectableNSTextView, theme: any ThemeProtocol) {
-        tv.isEditable = false
-        tv.isSelectable = true
+        // `-[NSTextView setEditable:]` invalidates state even when the value
+        // is unchanged, and this runs per block on every streaming apply —
+        // only touch the properties when they actually differ.
+        if tv.isEditable { tv.isEditable = false }
+        if !tv.isSelectable { tv.isSelectable = true }
         tv.selectedTextAttributes = [.backgroundColor: NSColor(theme.selectionColor)]
         tv.insertionPointColor = NSColor(theme.cursorColor)
         tv.accentColor = NSColor(theme.accentColor)

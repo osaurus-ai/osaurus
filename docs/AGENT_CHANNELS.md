@@ -1,8 +1,8 @@
 # Agent Channels
 
 Agent Channels are provider-neutral communication connections that expose the
-same agent actions across Discord, Slack, Telegram, and custom channel
-definitions.
+same agent actions across Discord, Slack, Telegram, iMessage, and custom
+channel definitions.
 
 ## Standard Actions
 
@@ -10,14 +10,23 @@ definitions.
 - `list_spaces`
 - `list_rooms`
 - `read_messages`
+- `read_thread`
 - `search_messages`
 - `draft_message`
 - `send_message`
 - `reply_thread`
+- `edit_message`
+- `delete_message`
+- `add_reaction`
+- `remove_reaction`
+- `send_typing`
 
 The model-facing tools use these standard verbs through `agent_channel_*`
 tools. Provider-specific adapters translate the standard action into the
-provider API. Native adapters currently include Discord, Slack, and Telegram.
+provider API. Native adapters currently include Discord, Slack, Telegram, and
+iMessage (macOS only, backed by a pinned, digest-verified `imsg` helper
+downloaded on demand from settings — like the sandbox runtime and models —
+instead of a remote bot API).
 
 The `agent_channel_*` tools are native dynamic tools. They are available to the
 app runtime and can be loaded through the capability flow, but they are not part
@@ -82,20 +91,22 @@ server, bot, or chat and prove:
    response that can be mapped to a confirmed delivery.
 6. External HTTP/MCP surfaces reject the same `agent_channel_*` tool names.
 
-The smoke boundary uses the visible Agent Channels settings surface and, for
-Telegram, the app-managed long-poll receive path. It does not require
-production webhook hosting. Slack Socket Mode background receive ships in the
-app: the transport supervisor starts the Socket Mode runtime at launch (and on
-settings changes) once a bot token, a Socket Mode app token, readable channels,
-and authorized sender IDs are configured. Its live health is shown in the
-Slack settings Receive section.
+The smoke boundary uses the visible Agent Channels settings surface and the
+app-managed receive transports: Slack Socket Mode, Telegram Bot API long polling,
+cursor-based Discord REST polling, and the iMessage `watch.subscribe` stream
+(with since-rowid cursor resume) against the downloaded helper. It does not require production webhook hosting. The
+transport supervisor starts each configured runtime at launch and after settings
+changes. Live health is shown in each provider's settings.
 
 Slack/Telegram release proof uses
 [`AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md`](AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md)
 and
 [`CHANNEL_RELEASE_RUNBOOK_SLACK_TELEGRAM.md`](CHANNEL_RELEASE_RUNBOOK_SLACK_TELEGRAM.md).
-Primary desktop transports are Slack Socket Mode and Telegram long-poll; public
-webhooks are advanced/future proof paths.
+iMessage release proof (helper pin rotation, macOS permissions, advanced
+private-API gating) uses
+[`CHANNEL_RELEASE_RUNBOOK_IMESSAGE.md`](CHANNEL_RELEASE_RUNBOOK_IMESSAGE.md).
+Primary desktop transports are Slack Socket Mode, Telegram long-poll, and
+the iMessage local watch stream; public webhooks are advanced/future proof paths.
 
 ## Release Readiness and Plugin Migration
 
@@ -114,6 +125,14 @@ Use the native readiness classifier in code for support tooling or future UI:
 - Telegram is blocked until the bot token validates, receive storage and long
   polling are enabled, readable chats and authorized senders are configured, and
   no webhook conflicts with long polling.
+- iMessage is blocked until the downloaded helper passes
+  verification, Full Disk
+  Access is granted, receive storage and receiving are enabled, and readable
+  chats and authorized senders are configured. Sending additionally needs Messages
+  Automation permission. Advanced (private-API) actions stay unavailable until
+  the operator both enables them per action in settings and has independently
+  disabled SIP and Library Validation — Osaurus only diagnoses that state and
+  never changes it.
 - Writes remain a separate gate: enabled writes require write-allowlisted
   destinations and confirmed send calls.
 
@@ -200,6 +219,119 @@ standard `agent_channel_*` tools. It does not add provider-specific standalone
 tools. Each configured action must map to a standard Agent Channel action, and
 the runner enforces the same read/write gates as native adapters before it
 builds an HTTP request.
+
+## Proactive Publishing (Agent Destinations)
+
+Schema v2 of `agent-channels.json` adds a top-level `bindings` array: provider-
+neutral agent→destination routes that let an agent publish to a channel during
+a normal run (chat, schedule, watcher, or self-scheduled wake-up) without an
+inbound message trigger. A v1 file decodes with empty bindings, so existing
+installs stay proactive-off by default.
+
+```json
+{
+  "schemaVersion": 2,
+  "connections": ["..."],
+  "bindings": [
+    {
+      "id": "daily-report",
+      "agentId": "00000000-0000-0000-0000-000000000001",
+      "connectionId": "slack",
+      "roomId": "C0123456789",
+      "threadId": null,
+      "label": "Team standup channel",
+      "guidance": "Post the daily summary at the end of the scheduled run.",
+      "allowedSources": ["schedule", "self_schedule"],
+      "outboundMode": "confirm",
+      "ratePolicy": { "maxSendsPerHour": 10, "minSecondsBetweenSends": 30 },
+      "enabled": true
+    }
+  ]
+}
+```
+
+Key properties of the model:
+
+- **Zero-config automatic destinations.** Connecting a native channel already
+  provides everything a proactive destination needs: the write allowlist says
+  which rooms the bot may post to, and inbound dispatch says which agent
+  answers there. `AgentChannelAutoDestinationResolver` derives an automatic
+  binding for every (answering agent, writable room) pair on an enabled native
+  connection with a saved credential, write access on, and dispatch enabled —
+  id `auto-<connection>-<room>-<agent prefix>`, always `confirm` mode, all run
+  sources, default rate policy. Automatic destinations grant no new write
+  capability (they exist only where the operator already allowlisted write
+  access) and can never send without a human: `confirm` is structural, not a
+  default. Every proactive read point — tool exposure, the system prompt
+  section, the publish tool's contextual `.ask` resolution, and the publish
+  service's authorization (including approval-time re-checks) — uses the
+  effective configuration (stored + derived), so removing a room from the
+  allowlist or disabling write access makes the automatic destination vanish
+  everywhere at once and refuses already-queued approvals with
+  `binding_removed`.
+- **Customization precedence.** A stored binding for the same (agent,
+  connection, room) suppresses the derived one — changing a room's mode in the
+  UI (including "Off") materializes a stored binding, and deleting that
+  customization reverts the room to automatic ask-first behavior. A stored
+  binding that reuses an automatic id also wins. Derived rows are labeled
+  "Automatic" in the UI; switching one to auto-send goes through the same
+  explicit acknowledgement as any autonomous binding.
+- Bindings are managed in two synchronized surfaces backed by the same store
+  and editor: per agent under the agent's own settings (Agents → agent →
+  Automation → Channel Posting, with the agent pinned in the editor) and
+  across all agents in Settings → Channels → Agent Posting. Each binding
+  names a single agent, a connection (native or custom), a room, an optional
+  thread, operator-facing "when to use" guidance, the run sources it may be
+  used from, an outbound mode, and a rate policy. New bindings get an
+  auto-generated slug id; rooms are picked from live discovery, and run
+  sources, rate limits, and thread pinning live behind Advanced with safe
+  defaults.
+- `outboundMode` decides what `agent_channel_publish` does: `off` refuses,
+  `draft` records a local draft with no provider I/O, `confirm` shows an
+  interactive approval card on attended runs and queues a pending outbox item
+  on unattended runs, and `autonomous` sends directly while still passing
+  every host gate (write allowlists, rate policy, kill switch).
+- When an agent has at least one usable binding, its system prompt gains a
+  dynamic "Channel Destinations" section listing binding ids, labels, modes,
+  and guidance for the current run source, and the narrow
+  `agent_channel_publish(binding_id, content, intent_key, thread_id?)` tool is
+  exposed. The model never supplies a raw connection or room for proactive
+  sends; an optional `thread_id` is honored only when the binding does not pin
+  a thread itself, and a conflicting thread is refused.
+- Every publish flows through a durable outbound-intent ledger keyed by
+  (agent, binding, `intent_key`). Replaying an intent key returns the prior
+  result instead of sending again. Provider failures are classified:
+  deterministic rejections (auth, permissions, unreachable host) park as
+  retryable `failed` rows that a retry re-claims via compare-and-set, while
+  ambiguous failures (timeout after dispatch, 5xx, undecodable success) park
+  as `delivery_unknown` — never auto-retried, resolvable only by the operator
+  (mark sent, discard, or explicitly resend). Interrupted `sending` rows from
+  a crashed run are reconciled to `delivery_unknown` at startup.
+- Policy checks and the provider write for one binding are serialized by a
+  per-binding lock inside the publish actor, so two concurrent sends can never
+  double-spend the binding's hourly or min-gap rate headroom.
+- If the user configures a global `.ask` policy on `agent_channel_publish`,
+  unattended runs (schedule/watcher/self-schedule) queue the message for
+  operator approval instead of stalling on a card nobody can answer — even for
+  `autonomous` bindings (strictest wins).
+- The Outbox page (Settings → Channels → Outbox) shows unresolved work first
+  (pending approvals, unknown deliveries, drafts) with paginated terminal
+  history below; terminal rows are pruned after 30 days while unresolved rows
+  are retained indefinitely. Approving, sending a draft, or retrying an
+  unknown delivery opens an exact-payload review sheet and re-runs the full
+  authorization matrix against current settings; an item whose binding route
+  (connection/room/thread) or allowed run sources changed since it was queued
+  is refused instead of silently rerouted.
+- Lifecycle safety: saving a binding validates that its agent and connection
+  exist; deleting a connection cascade-disables its bindings (recreating the
+  same connection id never silently reactivates them); deleting an agent
+  removes its bindings; imported configurations arrive with autonomous or
+  unresolvable bindings disabled until the local operator re-acknowledges
+  them, and materially repointing a binding resets its autonomous
+  acknowledgement.
+
+See `AGENT_CHANNEL_SECURITY.md` for the authorization matrix and the
+distinction between proactive publishing and reactive reply tokens.
 
 ## Safe Custom JSON Runner
 
@@ -322,6 +454,7 @@ The connection center validates channel definitions before saving:
 - `discord` is reserved for the native Discord adapter.
 - `slack` is reserved for the native Slack adapter.
 - `telegram` is reserved for the native Telegram adapter.
+- `imessage` is reserved for the native iMessage adapter.
 - Custom HTTP connections require an HTTP or HTTPS base URL.
 - Custom HTTP base URLs run through the same blocked-host policy used by the
   runner, so localhost/private/link-local targets are rejected before save.
@@ -348,6 +481,15 @@ non-secret IDs and policy:
   `reply_thread` can target.
 - `writeEnabled` must be true, and send/reply actions still require
   `confirm_send: true`.
+- `senderAllowlist` and `inboundDispatch` gate Discord polling before any
+  message reaches an agent. The first poll establishes a cursor and does not
+  replay historical messages.
+
+The Discord settings sheet fetches the bot's servers and selectable channels.
+Read and Write remain independent explicit choices; discovery never grants
+access automatically. It also attempts to load human members for the authorized
+sender picker; servers that restrict member listing keep the manual sender-ID
+fallback.
 
 ## Slack Connection
 
@@ -376,12 +518,27 @@ only non-secret IDs and policy in `slack.json`:
   `<!everyone>`, plus user-group markup such as `<!subteam^...>`, are rejected
   before any network call.
 
+The Slack settings sheet can fetch the authenticated workspace, visible
+conversations, and workspace users after the bot token is saved. Discovery is
+selection assistance only: it does not bypass allowlists or automatically
+grant read, write, or inbound-sender access. Channel rows expose independent
+Read and Write choices, unjoined channels are marked unavailable, and deleted,
+bot, and app users are omitted from sender choices. Manual IDs remain under
+Advanced for installations whose Slack scopes restrict directory discovery.
+
+Additional Slack workspaces can be connected from the same sheet. Each
+workspace keeps a separate bot token and optional Socket Mode app token in
+Keychain, a separate channel/sender policy in `workspaceAccounts`, and its own
+Socket Mode runtime. Channel actions route through the token belonging to the
+workspace that owns the selected channel.
+
 Slack thread ids use `channel_id:thread_ts` so the canonical
 `agent_channel_read_thread` and `agent_channel_reply_thread` tools can route
 Slack thread operations without adding Slack-only tool names. Sent messages use
 conservative Slack posting controls: automatic name linking is disabled,
-message parsing is set to `none`, unfurls are disabled, and thread replies do
-not broadcast.
+content posts through the `markdown_text` field so standard Markdown renders
+natively, unfurls are disabled, and thread replies do not broadcast. The
+explicit plain-text mode still posts through `text` with `parse: none`.
 
 The native adapter keeps live Slack calls behind `SlackAPIClientProtocol`.
 Outbound sends are represented as a `SlackOutboundMessageRequest` before
@@ -408,6 +565,70 @@ used by signed webhook fixtures. Public Events API webhooks remain an
 advanced/future transport that still must use the same signature verifier
 before parsing user-visible content.
 
+## Platform Presence
+
+Osaurus distinguishes transport health (shown in settings as "Not running" /
+"Healthy") from the presence indicator each platform shows next to the bot:
+
+- **Slack** has no runtime presence API for bot tokens. The recommended app
+  manifest sets `features.bot_user.always_online: true`, which is the only
+  supported way to show the bot with a green presence dot. Existing Slack apps
+  must reapply the manifest (App Manifest page) for the change to take effect.
+- **Discord** requires a live Gateway (WebSocket) session for the bot to appear
+  online; REST polling alone leaves it grey. Osaurus runs a lightweight
+  presence-only Gateway session (`DiscordGatewayPresenceRuntime`) whenever a
+  Discord bot token is saved — including send-only setups — identifying as
+  `online` with zero event intents, maintaining heartbeats, and reconnecting
+  with exponential backoff. Message receive stays on cursor-based REST polling.
+  The session disconnects cleanly when the token is removed or Osaurus stops,
+  so the bot presence tracks whether Osaurus is actually running.
+- **Telegram** does not show bot presence, so no presence work applies.
+
+## Native Message Formatting
+
+Outbound channel content is written by agents as Markdown and rendered
+per-provider by `AgentChannelMessageFormatter`, which reuses the same
+`parseBlocks` Markdown pipeline as the in-app chat view:
+
+- **Slack** receives standard Markdown through the `markdown_text` field, so
+  `**bold**`, lists, and code fences render natively instead of appearing as
+  literal markup. Mention/broadcast protections and disabled unfurls are
+  retained.
+- **Discord** receives Discord-compatible Markdown in `content` (headings are
+  clamped to Discord's `#`–`###` levels, images become plain links), with
+  mentions still suppressed via `allowed_mentions`.
+- **Telegram** receives escaped Bot API HTML with an explicit
+  `parse_mode: HTML`, so `**bold**` becomes `<b>bold</b>` and user content
+  containing `<`, `>`, or `&` is escaped rather than interpreted.
+
+Long content is split with shared structure-aware chunking: block boundaries
+first, then line boundaries, then grapheme clusters, so links, code fences, and
+emoji are never split mid-sequence. Limits are 12,000 characters per Slack
+message, 2,000 UTF-16 units per Discord message, and 4,096 UTF-16 units per
+Telegram message, with at most 5 native messages per send. Sends and replies
+chunk automatically (a reply reference applies to the first chunk only);
+message edits must fit a single native message.
+
+## Emoji Reactions
+
+`agent_channel_add_reaction` and `agent_channel_remove_reaction` accept both
+Slack-style aliases and Unicode emoji and normalize per provider through
+`AgentChannelReactionNormalizer`:
+
+- **Slack** takes alias names (`white_check_mark`); Unicode emoji such as `✅`
+  and colon-wrapped aliases such as `:tada:` are converted to the bare alias.
+- **Discord** takes Unicode emoji (`🔥`); aliases are converted to Unicode, and
+  custom emoji use the `name:id` form (`partyparrot:123456789012345678`).
+- **Telegram** takes Unicode emoji or a numeric custom-emoji id, sent as typed
+  `ReactionTypeEmoji` / `ReactionTypeCustomEmoji` payloads. Telegram bots keep
+  one reaction per message: removal clears the bot's reaction only when the
+  requested emoji matches the last reaction Osaurus set on that message, so an
+  unrelated remove request cannot wipe an existing reaction.
+
+Reactions remain behind the same confirmation, write-allowlist, and global
+kill-switch gates as other channel writes; there are no automatic reaction
+heuristics.
+
 ## Message State And Dedupe
 
 Agent Channels keep provider-neutral message state in
@@ -418,7 +639,8 @@ included in storage export/key rotation.
 The schema is intentionally provider-neutral:
 
 - `channel_messages` stores inbound and outbound message snapshots keyed by
-  `connection_id + room_id + provider_message_id`.
+  `connection_id + room_id + provider_message_id`, including normalized image,
+  audio, video, and file attachment metadata.
 - `channel_seen_events` stores receive-side event ids keyed by
   `connection_id + provider_event_id`.
 - `channel_receive_cursors` stores optional per-room cursors for polling or
@@ -433,6 +655,9 @@ message. Discord does this for `read_messages`, `search_messages`, and
 `send_message`, so repeated reads cannot duplicate the same provider message in
 the local store. The store keeps only the newest 1,000 message snapshots per
 connection/room pair so busy channels do not grow the database without bound.
+Slack file metadata, Telegram photo/document/audio/video metadata, and Discord
+attachments are preserved. Inbound agent turns receive this metadata inside the
+same untrusted-content envelope as message text; credentials are never included.
 Read and search results reflect messages that were authorized at ingest time.
 If an operator later tightens sender allowlists, previously stored snapshots may
 remain readable until they age out or are pruned.

@@ -33,8 +33,24 @@ explicit `error` row.
 descriptors by explicit `id` or by `(kind, source, artifactPath)`, and supports
 filters for kind, source, status, and artifact availability. Stable JSON output
 uses the package canonical encoder with sorted keys and ISO-8601 dates.
+Watcher scoreboard discovery uses the same registry service precedence, so a
+newer registration replaces an older available summary when an explicit ID is
+reused.
 
 Metadata is redacted before it reaches the registry. Sensitive keys such as API
 keys, authorization headers, passwords, private keys, credentials, and token
 fields are replaced with `<redacted>`. Values that look like common bearer,
 OpenAI, GitHub, or Slack-style secrets are also replaced.
+
+## Eval Watcher Usage
+
+`osaurus-evals report` writes the eval-specific report bundle as before, then
+emits `evidence-registry.json` next to `summary.json`. That snapshot registers
+the report summary as an `eval` artifact with source
+`osaurus-evals-review-report`.
+
+`osaurus-evals scoreboard` consumes those registry snapshots when rebuilding a
+watcher scoreboard. It does not scan arbitrary `summary.json` files as a second
+report source; it follows registry summaries, fails closed when a registered
+artifact is unavailable or invalid, and writes its own scoreboard registry
+snapshot with source `osaurus-evals-scoreboard`.

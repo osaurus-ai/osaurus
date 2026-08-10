@@ -416,19 +416,38 @@ struct HeaderTabsRow<Tab: AnimatedTabItem>: View where Tab.AllCases: RandomAcces
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            AnimatedTabSelector(
-                selection: $selection,
-                counts: counts,
-                badges: badges
-            )
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                tabSelector
 
-            Spacer()
+                Spacer(minLength: 12)
 
-            if showSearch {
-                SearchField(text: $searchText, placeholder: searchPlaceholder, width: 200)
+                if showSearch {
+                    SearchField(text: $searchText, placeholder: searchPlaceholder, width: 220)
+                }
             }
+
+            VStack(alignment: .leading, spacing: 10) {
+                tabSelector
+
+                if showSearch {
+                    SearchField(
+                        text: $searchText,
+                        placeholder: searchPlaceholder,
+                        fillsAvailableWidth: true
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private var tabSelector: some View {
+        AnimatedTabSelector(
+            selection: $selection,
+            counts: counts,
+            badges: badges
+        )
     }
 }
 

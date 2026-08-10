@@ -715,7 +715,7 @@ private struct RelaysSectionView: View {
         }
         .task {
             for agent in agentManager.agents where !agent.isBuiltIn && agent.agentAddress == nil {
-                try? agentManager.assignAddress(to: agent)
+                agentManager.assignAddressInBackground(to: agent)
             }
         }
     }

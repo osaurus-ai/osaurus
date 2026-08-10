@@ -76,7 +76,7 @@ Agents can also opt into a private local database and a single self-scheduled ne
 
 ### Agent Loop
 
-Every chat is an agent loop. Pick a working folder and the agent gets file, search, and git tools. Toggle the sandbox and it gets shell access in an isolated Linux VM. The model writes a markdown todo list, executes against it, and closes out with a verified summary -- all in the same chat window. See the [Agent Loop Guide](docs/AGENT_LOOP.md).
+Every chat is an agent loop. Pick a working folder and the agent gets file, search, and git tools. Toggle the sandbox and it gets shell access in an isolated sandbox. The model writes a markdown todo list, executes against it, and closes out with a verified summary -- all in the same chat window. See the [Agent Loop Guide](docs/AGENT_LOOP.md).
 
 ### Sandbox
 
@@ -96,7 +96,7 @@ Each agent gets its own Linux user and home directory. The VM connects back to O
 └────────────────┘       └────────────────────────────┘
 ```
 
-> Requires macOS 26+ (Tahoe). See the [Sandbox Guide](docs/SANDBOX.md) for configuration, built-in tools, and plugin authoring.
+> The Linux VM requires macOS 26+ (Tahoe). On earlier versions Osaurus falls back to a native macOS Seatbelt sandbox: commands run on your Mac under `sandbox-exec` confinement, with writes limited to the sandbox workspace, `pip`/`npm` installs (no `apk`), and all-or-nothing network access instead of per-domain allowlists. See the [Sandbox Guide](docs/SANDBOX.md) for configuration, built-in tools, and plugin authoring.
 
 ### Memory
 
@@ -121,6 +121,10 @@ When two Osaurus agents talk -- across your LAN or across the world through the 
 ### Subagents (Spawn)
 
 Let a chat delegate a bounded task to another model -- **local or remote** -- or to one of your saved agents, and get a compact result back without cluttering the conversation. Perfect for offloading research, coding, or analysis to a specialist mid-turn. When the subagent runs on a local model, Osaurus does a **single-residency handoff**: it unloads your chat model, runs the job, then reloads and continues, so two large models never fight for memory. Off by default, approved on first use, and configured per agent.
+
+### Browser Use
+
+Give an agent its own browser. `browser_use` runs a self-contained subagent that navigates, reads pages, clicks, types, and verifies each step against a persistent per-agent WebKit session — cookies and sign-ins survive between chats, isolated from other agents and your regular browser. Reads and navigation run automatically; typing and anything consequential pause for your approval, and sign-ins happen in a secure window you type into directly (agents never see credentials). Off by default, enabled per agent, sessions managed in Settings → Browser. See the [Browser Use Guide](docs/BROWSER.md).
 
 ### Image Generation
 
@@ -182,13 +186,13 @@ In the other direction, Osaurus can also act as an MCP client and aggregate tool
 ## Tools & Plugins
 
 ```bash
-osaurus tools install osaurus.browser    # Install from registry
+osaurus tools install osaurus.calendar   # Install from registry
 osaurus tools list                       # List installed
 osaurus tools create MyPlugin --swift    # Create a plugin
 osaurus tools dev com.acme.my-plugin     # Dev with hot reload
 ```
 
-20+ native plugins: Mail, Calendar, Vision, macOS Use, XLSX, PPTX, Browser, Music, Git, Filesystem, Search, Fetch, and more. Plugins target the v3 host API surface — register HTTP routes, serve web apps, persist data in SQLite, dispatch agent tasks, and call inference through any model. Older v1/v2 plugins continue to load unchanged. See the [Plugin Authoring Guide](docs/plugins/README.md).
+20+ native plugins: Mail, Calendar, Vision, XLSX, PPTX, Music, Git, Filesystem, Fetch, and more. (Web search, browsing, and macOS control are core Osaurus capabilities now — no plugin needed.) Plugins target the v3 host API surface — register HTTP routes, serve web apps, persist data in SQLite, dispatch agent tasks, and call inference through any model. Older v1/v2 plugins continue to load unchanged. See the [Plugin Authoring Guide](docs/plugins/README.md).
 
 Document attachments keep structure where the file format exposes it: CSV/TSV tables, XLSX workbooks, PPTX decks, PDF page anchors, and rich document sections are parsed through the document adapter registry before they reach the agent.
 
@@ -340,7 +344,7 @@ Osaurus is actively developed and we welcome contributions: bug fixes, new plugi
 Check out [Good First Issues](https://github.com/osaurus-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), read the [Contributing Guide](CONTRIBUTING.md), or join [Discord](https://discord.gg/osaurus). See [docs/FEATURES.md](docs/FEATURES.md) for the full feature inventory.
 
 > [!NOTE]
-> **🌐 Help translate Osaurus.** We're looking for contributors to localize the app into **Spanish**, **Japanese**, and **Traditional Chinese** -- these locales are already wired up in Xcode, so you can start translating right away. See [docs/TRANSLATORS.md](docs/TRANSLATORS.md) for how to contribute and the contributor leaderboard.
+> **🌐 Help translate Osaurus.** We're looking for contributors to localize the app into **Spanish** and **Japanese** -- these locales are already wired up in Xcode, so you can start translating right away. See [docs/TRANSLATORS.md](docs/TRANSLATORS.md) for how to contribute and the contributor leaderboard.
 
 ## Community
 

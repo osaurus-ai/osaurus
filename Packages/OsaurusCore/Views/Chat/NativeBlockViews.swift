@@ -285,9 +285,11 @@ final class NativeTypingIndicatorView: NSView {
     private func updatePrefillBadge(_ progress: PrefillProgressState?) {
         guard let progress, progress.totalUnitCount > 0 else {
             prefillBadge.isHidden = true
+            prefillTitleLabel.stringValue = L("Prefill")
             prefillCountLabel.stringValue = ""
             return
         }
+        prefillTitleLabel.stringValue = progress.stage.localizedDisplayTitle
         prefillCountLabel.stringValue = "\(progress.completedUnitCount)/\(progress.totalUnitCount)"
         prefillBadge.isHidden = false
         // The counter lives inside the RAM stack, so make sure that stack is
@@ -483,9 +485,12 @@ final class NativePendingToolCallView: NSView {
         // Always running: shimmer the friendly title to signal progress. The
         // view mirrors the running group row exactly (node + shimmer title), so
         // the pending → running-group → done transition is seamless — no args
-        // box flashing in and out. `argPreview`/`argSize` are unused.
+        // box flashing in and out. `argPreview` is unused; `argSize` drives the
+        // liveness counter, because the DSML envelope buffers to its closing
+        // tag and a long file-write otherwise renders a motionless card.
         shimmerLabel.configure(
-            text: ToolDisplayName.friendly(for: toolName, running: true),
+            text: ToolDisplayName.friendly(
+                for: toolName, running: true, pendingBytes: argSize),
             font: NSFont.systemFont(ofSize: 12, weight: .semibold),
             baseColor: NSColor(theme.primaryText).withAlphaComponent(0.4),
             highlightColor: NSColor(theme.primaryText)
@@ -1015,10 +1020,67 @@ final class NativeCodeBlockView: NSView {
 
 /// NSTextView subclass used as a grid cell. Keeps attributed-string formatting
 /// intact on focus and supports native selection within the cell.
-final class CellTextView: NSTextView {
+final class CellTextView: NSTextView, CrossSelectableTextView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { isSelectable }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { isSelectable }
+
+    /// Slice of the thread-wide cross-block selection (see ChatCrossSelection).
+    var crossSelectionRange: NSRange? {
+        didSet {
+            guard oldValue != crossSelectionRange else { return }
+            needsDisplay = true
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        drawCrossSelectionHighlight()
+        super.draw(dirtyRect)
+    }
+
+    /// Cursor comes from a `.cursorUpdate` tracking area — legacy cursor
+    /// rects don't survive layer-backed table-cell recycling (see
+    /// `chatTextCursorUpdate`).
+    private var cursorTrackingArea: NSTrackingArea?
+
+    override func cursorUpdate(with event: NSEvent) {
+        guard isSelectable else {
+            super.cursorUpdate(with: event)
+            return
+        }
+        chatTextCursorUpdate(with: event)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let cursorTrackingArea {
+            removeTrackingArea(cursorTrackingArea)
+        }
+        guard isSelectable else {
+            cursorTrackingArea = nil
+            return
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.cursorUpdate, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        cursorTrackingArea = area
+    }
+
+    /// See SelectableNSTextView.mouseDown — single-click drags go through
+    /// the cross-block selection controller (#2129).
+    override func mouseDown(with event: NSEvent) {
+        if isSelectable, event.clickCount == 1 {
+            ChatCrossSelection.shared.beginDrag(from: self, with: event)
+            return
+        }
+        ChatCrossSelection.shared.clear()
+        super.mouseDown(with: event)
+    }
+
 }
 
 // MARK: - NativeMarkdownTableView
@@ -1036,6 +1098,9 @@ final class NativeMarkdownTableView: NSView {
     private var rows: [[String]] = []
     private var lastWidth: CGFloat = 0
     private var lastThemeFingerprint: String = ""
+    /// Width used by the most recent `relayoutImpl` pass; `layout()` skips
+    /// re-measuring when it would run with the same width again.
+    private var lastRelayoutWidth: CGFloat = -1
     private var heightConstraint: NSLayoutConstraint?
 
     // [row][col]; row 0 is headers
@@ -1044,6 +1109,15 @@ final class NativeMarkdownTableView: NSView {
     // unchanged cells when the grid reconfigures during streaming
     private var cellTexts: [[String]] = []
     private let separator = NSBox()
+
+    // Per-row measurement cache. A streaming table reconfigures once per
+    // delta, and re-running TextKit layout for EVERY row of the whole table
+    // on each tick made large tables O(rows) per delta — a >3s main-thread
+    // hang in production (APPLE-MACOS-19C). Only rows whose text changed
+    // since the last measure (or a new column width) are re-measured.
+    private var measuredRowTexts: [[String]] = []
+    private var measuredRowHeights: [CGFloat] = []
+    private var measuredColumnWidth: CGFloat = -1
 
     /// Called after the grid re-measures and its height changes.
     var onHeightChanged: (() -> Void)?
@@ -1100,7 +1174,13 @@ final class NativeMarkdownTableView: NSView {
 
     override func layout() {
         super.layout()
-        if bounds.width > 0.5 {
+        // Only re-measure when the width actually changed. Every streaming
+        // tick triggers a layout pass on the cell, and unconditionally
+        // re-measuring every cell of every visible table per tick was the
+        // dominant markdown streaming cost (ChatPerfTrace: 4,536 relayouts /
+        // 7.8s over one stream). Content changes route through `configure`,
+        // which calls `relayout` directly.
+        if bounds.width > 0.5, abs(bounds.width - lastRelayoutWidth) > 0.5 {
             relayout(width: bounds.width)
         }
     }
@@ -1114,11 +1194,22 @@ final class NativeMarkdownTableView: NSView {
     private func updateCells(theme: any ThemeProtocol, rerenderAll: Bool) {
         let columnCount = max(headers.count, rows.map(\.count).max() ?? 0)
 
+        // A theme or typography-scale change re-renders cells without
+        // changing their source text, so cached row heights are stale.
+        if rerenderAll {
+            measuredRowTexts.removeAll()
+            measuredRowHeights.removeAll()
+            measuredColumnWidth = -1
+        }
+
         // A column-count change invalidates per-cell reuse; start over.
         if columnCount == 0 || cellFields.first?.count != columnCount {
             for row in cellFields { for cell in row { cell.removeFromSuperview() } }
             cellFields.removeAll()
             cellTexts.removeAll()
+            measuredRowTexts.removeAll()
+            measuredRowHeights.removeAll()
+            measuredColumnWidth = -1
         }
         guard columnCount > 0 else { return }
 
@@ -1247,6 +1338,15 @@ final class NativeMarkdownTableView: NSView {
     // MARK: - Private: Layout
 
     private func relayout(width: CGFloat) {
+        // Traced: table relayout during streaming is a suspected
+        // O(whole-table)-per-tick cost.
+        ChatPerfTrace.shared.time("markdown.tableRelayout") {
+            relayoutImpl(width: width)
+        }
+    }
+
+    private func relayoutImpl(width: CGFloat) {
+        lastRelayoutWidth = width
         let columnCount = cellFields.first?.count ?? 0
         guard columnCount > 0, width > 1 else {
             heightConstraint?.constant = 1
@@ -1262,9 +1362,20 @@ final class NativeMarkdownTableView: NSView {
         let usable = max(width - totalGaps, CGFloat(columnCount) * 40)
         let columnWidth = floor(usable / CGFloat(columnCount))
 
-        // Measure row heights via each cell's own TextKit layout
+        // Measure row heights via each cell's own TextKit layout, reusing the
+        // cached height for rows whose text hasn't changed since the last
+        // measure at this column width (see `measuredRowTexts`).
+        let cacheUsable = columnWidth == measuredColumnWidth
         var rowHeights: [CGFloat] = []
-        for row in cellFields {
+        for (rowIdx, row) in cellFields.enumerated() {
+            if cacheUsable,
+                rowIdx < measuredRowTexts.count,
+                rowIdx < cellTexts.count,
+                measuredRowTexts[rowIdx] == cellTexts[rowIdx]
+            {
+                rowHeights.append(measuredRowHeights[rowIdx])
+                continue
+            }
             var maxH: CGFloat = 0
             for cell in row {
                 cell.textContainer?.containerSize = NSSize(
@@ -1279,6 +1390,9 @@ final class NativeMarkdownTableView: NSView {
             }
             rowHeights.append(max(maxH, 18))
         }
+        measuredRowTexts = cellTexts
+        measuredRowHeights = rowHeights
+        measuredColumnWidth = columnWidth
 
         // Place cells
         var y: CGFloat = 0

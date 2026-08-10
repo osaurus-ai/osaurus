@@ -20,6 +20,73 @@ import os.log
 
 private let genLog = Logger(subsystem: "com.dinoki.osaurus", category: "Generation")
 
+extension Notification.Name {
+    /// Posted after the set of resident local model containers changes.
+    /// The object is a revisioned `ModelRuntimeResidencySnapshot`.
+    static let modelRuntimeResidencyChanged = Notification.Name("modelRuntimeResidencyChanged")
+}
+
+/// Owning-layer cause for a model-residency change. UI lifecycle recovery must
+/// never infer intent from an empty resident-name list: only an exact
+/// `.idlePolicy` decision associated with the current activation is recoverable.
+enum ModelRuntimeResidencyChangeReason: String, Sendable, Equatable {
+    case initial
+    case load
+    case idlePolicy
+    case memoryPressure
+    case handoff
+    case modelSwitch
+    case explicit
+    case settingsClear
+    case shutdown
+}
+
+/// Immutable, ordered runtime-residency event/query result.
+struct ModelRuntimeResidencySnapshot: Sendable, Equatable {
+    let names: [String]
+    let revision: UInt64
+    let reason: ModelRuntimeResidencyChangeReason
+    let idleDecisionID: UInt64?
+}
+
+/// Atomic result used when a visible chat becomes active. The runtime cancels
+/// the currently pending idle decision before returning. If that exact
+/// decision had already crossed into unload, its identity is returned so the
+/// controller may recover only the matching removal event.
+struct ModelRuntimeChatActivationResidencySnapshot: Sendable, Equatable {
+    let residency: ModelRuntimeResidencySnapshot
+    let recoverableIdleDecisionID: UInt64?
+}
+
+/// Small value-type ledger shared by runtime publication and deterministic
+/// tests. Keeping revision/reason/decision in one mutation prevents a
+/// notification from pairing a new resident-name set with stale metadata.
+struct ModelRuntimeResidencyLedger: Sendable {
+    private(set) var revision: UInt64 = 0
+    private var lastReason: ModelRuntimeResidencyChangeReason = .initial
+    private var lastIdleDecisionID: UInt64?
+
+    func snapshot(names: [String]) -> ModelRuntimeResidencySnapshot {
+        ModelRuntimeResidencySnapshot(
+            names: names.sorted(),
+            revision: revision,
+            reason: lastReason,
+            idleDecisionID: lastIdleDecisionID
+        )
+    }
+
+    mutating func record(
+        names: [String],
+        reason: ModelRuntimeResidencyChangeReason,
+        idleDecisionID: UInt64? = nil
+    ) -> ModelRuntimeResidencySnapshot {
+        revision &+= 1
+        lastReason = reason
+        lastIdleDecisionID = idleDecisionID
+        return snapshot(names: names)
+    }
+}
+
 // Force-link both trampolines so ModelFactoryRegistry discovers them at runtime.
 // `loadModelContainer` iterates factories in order — without touching each
 // `.shared` the trampoline's static initializer may never run, and a model
@@ -29,8 +96,131 @@ private let genLog = Logger(subsystem: "com.dinoki.osaurus", category: "Generati
 private let _vlmFactory = MLXVLM.VLMModelFactory.shared
 private let _llmFactory = MLXLLM.LLMModelFactory.shared
 
+/// Whether a load may disturb the model someone is already using.
+///
+/// The runtime is strictly single-model by default: loading B evicts resident A
+/// and cancels an in-flight load of A. That is fine when a human is waiting on
+/// B — they asked for it. It is never fine on behalf of housekeeping (memory
+/// distillation, voice-transcript cleanup, speculative warm-up, a cron-fired
+/// agent), which must fill an *empty* slot or step aside.
+///
+/// This has to be enforced inside the actor, at the moment of eviction. Callers
+/// used to probe `hasLoadInFlight()` / `hasResidentModelOther(than:)` and then
+/// load on a later actor hop — a check-then-act race that loses whatever arrived
+/// in between. `ModelRuntime` is reentrant across every `await`, so the only
+/// atomic place to refuse is the same synchronous segment that observed the
+/// conflict.
+public enum ModelLoadIntent: Sendable, Equatable {
+    /// A human is waiting on this load. May evict and cancel as needed.
+    case interactive
+    /// Housekeeping. Reuses a resident model or fills an empty slot; refuses
+    /// rather than disturb a model that is resident or already loading.
+    case background
+    /// Restore the model that a user-visible residency handoff temporarily
+    /// unloaded. Like an interactive load, this may evict a now-idle resident
+    /// model. Unlike an interactive load, it must never cancel a different
+    /// model whose cold load is already in flight: await that materialization,
+    /// then re-evaluate residency and restore in actor order.
+    case handoffRestore
+}
+
+/// Exact identity of one published local-model residency. The generation
+/// changes every time a cold load is published, so an old handoff lease cannot
+/// accidentally unload a later reload of the same model name (the ABA case).
+struct ModelResidencyIdentity: Sendable, Equatable, Hashable {
+    let modelName: String
+    let generation: UUID
+}
+
+/// One handoff's exclusive claim over models it cold-loaded. This is separate
+/// from the coarse request-source marker used by chat-close policy: a child
+/// that merely reuses an API/plugin/local resident must never acquire this
+/// token and therefore cannot unload that resident during transition/cleanup.
+struct ModelResidencyOwnershipToken: Sendable, Equatable, Hashable {
+    let id: UUID
+
+    init(id: UUID = UUID()) {
+        self.id = id
+    }
+}
+
+/// Bound by `ResidencyHandoff` only while its child body is running. Actor
+/// calls inherit TaskLocal values, so the runtime can attach the token to the
+/// loading-task record that actually creates a cold resident. Cache hits and
+/// coalescing onto someone else's load never acquire it.
+enum ModelResidencyOwnershipContext {
+    @TaskLocal static var childOwnershipToken: ModelResidencyOwnershipToken?
+}
+
 public actor ModelRuntime {
     // MARK: - Types
+
+    /// Thrown when a `.background` load would have evicted a resident model or
+    /// cancelled an in-flight one. Callers are expected to treat this as "not
+    /// now" — skip the housekeeping, or retry later — never as a hard failure.
+    public struct ResidencyRefusedError: Error, LocalizedError, Sendable, Equatable {
+        public enum Conflict: Sendable, Equatable {
+            /// A different model is resident and would have been evicted.
+            case wouldEvictResident(String)
+            /// A different model is mid-load and would have been cancelled.
+            case wouldCancelLoadInFlight(String)
+        }
+
+        public let requestedModel: String
+        public let conflict: Conflict
+
+        public var errorDescription: String? {
+            switch conflict {
+            case .wouldEvictResident(let resident):
+                return
+                    "Skipped background load of '\(requestedModel)': it would evict '\(resident)', which is in use"
+            case .wouldCancelLoadInFlight(let loading):
+                return
+                    "Skipped background load of '\(requestedModel)': it would cancel the in-flight load of '\(loading)'"
+            }
+        }
+    }
+
+    struct HandoffRestoreBlockedError: Error, LocalizedError, Sendable, Equatable {
+        let requestedModel: String
+        let protectedResident: String
+
+        var errorDescription: String? {
+            "Restore of '\(requestedModel)' was blocked because resident model "
+                + "'\(protectedResident)' is not owned by this handoff."
+        }
+    }
+
+    /// Short-lived claim held while a request resolves or loads a model and
+    /// publishes its ordinary `ModelLease`. Deletion closes the matching
+    /// identity gate before waiting for these claims to drain, which closes
+    /// the load-between-unload-and-unlink race without changing residency
+    /// ownership semantics.
+    struct ModelDeletionAccessLease: Sendable {
+        fileprivate let id: UUID
+    }
+
+    struct ModelDeletionProtectionSnapshot: Sendable, Equatable {
+        let isDeleting: Bool
+        let activeModelUses: Int
+        let blockedModelUses: Int
+        let blockedDeletionRequests: Int
+        let drainingDeletionRequests: Int
+
+        init(
+            isDeleting: Bool,
+            activeModelUses: Int,
+            blockedModelUses: Int,
+            blockedDeletionRequests: Int = 0,
+            drainingDeletionRequests: Int = 0
+        ) {
+            self.isDeleting = isDeleting
+            self.activeModelUses = activeModelUses
+            self.blockedModelUses = blockedModelUses
+            self.blockedDeletionRequests = blockedDeletionRequests
+            self.drainingDeletionRequests = drainingDeletionRequests
+        }
+    }
 
     struct LoadRefusedError: Error, LocalizedError, Sendable {
         let modelName: String
@@ -50,6 +240,19 @@ public actor ModelRuntime {
         let mlxPressStatus: MLXPressStatus
         let cacheStats: CacheCoordinatorStatsSnapshot?
         let cacheTopology: ModelCacheTopologySnapshot?
+        /// Exact coordinator settings captured by this resident model. These
+        /// remain intentionally separate from the currently saved settings:
+        /// a model loaded before a settings edit can otherwise make a newly
+        /// saved cap look live when it is not.
+        let activeCachePolicy: ActiveCachePolicy?
+    }
+
+    struct ActiveCachePolicy: Equatable, Sendable {
+        let maxKVSize: Int?
+        let longPromptMultiplier: Double
+        let pagedRAMEnabled: Bool
+        let diskL2Enabled: Bool
+        let diskL2MaxGB: Double
     }
 
     struct LiveVoiceAudioPreencodeResult: Sendable, Equatable {
@@ -73,27 +276,46 @@ public actor ModelRuntime {
         let name: String
         let container: ModelContainer
         let weightsSizeBytes: Int64
+        /// Identifies the *weights that are actually loaded*, so a prefix-cache
+        /// entry cannot outlive them. See `weightsFingerprint(for:)`.
+        let weightsFingerprint: String
         let isVLM: Bool
         let draftStrategy: MLXLMCommon.DraftStrategy?
         let nativeMTPStatus: String?
         let nativeMTPReason: String?
+        /// Numeric allocator-cache cap resolved from the user-visible
+        /// memory-safety plan used for this exact load. `nil` means no numeric
+        /// cap; the family-specific uncapped requirement is tracked separately
+        /// so ordinary models still use Osaurus's dynamic reuse heuristic.
+        let allocatorCacheLimitBytes: Int?
+        /// Plain affine DSV4 requires MLX's admitted allocator ceiling rather
+        /// than Osaurus's generic weight-scaled reuse heuristic. Its routed
+        /// decode intermediates otherwise churn out of the allocator cache on
+        /// every token even though RAM admission already accepted the model.
+        let requiresUncappedMLXAllocatorCache: Bool
         var cacheTopology: ModelCacheTopologySnapshot?
         init(
             name: String,
             container: ModelContainer,
             weightsSizeBytes: Int64,
+            weightsFingerprint: String,
             isVLM: Bool = false,
             draftStrategy: MLXLMCommon.DraftStrategy? = nil,
             nativeMTPStatus: String? = nil,
-            nativeMTPReason: String? = nil
+            nativeMTPReason: String? = nil,
+            allocatorCacheLimitBytes: Int? = nil,
+            requiresUncappedMLXAllocatorCache: Bool = false
         ) {
             self.name = name
             self.container = container
             self.weightsSizeBytes = weightsSizeBytes
+            self.weightsFingerprint = weightsFingerprint
             self.isVLM = isVLM
             self.draftStrategy = draftStrategy
             self.nativeMTPStatus = nativeMTPStatus
             self.nativeMTPReason = nativeMTPReason
+            self.allocatorCacheLimitBytes = allocatorCacheLimitBytes
+            self.requiresUncappedMLXAllocatorCache = requiresUncappedMLXAllocatorCache
         }
     }
 
@@ -128,11 +350,72 @@ public actor ModelRuntime {
     private struct LoadingTaskRecord {
         let id: UInt64
         let task: Task<SessionHolder, Error>
+        /// Captured only by the caller that registered this cold load. Written
+        /// to resident metadata only after `finishLoadedContainer` publishes
+        /// the holder successfully.
+        let childOwnershipToken: ModelResidencyOwnershipToken?
     }
 
     private var loadingTasks: [String: LoadingTaskRecord] = [:]
     private var supersededLoadingTaskIDs = Set<UInt64>()
     private var nextLoadingTaskID: UInt64 = 0
+
+    private struct ResidentMetadata: Sendable, Equatable {
+        let identity: ModelResidencyIdentity
+        var childOwnershipToken: ModelResidencyOwnershipToken?
+    }
+    private var residentMetadata: [String: ResidentMetadata] = [:]
+    /// Serializes teardown of one exact published generation. Without this,
+    /// two actor-reentrant unload calls can both pass an identity check, then
+    /// one can remove/reload the name while the other is suspended draining a
+    /// lease and the stale caller can tear down the replacement (ABA).
+    private var residencyUnloadClaims: [String: UUID] = [:]
+    /// Callers that arrive while the same exact teardown is already active
+    /// join it. Returning immediately would let destructive consumers unlink
+    /// weights while the first caller was still draining the resident model.
+    private var residencyUnloadWaiters:
+        [String: [CheckedContinuation<Void, Never>]] = [:]
+
+    /// Canonical model deletion quarantine. Each lease is indexed by both the
+    /// stable model id and picker/runtime name (plus their final path
+    /// components), so the download catalog and generation APIs converge on
+    /// the same identity even when one surface carries a full repo id.
+    private var modelDeletionClaims: [String: UUID] = [:]
+    private var modelDeletionLeaseKeys: [UUID: Set<String>] = [:]
+    private var modelDeletionAccessLeases: [UUID: [String]] = [:]
+    private var modelDeletionAccessCounts: [String: Int] = [:]
+
+    private enum ModelDeletionWaitSignal: Sendable, Equatable {
+        case released
+        case cancelled
+    }
+
+    private enum ModelDeletionWaitKind: Sendable {
+        case access(UUID)
+        case lease(UUID)
+        case drain(UUID)
+    }
+
+    private struct ModelDeletionWaiter {
+        let id: UUID
+        let continuation: CheckedContinuation<ModelDeletionWaitSignal, Never>
+    }
+
+    private enum ModelDeletionWaiterState {
+        case registering(ModelDeletionWaitKind)
+        case registered(ModelDeletionWaitKind)
+        case cancelledBeforeRegistration(ModelDeletionWaitKind)
+        case resolved
+    }
+
+    private var modelDeletionAccessWaiters:
+        [UUID: [ModelDeletionWaiter]] = [:]
+    private var modelDeletionLeaseWaiters:
+        [UUID: [ModelDeletionWaiter]] = [:]
+    private var modelDeletionDrainWaiters:
+        [UUID: [ModelDeletionWaiter]] = [:]
+    private var modelDeletionWaiterStates:
+        [UUID: ModelDeletionWaiterState] = [:]
 
     /// On-disk weight bytes reserved by loads that are past the pre-load gate
     /// but not yet resident in `modelCache`, keyed by model name. The
@@ -155,14 +438,45 @@ public actor ModelRuntime {
     /// enter MLX/Metal setup concurrently and trip native command-buffer
     /// assertions before Swift can throw. Hot cache hits bypass this slot.
     private var coldLoadActive = false
-    private var coldLoadWaiters: [CheckedContinuation<Void, Never>] = []
+    /// FIFO cold-load waiters, keyed so a cancelled waiter can be removed
+    /// and resumed with `CancellationError` immediately: Stop must unlock a
+    /// queued load's caller even while another model's cold load (possibly
+    /// wedged in native code) still holds the slot.
+    private var coldLoadWaiters: [(id: UUID, continuation: CheckedContinuation<Void, Error>)] = []
     private var currentModelName: String?
     private var cachedConfig: RuntimeConfig?
+    /// Monotonic sequence for every published residency-set mutation. Direct
+    /// queries return the latest value, allowing MainActor consumers to reject
+    /// delayed/duplicate NotificationCenter delivery deterministically.
+    private var residencyLedger = ModelRuntimeResidencyLedger()
+
+    /// Runtime-owned idle-policy identities. `pending` means the residency
+    /// manager may still fire; `inFlight` means the decision already won the
+    /// actor race and entered teardown. A focus activation invalidates the
+    /// former and captures the latter atomically.
+    private var nextIdleResidencyDecisionID: UInt64 = 0
+    private var pendingIdleResidencyDecisions: [String: UInt64] = [:]
+    private var inFlightIdleResidencyDecisions: [String: UInt64] = [:]
+    /// Once an idle teardown passes its final pre-destructive decision check,
+    /// new use waits for that exact teardown to finish and then reloads. Before
+    /// this point, new use cancels the in-flight decision and the teardown
+    /// exits without touching the engine or container.
+    private struct IdleResidencyTeardown {
+        let decisionID: UInt64
+        let task: Task<Void, Never>
+    }
+    private var committedIdleResidencyDecisions: [String: UInt64] = [:]
+    private var idleResidencyTeardowns: [String: IdleResidencyTeardown] = [:]
+    private var isClearingAllResidency = false
 
     /// Result of the most recent pre-load RAM feasibility check. Surfaced via
     /// `lastRAMFeasibilitySnapshot()` so `/health` and the model picker can
     /// show why a load was flagged as tight without re-scanning.
     private var lastRAMFeasibility: RAMFeasibility?
+
+    /// Exact bundle-aware Memory Safety result for the most recent cold load
+    /// attempt, including refused attempts.
+    private var lastMemorySafetyLoadDecision: MemorySafetyLoadDecision?
 
     /// Every in-flight generation wrapper task, keyed by a monotonic id.
     /// `ModelLease` is the authoritative "is anyone still using the model"
@@ -205,10 +519,518 @@ public actor ModelRuntime {
         return modelCache[name] != nil
     }
 
+    /// Models currently held resident. Background callers that can run against
+    /// *any* model (voice-transcript cleanup, for one) use this to pick the one
+    /// already in memory instead of an arbitrary installed model, which under the
+    /// strict single-model policy would evict whatever the user is chatting with.
+    func residentModelNames() -> [String] {
+        modelCache.keys.sorted()
+    }
+
+    /// Current typed snapshot without changing residency.
+    func residencySnapshot() -> ModelRuntimeResidencySnapshot {
+        currentResidencySnapshot()
+    }
+
+    /// Atomically reconcile a visible-chat activation against an idle-policy
+    /// decision. A pending decision is invalidated before the actor yields;
+    /// an already-running decision is returned by identity for one-shot UI
+    /// recovery. Conditional manager cancellation cannot erase a newer timer.
+    func chatActivationResidencySnapshot(
+        selectedModel: String?
+    ) async -> ModelRuntimeChatActivationResidencySnapshot {
+        guard let selectedModel, !selectedModel.isEmpty else {
+            return ModelRuntimeChatActivationResidencySnapshot(
+                residency: currentResidencySnapshot(),
+                recoverableIdleDecisionID: nil
+            )
+        }
+
+        let matchingName = matchingRuntimeModelName(selectedModel)
+        let cancelledDecision = matchingName.flatMap {
+            pendingIdleResidencyDecisions.removeValue(forKey: $0)
+        }
+        let recoverableDecision = matchingName.flatMap {
+            inFlightIdleResidencyDecisions[$0]
+        }
+
+        if let matchingName, let cancelledDecision {
+            await ModelResidencyManager.shared.cancel(
+                modelName: matchingName,
+                ownerDecisionID: cancelledDecision
+            )
+        }
+
+        return ModelRuntimeChatActivationResidencySnapshot(
+            residency: currentResidencySnapshot(),
+            recoverableIdleDecisionID: recoverableDecision
+        )
+    }
+
+    /// Hold an exclusive quarantine for one canonical model identity while a
+    /// destructive catalog operation runs. New loads and generation setup
+    /// wait behind the quarantine; setup that won the actor race first drains
+    /// before `operation` starts. The actor-isolated `defer` is the single
+    /// release path, including thrown filesystem/catalog failures.
+    func withModelDeletionLease<T: Sendable>(
+        modelID: String,
+        modelName: String,
+        operation: @Sendable () async throws -> T
+    ) async throws -> T {
+        let lease = try await beginModelDeletionLease(
+            modelID: modelID,
+            modelName: modelName
+        )
+        defer { finishModelDeletionLease(lease) }
+        try Task.checkCancellation()
+        return try await operation()
+    }
+
+    /// Acquire the non-destructive side of the deletion quarantine. Callers
+    /// must release this after either failing setup or publishing the normal
+    /// model-use lease that protects the full generation lifetime.
+    func beginModelDeletionProtectedAccess(
+        modelID: String,
+        modelName: String
+    ) async throws -> ModelDeletionAccessLease {
+        let keys = Self.modelDeletionIdentityKeys(
+            modelID: modelID,
+            modelName: modelName
+        )
+        while let deletion = activeModelDeletion(in: keys) {
+            try Task.checkCancellation()
+            let signal = await waitForModelDeletion(
+                kind: .access(deletion)
+            )
+            guard signal == .released else {
+                throw CancellationError()
+            }
+            try Task.checkCancellation()
+        }
+        try Task.checkCancellation()
+        for key in keys {
+            modelDeletionAccessCounts[key, default: 0] += 1
+        }
+        let lease = ModelDeletionAccessLease(id: UUID())
+        modelDeletionAccessLeases[lease.id] = keys
+        return lease
+    }
+
+    func finishModelDeletionProtectedAccess(
+        _ lease: ModelDeletionAccessLease
+    ) {
+        guard let identityKeys = modelDeletionAccessLeases.removeValue(forKey: lease.id) else {
+            return
+        }
+        for key in identityKeys {
+            guard let count = modelDeletionAccessCounts[key] else { continue }
+            if count <= 1 {
+                modelDeletionAccessCounts.removeValue(forKey: key)
+            } else {
+                modelDeletionAccessCounts[key] = count - 1
+            }
+        }
+        resumeReadyModelDeletionDrains()
+    }
+
+    func modelDeletionProtectionSnapshot(
+        modelID: String,
+        modelName: String
+    ) -> ModelDeletionProtectionSnapshot {
+        let keys = Self.modelDeletionIdentityKeys(
+            modelID: modelID,
+            modelName: modelName
+        )
+        let deletion = activeModelDeletion(in: keys)
+        return ModelDeletionProtectionSnapshot(
+            isDeleting: deletion != nil,
+            activeModelUses: keys.compactMap { modelDeletionAccessCounts[$0] }.max() ?? 0,
+            blockedModelUses: deletion.flatMap {
+                modelDeletionAccessWaiters[$0]?.count
+            } ?? 0,
+            blockedDeletionRequests: deletion.flatMap {
+                modelDeletionLeaseWaiters[$0]?.count
+            } ?? 0,
+            drainingDeletionRequests: deletion.flatMap {
+                modelDeletionDrainWaiters[$0]?.count
+            } ?? 0
+        )
+    }
+
+    private struct ModelDeletionLease {
+        let id: UUID
+        let identityKeys: [String]
+    }
+
+    private static func modelDeletionIdentityKeys(
+        modelID: String,
+        modelName: String
+    ) -> [String] {
+        var identities = Set<String>()
+        for raw in [modelID, modelName] {
+            let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalized.isEmpty else { continue }
+            identities.insert(normalized)
+            if let tail = normalized.split(separator: "/").last, !tail.isEmpty {
+                identities.insert(String(tail))
+            }
+        }
+        // Production callers always provide at least one identity. Keeping an
+        // explicit empty sentinel makes the API fail closed for malformed
+        // internal callers instead of silently bypassing the quarantine.
+        if identities.isEmpty {
+            identities.insert("<empty-model-identity>")
+        }
+        return identities.sorted()
+    }
+
+    private func activeModelDeletion(in identityKeys: [String]) -> UUID? {
+        identityKeys.lazy.compactMap { self.modelDeletionClaims[$0] }.first
+    }
+
+    private func beginModelDeletionLease(
+        modelID: String,
+        modelName: String
+    ) async throws -> ModelDeletionLease {
+        let keys = Self.modelDeletionIdentityKeys(
+            modelID: modelID,
+            modelName: modelName
+        )
+        while let activeDeletion = activeModelDeletion(in: keys) {
+            try Task.checkCancellation()
+            let signal = await waitForModelDeletion(
+                kind: .lease(activeDeletion)
+            )
+            guard signal == .released else {
+                throw CancellationError()
+            }
+            try Task.checkCancellation()
+        }
+        try Task.checkCancellation()
+
+        let lease = ModelDeletionLease(id: UUID(), identityKeys: keys)
+        modelDeletionLeaseKeys[lease.id] = Set(keys)
+        for key in keys {
+            modelDeletionClaims[key] = lease.id
+        }
+
+        do {
+            while keys.contains(where: { (modelDeletionAccessCounts[$0] ?? 0) > 0 }) {
+                try Task.checkCancellation()
+                let signal = await waitForModelDeletion(
+                    kind: .drain(lease.id)
+                )
+                guard signal == .released else {
+                    throw CancellationError()
+                }
+                try Task.checkCancellation()
+            }
+            try Task.checkCancellation()
+            return lease
+        } catch {
+            finishModelDeletionLease(lease)
+            throw error
+        }
+    }
+
+    private func finishModelDeletionLease(_ lease: ModelDeletionLease) {
+        guard modelDeletionLeaseKeys.removeValue(forKey: lease.id) != nil else {
+            return
+        }
+        for key in lease.identityKeys where modelDeletionClaims[key] == lease.id {
+            modelDeletionClaims.removeValue(forKey: key)
+        }
+        resolveModelDeletionWaiters(
+            kind: .access(lease.id),
+            signal: .released
+        )
+        resolveModelDeletionWaiters(
+            kind: .lease(lease.id),
+            signal: .released
+        )
+        // A drain waiter belongs to the lease being released. If one remains
+        // here, that lease can no longer authorize a destructive operation.
+        resolveModelDeletionWaiters(
+            kind: .drain(lease.id),
+            signal: .cancelled
+        )
+    }
+
+    private func resumeReadyModelDeletionDrains() {
+        let ready = modelDeletionLeaseKeys.compactMap { leaseID, keys -> UUID? in
+            keys.allSatisfy { (modelDeletionAccessCounts[$0] ?? 0) == 0 }
+                ? leaseID
+                : nil
+        }
+        for leaseID in ready {
+            resolveModelDeletionWaiters(
+                kind: .drain(leaseID),
+                signal: .released
+            )
+        }
+    }
+
+    private func waitForModelDeletion(
+        kind: ModelDeletionWaitKind
+    ) async -> ModelDeletionWaitSignal {
+        let waiterID = UUID()
+        modelDeletionWaiterStates[waiterID] = .registering(kind)
+        if Task.isCancelled {
+            modelDeletionWaiterStates[waiterID] =
+                .cancelledBeforeRegistration(kind)
+        }
+
+        let signal = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                registerModelDeletionWaiter(
+                    id: waiterID,
+                    kind: kind,
+                    continuation: continuation
+                )
+            }
+        } onCancel: {
+            Task {
+                await self.cancelModelDeletionWaiter(id: waiterID)
+            }
+        }
+        modelDeletionWaiterStates.removeValue(forKey: waiterID)
+        return signal
+    }
+
+    private func registerModelDeletionWaiter(
+        id: UUID,
+        kind: ModelDeletionWaitKind,
+        continuation: CheckedContinuation<ModelDeletionWaitSignal, Never>
+    ) {
+        switch modelDeletionWaiterStates[id] {
+        case .registering:
+            let waiter = ModelDeletionWaiter(
+                id: id,
+                continuation: continuation
+            )
+            appendModelDeletionWaiter(waiter, kind: kind)
+            modelDeletionWaiterStates[id] = .registered(kind)
+        case .cancelledBeforeRegistration:
+            modelDeletionWaiterStates[id] = .resolved
+            continuation.resume(returning: .cancelled)
+        case .registered, .resolved, .none:
+            // Registration is single-shot. If an unexpected state reaches
+            // this branch, fail closed rather than park an unowned waiter.
+            modelDeletionWaiterStates[id] = .resolved
+            continuation.resume(returning: .cancelled)
+        }
+    }
+
+    private func cancelModelDeletionWaiter(id: UUID) {
+        switch modelDeletionWaiterStates[id] {
+        case .registering(let kind):
+            modelDeletionWaiterStates[id] =
+                .cancelledBeforeRegistration(kind)
+        case .registered(let kind):
+            guard let waiter = removeModelDeletionWaiter(id: id, kind: kind) else {
+                modelDeletionWaiterStates[id] = .resolved
+                return
+            }
+            modelDeletionWaiterStates[id] = .resolved
+            waiter.continuation.resume(returning: .cancelled)
+        case .cancelledBeforeRegistration, .resolved, .none:
+            return
+        }
+    }
+
+    private func appendModelDeletionWaiter(
+        _ waiter: ModelDeletionWaiter,
+        kind: ModelDeletionWaitKind
+    ) {
+        switch kind {
+        case .access(let owner):
+            modelDeletionAccessWaiters[owner, default: []].append(waiter)
+        case .lease(let owner):
+            modelDeletionLeaseWaiters[owner, default: []].append(waiter)
+        case .drain(let owner):
+            modelDeletionDrainWaiters[owner, default: []].append(waiter)
+        }
+    }
+
+    private func removeModelDeletionWaiter(
+        id: UUID,
+        kind: ModelDeletionWaitKind
+    ) -> ModelDeletionWaiter? {
+        switch kind {
+        case .access(let owner):
+            return removeModelDeletionWaiter(
+                id: id,
+                owner: owner,
+                from: &modelDeletionAccessWaiters
+            )
+        case .lease(let owner):
+            return removeModelDeletionWaiter(
+                id: id,
+                owner: owner,
+                from: &modelDeletionLeaseWaiters
+            )
+        case .drain(let owner):
+            return removeModelDeletionWaiter(
+                id: id,
+                owner: owner,
+                from: &modelDeletionDrainWaiters
+            )
+        }
+    }
+
+    private func removeModelDeletionWaiter(
+        id: UUID,
+        owner: UUID,
+        from queues: inout [UUID: [ModelDeletionWaiter]]
+    ) -> ModelDeletionWaiter? {
+        guard var waiters = queues[owner],
+            let index = waiters.firstIndex(where: { $0.id == id })
+        else {
+            return nil
+        }
+        let waiter = waiters.remove(at: index)
+        if waiters.isEmpty {
+            queues.removeValue(forKey: owner)
+        } else {
+            queues[owner] = waiters
+        }
+        return waiter
+    }
+
+    private func resolveModelDeletionWaiters(
+        kind: ModelDeletionWaitKind,
+        signal: ModelDeletionWaitSignal
+    ) {
+        let waiters: [ModelDeletionWaiter]
+        switch kind {
+        case .access(let owner):
+            waiters = modelDeletionAccessWaiters.removeValue(forKey: owner) ?? []
+        case .lease(let owner):
+            waiters = modelDeletionLeaseWaiters.removeValue(forKey: owner) ?? []
+        case .drain(let owner):
+            waiters = modelDeletionDrainWaiters.removeValue(forKey: owner) ?? []
+        }
+        for waiter in waiters {
+            guard case .registered? = modelDeletionWaiterStates[waiter.id] else {
+                continue
+            }
+            modelDeletionWaiterStates[waiter.id] = .resolved
+            waiter.continuation.resume(returning: signal)
+        }
+    }
+
+    /// Exact live identity for `name`, accepting the same full-id/short-name
+    /// aliases as model selection. Nil means that exact resident does not
+    /// currently exist.
+    func residencyIdentity(named name: String) -> ModelResidencyIdentity? {
+        guard let key = residentKey(matching: name) else { return nil }
+        return residentMetadata[key]?.identity
+    }
+
+    func isChatOwnedResident(named name: String) -> Bool {
+        guard let key = residentKey(matching: name) else { return false }
+        return Self.isChatOwnedResidencySource(lastUseSource[key])
+    }
+
+    /// True only when the exact resident currently belongs to the request
+    /// surface driving the invoking turn. A spawned handoff uses this to
+    /// reclaim its own scheduled/API/plugin parent without treating another
+    /// resident from that broad source class as reclaimable.
+    func isResident(named name: String, ownedBy source: RequestSource) -> Bool {
+        guard let key = residentKey(matching: name) else { return false }
+        if source == .chatUI {
+            return Self.isChatOwnedResidencySource(lastUseSource[key])
+        }
+        return lastUseSource[key] == source
+    }
+
+    /// Models whose currently published residency was cold-loaded by this
+    /// handoff. Sorted for deterministic cleanup and tests.
+    func childOwnedResidentNames(
+        by token: ModelResidencyOwnershipToken
+    ) -> [String] {
+        residentMetadata.compactMap { name, metadata in
+            metadata.childOwnershipToken == token ? name : nil
+        }.sorted()
+    }
+
+    enum ExactUnloadResult: Sendable, Equatable {
+        case unloaded
+        case notResident
+        case identityChanged
+        case notOwned
+        case drainTimedOut
+    }
+
+    /// Unload only the exact published residency named by a parent lease.
+    /// A same-name reload is protected by the generation comparison.
+    func unloadExact(
+        _ identity: ModelResidencyIdentity,
+        leaseDrainTimeoutSeconds: Double? = nil
+    ) async -> ExactUnloadResult {
+        guard let key = residentKey(matching: identity.modelName) else {
+            return .notResident
+        }
+        guard residentMetadata[key]?.identity == identity else {
+            return .identityChanged
+        }
+        let unloaded = await unloadClaimed(
+            name: key,
+            leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds,
+            expectedIdentity: identity,
+            expectedOwnershipToken: nil
+        )
+        return unloaded ? .unloaded : .drainTimedOut
+    }
+
+    /// Unload a child model only when the currently published residency still
+    /// carries this handoff's ownership token. Preexisting residents, loads
+    /// initiated by another surface, and same-name reloads all fail closed.
+    func unloadChildOwned(
+        name: String,
+        by token: ModelResidencyOwnershipToken,
+        leaseDrainTimeoutSeconds: Double? = nil
+    ) async -> ExactUnloadResult {
+        guard let key = residentKey(matching: name) else {
+            return .notResident
+        }
+        guard residentMetadata[key]?.childOwnershipToken == token else {
+            return .notOwned
+        }
+        guard let identity = residentMetadata[key]?.identity else {
+            return .notOwned
+        }
+        let unloaded = await unloadClaimed(
+            name: key,
+            leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds,
+            expectedIdentity: identity,
+            expectedOwnershipToken: token
+        )
+        guard unloaded else { return .drainTimedOut }
+        return .unloaded
+    }
+
+    private func residentKey(matching requested: String) -> String? {
+        if modelCache[requested] != nil { return requested }
+        let installed = ModelManager.findInstalledModel(named: requested)
+        if let canonical = installed?.name, modelCache[canonical] != nil {
+            return canonical
+        }
+        let tail = requested.split(separator: "/").last.map(String.init) ?? requested
+        return modelCache.keys.first {
+            $0.caseInsensitiveCompare(requested) == .orderedSame
+                || $0.caseInsensitiveCompare(tail) == .orderedSame
+        }
+    }
+
     /// Warm-load an installed local model without starting generation. Used by
     /// delegated jobs that temporarily evict chat models for unified-memory
     /// headroom, then restore the prior resident set after the helper job.
-    func preload(name: String) async throws {
+    func preload(
+        name: String,
+        intent: ModelLoadIntent = .interactive,
+        restoreOwnershipToken: ModelResidencyOwnershipToken? = nil
+    ) async throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw NSError(
@@ -217,6 +1039,11 @@ public actor ModelRuntime {
                 userInfo: [NSLocalizedDescriptionKey: "Cannot preload an empty model name"]
             )
         }
+        let deletionAccess = try await beginModelDeletionProtectedAccess(
+            modelID: "",
+            modelName: trimmed
+        )
+        defer { finishModelDeletionProtectedAccess(deletionAccess) }
         if modelCache[trimmed] != nil { return }
         guard let found = ModelManager.findInstalledModel(named: trimmed) else {
             throw NSError(
@@ -226,7 +1053,12 @@ public actor ModelRuntime {
             )
         }
         if modelCache[found.name] != nil { return }
-        _ = try await loadContainer(id: found.id, name: found.name)
+        _ = try await loadContainer(
+            id: found.id,
+            name: found.name,
+            intent: intent,
+            restoreOwnershipToken: restoreOwnershipToken
+        )
         // A preload never acquires a generation lease, so without arming the
         // idle timer here the model would stay resident FOREVER if no
         // generation ever follows (the timer is otherwise only scheduled on
@@ -276,7 +1108,7 @@ public actor ModelRuntime {
             genLog.info(
                 "memory pressure: unloading idle model \(name, privacy: .public)"
             )
-            await unload(name: name)
+            await unload(name: name, reason: .memoryPressure)
             unloaded.append(name)
         }
         return unloaded
@@ -311,10 +1143,17 @@ public actor ModelRuntime {
         for name in modelCache.keys where !activeNames.contains(name) {
             if let source = lastUseSource[name], source != .chatUI { continue }
             guard await ModelLease.shared.count(for: name) == 0 else { continue }
+            guard let idleDecisionID = pendingIdleResidencyDecisions[name] else { continue }
             await ModelResidencyManager.shared.accelerateIdleUnload(
                 modelName: name,
                 grace: grace,
-                unload: { name in await ModelRuntime.shared.unload(name: name) },
+                ownerDecisionID: idleDecisionID,
+                unload: { name in
+                    await ModelRuntime.shared.performIdleUnloadIfCurrent(
+                        name: name,
+                        decisionID: idleDecisionID
+                    )
+                },
                 leaseCount: { name in await ModelLease.shared.count(for: name) },
                 isResident: { name in await ModelRuntime.shared.isResident(name: name) },
                 shouldStillUnload: { name in
@@ -325,6 +1164,62 @@ public actor ModelRuntime {
         }
     }
 
+    /// Background-task-completion residency release: shorten the pending idle
+    /// unload of the model a finished dispatched run (schedule, watcher,
+    /// plugin, HTTP agent dispatch, channel) was using, so an open chat
+    /// window can warm its own selection again instead of staying cold behind
+    /// a resident model whose owning surface already finished.
+    ///
+    /// This is the dispatched-run mirror of `accelerateIdleUnloadAfterChatClose`
+    /// and keeps every protection that path has:
+    /// - Only under an `.afterSeconds` idle policy. `.immediately` already
+    ///   unloaded at generation end, and `.never` is an explicit user opt-in
+    ///   to permanent residency that a task completion must not override.
+    /// - Only the resident this task's source class owns (`lastUseSource`).
+    ///   A model that a chat window or another surface generated on since
+    ///   keeps its full residency — in particular, chat-owned release stays
+    ///   exclusively on the window-close path.
+    /// - `keeping` / `isModelStillWanted` protect models an open window or a
+    ///   still-active registry task references, re-checked at fire time, and
+    ///   the fire path re-checks the lease count — a follow-up turn or an API
+    ///   client generation that starts inside the grace keeps the model warm.
+    func accelerateIdleUnloadAfterBackgroundTaskCompleted(
+        modelName: String,
+        taskSource: RequestSource,
+        keeping activeNames: Set<String>,
+        grace: TimeInterval = ModelRuntime.chatCloseUnloadGraceSeconds,
+        isModelStillWanted: @Sendable @escaping (String) async -> Bool
+    ) async {
+        guard taskSource != .chatUI else { return }
+        let policy =
+            await ServerConfigurationStore.load()?.modelIdleResidencyPolicy
+            ?? ServerConfiguration.default.modelIdleResidencyPolicy
+        guard case .afterSeconds = policy else { return }
+
+        guard let name = residentKey(matching: modelName) else { return }
+        guard !activeNames.contains(name) else { return }
+        guard lastUseSource[name] == taskSource else { return }
+        guard await ModelLease.shared.count(for: name) == 0 else { return }
+        guard let idleDecisionID = pendingIdleResidencyDecisions[name] else { return }
+        await ModelResidencyManager.shared.accelerateIdleUnload(
+            modelName: name,
+            grace: grace,
+            ownerDecisionID: idleDecisionID,
+            unload: { name in
+                await ModelRuntime.shared.performIdleUnloadIfCurrent(
+                    name: name,
+                    decisionID: idleDecisionID
+                )
+            },
+            leaseCount: { name in await ModelLease.shared.count(for: name) },
+            isResident: { name in await ModelRuntime.shared.isResident(name: name) },
+            shouldStillUnload: { name in
+                let stillWanted = await isModelStillWanted(name)
+                return !stillWanted
+            }
+        )
+    }
+
     func cachedModelSummaries(refreshTopology: Bool = false) async -> [ModelCacheSummary] {
         if refreshTopology {
             for holder in modelCache.values {
@@ -332,7 +1227,8 @@ public actor ModelRuntime {
             }
         }
         return modelCache.values.map { holder in
-            ModelCacheSummary(
+            let activeConfig = holder.container.cacheCoordinator?.config
+            return ModelCacheSummary(
                 name: holder.name,
                 bytes: holder.weightsSizeBytes,
                 isCurrent: holder.name == currentModelName,
@@ -342,12 +1238,87 @@ public actor ModelRuntime {
                 nativeMTPReason: holder.nativeMTPReason,
                 mlxPressStatus: holder.container.mlxPressStatus(),
                 cacheStats: holder.container.cacheCoordinator?.snapshotStats(),
-                cacheTopology: holder.cacheTopology
+                cacheTopology: holder.cacheTopology,
+                activeCachePolicy: activeConfig.map {
+                    ActiveCachePolicy(
+                        maxKVSize: $0.defaultMaxKVSize,
+                        longPromptMultiplier: $0.longPromptMultiplier,
+                        pagedRAMEnabled: $0.usePagedCache,
+                        diskL2Enabled: $0.enableDiskCache,
+                        diskL2MaxGB: Double($0.diskCacheMaxGB)
+                    )
+                }
             )
         }.sorted { lhs, rhs in
             if lhs.isCurrent != rhs.isCurrent { return lhs.isCurrent }
             return lhs.name < rhs.name
         }
+    }
+
+    /// Final monotonic cache counters for one resident holder. The caller
+    /// captures this only after its BatchEngine is shut down, then publishes
+    /// it to the registry only after removing the holder from `modelCache`.
+    /// That live-to-retired ordering keeps every counter represented exactly
+    /// once during model handoff.
+    private static func processLifetimeCacheCounters(
+        for holder: SessionHolder
+    ) -> ProcessLifetimeBatchCounters? {
+        guard let stats = holder.container.cacheCoordinator?.snapshotStats() else {
+            return nil
+        }
+        return ProcessLifetimeBatchCounters(
+            prefixHits: stats.pagedStats?.cacheHits ?? 0,
+            prefixMisses: stats.pagedStats?.cacheMisses ?? 0,
+            pagedEvictions: stats.pagedStats?.evictions ?? 0,
+            diskL2Hits: stats.diskStats?.hits ?? 0,
+            diskL2Misses: stats.diskStats?.misses ?? 0,
+            diskL2Stores: stats.diskStats?.stores ?? 0,
+            ssmCompanionHits: stats.ssmStats.hits,
+            ssmCompanionMisses: stats.ssmStats.misses,
+            ssmCompanionReDerives: stats.ssmStats.reDerives
+        )
+    }
+
+    /// Resolve the canonical installed identity before asking the vMLX
+    /// registry for one model's actor-consistent capacity. A preloaded model
+    /// can legitimately return nil until its first generation creates the
+    /// shared BatchEngine.
+    func batchEngineCapacitySnapshot(
+        for requestedModelName: String,
+        reconcilingTo configuredMaximum: Int? = nil
+    ) async -> ModelBatchCapacitySnapshot? {
+        let canonical =
+            ModelManager.findInstalledModel(named: requestedModelName)?.name
+            ?? requestedModelName
+        return await MLXBatchAdapter.capacitySnapshot(
+            for: canonical,
+            reconcilingTo: configuredMaximum
+        )
+    }
+
+    /// The resident set a chat-owned handoff may reclaim. A nil source is a
+    /// legacy/preload resident and remains chat-owned for backwards
+    /// compatibility; explicit API/plugin/P2P/scheduled owners are protected.
+    func chatOwnedCachedModelSummaries(
+        refreshTopology: Bool = false
+    ) async -> [ModelCacheSummary] {
+        let summaries = await cachedModelSummaries(refreshTopology: refreshTopology)
+        return summaries.filter { Self.isChatOwnedResidencySource(lastUseSource[$0.name]) }
+    }
+
+    nonisolated static func isChatOwnedResidencySource(_ source: RequestSource?) -> Bool {
+        source == nil || source == .chatUI
+    }
+
+    /// Nested subagents may reuse a model resident for another surface. They
+    /// must not steal its ownership marker merely by generating on it.
+    nonisolated static func resolvedResidencySource(
+        existing: RequestSource?,
+        incoming: RequestSource,
+        preserveExisting: Bool
+    ) -> RequestSource {
+        if preserveExisting, let existing { return existing }
+        return incoming
     }
 
     func preencodeLiveVoiceAudioIfResident(
@@ -376,6 +1347,23 @@ public actor ModelRuntime {
             )
         }
 
+        let deletionAccess: ModelDeletionAccessLease
+        do {
+            deletionAccess = try await beginModelDeletionProtectedAccess(
+                modelID: "",
+                modelName: modelName
+            )
+        } catch {
+            return LiveVoiceAudioPreencodeResult(
+                status: .failed,
+                sampleCount: samples.count,
+                sampleRate: sampleRate,
+                encodeMs: 0,
+                message: "Cancelled while waiting for model deletion to finish"
+            )
+        }
+        defer { finishModelDeletionProtectedAccess(deletionAccess) }
+
         guard
             let holder = modelCache[modelName]
                 ?? modelCache.values.first(where: {
@@ -391,11 +1379,33 @@ public actor ModelRuntime {
             )
         }
 
-        await ModelResidencyManager.shared.markActive(modelName: holder.name)
+        guard await markModelActiveForResidency(holder.name) else {
+            return LiveVoiceAudioPreencodeResult(
+                status: .skippedModelNotResident,
+                sampleCount: samples.count,
+                sampleRate: sampleRate,
+                encodeMs: 0,
+                message: nil
+            )
+        }
         // Live voice runs inside the chat UI, so its residency is chat-scoped.
         lastUseSource[holder.name] = .chatUI
         await ModelLease.shared.acquire(holder.name)
-        let soloLease = await MLXBatchAdapter.Registry.shared.acquireSoloLease(for: holder.name)
+        guard
+            let soloLease = await MLXBatchAdapter.Registry.shared.acquireSoloLease(
+                for: holder.name
+            )
+        else {
+            await ModelLease.shared.release(holder.name)
+            await scheduleIdleResidency(for: holder.name)
+            return LiveVoiceAudioPreencodeResult(
+                status: .failed,
+                sampleCount: samples.count,
+                sampleRate: sampleRate,
+                encodeMs: 0,
+                message: "Cancelled before audio encoding started"
+            )
+        }
 
         final class OutBox: @unchecked Sendable {
             var result: LiveVoiceAudioPreencodeResult?
@@ -410,7 +1420,23 @@ public actor ModelRuntime {
         // generation is in flight runs two unsynchronized command buffers and
         // trips `AGXG17XFamilyCommandBuffer` asserts (issue #1632). Balanced
         // on every exit path below.
-        await MetalGate.shared.enterGeneration(model: holder.name)
+        //
+        // Cancellation-aware: a cancelled attach gives up the wait instead of
+        // parking behind a wedged producer. No gate is held on the throw path.
+        do {
+            try await MetalGate.shared.enterGeneration(model: holder.name)
+        } catch {
+            await soloLease.release()
+            await ModelLease.shared.release(holder.name)
+            await scheduleIdleResidency(for: holder.name)
+            return LiveVoiceAudioPreencodeResult(
+                status: .failed,
+                sampleCount: samples.count,
+                sampleRate: sampleRate,
+                encodeMs: 0,
+                message: "Cancelled while waiting for the GPU gate"
+            )
+        }
 
         do {
             try await holder.container.perform { context in
@@ -493,11 +1519,12 @@ public actor ModelRuntime {
     // MARK: - Model lifecycle
 
     /// Defensive helper: cancels and awaits every tracked generation task
-    /// (optionally filtered to one model). With `ModelLease` enforcing
-    /// per-stream lifetime the unload paths already wait on
-    /// `waitForZero(name)` first, so this primarily catches the rare race
-    /// where a task was launched but never made it to `acquire`, and — at
-    /// quit — guarantees *all* concurrent streams are cancelled, not just
+    /// (optionally filtered to one model). Explicit unload must call this
+    /// before `waitForZero(name)`: the wrapper releases its `ModelLease` only
+    /// after its producer drains, so waiting first can deadlock the very task
+    /// that owns the lease. Idle-policy unload is intentionally different — it
+    /// waits for valid foreground work to finish without cancelling it. At quit
+    /// this also guarantees *all* concurrent streams are cancelled, not just
     /// the most recent. Callers should still treat the lease as authoritative.
     private func cancelActiveGeneration(for modelName: String? = nil) async {
         let records = activeGenerationTasks.filter { _, record in
@@ -649,7 +1676,8 @@ public actor ModelRuntime {
             return cached
         }
 
-        guard loadingTasks[name]?.id == loadID,
+        guard let loadingRecord = loadingTasks[name],
+            loadingRecord.id == loadID,
             !supersededLoadingTaskIDs.contains(loadID)
         else {
             holder.container.disableCaching()
@@ -657,13 +1685,22 @@ public actor ModelRuntime {
         }
 
         modelCache[name] = holder
+        residentMetadata[name] = ResidentMetadata(
+            identity: ModelResidencyIdentity(modelName: name, generation: UUID()),
+            childOwnershipToken: loadingRecord.childOwnershipToken
+        )
         loadingTasks.removeValue(forKey: name)
         currentModelName = name
         Memory.cacheLimit = mlxCacheLimit()
 
-        // Enable multi-tier KV caching via vmlx-swift's CacheCoordinator.
-        // Cache tier config is entirely osaurus-internal — not user-visible.
-        await installCacheCoordinator(on: holder)
+        // Publish the cache mutation before the native-MTP warm-up suspends
+        // this actor. An unload/model switch may win while that warm-up is
+        // running; publishing afterwards would create a newer, stale `.load`
+        // revision for a model that is no longer resident.
+        genLog.info(
+            "loadContainer: loaded \(name, privacy: .public) isVLM=\(holder.isVLM, privacy: .public)"
+        )
+        publishResidencyChange(reason: .load)
 
         // Native-MTP bundles historically ran their FIRST request in plain
         // autoregressive mode (the registry's cold-warmup rule), so the one
@@ -679,77 +1716,258 @@ public actor ModelRuntime {
             runtime: getConfig(),
             maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
         )
-
-        genLog.info(
-            "loadContainer: loaded \(name, privacy: .public) isVLM=\(holder.isVLM, privacy: .public)"
-        )
         return holder
     }
 
     /// Unload `name`, blocking until any in-flight generation against this
-    /// model has fully released its lease. The lease is held for the entire
-    /// stream lifetime (see `generateEventStream`), so this guarantees we
-    /// never free buffers that an active Metal command buffer still references.
-    func unload(name: String) async {
-        await ModelResidencyManager.shared.cancel(modelName: name)
+    /// model has fully released its lease. Idle-policy teardown carries its
+    /// exact decision identity; handoff callers may also bound the drain. A
+    /// timeout always fails closed with the container and lease intact.
+    @discardableResult
+    func unload(
+        name: String,
+        reason: ModelRuntimeResidencyChangeReason = .explicit,
+        idleDecisionID: UInt64? = nil,
+        leaseDrainTimeoutSeconds: Double? = nil
+    ) async -> Bool {
+        guard (reason == .idlePolicy) == (idleDecisionID != nil) else {
+            assertionFailure("idlePolicy unloads require one exact decision ID; other unloads require none")
+            return false
+        }
 
-        // Shut the BatchEngine first so its scheduling loop stops issuing
-        // new model forward passes; then wait for any in-flight per-request
-        // leases to drain before we touch the container.
-        await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)
-        await ModelLease.shared.waitForZero(name)
-        // Defensive: cancel the latest tracked wrapper task. The lease drain
-        // above already covers in-flight requests; this only catches the
-        // rare case where a task was cancelled mid-setup before acquiring.
-        await cancelActiveGeneration(for: name)
+        if reason != .idlePolicy,
+            let teardown = idleResidencyTeardowns[name],
+            committedIdleResidencyDecisions[name] == teardown.decisionID
+        {
+            await teardown.task.value
+        }
+
+        guard let key = residentKey(matching: name) else {
+            if reason == .idlePolicy, let idleDecisionID {
+                guard inFlightIdleResidencyDecisions[name] == idleDecisionID else { return false }
+                await ModelResidencyManager.shared.cancel(
+                    modelName: name,
+                    ownerDecisionID: idleDecisionID
+                )
+            } else {
+                pendingIdleResidencyDecisions.removeValue(forKey: name)
+                inFlightIdleResidencyDecisions.removeValue(forKey: name)
+                await ModelResidencyManager.shared.cancel(modelName: name)
+            }
+            await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)
+            if let leaseDrainTimeoutSeconds {
+                let drained = await ModelLease.shared.waitForZero(
+                    name,
+                    timeoutSeconds: leaseDrainTimeoutSeconds
+                )
+                guard drained else {
+                    genLog.error(
+                        "unload: timed out waiting for lease drain for non-resident \(name, privacy: .public)"
+                    )
+                    return false
+                }
+            } else {
+                await ModelLease.shared.waitForZero(name)
+            }
+            if let record = loadingTasks[name] {
+                await cancelAndDrainLoadingTasks([(name, record)])
+            }
+            return true
+        }
+
+        return await unloadClaimed(
+            name: key,
+            leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds,
+            expectedIdentity: residentMetadata[key]?.identity,
+            expectedOwnershipToken: nil,
+            reason: reason,
+            idleDecisionID: idleDecisionID
+        )
+    }
+
+    private func unloadClaimed(
+        name: String,
+        leaseDrainTimeoutSeconds: Double?,
+        expectedIdentity: ModelResidencyIdentity?,
+        expectedOwnershipToken: ModelResidencyOwnershipToken?,
+        reason: ModelRuntimeResidencyChangeReason = .handoff,
+        idleDecisionID: UInt64? = nil
+    ) async -> Bool {
+        guard (reason == .idlePolicy) == (idleDecisionID != nil) else { return false }
+
+        if reason != .idlePolicy,
+            let teardown = idleResidencyTeardowns[name],
+            committedIdleResidencyDecisions[name] == teardown.decisionID
+        {
+            await teardown.task.value
+            guard modelCache[name] != nil else { return true }
+        }
+
+        if residencyUnloadClaims[name] != nil {
+            await withCheckedContinuation { continuation in
+                residencyUnloadWaiters[name, default: []].append(continuation)
+            }
+            guard modelCache[name] != nil else { return true }
+            return await unloadClaimed(
+                name: name,
+                leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds,
+                expectedIdentity: expectedIdentity,
+                expectedOwnershipToken: expectedOwnershipToken,
+                reason: reason,
+                idleDecisionID: idleDecisionID
+            )
+        }
+        if let expectedIdentity,
+            residentMetadata[name]?.identity != expectedIdentity
+        {
+            return false
+        }
+        if let expectedOwnershipToken,
+            residentMetadata[name]?.childOwnershipToken != expectedOwnershipToken
+        {
+            return false
+        }
+
+        let claim = UUID()
+        residencyUnloadClaims[name] = claim
+        defer { finishResidencyUnloadClaim(name: name, claim: claim) }
+
+        if reason == .idlePolicy, let idleDecisionID {
+            await ModelResidencyManager.shared.cancel(
+                modelName: name,
+                ownerDecisionID: idleDecisionID
+            )
+            if let leaseDrainTimeoutSeconds {
+                let drained = await ModelLease.shared.waitForZero(
+                    name,
+                    timeoutSeconds: leaseDrainTimeoutSeconds
+                )
+                guard drained else { return false }
+            } else {
+                await ModelLease.shared.waitForZero(name)
+            }
+            guard inFlightIdleResidencyDecisions[name] == idleDecisionID else { return false }
+            if let expectedIdentity,
+                residentMetadata[name]?.identity != expectedIdentity
+            {
+                return false
+            }
+            if let expectedOwnershipToken,
+                residentMetadata[name]?.childOwnershipToken != expectedOwnershipToken
+            {
+                return false
+            }
+            await MetalGate.shared.enterModelTeardown(model: name)
+            guard inFlightIdleResidencyDecisions[name] == idleDecisionID else {
+                await MetalGate.shared.exitModelTeardown(model: name)
+                return false
+            }
+            committedIdleResidencyDecisions[name] = idleDecisionID
+            await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)
+        } else {
+            pendingIdleResidencyDecisions.removeValue(forKey: name)
+            inFlightIdleResidencyDecisions.removeValue(forKey: name)
+            await ModelResidencyManager.shared.cancel(modelName: name)
+            await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)
+            // The tracked wrapper owns the ModelLease and releases it only
+            // after the vMLX producer has drained. Cancel and await that exact
+            // model's wrappers before waiting for zero; the old reverse order
+            // left explicit UI unload parked forever behind its own stream.
+            await cancelActiveGeneration(for: name)
+            if let leaseDrainTimeoutSeconds {
+                let drained = await ModelLease.shared.waitForZero(
+                    name,
+                    timeoutSeconds: leaseDrainTimeoutSeconds
+                )
+                guard drained else {
+                    genLog.error(
+                        "unload: timed out waiting for lease drain for \(name, privacy: .public); model remains resident"
+                    )
+                    return false
+                }
+            } else {
+                await ModelLease.shared.waitForZero(name)
+            }
+            if let expectedIdentity,
+                residentMetadata[name]?.identity != expectedIdentity
+            {
+                return false
+            }
+            if let expectedOwnershipToken,
+                residentMetadata[name]?.childOwnershipToken != expectedOwnershipToken
+            {
+                return false
+            }
+            await MetalGate.shared.enterModelTeardown(model: name)
+        }
+
+        guard residencyUnloadClaims[name] == claim else {
+            await MetalGate.shared.exitModelTeardown(model: name)
+            return false
+        }
+        if let expectedIdentity,
+            residentMetadata[name]?.identity != expectedIdentity
+        {
+            await MetalGate.shared.exitModelTeardown(model: name)
+            return false
+        }
+        if let expectedOwnershipToken,
+            residentMetadata[name]?.childOwnershipToken != expectedOwnershipToken
+        {
+            await MetalGate.shared.exitModelTeardown(model: name)
+            return false
+        }
 
         if let record = loadingTasks[name] {
             await cancelAndDrainLoadingTasks([(name, record)])
         }
-
-        // Serialize the GPU teardown against every other Metal producer via the
-        // exclusive teardown gate. Acquired here — AFTER the lease/idle drains
-        // above, so we never hold the gate while waiting for in-flight requests
-        // — and released only after the final synchronize below, so "teardown
-        // gate released" provably means "this model's GPU work is idle",
-        // symmetric with the load and image lanes. Without it the next admitted
-        // producer (a model load, image job, or embedder) starts the moment this
-        // function returns and races the async buffer frees/fences the weight
-        // release enqueues — the chat→image handoff `Gather::eval_gpu` abort.
-        await MetalGate.shared.enterModelTeardown(model: name)
+        let retiredCacheCounters = modelCache[name].flatMap {
+            Self.processLifetimeCacheCounters(for: $0)
+        }
         modelCache[name]?.container.disableCaching()
 
-        // Drain the GPU BEFORE releasing the weight arrays. The lease/idle
-        // drains above stop new work and wait for request leases, but a chat
-        // turn's last compute command buffer (e.g. `Gemma4.prepare`) can still
-        // be queued on the shared Metal stream. Freeing the weights first and
-        // synchronizing only afterwards (below) lets that queued buffer execute
-        // against already-freed weights — observed SIGSEGV in
-        // `Gemma4.prepare → metal::Device::end_encoding` when the OCR/spawn
-        // residency handoff loads the subagent model on top of it. Draining
-        // here forces the buffer to complete while its weights are still valid.
         Stream.gpu.synchronize()
-
-        autoreleasepool {
-            _ = modelCache.removeValue(forKey: name)
+        let didRemove = autoreleasepool {
+            modelCache.removeValue(forKey: name) != nil
         }
+        residentMetadata.removeValue(forKey: name)
         lastUseSource.removeValue(forKey: name)
         if currentModelName == name { currentModelName = nil }
+        if didRemove {
+            if let retiredCacheCounters {
+                await MLXBatchAdapter.Registry.shared.recordRetiredCacheCounters(
+                    retiredCacheCounters
+                )
+            }
+            publishResidencyChange(reason: reason, idleDecisionID: idleDecisionID)
+        }
 
         Memory.cacheLimit = mlxCacheLimit()
-        // Fully settle the teardown before returning so the NEXT GPU producer
-        // (a model load, image generation, embedding) never overlaps this
-        // model's async buffer frees on the shared Metal device — releasing the
-        // weight arrays above enqueues allocator frees + fences that escape a
-        // single `synchronize` and otherwise race the next producer (observed:
-        // a slow model's unload dealloc colliding with vMLXFlux's weight load,
-        // SIGSEGV in `Fence::wait` vs `MetalAllocator::free`). Drain, return the
-        // freed buffers, then drain again to flush the frees `clearCache` itself
-        // triggers.
         Stream.gpu.synchronize()
         Memory.clearCache()
         Stream.gpu.synchronize()
         await MetalGate.shared.exitModelTeardown(model: name)
+        return true
+    }
+
+    /// Remove only the claim generation owned by this caller, then release all
+    /// joiners in the same actor turn.
+    private func finishResidencyUnloadClaim(name: String, claim: UUID) {
+        guard residencyUnloadClaims[name] == claim else { return }
+        residencyUnloadClaims.removeValue(forKey: name)
+        let waiters = residencyUnloadWaiters.removeValue(forKey: name) ?? []
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    private func finishAllResidencyUnloadClaims() {
+        residencyUnloadClaims.removeAll()
+        let waiters = residencyUnloadWaiters.values.flatMap { $0 }
+        residencyUnloadWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 
     /// Evict `other` for the strict-single-model policy WITHOUT cancelling an
@@ -773,7 +1991,7 @@ public actor ModelRuntime {
             _ = await ModelLease.shared.waitForZero(other, timeoutSeconds: 300)
         }
         genLog.info("loadContainer: strict eviction of \(other, privacy: .public)")
-        await unload(name: other)
+        await unload(name: other, reason: .modelSwitch)
     }
 
     /// Unloads any loaded model whose name is not in `activeNames`.
@@ -781,13 +1999,30 @@ public actor ModelRuntime {
     /// per-model `unload` call internally waits for the lease to drop before
     /// freeing buffers, so this method is safe to call with a stale `activeNames`
     /// snapshot — at worst the unload is briefly deferred, never a crash.
-    func unloadModelsNotIn(_ activeNames: Set<String>) async {
+    ///
+    /// - Parameter skipIfLoadInFlight: for housekeeping callers (residency-switch
+    ///   GC). A model that is *loading* is in `loadingTasks`, not yet in
+    ///   `modelCache`, and holds no lease — so it is invisible to both the
+    ///   `activeNames` snapshot and the lease check, and GC will happily tear
+    ///   down the runtime around it. Callers used to guard this by probing
+    ///   `hasLoadInFlight()` first, which is check-then-act: the probe returns,
+    ///   the actor yields, a load registers, and the GC proceeds anyway.
+    ///   Passing `true` moves that decision inside the actor, into the same
+    ///   synchronous segment as the `modelCache` read below.
+    func unloadModelsNotIn(
+        _ activeNames: Set<String>,
+        skipIfLoadInFlight: Bool = false
+    ) async {
+        if skipIfLoadInFlight, hasLoadInFlight() {
+            genLog.info("GC: skipping residency sweep — a model load is in flight")
+            return
+        }
         let leaseHeld = await ModelLease.shared.activeNames()
         let keep = activeNames.union(leaseHeld)
         let toUnload = modelCache.keys.filter { !keep.contains($0) }
         for name in toUnload {
             print("[ModelRuntime] GC: Unloading unused model \(name)")
-            await unload(name: name)
+            await unload(name: name, reason: .modelSwitch)
         }
     }
 
@@ -800,12 +2035,22 @@ public actor ModelRuntime {
     ///   normal (settings-change / GC) path leave this `false` for the full,
     ///   correctness-first teardown.
     func clearAll(quit: Bool = false) async {
+        isClearingAllResidency = true
+        defer { isClearingAllResidency = false }
         await ModelResidencyManager.shared.cancelAll()
 
-        // Shut down every BatchEngine so they stop scheduling new forward
-        // passes and cancel ALL tracked generation wrapper tasks, then wait
-        // for every leased model to drain before we touch any container.
+        // A pre-commit idle teardown may be waiting for the active model lease
+        // to drain. Cancel generation wrappers first so that lease can release;
+        // awaiting idle teardown tasks before this point can wedge settings
+        // clear and app termination behind the very generation they must stop.
         await cancelAllGenerations()
+        let idleTeardownTasks = idleResidencyTeardowns.values.map(\.task)
+        for task in idleTeardownTasks {
+            await task.value
+        }
+
+        // With idle teardown serialization settled, wait for every leased
+        // model to drain before touching any remaining container.
         var hasStuckLease = false
         for name in modelCache.keys {
             if quit {
@@ -850,6 +2095,12 @@ public actor ModelRuntime {
             loadingTasks.removeAll()
             supersededLoadingTaskIDs.removeAll()
             lastUseSource.removeAll()
+            pendingIdleResidencyDecisions.removeAll()
+            inFlightIdleResidencyDecisions.removeAll()
+            committedIdleResidencyDecisions.removeAll()
+            idleResidencyTeardowns.removeAll()
+            residentMetadata.removeAll()
+            finishAllResidencyUnloadClaims()
             currentModelName = nil
             cachedConfig = nil
             return
@@ -861,18 +2112,36 @@ public actor ModelRuntime {
         // down, and blocking on a wedged gate holder must never hang the quit
         // chain (the stuck-lease guard above already chose to let the OS reclaim).
         if !quit { await MetalGate.shared.enterModelTeardown(model: "all-models") }
+        var retiredCacheCounters = ProcessLifetimeBatchCounters()
+        var hasRetiredCacheCounters = false
         for holder in modelCache.values {
+            if let counters = Self.processLifetimeCacheCounters(for: holder) {
+                retiredCacheCounters.absorb(counters)
+                hasRetiredCacheCounters = true
+            }
             holder.container.disableCaching()
         }
 
         autoreleasepool {
             modelCache.removeAll()
         }
+        if hasRetiredCacheCounters {
+            await MLXBatchAdapter.Registry.shared.recordRetiredCacheCounters(
+                retiredCacheCounters
+            )
+        }
         lastUseSource.removeAll()
+        pendingIdleResidencyDecisions.removeAll()
+        inFlightIdleResidencyDecisions.removeAll()
+        committedIdleResidencyDecisions.removeAll()
+        idleResidencyTeardowns.removeAll()
+        residentMetadata.removeAll()
+        finishAllResidencyUnloadClaims()
         loadingTasks.removeAll()
         supersededLoadingTaskIDs.removeAll()
         currentModelName = nil
         cachedConfig = nil
+        publishResidencyChange(reason: quit ? .shutdown : .settingsClear)
 
         // `clearAll` empties `modelCache`, so `mlxCacheLimit()` returns 0
         // anyway — but route through the shared helper so the policy stays
@@ -882,6 +2151,56 @@ public actor ModelRuntime {
         Stream.gpu.synchronize()
         Memory.clearCache()
         if !quit { await MetalGate.shared.exitModelTeardown(model: "all-models") }
+    }
+
+    /// Broadcast a value snapshot rather than the actor-owned dictionary so
+    /// UI observers can invalidate stale warm indicators without crossing
+    /// actor isolation or polling the runtime.
+    private func publishResidencyChange(
+        reason: ModelRuntimeResidencyChangeReason,
+        idleDecisionID: UInt64? = nil
+    ) {
+        let snapshot = residencyLedger.record(
+            names: Array(modelCache.keys),
+            reason: reason,
+            idleDecisionID: idleDecisionID
+        )
+        NotificationCenter.default.post(
+            name: .modelRuntimeResidencyChanged,
+            object: snapshot
+        )
+    }
+
+    private func currentResidencySnapshot() -> ModelRuntimeResidencySnapshot {
+        residencyLedger.snapshot(names: Array(modelCache.keys))
+    }
+
+    private func matchingRuntimeModelName(_ selectedModel: String) -> String? {
+        let candidates = Set(modelCache.keys)
+            .union(pendingIdleResidencyDecisions.keys)
+            .union(inFlightIdleResidencyDecisions.keys)
+        if let exact = candidates.first(where: {
+            $0.caseInsensitiveCompare(selectedModel) == .orderedSame
+        }) {
+            return exact
+        }
+        if let installedName = ModelManager.findInstalledModel(named: selectedModel)?.name,
+            let exactInstalled = candidates.first(where: {
+                $0.caseInsensitiveCompare(installedName) == .orderedSame
+            })
+        {
+            return exactInstalled
+        }
+
+        let selectedTail = selectedModel.split(separator: "/").last.map(String.init) ?? selectedModel
+        let tailMatches = candidates.filter { candidate in
+            let candidateTail = candidate.split(separator: "/").last.map(String.init) ?? candidate
+            return candidate.caseInsensitiveCompare(selectedTail) == .orderedSame
+                || candidateTail.caseInsensitiveCompare(selectedTail) == .orderedSame
+        }
+        // A basename is only safe when it identifies one runtime owner. If
+        // multiple installed repos share it, do not cancel either idle timer.
+        return tailMatches.count == 1 ? tailMatches.first : nil
     }
 
     /// Invalidates the cached RuntimeConfig so the next request reads fresh values.
@@ -899,17 +2218,96 @@ public actor ModelRuntime {
     }
 
     private func scheduleIdleResidency(for modelName: String) async {
+        guard !isClearingAllResidency else { return }
         let policy =
             await ServerConfigurationStore.load()?.modelIdleResidencyPolicy
             ?? ServerConfiguration.default.modelIdleResidencyPolicy
+        if case .never = policy {
+            pendingIdleResidencyDecisions.removeValue(forKey: modelName)
+            await ModelResidencyManager.shared.scheduleIdleUnload(
+                modelName: modelName,
+                policy: policy,
+                unload: { _ in },
+                leaseCount: { name in await ModelLease.shared.count(for: name) },
+                isResident: { name in await ModelRuntime.shared.isResident(name: name) }
+            )
+            return
+        }
 
+        nextIdleResidencyDecisionID &+= 1
+        let idleDecisionID = nextIdleResidencyDecisionID
+        pendingIdleResidencyDecisions[modelName] = idleDecisionID
         await ModelResidencyManager.shared.scheduleIdleUnload(
             modelName: modelName,
             policy: policy,
-            unload: { name in await ModelRuntime.shared.unload(name: name) },
+            ownerDecisionID: idleDecisionID,
+            unload: { name in
+                await ModelRuntime.shared.performIdleUnloadIfCurrent(
+                    name: name,
+                    decisionID: idleDecisionID
+                )
+            },
             leaseCount: { name in await ModelLease.shared.count(for: name) },
             isResident: { name in await ModelRuntime.shared.isResident(name: name) }
         )
+
+        // `ModelRuntime` is reentrant across the manager actor hop. If a new
+        // generation/focus/schedule replaced this decision meanwhile, remove
+        // only the stale manager entry that this call may just have installed.
+        if pendingIdleResidencyDecisions[modelName] != idleDecisionID {
+            await ModelResidencyManager.shared.cancel(
+                modelName: modelName,
+                ownerDecisionID: idleDecisionID
+            )
+        }
+    }
+
+    /// Cancel a pre-commit idle decision, or wait for an already-committed
+    /// teardown before allowing the caller to touch/load the model again.
+    /// Returns whether the old container is still resident after that gate.
+    @discardableResult
+    private func markModelActiveForResidency(_ modelName: String) async -> Bool {
+        pendingIdleResidencyDecisions.removeValue(forKey: modelName)
+        if let teardown = idleResidencyTeardowns[modelName],
+            committedIdleResidencyDecisions[modelName] == teardown.decisionID
+        {
+            await teardown.task.value
+        } else {
+            inFlightIdleResidencyDecisions.removeValue(forKey: modelName)
+        }
+        await ModelResidencyManager.shared.markActive(modelName: modelName)
+        return modelCache[modelName] != nil
+    }
+
+    fileprivate func performIdleUnloadIfCurrent(
+        name: String,
+        decisionID: UInt64
+    ) async {
+        guard pendingIdleResidencyDecisions[name] == decisionID else { return }
+        pendingIdleResidencyDecisions.removeValue(forKey: name)
+        inFlightIdleResidencyDecisions[name] = decisionID
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.unload(name: name, reason: .idlePolicy, idleDecisionID: decisionID)
+            await self.finishIdleResidencyTeardown(name: name, decisionID: decisionID)
+        }
+        idleResidencyTeardowns[name] = IdleResidencyTeardown(
+            decisionID: decisionID,
+            task: task
+        )
+        await task.value
+    }
+
+    private func finishIdleResidencyTeardown(name: String, decisionID: UInt64) {
+        if inFlightIdleResidencyDecisions[name] == decisionID {
+            inFlightIdleResidencyDecisions.removeValue(forKey: name)
+        }
+        if committedIdleResidencyDecisions[name] == decisionID {
+            committedIdleResidencyDecisions.removeValue(forKey: name)
+        }
+        if idleResidencyTeardowns[name]?.decisionID == decisionID {
+            idleResidencyTeardowns.removeValue(forKey: name)
+        }
     }
 
     /// MLX freed-buffer cache limit sized for intermediate activation reuse.
@@ -921,16 +2319,50 @@ public actor ModelRuntime {
         let totalWeights = Int(modelCache.values.reduce(Int64(0)) { $0 + $1.weightsSizeBytes })
         let byModel = max(totalWeights / 4, 1 * 1024 * 1024 * 1024)
         let bySystem = min(systemRAM / 8, 8 * 1024 * 1024 * 1024)
-        return min(byModel, bySystem)
+        let dynamicLimit = min(byModel, bySystem)
+        let uncappedLimit = modelCache.values.contains {
+            $0.requiresUncappedMLXAllocatorCache
+        } ? max(dynamicLimit, Memory.memoryLimit) : nil
+        return Self.effectiveMLXCacheLimit(
+            dynamicLimit: dynamicLimit,
+            configuredLimits: modelCache.values.map(\.allocatorCacheLimitBytes),
+            uncappedLimit: uncappedLimit
+        )
+    }
+
+    /// Keep Osaurus's weight-scaled reuse heuristic as a ceiling, but never
+    /// exceed the allocator cap visibly resolved for any resident model. The
+    /// previous post-load assignment discarded Safe Auto's 128 MiB cap and
+    /// silently replaced it with at least 1 GiB.
+    nonisolated static func effectiveMLXCacheLimit(
+        dynamicLimit: Int,
+        configuredLimits: [Int?],
+        uncappedLimit: Int? = nil
+    ) -> Int {
+        guard dynamicLimit > 0 else { return 0 }
+        if let uncappedLimit {
+            return max(dynamicLimit, uncappedLimit)
+        }
+        guard let configuredLimit = configuredLimits.compactMap({ $0 }).min() else {
+            return dynamicLimit
+        }
+        return min(dynamicLimit, max(0, configuredLimit))
     }
 
     /// Flexible-mode resident-weights soft cap. Also read by
     /// `SubagentResidency`'s coexistence gate, which must stay under it —
     /// loading past this triggers `unloadForFlexibleResidentBudget`'s own
     /// eviction, which would evict the orchestrator with no restore lease.
-    static func flexibleResidentBudgetBytes() -> Int64 {
+    static func flexibleResidentBudgetBytes(
+        physicalMemoryBytes: Int64 = Int64(ProcessInfo.processInfo.physicalMemory),
+        automaticMemoryLimitsDisabled: Bool =
+            ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled()
+    ) -> Int64 {
+        if automaticMemoryLimitsDisabled {
+            return .max
+        }
         let thresholds = ServerRuntimeSettingsStore.modelLoadRAMThresholds()
-        return Int64(Double(ProcessInfo.processInfo.physicalMemory) * thresholds.soft)
+        return Int64(Double(physicalMemoryBytes) * thresholds.soft)
     }
 
     /// Snapshot of the most recent pre-load RAM feasibility assessment.
@@ -957,14 +2389,33 @@ public actor ModelRuntime {
         public let requiredAvailableBytes: Int64
         public let softLimitBytes: Int64
         public let hardLimitBytes: Int64
+        public let automaticMemoryLimitsDisabled: Bool
+        /// What Metal will actually keep resident on this machine. Zero when
+        /// it can't be determined.
+        public let gpuBudgetBytes: Int64
         public let timestamp: Date
+
+        /// The load doesn't fit the GPU working set, so macOS pages the
+        /// weights on every decode step. Distinct from ordinary RAM pressure:
+        /// the budget is a fixed fraction of installed memory, so closing
+        /// other apps cannot make room — only a smaller model can.
+        ///
+        /// Judged on the **weights**, not weights + KV headroom. The weights
+        /// are what must stay resident for every decode step; the KV cache
+        /// grows lazily under its own cap and is evictable. Charging the
+        /// worst-case KV allowance against the working set is what made a
+        /// 94 GiB pack that loads and decodes normally on a 128 GB Mac report
+        /// as needing 128 GB.
+        public var exceedsGPUBudget: Bool {
+            gpuBudgetBytes > 0 && incomingLoadFootprintBytes > gpuBudgetBytes
+        }
 
         /// UI severity for the chat input's tight-fit disclaimer.
         public enum LoadPressureSeverity: String, Sendable, Equatable {
             /// Comfortably within budget — no banner.
             case none
-            /// Above the soft threshold (or free pages look short): show the
-            /// disclaimer but allow sending.
+            /// The model is large relative to this Mac: show the disclaimer
+            /// but allow sending.
             case warn
             /// Above the hard ceiling, or the load can never fit in physical
             /// memory: block sending until memory frees.
@@ -976,14 +2427,45 @@ public actor ModelRuntime {
         /// UI-layer gate only — the runtime load path stays advisory (see
         /// `checkRAMFeasibility`).
         public var loadPressureSeverity: LoadPressureSeverity {
-            if projectedBytes > hardLimitBytes || requiredAvailableBytes > physicalMemoryBytes {
-                return .block
+            // Judge the hard ceiling on the resident working set (weights of
+            // everything resident plus the incoming footprint), NOT on the
+            // worst-case KV headroom: KV grows lazily under its own runtime
+            // cap and is evictable, exactly as `exceedsGPUBudget` documents
+            // below. Charging the full KV allowance here disabled the send
+            // button for a 94 GiB pack that loads and decodes normally on a
+            // 128 GB Mac (the projection claimed it "needs 128.3 GB"). The
+            // hard limit already embeds headroom below physical memory, so
+            // no extra margin is added on top.
+            let residentProjection = projectedBytes - kvHeadroomBytes
+            if residentProjection > hardLimitBytes
+                || incomingLoadFootprintBytes > physicalMemoryBytes
+            {
+                return automaticMemoryLimitsDisabled ? .warn : .block
             }
-            if verdict != .ok || projectedBytes > softLimitBytes {
-                return .warn
-            }
+            // A working set past the GPU budget gets paged even on an
+            // otherwise idle Mac, so it warns no matter how much RAM happens
+            // to be free.
+            if exceedsGPUBudget { return .warn }
+            // Only the model's own size relative to the machine warrants a
+            // banner. Deliberately *not* `verdict != .ok`: the verdict also
+            // goes `.tight` on `lowAvailable`, and on macOS free pages are
+            // nearly always scarce — the compressor and file cache give the
+            // memory back on demand. Warning on that popped a disclaimer at
+            // every launch for models that fit with room to spare.
+            if projectedBytes > softLimitBytes { return .warn }
             return .none
         }
+    }
+
+    public struct MemorySafetyLoadDecision: Sendable, Equatable {
+        public let modelName: String
+        public let estimatedWorkingSetBytes: UInt64?
+        public let resolvedLoadBudgetBytes: UInt64?
+        public let allowed: Bool
+        public let displaySummary: String
+        public let useMmapSafetensors: Bool
+        public let blockingIssues: [String]
+        public let timestamp: Date
     }
 
     /// Estimated KV-cache + activation headroom an incoming load needs beyond
@@ -999,13 +2481,17 @@ public actor ModelRuntime {
     static func estimatedKVHeadroomBytes(
         forWeights weights: Int64,
         modelDirectory: URL? = nil,
-        modelName: String? = nil
+        modelName: String? = nil,
+        kvRetentionCap: Int? = ServerRuntimeSettingsStore.resolvedKVRetentionCap()
     ) -> Int64 {
         if let knownHeadroom = Self.knownMiMoOrN2JANGTQKVHeadroomBytes(modelName: modelName) {
             return knownHeadroom
         }
         if let modelDirectory,
-            let architectureHeadroom = estimatedArchitectureKVHeadroomBytes(at: modelDirectory)
+            let architectureHeadroom = estimatedArchitectureKVHeadroomBytes(
+                at: modelDirectory,
+                kvRetentionCap: kvRetentionCap
+            )
         {
             return architectureHeadroom
         }
@@ -1038,7 +2524,10 @@ public actor ModelRuntime {
         return nil
     }
 
-    private static func estimatedArchitectureKVHeadroomBytes(at directory: URL) -> Int64? {
+    private static func estimatedArchitectureKVHeadroomBytes(
+        at directory: URL,
+        kvRetentionCap: Int?
+    ) -> Int64? {
         let configURL = directory.appendingPathComponent("config.json")
         guard let data = try? Data(contentsOf: configURL),
             let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -1064,12 +2553,27 @@ public actor ModelRuntime {
                 else { return nil }
                 return hidden / heads
             }()
-        let maxPositions =
+        // The KV cache never grows past the server's configured cap, and it
+        // grows lazily — vmlx allocates in steps as the conversation extends,
+        // it does not preallocate the model's theoretical window. Budgeting
+        // the declared `max_position_embeddings` therefore invents memory the
+        // load will never touch: Hy3 advertises 262144 positions, which prices
+        // its KV at 80 GiB and made a 94 GiB pack look like it needed 128 GB
+        // on a 128 GB Mac — a model that in fact loads and decodes fine. Cap
+        // the estimate at the KV limit the runtime will actually enforce.
+        let declaredPositions =
             effectiveKVPositionBudget(config: config)
             ?? intValue(config["max_position_embeddings"])
             ?? intValue(config["max_sequence_length"])
             ?? intValue(config["seq_length"])
             ?? 32768
+        // Price the same RESOLVED Memory Safety/cache policy that a newly
+        // loaded coordinator receives. The old raw-field lookup used 8K when
+        // the saved override was blank even though Safe Auto actually loaded
+        // a 64K cap, materially under-reporting projected KV headroom.
+        let maxPositions =
+            kvRetentionCap.map { min(declaredPositions, max($0, 4096)) }
+            ?? declaredPositions
         guard let kvHeads, let headDim, kvHeads > 0, headDim > 0, maxPositions > 0 else {
             return nil
         }
@@ -1105,15 +2609,36 @@ public actor ModelRuntime {
     }
 
     private static func attentionLayerCount(in config: [String: Any]) -> Int {
+        let physicalLayers: Int
         if let blocks = config["layers_block_type"] as? [Any] {
-            return blocks.compactMap { stringValue($0)?.lowercased() }
+            physicalLayers = blocks.compactMap { stringValue($0)?.lowercased() }
                 .filter { $0 == "attention" || $0 == "attn" || $0 == "*" }
                 .count
+        } else if let pattern = stringValue(config["hybrid_override_pattern"]), !pattern.isEmpty {
+            physicalLayers = pattern.filter { $0 == "*" || $0 == "A" || $0 == "a" }.count
+        } else {
+            physicalLayers = intValue(config["num_hidden_layers"]) ?? 0
         }
-        if let pattern = stringValue(config["hybrid_override_pattern"]), !pattern.isEmpty {
-            return pattern.filter { $0 == "*" || $0 == "A" || $0 == "a" }.count
+
+        // Nanbeige 4.2 executes one physical attention stack repeatedly while
+        // retaining independent KV state for every (loop, layer) pair. Its
+        // runtime therefore creates `physicalLayers * totalLoops` cache slots,
+        // not one slot per weight-bearing layer. Keep this architecture-scoped:
+        // `num_loops` has unrelated meanings in other model configurations.
+        guard stringValue(config["model_type"])?.lowercased() == "nanbeige",
+            physicalLayers > 0
+        else {
+            return physicalLayers
         }
-        return intValue(config["num_hidden_layers"]) ?? 0
+
+        let loopLossWeights = config["loop_loss_weights"] as? [Any]
+        let totalLoops =
+            if let loopLossWeights, !loopLossWeights.isEmpty {
+                loopLossWeights.count + 1
+            } else {
+                max(1, intValue(config["num_loops"]) ?? 1)
+            }
+        return physicalLayers * totalLoops
     }
 
     private static func effectiveKVPositionBudget(config: [String: Any]) -> Int? {
@@ -1167,6 +2692,38 @@ public actor ModelRuntime {
         lastRAMFeasibility
     }
 
+    public func lastMemorySafetyLoadDecisionSnapshot() -> MemorySafetyLoadDecision? {
+        lastMemorySafetyLoadDecision
+    }
+
+    static func estimatedMemorySafetyWorkingSetBytes(
+        loadFootprintBytes: Int64,
+        physicalMemoryBytes: UInt64
+    ) -> UInt64? {
+        guard physicalMemoryBytes > 0 else { return nil }
+        return GPUMemoryBudget.estimatedChatWorkingSetBytes(
+            onDiskBytes: loadFootprintBytes
+        )
+    }
+
+    static func memorySafetyRequestEstimateMessage(
+        estimatedWorkingSetBytes: UInt64?,
+        resolvedLoadBudgetBytes: UInt64?
+    ) -> String {
+        guard let estimatedWorkingSetBytes, let resolvedLoadBudgetBytes else {
+            return "The request exceeds the selected Memory Safety load budget."
+        }
+        let bytesPerGB = Double(1 << 30)
+        let estimatedGB = Double(estimatedWorkingSetBytes) / bytesPerGB
+        let budgetGB = Double(resolvedLoadBudgetBytes) / bytesPerGB
+        return String(
+            format:
+                "Estimated request working set ~%.1f GB exceeds the selected ~%.1f GB load budget.",
+            estimatedGB,
+            budgetGB
+        )
+    }
+
     /// Shared verdict math for the pre-load advisory gate
     /// (`checkRAMFeasibility`) and the chat input's candidate-load projection
     /// (`projectedLoadFeasibility`), so the two assessments can't drift.
@@ -1188,7 +2745,9 @@ public actor ModelRuntime {
         inflightOther: Int64,
         kvHeadroom: Int64,
         physical: Int64,
-        available: Int64
+        available: Int64,
+        automaticMemoryLimitsDisabled: Bool =
+            ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled()
     ) -> RAMFeasibility {
         let requiredAvailable = incomingLoadFootprintBytes + kvHeadroom
         let projected = resident + inflightOther + incomingLoadFootprintBytes + kvHeadroom
@@ -1196,11 +2755,12 @@ public actor ModelRuntime {
         let softLimit = Int64(Double(physical) * thresholds.soft)
         let hardLimit = Int64(Double(physical) * thresholds.hard)
 
-        // `available` counts only immediately reclaimable pages; macOS also
-        // frees compressor and file-cache memory on demand, so a strict
-        // `required > available` comparison flags loads that succeed without
-        // pressure on any busy machine. Allow a slack of 10% of physical for
-        // that on-demand reclaim before calling free pages short.
+        // `available` is physical minus unreclaimable memory (wired,
+        // compressor, non-purgeable anonymous). Anonymous pages of idle
+        // processes still compress on demand and load-time transients spike,
+        // so a strict `required > available` comparison flags loads that
+        // succeed without pressure on any busy machine. Allow a slack of 10%
+        // of physical before calling free pages short.
         let reclaimSlack = physical / 10
         let lowAvailable = available > 0 && requiredAvailable > available + reclaimSlack
         let verdict: RAMFeasibility.Verdict
@@ -1223,8 +2783,22 @@ public actor ModelRuntime {
             requiredAvailableBytes: requiredAvailable,
             softLimitBytes: softLimit,
             hardLimitBytes: hardLimit,
+            automaticMemoryLimitsDisabled: automaticMemoryLimitsDisabled,
+            gpuBudgetBytes: Self.gpuBudgetBytes(physicalMemoryBytes: physical),
             timestamp: Date()
         )
+    }
+
+    /// The Metal working set available to a machine with `physicalMemoryBytes`
+    /// of unified memory. Weights that don't fit here get paged rather than
+    /// rejected, which reads as a catastrophically slow model rather than a
+    /// failed load — see `GPUMemoryBudget`.
+    static func gpuBudgetBytes(physicalMemoryBytes physical: Int64) -> Int64 {
+        let bytesPerGB: Double = 1024 * 1024 * 1024
+        let budgetGB = GPUMemoryBudget.budgetGB(
+            physicalMemoryGB: Double(physical) / bytesPerGB
+        )
+        return Int64(budgetGB * bytesPerGB)
     }
 
     /// Pre-load RAM feasibility assessment. Records `lastRAMFeasibility` for
@@ -1239,7 +2813,10 @@ public actor ModelRuntime {
         incomingWeightsBytes: Int64,
         incomingLoadFootprintBytes: Int64,
         excludingResident excludedName: String?,
-        modelDirectory: URL? = nil
+        modelDirectory: URL? = nil,
+        refuseOnShortfall: Bool = false,
+        automaticMemoryLimitsDisabled: Bool =
+            ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled()
     ) throws {
         let physical = Int64(ProcessInfo.processInfo.physicalMemory)
         guard physical > 0, incomingWeightsBytes > 0 else { return }
@@ -1262,10 +2839,41 @@ public actor ModelRuntime {
             inflightOther: inflightOther,
             kvHeadroom: kvHeadroom,
             physical: physical,
-            available: Self.availableMemoryBytes()
+            available: Self.availableMemoryBytes(),
+            automaticMemoryLimitsDisabled: automaticMemoryLimitsDisabled
         )
 
         lastRAMFeasibility = assessment
+
+        // Materialized (mmap-off) loads make the verdict authoritative: a
+        // load that truly cannot fit aborts in a Metal command-buffer
+        // completion handler mid-materialization instead of degrading
+        // gracefully. Refuse those with a clear error. macOS does reclaim
+        // its own file cache under allocation pressure (the Python runtime
+        // materializes this same 94 GB pack repeatedly with a warm cache),
+        // so grant the same 10%-of-physical reclaim slack the advisory
+        // verdict uses; the margin covers load-time transients. KV headroom
+        // is deliberately not required up front — KV grows later under the
+        // normal budget.
+        if refuseOnShortfall {
+            let workingMargin: Int64 = 4 << 30
+            let required = incomingLoadFootprintBytes + workingMargin
+            let available = assessment.availableMemoryBytes
+            let reclaimSlack = physical / 10
+            if available > 0, required > available + reclaimSlack {
+                genLog.error(
+                    "loadContainer: refusing materialized load of \(modelName, privacy: .public): required=\(required, privacy: .public) available=\(available, privacy: .public)"
+                )
+                throw NSError(
+                    domain: "ModelRuntime",
+                    code: 507,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "Not enough free memory to load \(modelName): it needs ~\(required >> 30) GB free (\(incomingLoadFootprintBytes >> 30) GB of weights plus working margin) but only \(available >> 30) GB is available. Close other apps or unload other models, then retry."
+                    ]
+                )
+            }
+        }
 
         switch assessment.verdict {
         case .ok:
@@ -1367,6 +2975,165 @@ public actor ModelRuntime {
         )
     }
 
+    /// Resolve the live, authoritative memory facts used to admit one
+    /// same-local-model subagent batch.
+    ///
+    /// This deliberately shares the normal model-load policy instead of
+    /// teaching `SpawnBatchTool` another weight/JANG/materialization formula:
+    /// the target footprint follows the same preliminary Memory Safety plan as
+    /// `loadContainer`, while per-child cache/state comes from the existing
+    /// architecture-aware KV/SSM/activation estimator. Resident parent bytes
+    /// are counted as releasable only when the already-resolved handoff plan
+    /// will actually unload them.
+    private struct SubagentMemoryProfile {
+        let canonicalName: String
+        let summaries: [ModelCacheSummary]
+        let targetAlreadyResident: Bool
+        let targetLoadFootprintBytes: Int64?
+        let perActiveChildHeadroomBytes: Int64?
+        let resolvedLoadBudgetBytes: UInt64?
+        let memorySafetyAllowsLoad: Bool
+    }
+
+    private func subagentMemoryProfile(
+        for modelName: String
+    ) async -> SubagentMemoryProfile? {
+        let trimmed = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+            let found = ModelManager.findInstalledModel(named: trimmed),
+            let localURL = Self.findLocalDirectory(forModelId: found.id)
+        else {
+            return nil
+        }
+
+        let canonicalName = found.name
+        let summaries = await cachedModelSummaries()
+        let targetAlreadyResident = summaries.contains { summary in
+            let residentName =
+                ModelManager.findInstalledModel(named: summary.name)?.name
+                ?? summary.name
+            return residentName.caseInsensitiveCompare(canonicalName) == .orderedSame
+        }
+        let settings = ServerRuntimeSettingsStore.snapshot()
+        let preliminaryPlan = Self.resolveMemorySafetyLoadPlan(
+            modelName: canonicalName,
+            modelDirectory: localURL,
+            settings: settings,
+            baseLoadConfiguration: .osaurusProduction,
+            inspectBundleFacts: true
+        )
+        let rawWeightsBytes = candidateWeightsSizeBytes(
+            modelName: canonicalName,
+            directory: localURL
+        )
+        let targetLoadFootprintBytes: Int64? =
+            rawWeightsBytes > 0
+            ? (
+                preliminaryPlan.loadConfiguration.useMmapSafetensors
+                ? Self.effectiveLoadFootprintBytes(
+                    rawWeightsBytes: rawWeightsBytes,
+                    modelDirectory: localURL,
+                    modelName: canonicalName
+                )
+                : rawWeightsBytes
+            )
+            : nil
+        let perActiveChildHeadroomBytes = targetLoadFootprintBytes.map {
+            Self.estimatedKVHeadroomBytes(
+                forWeights: $0,
+                modelDirectory: localURL,
+                modelName: canonicalName,
+                kvRetentionCap: preliminaryPlan.cache.defaultMaxKVSize
+            )
+        }
+        let estimatedWorkingSetBytes = targetLoadFootprintBytes.flatMap {
+            Self.estimatedMemorySafetyWorkingSetBytes(
+                loadFootprintBytes: $0,
+                physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory
+            )
+        }
+        let admissionPlan = Self.resolveMemorySafetyLoadPlan(
+            modelName: canonicalName,
+            modelDirectory: localURL,
+            settings: settings,
+            baseLoadConfiguration: .osaurusProduction,
+            inspectBundleFacts: true,
+            request: VMLXMemoryRequestEstimate(
+                workingSetBytes: estimatedWorkingSetBytes
+            )
+        )
+        return SubagentMemoryProfile(
+            canonicalName: canonicalName,
+            summaries: summaries,
+            targetAlreadyResident: targetAlreadyResident,
+            targetLoadFootprintBytes: targetLoadFootprintBytes,
+            perActiveChildHeadroomBytes: perActiveChildHeadroomBytes,
+            resolvedLoadBudgetBytes: admissionPlan.resolvedLoadBudgetBytes,
+            memorySafetyAllowsLoad: admissionPlan.blockingIssues.isEmpty
+        )
+    }
+
+    /// Exact pre-side-effect Memory Safety verdict for the coexistence route.
+    /// The separate flexible-resident budget remains authoritative for
+    /// eviction; this answers only whether the normal loader admits the target
+    /// bundle under the current Memory Safety request budget.
+    func subagentCoexistenceMemorySafetyAllowsLoad(
+        for modelName: String
+    ) async -> Bool {
+        await subagentMemoryProfile(for: modelName)?.memorySafetyAllowsLoad ?? false
+    }
+
+    func subagentBatchMemoryFacts(
+        for modelName: String,
+        residencyPlan: ResidencyPlan
+    ) async -> SubagentBatchMemoryFacts? {
+        guard let profile = await subagentMemoryProfile(for: modelName) else {
+            return nil
+        }
+        let releasableParentBytes: Int64 =
+            residencyPlan.shouldUnload
+            ? profile.summaries.reduce(Int64(0)) { partial, summary in
+                let residentName =
+                    ModelManager.findInstalledModel(named: summary.name)?.name
+                    ?? summary.name
+                guard
+                    residentName.caseInsensitiveCompare(profile.canonicalName)
+                        != .orderedSame
+                else {
+                    return partial
+                }
+                let (sum, overflow) = partial.addingReportingOverflow(summary.bytes)
+                return overflow ? Int64.max : sum
+            }
+            : 0
+
+        return SubagentBatchMemoryFacts(
+            canonicalModelKey: profile.canonicalName,
+            targetAlreadyResident: profile.targetAlreadyResident,
+            targetLoadFootprintBytes: profile.targetLoadFootprintBytes.flatMap(
+                Self.nonnegativeUInt64
+            ),
+            perActiveChildHeadroomBytes: profile.perActiveChildHeadroomBytes.flatMap(
+                Self.nonnegativeUInt64
+            ),
+            // Match the existing subagent handoff preflight exactly. The
+            // broader model-load estimator also counts speculative pages,
+            // which are not part of the conservative handoff admission
+            // contract and could over-admit a batch.
+            reclaimableBytes: Self.nonnegativeUInt64(
+                ChatResidencyHandoff.availableMemoryBytes()
+            ),
+            releasableParentBytes: Self.nonnegativeUInt64(releasableParentBytes) ?? 0,
+            resolvedLoadBudgetBytes: profile.resolvedLoadBudgetBytes,
+            osHeadroomBytes: Self.nonnegativeUInt64(SubagentCoexistence.headroomBytes) ?? 0
+        )
+    }
+
+    private nonisolated static func nonnegativeUInt64(_ value: Int64) -> UInt64? {
+        guard value >= 0 else { return nil }
+        return UInt64(value)
+    }
+
     /// Memoized bundle-size lookup for `projectedLoadFeasibility`: the UI
     /// re-polls every ~2s while a banner is up, and `computeWeightsSizeBytes`
     /// re-reads directory metadata / index JSON on every call. Keyed by model
@@ -1400,12 +3167,18 @@ public actor ModelRuntime {
         var rawPageSize: vm_size_t = 0
         host_page_size(host, &rawPageSize)
         let pageSize = Int64(rawPageSize)
-        let pages =
-            Int64(stats.free_count)
-            + Int64(stats.inactive_count)
-            + Int64(stats.speculative_count)
-            + Int64(stats.purgeable_count)
-        return max(0, pages * pageSize)
+        // Count what macOS can NOT reclaim (wired, compressor-resident, and
+        // non-purgeable anonymous pages) and report the rest as available.
+        // Summing free+inactive+speculative queues instead misses the file
+        // cache sitting in the ACTIVE queue — after materializing a ~90 GB
+        // weight pack that is most of physical memory, and the shortfall
+        // guard then refuses a reload on an otherwise idle machine.
+        let unreclaimablePages =
+            Int64(stats.wire_count)
+            + Int64(stats.compressor_page_count)
+            + max(0, Int64(stats.internal_page_count) - Int64(stats.purgeable_count))
+        let physical = Int64(ProcessInfo.processInfo.physicalMemory)
+        return max(0, physical - unreclaimablePages * pageSize)
     }
 
     private func residentWeightBytes(excluding excludedName: String? = nil) -> Int64 {
@@ -1425,24 +3198,169 @@ public actor ModelRuntime {
         }
     }
 
-    private func acquireColdLoadSlot() async {
+    /// Acquire the process-wide cold-load slot, or throw `CancellationError`
+    /// if the caller is cancelled while queued. The wait itself is unbounded
+    /// on purpose — a queued load must not barge into MLX/Metal setup while
+    /// another cold load holds the slot — but it is always escapable: the
+    /// caller's cancellation (Stop, turn deadline) releases the waiter
+    /// immediately instead of leaving it parked behind a wedged native load.
+    private func acquireColdLoadSlot() async throws {
         if !coldLoadActive {
             coldLoadActive = true
             return
         }
 
-        await withCheckedContinuation { continuation in
-            coldLoadWaiters.append(continuation)
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                coldLoadWaiters.append((id: waiterID, continuation: continuation))
+            }
+        } onCancel: {
+            Task { await self.cancelColdLoadWaiter(id: waiterID) }
         }
+    }
+
+    /// Remove and fail one queued waiter. No-op when the waiter was already
+    /// resumed (slot handed over) or removed — a continuation is resumed at
+    /// most once because both paths remove it from the queue first.
+    private func cancelColdLoadWaiter(id: UUID) {
+        guard let index = coldLoadWaiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = coldLoadWaiters.remove(at: index)
+        waiter.continuation.resume(throwing: CancellationError())
     }
 
     private func releaseColdLoadSlot() {
         guard coldLoadActive else { return }
         if !coldLoadWaiters.isEmpty {
             let next = coldLoadWaiters.removeFirst()
-            next.resume()
+            next.continuation.resume(returning: ())
         } else {
             coldLoadActive = false
+        }
+    }
+
+    /// Refuse a `.background` load that is about to disturb someone else's model.
+    ///
+    /// This is deliberately **synchronous**. `ModelRuntime` is an actor, so an
+    /// actor-isolated segment with no `await` in it runs to completion without
+    /// interleaving. Callers must therefore observe the conflict (read
+    /// `loadingTasks` / `modelCache`) and call this in the *same* segment — no
+    /// suspension in between. That is what makes the refusal atomic with the
+    /// eviction it is preventing.
+    ///
+    /// Checking-then-awaiting from outside the actor (the old
+    /// `hasLoadInFlight()` + `preload()` shape) cannot work: whatever the probe
+    /// saw is already stale by the time the load runs.
+    private func refuseBackgroundLoadIfItWouldDisturb(
+        intent: ModelLoadIntent,
+        requested: String,
+        conflict: @autoclosure () -> ResidencyRefusedError.Conflict
+    ) throws {
+        guard intent == .background else { return }
+        let refusal = ResidencyRefusedError(requestedModel: requested, conflict: conflict())
+        genLog.info(
+            "loadContainer: refusing background load model=\(requested, privacy: .public) reason=\(refusal.errorDescription ?? "", privacy: .public)"
+        )
+        throw refusal
+    }
+
+    /// Await a different model load without cancelling it, then publish the
+    /// resulting holder into the live cache when it completed successfully.
+    /// Used by flexible residency and handoff restoration; both must preserve
+    /// an already-started materialization rather than destroy another
+    /// request's load.
+    private func awaitConflictingLoadWithoutCancellation(
+        name: String,
+        record: LoadingTaskRecord
+    ) async {
+        do {
+            let holder = try await record.task.value
+            _ = try? await finishLoadedContainer(
+                name: name,
+                holder: holder,
+                loadID: record.id
+            )
+        } catch {
+            if loadingTasks[name]?.id == record.id {
+                loadingTasks.removeValue(forKey: name)
+            }
+            supersededLoadingTaskIDs.remove(record.id)
+        }
+    }
+
+    /// Resolve a different model load observed in the current actor segment.
+    ///
+    /// The same decision is required before and after acquiring the cold-load
+    /// slot. Keeping it here prevents those two residency loops from drifting:
+    /// strict interactive loads cancel and drain, strict handoff restoration
+    /// waits, background work refuses atomically, and flexible residency waits.
+    private func resolveConflictingLoad(
+        requestedName: String,
+        otherName: String,
+        otherRecord: LoadingTaskRecord,
+        policy: ModelEvictionPolicy,
+        intent: ModelLoadIntent,
+        restoreOwnershipToken: ModelResidencyOwnershipToken?,
+        afterColdLoadWait: Bool
+    ) async throws {
+        let suffix = afterColdLoadWait ? " after cold-load wait" : ""
+        if policy == .strictSingleModel, intent != .handoffRestore {
+            try refuseBackgroundLoadIfItWouldDisturb(
+                intent: intent,
+                requested: requestedName,
+                conflict: .wouldCancelLoadInFlight(otherName)
+            )
+            genLog.info(
+                "loadContainer: strict drain of in-flight load \(otherName, privacy: .public)\(suffix, privacy: .public)"
+            )
+            await cancelAndDrainLoadingTasks([(otherName, otherRecord)])
+            return
+        }
+
+        if policy == .strictSingleModel {
+            guard let restoreOwnershipToken,
+                otherRecord.childOwnershipToken == restoreOwnershipToken
+            else {
+                throw HandoffRestoreBlockedError(
+                    requestedModel: requestedName,
+                    protectedResident: otherName
+                )
+            }
+            genLog.info(
+                "loadContainer: handoff restore waiting for in-flight load \(otherName, privacy: .public)\(suffix, privacy: .public)"
+            )
+        }
+        await awaitConflictingLoadWithoutCancellation(
+            name: otherName,
+            record: otherRecord
+        )
+    }
+
+    /// True while any model load is registered or holds the cold-load slot.
+    ///
+    /// Diagnostics only. Do **not** gate a load on this: the answer is stale the
+    /// moment it returns, because the load you would then start runs on a later
+    /// actor hop. Pass `intent: .background` down into the load instead and let
+    /// `refuseBackgroundLoadIfItWouldDisturb` decide atomically.
+    func hasLoadInFlight() -> Bool {
+        !loadingTasks.isEmpty || coldLoadActive
+    }
+
+    /// True when some model other than `name` is resident. Speculative
+    /// warm-ups consult this: loading a non-resident model under the strict
+    /// single-model policy evicts whoever is resident, so a launch-time
+    /// warm-up for a restored UI selection must not fire over a model an API
+    /// client is actively using. Matches both the full picker id and its
+    /// unprefixed tail against the canonical cache keys.
+    func hasResidentModelOther(than name: String) -> Bool {
+        let tail = name.split(separator: "/").last.map(String.init) ?? name
+        return modelCache.keys.contains {
+            $0.caseInsensitiveCompare(name) != .orderedSame
+                && $0.caseInsensitiveCompare(tail) != .orderedSame
         }
     }
 
@@ -1452,8 +3370,10 @@ public actor ModelRuntime {
     /// Hy3-sized residents do not collide with the next load.
     private func unloadForFlexibleResidentBudget(
         targetName: String,
-        incomingWeightsSizeBytes: Int64
-    ) async {
+        incomingWeightsSizeBytes: Int64,
+        intent: ModelLoadIntent = .interactive,
+        restoreOwnershipToken: ModelResidencyOwnershipToken? = nil
+    ) async throws {
         let limit = Self.flexibleResidentBudgetBytes()
         guard limit > 0 else { return }
 
@@ -1467,14 +3387,39 @@ public actor ModelRuntime {
                 return
             }
 
+            // Flexible mode evicts too, just for a different reason (RAM budget
+            // rather than strict single-model). Without this the "background
+            // never disturbs a resident model" contract would hold only under
+            // the default policy — a silent hole for anyone on manualMultiModel.
+            try refuseBackgroundLoadIfItWouldDisturb(
+                intent: intent,
+                requested: targetName,
+                conflict: .wouldEvictResident(candidate.key)
+            )
+            if intent == .handoffRestore {
+                guard let restoreOwnershipToken,
+                    residentMetadata[candidate.key]?.childOwnershipToken
+                        == restoreOwnershipToken
+                else {
+                    throw HandoffRestoreBlockedError(
+                        requestedModel: targetName,
+                        protectedResident: candidate.key
+                    )
+                }
+            }
             genLog.info(
                 "loadContainer: flexible budget eviction of \(candidate.key, privacy: .public) before loading \(targetName, privacy: .public) residentBytes=\(self.residentWeightBytes(excluding: targetName), privacy: .public) incomingBytes=\(incomingWeightsSizeBytes, privacy: .public) limitBytes=\(limit, privacy: .public)"
             )
-            await unload(name: candidate.key)
+            await unload(name: candidate.key, reason: .modelSwitch)
         }
     }
 
-    private func loadContainer(id: String, name: String) async throws -> SessionHolder {
+    private func loadContainer(
+        id: String,
+        name: String,
+        intent: ModelLoadIntent = .interactive,
+        restoreOwnershipToken: ModelResidencyOwnershipToken? = nil
+    ) async throws -> SessionHolder {
         try Task.checkCancellation()
         let policy = await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
         let loadStartedAt = CFAbsoluteTimeGetCurrent()
@@ -1519,42 +3464,60 @@ public actor ModelRuntime {
             }
 
             if let otherLoading = loadingTasks.first(where: { $0.key != name }) {
-                let otherName = otherLoading.key
-                let otherRecord = otherLoading.value
-                if policy == .strictSingleModel {
-                    genLog.info(
-                        "loadContainer: strict drain of in-flight load \(otherName, privacy: .public)"
-                    )
-                    await cancelAndDrainLoadingTasks([(otherName, otherRecord)])
-                } else {
-                    do {
-                        let holder = try await otherRecord.task.value
-                        _ = try? await finishLoadedContainer(
-                            name: otherName,
-                            holder: holder,
-                            loadID: otherRecord.id
-                        )
-                    } catch {
-                        if loadingTasks[otherName]?.id == otherRecord.id {
-                            loadingTasks.removeValue(forKey: otherName)
-                        }
-                        supersededLoadingTaskIDs.remove(otherRecord.id)
-                    }
-                }
+                try await resolveConflictingLoad(
+                    requestedName: name,
+                    otherName: otherLoading.key,
+                    otherRecord: otherLoading.value,
+                    policy: policy,
+                    intent: intent,
+                    restoreOwnershipToken: restoreOwnershipToken,
+                    afterColdLoadWait: false
+                )
                 continue
             }
 
             if policy == .strictSingleModel,
                 let other = modelCache.keys.first(where: { $0 != name })
             {
-                await strictEvict(other)
+                if intent == .handoffRestore {
+                    guard let restoreOwnershipToken,
+                        residentMetadata[other]?.childOwnershipToken
+                            == restoreOwnershipToken
+                    else {
+                        throw HandoffRestoreBlockedError(
+                            requestedModel: name,
+                            protectedResident: other
+                        )
+                    }
+                    let result = await unloadChildOwned(
+                        name: other,
+                        by: restoreOwnershipToken
+                    )
+                    guard result == .unloaded || result == .notResident else {
+                        throw HandoffRestoreBlockedError(
+                            requestedModel: name,
+                            protectedResident: other
+                        )
+                    }
+                } else {
+                    // `strictEvict` suspends (it waits on the `ModelLease`
+                    // actor) before it unloads. Keep the synchronous refusal
+                    // immediately before that suspension in the same actor
+                    // segment that read `modelCache`.
+                    try refuseBackgroundLoadIfItWouldDisturb(
+                        intent: intent,
+                        requested: name,
+                        conflict: .wouldEvictResident(other)
+                    )
+                    await strictEvict(other)
+                }
                 continue
             }
 
             break
         }
 
-        await acquireColdLoadSlot()
+        try await acquireColdLoadSlot()
         defer { releaseColdLoadSlot() }
 
         while true {
@@ -1591,35 +3554,55 @@ public actor ModelRuntime {
             }
 
             if let otherLoading = loadingTasks.first(where: { $0.key != name }) {
-                let otherName = otherLoading.key
-                let otherRecord = otherLoading.value
-                if policy == .strictSingleModel {
-                    genLog.info(
-                        "loadContainer: strict drain of in-flight load \(otherName, privacy: .public) after cold-load wait"
-                    )
-                    await cancelAndDrainLoadingTasks([(otherName, otherRecord)])
-                } else {
-                    do {
-                        let holder = try await otherRecord.task.value
-                        _ = try? await finishLoadedContainer(
-                            name: otherName,
-                            holder: holder,
-                            loadID: otherRecord.id
-                        )
-                    } catch {
-                        if loadingTasks[otherName]?.id == otherRecord.id {
-                            loadingTasks.removeValue(forKey: otherName)
-                        }
-                        supersededLoadingTaskIDs.remove(otherRecord.id)
-                    }
-                }
+                // Re-checked after `acquireColdLoadSlot()`, which suspends —
+                // the actor is reentrant across it, so the pre-slot check above
+                // proves nothing about the state we see now.
+                try await resolveConflictingLoad(
+                    requestedName: name,
+                    otherName: otherLoading.key,
+                    otherRecord: otherLoading.value,
+                    policy: policy,
+                    intent: intent,
+                    restoreOwnershipToken: restoreOwnershipToken,
+                    afterColdLoadWait: true
+                )
                 continue
             }
 
             if policy == .strictSingleModel,
                 let other = modelCache.keys.first(where: { $0 != name })
             {
-                await strictEvict(other)
+                if intent == .handoffRestore {
+                    guard let restoreOwnershipToken,
+                        residentMetadata[other]?.childOwnershipToken
+                            == restoreOwnershipToken
+                    else {
+                        throw HandoffRestoreBlockedError(
+                            requestedModel: name,
+                            protectedResident: other
+                        )
+                    }
+                    let result = await unloadChildOwned(
+                        name: other,
+                        by: restoreOwnershipToken
+                    )
+                    guard result == .unloaded || result == .notResident else {
+                        throw HandoffRestoreBlockedError(
+                            requestedModel: name,
+                            protectedResident: other
+                        )
+                    }
+                } else {
+                    // Re-establish the same no-suspension refusal/eviction
+                    // sequence after `acquireColdLoadSlot()` as in the first
+                    // residency loop.
+                    try refuseBackgroundLoadIfItWouldDisturb(
+                        intent: intent,
+                        requested: name,
+                        conflict: .wouldEvictResident(other)
+                    )
+                    await strictEvict(other)
+                }
                 continue
             }
 
@@ -1637,6 +3620,38 @@ public actor ModelRuntime {
         genLog.info(
             "loadContainer: local directory model=\(name, privacy: .public) path=\(localURL.path, privacy: .public)"
         )
+        let loadBundleFacts = LoadBundleFacts.inspect(bundleURL: localURL)
+
+        // One-time, idempotent bundle-metadata repair for the Laguna XS 2.1
+        // release that shipped an incorrect/missing top_k in some artifacts.
+        // This happens before both compatibility inspection and
+        // `loadModelContainer`, so Osaurus and vMLX read the same corrected
+        // files. It is intentionally not an in-memory/global sampler override:
+        // explicit request top_k retains precedence after this migration.
+        do {
+            let repairedFiles =
+                try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+                    at: localURL,
+                    modelName: name
+                )
+            if !repairedFiles.isEmpty {
+                genLog.info(
+                    "repaired Laguna XS 2.1 sampling metadata model=\(name, privacy: .public) files=\(repairedFiles.joined(separator: ","), privacy: .public) topK=20"
+                )
+            }
+        } catch {
+            genLog.error(
+                "failed to repair Laguna XS 2.1 sampling metadata model=\(name, privacy: .public): \(String(describing: error), privacy: .public)"
+            )
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 422,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Laguna XS 2.1 requires top_k 20, but Osaurus could not update its generation metadata. \(error.localizedDescription)"
+                ]
+            )
+        }
 
         let installedModel =
             ModelManager.findInstalledMLXModel(named: id)
@@ -1688,7 +3703,6 @@ public actor ModelRuntime {
         // pass, hits a precondition in TurboQuantSwitchLinear, and abort()s
         // the whole process — taking osaurus with it. Caught here so the user
         // gets a clear error and the server stays up.
-        try Self.validateUnsupportedPlainDSV4AffineJANG(at: localURL, name: name)
         try await Self.ensureJANGTQSidecar(at: localURL, modelId: id, name: name)
         // One-time, idempotent: Gemma-4 JANG (affine) audio bundles shipped
         // without the `quantization.multimodal` fp16-passthrough flag that the
@@ -1704,14 +3718,86 @@ public actor ModelRuntime {
         // below — were blind under the default strict policy. The value also
         // feeds `mlxCacheLimit()` and the `/health` + model-picker surfaces.
         let weightsBytes = Self.computeWeightsSizeBytes(at: localURL, modelName: name)
-        let loadFootprintBytes = Self.effectiveLoadFootprintBytes(
-            rawWeightsBytes: weightsBytes,
+        // A near-RAM-scale pack loads materialized (vmlx disables mmap so
+        // its pages stay resident instead of refaulting from SSD every
+        // decode step). Its real footprint is the full weight size — the
+        // mmap hot-subset heuristic below under-counted Hy3-JANG_2K's 94 GB
+        // as 28 GB — and the feasibility verdict becomes authoritative:
+        // materialization allocates anonymous pages faster than macOS
+        // reclaims file cache, so proceeding into a shortfall dies as a
+        // Metal command-buffer abort mid-load, not graceful pressure
+        // (observed live: available 101 GB loaded clean, 89 GB crashed).
+        let preloadServerSettings = ServerRuntimeSettingsStore.snapshot()
+        let automaticMemoryLimitsDisabled =
+            ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled(
+                for: preloadServerSettings
+            )
+        let preliminaryMemorySafetyPlan = Self.resolveMemorySafetyLoadPlan(
+            modelName: name,
             modelDirectory: localURL,
-            modelName: name
+            settings: preloadServerSettings,
+            baseLoadConfiguration: .osaurusProduction,
+            inspectBundleFacts: true
         )
+        let willMaterialize =
+            !preliminaryMemorySafetyPlan.loadConfiguration.useMmapSafetensors
+        let loadFootprintBytes =
+            willMaterialize
+            ? weightsBytes
+            : Self.effectiveLoadFootprintBytes(
+                rawWeightsBytes: weightsBytes,
+                modelDirectory: localURL,
+                modelName: name
+            )
         genLog.info(
-            "loadContainer: pre-load checks done model=\(name, privacy: .public) weightsBytes=\(weightsBytes, privacy: .public) loadFootprintBytes=\(loadFootprintBytes, privacy: .public)"
+            "loadContainer: pre-load checks done model=\(name, privacy: .public) weightsBytes=\(weightsBytes, privacy: .public) loadFootprintBytes=\(loadFootprintBytes, privacy: .public) materialized=\(willMaterialize, privacy: .public)"
         )
+
+        let estimatedWorkingSetBytes = Self.estimatedMemorySafetyWorkingSetBytes(
+            loadFootprintBytes: loadFootprintBytes,
+            physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory
+        )
+        let admissionPlan = Self.resolveMemorySafetyLoadPlan(
+            modelName: name,
+            modelDirectory: localURL,
+            settings: preloadServerSettings,
+            baseLoadConfiguration: .osaurusProduction,
+            inspectBundleFacts: true,
+            request: VMLXMemoryRequestEstimate(
+                workingSetBytes: estimatedWorkingSetBytes
+            )
+        )
+        let blockingIssueMessages = admissionPlan.blockingIssues.map { issue in
+            if issue.field == "memorySafety.requestEstimate" {
+                return
+                    "\(issue.field): \(Self.memorySafetyRequestEstimateMessage(estimatedWorkingSetBytes: estimatedWorkingSetBytes, resolvedLoadBudgetBytes: admissionPlan.resolvedLoadBudgetBytes))"
+            }
+            return "\(issue.field): \(issue.message)"
+        }
+        lastMemorySafetyLoadDecision = MemorySafetyLoadDecision(
+            modelName: name,
+            estimatedWorkingSetBytes: estimatedWorkingSetBytes,
+            resolvedLoadBudgetBytes: admissionPlan.resolvedLoadBudgetBytes,
+            allowed: blockingIssueMessages.isEmpty,
+            displaySummary: admissionPlan.displaySummary,
+            useMmapSafetensors: admissionPlan.loadConfiguration.useMmapSafetensors,
+            blockingIssues: blockingIssueMessages,
+            timestamp: Date()
+        )
+        if !blockingIssueMessages.isEmpty {
+            let issueSummary = blockingIssueMessages.joined(separator: "; ")
+            genLog.error(
+                "loadContainer: memory safety refused \(name, privacy: .public): \(issueSummary, privacy: .public)"
+            )
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 507,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Memory Safety refused to load \(name). \(issueSummary) Increase the selected budget or choose Safe Auto / No Automatic Limits in Server Settings, then retry."
+                ]
+            )
+        }
 
         // Reserve this load's footprint the instant it's known, BEFORE the
         // feasibility gate and the task registration below, so a concurrent
@@ -1726,9 +3812,11 @@ public actor ModelRuntime {
         try Task.checkCancellation()
 
         if policy == .manualMultiModel {
-            await unloadForFlexibleResidentBudget(
+            try await unloadForFlexibleResidentBudget(
                 targetName: name,
-                incomingWeightsSizeBytes: loadFootprintBytes
+                incomingWeightsSizeBytes: loadFootprintBytes,
+                intent: intent,
+                restoreOwnershipToken: restoreOwnershipToken
             )
         }
         try Task.checkCancellation()
@@ -1736,13 +3824,17 @@ public actor ModelRuntime {
         // Pre-load RAM feasibility assessment (all policies). After strict
         // eviction / flexible budget trimming above, `resident` reflects what
         // will still be alive when this load lands. Pressure is reported via
-        // health/logs, but RAM fullness is not a user-requested load block.
+        // health/logs; for mmap loads RAM fullness is not a user-requested
+        // load block, but a materialized load short on free memory is
+        // refused outright — see `willMaterialize` above.
         try checkRAMFeasibility(
             modelName: name,
             incomingWeightsBytes: weightsBytes,
             incomingLoadFootprintBytes: loadFootprintBytes,
             excludingResident: name,
-            modelDirectory: localURL
+            modelDirectory: localURL,
+            refuseOnShortfall: willMaterialize && !automaticMemoryLimitsDisabled,
+            automaticMemoryLimitsDisabled: automaticMemoryLimitsDisabled
         )
 
         // Tool-call format + reasoning parser are stamped automatically by
@@ -1768,7 +3860,7 @@ public actor ModelRuntime {
                 settings: serverSettings
             )
             genLog.info(
-                "loadContainer: native MTP plan model=\(name, privacy: .public) nativeMTP=\(mtpPlan.loadConfiguration.nativeMTP, privacy: .public) draftStrategy=\(Self.describeDraftStrategy(mtpPlan.draftStrategy), privacy: .public) reason=\(mtpPlan.reason, privacy: .public) status=\(mtpPlan.statusLine ?? "none", privacy: .public) memorySafety=\(mtpPlan.memorySafetySummary, privacy: .public)"
+                "loadContainer: resolved load plan model=\(name, privacy: .public) nativeMTP=\(mtpPlan.loadConfiguration.nativeMTP, privacy: .public) dsv4ActivationQAT=\(mtpPlan.loadConfiguration.deepseekV4ActivationQAT ?? false, privacy: .public) draftStrategy=\(Self.describeDraftStrategy(mtpPlan.draftStrategy), privacy: .public) reason=\(mtpPlan.reason, privacy: .public) status=\(mtpPlan.statusLine ?? "none", privacy: .public) memorySafety=\(mtpPlan.memorySafetySummary, privacy: .public)"
             )
             // Weight dequantization + kernel compilation drive the Metal
             // command queue. Hold the GPU gate as an exclusive producer so a
@@ -1820,18 +3912,41 @@ public actor ModelRuntime {
             genLog.info(
                 "loadContainer: task loaded model=\(name, privacy: .public) loadID=\(loadID, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public) isVLM=\(isVLM, privacy: .public)"
             )
-            return SessionHolder(
+            let holder = SessionHolder(
                 name: name,
                 container: container,
                 weightsSizeBytes: loadFootprintBytes,
+                weightsFingerprint: Self.weightsFingerprint(for: localURL),
                 isVLM: isVLM,
                 draftStrategy: mtpPlan.draftStrategy,
                 nativeMTPStatus: mtpPlan.statusLine,
-                nativeMTPReason: mtpPlan.reason
+                nativeMTPReason: mtpPlan.reason,
+                allocatorCacheLimitBytes: mtpPlan.loadConfiguration.maxResidentBytes
+                    .applyAsCacheLimitInt(
+                        physicalMemory: ProcessInfo.processInfo.physicalMemory
+                    ),
+                requiresUncappedMLXAllocatorCache:
+                    loadBundleFacts.isPlainDeepseekV4AffineJANG
             )
+
+            // Install the cache coordinator before the coalesced load task
+            // returns its holder. `finishLoadedContainer` publishes the holder
+            // in `modelCache` and is actor-reentrant across its post-load MTP
+            // warm-up; installing there let a rapid UI send observe a loaded
+            // model whose BatchEngine still had no coordinator. The request
+            // then generated coherently but could neither fetch nor store its
+            // SSD prefix. Keeping this inside the single shared load task makes
+            // "load complete" mean the configured prefix/paged/L2 policy is
+            // already attached for every waiter.
+            await Self.installCacheCoordinator(on: holder)
+            return holder
         }
 
-        loadingTasks[name] = LoadingTaskRecord(id: loadID, task: task)
+        loadingTasks[name] = LoadingTaskRecord(
+            id: loadID,
+            task: task,
+            childOwnershipToken: ModelResidencyOwnershipContext.childOwnershipToken
+        )
 
         do {
             let holder = try await withTaskCancellationHandler {
@@ -1915,8 +4030,10 @@ public actor ModelRuntime {
     // Per-request explicit values still override these. We continue to
     // pass `modelKey` (per-model isolation) and `diskCacheDir` /
     // `enableDiskCache` (osaurus-managed disk path, sandbox-aware).
-    // Everything else (`maxCacheBlocks`, `diskCacheMaxGB`, `pagedBlockSize`,
-    // `ssmMaxEntries`) is left at the library default.
+    // Everything else (`maxCacheBlocks`, `diskCacheMaxGB`, `pagedBlockSize`)
+    // is left at the library default. Hybrid SSM companion snapshots are an
+    // exception: the library default retains 50 fully materialized GPU-state
+    // copies, so the app's Memory Safety mode must also bound that live LRU.
 
     /// Builds a `CacheCoordinatorConfig` with the overrides recommended
     /// by vmlx-swift's `OSAURUS-INTEGRATION.md` (Coordinator-owned KV
@@ -1924,6 +4041,7 @@ public actor ModelRuntime {
     /// file-level comment for rationale on each knob.
     private nonisolated static func buildCacheCoordinatorConfig(
         modelName: String,
+        weightsFingerprint: String,
         cacheTopology: ModelCacheTopologySnapshot? = nil
     ) -> CacheCoordinatorConfig {
         let settings = ServerRuntimeSettingsStore.snapshot()
@@ -1937,17 +4055,28 @@ public actor ModelRuntime {
         // the two diverged and the slider never reached the coordinator.
         var resolvedSettings = settings
         resolvedSettings.cache =
-            settings.resolvedMemorySafetyPlan(
+            ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+                for: settings,
                 host: MemoryStatus.snapshot()
             ).cache
         let diskCacheDir = Self.cacheDiskDirectoryOverride(for: resolvedSettings.cache)
         if let diskCacheDir {
             OsaurusPaths.ensureExistsSilent(diskCacheDir)
         }
-        let diskDirUsable = diskCacheDir.map(isDirectoryWritable) ?? false
-        if let diskCacheDir, !diskDirUsable {
-            genLog.warning(
-                "buildCacheCoordinatorConfig: disk cache dir not writable, forcing memory-only: \(diskCacheDir.path, privacy: .public)"
+        let diskProbeFailure = diskCacheDir.flatMap(diskCacheProbeFailure)
+        let diskDirUsable = diskCacheDir != nil && diskProbeFailure == nil
+        if let diskCacheDir, let diskProbeFailure {
+            // `.error`, not `.warning`: this is not a tuning detail. It removes
+            // the only prefix-reuse tier for paged-incompatible models, so the
+            // user sees every tool round cold-prefill the whole transcript.
+            // Name the path AND the reason so it is fixable without a bisect.
+            genLog.error(
+                """
+                buildCacheCoordinatorConfig: disk cache dir NOT WRITABLE — prefix caching \
+                is disabled and every request will re-prefill from scratch. \
+                path=\(diskCacheDir.path, privacy: .public) \
+                reason=\(diskProbeFailure, privacy: .public)
+                """
             )
         }
 
@@ -1979,7 +4108,10 @@ public actor ModelRuntime {
         let scopedKey = Self.cacheCoordinatorModelKey(
             modelName: modelName,
             kvModeTag: kvModeTag,
-            cacheTopology: cacheTopology
+            weightsFingerprint: weightsFingerprint,
+            cacheTopology: cacheTopology,
+            deepseekV4ActivationQAT:
+                resolvedSettings.effectivePerformance.deepseekV4ActivationQAT
         )
 
         // Delegate the full coordinator config to vmlx's spec'd builder
@@ -1993,7 +4125,9 @@ public actor ModelRuntime {
         var config = resolvedSettings.cacheCoordinatorConfig(
             modelKey: scopedKey,
             diskCacheDirectory: diskDirUsable ? diskCacheDir : nil,
-            ssmMaxEntries: 50
+            ssmMaxEntries: Self.ssmCompanionEntryLimit(
+                for: resolvedSettings.memorySafety.mode
+            )
         )
         config.defaultKVMode = effectiveDefaultKVMode
         if diskCacheDir != nil, !diskDirUsable {
@@ -2002,6 +4136,30 @@ public actor ModelRuntime {
         }
         applyHostAwareDiskCacheCeiling(to: &config, diskCacheDir: diskCacheDir)
         return config
+    }
+
+    /// Bound the in-memory hybrid/linear-attention companion LRU with the same
+    /// user-visible Memory Safety mode that governs load and allocator caps.
+    ///
+    /// Each entry is a materialized GPU snapshot, not lightweight metadata.
+    /// Bonsai/Qwen 3.5 retained several hundred MiB per boundary under the
+    /// library default of 50, allowing ordinary multi-turn chat plus a Thinking
+    /// toggle to grow back to the model's full on-disk size even though Safe
+    /// Auto visibly promised a bounded plan. Disk L2 remains available for
+    /// older boundaries; the small live LRU keeps the newest cross-turn states.
+    nonisolated static func ssmCompanionEntryLimit(
+        for mode: VMLXMemorySafetyMode
+    ) -> Int {
+        switch mode {
+        case .performance, .diagnosticDangerous:
+            return 50
+        case .balanced:
+            return 8
+        case .safeAuto:
+            return 2
+        case .strict:
+            return 1
+        }
     }
 
     /// Bound the L2 disk-cache cap to a fraction of CURRENT free disk so a
@@ -2029,6 +4187,20 @@ public actor ModelRuntime {
         freeFraction: Double = 0.25,
         minUsefulGB: Double = 1.0
     ) {
+        // A non-positive cap is savable through the settings UI and the admin
+        // API (Save is not gated on validation errors). Zero reaches
+        // `DiskCache(maxSizeGB: 0)`, whose quota pass then evicts EVERY entry
+        // at insert — the disk tier reports stores and hits nothing, with no
+        // eviction trace. Normalize here, on the engine-effective path, so
+        // both entry points are covered; the guard below must not run before
+        // this or a 0 cap on an unknown-free-space volume slips through.
+        let rawConfiguredCapGB = Double(config.diskCacheMaxGB)
+        if rawConfiguredCapGB <= 0 {
+            genLog.error(
+                "buildCacheCoordinatorConfig: configured disk-L2 cap \(String(format: "%.1f", rawConfiguredCapGB), privacy: .public) GB is non-positive — a zero cap self-evicts every entry at insert; using engine default 10 GB"
+            )
+            config.diskCacheMaxGB = 10.0
+        }
         guard config.enableDiskCache, let diskCacheDir,
             let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: diskCacheDir.path),
             freeBytes > 0
@@ -2160,9 +4332,8 @@ public actor ModelRuntime {
         // shipped default) therefore resolves to native fp16 KV for every
         // model.
         //
-        // vMLX's settings resolve `.engineSelected -> .turboQuant()`, so this
-        // runtime gate is the single point that decides whether engine-
-        // selected actually turns TurboQuant on. Previously it returned true
+        // This host gate and the pinned vMLX settings default both resolve
+        // engine-selected to native KV. Previously this gate returned true
         // for full-KV families (MiniMax) and for any topology with KV layers
         // and no rotating/hybrid layers — which silently force-enabled
         // TurboQuant on multiple families. TurboQuant's per-step
@@ -2190,13 +4361,83 @@ public actor ModelRuntime {
         return false
     }
 
+    /// Identity of the weights on disk, cheap enough to recompute on every load.
+    ///
+    /// The prefix cache is keyed by model *name*, and a name is not an identity: a
+    /// re-quantized bundle installed over the old one (MXFP4 -> MXFP8, a re-bake,
+    /// any weight edit) keeps its name, its layer count, its head dims and its KV
+    /// mode — every tag the key carried. The key was therefore byte-identical
+    /// across the swap, and the new weights would restore the OLD weights' KV and
+    /// continue generating from activations that never came from them. Silent, and
+    /// exactly the kind of thing that reads as "the quant is bad".
+    ///
+    /// `stat` per shard, not a content hash: digesting 94 GB on every load is not
+    /// affordable, and (size, mtime) over the shard set already changes on any real
+    /// re-bake. This is a cache *invalidation* key, not a security boundary — the
+    /// cost of a false miss is one slow prefill, so erring toward missing is right.
+    nonisolated static func weightsFingerprint(for directory: URL) -> String {
+        let fm = FileManager.default
+        guard
+            let entries = try? fm.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
+                options: [.skipsHiddenFiles]
+            )
+        else {
+            // Unreadable bundle: fall back to a value that never matches a previous
+            // load, so we take a cold prefill rather than risk a wrong-weights hit.
+            return "unknown-\(UUID().uuidString)"
+        }
+
+        // Weights and the files that change how they are interpreted. A tokenizer or
+        // config edit changes token ids / rope / quant metadata, which invalidates a
+        // stored KV just as surely as a weight edit does.
+        let interesting = entries.filter { url in
+            let name = url.lastPathComponent
+            return name.hasSuffix(".safetensors")
+                || name == "config.json"
+                || name == "tokenizer.json"
+                || name == "tokenizer_config.json"
+        }
+
+        let parts =
+            interesting
+            .map { url -> String in
+                let values = try? url.resourceValues(forKeys: [
+                    .fileSizeKey, .contentModificationDateKey,
+                ])
+                let size = values?.fileSize ?? -1
+                let mtime = values?.contentModificationDate?.timeIntervalSince1970 ?? -1
+                return "\(url.lastPathComponent):\(size):\(Int(mtime))"
+            }
+            .sorted()
+
+        guard !parts.isEmpty else { return "empty" }
+
+        // FNV-1a, not `hashValue`: Swift seeds `Hasher` per process, so a
+        // `hashValue`-derived key would differ on every launch and the prefix cache
+        // would never hit again — trading a correctness bug for a performance one.
+        // This must be stable across launches and across machines.
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in parts.joined(separator: "|").utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        return String(format: "%016llx", hash)
+    }
+
     nonisolated static func cacheCoordinatorModelKey(
         modelName: String,
         kvModeTag: String,
-        cacheTopology: ModelCacheTopologySnapshot? = nil
+        weightsFingerprint: String,
+        cacheTopology: ModelCacheTopologySnapshot? = nil,
+        deepseekV4ActivationQAT: Bool = false
     ) -> String {
         var tags = [
             modelName,
+            // A name is not an identity — see `weightsFingerprint(for:)`. Without
+            // this, re-baking a pack under the same name serves the old pack's KV.
+            "weights=\(weightsFingerprint)",
             "kv=\(kvModeTag)",
             // vmlx `TQDiskSerializer.currentFormatVersion == 2` at the
             // pinned runtime. Keep this in the host key so older L2 records
@@ -2206,6 +4447,12 @@ public actor ModelRuntime {
             // paired vmlx fix materializes full-hit trim mutations before
             // the one-token seed forward on the B=1 TokenIterator path.
             "restore=fullhit-trim-eval1",
+            // Dedicated prefill warmups now preserve exact boundaries only for
+            // fully restorable topologies. Recurrent hybrids persist an N-1
+            // processor-proven seed instead; older exact Ornith warmup records
+            // can replay a prior tool turn after reasoning-mode changes, so
+            // keep every previous record outside this cache namespace.
+            "warmup=recurrent-safe-seed-v2",
         ]
 
         if let cacheTopology {
@@ -2213,10 +4460,18 @@ public actor ModelRuntime {
             tags.append(contentsOf: cacheTopology.topologyTags)
         }
 
-        if ModelFamilyNames.isDSV4Family(modelName) {
+        let isDSV4CacheTopology =
+            ModelFamilyNames.isDSV4Family(modelName)
+            || (cacheTopology?.hybridPoolLayerCount ?? 0) > 0
+        if isDSV4CacheTopology {
             tags.append("layers=deepseekV4")
             tags.append("prefix=hybrid-pool-disk")
             tags.append("decode=max-rp110")
+            // Activation-QAT changes every attention/cache activation from
+            // token zero. Its stored SWA/CSA/HSA state is therefore not valid
+            // under the other graph, even when prompt, weights, and KV codec
+            // are identical.
+            tags.append("activation-qat=\(deepseekV4ActivationQAT ? "on" : "off")")
         } else if ModelFamilyNames.isZayaFamily(modelName) {
             tags.append("layers=zayaCCA")
             tags.append("prefix=path-dependent-disk")
@@ -2235,22 +4490,51 @@ public actor ModelRuntime {
     /// tempfile round-trip rather than `FileManager.isWritableFile(atPath:)`
     /// so symlinks / ACLs / out-of-disk conditions are caught.
     private nonisolated static func isDirectoryWritable(_ url: URL) -> Bool {
+        diskCacheProbeFailure(url) == nil
+    }
+
+    /// Probe the disk-cache directory, returning a human-readable reason when
+    /// it is not writable.
+    ///
+    /// This used to be a bare `Bool` that swallowed the underlying error, and
+    /// a failure here silently forces the whole runtime to memory-only. For a
+    /// paged-incompatible model (DSV4) the disk tier is the ONLY prefix-reuse
+    /// mechanism, so that silent downgrade removes prefix caching entirely and
+    /// presents as an agent loop that re-prefills the full transcript every
+    /// tool round — with nothing in the logs naming the cause.
+    ///
+    /// Observed live 2026-08-02: `~/.osaurus/cache` had been created
+    /// root-owned, every probe write failed with EACCES, and the trace showed
+    /// zero stores and zero hits across an entire session. Reporting the errno
+    /// and the directory's owner turns that from an invisible performance
+    /// cliff into a one-line diagnosis.
+    nonisolated static func diskCacheProbeFailure(_ url: URL) -> String? {
         let probe = url.appendingPathComponent(".osaurus_write_probe_\(UUID().uuidString)")
         do {
             try Data().write(to: probe)
             try? FileManager.default.removeItem(at: probe)
-            return true
+            return nil
         } catch {
-            return false
+            var detail = (error as NSError).localizedDescription
+            if let attributes = try? FileManager.default
+                .attributesOfItem(atPath: url.path),
+                let owner = attributes[.ownerAccountName] as? String
+            {
+                let permissions = (attributes[.posixPermissions] as? NSNumber)
+                    .map { String($0.intValue, radix: 8) } ?? "?"
+                detail += " (owner=\(owner) mode=\(permissions), current user=\(NSUserName()))"
+            }
+            return detail
         }
     }
 
     /// Installs the cache coordinator on a freshly-loaded holder.
-    private func installCacheCoordinator(on holder: SessionHolder) async {
+    private nonisolated static func installCacheCoordinator(on holder: SessionHolder) async {
         let cacheTopology = await holder.container.cacheTopologySnapshot()
         holder.cacheTopology = cacheTopology
-        let cacheConfig = Self.buildCacheCoordinatorConfig(
+        let cacheConfig = buildCacheCoordinatorConfig(
             modelName: holder.name,
+            weightsFingerprint: holder.weightsFingerprint,
             cacheTopology: cacheTopology
         )
         await holder.container.enableCachingAsync(config: cacheConfig)
@@ -2298,6 +4582,15 @@ public actor ModelRuntime {
         // 35B the qwen3_5_moe variant; both need the eager setHybrid flip
         // and the compiled-B=1-trace opt-out that the family already gets.
         if lower.contains("ornith") {
+            return true
+        }
+        // Bonsai (prism-ml, OsaurusAI re-bakes) — qwen3_5 model_type dense
+        // VL backbone (48 linear_attention + 16 full_attention layers →
+        // `MambaCache` companion slots), but the bundle ids carry no "qwen"
+        // substring — same situation as Ornith above. Without this entry the
+        // family silently missed the eager hybrid flip, the compiled-decode
+        // opt-out, and the `layers=hybrid-ssm` cache-key tag.
+        if lower.contains("bonsai") {
             return true
         }
         // Qwen3-Next (qwen3_next model_type) — newer hybrid MoE that vmlx
@@ -2424,9 +4717,31 @@ public actor ModelRuntime {
         // work).
         if Task.isCancelled { throw CancellationError() }
 
+        let deletionAccess = try await beginModelDeletionProtectedAccess(
+            modelID: modelId,
+            modelName: modelName
+        )
+        defer { finishModelDeletionProtectedAccess(deletionAccess) }
+
         genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
-        await ModelResidencyManager.shared.markActive(modelName: modelName)
-        lastUseSource[modelName] = parameters.requestSource
+        await markModelActiveForResidency(modelName)
+        // Ownership belongs only to the handoff that cold-published this
+        // generation. If another surface later reuses it, that surface has
+        // made the residency shared and the original handoff must no longer
+        // be able to remove it during transition/final cleanup.
+        if let key = residentKey(matching: modelName),
+            var metadata = residentMetadata[key],
+            let owner = metadata.childOwnershipToken,
+            owner != ModelResidencyOwnershipContext.childOwnershipToken
+        {
+            metadata.childOwnershipToken = nil
+            residentMetadata[key] = metadata
+        }
+        lastUseSource[modelName] = Self.resolvedResidencySource(
+            existing: lastUseSource[modelName],
+            incoming: parameters.requestSource,
+            preserveExisting: parameters.preserveExistingResidencyOwner
+        )
 
         // Scoped start/finish around ONLY a cold container load. Hot
         // resident turns still call `loadContainer` to get the holder, but
@@ -2451,7 +4766,11 @@ public actor ModelRuntime {
         }
         let holder: SessionHolder
         do {
-            holder = try await loadContainer(id: modelId, name: modelName)
+            holder = try await loadContainer(
+                id: modelId,
+                name: modelName,
+                intent: parameters.loadIntent
+            )
         } catch {
             await ModelResidencyManager.shared.cancel(modelName: modelName)
             if shouldReportModelLoad {
@@ -2542,7 +4861,14 @@ public actor ModelRuntime {
             events: prepared.stream,
             modelName: modelName,
             trace: trace,
-            suppressProgressUI: parameters.suppressProgressUI
+            suppressProgressUI: parameters.suppressProgressUI,
+            onConsumerCancellation: {
+                // Cancel this exact generation wrapper, not every request
+                // using the same model. The wrapper drains the direct vmlx
+                // producer and releases this stream's ModelLease before a
+                // residency restore can evict the child model.
+                activeTask.cancel()
+            }
         )
     }
 
@@ -2708,17 +5034,14 @@ public actor ModelRuntime {
         )
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let producerTask = Task {
-            // Chat UI streaming should execute a parsed tool call as soon as
-            // the model finishes the step. We surface the tool hints
-            // immediately, then keep draining ONLY to forward the step's
-            // end-of-generation `.completionInfo` (decode/prefill tok/s + token
-            // count) before finishing-by-throw — otherwise a step that ends in
-            // a tool call (the common agentic case) drops its decode stats,
-            // which is why tool-call turns historically reported 0 completion
-            // tokens / no tok/s in both the OpenAI `usage` and the eval
-            // telemetry. Post-tool model text is still suppressed (never
-            // yielded once a tool is pending), preserving the no-leak intent.
-            var pendingTool: ServiceToolInvocation?
+            // Chat UI streaming must dispatch a parsed local tool call as soon
+            // as vmlx emits `.toolInvocation`. A trailing `.completionInfo`
+            // is useful telemetry, but it is not part of the executable tool
+            // contract: the parser has already closed the envelope and built
+            // canonical JSON. Waiting for stats lets a model/runtime stream
+            // that never reaches EOS leave the UI stuck with a complete-looking
+            // tool row and no actual dispatch. Finish-by-throw immediately and
+            // let `onTermination` cancel the now-unneeded decode tail.
             do {
                 for try await ev in events {
                     if case .completionInfo(
@@ -2737,14 +5060,6 @@ public actor ModelRuntime {
                                 prefillTokensPerSecond: promptTokensPerSecond
                             )
                         )
-                        // End-of-generation stats are the terminal event. If a
-                        // tool call is pending, the stats have now been
-                        // forwarded — finish-by-throw so the consumer dispatches
-                        // the tool, with the decode telemetry already delivered.
-                        if let tool = pendingTool {
-                            continuation.finish(throwing: tool)
-                            return
-                        }
                         continue
                     }
 
@@ -2754,56 +5069,46 @@ public actor ModelRuntime {
                     }
                     switch ev {
                     case .tokens(let s):
-                        // Suppress model text once a tool call is pending so the
-                        // pseudo-tool prose never leaks to the UI/consumer.
-                        if pendingTool == nil, !s.isEmpty { continuation.yield(s) }
+                        if !s.isEmpty { continuation.yield(s) }
                     case .reasoning(let s):
-                        if pendingTool == nil, !s.isEmpty {
+                        if !s.isEmpty {
                             continuation.yield(StreamingReasoningHint.encode(s))
                         }
                     case .prefillProgress(let progress):
-                        if pendingTool == nil {
-                            continuation.yield(StreamingPrefillProgressHint.encode(progress))
-                        }
+                        continuation.yield(StreamingPrefillProgressHint.encode(progress))
                     case .toolCallProgress(let envelopeDelta):
                         // Live preview of the tool-call envelope as it is
                         // written. Emitted before the committed
-                        // `.toolInvocation`, so `pendingTool` is still nil here.
+                        // `.toolInvocation`.
                         // Encoded behind the `\u{FFFE}` sentinel so it never
                         // reaches the visible token stream or the OpenAI wire —
                         // only the native ChatView decodes it, to keep the
                         // tool-call card alive instead of showing a frozen
                         // spinner during a long file-write call.
-                        if pendingTool == nil, !envelopeDelta.isEmpty {
+                        if !envelopeDelta.isEmpty {
                             continuation.yield(
                                 StreamingToolCallProgressHint.encode(envelopeDelta)
                             )
                         }
                     case .toolInvocation(let name, let argsJSON):
-                        // Surface the first tool call's hints immediately, then
-                        // keep draining for its trailing `.completionInfo`
-                        // before throwing (see comment above). Arity is
-                        // unchanged: only the first tool is dispatched per step.
-                        if pendingTool == nil {
-                            continuation.yield(StreamingToolHint.encode(name))
-                            continuation.yield(StreamingToolHint.encodeArgs(argsJSON))
-                            pendingTool = ServiceToolInvocation(
-                                toolName: name,
-                                jsonArguments: argsJSON
-                            )
-                        }
+                        // Surface the first parsed tool call and terminate this
+                        // generation step immediately. The stream termination
+                        // cancels any remaining decode tail, so post-tool prose
+                        // cannot leak and the chat loop can execute the tool
+                        // without waiting for an optional stats/EOS event.
+                        continuation.yield(StreamingToolHint.encode(name))
+                        continuation.yield(StreamingToolHint.encodeArgs(argsJSON))
+                        let tool = ServiceToolInvocation(
+                            toolName: name,
+                            jsonArguments: argsJSON
+                        )
+                        continuation.finish(throwing: tool)
+                        return
                     case .completionInfo:
                         continue
                     }
                 }
-                // Stream ended (natural EOS). If the generator never emitted a
-                // trailing `.completionInfo` after the tool call, throw now so
-                // the tool is still dispatched (just without decode stats).
-                if let tool = pendingTool {
-                    continuation.finish(throwing: tool)
-                } else {
-                    continuation.finish()
-                }
+                continuation.finish()
             } catch {
                 if Task.isCancelled {
                     continuation.finish()
@@ -2863,6 +5168,11 @@ public actor ModelRuntime {
     ///    keeps MLX compile globally opt-in pending the PR #1173
     ///    model-switch corruption root cause; the per-request flag is set
     ///    in makeGenerateParameters)
+    ///  - memorySafety.mode -> CacheStoreBudget.policy (the prefix-cache store
+    ///    runs inside the decode loop and has no settings handle, so the user's
+    ///    safety level has to be pushed to it; without this the store gates
+    ///    against raw physical RAM and the Memory Safety section is decorative
+    ///    for that decision)
     nonisolated static func applyPerformancePolicy(_ settings: VMLXServerRuntimeSettings) {
         let perf = settings.effectivePerformance
         if let quant = perf.tiedHeadCodec.quantization {
@@ -2878,6 +5188,16 @@ public actor ModelRuntime {
         } else {
             unsetenv("VMLX_ENABLE_UNSAFE_COMPILE")
         }
+        CacheStoreBudget.policy = cacheStorePolicy(for: settings)
+    }
+
+    nonisolated static func cacheStorePolicy(
+        for settings: VMLXServerRuntimeSettings
+    ) -> CacheStorePolicy {
+        if ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled(for: settings) {
+            return CacheStorePolicy(headroomFraction: 1.0)
+        }
+        return settings.memorySafety.mode.cacheStorePolicy
     }
 
     nonisolated static func makeGenerateParameters(
@@ -3030,24 +5350,26 @@ public actor ModelRuntime {
         modelDirectory: URL,
         settings: VMLXServerRuntimeSettings,
         baseLoadConfiguration: LoadConfiguration,
-        inspectBundleFacts: Bool
+        inspectBundleFacts: Bool,
+        request: VMLXMemoryRequestEstimate? = nil
     ) -> VMLXResolvedMemorySafetyPlan {
         let bundleFacts =
             inspectBundleFacts
             ? LoadBundleFacts.inspect(bundleURL: modelDirectory)
             : nil
-        let plan = settings.resolvedMemorySafetyPlan(
+        let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+            for: settings,
             baseLoadConfiguration: baseLoadConfiguration,
             bundleFacts: bundleFacts,
             host: MemoryStatus.snapshot(),
-            request: nil
+            request: request
         )
         if !plan.blockingIssues.isEmpty {
             let issueSummary = plan.blockingIssues
                 .map { "\($0.field): \($0.message)" }
                 .joined(separator: "; ")
             genLog.warning(
-                "loadContainer: memory safety plan produced advisory blocking issues for \(modelName, privacy: .public): \(issueSummary, privacy: .public)"
+                "loadContainer: memory safety plan produced blocking issues for \(modelName, privacy: .public): \(issueSummary, privacy: .public)"
             )
         }
         return plan
@@ -3234,16 +5556,16 @@ public actor ModelRuntime {
                     )
                 )
             case "assistant":
-                let content = (m.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                let reasoningContent = m.reasoning_content?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let content = m.content ?? ""
+                let reasoningContent = m.reasoning_content
                 let toolCalls = preserveStructuredToolHistory ? toMLXToolCalls(m.tool_calls) : nil
                 // Skip fully-empty assistant turns. Reasoning-only assistant
                 // turns are NOT empty for local MLX templates: ZAYA,
                 // Nemotron-H/Omni, MiniMax and DSV4 read
                 // `message.reasoning_content` to reconstruct prior
                 // `<think>...</think>` history on follow-ups.
-                if content.isEmpty
-                    && (reasoningContent?.isEmpty ?? true)
+                if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && (reasoningContent?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
                     && (toolCalls?.isEmpty ?? true)
                 {
                     continue
@@ -3325,7 +5647,11 @@ public actor ModelRuntime {
                 )) ?? [:]
             return MLXLMCommon.ToolCall(
                 id: tc.id,
-                function: .init(name: tc.function.name, arguments: args)
+                function: .init(
+                    name: tc.function.name,
+                    arguments: args,
+                    rawArgumentsJSON: tc.function.arguments
+                )
             )
         }
     }
@@ -4146,84 +6472,6 @@ public actor ModelRuntime {
                 "failed to patch Gemma-4 JANG audio config model=\(name, privacy: .public): \(String(describing: error), privacy: .public)"
             )
         }
-    }
-
-    /// Blocks the known-bad plain affine DeepSeek V4 Flash JANG bundle before
-    /// vmlx starts loading hundreds of GB of shards. The production DSV4 path
-    /// is JANGTQ (`weight_format == "mxtq"` + `jangtq_runtime.safetensors`),
-    /// which dispatches to TurboQuantSwitchGLU. Plain affine DSV4 JANG falls
-    /// through to the generic SwitchGLU route; current engine evidence shows
-    /// unusable decode speed and high memory pressure, not a shippable row.
-    ///
-    /// Engine developers can still opt in for diagnostics with
-    /// `OSAURUS_ALLOW_EXPERIMENTAL_DSV4_AFFINE_JANG=1` or
-    /// `VMLINUX_ALLOW_EXPERIMENTAL_DSV4_AFFINE_JANG=1`.
-    static func validateUnsupportedPlainDSV4AffineJANG(at directory: URL, name: String) throws {
-        guard !Self.experimentalDSV4AffineJANGAllowed else { return }
-
-        let fm = FileManager.default
-        let jangConfigURL = directory.appendingPathComponent("jang_config.json")
-        let configURL = directory.appendingPathComponent("config.json")
-        guard fm.fileExists(atPath: jangConfigURL.path),
-            fm.fileExists(atPath: configURL.path)
-        else { return }
-
-        let sidecarURL = directory.appendingPathComponent("jangtq_runtime.safetensors")
-        guard !fm.fileExists(atPath: sidecarURL.path) else { return }
-
-        let jang = Self.readJSONObject(at: jangConfigURL)
-        let config = Self.readJSONObject(at: configURL)
-        let modelType = Self.stringValue(config["model_type"])?.lowercased()
-        guard modelType == "deepseek_v4" else { return }
-
-        let weightFormat = Self.stringValue(jang["weight_format"])?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        let codec = ((jang["quantization"] as? [String: Any])?["routed_experts"] as? [String: Any])
-            .flatMap { Self.stringValue($0["codec"]) }?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        let isAffine =
-            weightFormat == nil
-            || weightFormat == "affine"
-            || weightFormat == "jang"
-            || weightFormat == "jang_v2"
-            || codec == "affine"
-
-        let routedExperts =
-            Self.intValue(config["n_routed_experts"])
-            ?? Self.intValue(config["num_experts"])
-            ?? Self.intValue(config["num_routed_experts"])
-
-        guard isAffine, (routedExperts ?? 0) >= 128 else { return }
-
-        throw MLXService.RuntimePolicyError(
-            modelName: name,
-            issues: [
-                "Model '\(name)' is a plain affine DeepSeek V4 Flash JANG bundle. "
-                    + "That path is not production-supported in this Osaurus build because "
-                    + "it loads through the generic SwitchGLU route and can consume very high "
-                    + "memory while decoding at unusable speed. Use the JANGTQ2 or JANGTQ-K "
-                    + "DeepSeek V4 Flash bundle instead. For engine diagnostics only, set "
-                    + "OSAURUS_ALLOW_EXPERIMENTAL_DSV4_AFFINE_JANG=1."
-            ]
-        )
-    }
-
-    private static var experimentalDSV4AffineJANGAllowed: Bool {
-        let env = ProcessInfo.processInfo.environment
-        for key in [
-            "OSAURUS_ALLOW_EXPERIMENTAL_DSV4_AFFINE_JANG",
-            "VMLINUX_ALLOW_EXPERIMENTAL_DSV4_AFFINE_JANG",
-        ] {
-            guard let raw = env[key]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
-                continue
-            }
-            if ["1", "true", "yes", "on"].contains(raw) {
-                return true
-            }
-        }
-        return false
     }
 
     private static func readJSONObject(at url: URL) -> [String: Any] {

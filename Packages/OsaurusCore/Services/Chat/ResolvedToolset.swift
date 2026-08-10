@@ -23,6 +23,12 @@ struct ResolvedToolset: Sendable {
     /// alphabetical). Empty when `effectiveToolsOff` is true.
     let tools: [Tool]
 
+    /// Full resolved tool surface before a greeting-only first turn suppresses
+    /// the request schema. Callers persist these exact payloads as the session
+    /// baseline so the next non-trivial turn does not rebuild them from
+    /// asynchronously changing registry state.
+    let sessionBaselineTools: [Tool]
+
     /// Rendered enabled-capabilities manifest section for this session, or
     /// `nil` when the section is gated off / empty. Frozen at session start
     /// and injected as a static prefix section, so it is query- and
@@ -34,6 +40,12 @@ struct ResolvedToolset: Sendable {
     /// frozen snapshot when one was supplied. Callers stash this on
     /// the per-session state so subsequent turns can freeze the schema.
     let alwaysLoadedNames: LoadedTools
+
+    /// One request-local view of the user-configured spawn pools filtered to
+    /// targets that can actually execute now. Prompt prose and all three spawn
+    /// schemas consume this same value so provider/discovery changes cannot
+    /// create zombie choices or prompt/schema drift within a request.
+    let spawnTargets: SpawnTargetAvailabilitySnapshot
 
     /// Auto-disable verdict for the resolved model's context window,
     /// or nil for normal-class models. Surfaces through

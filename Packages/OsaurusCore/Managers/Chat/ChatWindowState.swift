@@ -45,18 +45,17 @@ final class ChatWindowState: ObservableObject {
     // MARK: - Identity & Session
 
     let windowId: UUID
-    let session: ChatSession
+    /// The session this window currently displays. Replaceable: switching
+    /// chats while a run is in flight detaches the running session into the
+    /// `BackgroundTaskManager` registry (execution continues) and installs a
+    /// different `ChatSession` here. `@Published` so the window root view can
+    /// rebuild `ChatView` around the new instance.
+    @Published private(set) var session: ChatSession
     let foundationModelAvailable: Bool
 
     // MARK: - View State
 
     @Published var showSidebar: Bool = false
-
-    /// Drives the in-chat "Keep this chat running?" confirmation overlay
-    /// that intercepts a close while `session.isStreaming` is true. Set
-    /// from `ChatWindowManager.shouldAllowClose`; cleared by the alert's
-    /// button actions in `ChatView`.
-    @Published var showCloseConfirmation: Bool = false
 
     /// Drives the "a local model is already running in another window" alert
     /// raised when the user tries to start a second local generation. Only one
@@ -77,6 +76,11 @@ final class ChatWindowState: ObservableObject {
     /// key monitor (which cannot touch `ChatView`'s `@State`) and cleared by
     /// the bar's close button or the Esc dismissal chain.
     @Published var isFindBarVisible: Bool = false
+
+    /// Bumped on every Cmd+F so the find bar re-focuses its text field even
+    /// when the bar is already visible (e.g. focus wandered back to the
+    /// composer). Monotonic counter; the value itself is meaningless.
+    @Published var findBarFocusRequestID: Int = 0
 
     // MARK: - Agent State
 
@@ -114,6 +118,26 @@ final class ChatWindowState: ObservableObject {
     /// found"). Driven by `pinRemoteAgentModelAfterConnect` and kept in sync
     /// with later disconnects via the `.remoteProviderStatusChanged` observer.
     @Published var remoteAgentConnectionPhase: RemoteAgentConnectionPhase = .idle
+
+    /// True while the window is in native full screen. AppKit draws the
+    /// full-screen toolbar with an opaque system backdrop that clashes with
+    /// custom themes, so the NSToolbar is hidden in full screen and the
+    /// content renders its own themed header row instead.
+    @Published var isFullScreen: Bool = false
+
+    // MARK: - Sandbox Changes State
+
+    /// Drives the session-scoped "Changes" sheet (sandbox file changes +
+    /// undo). Presented from `ChatView`, toggled by the toolbar button.
+    @Published var isChangesSheetPresented: Bool = false
+
+    /// Number of outstanding sandbox workspace changes tracked for the
+    /// current chat session. Zero hides the toolbar entrypoint.
+    @Published private(set) var sandboxChangesCount: Int = 0
+
+    /// True while a background job spawned by the current session may still
+    /// be mutating the workspace (undo is disabled meanwhile).
+    @Published private(set) var sandboxChangesHaveActiveJob: Bool = false
 
     // MARK: - Theme State
 
@@ -165,11 +189,22 @@ final class ChatWindowState: ObservableObject {
             self?.refreshSessionsDebounced()
         }
 
+        // One-time legacy migration: pre-per-chat-isolation builds persisted a
+        // single process-wide folder bookmark. The first eligible chat opened
+        // after the update adopts it as ITS folder (then the global key is
+        // deleted); it is never used as a default for any other chat. The
+        // Default agent is folder-less by policy, and a session that already
+        // carries its own bookmark must not be overridden.
+        if agentId != Agent.defaultId, sessionData?.folderBookmark == nil {
+            self.session.folderState.adoptLegacyGlobalBookmarkIfNeeded()
+        }
+
         setupNotificationObservers()
         observeBonjourBrowser()
         observeAgentManager()
         observeSessionsManager()
         refreshPairedRelayAgents()
+        refreshSandboxChanges()
     }
 
     /// Wrap an existing `ExecutionContext`, reusing its sessions without duplication.
@@ -188,6 +223,9 @@ final class ChatWindowState: ObservableObject {
         self.cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
         decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
 
+        // Re-link the adopted session to this window so busy alerts and
+        // Mode 2 routing reach the view that now displays it.
+        self.session.windowState = self
         self.session.onSessionChanged = { [weak self] in
             self?.refreshSessionsDebounced()
         }
@@ -197,6 +235,7 @@ final class ChatWindowState: ObservableObject {
         observeAgentManager()
         observeSessionsManager()
         refreshPairedRelayAgents()
+        refreshSandboxChanges()
     }
 
     deinit {
@@ -218,21 +257,6 @@ final class ChatWindowState: ObservableObject {
         session.onSessionChanged = nil
     }
 
-    // MARK: - Close-Confirmation Actions
-
-    /// "Continue in Background" — adopt the live session as a background
-    /// task (visible in the notch) and dismiss the window.
-    func confirmCloseInBackground() {
-        BackgroundTaskManager.shared.detachChatWindow(windowId: windowId)
-        ChatWindowManager.shared.closeWindow(id: windowId)
-    }
-
-    /// "Stop and Close" — cancel the in-flight stream, then dismiss.
-    func confirmCloseAndStop() {
-        session.stop()
-        ChatWindowManager.shared.closeWindow(id: windowId)
-    }
-
     // MARK: - API
 
     var activeAgent: Agent { cachedActiveAgent }
@@ -245,16 +269,26 @@ final class ChatWindowState: ObservableObject {
         TTSService.shared.stop()
         if !session.turns.isEmpty { session.save() }
         adoptAgent(newAgentId)
-        session.reset(for: newAgentId)
+        if detachRunningSessionIfNeeded() {
+            installFreshSession(agentId: newAgentId)
+        } else {
+            session.reset(for: newAgentId)
+        }
         refreshSessions()
+        refreshSandboxChanges()
     }
 
     func startNewChat() {
         TTSService.shared.stop()
         if !session.turns.isEmpty { session.save() }
         flushCurrentSession()
-        session.reset(for: agentId)
+        if detachRunningSessionIfNeeded() {
+            installFreshSession(agentId: agentId)
+        } else {
+            session.reset(for: agentId)
+        }
         refreshSessions()
+        refreshSandboxChanges()
         // KPI: user started a new chat conversation. Count only.
         FeatureTelemetry.chatSessionStarted()
     }
@@ -277,8 +311,102 @@ final class ChatWindowState: ObservableObject {
             adoptAgent(targetAgentId)
         }
 
-        session.load(from: resolvedData)
+        // Reopening a chat the registry is still running: attach the live
+        // in-memory session instead of hydrating a stale copy from disk —
+        // the stream keeps rendering into the reopened view, and disk state
+        // lags behind the in-flight turns.
+        if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: sessionData.id),
+            let liveSession = liveTask.chatSession
+        {
+            detachRunningSessionIfNeeded()
+            attachSession(liveSession, registryTaskId: liveTask.id)
+        } else if detachRunningSessionIfNeeded() {
+            // The chat we're leaving keeps running in the background; the
+            // target loads into a brand-new session so the two never share
+            // transcript state.
+            installFreshSession(agentId: targetAgentId, loading: resolvedData)
+        } else {
+            session.load(from: resolvedData)
+        }
         refreshSessions()
+        refreshSandboxChanges()
+    }
+
+    // MARK: - Sandbox Changes
+
+    /// Re-query the tracker for the current session's outstanding sandbox
+    /// change count + active-job flag. Cheap (actor cache hit) and safe to
+    /// call on every chat switch / tracker notification.
+    func refreshSandboxChanges() {
+        // Remote-agent chats never mutate the local sandbox; a new chat has
+        // no session id until the first send.
+        guard selectedDiscoveredAgentProviderId == nil,
+            let sessionId = session.sessionId?.uuidString
+        else {
+            sandboxChangesCount = 0
+            sandboxChangesHaveActiveJob = false
+            return
+        }
+        Task { [weak self] in
+            let count = await SandboxWorkspaceChangeTracker.shared.changeCount(for: sessionId)
+            let hasJob = await SandboxWorkspaceChangeTracker.shared.hasActiveBackgroundJobs(
+                sessionId: sessionId)
+            await MainActor.run {
+                guard let self, self.session.sessionId?.uuidString == sessionId else { return }
+                self.sandboxChangesCount = count
+                self.sandboxChangesHaveActiveJob = hasJob
+            }
+        }
+    }
+
+    // MARK: - Detach / Attach
+
+    /// Hand a mid-run session over to the `BackgroundTaskManager` registry so
+    /// its execution lifecycle survives this window moving to another chat
+    /// (or closing). Returns true when a handoff happened — the caller must
+    /// then install a replacement session rather than reuse (and thereby
+    /// stop) the detached one.
+    @discardableResult
+    private func detachRunningSessionIfNeeded() -> Bool {
+        guard session.isStreaming || session.awaitingClarify != nil else { return false }
+        guard BackgroundTaskManager.shared.adoptSession(session) != nil else { return false }
+        // The detached run no longer belongs to this window: break the weak
+        // window link so it can't push alerts into a view showing a
+        // different conversation, and stop routing its saves into this
+        // window's sidebar refresh.
+        session.windowState = nil
+        session.onSessionChanged = nil
+        BackgroundTaskManager.shared.unbindWindow(windowId)
+        return true
+    }
+
+    /// Install a brand-new `ChatSession` for this window (optionally loading
+    /// persisted turns), used after the previous one was detached to the
+    /// registry.
+    private func installFreshSession(agentId: UUID, loading data: ChatSessionData? = nil) {
+        let fresh = ChatSession()
+        fresh.windowState = self
+        fresh.agentId = agentId
+        fresh.applyInitialModelSelection()
+        if let data { fresh.load(from: data) }
+        fresh.onSessionChanged = { [weak self] in
+            self?.refreshSessionsDebounced()
+        }
+        session = fresh
+    }
+
+    /// Attach an existing (registry-owned) live session to this window so
+    /// the user sees the in-flight stream. Execution ownership stays with
+    /// the registry; the window is only a view. The window→task binding
+    /// makes close/switch detach instead of stop, and suppresses the
+    /// duplicate notch/toast surface while the chat is visible.
+    private func attachSession(_ liveSession: ChatSession, registryTaskId: UUID) {
+        liveSession.windowState = self
+        liveSession.onSessionChanged = { [weak self] in
+            self?.refreshSessionsDebounced()
+        }
+        session = liveSession
+        BackgroundTaskManager.shared.bindWindow(windowId, toTask: registryTaskId)
     }
 
     /// Switch every per-agent piece of window state (`agentId`,
@@ -339,8 +467,12 @@ final class ChatWindowState: ObservableObject {
         let newTheme = Self.loadTheme(for: agentId)
         let oldConfig = theme.customThemeConfig
         let newConfig = newTheme.customThemeConfig
-        // Skip only if the full config is identical (not just the ID)
-        guard oldConfig != newConfig else { return }
+        // Skip only if the full config is identical (not just the ID) and the
+        // global font zoom is unchanged — the zoom lives on the theme instance,
+        // not in the config, so it must be compared separately.
+        let oldScale = (theme as? CustomizableTheme)?.fontScale
+        let newScale = (newTheme as? CustomizableTheme)?.fontScale
+        guard oldConfig != newConfig || oldScale != newScale else { return }
         let shouldRedecodeBackgroundImage = Self.needsBackgroundImageRedecode(
             oldConfig: oldConfig,
             newConfig: newConfig
@@ -361,7 +493,13 @@ final class ChatWindowState: ObservableObject {
         cachedSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: agentId)
         cachedActiveAgent = agents.first { $0.id == agentId } ?? .default
         cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
-        session.invalidateTokenCache()
+        // `.appConfigurationChanged` also feeds ChatSession's prompt-shape
+        // detector. Keep its old preview bytes until that detector compares
+        // them with the newly persisted Default-agent configuration. Clearing
+        // the preview here allowed the intervening SwiftUI redraw to cache
+        // the new bytes first, hiding the change and leaving a stale green
+        // warm-prefix claim for the next send.
+        session.invalidateTokenCache(preservingPromptShapeBaseline: true)
     }
 
     func refreshAll() async {
@@ -440,7 +578,20 @@ final class ChatWindowState: ObservableObject {
         sessionsCancellable = ChatSessionsManager.shared.$sessions
             .dropFirst()
             .sink { [weak self] _ in
-                self?.refreshSessions()
+                // `@Published` emits in willSet (see the warning on
+                // `applyAgentsUpdate`): during this callback the manager's
+                // storage still holds the OLD array, and `refreshSessions()`
+                // re-reads that storage. Refreshing synchronously here
+                // captured mid-mutation state — after `upsertInMemory`'s
+                // remove+insert pair, the LAST emission observed the list
+                // with the session removed but not yet re-inserted, so the
+                // sidebar latched onto a snapshot missing a live chat until
+                // some later refresh happened to run (never, for the quiet
+                // auto-title rename). Hop one main-actor turn so the read
+                // sees the post-mutation array.
+                Task { @MainActor [weak self] in
+                    self?.refreshSessions()
+                }
             }
     }
 
@@ -483,7 +634,11 @@ final class ChatWindowState: ObservableObject {
         if !newActive.isBuiltIn {
             cachedSystemPrompt = newActive.systemPrompt
         }
-        session.invalidateTokenCache()
+        // The matching `.agentUpdated` / prompt-shape signal must compare the
+        // old preview against this newly published agent. Preserve that
+        // baseline across the immediate window-state refresh; otherwise a
+        // view redraw can consume the new shape before the detector runs.
+        session.invalidateTokenCache(preservingPromptShapeBaseline: true)
 
         if newActive.themeId != oldActive.themeId {
             refreshTheme()
@@ -587,6 +742,33 @@ final class ChatWindowState: ObservableObject {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in Task { @MainActor in self?.refreshAgents() } }
+        )
+        // Conversation import saves sessions from outside any window;
+        // refresh so the new rows appear in every open sidebar.
+        notificationObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: .chatSessionsImported,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in Task { @MainActor in self?.refreshSessions() } }
+        )
+        // Sandbox change tracking: refresh the toolbar count when the
+        // tracker records/undoes changes for the session this window shows.
+        notificationObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: .sandboxWorkspaceChangesDidChange,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                let changed = notification.userInfo?["sessionId"] as? String
+                Task { @MainActor in
+                    guard let self else { return }
+                    guard let current = self.session.sessionId?.uuidString,
+                        changed == nil || changed == current
+                    else { return }
+                    self.refreshSandboxChanges()
+                }
+            }
         )
         // Note: .chatOverlayActivated intentionally not observed here
         // State is loaded in init(), refreshAll() would cause excessive re-renders

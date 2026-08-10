@@ -207,8 +207,26 @@ actor MLXService: ToolCapableService {
         await ModelRuntime.shared.cachedModelSummaries()
     }
 
-    func unloadRuntimeModel(named name: String) async {
-        await ModelRuntime.shared.unload(name: name)
+    /// User-initiated cache eviction must never leave its control spinning
+    /// forever behind a leaked or still-owned lease. Runtime teardown remains
+    /// fail-closed: on timeout the model stays resident and the UI receives
+    /// `false`, so it can explain that the model is still in use.
+    @discardableResult
+    func unloadRuntimeModel(
+        named name: String,
+        leaseDrainTimeoutSeconds: Double = 5
+    ) async -> Bool {
+        // Route chat-owned work through the same lifecycle cancellation as the
+        // visible Stop control before cancelling the runtime producer. Without
+        // this bridge, ChatSession sees a normal end-of-stream, schedules its
+        // successful-run warm-up, and immediately reloads the model.
+        await MainActor.run {
+            ChatWindowManager.shared.prepareSessionsForExplicitModelUnload(named: name)
+        }
+        return await ModelRuntime.shared.unload(
+            name: name,
+            leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds
+        )
     }
 
     func clearRuntimeCache() async {
@@ -284,6 +302,17 @@ actor MLXService: ToolCapableService {
         {
             issues.append("Model capability detection reports tool calling as unsupported.")
         }
+        // Production-serving block consults the capability ledger: the seed
+        // rule reproduces the old hardcoded ZAYA1-VL JANGTQ_K check exactly,
+        // and a measured `productionServing: pass` record (e.g. a future
+        // gauntlet run proving a fixed bundle) can clear it without a
+        // release. See `ModelCapabilityLedger`.
+        if let blockReason = ModelCapabilityLedger.productionServingBlockReason(
+            modelName: modelName, modelId: modelId)
+        {
+            issues.append(blockReason)
+        }
+
         if !issues.isEmpty {
             throw RuntimePolicyError(modelName: modelName, issues: issues)
         }

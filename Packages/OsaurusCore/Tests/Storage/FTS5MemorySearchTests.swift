@@ -81,6 +81,81 @@ struct FTS5MemorySearchTests {
     }
 
     @Test
+    func pinnedFactSearchFallsBackToLooseNaturalRecallTerms() throws {
+        let db = try openInMemory()
+        defer { db.close() }
+
+        let now = ISO8601DateFormatter().string(from: Date())
+        try db.insertPinnedFact(
+            PinnedFact(
+                agentId: "a",
+                content: "The user's sailboat is named Peregrine Dusk.",
+                salience: 0.9,
+                lastUsed: now,
+                createdAt: now
+            )
+        )
+        try db.insertPinnedFact(
+            PinnedFact(
+                agentId: "a",
+                content: "The user has a dermatology appointment on the 14th.",
+                salience: 0.9,
+                lastUsed: now,
+                createdAt: now
+            )
+        )
+
+        // Full natural-language question: the OR-with-prefix FTS recall
+        // (see `ftsMatchQuery`) surfaces the boat fact. A broad question may
+        // also pull in tangential facts that share common words, so assert
+        // the boat fact is recalled rather than a strict count (mirrors
+        // `transcriptSearchFindsKeywordsViaFTS`).
+        let hits = try db.searchPinnedFactsText(
+            query: "What is the name of my boat?",
+            agentId: "a",
+            limit: 5
+        )
+        #expect(hits.contains { $0.content.contains("Peregrine Dusk") })
+    }
+
+    @Test
+    func episodeSearchFallsBackToLooseNaturalRecallTerms() throws {
+        let db = try openInMemory()
+        defer { db.close() }
+
+        let now = ISO8601DateFormatter().string(from: Date())
+        _ = try db.insertEpisode(
+            Episode(
+                agentId: "a",
+                conversationId: "c1",
+                summary: "Discussed the greenhouse project: cedar frame, $900 budget.",
+                topicsCSV: "greenhouse,woodworking",
+                entitiesCSV: "greenhouse,cedar",
+                salience: 0.9,
+                conversationAt: now
+            )
+        )
+        _ = try db.insertEpisode(
+            Episode(
+                agentId: "a",
+                conversationId: "c2",
+                summary: "Talked about tax filing deadlines.",
+                topicsCSV: "taxes",
+                entitiesCSV: "taxes",
+                salience: 0.9,
+                conversationAt: now
+            )
+        )
+
+        let hits = try db.searchEpisodesText(
+            query: "What did we decide about the greenhouse project last time we talked?",
+            agentId: "a",
+            limit: 5
+        )
+        #expect(hits.first?.summary.contains("greenhouse") == true)
+    }
+
+    @Test
     func emptyQueryReturnsNoHits() throws {
         let db = try openInMemory()
         defer { db.close() }
@@ -99,11 +174,14 @@ struct FTS5MemorySearchTests {
 
     @Test
     func querySanitizerStripsSQLOperators() {
-        // Single-word queries get quoted; multi-word with operator-ish
-        // characters should still produce safe quoted tokens.
-        #expect(MemoryDatabase.ftsMatchQuery("foo AND bar OR baz") == "\"foo\" \"AND\" \"bar\" \"OR\" \"baz\"")
-        #expect(MemoryDatabase.ftsMatchQuery("(rm -rf /)") == "\"rm\" \"-rf\"")
-        #expect(MemoryDatabase.ftsMatchQuery("\u{0}\"NEAR\"") == "\"NEAR\"")
+        // Terms are quoted, prefix-matched, and OR-joined; operator-ish
+        // characters embedded by the user become safe literal tokens.
+        #expect(
+            MemoryDatabase.ftsMatchQuery("foo AND bar OR baz")
+                == "\"foo\"* OR \"AND\"* OR \"bar\"* OR \"OR\"* OR \"baz\"*"
+        )
+        #expect(MemoryDatabase.ftsMatchQuery("(rm -rf /)") == "\"rm\"* OR \"-rf\"*")
+        #expect(MemoryDatabase.ftsMatchQuery("\u{0}\"NEAR\"") == "\"NEAR\"*")
         #expect(MemoryDatabase.ftsMatchQuery("   ") == nil)
     }
 }

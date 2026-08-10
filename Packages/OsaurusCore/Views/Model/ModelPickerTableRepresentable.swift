@@ -39,6 +39,9 @@ struct ModelPickerRow: Equatable, Identifiable {
     let parameterCount: String?
     let quantization: String?
     let isVLM: Bool
+    let mediaKind: MediaGenerationKind?
+    let mediaPrivacy: String?
+    let mediaPrice: String?
     /// False when the bundle is on disk but not in MLX format — the row is
     /// dimmed and made non-selectable so the user can't pick a model that
     /// would fail at load. Defaults to true (every selectable model).
@@ -57,6 +60,9 @@ struct ModelPickerRow: Equatable, Identifiable {
         parameterCount: String?,
         quantization: String?,
         isVLM: Bool,
+        mediaKind: MediaGenerationKind? = nil,
+        mediaPrivacy: String? = nil,
+        mediaPrice: String? = nil,
         isMLXFormat: Bool = true,
         providerLabel: String? = nil,
         isFavorite: Bool = false
@@ -68,6 +74,9 @@ struct ModelPickerRow: Equatable, Identifiable {
         self.parameterCount = parameterCount
         self.quantization = quantization
         self.isVLM = isVLM
+        self.mediaKind = mediaKind
+        self.mediaPrivacy = mediaPrivacy
+        self.mediaPrice = mediaPrice
         self.isMLXFormat = isMLXFormat
         self.providerLabel = providerLabel
         self.isFavorite = isFavorite
@@ -119,8 +128,9 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
     let rows: [ModelPickerRow]
     let theme: ThemeProtocol
     var selectedModelId: String?
-    /// True while the Favorites tab is active: the trailing control becomes an
-    /// always-visible filled heart (remove) instead of a hover-only heart (toggle).
+    /// True while the Favorites tab is active: the inline heart next to the
+    /// name becomes an always-visible filled heart (remove) instead of a
+    /// hover-only heart (toggle).
     var isFavoritesTab: Bool = false
     var onSelectModel: ((String) -> Void)?
     var onSwitchTab: ((Int) -> Void)?
@@ -327,7 +337,7 @@ private enum RowAccessoryKind: Equatable {
     case none
     case heart  // not yet favourited — outline, shown on hover
     case heartFill  // favourited — filled, shown persistently
-    case favoritesRemove  // Favorites tab — filled heart, removes, always shown
+    case favoritesRemove  // Favorites tab — filled heart inline after the name, removes, always shown
 }
 
 /// Model row cell with hover/selection background.
@@ -336,10 +346,13 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
     private let bgLayer = CALayer()
     private let nameLabel = makeLabel()
     private let vlmBadge = PickerBadgeView()
+    private let mediaBadge = PickerBadgeView()
     private let providerBadge = PickerBadgeView()
     private let descLabel = makeLabel()
     private let paramBadge = PickerBadgeView()
     private let quantBadge = PickerBadgeView()
+    private let privacyBadge = PickerBadgeView()
+    private let priceBadge = PickerBadgeView()
     private let checkmarkView = NSImageView()
     private let accessoryButton = NSButton()
 
@@ -352,9 +365,6 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
     private var onSelect: (() -> Void)?
     private var onAccessory: (() -> Void)?
 
-    /// Fixed side of the trailing accessory hit target. Kept in sync between
-    /// `configure`/`layout` so provider-badge space is carved correctly.
-    private static let accessorySide: CGFloat = 22
     private var accessoryKind: RowAccessoryKind = .none
 
     // structural flags from the last configure, compared against incoming
@@ -362,9 +372,14 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
     private var hasDesc = false
     private var hasBadges = false
     private var hasVLM = false
+    private var hasMedia = false
     private var hasProvider = false
     private var cachedDisplayName: String?
+    private var cachedDescription: String?
     private var cachedProviderLabel: String?
+    private var cachedMediaKind: MediaGenerationKind?
+    private var cachedMediaPrivacy: String?
+    private var cachedMediaPrice: String?
 
     // visual state from the last configure, compared to skip redundant
     // background/checkmark updates
@@ -382,9 +397,12 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
 
         descLabel.isHidden = true
         vlmBadge.isHidden = true
+        mediaBadge.isHidden = true
         providerBadge.isHidden = true
         paramBadge.isHidden = true
         quantBadge.isHidden = true
+        privacyBadge.isHidden = true
+        priceBadge.isHidden = true
         checkmarkView.imageScaling = .scaleNone
         checkmarkView.isHidden = true
 
@@ -399,10 +417,13 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
 
         addSubview(nameLabel)
         addSubview(vlmBadge)
+        addSubview(mediaBadge)
         addSubview(providerBadge)
         addSubview(descLabel)
         addSubview(paramBadge)
         addSubview(quantBadge)
+        addSubview(privacyBadge)
+        addSubview(priceBadge)
         addSubview(checkmarkView)
         addSubview(accessoryButton)
         let click = NSClickGestureRecognizer(target: self, action: #selector(didClick))
@@ -436,6 +457,9 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         parameterCount: String?,
         quantization: String?,
         isVLM: Bool,
+        mediaKind: MediaGenerationKind?,
+        mediaPrivacy: String?,
+        mediaPrice: String?,
         providerLabel: String?,
         isSelected: Bool,
         isHighlighted: Bool,
@@ -445,6 +469,11 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         colors: ThemeColorCache,
         checkmarkImage: NSImage?,
         eyeImage: NSImage?,
+        imageMediaImage: NSImage?,
+        textToVideoImage: NSImage?,
+        imageToVideoImage: NSImage?,
+        privacyImage: NSImage?,
+        priceImage: NSImage?,
         heartImage: NSImage?,
         heartFillImage: NSImage?,
         regularFont: NSFont,
@@ -461,21 +490,33 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         self.onAccessory = onAccessory
 
         let newHasDesc = description?.isEmpty == false
-        let newHasBadges = parameterCount != nil || quantization != nil
+        let newHasBadges =
+            parameterCount != nil
+            || quantization != nil
+            || mediaPrivacy?.isEmpty == false
+            || mediaPrice?.isEmpty == false
         let newHasVLM = isVLM
+        let newHasMedia = mediaKind != nil
         let newHasProvider = providerLabel?.isEmpty == false
 
         // only trigger full layout if structural content changed
         let structureChanged =
             isNewRow || hasDesc != newHasDesc || hasBadges != newHasBadges || hasVLM != newHasVLM
-            || hasProvider != newHasProvider || cachedProviderLabel != providerLabel
-            || cachedDisplayName != displayName
+            || hasMedia != newHasMedia || hasProvider != newHasProvider
+            || cachedProviderLabel != providerLabel || cachedDisplayName != displayName
+            || cachedDescription != description || cachedMediaKind != mediaKind
+            || cachedMediaPrivacy != mediaPrivacy || cachedMediaPrice != mediaPrice
         hasDesc = newHasDesc
         hasBadges = newHasBadges
         hasVLM = newHasVLM
+        hasMedia = newHasMedia
         hasProvider = newHasProvider
         cachedDisplayName = displayName
+        cachedDescription = description
         cachedProviderLabel = providerLabel
+        cachedMediaKind = mediaKind
+        cachedMediaPrivacy = mediaPrivacy
+        cachedMediaPrice = mediaPrice
 
         if structureChanged || cachedIsSelected != isSelected {
             nameLabel.stringValue = displayName
@@ -498,6 +539,36 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
             vlmBadge.isHidden = false
         } else {
             vlmBadge.isHidden = true
+        }
+
+        if let mediaKind {
+            let label: String
+            let icon: NSImage?
+            switch mediaKind {
+            case .image:
+                label = L("Image")
+                icon = imageMediaImage
+            case .textToVideo:
+                label = L("Text → Video")
+                icon = textToVideoImage
+            case .imageToVideo:
+                label = L("Image → Video")
+                icon = imageToVideoImage
+            }
+            if structureChanged {
+                mediaBadge.configure(
+                    text: label,
+                    iconImage: icon,
+                    font: badgeFontSmall,
+                    textColor: colors.accentColor,
+                    bgColor: colors.accentAlpha012,
+                    borderColor: colors.accentAlpha015,
+                    isCapsule: true
+                )
+            }
+            mediaBadge.isHidden = false
+        } else {
+            mediaBadge.isHidden = true
         }
 
         if let provider = providerLabel, !provider.isEmpty {
@@ -552,6 +623,39 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
             quantBadge.isHidden = true
         }
 
+        if let privacy = mediaPrivacy, !privacy.isEmpty {
+            if structureChanged {
+                privacyBadge.configure(
+                    text: privacy,
+                    iconImage: privacyImage,
+                    font: badgeFont,
+                    textColor: colors.secondaryTextAlpha09,
+                    bgColor: colors.secondaryTextAlpha012,
+                    isCapsule: true
+                )
+            }
+            privacyBadge.isHidden = false
+        } else {
+            privacyBadge.isHidden = true
+        }
+
+        if let price = mediaPrice, !price.isEmpty {
+            if structureChanged {
+                priceBadge.configure(
+                    text: price,
+                    iconImage: priceImage,
+                    font: badgeFont,
+                    textColor: colors.accentAlpha09,
+                    bgColor: colors.accentAlpha012,
+                    borderColor: colors.accentAlpha015,
+                    isCapsule: true
+                )
+            }
+            priceBadge.isHidden = false
+        } else {
+            priceBadge.isHidden = true
+        }
+
         if isSelected {
             if cachedIsSelected != isSelected {
                 checkmarkView.image = checkmarkImage
@@ -577,7 +681,7 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         cachedIsHovered = isHovered
         cachedIsHighlighted = isHighlighted
 
-        // Trailing favourite control. In the Favorites tab it's an
+        // Inline favourite control. In the Favorites tab it's an
         // always-visible filled heart (remove); elsewhere it's a heart — shown
         // filled and persistent once favourited, and as an outline on hover so
         // an un-favourited row can be bookmarked. `RowAccessoryKind` is compared
@@ -651,7 +755,8 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         //   line 2 (optional): param/quant badges + description
         // Name-only rows center the name line vertically.
         let hasMeta = hasDesc || hasBadges
-        let nameY: CGFloat = hasMeta ? 10 : (h - nameH) / 2
+        let hasMediaDetailsLine = hasMedia && hasDesc
+        let nameY: CGFloat = hasMediaDetailsLine ? 7 : (hasMeta ? 10 : (h - nameH) / 2)
 
         if !checkmarkView.isHidden {
             checkmarkView.frame = CGRect(
@@ -664,19 +769,6 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         let contentX = pad + 14 + 6
 
         var trailingX = w - pad
-        // Only the always-visible remove heart (Favorites tab) lives at the
-        // trailing edge. The hover heart is placed inline after the name below,
-        // so its appearance never shifts the right-aligned Vision/provider badges.
-        if accessoryKind == .favoritesRemove {
-            let side = Self.accessorySide
-            accessoryButton.frame = CGRect(
-                x: trailingX - side,
-                y: (h - side) / 2,
-                width: side,
-                height: side
-            )
-            trailingX -= (side + 6)
-        }
         if !providerBadge.isHidden {
             providerBadge.sizeToFitContent()
             trailingX -= providerBadge.frame.width
@@ -686,37 +778,58 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
             )
             trailingX -= 8
         }
-        let contentW = trailingX - contentX
-
+        var badgeX = trailingX
+        if !mediaBadge.isHidden {
+            mediaBadge.sizeToFitContent()
+            badgeX -= mediaBadge.frame.width
+            mediaBadge.frame.origin = CGPoint(
+                x: badgeX,
+                y: nameY + (nameH - mediaBadge.frame.height) / 2
+            )
+            badgeX -= 6
+        }
         if !vlmBadge.isHidden {
             vlmBadge.sizeToFitContent()
-            let nameW = contentW - vlmBadge.frame.width - 6
-            nameLabel.frame = CGRect(x: contentX, y: nameY, width: max(0, nameW), height: nameH)
+            badgeX -= vlmBadge.frame.width
             vlmBadge.frame.origin = CGPoint(
-                x: nameLabel.frame.maxX + 6,
+                x: badgeX,
                 y: nameY + (nameH - vlmBadge.frame.height) / 2
             )
-        } else {
-            nameLabel.frame = CGRect(x: contentX, y: nameY, width: max(0, contentW), height: nameH)
+            badgeX -= 6
         }
+        nameLabel.frame = CGRect(
+            x: contentX,
+            y: nameY,
+            width: max(0, badgeX - contentX),
+            height: nameH
+        )
 
         // Heart sits right after the name text, clamped so it never runs into
         // the right-aligned Vision badge (or the trailing edge). The button is
         // framed at the symbol's natural size with its baseline (encoded in
         // the image's alignment insets) placed on the title's baseline, so the
         // glyph sits exactly on the text line instead of being box-centred.
-        if accessoryKind == .heart || accessoryKind == .heartFill {
+        // The Favorites tab's always-visible remove heart shares this inline
+        // placement so both tabs read the same.
+        if accessoryKind != .none {
             let imgSize = accessoryButton.image?.size ?? .zero
             let baselineInset = accessoryButton.image?.alignmentRect.origin.y ?? 0
             let font = nameLabel.font ?? NSFont.systemFont(ofSize: 12, weight: .medium)
             let lineH = font.ascender - font.descender
             let baselineFromTop = (nameH - lineH) / 2 + font.ascender
             let nameTextW = min(nameLabel.intrinsicContentSize.width, nameLabel.frame.width)
-            let limit = (vlmBadge.isHidden ? trailingX : vlmBadge.frame.minX) - imgSize.width - 4
+            let firstBadgeX = [mediaBadge, vlmBadge]
+                .filter { !$0.isHidden }
+                .map(\.frame.minX)
+                .min() ?? trailingX
+            let limit = firstBadgeX - imgSize.width - 4
             let x = min(nameLabel.frame.minX + nameTextW + 6, limit)
+            // Lift the glyph slightly off the baseline so it reads as
+            // vertically centred against the name text.
+            let bottomPadding: CGFloat = 3.2
             accessoryButton.frame = CGRect(
                 x: max(contentX, x),
-                y: nameY + baselineFromTop - (imgSize.height - baselineInset) - 1,
+                y: nameY + baselineFromTop - (imgSize.height - baselineInset) - bottomPadding,
                 width: imgSize.width,
                 height: imgSize.height
             )
@@ -725,6 +838,22 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         if hasMeta {
             let metaY = nameY + nameH + 4
             var x = contentX
+            if !privacyBadge.isHidden {
+                privacyBadge.sizeToFitContent()
+                privacyBadge.frame.origin = CGPoint(
+                    x: x,
+                    y: metaY + (metaH - privacyBadge.frame.height) / 2
+                )
+                x += privacyBadge.frame.width + 5
+            }
+            if !priceBadge.isHidden {
+                priceBadge.sizeToFitContent()
+                priceBadge.frame.origin = CGPoint(
+                    x: x,
+                    y: metaY + (metaH - priceBadge.frame.height) / 2
+                )
+                x += priceBadge.frame.width + 5
+            }
             if !paramBadge.isHidden {
                 paramBadge.sizeToFitContent()
                 paramBadge.frame.origin = CGPoint(
@@ -742,9 +871,18 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
                 x += quantBadge.frame.width + 4
             }
             if !descLabel.isHidden {
-                if x > contentX { x += 4 }
-                let descW = w - pad - x
-                descLabel.frame = CGRect(x: x, y: metaY + 1, width: max(0, descW), height: 14)
+                if hasMediaDetailsLine {
+                    descLabel.frame = CGRect(
+                        x: contentX,
+                        y: metaY + metaH + 2,
+                        width: max(0, w - pad - contentX),
+                        height: 14
+                    )
+                } else {
+                    if x > contentX { x += 4 }
+                    let descW = w - pad - x
+                    descLabel.frame = CGRect(x: x, y: metaY + 1, width: max(0, descW), height: 14)
+                }
             }
         }
     }
@@ -756,18 +894,26 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         onAccessory = nil
         descLabel.isHidden = true
         vlmBadge.isHidden = true
+        mediaBadge.isHidden = true
         providerBadge.isHidden = true
         paramBadge.isHidden = true
         quantBadge.isHidden = true
+        privacyBadge.isHidden = true
+        priceBadge.isHidden = true
         checkmarkView.isHidden = true
         accessoryButton.isHidden = true
         accessoryKind = .none
         hasDesc = false
         hasBadges = false
         hasVLM = false
+        hasMedia = false
         hasProvider = false
         cachedDisplayName = nil
+        cachedDescription = nil
         cachedProviderLabel = nil
+        cachedMediaKind = nil
+        cachedMediaPrivacy = nil
+        cachedMediaPrice = nil
         cachedIsSelected = false
         cachedIsHovered = false
         cachedIsHighlighted = false
@@ -829,6 +975,31 @@ extension ModelPickerTableRepresentable {
 
         private lazy var eyeImage: NSImage? = NSImage(
             systemSymbolName: "eye",
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(.init(pointSize: 8, weight: .medium))
+
+        private lazy var imageMediaImage: NSImage? = NSImage(
+            systemSymbolName: "photo",
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(.init(pointSize: 8, weight: .medium))
+
+        private lazy var textToVideoImage: NSImage? = NSImage(
+            systemSymbolName: "film",
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(.init(pointSize: 8, weight: .medium))
+
+        private lazy var imageToVideoImage: NSImage? = NSImage(
+            systemSymbolName: "photo.on.rectangle",
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(.init(pointSize: 8, weight: .medium))
+
+        private lazy var privacyImage: NSImage? = NSImage(
+            systemSymbolName: "lock.shield",
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(.init(pointSize: 8, weight: .medium))
+
+        private lazy var priceImage: NSImage? = NSImage(
+            systemSymbolName: "dollarsign.circle",
             accessibilityDescription: nil
         )?.withSymbolConfiguration(.init(pointSize: 8, weight: .medium))
 
@@ -1052,9 +1223,9 @@ extension ModelPickerTableRepresentable {
             // (both branches) so a reused cell never keeps a stale dim state.
             cell.alphaValue = row.isMLXFormat ? 1.0 : 0.45
             cell.toolTip =
-                row.isMLXFormat
-                ? nil
-                : L("Not an MLX model — the local engine can't load this bundle")
+                !row.isMLXFormat
+                ? L("Not an MLX model — the local engine can't load this bundle")
+                : (row.mediaKind == nil ? nil : row.description)
             cell.configure(
                 id: row.id,
                 displayName: row.displayName,
@@ -1062,6 +1233,9 @@ extension ModelPickerTableRepresentable {
                 parameterCount: row.parameterCount,
                 quantization: row.quantization,
                 isVLM: row.isVLM,
+                mediaKind: row.mediaKind,
+                mediaPrivacy: row.mediaPrivacy,
+                mediaPrice: row.mediaPrice,
                 providerLabel: row.providerLabel,
                 isSelected: selectedModelId == id,
                 isHighlighted: highlightedRowId == row.id,
@@ -1071,6 +1245,11 @@ extension ModelPickerTableRepresentable {
                 colors: colors,
                 checkmarkImage: checkmarkImage,
                 eyeImage: eyeImage,
+                imageMediaImage: imageMediaImage,
+                textToVideoImage: textToVideoImage,
+                imageToVideoImage: imageToVideoImage,
+                privacyImage: privacyImage,
+                priceImage: priceImage,
                 heartImage: heartImage,
                 heartFillImage: heartFillImage,
                 regularFont: regularFont,
@@ -1125,6 +1304,11 @@ extension ModelPickerTableRepresentable {
                 row.description?.isEmpty == false
                 || row.parameterCount != nil
                 || row.quantization != nil
+                || row.mediaPrivacy?.isEmpty == false
+                || row.mediaPrice?.isEmpty == false
+            if row.mediaKind != nil, row.description?.isEmpty == false {
+                return 74
+            }
             return hasMeta ? 56 : 36
         }
     }

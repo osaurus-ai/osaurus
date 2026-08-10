@@ -56,7 +56,7 @@ public struct WhatsNewModal: View {
             // change so the swap never feels abrupt.
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .center) {
-                    Text(localized: "What's New")
+                    eyebrowText(for: release.pages[currentIndex])
                         .font(.system(size: 11, weight: .semibold))
                         .textCase(.uppercase)
                         .tracking(0.8)
@@ -115,15 +115,36 @@ public struct WhatsNewModal: View {
 
     // MARK: - Text block (title + description)
 
+    /// Pages can override the default "What's New" eyebrow (e.g. a feature
+    /// announcement keeps its name on every page after the first).
+    private func eyebrowText(for page: WhatsNewPage) -> Text {
+        if let eyebrow = page.eyebrow {
+            return Text(LocalizedStringKey(eyebrow), bundle: .module)
+        }
+        return Text(localized: "What's New")
+    }
+
+    /// Headline with an optional muted lead-in ("Introducing Knowledge
+    /// Base"): the prefix renders in the secondary color, the title keeps
+    /// the primary color.
+    private func titleText(for page: WhatsNewPage) -> Text {
+        let title = Text(LocalizedStringKey(page.title), bundle: .module)
+            .foregroundColor(theme.primaryText)
+        guard let prefix = page.titlePrefix else { return title }
+        return Text(LocalizedStringKey(prefix), bundle: .module)
+            .foregroundColor(theme.secondaryText)
+            + Text(verbatim: " ")
+            + title
+    }
+
     private func textBlock(for page: WhatsNewPage) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             // Page copy is authored as English `String`s in `WhatsNewContent`.
             // Resolve them through the module catalog so translated releases
             // (e.g. 0.21.0) localize; keys missing from the catalog fall back
             // to the literal English string, so older notes are unaffected.
-            Text(LocalizedStringKey(page.title), bundle: .module)
+            titleText(for: page)
                 .font(.system(size: 22, weight: .bold))
-                .foregroundStyle(theme.primaryText)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 

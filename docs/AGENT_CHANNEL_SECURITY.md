@@ -67,6 +67,111 @@ or accepting a channel response, and use short TTLs, explicit nonce revocation,
 or the global kill switch when policy changes must invalidate outstanding write
 tokens immediately.
 
+## Proactive Publishing
+
+Proactive publishing (`agent_channel_publish`) is a separate capability from
+reactive replies and deliberately does NOT reuse reply tokens: reply tokens are
+sender-bound, one-shot reactive grants issued against a specific inbound
+message, while proactive publishing is authorized by an operator-configured
+`AgentChannelBinding` and enforced by the serialized
+`AgentChannelPublishService` at send time.
+
+Bindings come in two forms with identical enforcement:
+
+- **Stored bindings** — explicit operator configuration in
+  `agent-channels.json`.
+- **Automatic (derived) bindings** — synthesized by
+  `AgentChannelAutoDestinationResolver` from configuration the operator
+  already completed on a native connection: a saved credential, write access
+  enabled, a room on the write allowlist, and an agent assigned by inbound
+  dispatch to answer that room. Derivation grants no new write capability —
+  it only names routes every send-time gate would already permit — and a
+  derived binding is structurally `confirm`-only: it can never be
+  autonomous, so a human approves every send (interactive card on attended
+  runs, outbox queue on unattended runs). A stored binding for the same
+  (agent, connection, room) suppresses the derived one, so customization —
+  including "off" — always wins; escalating a route to autonomous requires
+  materializing a stored binding through the same acknowledged opt-in as any
+  other autonomous destination. All read points (tool exposure, prompt
+  section, contextual permission resolution, publish authorization, and
+  approval-time re-checks) evaluate the same effective configuration, so
+  removing the room from the allowlist, disabling write access, removing the
+  credential, or unassigning the agent makes the derived binding vanish
+  everywhere at once — a queued approval for it refuses with
+  `binding_removed`.
+
+The authorization matrix, re-evaluated in full on every attempt (including
+approval of a queued item):
+
+1. **Surface gate** — external surfaces (HTTP, MCP bridge) and runs triggered
+   by an inbound channel message are always denied. Provenance comes from the
+   typed `SessionSource` task local, not from surface flags alone; a missing
+   source is treated as "not authorized".
+2. **Run source** — only `chat`, `schedule`, `watcher`, and `self_schedule`
+   runs can publish, and only when the binding's `allowedSources` includes the
+   current source. `plugin`, `http`, and `channel` sources have no binding
+   vocabulary at all.
+3. **Binding ownership and state** — the binding must exist, belong to the
+   running agent, be enabled, and have an outbound mode other than `off`.
+4. **Outbound mode** — `draft` records a local draft (no provider I/O);
+   `confirm` resolves the tool's permission to `ask` on attended runs
+   (interactive approval card) and queues a pending outbox item on unattended
+   runs; `autonomous` sends without a prompt. A user-configured global `.ask`
+   on the publish tool narrows even an autonomous binding on unattended runs
+   to queued operator approval — the run proceeds, but the human gate moves
+   into the outbox instead of the provider write happening.
+5. **Thread contract** — a binding-pinned thread always wins; a model-supplied
+   `thread_id` is honored only when the binding leaves the thread open, and a
+   conflicting request is refused before any ledger claim.
+6. **Send-time policy** — at the moment of a provider write: global write
+   kill switch, connection enabled, connection write access, room write
+   allowlist (or thread-reply support for thread routes), and the binding's
+   rate policy against the durable ledger. Provider `confirmSend` is enforced
+   a second time at the provider boundary. The policy check and the provider
+   write run inside a per-binding lock, so concurrent sends for one binding
+   cannot pass the same rate headroom twice.
+7. **Approval-time route pinning** — operator actions on a queued/draft/
+   unknown item (approve, send, retry) additionally compare the intent's
+   STORED route (connection, room, thread) and the run source that queued it
+   against the current binding. A binding repointed or narrowed since the
+   item was recorded refuses the send (`binding_route_changed` /
+   `run_source_not_allowed`) instead of silently following the edit.
+
+Permission composition is strictest-wins: the registry combines the configured
+per-tool policy with the binding-resolved contextual policy via
+`ToolPermissionPolicy.strictest` (`deny` > `ask` > `auto`), so a global user
+setting can narrow a binding but a permissive binding can never loosen a user
+setting.
+
+Idempotency and durability: every attempt claims a row in the
+`channel_outbound_intents` ledger keyed by (agent, binding, `intent_key`)
+before any policy that could vary over time is consulted, so a replayed key
+deterministically reports `duplicate` rather than the current rate/kill-switch
+state. Status transitions are compare-and-set, which serializes concurrent
+sends of one intent down to a single provider write. Send-time denials release
+the claim to `failed` with a typed code; retryable failures (deterministic
+provider rejections, rate limits) can be retried under the same key without
+double-sending.
+
+Ambiguous provider failures — a timeout after dispatch, a 5xx, or an
+undecodable success response, where the message MAY have been accepted — are
+never treated as retryable. The intent parks as `delivery_unknown`: replays of
+the key report `duplicate`, no automatic retry ever runs, and only an operator
+may resolve the row (mark it sent, discard it, or explicitly resend knowing a
+duplicate is possible). `sending` rows left behind by a crashed run are
+reconciled to `delivery_unknown` at startup for the same reason. Custom HTTP
+connections may declare provider-side idempotency in their action config;
+Discord/Slack/Telegram bot sends have no server-side dedupe key, which is
+exactly why the ambiguous class exists.
+
+The prompt payload is redacted by design: the dynamic "Channel Destinations"
+section lists only the current agent's usable bindings for the current run
+source — stable binding ids, labels, connection/room display ids, modes, and
+operator guidance. It never includes secrets, sender identities, other agents'
+destinations, or bindings the current run source cannot use. Every publish
+attempt (accepted, denied, duplicate, failed) is recorded in the channel audit
+log with a redacted content preview.
+
 ## Replay Store
 
 `ChannelReplayNonceStore` persists nonce records under the Agent Channels data

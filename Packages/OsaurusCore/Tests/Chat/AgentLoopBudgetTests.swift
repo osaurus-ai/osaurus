@@ -44,6 +44,43 @@ struct AgentLoopBudgetTests {
         return ContextBreakdown(context: ctx, messages: msgs, disable: nil)
     }
 
+    @Test @MainActor func foundationResolutionReportsItsFixedSource() {
+        let resolution =
+            AgentLoopBudget.resolveContextWindowResolutionSync(
+                modelId: "foundation"
+            )
+
+        #expect(resolution.tokens == AgentLoopBudget.foundationContextWindow)
+        #expect(resolution.source == .foundationFixed)
+    }
+
+    @Test @MainActor func remoteProviderMetadataWinsOverGenericFallback() async {
+        let cache = ModelPickerItemCache.shared
+        let previous = cache._setItemsForTesting([
+            ModelPickerItem(
+                id: "router/model-with-window",
+                displayName: "Remote",
+                source: .remote(
+                    providerName: "Router",
+                    providerId: UUID()
+                ),
+                contextLength: 262_144
+            )
+        ])
+        defer { cache._setItemsForTesting(previous) }
+
+        let sync = AgentLoopBudget.resolveContextWindowResolutionSync(
+            modelId: "router/model-with-window"
+        )
+        let asyncResolution = await AgentLoopBudget.resolveContextWindowResolution(
+            modelId: "router/model-with-window"
+        )
+
+        #expect(sync.tokens == 262_144)
+        #expect(sync.source == .providerMetadata)
+        #expect(asyncResolution == sync)
+    }
+
     @Test func ratioUsesEffectiveBudgetNotRawWindow() {
         // 10_000 window → effective 8_500. 8_000 tokens is 94% of the
         // effective budget (near limit) even though it's only 80% of the
@@ -155,6 +192,33 @@ struct AgentLoopBudgetTests {
         #expect(composed.messages.count == 2)
         #expect(composed.messages.last?.content == "[System Notice] n")
         #expect(!composed.overBudget)
+    }
+
+    @Test func iterationCapWrapUpNoticeForbidsFabricatedUnexecutedWork() {
+        let notice = AgentToolLoop.iterationCapWrapUpNotice
+        #expect(notice.contains("No more tools are available"))
+        #expect(notice.contains("only tool results already present"))
+        #expect(notice.contains("Do not emit or imitate a tool call"))
+        #expect(notice.contains("do not claim an unexecuted step succeeded"))
+        #expect(notice.contains("remains unfinished"))
+
+        let messages = AgentLoopBudget.appendingTransientNotices(
+            [notice],
+            to: [
+                ChatMessage(role: "user", content: "read two files"),
+                ChatMessage(
+                    role: "tool",
+                    content: #"{"ok":true,"result":"alpha"}"#,
+                    tool_calls: nil,
+                    tool_call_id: "read_alpha"
+                ),
+            ]
+        )
+
+        #expect(messages.last?.role == "tool")
+        #expect(messages.last?.tool_call_id == "read_alpha")
+        #expect(messages.last?.content == notice)
+        #expect(messages.filter { $0.role == "user" }.count == 1)
     }
 
     /// Regression (KV/prefix re-prefill after a tool call): a transient notice

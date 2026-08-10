@@ -2,7 +2,8 @@
 //  Version.swift
 //  osaurus
 //
-//  Command to display the Osaurus version and build number from environment variables.
+//  Command to display release metadata from the build environment or the
+//  companion application bundle.
 //
 
 import Foundation
@@ -11,21 +12,22 @@ public struct VersionCommand: Command {
     public static let name = "version"
 
     public static func execute(args: [String]) async {
-        var versionString: String?
-        var buildString: String?
-
-        if let v = ProcessInfo.processInfo.environment["OSAURUS_VERSION"] { versionString = v }
-        if let b = ProcessInfo.processInfo.environment["OSAURUS_BUILD_NUMBER"] { buildString = b }
-
-        let output: String
-        if let v = versionString, let b = buildString, !b.isEmpty {
-            output = "Osaurus \(v) (\(b))"
-        } else if let v = versionString {
-            output = "Osaurus \(v)"
-        } else {
-            output = "Osaurus dev"
-        }
-        print(output)
+        print(output())
         exit(EXIT_SUCCESS)
+    }
+
+    public static func output(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        executablePath: String = CommandLine.arguments.first ?? ""
+    ) -> String {
+        let resolved = CLIVersionResolver.resolve(
+            environment: environment,
+            executablePath: executablePath
+        )
+        if let version = resolved.version, let build = resolved.build {
+            return "Osaurus \(version) (\(build))"
+        }
+        if let version = resolved.version { return "Osaurus \(version)" }
+        return "Osaurus dev"
     }
 }

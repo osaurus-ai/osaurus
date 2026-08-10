@@ -15,15 +15,21 @@ import Foundation
 /// funnel can join the path choice to the first message sent, and so the chosen
 /// path can pin its model after onboarding finishes.
 enum BrainSource: Equatable {
+    /// The managed Osaurus Router — hosted models that are ready with no
+    /// download or key. The onboarding default.
+    case osaurus
     /// A local MLX model running on this Mac.
     case local
     /// A bring-your-own-key cloud provider (OpenAI, Anthropic, xAI, Venice, …).
     case providerKey(ProviderPreset)
 
     /// Low-cardinality analytics token for `brain_source_selected` and the
-    /// `brain_source` dimension on `message_sent`.
+    /// `brain_source` dimension on `message_sent`. `hosted` matches the
+    /// vocabulary `FeatureTelemetry.recordOnboardingBrainSource` documents
+    /// (`local` | `hosted` | `provider_key`).
     var telemetryValue: String {
         switch self {
+        case .osaurus: return "hosted"
         case .local: return "local"
         case .providerKey: return "provider_key"
         }

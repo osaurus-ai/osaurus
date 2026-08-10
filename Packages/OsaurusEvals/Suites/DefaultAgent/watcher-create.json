@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.watcher-create",
+  "domain": "default_agent",
+  "label": "default agent • create a folder watcher",
+  "query": "Watch my ~/Downloads folder and organize new files into subfolders by type whenever something lands there.",
+  "notes": "Gap-closure write surface: the new osaurus_watcher domain. Pins action 'create' with the Downloads path. Watchers require a custom agent_id (the Default agent is refused with a typed error naming osaurus_agent), so the happy path is agent create -> watcher create; the extra iterations cover that recovery. The tool also validates the directory exists, so on eval hosts without ~/Downloads the call still counts for selection scoring.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_watcher"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load", "osaurus_schedule"],
+      "argsMustContain": [
+        { "tool": "osaurus_watcher", "args": { "action": "create", "path": "Downloads" } }
+      ],
+      "maxIterations": 6
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "id": "memory.multi-fact-synthesis",
+  "domain": "memory",
+  "label": "memory • answer synthesizes two independent seeded facts",
+  "query": "I want to invite my book club to a dinner at my favorite restaurant. Draft a one-sentence invitation that names the restaurant and the day my book club meets.",
+  "notes": "Synthesis row: the correct invitation needs BOTH seeded facts (restaurant name + meeting day) combined in one answer — recall of a single fact is not enough. Both needles are fixture-unique. Off-CI (needs a model).",
+  "fixtures": {
+    "seedMemory": {
+      "pinnedFacts": [
+        "The user's favorite restaurant is Saffron Lantern on 5th Street.",
+        "The user's book club meets on Thursdays."
+      ]
+    }
+  },
+  "expect": {
+    "memory": {
+      "maxTokens": 384,
+      "answerContains": ["Saffron Lantern", "Thursday"],
+      "requireMemoryInjected": true
+    }
+  }
+}

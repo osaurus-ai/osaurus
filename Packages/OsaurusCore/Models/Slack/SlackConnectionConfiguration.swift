@@ -8,6 +8,38 @@
 import Foundation
 import CryptoKit
 
+struct SlackWorkspaceAccountConfiguration: Codable, Equatable, Identifiable, Sendable {
+    var id: String { teamId }
+    var teamId: String
+    var teamName: String?
+    var readableChannelIds: [String]
+    var writableChannelIds: [String]
+    var senderAllowlist: [String]
+    var botUserId: String?
+    var botId: String?
+    var apiAppId: String?
+
+    init(
+        teamId: String,
+        teamName: String? = nil,
+        readableChannelIds: [String] = [],
+        writableChannelIds: [String] = [],
+        senderAllowlist: [String] = [],
+        botUserId: String? = nil,
+        botId: String? = nil,
+        apiAppId: String? = nil
+    ) {
+        self.teamId = SlackConnectionConfiguration.normalizedId(teamId)
+        self.teamName = SlackConnectionConfiguration.normalizedOptionalId(teamName)
+        self.readableChannelIds = SlackConnectionConfiguration.normalizedIds(readableChannelIds)
+        self.writableChannelIds = SlackConnectionConfiguration.normalizedIds(writableChannelIds)
+        self.senderAllowlist = SlackConnectionConfiguration.normalizedIds(senderAllowlist)
+        self.botUserId = SlackConnectionConfiguration.normalizedOptionalId(botUserId)
+        self.botId = SlackConnectionConfiguration.normalizedOptionalId(botId)
+        self.apiAppId = SlackConnectionConfiguration.normalizedOptionalId(apiAppId)
+    }
+}
+
 struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
     var configuredTeamIds: [String]
     var readableChannelIds: [String]
@@ -19,6 +51,8 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
     var botUserId: String?
     var botId: String?
     var apiAppId: String?
+    var inboundDispatch: AgentChannelInboundDispatchConfiguration
+    var workspaceAccounts: [SlackWorkspaceAccountConfiguration]
 
     init(
         configuredTeamIds: [String] = [],
@@ -30,7 +64,9 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
         allowBroadcastMentions: Bool = false,
         botUserId: String? = nil,
         botId: String? = nil,
-        apiAppId: String? = nil
+        apiAppId: String? = nil,
+        inboundDispatch: AgentChannelInboundDispatchConfiguration = AgentChannelInboundDispatchConfiguration(),
+        workspaceAccounts: [SlackWorkspaceAccountConfiguration] = []
     ) {
         self.configuredTeamIds = Self.normalizedIds(configuredTeamIds)
         self.readableChannelIds = Self.normalizedIds(readableChannelIds)
@@ -42,6 +78,11 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
         self.botUserId = Self.normalizedOptionalId(botUserId)
         self.botId = Self.normalizedOptionalId(botId)
         self.apiAppId = Self.normalizedOptionalId(apiAppId)
+        self.inboundDispatch = inboundDispatch
+        var seenTeams = Set<String>()
+        self.workspaceAccounts = workspaceAccounts.filter {
+            !$0.teamId.isEmpty && seenTeams.insert($0.teamId).inserted
+        }
     }
 
     var normalized: SlackConnectionConfiguration {
@@ -55,28 +96,38 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
             allowBroadcastMentions: allowBroadcastMentions,
             botUserId: botUserId,
             botId: botId,
-            apiAppId: apiAppId
+            apiAppId: apiAppId,
+            inboundDispatch: inboundDispatch,
+            workspaceAccounts: workspaceAccounts
         )
     }
 
     func canRead(channelId: String) -> Bool {
-        readableChannelIds.contains(Self.normalizedId(channelId))
+        let channelId = Self.normalizedId(channelId)
+        return readableChannelIds.contains(channelId)
+            || workspaceAccounts.contains { $0.readableChannelIds.contains(channelId) }
     }
 
     func canWrite(channelId: String) -> Bool {
-        writeEnabled && writableChannelIds.contains(Self.normalizedId(channelId))
+        let channelId = Self.normalizedId(channelId)
+        return writeEnabled
+            && (writableChannelIds.contains(channelId)
+                || workspaceAccounts.contains { $0.writableChannelIds.contains(channelId) })
     }
 
     func canUseTeam(teamId: String) -> Bool {
         let normalized = Self.normalizedId(teamId)
-        return configuredTeamIds.isEmpty || configuredTeamIds.contains(normalized)
+        return configuredTeamIds.isEmpty
+            || configuredTeamIds.contains(normalized)
+            || workspaceAccounts.contains { $0.teamId == normalized }
     }
 
     func canUseSender(senderId: String?) -> Bool {
         guard let normalized = Self.normalizedOptionalId(senderId) else {
             return false
         }
-        return !senderAllowlist.isEmpty && senderAllowlist.contains(normalized)
+        return senderAllowlist.contains(normalized)
+            || workspaceAccounts.contains { $0.senderAllowlist.contains(normalized) }
     }
 
     enum CodingKeys: String, CodingKey {
@@ -90,6 +141,8 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
         case botUserId
         case botId
         case apiAppId
+        case inboundDispatch
+        case workspaceAccounts
     }
 
     init(from decoder: Decoder) throws {
@@ -107,7 +160,15 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
             ) ?? false,
             botUserId: try container.decodeIfPresent(String.self, forKey: .botUserId),
             botId: try container.decodeIfPresent(String.self, forKey: .botId),
-            apiAppId: try container.decodeIfPresent(String.self, forKey: .apiAppId)
+            apiAppId: try container.decodeIfPresent(String.self, forKey: .apiAppId),
+            inboundDispatch: try container.decodeIfPresent(
+                AgentChannelInboundDispatchConfiguration.self,
+                forKey: .inboundDispatch
+            ) ?? AgentChannelInboundDispatchConfiguration(),
+            workspaceAccounts: try container.decodeIfPresent(
+                [SlackWorkspaceAccountConfiguration].self,
+                forKey: .workspaceAccounts
+            ) ?? []
         )
     }
 
@@ -133,6 +194,12 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
         return trimmed.allSatisfy { character in
             character.isASCII && (character.isLetter || character.isNumber || character == "." || character == "-")
         }
+    }
+
+    static func isValidSlackId(_ id: String, allowedPrefixes: Set<Character>) -> Bool {
+        let trimmed = normalizedId(id)
+        return isValidSlackId(trimmed)
+            && (trimmed.first.map { allowedPrefixes.contains($0) } ?? false)
     }
 
     static func clampReadLimit(_ value: Int) -> Int {
@@ -181,6 +248,10 @@ enum SlackCredentialStore {
     static let botTokenKey = "bot_token"
     static let signingSecretKey = "signing_secret"
     static let appTokenKey = "app_token"
+
+    static func accountSecretKey(_ base: String, teamId: String) -> String {
+        "\(base).workspace.\(SlackConnectionConfiguration.normalizedId(teamId))"
+    }
 
     @discardableResult
     static func saveBotToken(_ token: String) -> Bool {
@@ -236,15 +307,48 @@ enum SlackCredentialStore {
         deleteSecret(id: appTokenKey)
     }
 
+    static func saveBotToken(_ token: String, teamId: String) -> Bool {
+        saveSecret(token, id: accountSecretKey(botTokenKey, teamId: teamId))
+    }
+
+    static func botToken(teamId: String) -> String? {
+        secret(id: accountSecretKey(botTokenKey, teamId: teamId))
+    }
+
+    static func hasBotToken(teamId: String) -> Bool {
+        hasSecret(id: accountSecretKey(botTokenKey, teamId: teamId))
+    }
+
+    static func deleteBotToken(teamId: String) -> Bool {
+        deleteSecret(id: accountSecretKey(botTokenKey, teamId: teamId))
+    }
+
+    static func saveAppToken(_ token: String, teamId: String) -> Bool {
+        saveSecret(token, id: accountSecretKey(appTokenKey, teamId: teamId))
+    }
+
+    static func appToken(teamId: String) -> String? {
+        secret(id: accountSecretKey(appTokenKey, teamId: teamId))
+    }
+
+    static func deleteAppToken(teamId: String) -> Bool {
+        deleteSecret(id: accountSecretKey(appTokenKey, teamId: teamId))
+    }
+
     private static func saveSecret(_ value: String, id: String) -> Bool {
+        saveSecretOutcome(value, id: id).isSuccess
+    }
+
+    static func saveSecretOutcome(_ value: String, id: String) -> SecretSaveOutcome {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        return ToolSecretsKeychain.saveSecret(
+        guard !trimmed.isEmpty else { return .emptyValue }
+        let outcome = ToolSecretsKeychain.saveSecretOutcome(
             trimmed,
             id: id,
             for: pluginId,
             agentId: Agent.defaultId
         )
+        return outcome == .success ? .success : .keychainFailure(outcome)
     }
 
     private static func secret(id: String) -> String? {
@@ -286,11 +390,56 @@ protocol SlackCredentialStorage: Sendable {
     func appToken() -> String?
     func hasAppToken() -> Bool
     func deleteAppToken() -> Bool
+    func saveBotToken(_ token: String, teamId: String) -> Bool
+    func botToken(teamId: String) -> String?
+    func hasBotToken(teamId: String) -> Bool
+    func deleteBotToken(teamId: String) -> Bool
+    func saveAppToken(_ token: String, teamId: String) -> Bool
+    func appToken(teamId: String) -> String?
+    func deleteAppToken(teamId: String) -> Bool
+    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome
+    func saveSigningSecretOutcome(_ secret: String) -> SecretSaveOutcome
+    func saveAppTokenOutcome(_ token: String) -> SecretSaveOutcome
+}
+
+extension SlackCredentialStorage {
+    // Bool-only stores (test doubles) fall back to an undetailed outcome; the
+    // Keychain-backed store overrides these with the real failure reason.
+    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome {
+        saveBotToken(token) ? .success : .unknownFailure
+    }
+
+    func saveSigningSecretOutcome(_ secret: String) -> SecretSaveOutcome {
+        saveSigningSecret(secret) ? .success : .unknownFailure
+    }
+
+    func saveAppTokenOutcome(_ token: String) -> SecretSaveOutcome {
+        saveAppToken(token) ? .success : .unknownFailure
+    }
+    func saveBotToken(_: String, teamId _: String) -> Bool { false }
+    func botToken(teamId _: String) -> String? { nil }
+    func hasBotToken(teamId _: String) -> Bool { false }
+    func deleteBotToken(teamId _: String) -> Bool { false }
+    func saveAppToken(_: String, teamId _: String) -> Bool { false }
+    func appToken(teamId _: String) -> String? { nil }
+    func deleteAppToken(teamId _: String) -> Bool { false }
 }
 
 struct KeychainSlackCredentialStorage: SlackCredentialStorage {
     func saveBotToken(_ token: String) -> Bool {
         SlackCredentialStore.saveBotToken(token)
+    }
+
+    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome {
+        SlackCredentialStore.saveSecretOutcome(token, id: SlackCredentialStore.botTokenKey)
+    }
+
+    func saveSigningSecretOutcome(_ secret: String) -> SecretSaveOutcome {
+        SlackCredentialStore.saveSecretOutcome(secret, id: SlackCredentialStore.signingSecretKey)
+    }
+
+    func saveAppTokenOutcome(_ token: String) -> SecretSaveOutcome {
+        SlackCredentialStore.saveSecretOutcome(token, id: SlackCredentialStore.appTokenKey)
     }
 
     func botToken() -> String? {
@@ -338,6 +487,34 @@ struct KeychainSlackCredentialStorage: SlackCredentialStorage {
     @discardableResult
     func deleteAppToken() -> Bool {
         SlackCredentialStore.deleteAppToken()
+    }
+
+    func saveBotToken(_ token: String, teamId: String) -> Bool {
+        SlackCredentialStore.saveBotToken(token, teamId: teamId)
+    }
+
+    func botToken(teamId: String) -> String? {
+        SlackCredentialStore.botToken(teamId: teamId)
+    }
+
+    func hasBotToken(teamId: String) -> Bool {
+        SlackCredentialStore.hasBotToken(teamId: teamId)
+    }
+
+    func deleteBotToken(teamId: String) -> Bool {
+        SlackCredentialStore.deleteBotToken(teamId: teamId)
+    }
+
+    func saveAppToken(_ token: String, teamId: String) -> Bool {
+        SlackCredentialStore.saveAppToken(token, teamId: teamId)
+    }
+
+    func appToken(teamId: String) -> String? {
+        SlackCredentialStore.appToken(teamId: teamId)
+    }
+
+    func deleteAppToken(teamId: String) -> Bool {
+        SlackCredentialStore.deleteAppToken(teamId: teamId)
     }
 }
 

@@ -113,6 +113,167 @@ struct OsaurusRouterAPIClientTests {
         #expect(response.nextCursor == "cursor-3")
     }
 
+    @Test func welcomeClaim_postsDeviceIdAndDecodesGrant() async throws {
+        let client = try makeClient { request in
+            #expect(request.url?.path == "/credits/welcome/claim")
+            #expect(request.httpMethod == "POST")
+            let body = String(data: request.httpBodyStreamData ?? request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            #expect(body == #"{"device_id":"stable-device-hash"}"#)
+            return json(#"{"granted":true,"already_granted":false,"amount_micro":"2500000"}"#)
+        }
+
+        let claim = try await client.claimWelcomeCredit(deviceId: "stable-device-hash")
+        #expect(claim.granted == true)
+        #expect(claim.alreadyGranted == false)
+        #expect(claim.amountMicro == "2500000")
+    }
+
+    @Test func welcomeClaim_decodesIdempotentRetry() async throws {
+        let client = try makeClient { _ in
+            json(#"{"granted":true,"already_granted":true,"amount_micro":"2500000"}"#)
+        }
+
+        let claim = try await client.claimWelcomeCredit(deviceId: "stable-device-hash")
+        #expect(claim.granted == true)
+        #expect(claim.alreadyGranted == true)
+    }
+
+    @Test func redeemCode_postsExactCodeAndDecodesCampaignResult() async throws {
+        let client = try makeClient { request in
+            #expect(request.url?.path == "/credits/redeem")
+            #expect(request.httpMethod == "POST")
+            let body = String(
+                data: request.httpBodyStreamData ?? request.httpBody ?? Data(),
+                encoding: .utf8
+            ) ?? ""
+            #expect(body == #"{"code":"LAUNCH25"}"#)
+            return json(
+                """
+                {"redeemed":true,"already_redeemed":false,"campaign_kind":"first_time","amount_micro":"5000000","referral_pending":false,"redemption_message":"Welcome to Osaurus — $5 in credits was added."}
+                """
+            )
+        }
+
+        let response = try await client.redeemCode("LAUNCH25")
+        #expect(response.redeemed)
+        #expect(response.alreadyRedeemed == false)
+        #expect(response.campaignKind == "first_time")
+        #expect(response.amountMicro == "5000000")
+        #expect(response.referralPending == false)
+        #expect(response.redemptionMessage == "Welcome to Osaurus — $5 in credits was added.")
+    }
+
+    @Test func redeemCode_decodesIdempotentReferralResult() async throws {
+        let client = try makeClient { _ in
+            json(
+                """
+                {"redeemed":true,"already_redeemed":true,"campaign_kind":"referral","amount_micro":"0","referral_pending":true,"redemption_message":"Referral linked."}
+                """
+            )
+        }
+
+        let response = try await client.redeemCode("OSA-TEST")
+        #expect(response.alreadyRedeemed)
+        #expect(response.referralPending)
+        #expect(response.amountMicro == "0")
+    }
+
+    @Test func searchSession_timeoutSitsAboveRouterUpstreamBudget() {
+        let session = OsaurusRouterAPIClient.makeSearchSession()
+        defer { session.invalidateAndCancel() }
+        // Slightly above the router's ~30s upstream timeout so the router —
+        // not the local URLSession — decides timeout outcomes and can refund
+        // the hold before responding.
+        #expect(session.configuration.timeoutIntervalForRequest > 30)
+    }
+
+    @Test func webSettings_decodesAutoPayAndGrants() async throws {
+        let client = try makeClient { request in
+            #expect(request.url?.path == "/credits/web-settings")
+            #expect(request.httpMethod == "GET")
+            return json(
+                """
+                {"auto_pay_enabled":true,
+                 "grants":{"search":{"included_total":20,"used_total":3,"remaining_total":17},
+                           "contents":{"included_total":0,"used_total":0,"remaining_total":0}}}
+                """
+            )
+        }
+
+        let settings = try await client.webSettings()
+        #expect(settings.autoPayEnabled)
+        #expect(settings.grants?.search?.remainingTotal == 17)
+        #expect(settings.grants?.contents?.includedTotal == 0)
+    }
+
+    @Test func updateWebSettings_postsPreferenceAndDecodesResult() async throws {
+        let client = try makeClient { request in
+            #expect(request.url?.path == "/credits/web-settings")
+            #expect(request.httpMethod == "POST")
+            let body = String(data: request.httpBodyStreamData ?? request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            #expect(body == #"{"auto_pay_enabled":false}"#)
+            return json(#"{"auto_pay_enabled":false,"grants":null}"#)
+        }
+
+        let settings = try await client.updateWebSettings(autoPayEnabled: false)
+        #expect(settings.autoPayEnabled == false)
+    }
+
+    @Test func webUsage_includesCursorAndDecodesMetadataOnlyRows() async throws {
+        let client = try makeClient { request in
+            #expect(request.url?.path == "/credits/web-usage")
+            #expect(request.url?.query?.contains("limit=25") == true)
+            #expect(request.url?.query?.contains("cursor=web-cursor") == true)
+            return json(
+                """
+                {"data":[{"id":"wu1","request_id":"idem-1","operation":"search","provider":"exa",
+                          "billing":"free","units":{"requests":1,"extra_results":0,"content_pages":2,"summary_pages":0},
+                          "cost_micro":"0","status":"completed","created_at":"2026-07-01T10:00:00Z"}],
+                 "next_cursor":null}
+                """
+            )
+        }
+
+        let response = try await client.webUsage(limit: 25, cursor: "web-cursor")
+        #expect(response.data.count == 1)
+        #expect(response.data[0].operation == "search")
+        #expect(response.data[0].billing == "free")
+        #expect(response.data[0].units?.contentPages == 2)
+        #expect(response.nextCursor == nil)
+    }
+
+    @Test func errorEnvelope_mapsPaidWebDisabled() async throws {
+        let client = try makeClient { _ in
+            json(#"{"error":{"code":"PAID_WEB_DISABLED","message":"auto-pay off"}}"#, status: 402)
+        }
+
+        do {
+            _ = try await client.webSettings()
+            Issue.record("Expected paid-web-disabled error")
+        } catch let error as OsaurusRouterAPIError {
+            guard case .paidWebDisabled = error else {
+                Issue.record("Expected .paidWebDisabled, got \(error)")
+                return
+            }
+        }
+    }
+
+    @Test func errorEnvelope_mapsIdempotencyConflict() async throws {
+        let client = try makeClient { _ in
+            json(#"{"error":{"code":"IDEMPOTENCY_CONFLICT","message":"reuse"}}"#, status: 409)
+        }
+
+        do {
+            _ = try await client.webSettings()
+            Issue.record("Expected idempotency-conflict error")
+        } catch let error as OsaurusRouterAPIError {
+            guard case .idempotencyConflict = error else {
+                Issue.record("Expected .idempotencyConflict, got \(error)")
+                return
+            }
+        }
+    }
+
     @Test func errorEnvelope_mapsInsufficientFunds() async throws {
         let client = try makeClient { _ in
             json(#"{"error":{"code":"INSUFFICIENT_FUNDS","message":"top up required"}}"#, status: 402)

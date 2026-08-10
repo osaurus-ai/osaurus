@@ -9,6 +9,7 @@ import Foundation
 
 enum ChannelRemoteActionClass: String, Codable, CaseIterable, Sendable {
     case receive
+    case dispatch
     case reply
     case write
     case dangerousApproval = "dangerous_approval"
@@ -18,7 +19,7 @@ enum ChannelRemoteActionClass: String, Codable, CaseIterable, Sendable {
 
     var startsRemoteTask: Bool {
         switch self {
-        case .computerUseStart:
+        case .dispatch, .computerUseStart:
             return true
         case .receive, .reply, .write, .dangerousApproval, .computerUseStatus, .computerUseResult:
             return false
@@ -27,7 +28,7 @@ enum ChannelRemoteActionClass: String, Codable, CaseIterable, Sendable {
 
     var requiredReplyTokenAction: ChannelSecurityAction {
         switch self {
-        case .receive, .computerUseStatus, .computerUseResult:
+        case .receive, .dispatch, .computerUseStatus, .computerUseResult:
             return .read
         case .reply:
             return .reply

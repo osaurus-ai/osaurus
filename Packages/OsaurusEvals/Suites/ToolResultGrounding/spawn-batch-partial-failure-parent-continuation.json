@@ -1,0 +1,98 @@
+{
+  "id": "tool_result_grounding.spawn-batch-partial-failure-parent-continuation",
+  "domain": "tool_result_grounding",
+  "label": "spawn_batch • partial failure settles siblings and parent finalizes",
+  "query": "Delegate both jobs, preserve the successful sibling, report the failed sibling honestly, and finish once.",
+  "notes": "Model-free committed-transcript contract. The structured scorer pins both exact UUID targets, the partial_failure aggregate, settled child rows, and a single grounded parent final after the complete aggregate. This does not replace a live AgentLoop run.",
+  "fixtures": {},
+  "expect": {
+    "toolResultGrounding": {
+      "events": [
+        {
+          "kind": "toolCall",
+          "callId": "batch-1",
+          "tool": "spawn_batch",
+          "arguments": "{\"jobs\":[{\"id\":\"ok-worker\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000201\",\"input\":\"Return the sibling result.\"},{\"id\":\"failed-worker\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000202\",\"input\":\"Run the failure probe.\"}]}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "batch-1",
+          "tool": "spawn_batch",
+          "content": "{\"ok\":true,\"tool\":\"spawn_batch\",\"result\":{\"kind\":\"spawn_batch_result\",\"max_parallel\":2,\"succeeded\":1,\"failed\":1,\"cancelled\":0,\"aggregate_status\":\"partial_failure\",\"execution\":{\"configured_max_subagents\":2,\"waves\":[{\"wave\":0,\"jobs\":2,\"remote_jobs\":2,\"local_jobs\":0,\"effective_local_slots\":2,\"local_subwaves\":[2],\"limited_by\":[],\"verdict\":\"admitted\"}],\"cache\":{\"available\":false}},\"results\":[{\"id\":\"ok-worker\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000201\",\"ok\":true,\"envelope\":{\"ok\":true,\"tool\":\"spawn\",\"result\":{\"kind\":\"spawn_result\",\"model\":\"test/worker-model\",\"summary\":\"PARTIAL_SIBLING_OK_42\"}}},{\"id\":\"failed-worker\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000202\",\"ok\":false,\"envelope\":{\"ok\":false,\"kind\":\"execution_error\",\"tool\":\"spawn\",\"message\":\"scripted worker failed\",\"retryable\":false}}]}}"
+        },
+        {
+          "kind": "assistant",
+          "content": "The successful sibling returned PARTIAL_SIBLING_OK_42. The other sibling reported scripted worker failed, so the batch completed with a partial failure."
+        }
+      ],
+      "assertions": [
+        {
+          "callId": "batch-1",
+          "answerMustContain": [
+            "PARTIAL_SIBLING_OK_42",
+            "scripted worker failed"
+          ],
+          "resultMustContain": [
+            "\"aggregate_status\":\"partial_failure\"",
+            "\"target\":\"A11CE001-0000-4000-8000-000000000201\"",
+            "\"target\":\"A11CE001-0000-4000-8000-000000000202\""
+          ],
+          "argumentsMustNotContain": [
+            "PARTIAL_SIBLING_OK_42",
+            "scripted worker failed"
+          ]
+        }
+      ],
+      "expectedToolSequence": [
+        "spawn_batch"
+      ],
+      "requireSingleFinalAssistant": true,
+      "requireFinalAfterAllToolResults": true,
+      "requireFinalIsLastEvent": true,
+      "spawnBatch": {
+        "exactCallCount": 1,
+        "expectedJobIds": [
+          "ok-worker",
+          "failed-worker"
+        ],
+        "expectedSucceeded": 1,
+        "expectedFailed": 1,
+        "expectedMaxParallel": 2,
+        "requireEveryRowSettled": true,
+        "requireReportedCountsMatchRows": true,
+        "expectedAggregateStatus": "partial_failure",
+        "expectedExecutionWaves": [
+          {
+            "wave": 0,
+            "remoteJobs": 2,
+            "effectiveLocalSlots": 2,
+            "localSubwaves": [
+              2
+            ],
+            "limitingFactors": []
+          }
+        ],
+        "requireEveryExecutionWaveWellFormed": true,
+        "expectedCacheAvailable": false,
+        "expectedRows": [
+          {
+            "id": "ok-worker",
+            "targetType": "agent",
+            "target": "A11CE001-0000-4000-8000-000000000201",
+            "ok": true,
+            "model": "test/worker-model",
+            "summaryContains": [
+              "PARTIAL_SIBLING_OK_42"
+            ]
+          },
+          {
+            "id": "failed-worker",
+            "targetType": "agent",
+            "target": "A11CE001-0000-4000-8000-000000000202",
+            "ok": false
+          }
+        ]
+      }
+    }
+  }
+}

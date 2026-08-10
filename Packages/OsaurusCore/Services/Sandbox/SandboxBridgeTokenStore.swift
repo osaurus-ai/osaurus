@@ -47,6 +47,13 @@ public actor SandboxBridgeTokenStore {
         byToken[token]
     }
 
+    /// The token minted for a Linux user, if any. Used by the egress
+    /// proxy env injection to attach the caller's own credential to
+    /// `http_proxy` — never someone else's.
+    public func token(forLinuxName linuxName: String) -> String? {
+        byLinuxName[linuxName]
+    }
+
     /// Revoke a token for a Linux user — used when the agent is unprovisioned.
     @discardableResult
     public func revoke(linuxName: String) -> Bool {

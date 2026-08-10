@@ -74,12 +74,32 @@ struct GenerationParameters: Sendable {
     /// history cache boundary before prefill (see
     /// `ChatCompletionRequest.warmupPrefill`).
     let warmupPrefill: Bool
+    /// Runtime-only byte-exact stable leading system prompt. This is not a
+    /// user/API control and is consumed only by local MLX as a validated SSD
+    /// prefix-boundary hint.
+    let cacheStableSystemPrefix: String?
     /// Where the request originated (chat UI, HTTP API, plugin, P2P).
     /// `ModelRuntime` records this per model so chat-window close can
     /// accelerate idle unload of chat-sourced models without touching models
     /// kept warm by API clients. Defaults to `.httpAPI` — the conservative
     /// choice (never accelerated) for paths that don't set it explicitly.
     let requestSource: RequestSource
+    /// Whether this generation's model load may disturb a model someone else is
+    /// using. `.interactive` (the default) keeps today's behaviour: a human is
+    /// waiting, so the load may evict a resident model or cancel an in-flight
+    /// one. Housekeeping generations — memory distillation,
+    /// voice-transcript cleanup, speculative warm-up — must pass `.background`,
+    /// which makes `ModelRuntime` refuse the load rather than take the GPU out
+    /// from under an active chat.
+    ///
+    /// This rides on `GenerationParameters` rather than being a separate
+    /// argument so it survives the whole ChatEngine → MLXService → ModelRuntime
+    /// path without every layer having to re-plumb it.
+    let loadIntent: ModelLoadIntent
+    /// Preserve a non-nil residency owner when this request reuses an already
+    /// resident model. Nested subagents set this so using an API/plugin-owned
+    /// resident cannot silently convert it into a chat-owned unload target.
+    let preserveExistingResidencyOwner: Bool
 
     init(
         temperature: Float?,
@@ -101,7 +121,10 @@ struct GenerationParameters: Sendable {
         runAsRemoteAgent: Bool = false,
         suppressProgressUI: Bool = false,
         warmupPrefill: Bool = false,
-        requestSource: RequestSource = .httpAPI
+        cacheStableSystemPrefix: String? = nil,
+        requestSource: RequestSource = .httpAPI,
+        loadIntent: ModelLoadIntent = .interactive,
+        preserveExistingResidencyOwner: Bool = false
     ) {
         self.temperature = temperature
         self.maxTokens = maxTokens
@@ -122,7 +145,10 @@ struct GenerationParameters: Sendable {
         self.runAsRemoteAgent = runAsRemoteAgent
         self.suppressProgressUI = suppressProgressUI
         self.warmupPrefill = warmupPrefill
+        self.cacheStableSystemPrefix = cacheStableSystemPrefix
         self.requestSource = requestSource
+        self.loadIntent = loadIntent
+        self.preserveExistingResidencyOwner = preserveExistingResidencyOwner
     }
 }
 

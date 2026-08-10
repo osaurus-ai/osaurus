@@ -7,6 +7,15 @@
 
 import Foundation
 
+/// Whether a tool body can be owned by a spawned run that must abort and
+/// drain every child operation before returning. The default is deliberately
+/// unsupported: cancelling a Swift `Task` does not terminate synchronous work
+/// or an external process unless the concrete tool cooperates.
+enum SpawnedOperationCancellationSupport: Sendable, Equatable {
+    case unsupported
+    case cooperative
+}
+
 protocol OsaurusTool: Sendable {
     /// Unique tool name exposed to the model
     var name: String { get }
@@ -28,6 +37,21 @@ protocol OsaurusTool: Sendable {
     /// retryable: false)` so resources are released promptly.
     func execute(argumentsJSON: String) async throws -> String
 
+    /// Classify one concrete invocation for spawned-run ownership. A tool may
+    /// opt in only when every path selected by these arguments observes task
+    /// cancellation (or forwards it to a hard-abort owner) and does not return
+    /// until that work has terminated.
+    func spawnedOperationCancellationSupport(
+        argumentsJSON: String
+    ) -> SpawnedOperationCancellationSupport
+
+    /// Whether this tool has at least one invocation shape that can satisfy
+    /// `spawnedOperationCancellationSupport`. Spawned children only receive
+    /// schemas for tools that opt in here; the argument-aware check above
+    /// remains the final gate for tools whose safe support is narrower than
+    /// their ordinary chat schema.
+    var canExposeToSpawnedOperation: Bool { get }
+
     /// When `true`, the registry skips its own wall-clock race and
     /// dispatches the body straight through. Streaming-aware tools
     /// (`sandbox_exec`, `shell_run`) opt in here because they have no
@@ -36,12 +60,56 @@ protocol OsaurusTool: Sendable {
     /// + their own optional inactivity timeout as the safety net.
     /// Default `false`: every other tool keeps the 120s safety net.
     var bypassRegistryTimeout: Bool { get }
+
+    /// When `true`, executing this tool can create/edit/delete files in
+    /// the agent's sandbox workspace (agent home / `/workspace/shared`).
+    /// The registry wraps such calls in a `SandboxWorkspaceChangeTracker`
+    /// checkpoint so the chat's "Changes" list stays complete. Default
+    /// `false`.
+    var mutatesSandboxWorkspace: Bool { get }
+
+    /// When `true`, executing this tool can create/edit/delete files in the
+    /// user-selected host folder (the "Folder" chip). The registry wraps such
+    /// calls in a host-folder checkpoint so those mutations land in the same
+    /// "Changes" list. Mutually exclusive with `mutatesSandboxWorkspace`.
+    /// Default `false`.
+    var mutatesHostFolder: Bool { get }
+
+    /// Optional, tool-owned repair for a narrowly documented model-output
+    /// shape before the shared schema validator runs. The default is identity;
+    /// tools must not use this to weaken their schema generally.
+    func normalizeArgumentsBeforeValidation(_ argumentsJSON: String) -> String
 }
 
 extension OsaurusTool {
+    /// Unknown/plugin/MCP operations are not assumed abortable from their
+    /// names. Concrete tools opt in after their cancellation path is audited.
+    func spawnedOperationCancellationSupport(
+        argumentsJSON _: String
+    ) -> SpawnedOperationCancellationSupport {
+        .unsupported
+    }
+
+    /// Unknown/plugin/MCP tools stay out of spawned-worker schemas until
+    /// their concrete cancellation owner has been audited.
+    var canExposeToSpawnedOperation: Bool { false }
+
     /// Default: every tool gets the registry's wall-clock safety net.
     /// Streaming tools (`sandbox_exec`, `shell_run`) override to `true`.
     var bypassRegistryTimeout: Bool { false }
+
+    /// Default: tools do not mutate the sandbox workspace. Sandbox
+    /// write/exec/install/plugin tools override to `true`.
+    var mutatesSandboxWorkspace: Bool { false }
+
+    /// Default: tools do not mutate the selected host folder. Folder
+    /// write/edit/shell/undo tools override to `true`.
+    var mutatesHostFolder: Bool { false }
+
+    /// Default: preserve the model/client payload byte-for-byte.
+    func normalizeArgumentsBeforeValidation(_ argumentsJSON: String) -> String {
+        argumentsJSON
+    }
 
     /// Build OpenAI-compatible Tool specification
     func asOpenAITool() -> Tool {
@@ -334,7 +402,7 @@ public enum ArgumentCoercion {
     public static func bool(_ value: Any?) -> Bool? {
         if let b = value as? Bool { return b }
         if let s = value as? String {
-            switch s.lowercased() {
+            switch s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
             case "true", "1", "yes": return true
             case "false", "0", "no": return false
             default: return nil

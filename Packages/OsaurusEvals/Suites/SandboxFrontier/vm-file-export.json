@@ -1,0 +1,28 @@
+{
+  "id": "sandbox.vm-file-export",
+  "domain": "agent_loop",
+  "label": "sandbox • create exportable VM file through public vocabulary",
+  "query": "Create report.md in your working directory containing exactly '# VM Report' followed by a line containing 'EXPORT-READY-4412'. The file itself is the deliverable.",
+  "notes": "Pins mode-invariant file_write and VM-side delivery. The write result carries a typed exportable file reference and the Changes UI provides Export without another model turn.",
+  "fixtures": {
+    "sandbox": {}
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 5,
+      "mustCallTools": ["file_write"],
+      "mustNotCallTools": [
+        "sandbox_write_file",
+        "share_artifact",
+        "complete",
+        "todo"
+      ],
+      "toolUsageAudit": [
+        { "tool": "file_write", "minCalls": 1, "maxCalls": 1, "maxErrors": 0 }
+      ],
+      "sandboxFiles": [
+        { "path": "report.md", "contains": "EXPORT-READY-4412" }
+      ]
+    }
+  }
+}

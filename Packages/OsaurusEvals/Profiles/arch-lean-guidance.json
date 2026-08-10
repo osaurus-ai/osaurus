@@ -1,0 +1,5 @@
+{
+  "name": "arch-lean-guidance",
+  "description": "Drop the always-on guidance prose sections together (selective guidance loading). Best measured trade on Bonsai 27B Ternary JANG (2026-07-22): -17% first-step, -22% cumulative tokens, 26/29 vs baseline 25/29 at 5 trials - but BLOCKED by the strict gate on one flaky row (capability_claims.honest-absence-print 4/5 -> 1/5). Re-run finalists with more trials before promoting; never promote it over the gate.",
+  "dropSections": ["modelFamilyGuidance", "agentLoopGuidance", "codeStyle", "riskAware", "selfImprovement", "capabilityNudge"]
+}

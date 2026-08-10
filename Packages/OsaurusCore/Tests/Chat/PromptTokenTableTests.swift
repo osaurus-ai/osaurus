@@ -70,7 +70,11 @@ struct PromptTokenTableTests {
                     compact: true
                 )
             ),
-            Row("discoveryNudge(non-sandbox)", full: SystemPromptTemplates.capabilityDiscoveryNudge),
+            Row(
+                "discoveryNudge(non-sandbox)",
+                full: SystemPromptTemplates.capabilityDiscoveryNudge,
+                compact: ""
+            ),
             Row(
                 "secretHandling",
                 full: SystemPromptTemplates.secretHandlingGuidance,
@@ -119,11 +123,18 @@ struct PromptTokenTableTests {
                     compact: true
                 )
             ),
-            Row("skillsGovernToolGroups", full: SystemPromptTemplates.skillsGovernToolGroups),
+            Row(
+                "skillsGovernToolGroups",
+                full: SystemPromptTemplates.skillsGovernToolGroups()
+            ),
             Row(
                 "pluginCreator",
                 full: PluginCreatorGate.section(
                     instructions: SystemPromptTemplates.pluginCreatorInstructions
+                ),
+                compact: PluginCreatorGate.section(
+                    instructions:
+                        SystemPromptTemplates.pluginCreatorInstructionsCompactBody()
                 )
             ),
             Row(
@@ -208,9 +219,7 @@ struct PromptTokenTableTests {
                     model: "qwen3-8b"
                 )
 
-                let expectedNames = ToolRegistry.shared.builtInSandboxToolNamesSnapshot
-                    .union(SystemPromptComposer.agentLoopToolNames)
-                    .union(["capabilities_discover", "capabilities_load"])
+                let expectedNames = ToolRegistry.coreWorkspaceToolNames
                 let baseline = ctx.tools.filter { expectedNames.contains($0.function.name) }
                 let toolTokens = ToolRegistry.shared.totalEstimatedTokens(for: baseline)
 

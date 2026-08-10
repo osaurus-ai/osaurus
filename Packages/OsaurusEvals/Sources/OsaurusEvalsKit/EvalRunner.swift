@@ -117,7 +117,9 @@ public enum EvalRunner {
                     Data("[evals] warm-up DISABLED (OSAURUS_EVALS_DISABLE_WARMUP=1)\n".utf8)
                 )
             }
-            let scoredCases = suite.cases.filter { filter == nil || $0.id.contains(filter!) }
+            let scoredCases = suite.cases.filter {
+                EvalCaseFilter.matches(caseID: $0.id, filter: filter)
+            }
             // Ordered descriptors + a thread-safe sink of completed rows. The
             // per-case watchdog (which runs on an OS thread, off the wedged
             // cooperative runtime) uses these to assemble a COMPLETE report —
@@ -158,11 +160,16 @@ public enum EvalRunner {
                             .utf8
                     )
                 )
+                // Per-case flake policy: the case file's `trials` acts as a
+                // floor under the CLI's `--repeat`, so a known-flaky case
+                // always gets its declared trial count without the operator
+                // remembering the flag.
+                let trialsForCase = max(trialsWanted, max(1, testCase.trials ?? 1))
                 var trialRows: [EvalCaseReport] = []
-                for trial in 1 ... trialsWanted {
-                    if trialsWanted > 1 {
+                for trial in 1 ... trialsForCase {
+                    if trialsForCase > 1 {
                         FileHandle.standardError.write(
-                            Data("[evals]   trial \(trial)/\(trialsWanted) \(testCase.id)\n".utf8)
+                            Data("[evals]   trial \(trial)/\(trialsForCase) \(testCase.id)\n".utf8)
                         )
                     }
                     let row = await runOneWatchdogged(
@@ -171,6 +178,10 @@ public enum EvalRunner {
                         thresholdOverride: thresholdOverride,
                         embedCosineFloorOverride: embedCosineFloorOverride,
                         suiteDirectory: suite.directory,
+                        trialIdentity: EvalTrialIdentity(
+                            ordinal: trial,
+                            total: trialsForCase
+                        ),
                         watchdogContext: EvalWatchdogContext(
                             sink: rowSink,
                             outPath: outPath,
@@ -184,7 +195,10 @@ public enum EvalRunner {
                     // repeating it adds no signal and wastes wall-clock.
                     if row.outcome == .skipped { break }
                 }
-                let merged = EvalCaseReport.mergedTrials(trialRows)
+                let merged = EvalCaseReport.mergedTrials(
+                    trialRows,
+                    passThreshold: testCase.passThreshold
+                )
                 rows.append(merged)
                 rowSink.append(merged)
                 onCaseCompleted?(merged)
@@ -230,7 +244,10 @@ public enum EvalRunner {
             telemetry: row.telemetry,
             trials: row.trials,
             trialsPassed: row.trialsPassed,
-            judge: row.judge
+            trialSummaries: row.trialSummaries,
+            blocker: row.blocker,
+            judge: row.judge,
+            context: row.context
         )
     }
 
@@ -243,6 +260,7 @@ public enum EvalRunner {
     private static let resourceSampledDomains: Set<String> = [
         "agent_loop", "capability_claims", "computer_use_loop", "capability_search",
         "default_agent", "subagent", "apple_script", "micro_perf",
+        "reasoning_channel", "cache_proof", "memory", "http_api",
     ]
 
     /// Wall-clock budget for any single tool execution in a
@@ -315,17 +333,20 @@ public enum EvalRunner {
         thresholdOverride: Float? = nil,
         embedCosineFloorOverride: Float? = nil,
         suiteDirectory: URL,
+        trialIdentity: EvalTrialIdentity,
         watchdogContext: EvalWatchdogContext
     ) async -> EvalCaseReport {
         let timeout = Self.caseTimeoutSeconds
         guard timeout > 0 else {
-            return await runOne(
-                testCase,
-                modelId: modelId,
-                thresholdOverride: thresholdOverride,
-                embedCosineFloorOverride: embedCosineFloorOverride,
-                suiteDirectory: suiteDirectory
-            )
+            return await EvalTrialExecutionContext.$current.withValue(trialIdentity) {
+                await runOne(
+                    testCase,
+                    modelId: modelId,
+                    thresholdOverride: thresholdOverride,
+                    embedCosineFloorOverride: embedCosineFloorOverride,
+                    suiteDirectory: suiteDirectory
+                )
+            }
         }
         // Snapshot only Sendable scalars for the watchdog thread (never the
         // non-Sendable EvalCase).
@@ -374,13 +395,15 @@ public enum EvalRunner {
         watchdog.start()
 
         let work = Task { @MainActor in
-            let r = await runOne(
-                testCase,
-                modelId: modelId,
-                thresholdOverride: thresholdOverride,
-                embedCosineFloorOverride: embedCosineFloorOverride,
-                suiteDirectory: suiteDirectory
-            )
+            let r = await EvalTrialExecutionContext.$current.withValue(trialIdentity) {
+                await runOne(
+                    testCase,
+                    modelId: modelId,
+                    thresholdOverride: thresholdOverride,
+                    embedCosineFloorOverride: embedCosineFloorOverride,
+                    suiteDirectory: suiteDirectory
+                )
+            }
             _ = latch.resume(r)
         }
 
@@ -484,7 +507,12 @@ public enum EvalRunner {
     /// runner already attached (decode tok/s, TTFT, prefill from the
     /// agent-loop transcript). KV deltas are only recorded when both
     /// snapshots exist (a remote-only run has neither).
-    private static func mergeResourceTelemetry(
+    ///
+    /// Internal (not private) for the regression test that pins the row
+    /// rebuild preserving `context` — this wrapper silently dropping the
+    /// attribution block for every resource-sampled domain is exactly the
+    /// bug that shipped once.
+    static func mergeResourceTelemetry(
         into row: EvalCaseReport,
         sample: ResourceSample,
         kvBefore: BatchDiagnosticsSnapshot?,
@@ -511,6 +539,7 @@ public enum EvalRunner {
             decodeTokensPerSecond: existing?.decodeTokensPerSecond,
             prefillTokensPerSecond: existing?.prefillTokensPerSecond,
             ttftMs: existing?.ttftMs,
+            firstActionMs: existing?.firstActionMs,
             completionTokens: existing?.completionTokens,
             promptTokensTotal: existing?.promptTokensTotal,
             peakContextTokens: existing?.peakContextTokens,
@@ -543,7 +572,10 @@ public enum EvalRunner {
             telemetry: merged,
             trials: row.trials,
             trialsPassed: row.trialsPassed,
-            judge: row.judge
+            trialSummaries: row.trialSummaries,
+            blocker: row.blocker,
+            judge: row.judge,
+            context: row.context
         )
     }
 
@@ -564,15 +596,46 @@ public enum EvalRunner {
         case "tool_result_grounding":
             return runToolResultGroundingCase(testCase, modelId: modelId)
         case "streaming_hint":
-            return runStreamingHintCase(testCase, modelId: modelId)
+            // Retired: the encode/decode round-trip pins were pure unit
+            // tests with no model in the loop. They now live in
+            // OsaurusCore's StreamingHintTests (Tests/Service/) — author
+            // new sentinel pins there, not in the eval catalog.
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .errored,
+                notes: [
+                    "domain 'streaming_hint' was retired — the pins moved to "
+                        + "OsaurusCore Tests/Service/StreamingHintTests.swift."
+                ],
+                modelId: modelId
+            )
         case "prefix_hash":
             return runPrefixHashCase(testCase, modelId: modelId)
+        case "prompt_surface":
+            return await runPromptSurfaceCase(testCase, modelId: modelId)
         case "argument_coercion":
             return runArgumentCoercionCase(testCase, modelId: modelId)
         case "sandbox_diagnostics":
             return runSandboxDiagnosticsCase(testCase, modelId: modelId)
         case "request_validation":
-            return runRequestValidationCase(testCase, modelId: modelId)
+            // Retired: pure type-level accept/reject pins over
+            // `unsupportedSamplerReason` moved to OsaurusCore's
+            // RequestValidationTests (Tests/Networking/); the live HTTP
+            // rejection contract is covered by `http_api` typed-error cases.
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .errored,
+                notes: [
+                    "domain 'request_validation' was retired — unit pins live in "
+                        + "OsaurusCore Tests/Networking/RequestValidationTests.swift; "
+                        + "live rejections belong in the `http_api` domain."
+                ],
+                modelId: modelId
+            )
         case "computer_use":
             return runComputerUseCase(testCase, modelId: modelId)
         case "computer_use_loop":
@@ -604,18 +667,29 @@ public enum EvalRunner {
             return await runJudgeCalibrationCase(testCase, modelId: modelId)
         case "micro_perf":
             return await runMicroPerfCase(testCase, modelId: modelId)
+        case "reasoning_channel":
+            return await runReasoningChannelCase(testCase, modelId: modelId)
+        case "cache_proof":
+            return await runCacheProofCase(testCase, modelId: modelId)
+        case "http_api":
+            return await runHTTPAPICase(testCase, modelId: modelId)
+        case "memory":
+            return await runMemoryCase(testCase, modelId: modelId)
+        case "agent_channels":
+            return await runAgentChannelsCase(testCase, modelId: modelId)
         case "tools", "streaming", "contract":
-            // Scaffolded domains — runner implementation lives in a
-            // follow-up so cases can be authored against the format
-            // without forcing a heavyweight ChatEngine entry point
-            // into the public OsaurusCore surface yet.
+            // Retired scaffolds: the live HTTP lane (`http_api`) covers
+            // what these placeholders were reserved for. Kept as an
+            // explicit error (not the generic unknown-domain arm) so a
+            // stray legacy case file gets a migration hint.
             return .terminal(
                 id: testCase.id,
                 label: label,
                 domain: testCase.domain,
-                outcome: .skipped,
+                outcome: .errored,
                 notes: [
-                    "domain '\(testCase.domain)' runner not yet implemented in this build."
+                    "domain '\(testCase.domain)' was retired — author the case in the "
+                        + "`http_api` domain (expect.httpAPI) instead."
                 ],
                 modelId: modelId
             )
@@ -706,7 +780,7 @@ public enum EvalRunner {
     /// Convert a `JSONValue` (decoded from the case JSON) into the
     /// `Any` shape `SchemaValidator.validate` consumes. Mirrors the
     /// private `JSONValue.foundationValue` extension in SchemaValidator.
-    private static func jsonValueToAny(_ value: JSONValue) -> Any {
+    static func jsonValueToAny(_ value: JSONValue) -> Any {
         switch value {
         case .null: return NSNull()
         case .bool(let b): return b
@@ -803,87 +877,6 @@ public enum EvalRunner {
         case .array, .object:
             return false
         }
-    }
-
-    // MARK: - Streaming hint domain
-
-    /// Pure-data evaluator for `domain == "streaming_hint"`. Verifies
-    /// the encode → isSentinel → decode round-trip for every supported
-    /// `StreamingToolHint` operation.
-    private static func runStreamingHintCase(_ testCase: EvalCase, modelId: String) -> EvalCaseReport {
-        let label = testCase.label ?? testCase.id
-        guard let exp = testCase.expect.streamingHint else {
-            return Self.errored(testCase, label: label, modelId: modelId, note: "missing `expect.streamingHint`")
-        }
-
-        var notes: [String] = []
-        var passed = true
-        switch exp.op {
-        case .encode:
-            guard let payload = exp.payload else {
-                return Self.errored(testCase, label: label, modelId: modelId, note: "encode op needs `payload`")
-            }
-            let encoded = StreamingToolHint.encode(payload)
-            if !StreamingToolHint.isSentinel(encoded) {
-                passed = false
-                notes.append("isSentinel returned false on encoded payload")
-            }
-            if StreamingToolHint.decode(encoded) != payload {
-                passed = false
-                notes.append("decode did not round-trip payload")
-            }
-        case .encodeArgs:
-            guard let payload = exp.payload else {
-                return Self.errored(testCase, label: label, modelId: modelId, note: "encodeArgs op needs `payload`")
-            }
-            let encoded = StreamingToolHint.encodeArgs(payload)
-            if !StreamingToolHint.isSentinel(encoded) {
-                passed = false
-                notes.append("isSentinel returned false on encoded args")
-            }
-            if StreamingToolHint.decodeArgs(encoded) != payload {
-                passed = false
-                notes.append("decodeArgs did not round-trip payload")
-            }
-        case .encodeDone:
-            guard let callId = exp.callId, let name = exp.name,
-                let arguments = exp.arguments, let result = exp.result
-            else {
-                return Self.errored(
-                    testCase,
-                    label: label,
-                    modelId: modelId,
-                    note: "encodeDone needs callId/name/arguments/result"
-                )
-            }
-            let encoded = StreamingToolHint.encodeDone(
-                callId: callId,
-                name: name,
-                arguments: arguments,
-                result: result
-            )
-            if !StreamingToolHint.isSentinel(encoded) {
-                passed = false
-                notes.append("isSentinel returned false on encoded done")
-            }
-            guard let decoded = StreamingToolHint.decodeDone(encoded) else {
-                passed = false
-                notes.append("decodeDone returned nil")
-                break
-            }
-            if decoded.callId != callId { passed = false; notes.append("callId drift: \(decoded.callId)") }
-            if decoded.name != name { passed = false; notes.append("name drift: \(decoded.name)") }
-            if decoded.arguments != arguments { passed = false; notes.append("arguments drift") }
-            if decoded.result != result { passed = false; notes.append("result drift") }
-        }
-        return .terminal(
-            id: testCase.id,
-            label: label,
-            domain: testCase.domain,
-            outcome: passed ? .passed : .failed,
-            notes: notes,
-            modelId: modelId
-        )
     }
 
     // MARK: - Prefix hash domain
@@ -990,7 +983,8 @@ public enum EvalRunner {
         let hint = shellCommandFailureHint(
             command: exp.command,
             exitCode: Int32(exp.exitCode),
-            stderr: exp.stderr
+            stderr: exp.stderr,
+            sandboxInstallAvailable: true
         )
         let fired = hint != nil
         var passed = fired == exp.expectHint
@@ -1049,63 +1043,6 @@ public enum EvalRunner {
             }
         default: return false
         }
-    }
-
-    // MARK: - Request validation domain
-
-    /// Pure-data evaluator for `domain == "request_validation"`. Pins
-    /// the accept/reject decision of `RequestValidator.unsupportedSamplerReason`
-    /// for the (`n`, `response_format.type`) tuple.
-    private static func runRequestValidationCase(_ testCase: EvalCase, modelId: String) -> EvalCaseReport {
-        let label = testCase.label ?? testCase.id
-        guard let exp = testCase.expect.requestValidation else {
-            return Self.errored(
-                testCase,
-                label: label,
-                modelId: modelId,
-                note: "missing `expect.requestValidation`"
-            )
-        }
-        let reason = RequestValidator.unsupportedSamplerReason(
-            n: exp.n,
-            responseFormatType: exp.responseFormatType
-        )
-        var passed = true
-        var notes: [String] = []
-        if exp.expectAccept {
-            if let reason {
-                passed = false
-                notes.append("expected accept, got reject: \(reason)")
-            } else {
-                notes.append("accepted (as expected)")
-            }
-        } else {
-            guard let reason else {
-                passed = false
-                notes.append("expected reject, got accept")
-                return .terminal(
-                    id: testCase.id,
-                    label: label,
-                    domain: testCase.domain,
-                    outcome: .failed,
-                    notes: notes,
-                    modelId: modelId
-                )
-            }
-            notes.append("rejected: \(reason)")
-            if let needle = exp.expectReasonContains, !reason.contains(needle) {
-                passed = false
-                notes.append("expected reason to contain '\(needle)'")
-            }
-        }
-        return .terminal(
-            id: testCase.id,
-            label: label,
-            domain: testCase.domain,
-            outcome: passed ? .passed : .failed,
-            notes: notes,
-            modelId: modelId
-        )
     }
 
     // MARK: - Computer Use domain
@@ -1277,15 +1214,16 @@ public enum EvalRunner {
             }
         }
 
-        // Per-case fixture setup. Both `seedMethods` and `enableSkills`
-        // mutate persistent state (SQLite + on-disk skill files) — the
-        // wrap snapshots prior state and restores it after the case
-        // body runs. Crashes mid-case can leak `eval-` prefixed methods
-        // and toggled-on skills into the developer's local state; we
-        // accept this as a cost of running fixtures against the live
-        // DB rather than building an isolated test harness.
+        // Per-case fixture setup. `seedMethods` mutates persistent state
+        // (SQLite) — the wrap snapshots prior state and restores it after
+        // the case body runs. Every eval process now runs against an
+        // isolated throwaway root
+        // (`EvalBootstrap.configureIsolatedRunStorage`), so a crash
+        // mid-case at worst leaks `eval-` prefixed methods into the temp
+        // root the orphan sweep later deletes — never into the developer's
+        // real databases. Skills need no per-case mutation: every installed
+        // skill is universally searchable.
         let seededMethods = await applySeedMethods(testCase.fixtures.seedMethods)
-        let priorSkillState = await applyEnableSkills(testCase.fixtures.enableSkills)
 
         let threshold = cliThresholdOverride ?? exp.thresholdOverride
         let topK = exp.topK ?? 10
@@ -1296,7 +1234,6 @@ public enum EvalRunner {
             embedCosineFloor: cliEmbedCosineFloorOverride
         )
 
-        await restoreSkillEnabledState(priorSkillState)
         await cleanupSeededMethods(seededMethods)
 
         var notes: [String] = []
@@ -1396,10 +1333,11 @@ public enum EvalRunner {
     /// rubric. Off-CI (token cost).
     ///
     /// Fixture setup mirrors `capability_search`: `requirePlugins` skips,
-    /// `enableSkills` / `enableTools` grant capabilities for the run
-    /// window and restore afterwards. `ensureToolsDisabled` skips the
-    /// case when a tool that must be absent is actually enabled, since
-    /// the runner can't safely disable globally-enabled tools.
+    /// `enableTools` grants tools for the run window and restores
+    /// afterwards. `ensureToolsDisabled` skips the case when a tool that
+    /// must be absent is actually enabled, since the runner can't safely
+    /// disable globally-enabled tools. Skills need no grant — every
+    /// installed skill is universally available.
     private static func runCapabilityClaimsCase(
         _ testCase: EvalCase,
         modelId: String
@@ -1484,21 +1422,20 @@ public enum EvalRunner {
         // suite:
         //  - Absence cases (`ensureToolsDisabled`) get an allowlist that
         //    EXCLUDES the forbidden names, so "you have no X" is provable.
-        //  - Positive cases (`enableTools` / `enableSkills` for a real
-        //    capability — e.g. the browser plugin) need the manifest to NAME
-        //    the enabled capability. The active Default agent is the
+        //  - Positive cases (`enableTools` for a real capability) need an
+        //    isolated custom agent. Dynamic tools are granted through its
+        //    allow-list; authoritatively gated built-ins such as Browser Use
+        //    are enabled through their real per-agent flag below. The active Default agent is the
         //    config-only agent: it is not in `.auto` mode, so it renders NO
         //    capability manifest, and it is designed to disclaim non-config
         //    work ("I only help configure Osaurus") — so it wrongly DENIES an
         //    enabled browser capability that the model should confirm. A
-        //    fully-enabled auto-mode agent advertises the capability in the
-        //    manifest (the lean hot set still forces `capabilities_load` for
-        //    the act-on-it cases), so the model can honestly confirm/act.
+        //    fully-enabled auto-mode agent advertises dynamic capabilities in
+        //    the manifest and injects gated built-ins directly, matching production.
         // Fall back to the active agent only when the case sets up neither side
         // (no fixtures to make authoritative).
         let claimsPositiveCapability =
             !(testCase.fixtures.enableTools?.isEmpty ?? true)
-            || !(testCase.fixtures.enableSkills?.isEmpty ?? true)
         let isolatedClaimsAgentId: UUID?
         if !claimsAbsenceNames.isEmpty {
             isolatedClaimsAgentId = installCapabilityClaimsAgent(excluding: claimsAbsenceNames)
@@ -1547,13 +1484,12 @@ public enum EvalRunner {
             }
         }
 
-        ccPhase("enable-skills-begin")
-        let priorSkillState = await applyEnableSkills(testCase.fixtures.enableSkills)
-        let priorToolGrant = await applyEnableTools(
+        ccPhase("enable-tools-begin")
+        let capabilityFixtureRestore = await applyEnableTools(
             testCase.fixtures.enableTools,
             agentId: resolvedAgentId
         )
-        ccPhase("enable-skills-done")
+        ccPhase("enable-tools-done")
 
         let judgeModel = EvalJudgeModel.resolveAndWarnOnce(runModelId: modelId)
         let started = Date()
@@ -1607,8 +1543,7 @@ public enum EvalRunner {
         }
         ccPhase("judge-done restore-begin")
 
-        await restoreToolGrant(priorToolGrant, agentId: resolvedAgentId)
-        await restoreSkillEnabledState(priorSkillState)
+        await restoreToolGrant(capabilityFixtureRestore, agentId: resolvedAgentId)
         ccPhase("restore-done")
 
         // Score.
@@ -1626,7 +1561,8 @@ public enum EvalRunner {
                     outcome: .errored,
                     notes: ["agent loop error: \(err)"],
                     modelId: modelId,
-                    latencyMs: elapsed
+                    latencyMs: elapsed,
+                    telemetry: claimsTelemetry(from: transcript)
                 ),
                 query: testCase.query
             )
@@ -1698,6 +1634,7 @@ public enum EvalRunner {
                 modelId: modelId,
                 latencyMs: elapsed,
                 judgeLatencyMs: judgeElapsed,
+                telemetry: claimsTelemetry(from: transcript),
                 judge: judgeAudit
             ),
             query: testCase.query
@@ -1731,6 +1668,27 @@ public enum EvalRunner {
             )
         )
         return report
+    }
+
+    /// Project shared capability-claims/default-agent loop telemetry into the
+    /// persisted report. Input estimates are deterministic and therefore
+    /// available for local and remote models even when runtime usage omits
+    /// completion/decode statistics.
+    private static func claimsTelemetry(
+        from transcript: CapabilityClaimsTranscript
+    ) -> EvalCaseTelemetry? {
+        let total = transcript.promptTokensTotal.map {
+            $0 + (transcript.completionTokens ?? 0)
+        }
+        let telemetry = EvalCaseTelemetry(
+            decodeTokensPerSecond: transcript.decodeTokensPerSecond,
+            completionTokens: transcript.completionTokens,
+            promptTokensTotal: transcript.promptTokensTotal,
+            peakContextTokens: transcript.peakContextTokens,
+            totalModelTokens: total,
+            modelSteps: transcript.modelSteps
+        )
+        return telemetry.isEmpty ? nil : telemetry
     }
 
     /// Agent-loop evaluator for `domain == "default_agent"`. Drives the
@@ -1826,7 +1784,8 @@ public enum EvalRunner {
                     outcome: .errored,
                     notes: ["agent loop error: \(err)"],
                     modelId: modelId,
-                    latencyMs: elapsed
+                    latencyMs: elapsed,
+                    telemetry: claimsTelemetry(from: transcript)
                 ),
                 query: testCase.query
             )
@@ -1925,10 +1884,7 @@ public enum EvalRunner {
                 modelId: modelId,
                 latencyMs: elapsed,
                 judgeLatencyMs: judgeElapsed,
-                telemetry: EvalCaseTelemetry(
-                    decodeTokensPerSecond: transcript.decodeTokensPerSecond,
-                    completionTokens: transcript.completionTokens
-                ),
+                telemetry: claimsTelemetry(from: transcript),
                 judge: judgeAudit
             ),
             query: testCase.query
@@ -2115,31 +2071,79 @@ public enum EvalRunner {
         return (true, "skill-first ok: loaded '\(matcher.skill)' before gated tool")
     }
 
-    /// Grant `names` to the agent for a case run. Returns the prior
-    /// allowlist to restore, or nil when no mutation was needed (legacy
-    /// global mode, or every name already enabled). Snapshot/restore
-    /// mirrors `applyEnableSkills`.
-    private static func applyEnableTools(
+    struct EnabledCapabilityFixtureRestore {
+        let priorToolGrant: [String]?
+        let priorBrowserUseEnabled: Bool?
+    }
+
+    /// Grant `names` to the agent for a case run. Dynamic names update the
+    /// per-agent allow-list. Authoritatively gated built-ins must use their
+    /// production flag instead: putting `browser_use` in a dynamic allow-list
+    /// does not expose it and used to make the positive browser claims cases
+    /// prove a fixture fiction rather than shipped behavior.
+    static func applyEnableTools(
         _ names: [String]?,
         agentId: UUID
-    ) async -> [String]? {
-        guard let names, !names.isEmpty else { return nil }
+    ) async -> EnabledCapabilityFixtureRestore {
+        guard let names, !names.isEmpty else {
+            return EnabledCapabilityFixtureRestore(
+                priorToolGrant: nil,
+                priorBrowserUseEnabled: nil
+            )
+        }
+
+        var priorBrowserUseEnabled: Bool?
+        let browserToolName = SubagentCapabilityRegistry.browserUse.primaryToolName
+        if names.contains(browserToolName),
+            var agent = AgentManager.shared.agent(for: agentId),
+            !agent.isBuiltIn
+        {
+            priorBrowserUseEnabled = agent.settings.browserUseEnabled
+            if !agent.settings.browserUseEnabled {
+                agent.settings.browserUseEnabled = true
+                AgentManager.shared.update(agent)
+            }
+        }
+
+        let dynamicNames = names.filter { $0 != browserToolName }
         // nil = legacy global-enabled mode: the names are already
         // reachable, so there's nothing to grant or restore.
         guard let prior = AgentManager.shared.effectiveEnabledToolNames(for: agentId) else {
-            return nil
+            return EnabledCapabilityFixtureRestore(
+                priorToolGrant: nil,
+                priorBrowserUseEnabled: priorBrowserUseEnabled
+            )
         }
         let priorSet = Set(prior)
-        let missing = names.filter { !priorSet.contains($0) }
-        if missing.isEmpty { return nil }
-        AgentManager.shared.updateEnabledToolNames(Array(priorSet.union(names)), for: agentId)
-        return prior
+        let missing = dynamicNames.filter { !priorSet.contains($0) }
+        if !missing.isEmpty {
+            AgentManager.shared.updateEnabledToolNames(
+                Array(priorSet.union(dynamicNames)),
+                for: agentId
+            )
+        }
+        return EnabledCapabilityFixtureRestore(
+            priorToolGrant: missing.isEmpty ? nil : prior,
+            priorBrowserUseEnabled: priorBrowserUseEnabled
+        )
     }
 
     /// Restore the allowlist snapshot taken by `applyEnableTools`.
-    private static func restoreToolGrant(_ prior: [String]?, agentId: UUID) async {
-        guard let prior else { return }
-        AgentManager.shared.updateEnabledToolNames(prior, for: agentId)
+    static func restoreToolGrant(
+        _ restore: EnabledCapabilityFixtureRestore,
+        agentId: UUID
+    ) async {
+        if let prior = restore.priorToolGrant {
+            AgentManager.shared.updateEnabledToolNames(prior, for: agentId)
+        }
+        if let priorBrowserUseEnabled = restore.priorBrowserUseEnabled,
+            var agent = AgentManager.shared.agent(for: agentId),
+            !agent.isBuiltIn,
+            agent.settings.browserUseEnabled != priorBrowserUseEnabled
+        {
+            agent.settings.browserUseEnabled = priorBrowserUseEnabled
+            AgentManager.shared.update(agent)
+        }
     }
 
     /// Re-establish the ephemeral remote judge provider if a configuration
@@ -2219,39 +2223,6 @@ public enum EvalRunner {
         for id in ids {
             try? MethodDatabase.shared.deleteMethod(id: id)
             await MethodSearchService.shared.removeMethod(id: id)
-        }
-    }
-
-    /// Snapshot the prior `enabled` flag of every named skill, then
-    /// flip them all on. Returns `[(skillId, priorEnabled)]` for
-    /// `restoreSkillEnabledState` to walk in reverse.
-    ///
-    /// Skill lookup is by name (case-insensitive, mirrors
-    /// `SkillManager.skill(named:)`). Names that don't resolve are
-    /// silently ignored — the `expectedSkills` matcher will surface
-    /// the miss as a real recall failure rather than a config error.
-    private static func applyEnableSkills(_ names: [String]?) async -> [(UUID, Bool)] {
-        guard let names, !names.isEmpty else { return [] }
-        var prior: [(UUID, Bool)] = []
-        for name in names {
-            guard let skill = SkillManager.shared.skill(named: name) else { continue }
-            prior.append((skill.id, skill.enabled))
-            if !skill.enabled {
-                await SkillManager.shared.setEnabled(true, for: skill.id)
-            }
-        }
-        return prior
-    }
-
-    /// Restore the snapshot taken by `applyEnableSkills`. Skips
-    /// entries whose current state already matches the prior state
-    /// to avoid an unnecessary disk write.
-    private static func restoreSkillEnabledState(_ prior: [(UUID, Bool)]) async {
-        for (id, wasEnabled) in prior {
-            guard let current = SkillManager.shared.skill(for: id) else { continue }
-            if current.enabled != wasEnabled {
-                await SkillManager.shared.setEnabled(wasEnabled, for: id)
-            }
         }
     }
 

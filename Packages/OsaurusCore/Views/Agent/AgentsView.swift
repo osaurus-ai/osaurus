@@ -37,6 +37,10 @@ struct AgentsView: View {
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var remoteAgentManager = RemoteAgentManager.shared
     @ObservedObject private var managementState = ManagementStateManager.shared
+    /// Drives the landing glow when a settings-search result targets this
+    /// screen (`agents.*` anchors). Also observed so an open detail view pops
+    /// back to the grid, where the anchored controls live.
+    @ObservedObject private var highlightCoordinator = SettingsHighlightCoordinator.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -56,10 +60,13 @@ struct AgentsView: View {
     @State private var consumedDeeplinkAgentId: UUID?
     /// One-shot inner-tab target paired with an agent id, set by the
     /// `.agentDetailDeeplink` handler so the detail view opens on a specific
-    /// tab (e.g. Subagents). Applied at `AgentDetailView` construction so it
+    /// tab (e.g. Subagents). Kept as the RAW deep-link string (not a resolved
+    /// `DetailTab`) so legacy database-surface values like `data` / `views`
+    /// survive to `AgentDetailView`, which maps them onto the Database
+    /// workspace section. Applied at `AgentDetailView` construction so it
     /// survives a cold window open; matched on id so it only affects the
     /// deep-linked agent, and cleared on back.
-    @State private var deeplinkTab: (agentId: UUID, tab: DetailTab)?
+    @State private var deeplinkTab: (agentId: UUID, tabRaw: String)?
 
     init(deeplinkAgentId: UUID? = nil) {
         self.deeplinkAgentId = deeplinkAgentId
@@ -104,7 +111,7 @@ struct AgentsView: View {
                 // state reloads via onAppear without manual onChange wiring.
                 AgentDetailView(
                     agent: agent,
-                    initialTab: deeplinkTab?.agentId == agent.id ? deeplinkTab?.tab.rawValue : nil,
+                    initialTab: deeplinkTab?.agentId == agent.id ? deeplinkTab?.tabRaw : nil,
                     onBack: {
                         deeplinkTab = nil
                         withAnimation(Self.navTransition) { selectedAgent = nil }
@@ -206,6 +213,16 @@ struct AgentsView: View {
         .onReceive(managementState.$pendingRemoteAgentDetailId) { _ in
             applyPendingRemoteAgentDetail()
         }
+        .onChange(of: highlightCoordinator.pending) { _, pending in
+            // Settings-search landings target the grid (header / agent
+            // cards); pop any open detail so the anchored control is
+            // actually on screen to glow.
+            guard let pending, pending.hasPrefix("agents.") else { return }
+            withAnimation(Self.navTransition) {
+                selectedAgent = nil
+                selectedRemoteAgentId = nil
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .agentDetailDeeplink)) { note in
             // Notification-tap deep-link router (spec §3.3). Resolves
             // the target agent and surfaces it; `AgentDetailView`
@@ -218,11 +235,13 @@ struct AgentsView: View {
             // Carry an optional inner-tab target so the detail opens on the
             // requested tab. Applied at construction below (cold open) and by
             // `AgentDetailView`'s own deeplink handler (warm, already mounted).
+            // Legacy database-surface raws (`data`, `views`, …) resolve via
+            // `DetailTab.fromDeeplink`; the raw string is preserved so the
+            // detail view can also recover the target workspace section.
             if let tabRaw = info["tab"] as? String,
-                let tab = DetailTab(rawValue: tabRaw),
-                DetailTab.allTabsForAgent(target).contains(tab)
+                DetailTab.fromDeeplink(tabRaw) != nil
             {
-                deeplinkTab = (agentId, tab)
+                deeplinkTab = (agentId, tabRaw)
             }
             withAnimation(Self.navTransition) {
                 selectedRemoteAgentId = nil
@@ -237,6 +256,7 @@ struct AgentsView: View {
         VStack(spacing: 0) {
             headerView
                 .managerHeaderEntrance(hasAppeared: hasAppeared)
+                .settingsLandingAnchor("agents.overview")
 
             // First-agent onboarding stays reachable as long as the user has no
             // *local* agents — even if they've already paired a remote agent.
@@ -292,7 +312,8 @@ struct AgentsView: View {
                                     withAnimation(Self.navTransition) { selectedAgent = agent }
                                 },
                                 onDuplicate: { duplicateAgent(agent) },
-                                onDelete: { deleteAgent(agent) }
+                                onDelete: { deleteAgent(agent) },
+                                onOpenDatabase: { openDatabase(for: agent) }
                             )
                             .gridDiffCell()
                         }
@@ -309,9 +330,24 @@ struct AgentsView: View {
                     }
                     .padding(24)
                     .gridDiffAnimation(token: gridChangeToken)
+                    // Landing target for the "Agent Database" settings-search
+                    // entry: the grid glows, and each card's Database
+                    // status/menu shortcut is the direct entry point.
+                    .settingsLandingAnchor("agents.database")
                 }
                 .opacity(hasAppeared ? 1 : 0)
             }
+        }
+    }
+
+    /// Opens `agent`'s detail view directly on the Database workspace —
+    /// the same routing a `tab: "database"` deep-link takes, so the card
+    /// shortcut and notification paths stay consistent.
+    private func openDatabase(for agent: Agent) {
+        deeplinkTab = (agent.id, "database")
+        withAnimation(Self.navTransition) {
+            selectedRemoteAgentId = nil
+            selectedAgent = agent
         }
     }
 
@@ -513,6 +549,10 @@ private struct AgentCard: View {
     let onSelect: () -> Void
     let onDuplicate: () -> Void
     let onDelete: () -> Void
+    /// Opens the agent's detail view directly on the Database workspace
+    /// (Knowledge › Database) — surfaced in the card menu so users can jump
+    /// straight to their agent's data without hunting through tabs.
+    let onOpenDatabase: () -> Void
 
     init(
         agent: Agent,
@@ -521,7 +561,8 @@ private struct AgentCard: View {
         hasAppeared: Bool,
         onSelect: @escaping () -> Void,
         onDuplicate: @escaping () -> Void,
-        onDelete: @escaping () -> Void
+        onDelete: @escaping () -> Void,
+        onOpenDatabase: @escaping () -> Void
     ) {
         self.agent = agent
         self.isActive = isActive
@@ -530,6 +571,7 @@ private struct AgentCard: View {
         self.onSelect = onSelect
         self.onDuplicate = onDuplicate
         self.onDelete = onDelete
+        self.onOpenDatabase = onOpenDatabase
     }
 
     @State private var isHovered = false
@@ -616,6 +658,13 @@ private struct AgentCard: View {
                                 Text("Duplicate", bundle: .module)
                             } icon: {
                                 Image(systemName: "doc.on.doc")
+                            }
+                        }
+                        Button(action: onOpenDatabase) {
+                            Label {
+                                Text("Open Database", bundle: .module)
+                            } icon: {
+                                Image(systemName: "cylinder.split.1x2")
                             }
                         }
                         Divider()
@@ -775,6 +824,13 @@ private struct AgentCard: View {
             chips.append(.init(icon: "clock.badge.checkmark", text: "\(automationCount)"))
         }
 
+        // Database: status chip when the agent has its private database
+        // enabled. The card menu's "Open Database" jumps straight into the
+        // workspace.
+        if agent.settings.dbEnabled {
+            chips.append(.init(icon: "cylinder.split.1x2", text: L("Database")))
+        }
+
         // Updated: relative time so it stays meaningful at a glance.
         chips.append(
             .init(icon: "clock", text: agent.updatedAt.formatted(.relative(presentation: .named)))
@@ -821,6 +877,11 @@ private struct AgentCard: View {
 
 private enum DetailTab: String, CaseIterable {
     case configure
+    /// Abilities → Overview: every capability switch in one place, paired
+    /// with a live estimated-startup-context readout. Owns the primary
+    /// on/off state that used to live in Configure → Features; deep
+    /// configuration stays in the specialist tabs it links to.
+    case abilities
     case capabilities
     /// Per-agent subagent helpers (Computer Use, spawn, image) and their
     /// inline config, bound to `AgentSettings`. Custom agents only — the built-in
@@ -833,76 +894,83 @@ private enum DetailTab: String, CaseIterable {
     /// action. Visible for every agent; the content gates itself to agents
     /// that actually have a shareable identity (`agentAddress`).
     case connections
+    /// This agent's channel messaging surface: a read-only summary of
+    /// where it replies to incoming messages (reply routing is configured
+    /// per channel, in Settings → Channels) plus the destinations where it
+    /// may start new messages of its own.
+    case channels
     case sandbox
     case automation
     case memory
-    /// Agent DB feature (spec §5.5 / §7). Visible only when
-    /// `Agent.settings.dbEnabled == true`; the tab strip filters
-    /// these out via `Self.allTabsForAgent`. Order in the strip
-    /// follows the canonical iteration order on `allCases`.
-    case home
-    case schema
-    case data
-    case views
-    case activity
+    /// The Database workspace (spec §5.5 / §7): Overview, Tables, Saved
+    /// Views, and History as sections inside ONE tab. Always visible —
+    /// when `Agent.settings.dbEnabled` is off the workspace shows an
+    /// explanatory empty state with an Enable action, so the feature
+    /// stays discoverable. Legacy deep links (`home` / `schema` / `data`
+    /// / `views` / `activity`) map onto this tab's sections via
+    /// `AgentDetailTabRoute`.
+    case database
 
-    /// DetailTabs that belong to the Agent DB feature. Hidden from
-    /// the tab strip unless the agent has `settings.dbEnabled`.
-    static let dbTabs: Set<DetailTab> = [.home, .schema, .data, .views, .activity]
-
-    /// Tabs visible for `agent`, in canonical order. We render the
-    /// schema/data/activity trio at the end so they sit visually
-    /// adjacent to memory — both surface "what does this agent
-    /// remember?" but along different axes.
+    /// Tabs visible for `agent`, in canonical order. Every built-in tab
+    /// is visible for every custom agent — the Database tab included,
+    /// so the feature is discoverable even before it's switched on.
     static func allTabsForAgent(_ agent: Agent) -> [DetailTab] {
-        var hidden: Set<DetailTab> = []
-        // Agent DB tabs only appear once the feature is on.
-        if !agent.settings.dbEnabled { hidden.formUnion(dbTabs) }
-        return DetailTab.allCases.filter { !hidden.contains($0) }
+        DetailTab.allCases
+    }
+
+    /// Resolve a deep-link tab string, including the legacy per-surface
+    /// database tab raw values (`home`, `schema`, `data`, `views`,
+    /// `activity`) that older callers still post.
+    static func fromDeeplink(_ raw: String) -> (tab: DetailTab, dbSection: AgentDatabaseSection?)? {
+        guard let route = AgentDetailTabRoute.resolve(raw),
+            let tab = DetailTab(rawValue: route.tabRawValue)
+        else { return nil }
+        return (tab, route.databaseSection)
     }
 
     var label: String {
         switch self {
         case .configure: return L("Configure")
-        case .capabilities: return L("Capabilities")
+        case .abilities: return L("Overview")
+        case .capabilities: return L("Tools")
         case .subagents: return L("Subagents")
-        case .customization: return L("Customization")
+        case .customization: return L("Appearance")
         case .network: return L("Network")
         case .connections: return L("Remote Connections")
+        case .channels: return L("Channels")
         case .sandbox: return L("Sandbox")
         case .automation: return L("Automation")
         case .memory: return L("Memory")
-        case .home: return L("Home")
-        case .schema: return L("Schema")
-        case .data: return L("Data")
-        case .views: return L("Views")
-        case .activity: return L("Activity")
+        case .database: return L("Database")
         }
     }
 
     var icon: String {
         switch self {
         case .configure: return "gear"
+        case .abilities: return "switch.2"
         case .capabilities: return "wrench.and.screwdriver"
         case .subagents: return "person.2.wave.2"
         case .customization: return "paintpalette.fill"
         case .network: return "network"
         case .connections: return "person.2.badge.key"
+        case .channels: return "bubble.left.and.bubble.right"
         case .sandbox: return "shippingbox"
         case .automation: return "clock.badge.checkmark"
         case .memory: return "brain.head.profile"
-        case .home: return "house"
-        case .schema: return "tablecells"
-        case .data: return "square.grid.3x1.below.line.grid.1x2"
-        case .views: return "eye"
-        case .activity: return "waveform.path.ecg"
+        case .database: return "cylinder.split.1x2"
         }
     }
 
     var helperText: String {
         switch self {
         case .configure: return L("Identity, model, and behavior overrides.")
-        case .capabilities: return L("Pick which tools and skills this agent can use.")
+        case .abilities:
+            return L(
+                "Everything this agent can do. Context impact updates as you turn abilities on or off."
+            )
+        case .capabilities:
+            return L("Pick which tools this agent can use. Skills come from the shared library and are always available.")
         case .subagents:
             return L(
                 "Let this agent delegate work — control your Mac, hand tasks to other agents, or generate images."
@@ -911,20 +979,69 @@ private enum DetailTab: String, CaseIterable {
         case .network: return L("Bonjour discovery and relay tunnel.")
         case .connections:
             return L("Peers granted access to this agent — usage and revocation.")
-        case .sandbox: return L("Container-based code execution.")
+        case .channels:
+            return L(
+                "Where this agent replies on Discord, Slack, Telegram, and iMessage — and where it may start messages of its own."
+            )
+        case .sandbox: return L("Sandboxed code execution.")
         case .automation: return L("Schedules and file watchers for autonomous behavior.")
         case .memory: return L("Conversation history, pinned facts, and episode summaries.")
-        case .home:
-            return L("Dashboard of pinned views — the agent's own home screen.")
-        case .schema:
-            return L("Tables, columns, indexes the agent has created in its private database.")
-        case .data:
-            return L("Browse, inspect, and export the rows stored in the agent's database.")
-        case .views:
-            return L("Saved SQL views the agent reuses across runs.")
-        case .activity:
-            return L("Run history and the audit trail of every write the agent has done.")
+        case .database:
+            return L("Everything this agent stores — browse tables, saved views, and history.")
         }
+    }
+}
+
+// MARK: - Detail Tab Groups
+
+/// Top-level navigation groups for the agent detail view. Five stable,
+/// plain-language buckets replace the old flat strip of 14+ tabs; agent
+/// plugins (and failed plugins) join the Abilities group.
+private enum DetailTabGroup: String, CaseIterable {
+    case general
+    case abilities
+    case connections
+    case automation
+    case knowledge
+
+    var label: String {
+        switch self {
+        case .general: return L("General")
+        case .abilities: return L("Abilities")
+        case .connections: return L("Connections")
+        case .automation: return L("Automation")
+        // Labeled "Memory" (the group holds the Memory and Database tabs)
+        // so it can't be confused with the knowledge-collections feature,
+        // which lives in Abilities and in the main window's Knowledge
+        // section.
+        case .knowledge: return L("Memory")
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .general: return "gear"
+        case .abilities: return "wrench.and.screwdriver"
+        case .connections: return "network"
+        case .automation: return "clock.badge.checkmark"
+        case .knowledge: return "brain.head.profile"
+        }
+    }
+
+    /// Built-in tabs that live inside this group, in display order.
+    var builtInTabs: [DetailTab] {
+        switch self {
+        case .general: return [.configure, .customization]
+        case .abilities: return [.abilities, .capabilities, .subagents, .sandbox]
+        case .connections: return [.network, .connections, .channels]
+        case .automation: return [.automation]
+        case .knowledge: return [.memory, .database]
+        }
+    }
+
+    /// The group that hosts `tab`.
+    static func group(for tab: DetailTab) -> DetailTabGroup {
+        allCases.first { $0.builtInTabs.contains(tab) } ?? .general
     }
 }
 
@@ -942,6 +1059,7 @@ private enum AgentTab: Hashable {
 // MARK: - Agent Detail View
 
 struct AgentDetailView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
     private let scheduleManager = ScheduleManager.shared
@@ -985,8 +1103,11 @@ struct AgentDetailView: View {
         // Seed the inner tab at construction so a deep-link (e.g. the What's New
         // "Open Subagent settings" CTA) lands on the right tab even on a cold
         // window open, where a post-mount notification would race the view.
-        let resolvedInitialTab = initialTab.flatMap(DetailTab.init(rawValue:)) ?? .configure
-        _selectedTab = State(initialValue: .builtIn(resolvedInitialTab))
+        // Legacy database-surface raws (`home` / `schema` / `data` / `views` /
+        // `activity`) resolve to the Database tab plus a workspace section.
+        let resolved = initialTab.flatMap(DetailTab.fromDeeplink)
+        _selectedTab = State(initialValue: .builtIn(resolved?.tab ?? .configure))
+        _pendingDatabaseSection = State(initialValue: resolved?.dbSection)
     }
 
     // MARK: - Editable State
@@ -1001,17 +1122,26 @@ struct AgentDetailView: View {
     @State private var editingQuickActionId: UUID?
     @State private var pluginInstructionsMap: [String: String] = [:]
     /// Positive-polarity local mirrors of `Agent.toolsEnabled` /
-    /// `Agent.memoryEnabled` (default true). The Features toggles bind
-    /// directly; `saveAgent` folds them back into the persisted agent.
+    /// `Agent.memoryEnabled` (default true). The Abilities overview cards
+    /// bind directly; `saveAgent` folds them back into the persisted agent.
     @State private var toolsEnabled: Bool = true
+    /// Turning a tool-backed ability on while Tools is off (or tapping its
+    /// "Inactive while Tools is off" chip) scrolls to the Tools card and
+    /// pulses the shared search-highlight glow on it, pointing at the
+    /// master switch that unlocks the ability. The nonce keys the scroll;
+    /// the generation counter lets a pulse's delayed auto-clear detect
+    /// that a newer tap superseded it.
+    @State private var scrollToToolsNonce = 0
+    @State private var toolsHighlightActive = false
+    @State private var toolsHighlightGeneration = 0
     @State private var memoryEnabled: Bool = true
     /// Local mirror of `Agent.settings.dbEnabled` (spec §5.5). The
-    /// Features section binds a toggle to this; `debouncedSave`
+    /// Abilities overview binds a card to this; `debouncedSave`
     /// folds it back into the persisted `AgentSettings` block.
     @State private var dbEnabled: Bool = false
     /// Local mirrors of the per-agent built-in tool gates
-    /// (`render_chart` / `speak` / `search_memory`). The Features
-    /// section binds individual toggles to these; `saveAgent` folds
+    /// (`render_chart` / `speak` / `search_memory`). The Abilities
+    /// overview binds individual cards to these; `saveAgent` folds
     /// them back into the persisted `AgentSettings` block.
     @State private var renderChartEnabled: Bool = false
     @State private var speakEnabled: Bool = false
@@ -1019,6 +1149,14 @@ struct AgentDetailView: View {
     /// Native `web_search` gate — default ON (free providers need no setup).
     @State private var webSearchEnabled: Bool = true
     @State private var selfSchedulingEnabled: Bool = false
+    /// Local mirrors of the knowledge feature (`AgentSettings.knowledgeEnabled`
+    /// + collection grants). The Features section binds these; `saveAgent`
+    /// folds them back into the persisted `AgentSettings` block.
+    @State private var knowledgeEnabled: Bool = false
+    @State private var knowledgeCollectionIds: [UUID] = []
+    @State private var knowledgeCuratorEnabled: Bool = false
+    /// Registry of knowledge collections for the grants checklist.
+    @ObservedObject private var knowledgeManager = KnowledgeManager.shared
     /// Per-agent subagent capability toggles, keyed by the capability
     /// registry's `PerAgentFlag` (computer_use, spawn, image). Hydrated in
     /// `loadAgent` by looping the registry and folded back into `AgentSettings`
@@ -1028,13 +1166,15 @@ struct AgentDetailView: View {
     /// Convenience reads over `subagentToggles` so the save path and the
     /// inline config rows keep their existing call sites.
     private var computerUseEnabled: Bool { subagentToggles[.computerUse] ?? false }
+    private var browserUseEnabled: Bool { subagentToggles[.browserUse] ?? false }
     private var spawnDelegationEnabled: Bool { subagentToggles[.spawn] ?? false }
     private var imageEnabled: Bool { subagentToggles[.image] ?? false }
+    private var videoEnabled: Bool { subagentToggles[.video] ?? false }
     private var appleScriptEnabled: Bool { subagentToggles[.appleScript] ?? false }
     /// Per-agent `spawn_agent` allow-list (which agents this agent may spawn).
-    /// Mirrored from / into `AgentSettings.spawnableAgentNames`; empty hides the
+    /// Mirrored from / into `AgentSettings.spawnableAgentIDs`; empty hides the
     /// `spawn_agent` tool.
-    @State private var spawnableAgentNames: [String] = []
+    @State private var spawnableAgentIDs: [UUID] = []
     /// Per-agent `spawn_model` allow-list (raw model ids this agent may spawn).
     /// Mirrored from / into `AgentSettings.spawnableModelNames`; empty hides the
     /// `spawn_model` tool.
@@ -1042,16 +1182,6 @@ struct AgentDetailView: View {
     /// Per-agent "when/how to use" notes keyed by spawnable model id. Mirrored
     /// from / into `AgentSettings.spawnableModelNotes`; pruned to the pool on save.
     @State private var spawnableModelNotes: [String: String] = [:]
-    /// Drives the "Add agent" / "Add model" multi-select popovers in the spawn
-    /// config panel (UI-only; the selections persist immediately on toggle).
-    @State private var spawnAgentPickerPresented = false
-    @State private var spawnModelPickerPresented = false
-    @State private var spawnAgentSearch = ""
-    @State private var spawnModelSearch = ""
-    /// Whether the Spawn card's "Limits" budget steppers are expanded. Collapsed
-    /// by default — the normalized defaults are sensible, so these are power-user
-    /// knobs tucked behind a disclosure (a one-line summary shows when closed).
-    @State private var spawnLimitsExpanded = false
     /// Per-agent autonomy ceiling for Computer Use (PR2). `nil` means no
     /// ceiling. Mirrored from / into `AgentSettings.computerUseCeiling`.
     @State private var computerUseCeiling: AutonomyCeiling? = nil
@@ -1065,8 +1195,10 @@ struct AgentDetailView: View {
     /// Per-agent image model bundle ids (generation / edit). `nil` resolves to
     /// the first ready model at run time. Mirrored from / into
     /// `AgentSettings.imageGenerationModelId` / `imageEditModelId`.
-    @State private var imageGenerationModelId: String? = nil
+    @State private var imageGenerationTarget: MediaModelTarget? = nil
     @State private var imageEditModelId: String? = nil
+    @State private var textToVideoTarget: MediaModelTarget? = nil
+    @State private var imageToVideoTarget: MediaModelTarget? = nil
     /// Per-agent AppleScript model bundle id (`nil` resolves to the first
     /// installed catalog model at run time) and execution mode (confirm each
     /// script vs auto-run with a warning). Mirrored from / into
@@ -1076,6 +1208,12 @@ struct AgentDetailView: View {
     /// Per-agent delegation permissions (spawn / image) + spawn budgets. Mirrored
     /// from / into `AgentSettings`.
     @State private var subagentPermissions: SubagentPermissionDefaults = SubagentPermissionDefaults()
+    /// Permission snapshot loaded into this editor. Live approval prompts can
+    /// update AgentManager while the view remains open; save performs a
+    /// three-way merge against this baseline so unrelated edits do not restore
+    /// stale permission values.
+    @State private var loadedSubagentPermissions: SubagentPermissionDefaults =
+        SubagentPermissionDefaults()
     @State private var subagentBudgets: SubagentBudgets = SubagentBudgets()
     @State private var spawnToolAccess: SpawnToolAccess = .none
     /// Per-agent subagent model overrides keyed by capability id (computer_use /
@@ -1083,33 +1221,71 @@ struct AgentDetailView: View {
     /// Mirrored from / into `AgentSettings.subagentModelOverrides`.
     @State private var subagentModelOverrides: [String: String] = [:]
     /// Read-only snapshot of the global `SubagentConfiguration`, loaded in
-    /// `loadAgentData`. Used only by `spawnHandoffDisabledWarning` to surface the
-    /// Local Orchestrator Handoff state while configuring an agent's spawn pool;
-    /// the handoff toggle itself lives in Settings → Subagents.
+    /// `loadAgentData`. The shared Spawn editor uses it to surface the Local
+    /// Orchestrator Handoff state while configuring an agent's spawn pool; the
+    /// handoff toggle itself lives in Settings → Subagents.
     @State private var globalSubagentConfig: SubagentConfiguration = .default
+
+    /// Custom agents keep their own token / turn / tool / elapsed budgets, but
+    /// parallel fan-out is one shared Server + Spawn setting. The binding makes
+    /// the shared value visible immediately and routes an explicit agent-editor
+    /// change through the live Server controller before the debounced agent save.
+    private var sharedSpawnBudgetsBinding: Binding<SubagentBudgets> {
+        Binding(
+            get: {
+                SpawnBatchConcurrencyContract.applyingSharedLimit(
+                    from: globalSubagentConfig,
+                    to: subagentBudgets
+                )
+            },
+            set: { newValue in
+                let normalized = newValue.normalized
+                let requested = normalized.maxParallelSpawns
+                subagentBudgets = normalized
+
+                let live = SubagentConfigurationStore.snapshot()
+                guard
+                    SpawnBatchConcurrencyContract.configuredLimit(for: live)
+                        != requested
+                else {
+                    if globalSubagentConfig != live {
+                        globalSubagentConfig = live
+                    }
+                    return
+                }
+
+                let saved = SubagentConfigurationStore.mutate { configuration in
+                    configuration.budgets.maxParallelSpawns = requested
+                }
+                globalSubagentConfig = saved
+                Task { @MainActor in
+                    await ServerController.applyAgentSpawnBatchLimit(requested)
+                }
+            }
+        )
+    }
     /// Display mirror of `Agent.hostWorkspacePath`. Drives the Host Files row
     /// so the selected folder updates immediately after the user picks/clears
     /// it (the persisted bookmark on `Agent.hostWorkspaceBookmark` is the real
     /// grant). `nil` means no host folder is granted.
     @State private var hostWorkspacePath: String? = nil
-    /// Per-agent on/off for the chat empty-state generative greeting.
-    /// Default off, like the other capability flags; the agent opts in
-    /// from the Features tab. Drives whether the Empty State section
-    /// shows the AI personality editor or the manual greeting editor.
-    /// Flows through `loadAgent` / `saveAgent` like the other
-    /// `AgentSettings` fields.
-    @State private var generativeGreetingsEnabled: Bool = false
-    /// Per-agent override for the empty-state greeting voice. Empty-after-
-    /// trim falls through to the global persona on
-    /// `ChatConfiguration.greetingPersona`; both empty falls back to the
-    /// built-in default in `GenerativeGreetingService`.
-    @State private var greetingPersona: String = ""
+    /// One live startup-context estimate shared by every Abilities sub-tab.
+    /// Specialist editors report local values here before persistence lands.
+    @State private var abilityContextPreview: AgentAbilityContextPreview?
+    @State private var abilityContextDelta: Int?
+    @State private var abilityContextDeltaDismissTask: Task<Void, Never>?
+    @State private var abilityPreviewToolMode: ToolSelectionMode?
+    @State private var abilityPreviewToolNames: Set<String>?
+    @State private var abilityPreviewAutonomousConfig: AutonomousExecConfig?
+    @State private var abilityPreviewRegistryRevision = 0
+    /// Editable mirror of `AutonomousExecConfig.sandboxAllowedDomains`
+    /// (comma-joined). Committed (normalized + persisted) on submit.
+    @State private var sandboxAllowedDomainsText: String = ""
     /// Manual override for `Agent.chatGreeting`. Empty-after-trim becomes
     /// `nil` on save so the chat empty state falls through to the
-    /// time-of-day default. Only rendered when `generativeGreetingsEnabled`
-    /// is OFF for this agent.
+    /// time-of-day default.
     @State private var chatGreetingDraft: String = ""
-    /// Manual override for `Agent.chatSubtitle`. Same gating and
+    /// Manual override for `Agent.chatSubtitle`. Uses the same
     /// trim-empty-to-nil semantics as `chatGreetingDraft`.
     @State private var chatSubtitleDraft: String = ""
     /// Bound to the `Delete Data` confirmation dialog. We require an
@@ -1165,16 +1341,21 @@ struct AgentDetailView: View {
 
     @State private var selectedTab: AgentTab = .builtIn(.configure)
     /// Optional saved-view name to focus when the user lands on the
-    /// Views tab via the notification deep-link (spec §3.3). Passed
-    /// through to `ViewsTabView`, which uses it as an initial
-    /// `selection`. Cleared back to `nil` once the user navigates
-    /// elsewhere so re-entering the tab manually doesn't keep
-    /// snapping back to the old view.
+    /// Database workspace via the notification deep-link (spec §3.3).
+    /// Passed through to `DatabaseWorkspaceView`, which uses it as an
+    /// initial selection. Cleared back to `nil` once the user navigates
+    /// elsewhere so re-entering the tab manually doesn't keep snapping
+    /// back to the old view.
     @State private var pendingFocusedViewName: String? = nil
     /// Optional table name to pre-select when the user lands on the
-    /// Data tab via the Schema-tab "Browse" deep-link. Same lifecycle
+    /// Database workspace via a `tableRef` deep-link. Same lifecycle
     /// as `pendingFocusedViewName`.
     @State private var pendingFocusedTableName: String? = nil
+    /// Workspace section the Database tab should open on, resolved from
+    /// the deep-link raw tab value (legacy `home` / `schema` / `data` /
+    /// `views` / `activity` map to sections). Cleared once the user
+    /// navigates away so manual re-entry lands on the default section.
+    @State private var pendingDatabaseSection: AgentDatabaseSection? = nil
     @State private var saveIndicator: String?
     @State private var saveDebounceTask: Task<Void, Never>?
     @State private var showDeleteConfirm = false
@@ -1275,44 +1456,63 @@ struct AgentDetailView: View {
     private var tabContent: some View {
         switch selectedTab {
         case .builtIn(.capabilities):
-            AgentCapabilityManagerView(agentId: agent.id, onDismiss: nil)
-                .environment(\.theme, themeManager.currentTheme)
-                .id(selectedTab)
-        case .builtIn(.home):
-            HomeTabView(agentId: agent.id)
-                .environment(\.theme, themeManager.currentTheme)
-                .id(selectedTab)
-        case .builtIn(.schema):
-            SchemaTabView(agentId: agent.id)
-                .environment(\.theme, themeManager.currentTheme)
-                .id(selectedTab)
-        case .builtIn(.data):
-            DataTabView(
+            AgentCapabilityManagerView(
                 agentId: agent.id,
-                initialSelectedTable: pendingFocusedTableName
-            )
-            .environment(\.theme, themeManager.currentTheme)
-            .id(selectedTab)
-        case .builtIn(.views):
-            ViewsTabView(
-                agentId: agent.id,
-                initialFocusedViewName: pendingFocusedViewName
-            )
-            .environment(\.theme, themeManager.currentTheme)
-            .id(selectedTab)
-        case .builtIn(.activity):
-            ActivityTabView(agentId: agent.id)
-                .environment(\.theme, themeManager.currentTheme)
-                .id(selectedTab)
-        default:
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    scrollableTabContent
+                onDismiss: nil,
+                onSelectionChanged: { mode, names in
+                    abilityPreviewToolMode = mode
+                    abilityPreviewToolNames = names
                 }
-                .padding(24)
+            )
+                .environment(\.theme, themeManager.currentTheme)
                 .id(selectedTab)
+        case .builtIn(.database):
+            DatabaseWorkspaceView(
+                agentId: agent.id,
+                isEnabled: dbEnabled,
+                isRemoteProvider: isUsingRemoteProvider,
+                initialSection: pendingDatabaseSection,
+                initialTableName: pendingFocusedTableName,
+                initialViewName: pendingFocusedViewName,
+                isBundleBusy: isBundleBusy,
+                onEnable: {
+                    dbEnabled = true
+                    debouncedSave()
+                },
+                onExportBundle: { beginBundleExport() },
+                onImportBundle: { beginBundleImport() },
+                onDeleteData: { showDeleteDBConfirmation = true }
+            )
+            .environment(\.theme, themeManager.currentTheme)
+            .id(selectedTab)
+        default:
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        scrollableTabContent
+                    }
+                    .padding(24)
+                    .id(selectedTab)
+                }
+                .animation(nil, value: selectedTab)
+                .onChange(of: scrollToToolsNonce) { _, _ in
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        proxy.scrollTo(Self.toolsToggleScrollId, anchor: .center)
+                    }
+                }
             }
-            .animation(nil, value: selectedTab)
+        }
+    }
+
+    /// Context is an Abilities-group status, not destination content. Keep the
+    /// same compact control visible for built-in and plugin tabs in the group.
+    private var isAbilitiesGroupSelected: Bool {
+        switch selectedTab {
+        case .builtIn(.abilities), .builtIn(.capabilities), .builtIn(.subagents),
+            .builtIn(.sandbox), .plugin, .failedPlugin:
+            return true
+        default:
+            return false
         }
     }
 
@@ -1334,17 +1534,18 @@ struct AgentDetailView: View {
             }
 
             VStack(alignment: .leading, spacing: 0) {
+                // The grouped strip owns its padding + the sub-row's
+                // full-bleed background, so it sits flush here.
                 tabBar
-                    .padding(.horizontal, 20)
-                    .padding(.top, 8)
 
                 Divider()
                     .foregroundColor(theme.primaryBorder)
 
-                // Capabilities + Schema/Data/Activity host their own scrolling
-                // (NSTableView / NSOutlineView). Rendering them directly —
-                // without the outer ScrollView the other tabs share — keeps
-                // their tables flush and avoids nested scrolling.
+                // Capabilities + the Database workspace host their own
+                // scrolling (NSTableView / NSOutlineView). Rendering them
+                // directly — without the outer ScrollView the other tabs
+                // share — keeps their tables flush and avoids nested
+                // scrolling.
                 tabContent
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1365,6 +1566,12 @@ struct AgentDetailView: View {
                 isInitialLoadComplete = true
             }
         }
+        .task(id: abilityDraft) {
+            await refreshAbilityContextPreview()
+        }
+        .onDisappear {
+            abilityContextDeltaDismissTask?.cancel()
+        }
         .onChange(of: agent.id) { _, _ in
             refreshDetailCaches()
         }
@@ -1377,18 +1584,22 @@ struct AgentDetailView: View {
         .onReceive(NotificationCenter.default.publisher(for: .watchersChanged)) { _ in
             refreshDetailCaches()
         }
-        .onChange(of: dbEnabled) { _, newValue in
-            // Watch the local `@State dbEnabled` (driven by the Configure
-            // tab toggle), not `agent.settings.dbEnabled` — the prop is
-            // frozen at view construction and would never fire. If the
-            // user just turned the DB feature off while sitting on a
-            // DB-only tab, snap back to Configure so they're not
-            // stranded on a tab whose data has just been deleted.
-            if !newValue,
-                case .builtIn(let dt) = selectedTab,
-                DetailTab.dbTabs.contains(dt)
-            {
-                selectedTab = .builtIn(.configure)
+        // The Spawn editor reads Local Orchestrator Handoff from the shared
+        // global store. Keep an already-open custom agent in sync when the
+        // setting changes elsewhere, matching ConfigurationView's
+        // notification-driven refresh instead of requiring the user to close
+        // and reopen this detail view.
+        .onReceive(
+            NotificationCenter.default.publisher(for: .subagentConfigurationChanged)
+        ) { _ in
+            let latest = SubagentConfigurationStore.snapshot()
+            if latest != globalSubagentConfig { globalSubagentConfig = latest }
+            let synchronized = SpawnBatchConcurrencyContract.applyingSharedLimit(
+                from: latest,
+                to: subagentBudgets
+            )
+            if synchronized != subagentBudgets {
+                subagentBudgets = synchronized
             }
         }
         .onChange(of: selfSchedulingEnabled) { _, newValue in
@@ -1412,45 +1623,41 @@ struct AgentDetailView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .agentDetailDeeplink)) { note in
-            // Tab + entity deep-link handler. Used by:
-            //   - `NotifyTool` taps (`tab: "views"`, `viewRef: ...`)
-            //   - `SchemaTabView` "Browse" button (`tab: "data"`,
-            //     `tableRef: ...`)
-            // AgentsView selects the right agent via the same
-            // notification; this handler just flips the inner tab
-            // and stashes the entity name for the destination tab to
-            // pick up on first load.
+            // Tab + entity deep-link handler. Used by `NotifyTool` taps
+            // (`tab: "views"`, `viewRef: ...`) and legacy database-surface
+            // callers (`tab: "data"`, `tableRef: ...`). AgentsView selects
+            // the right agent via the same notification; this handler just
+            // flips the inner tab (mapping legacy raws onto the Database
+            // workspace) and stashes the entity name for the destination
+            // to pick up on first load.
             guard let info = note.userInfo,
                 let targetId = info["agentId"] as? UUID,
                 targetId == agent.id
             else { return }
             if let tabRaw = info["tab"] as? String,
-                let tab = DetailTab(rawValue: tabRaw),
-                DetailTab.allTabsForAgent(currentAgent).contains(tab)
+                let resolved = DetailTab.fromDeeplink(tabRaw)
             {
                 pendingFocusedViewName = info["viewRef"] as? String
                 pendingFocusedTableName = info["tableRef"] as? String
-                selectedTab = .builtIn(tab)
+                pendingDatabaseSection = resolved.dbSection
+                selectedTab = .builtIn(resolved.tab)
             }
         }
         .onChange(of: selectedTab) { _, newValue in
             // Drop any leftover notification-driven focus when the
-            // user navigates to a tab the focus doesn't apply to.
-            // The focused-name state is set together with
-            // `selectedTab` in the deeplink handler above so it
-            // survives this transition exactly once.
-            switch newValue {
-            case .builtIn(.views):
-                pendingFocusedTableName = nil
-            case .builtIn(.data):
-                pendingFocusedViewName = nil
-            default:
+            // user navigates away from the Database workspace. The
+            // focused-name state is set together with `selectedTab`
+            // in the deeplink handler above so it survives the
+            // transition into the workspace exactly once.
+            if newValue != .builtIn(.database) {
                 pendingFocusedViewName = nil
                 pendingFocusedTableName = nil
+                pendingDatabaseSection = nil
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
             loadedPluginsRefreshNonce &+= 1
+            abilityPreviewRegistryRevision &+= 1
             switch selectedTab {
             case .plugin(let pid):
                 let stillVisible = PluginManager.shared.plugins.contains {
@@ -1487,6 +1694,26 @@ struct AgentDetailView: View {
 
     private var bodyWithSheets: some View {
         bodyCore
+            // Attached at the body level (not inside a tab) because the
+            // Delete Data action is triggered from the Database workspace
+            // as well as legacy call sites.
+            .confirmationDialog(
+                "Delete this agent's database?",
+                isPresented: $showDeleteDBConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button(localized: "Delete Data", role: .destructive) {
+                    deleteAgentDatabaseData()
+                }
+                Button(localized: "Cancel", role: .cancel) {}
+            } message: {
+                Text(
+                    "This permanently erases the encrypted SQLite database, all "
+                        + "schema artifacts, all scheduled / pause state, and the run "
+                        + "history for this agent. The agent itself stays. This can't "
+                        + "be undone."
+                )
+            }
             .sheet(
                 isPresented: Binding(
                     get: { bundleExportDestination != nil },
@@ -1736,8 +1963,8 @@ struct AgentDetailView: View {
         switch tab {
         case .builtIn(let dt):
             switch dt {
-            case .configure, .capabilities, .subagents, .customization, .network, .connections,
-                .sandbox, .home, .schema, .data, .views, .activity:
+            case .configure, .abilities, .capabilities, .subagents, .customization, .network,
+                .connections, .channels, .sandbox, .database:
                 return nil
             case .automation:
                 let count = linkedSchedules.count + linkedWatchers.count
@@ -1756,56 +1983,91 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Horizontally scrollable tab bar — built-in tabs stay leftmost, then one
-    /// per plugin, then any failed-plugin warning tabs. The shared
-    /// `AgentDetailTabStrip` owns the scroll / overflow-fade / chevron chrome,
-    /// so this view only maps the agent's tab sources into items.
+    /// Two-level navigation: five stable groups on top, the active
+    /// group's tabs as pills below. `AgentDetailGroupedTabStrip` owns the
+    /// chrome; this view only maps the agent's tab sources into groups.
     private var tabBar: some View {
-        AgentDetailTabStrip(items: tabItems, selection: $selectedTab)
+        AgentDetailGroupedTabStrip(
+            groups: tabGroups,
+            selection: $selectedTab,
+            trailingAccessory:
+                isAbilitiesGroupSelected
+                ? AnyView(
+                    AgentAbilityContextPreviewBar(
+                        preview: abilityContextPreview,
+                        delta: abilityContextDelta,
+                        enabledCount: abilityFlagValues.filter { $0 }.count,
+                        totalCount: abilityFlagValues.count
+                    )
+                )
+                : nil
+        )
     }
 
-    /// Built-in + plugin + failed-plugin tabs as `AgentDetailTabStrip` items.
-    /// IMPORTANT: read from `currentAgent`, not the captured `agent` prop — the
-    /// prop is frozen at view construction, while `currentAgent` re-fetches from
-    /// `AgentManager` so flipping `Enable Database` in Configure causes the DB
-    /// tabs (Home/Schema/Data/Views/Activity) to appear here.
-    private var tabItems: [AgentDetailTabItem<AgentTab>] {
-        var items: [AgentDetailTabItem<AgentTab>] = []
-        for tab in DetailTab.allTabsForAgent(currentAgent) {
-            items.append(
-                AgentDetailTabItem(
-                    id: .builtIn(tab),
-                    label: tab.label,
-                    icon: tab.icon,
-                    badgeCount: tabBadgeCount(for: .builtIn(tab))
-                )
+    private func tabItem(for tab: DetailTab) -> AgentDetailTabItem<AgentTab> {
+        AgentDetailTabItem(
+            id: .builtIn(tab),
+            label: tab.label,
+            icon: tab.icon,
+            badgeCount: tabBadgeCount(for: .builtIn(tab)),
+            help: tab.helperText
+        )
+    }
+
+    /// Built-in tabs mapped into their groups, with agent plugins (and
+    /// failed plugins) appended to the Abilities group. Group badges
+    /// surface the automation count and the memory-session count; a
+    /// failed plugin marks the Abilities group with the warning tint so
+    /// the problem is visible before the group is opened.
+    private var tabGroups: [AgentDetailTabGroup<AgentTab>] {
+        DetailTabGroup.allCases.map { group in
+            var items = group.builtInTabs.map(tabItem(for:))
+            if group == .abilities {
+                for loaded in agentPlugins {
+                    items.append(
+                        AgentDetailTabItem(
+                            id: .plugin(loaded.plugin.id),
+                            label: loaded.plugin.manifest.name ?? loaded.plugin.id,
+                            icon: "puzzlepiece.extension",
+                            badgeCount: tabBadgeCount(for: .plugin(loaded.plugin.id))
+                        )
+                    )
+                }
+                // Failed plugins surface AFTER successfully loaded ones so
+                // the warning pills cluster on the trailing edge. Each shows
+                // a structured error + Retry via `failedPluginTabContent`.
+                for failed in agentFailedPlugins {
+                    items.append(
+                        AgentDetailTabItem(
+                            id: .failedPlugin(failed.pluginId),
+                            label: failedPluginTabLabel(for: failed),
+                            icon: "exclamationmark.triangle.fill",
+                            isWarning: true
+                        )
+                    )
+                }
+            }
+            let badge: Int? = {
+                switch group {
+                case .automation:
+                    let count = linkedSchedules.count + linkedWatchers.count
+                    return count > 0 ? count : nil
+                case .knowledge:
+                    let count = chatSessions.count
+                    return count > 0 ? count : nil
+                case .general, .abilities, .connections:
+                    return nil
+                }
+            }()
+            return AgentDetailTabGroup(
+                id: group.rawValue,
+                label: group.label,
+                icon: group.icon,
+                items: items,
+                badgeCount: badge,
+                isWarning: group == .abilities && !agentFailedPlugins.isEmpty
             )
         }
-        for loaded in agentPlugins {
-            items.append(
-                AgentDetailTabItem(
-                    id: .plugin(loaded.plugin.id),
-                    label: loaded.plugin.manifest.name ?? loaded.plugin.id,
-                    icon: "puzzlepiece.extension",
-                    badgeCount: tabBadgeCount(for: .plugin(loaded.plugin.id))
-                )
-            )
-        }
-        // Failed plugins surface AFTER successfully loaded ones so the warning
-        // tabs cluster on the trailing edge of the strip — visually obvious
-        // without crowding the happy-path tabs. Each shows a structured error +
-        // Retry button via `failedPluginTabContent`.
-        for failed in agentFailedPlugins {
-            items.append(
-                AgentDetailTabItem(
-                    id: .failedPlugin(failed.pluginId),
-                    label: failedPluginTabLabel(for: failed),
-                    icon: "exclamationmark.triangle.fill",
-                    isWarning: true
-                )
-            )
-        }
-        return items
     }
 
     private func tabHelperText(_ text: String) -> some View {
@@ -1839,18 +2101,12 @@ struct AgentDetailView: View {
         defaultModelSection
         // The schedule-mode picker is configuration for the self-scheduling
         // feature, so it only appears once that capability is switched on
-        // (the master toggle lives in the Features section below). With it
-        // off the agent has no scheduler tools, so the bounds picker would
-        // be dead UI.
+        // (the master toggle lives in Abilities → Overview). With it off
+        // the agent has no scheduler tools, so the bounds picker would be
+        // dead UI.
         if agent.id != Agent.defaultId, selfSchedulingEnabled {
             scheduleSection
         }
-        // Feature toggles are always visible (not tucked behind the Advanced
-        // disclosure) so the per-agent capability surface — model access,
-        // output, memory, autonomy, data, and code execution — is
-        // discoverable at a glance. The Advanced Settings disclosure sits at
-        // the very bottom.
-        featuresSection
         advancedSettingsDisclosure
     }
 
@@ -1862,6 +2118,8 @@ struct AgentDetailView: View {
         switch selectedTab {
         case .builtIn(.configure):
             configureTabContent
+        case .builtIn(.abilities):
+            abilitiesTabContent
         case .builtIn(.subagents):
             subagentsTabContent
         case .builtIn(.customization):
@@ -1870,19 +2128,17 @@ struct AgentDetailView: View {
             networkTabContent
         case .builtIn(.connections):
             connectionsTabContent
+        case .builtIn(.channels):
+            channelsTabContent
         case .builtIn(.sandbox):
             sandboxTabContent
         case .builtIn(.automation):
             automationTabContent
         case .builtIn(.memory):
             memoryTabContent
-        case .builtIn(.home),
-            .builtIn(.schema),
-            .builtIn(.data),
-            .builtIn(.views),
-            .builtIn(.activity):
+        case .builtIn(.database):
             // Routed at the body level outside the ScrollView (the
-            // DB tabs host their own scrolling); the
+            // Database workspace hosts its own scrolling); the
             // ScrollView-wrapping path would force a fixed sizing.
             EmptyView()
         case .builtIn(.capabilities):
@@ -1983,9 +2239,9 @@ struct AgentDetailView: View {
     }
 
     /// Tiny one-line summary shown next to "Advanced Settings" so users can see at
-    /// a glance whether anything in there is overridden. The feature toggles now
-    /// live in the always-visible Features section, so only generation overrides
-    /// remain behind this disclosure.
+    /// a glance whether anything in there is overridden. The capability toggles
+    /// live on Abilities → Overview, so only generation overrides remain behind
+    /// this disclosure.
     private var advancedSummary: String {
         var parts: [String] = []
         if !temperature.isEmpty || !maxTokens.isEmpty { parts.append("generation") }
@@ -2000,87 +2256,14 @@ struct AgentDetailView: View {
         themeSection
     }
 
-    /// Customization → Empty State. The Generative Greetings toggle in
-    /// the Features tab decides which editor shows here:
-    /// - **on** → free-text Personality drives the generated greeting + actions.
-    /// - **off** → user-authored Greeting / Message / Action Bar.
-    /// We render only the active side so the surface stays calm.
+    /// Customization → Empty State. Provides user-authored Greeting, Message,
+    /// and Action Bar controls.
     private var emptyStateSection: some View {
         AgentDetailSection(title: L("Empty State"), icon: "sparkles") {
-            VStack(alignment: .leading, spacing: 14) {
-                if generativeGreetingsEnabled {
-                    aiEmptyStateBody
-                } else {
-                    manualEmptyStateBody
-                    Text(
-                        "Turn on Generative Greetings in the Features tab to use an AI-written greeting instead.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                }
-            }
-            .onChange(of: chatGreetingDraft) { debouncedSave() }
-            .onChange(of: chatSubtitleDraft) { debouncedSave() }
+            manualEmptyStateBody
+                .onChange(of: chatGreetingDraft) { debouncedSave() }
+                .onChange(of: chatSubtitleDraft) { debouncedSave() }
         }
-    }
-
-    /// AI side: just the Personality editor with one short helper line.
-    /// We drop the noisy "Generates a fresh greeting + four quick
-    /// actions on your Core Model. Falls back to the static defaults
-    /// silently on any failure." paragraph — that's runtime trivia,
-    /// not configuration the user needs to think about. The label row
-    /// also hosts a "Reset to Default" button that flips the editor
-    /// back to whatever the agent currently inherits.
-    private var aiEmptyStateBody: some View {
-        let isAtDefault =
-            greetingPersona.trimmingCharacters(in: .whitespacesAndNewlines)
-            == resolvedPersonaDefault.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("Personality", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-                if !isAtDefault {
-                    Button {
-                        greetingPersona = resolvedPersonaDefault
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.uturn.backward")
-                                .font(.system(size: 10, weight: .semibold))
-                            Text("Reset to Default", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundColor(theme.accentColor)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            personalityEditor
-
-            Text(
-                "Inherits from the global personality in Settings → Chat. Edit to give this agent its own voice.",
-                bundle: .module
-            )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
-        }
-    }
-
-    /// Resolved default for the per-agent Personality field. The editor
-    /// inherits from the global persona on `ChatConfiguration.greetingPersona`
-    /// when the agent has no explicit override; if the global is also
-    /// empty we fall back to the built-in default. Same precedence the
-    /// runtime uses in `GenerativeGreetingService.resolvedPersona(...)`.
-    private var resolvedPersonaDefault: String {
-        let global = AppConfiguration.shared.chatConfig.greetingPersona
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return global.isEmpty
-            ? GenerativeGreetingService.defaultPersonaInstruction
-            : global
     }
 
     /// Manual side: Greeting / Message / Action Bar. The Action Bar's
@@ -2114,31 +2297,6 @@ struct AgentDetailView: View {
 
             actionBarBlock
         }
-    }
-
-    /// Personality `TextEditor` with matching panel chrome. The editor
-    /// is hydrated by `loadAgentData` with `resolvedPersonaDefault` when
-    /// the agent has no explicit override, so the empty-placeholder
-    /// branch we used to need is gone — the user always sees real text
-    /// they can edit, copy, or wipe to type their own. Persists on
-    /// change so the segmented picker doesn't need to push it onto the
-    /// manual side's onChange handlers.
-    private var personalityEditor: some View {
-        TextEditor(text: $greetingPersona)
-            .font(.system(size: 13, design: .monospaced))
-            .foregroundColor(theme.primaryText)
-            .scrollContentBackground(.hidden)
-            .frame(minHeight: 80, maxHeight: 200)
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
-            .onChange(of: greetingPersona) { debouncedSave() }
     }
 
     private var avatarSection: some View {
@@ -2311,6 +2469,21 @@ struct AgentDetailView: View {
     @ViewBuilder
     private var sandboxTabContent: some View {
         tabHelperText(DetailTab.sandbox.helperText)
+        // Execution permissions (master switch + plugin creation, network,
+        // background processes, secret reads). The master switch is also
+        // surfaced as the Code Execution card on Abilities → Overview,
+        // which links here for the full permission set.
+        if agent.id != Agent.defaultId {
+            AgentDetailSection(
+                title: L("Execution"),
+                icon: "terminal",
+                subtitle: L("What the agent may do inside the sandbox.")
+            ) {
+                VStack(alignment: .leading, spacing: 12) {
+                    sandboxExecSubsection
+                }
+            }
+        }
         sandboxSection
     }
 
@@ -2319,6 +2492,47 @@ struct AgentDetailView: View {
         tabHelperText(DetailTab.automation.helperText)
         schedulesSection
         watchersSection
+    }
+
+    /// The agent's channel messaging surface (Connections → Channels):
+    /// where it replies to incoming messages and where it may start new
+    /// messages. Both mirror the global Channels pane (same store, same
+    /// editor), scoped to this one agent.
+    @ViewBuilder
+    private var channelsTabContent: some View {
+        tabHelperText(DetailTab.channels.helperText)
+        channelRepliesSection
+        channelNewMessagesSection
+    }
+
+    /// Read-only summary of where this agent answers incoming messages.
+    /// Reply routing is configured per channel (Settings → Channels), so
+    /// this section reports the current state and links there.
+    private var channelRepliesSection: some View {
+        AgentDetailSection(
+            title: L("Replies"),
+            icon: "arrowshape.turn.up.left",
+            subtitle: L(
+                "Channels where this agent answers incoming messages. Configured on each connected channel, in Channels settings."
+            )
+        ) {
+            AgentChannelAgentRepliesSection(agentId: agent.id)
+        }
+    }
+
+    /// This agent's proactive destinations — automatic ones derived from
+    /// the channel setup plus any customized ones. The Channels pane shows
+    /// the same rows across all agents (same store, same editor).
+    private var channelNewMessagesSection: some View {
+        AgentDetailSection(
+            title: L("Messages It Can Start"),
+            icon: "paperplane",
+            subtitle: L(
+                "Where this agent may bring things up on its own — it asks you first unless you change a destination's setting."
+            )
+        ) {
+            AgentChannelAgentDestinationsSection(agentId: agent.id)
+        }
     }
 
     @ViewBuilder
@@ -2540,8 +2754,7 @@ struct AgentDetailView: View {
         guard var current = agentManager.agent(for: agent.id) else { return }
         guard current.settings.schedule.mode != newMode else { return }
         // Mutate only the schedule preset so every other opt-in
-        // (DB, generative greetings, persona, the built-in tool gates)
-        // is preserved across a mode change.
+        // (DB and the built-in tool gates) is preserved across a mode change.
         current.settings.schedule = AgentScheduleSettings.defaults(for: newMode)
         current.updatedAt = Date()
         agentManager.update(current)
@@ -2639,242 +2852,512 @@ struct AgentDetailView: View {
         )
     }
 
-    // MARK: - Features
+    // MARK: - Abilities Overview
 
-    private var featuresSection: some View {
+    /// Abilities → Overview tab: every capability card. The primary on/off state
+    /// lives here; the shared context card stays in the fixed tab chrome above.
+    /// deep-link into the specialist tabs (Tools, Memory, Automation,
+    /// Database, Sandbox) for detailed configuration.
+    @ViewBuilder
+    private var abilitiesTabContent: some View {
+        tabHelperText(DetailTab.abilities.helperText)
+        AgentAbilitiesOverviewView {
+            abilityCards
+        }
+    }
+
+    /// The editor's complete LOCAL Abilities state, priced before any of the
+    /// three persistence lanes (debounced agent, immediate tools, async
+    /// sandbox) finish.
+    private var abilityDraft: AgentAbilityContextPreview.Draft {
+        let toolMode =
+            abilityPreviewToolMode
+            ?? agentManager.effectiveToolSelectionMode(for: agent.id)
+        let toolNames =
+            abilityPreviewToolNames
+            ?? Set(agentManager.effectiveEnabledToolNames(for: agent.id) ?? [])
+        let autonomous =
+            abilityPreviewAutonomousConfig
+            ?? agentManager.effectiveAutonomousExec(for: agent.id)
+            ?? .default
+        let collectionIds = Set(knowledgeCollectionIds)
+        let collections = knowledgeManager.collections
+            .filter { collectionIds.contains($0.id) }
+            .map(\.grantDescriptor)
+        let spawnConfiguration = AgentSpawnConfigSnapshot(
+            agentIDs: spawnableAgentIDs.filter { $0 != agent.id },
+            modelNames: spawnableModelNames,
+            modelNotes: spawnableModelNotes,
+            budgets: SpawnBatchConcurrencyContract.applyingSharedLimit(
+                from: globalSubagentConfig,
+                to: subagentBudgets
+            ),
+            toolAccess: spawnToolAccess,
+            launcherModelOverride:
+                subagentModelOverrides[SubagentCapabilityRegistry.spawn.id]
+        )
+
+        return AgentAbilityContextPreview.Draft(
+            toolsEnabled: toolsEnabled,
+            memoryEnabled: memoryEnabled,
+            dbEnabled: dbEnabled,
+            renderChartEnabled: renderChartEnabled,
+            speakEnabled: speakEnabled,
+            searchMemoryEnabled: searchMemoryEnabled,
+            webSearchEnabled: webSearchEnabled,
+            selfSchedulingEnabled: selfSchedulingEnabled,
+            knowledgeEnabled: knowledgeEnabled,
+            knowledgeCuratorEnabled: knowledgeCuratorEnabled,
+            codeExecutionEnabled: autonomous.enabled,
+            model: selectedModel,
+            toolMode: toolMode,
+            manualToolNames: toolNames.sorted(),
+            computerUseEnabled: computerUseEnabled,
+            browserUseEnabled: browserUseEnabled,
+            spawnDelegationEnabled: spawnDelegationEnabled,
+            imageEnabled: imageEnabled,
+            videoEnabled: videoEnabled,
+            appleScriptEnabled: appleScriptEnabled,
+            spawnableAgentIDs: spawnableAgentIDs,
+            spawnableModelNames: spawnableModelNames,
+            spawnableModelNotes: spawnableModelNotes,
+            spawnConfiguration: spawnConfiguration,
+            autonomousConfig: autonomous,
+            knowledgeCollections: collections,
+            registryRevision: abilityPreviewRegistryRevision
+        )
+    }
+
+    /// Recompose only when a budget input changes. The short debounce keeps
+    /// bulk tool/group flips and slider edits from opening the agent store on
+    /// every intermediate state.
+    @MainActor
+    private func refreshAbilityContextPreview() async {
+        try? await Task.sleep(nanoseconds: 140_000_000)
+        guard !Task.isCancelled else { return }
+        guard !StorageMutationGate.isRotationInFlight else { return }
+
+        let next = AgentAbilityContextPreview.compute(agentId: agent.id, draft: abilityDraft)
+        if let previous = abilityContextPreview {
+            let delta = next.highTokens - previous.highTokens
+            if delta != 0 {
+                abilityContextDelta = delta
+                abilityContextDeltaDismissTask?.cancel()
+                abilityContextDeltaDismissTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 2_600_000_000)
+                    guard !Task.isCancelled else { return }
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
+                        abilityContextDelta = nil
+                    }
+                }
+            }
+        }
+
+        withAnimation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.9)) {
+            abilityContextPreview = next
+        }
+    }
+
+    /// On/off values behind the hero's "N of M abilities on" counter, in
+    /// card order. Host Files counts as on when a folder grant exists.
+    private var abilityFlagValues: [Bool] {
+        var flags = [toolsEnabled]
+        if agent.id != Agent.defaultId {
+            flags += [
+                memoryEnabled,
+                renderChartEnabled,
+                speakEnabled,
+                searchMemoryEnabled,
+                knowledgeEnabled,
+                webSearchEnabled,
+                selfSchedulingEnabled,
+                dbEnabled,
+                abilityPreviewAutonomousConfig?.enabled
+                    ?? agentManager.effectiveAutonomousExec(for: agent.id)?.enabled
+                    ?? false,
+                hostWorkspacePath != nil,
+            ]
+        }
+        return flags
+    }
+
+    /// Per-collection grant checkmark row inside the Knowledge ability
+    /// card. Grants are re-enforced at tool execution time, so this UI is
+    /// the only way to widen an agent's knowledge scope.
+    private func knowledgeGrantRow(_ collection: KnowledgeCollection) -> some View {
+        let granted = knowledgeCollectionIds.contains(collection.id)
+        return Button {
+            if granted {
+                knowledgeCollectionIds.removeAll { $0 == collection.id }
+            } else {
+                knowledgeCollectionIds.append(collection.id)
+            }
+            debouncedSave()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: granted ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 14))
+                    .foregroundColor(granted ? theme.accentColor : theme.tertiaryText)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(collection.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    if !collection.summary.isEmpty {
+                        Text(collection.summary)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(2)
+                    }
+                }
+                Spacer(minLength: 8)
+                if !collection.isEnabled {
+                    Text("Disabled", bundle: .module)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.tertiaryText)
+                }
+            }
+            .padding(8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Wrap a local `@State` flag binding so writes also schedule the
+    /// debounced agent save — the same write path every other editor
+    /// control in this view uses.
+    private func abilitySaveBinding(_ source: Binding<Bool>) -> Binding<Bool> {
+        Binding(
+            get: { source.wrappedValue },
+            set: { newValue in
+                source.wrappedValue = newValue
+                debouncedSave()
+            }
+        )
+    }
+
+    /// Chip shown on tool-backed cards while the Tools master switch is
+    /// off: those abilities keep their configured state but ship no tool
+    /// schema until Tools comes back.
+    private var toolsPausedNote: LocalizedStringKey? {
+        let readiness = AgentCapabilityReadiness.resolve(
+            configured: true,
+            toolsEnabled: toolsEnabled
+        )
+        return readiness.isCallable
+            ? nil
+            : readiness.statusMessage.map { LocalizedStringKey($0) }
+    }
+
+    private var knowledgeReadinessNote: LocalizedStringKey? {
+        let readiness = AgentCapabilityReadiness.resolve(
+            configured: knowledgeEnabled,
+            toolsEnabled: toolsEnabled,
+            blockers: knowledgeCollectionIds.isEmpty ? [.noKnowledgeCollections] : []
+        )
+        return readiness.isCallable || !readiness.configured
+            ? nil
+            : readiness.statusMessage.map { LocalizedStringKey($0) }
+    }
+
+    /// Scroll anchor for the Tools master card in the Abilities overview.
+    private static let toolsToggleScrollId = "abilities-tools-card"
+
+    /// `abilitySaveBinding` for tool-backed abilities: while Tools is off
+    /// the switch refuses to turn ON — the write is dropped so the toggle
+    /// snaps back, and the view scrolls to and pulses the Tools master
+    /// card instead. Turning OFF still lands, so a paused ability can be
+    /// unconfigured without re-enabling Tools first.
+    private func toolBackedSaveBinding(_ source: Binding<Bool>) -> Binding<Bool> {
+        Binding(
+            get: { source.wrappedValue },
+            set: { newValue in
+                if newValue, !toolsEnabled {
+                    // Re-assert false so the optimistic switch animation
+                    // snaps back even though the value never changed.
+                    source.wrappedValue = false
+                    flashToolsToggle()
+                    return
+                }
+                source.wrappedValue = newValue
+                debouncedSave()
+            }
+        )
+    }
+
+    /// Scroll the Tools card into view and run one highlight breath on
+    /// it. Dropping the flag first gives `settingsSearchHighlight` a
+    /// fresh rising edge so a repeat tap re-fires; the delayed clear only
+    /// lands if no newer tap has bumped the generation, so a rapid second
+    /// tap can't cut its own glow short.
+    private func flashToolsToggle() {
+        scrollToToolsNonce += 1
+        toolsHighlightGeneration += 1
+        let generation = toolsHighlightGeneration
+        toolsHighlightActive = false
+        DispatchQueue.main.async {
+            guard generation == toolsHighlightGeneration else { return }
+            toolsHighlightActive = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+            guard generation == toolsHighlightGeneration else { return }
+            toolsHighlightActive = false
+        }
+    }
+
+    @ViewBuilder
+    private var abilityCards: some View {
         let isCustomAgent = agent.id != Agent.defaultId
-        return AgentDetailSection(
-            title: L("Features"),
-            icon: "switch.2",
-            subtitle: L("Control what this agent can do. Extra capabilities are off by default to keep it lean.")
-        ) {
-            VStack(alignment: .leading, spacing: 18) {
-                featureGroup(
-                    "Model Access",
-                    description: "What the model can draw on by default."
-                ) {
-                    featureToggleRow(
-                        title: "Tools",
-                        subtitle:
-                            "Let the agent use tools to take actions and look things up. Turn off for a chat-only agent.",
-                        isOn: $toolsEnabled
-                    )
-                    // The default agent has no per-agent memory flag: its
-                    // memory is governed globally (Settings > Enable memory),
-                    // so a per-agent toggle here would be a dead control.
-                    if isCustomAgent {
-                        featureToggleRow(
-                            title: "Memory",
-                            subtitle: "Pull relevant memories into prompts and save new ones as you chat.",
-                            isOn: $memoryEnabled
-                        )
-                    } else {
+
+        AgentAbilityGroupHeader(
+            label: "Model Access",
+            description: "What the model can draw on by default."
+        )
+        AgentAbilityCard(
+            title: "Tools",
+            subtitle:
+                "Let the agent use tools to take actions and look things up. Turn off for a chat-only agent.",
+            icon: "wrench.and.screwdriver",
+            isOn: abilitySaveBinding($toolsEnabled),
+            configureLabel: "Choose tools & skills",
+            onConfigure: { selectedTab = .builtIn(.capabilities) }
+        )
+        .id(Self.toolsToggleScrollId)
+        .settingsSearchHighlight(toolsHighlightActive)
+        // The default agent has no per-agent memory flag: its memory is
+        // governed globally (Settings > Enable memory), so a per-agent
+        // toggle here would be a dead control.
+        if isCustomAgent {
+            AgentAbilityCard(
+                title: "Memory",
+                subtitle:
+                    "Pull relevant memories into prompts and save new ones as you chat. Injected per turn, so it widens the context estimate into a range.",
+                icon: "brain.head.profile",
+                isOn: abilitySaveBinding($memoryEnabled),
+                configureLabel: "History, facts & episodes",
+                onConfigure: { selectedTab = .builtIn(.memory) }
+            )
+        } else {
+            Text(
+                "Memory for the default agent is controlled globally in Settings > Enable memory.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+        }
+
+        // Custom-agent-only cards. The default agent is locked to its
+        // fixed baseline (DB hard-off, no sandbox), so these would be
+        // dead UI for it.
+        if isCustomAgent {
+            AgentAbilityGroupHeader(
+                label: "Output",
+                description: "Extra ways the agent can present results."
+            )
+            AgentAbilityCard(
+                title: "Charts",
+                subtitle: "Render data as inline chart cards.",
+                icon: "chart.bar.xaxis",
+                isOn: toolBackedSaveBinding($renderChartEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle
+            )
+            AgentAbilityCard(
+                title: "Speak Tool",
+                subtitle:
+                    "Give the agent a tool it can call to read a reply aloud when you ask. For always-speak, use Auto Speak Responses in the Voice section.",
+                icon: "speaker.wave.2",
+                isOn: toolBackedSaveBinding($speakEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle
+            )
+
+            AgentAbilityGroupHeader(
+                label: "Memory & Recall",
+                description: "Active lookups into the agent's memory."
+            )
+            AgentAbilityCard(
+                title: "Memory Recall",
+                subtitle:
+                    "Let the agent search its own memory mid-conversation to pull up past details on demand. Separate from Memory above, which only auto-injects and saves.",
+                icon: "magnifyingglass",
+                isOn: toolBackedSaveBinding($searchMemoryEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle
+            )
+
+            AgentAbilityGroupHeader(
+                label: "Knowledge",
+                description: "Curated reference material the agent can consult on demand."
+            )
+            AgentAbilityCard(
+                title: "Knowledge",
+                subtitle:
+                    "Let the agent search and read the knowledge collections granted below: curated guides, templates, and standards. Separate from memory, knowledge is yours to edit and never written by the agent.",
+                icon: "books.vertical",
+                isOn: toolBackedSaveBinding($knowledgeEnabled),
+                pausedNote: knowledgeReadinessNote,
+                onPausedNoteTap: {
+                    if !toolsEnabled { flashToolsToggle() }
+                }
+            ) {
+                if knowledgeEnabled {
+                    if knowledgeManager.collections.isEmpty {
                         Text(
-                            "Memory for the default agent is controlled globally in Settings > Enable memory.",
+                            "No knowledge collections yet. Add one in the Knowledge section of this window.",
                             bundle: .module
                         )
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
-                    }
-                }
-
-                // Always shown (default + custom agents): the empty-state
-                // greeting flavor. The on/off lives here; the matching
-                // editor (AI personality vs. custom greeting) is in
-                // Customization > Empty State.
-                featureGroup(
-                    "Empty State",
-                    description: "How the chat looks before your first message."
-                ) {
-                    featureToggleRow(
-                        title: "Generative Greetings",
-                        subtitle:
-                            "Generate a fresh AI greeting and quick actions on your Core Model each time you open an empty chat. Off uses your custom greeting. The first generation can feel slow on small models like Foundation.",
-                        isOn: $generativeGreetingsEnabled
-                    )
-                }
-
-                // Custom-agent-only groups. The default agent is locked to
-                // its fixed baseline (DB hard-off, no sandbox), so these
-                // would be dead UI for it.
-                if isCustomAgent {
-                    featureGroup(
-                        "Output",
-                        description: "Extra ways the agent can present results."
-                    ) {
-                        featureToggleRow(
-                            title: "Charts",
-                            subtitle: "Render data as inline chart cards.",
-                            isOn: $renderChartEnabled
-                        )
-                        featureToggleRow(
-                            title: "Speak Tool",
-                            subtitle:
-                                "Give the agent a tool it can call to read a reply aloud when you ask. For always-speak, use Auto Speak Responses in the Voice section.",
-                            isOn: $speakEnabled
-                        )
-                    }
-
-                    featureGroup(
-                        "Memory & Recall",
-                        description: "Active lookups into the agent's memory."
-                    ) {
-                        featureToggleRow(
-                            title: "Memory Recall",
-                            subtitle:
-                                "Let the agent search its own memory mid-conversation to pull up past details on demand. Separate from Memory above, which only auto-injects and saves.",
-                            isOn: $searchMemoryEnabled
-                        )
-                    }
-
-                    featureGroup(
-                        "Web",
-                        description: "Live information from the internet."
-                    ) {
-                        featureToggleRow(
-                            title: "Web Search",
-                            subtitle:
-                                "Let the agent search the web through your search providers. Works out of the box with free sources; configure providers in Settings > Search.",
-                            isOn: $webSearchEnabled
-                        )
-                    }
-
-                    featureGroup(
-                        "Autonomy",
-                        description: "Let the agent act between your messages."
-                    ) {
-                        featureToggleRow(
-                            title: "Self-scheduling",
-                            subtitle:
-                                "Let the agent schedule its own follow-up runs and send you notifications.",
-                            isOn: $selfSchedulingEnabled
-                        )
-                        if selfSchedulingEnabled {
-                            Text(
-                                "Run frequency and limits are configured in the Scheduling section below.",
-                                bundle: .module
-                            )
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
+                    } else {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(knowledgeManager.collections) { collection in
+                                knowledgeGrantRow(collection)
+                            }
                         }
                     }
-
-                    featureGroup(
-                        "Data",
-                        description: "Durable storage for this agent."
-                    ) {
-                        databaseFeatureRow
-                    }
-
-                    featureGroup(
-                        "Code Execution",
-                        description: "Run code and commands in an isolated sandbox."
-                    ) {
-                        sandboxExecSubsection
-                    }
-
-                    featureGroup(
-                        "Host Files",
-                        description: "Let the agent read and write files inside a folder you choose."
-                    ) {
-                        hostWorkspaceFolderRow
-                    }
-
-                    Text(
-                        "Voice output lives in the Voice section; the greeting text and personality are in Customization > Empty State.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
                 }
             }
-        }
-    }
+            if knowledgeEnabled {
+                AgentAbilityCard(
+                    title: "Curator",
+                    subtitle:
+                        "Let this agent draft document updates as pending proposals (it can also file and work staleness tickets). Nothing changes in a collection until you approve a proposal in the Knowledge section.",
+                    icon: "checkmark.seal",
+                    isOn: toolBackedSaveBinding($knowledgeCuratorEnabled),
+                    pausedNote: toolsPausedNote,
+                    onPausedNoteTap: flashToolsToggle
+                )
+            }
 
-    /// Row for the Agent DB feature (spec §5.5). Houses the on/off
-    /// toggle plus a Delete Data action that wipes the per-agent
-    /// `db.sqlite` (encrypted) and the scheduler-side rows belonging
-    /// to this agent. The Delete action only renders when the agent
-    /// has the feature on, since there's nothing to delete otherwise.
-    @ViewBuilder
-    private var databaseFeatureRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            featureToggleRow(
+            AgentAbilityGroupHeader(
+                label: "Web",
+                description: "Live information from the internet."
+            )
+            AgentAbilityCard(
+                title: "Web Search",
+                subtitle:
+                    "Let the agent search the web through your search providers. Works out of the box with built-in sources; configure providers in Settings > Search.",
+                icon: "globe",
+                isOn: toolBackedSaveBinding($webSearchEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle
+            )
+
+            AgentAbilityGroupHeader(
+                label: "Autonomy",
+                description: "Let the agent act between your messages."
+            )
+            AgentAbilityCard(
+                title: "Self-scheduling",
+                subtitle:
+                    "Let the agent schedule its own follow-up runs and send you notifications. Run frequency and limits live in General → Configure → Scheduling.",
+                icon: "calendar.badge.clock",
+                isOn: toolBackedSaveBinding($selfSchedulingEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle,
+                configureLabel: "Schedules & watchers",
+                onConfigure: { selectedTab = .builtIn(.automation) }
+            )
+
+            AgentAbilityGroupHeader(
+                label: "Data",
+                description: "Durable storage for this agent."
+            )
+            AgentAbilityCard(
                 title: "Database",
                 subtitle:
                     "Give this agent a private encrypted database to remember structured data across runs.",
-                isOn: $dbEnabled
-            )
-            if dbEnabled, isUsingRemoteProvider {
-                // Spec §5.5.5 / line 340: when the agent's effective
-                // model is a remote (cloud) provider, surface the
-                // schema-leak disclaimer right under the toggle so the
-                // user knows exactly what crosses the wire.
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "info.circle")
+                icon: "cylinder.split.1x2",
+                isOn: toolBackedSaveBinding($dbEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle,
+                configureLabel: "Open Database",
+                onConfigure: { selectedTab = .builtIn(.database) }
+            ) {
+                if dbEnabled, isUsingRemoteProvider {
+                    // Spec §5.5.5 / line 340: when the agent's effective
+                    // model is a remote (cloud) provider, surface the
+                    // schema-leak disclaimer right under the toggle so the
+                    // user knows exactly what crosses the wire.
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                        Text(
+                            "Schema (table names and column types) is sent with each request. Row data is not.",
+                            bundle: .module
+                        )
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
-                    Text(
-                        "Schema (table names and column types) is sent with each request. Row data is not.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 10)
-                .padding(.bottom, 2)
-            }
-            if dbEnabled {
-                HStack(spacing: 8) {
-                    Button {
-                        beginBundleExport()
-                    } label: {
-                        Label(localized: "Export Bundle…", systemImage: "square.and.arrow.up")
-                            .font(.system(size: 11, weight: .medium))
+                        .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(isBundleBusy)
-                    Button {
-                        beginBundleImport()
-                    } label: {
-                        Label(localized: "Import Bundle…", systemImage: "square.and.arrow.down")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(isBundleBusy)
-                    Spacer()
-                    Button(role: .destructive) {
-                        showDeleteDBConfirmation = true
-                    } label: {
-                        Label(localized: "Delete Data", systemImage: "trash")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .tint(.red)
                 }
             }
-        }
-        .confirmationDialog(
-            "Delete this agent's database?",
-            isPresented: $showDeleteDBConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button(localized: "Delete Data", role: .destructive) {
-                deleteAgentDatabaseData()
-            }
-            Button(localized: "Cancel", role: .cancel) {}
-        } message: {
-            Text(
-                "This permanently erases the encrypted SQLite database, all "
-                    + "schema artifacts, all scheduled / pause state, and the run "
-                    + "history for this agent. The agent itself stays. This can't "
-                    + "be undone."
+
+            AgentAbilityGroupHeader(
+                label: "Code Execution",
+                description: "Run code and commands in an isolated sandbox."
             )
+            codeExecutionAbilityCard
+
+            AgentAbilityGroupHeader(
+                label: "Host Files",
+                description: "Let the agent read and write files inside a folder you choose."
+            )
+            AgentAbilityCard(
+                title: "Host Files",
+                subtitle:
+                    "Grant access to one macOS folder, including over authenticated remote agent runs. Writes stay inside the folder; shell and git remain disabled.",
+                icon: "folder.badge.person.crop",
+                isActive: hostWorkspacePath != nil
+            ) {
+                hostWorkspaceFolderRow
+            }
+
+            Text(
+                "Voice output lives in General → Configure → Voice; the greeting text and personality are in General → Appearance → Empty State.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+        }
+    }
+
+    /// Code Execution master switch. Writes through `updateAutonomousExec`
+    /// immediately (no debounce) like the sandbox tab's toggles; the
+    /// sub-permissions (plugin creation, network, background processes,
+    /// secret reads) stay in Abilities → Sandbox → Execution, which the
+    /// card links into.
+    @ViewBuilder
+    private var codeExecutionAbilityCard: some View {
+        let sandboxAvailable = SandboxManager.State.shared.availability.isAvailable
+        let sandboxRunning = SandboxManager.State.shared.status == .running
+        let execConfig =
+            abilityPreviewAutonomousConfig
+            ?? agentManager.effectiveAutonomousExec(for: agent.id)
+
+        AgentAbilityCard(
+            title: "Autonomous Execution",
+            subtitle: "Allow the agent to run arbitrary commands in the sandbox.",
+            icon: "terminal",
+            isOn: Binding(
+                get: { execConfig?.enabled ?? false },
+                set: { enabled in
+                    updateAutonomousExec(from: execConfig) { $0.enabled = enabled }
+                }
+            ),
+            isInteractive: sandboxRunning,
+            configureLabel: "Sandbox permissions & secrets",
+            onConfigure: { selectedTab = .builtIn(.sandbox) }
+        ) {
+            if !sandboxAvailable {
+                sandboxFeatureHint("Container-based execution requires macOS 26 or later.")
+            } else if !sandboxRunning {
+                sandboxFeatureHint(
+                    "Start the sandbox container from the Sandbox status bar to enable this."
+                )
+            }
         }
     }
 
@@ -3204,7 +3687,14 @@ struct AgentDetailView: View {
                     flag: .image,
                     title: "Image",
                     subtitle:
-                        "Let the agent generate and edit images with a local model using the `image` tool."
+                        "Let the agent generate images with a configured local or hosted model, and edit with a local model."
+                )
+            case .video:
+                return PerAgentFeature(
+                    flag: .video,
+                    title: "Video",
+                    subtitle:
+                        "Let the agent queue billable text-to-video or image-to-video jobs after a quote-aware approval."
                 )
             case .appleScript:
                 return PerAgentFeature(
@@ -3213,12 +3703,19 @@ struct AgentDetailView: View {
                     subtitle:
                         "Let the agent automate this Mac by writing and running AppleScript with an on-device model. Each script is shown for your approval or auto-run with a warning, per the mode below."
                 )
+            case .browserUse:
+                return PerAgentFeature(
+                    flag: .browserUse,
+                    title: "Browser Use",
+                    subtitle:
+                        "Let the agent browse the web in its own persistent browser session — sign-ins stick around between chats. Reads and navigation run automatically; typing and anything consequential pause for your approval."
+                )
             }
         }
     }
 
-    /// Two-way binding into `subagentToggles` for a per-agent flag, so the
-    /// shared `featureToggleRow` can drive the registry-keyed edit-state.
+    /// Two-way binding into `subagentToggles` for a per-agent flag, so a
+    /// shared toggle row can drive the registry-keyed edit-state.
     /// The setter persists via `debouncedSave()` (guarded by
     /// `isInitialLoadComplete`) so flipping a capability on/off is written to
     /// `AgentSettings` — matching every other control in this tab. Without it
@@ -3234,6 +3731,82 @@ struct AgentDetailView: View {
         )
     }
 
+    /// Presentation truth for a Subagents card. The configured toggle remains
+    /// intact when a prerequisite disappears; this resolver explains the same
+    /// gates the composer will apply instead of presenting every ON switch as
+    /// callable.
+    private func subagentReadiness(
+        for flag: SubagentCapability.PerAgentFlag
+    ) -> AgentCapabilityReadiness {
+        let configured = subagentToggles[flag] ?? false
+        let capability = SubagentCapabilityRegistry.capability(forPerAgentFlag: flag)
+        let override = capability.flatMap { subagentModelOverrides[$0.id] }?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasResolvedModel =
+            !(override?.isEmpty ?? true)
+            || agentManager.effectiveModel(for: agent.id) != nil
+
+        var configuredSpawnTargetCount = 0
+        var runnableSpawnTargetCount = 0
+        var checkingSpawnTargets = false
+        if flag == .spawn {
+            let configuredAgentIDs = spawnableAgentIDs.filter { $0 != agent.id }
+            configuredSpawnTargetCount =
+                configuredAgentIDs.count + spawnableModelNames.count
+            let availability = SpawnDescriptors.resolveForPreview(
+                agentIDs: configuredAgentIDs,
+                modelNames: spawnableModelNames,
+                modelNotes: spawnableModelNotes,
+                launcherModelOverride:
+                    subagentModelOverrides[SubagentCapabilityRegistry.spawn.id]
+            )
+            runnableSpawnTargetCount =
+                availability.runnableAgentIDs.count
+                + availability.runnableModelIds.count
+            checkingSpawnTargets =
+                availability.agentTargets.contains { $0.state == .checking }
+                || availability.modelTargets.contains { $0.state == .checking }
+        }
+
+        let permissionKindId: String = {
+            switch flag {
+            case .spawn: return SubagentCapabilityRegistry.spawn.id
+            case .video: return SubagentCapabilityRegistry.video.id
+            default: return SubagentCapabilityRegistry.image.id
+            }
+        }()
+        let permission: SubagentPermissionPolicy =
+            (flag == .spawn || flag == .image || flag == .video)
+            ? subagentPermissions.policy(for: permissionKindId)
+            : .ask
+
+        return AgentCapabilityReadiness.subagent(
+            flag: flag,
+            configured: configured,
+            toolsEnabled: toolsEnabled,
+            hasResolvedModel: hasResolvedModel,
+            configuredSpawnTargetCount: configuredSpawnTargetCount,
+            runnableSpawnTargetCount: runnableSpawnTargetCount,
+            isCheckingSpawnTargets: checkingSpawnTargets,
+            hasReadyImageModel: ModelPickerItemCache.shared.hasReadyImageModel,
+            hasReadyVideoModel: ModelPickerItemCache.shared.hasReadyVideoGenerationModel,
+            hasReadyAppleScriptModel: ModelPickerItemCache.shared.hasReadyAppleScriptModel,
+            permission: permission
+        )
+    }
+
+    private var configuredSubagentCount: Int {
+        SubagentCapabilityRegistry.perAgentToggleFlags.count {
+            subagentReadiness(for: $0).configured
+        }
+    }
+
+    private var callableSubagentCount: Int {
+        SubagentCapabilityRegistry.perAgentToggleFlags.count {
+            subagentReadiness(for: $0).isCallable
+        }
+    }
+
     // MARK: - Subagents tab
 
     /// The Subagents tab: one card per per-agent capability (Computer Use,
@@ -3247,18 +3820,20 @@ struct AgentDetailView: View {
         AgentDetailSection(
             title: L("Subagents"),
             icon: "person.2.wave.2",
-            subtitle: L(
-                "Each helper is off by default. Turn one on to set it up."
-            )
+            subtitle:
+                "\(callableSubagentCount) \(L("callable")) · "
+                + "\(configuredSubagentCount) \(L("configured"))"
         ) {
             VStack(alignment: .leading, spacing: 18) {
                 ForEach(perAgentFeatures, id: \.flag) { feature in
                     let isOn = subagentToggleBinding(feature.flag)
+                    let readiness = subagentReadiness(for: feature.flag)
                     VStack(alignment: .leading, spacing: 6) {
                         subagentCapabilityCard(
                             title: feature.title,
                             subtitle: feature.subtitle,
-                            isOn: isOn
+                            isOn: isOn,
+                            readiness: readiness
                         )
                         if isOn.wrappedValue {
                             subagentConfigPanel {
@@ -3268,7 +3843,7 @@ struct AgentDetailView: View {
                                 // the kind-specific config follows it.
                                 if let capability = SubagentCapabilityRegistry.capability(
                                     forPerAgentFlag: feature.flag
-                                ), capability.supportsModelOverride {
+                                ), capability.supportsModelOverride, feature.flag != .spawn {
                                     subagentModelOverrideRow(capability)
                                     subagentPanelDivider
                                 }
@@ -3282,17 +3857,18 @@ struct AgentDetailView: View {
     }
 
     /// Capability toggle card for the Subagents tab. Mirrors `featureCard`'s
-    /// chrome so it matches the Features tab, but binds directly to the
+    /// chrome so it matches the other toggle rows, but binds directly to the
     /// per-capability enable binding (which routes the right save) and tints its
     /// border with the accent color when on, so an active capability is
     /// scannable at a glance.
     private func subagentCapabilityCard(
         title: LocalizedStringKey,
         subtitle: LocalizedStringKey,
-        isOn: Binding<Bool>
+        isOn: Binding<Bool>,
+        readiness: AgentCapabilityReadiness
     ) -> some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(title, bundle: .module)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.primaryText)
@@ -3300,6 +3876,15 @@ struct AgentDetailView: View {
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
                     .fixedSize(horizontal: false, vertical: true)
+                if readiness.configured, let status = readiness.statusMessage {
+                    HStack(spacing: 5) {
+                        Image(systemName: readiness.isCallable ? "checkmark.circle.fill" : "info.circle.fill")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(verbatim: status)
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundColor(subagentReadinessColor(readiness.state))
+                }
             }
             Spacer(minLength: 12)
             Toggle("", isOn: isOn)
@@ -3310,9 +3895,25 @@ struct AgentDetailView: View {
         .background(
             roundedSurface(
                 fill: theme.inputBackground,
-                stroke: isOn.wrappedValue ? theme.accentColor.opacity(0.5) : theme.inputBorder
+                stroke:
+                    isOn.wrappedValue
+                    ? subagentReadinessColor(readiness.state).opacity(0.5)
+                    : theme.inputBorder
             )
         )
+    }
+
+    private func subagentReadinessColor(_ state: AgentCapabilityReadinessState) -> Color {
+        switch state {
+        case .disabled:
+            return theme.tertiaryText
+        case .active:
+            return theme.successColor
+        case .paused, .needsSetup:
+            return theme.warningColor
+        case .unavailable:
+            return theme.errorColor
+        }
     }
 
     /// Calm, clearly subordinate container for a capability's expanded settings.
@@ -3343,37 +3944,6 @@ struct AgentDetailView: View {
             .font(.system(size: 11))
             .foregroundColor(theme.tertiaryText)
             .fixedSize(horizontal: false, vertical: true)
-    }
-
-    /// Surfaced inside the Spawn config when the global Local Orchestrator
-    /// Handoff is OFF. That handoff is a reject-before-evict gate: spawning a
-    /// LOCAL target whose model differs from the resident chat model is refused
-    /// (only remote targets and the already-loaded model run). Showing it here
-    /// means the limit is visible while configuring targets, not just as a
-    /// runtime error. Reads the global store snapshot (`globalSubagentConfig`)
-    /// loaded for every agent; the toggle itself lives in Settings → Subagents.
-    @ViewBuilder
-    private var spawnHandoffDisabledWarning: some View {
-        if !globalSubagentConfig.localTextDelegationEnabled {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.warningColor)
-                Text(
-                    "Local Orchestrator Handoff is off (Settings → Subagents). Spawning a local agent or model whose model differs from the current chat model will be refused — only remote targets and the loaded model run.",
-                    bundle: .module
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.warningColor.opacity(0.12))
-            )
-        }
     }
 
     /// Leading label (plus an optional one-line description) and a trailing
@@ -3436,22 +4006,22 @@ struct AgentDetailView: View {
                 "Requires Accessibility permission. Grant it and review status in Settings > Computer Use."
             )
         case .spawn:
-            // The model-override row is rendered generically above (registry
-            // `supportsModelOverride`). Two allow-lists drive the two spawn tools:
-            // agents (`spawn_agent`) and bare models (`spawn_model`).
-            spawnHandoffDisabledWarning
-            spawnableAgentsPicker
-            subagentPanelDivider
-            spawnableModelsPicker
-            subagentPanelDivider
-            subagentPermissionRow(
-                for: SubagentCapabilityRegistry.spawn.id,
-                label: "Permission"
+            // This shared editor is also used for the built-in main chat's
+            // Settings surface. Keeping the controls in one component prevents
+            // its pools, notes, permission, worker tools, and limits from
+            // drifting away from custom-agent behavior.
+            SpawnConfigurationEditor(
+                excludedAgentID: agent.id,
+                localHandoffEnabled: globalSubagentConfig.localTextDelegationEnabled,
+                modelOverride: spawnModelOverrideBinding,
+                spawnableAgentIDs: $spawnableAgentIDs,
+                spawnableModelNames: $spawnableModelNames,
+                spawnableModelNotes: $spawnableModelNotes,
+                permissionDefaults: $subagentPermissions,
+                budgets: sharedSpawnBudgetsBinding,
+                toolAccess: $spawnToolAccess,
+                onChange: debouncedSave
             )
-            subagentPanelDivider
-            spawnToolAccessRow
-            subagentPanelDivider
-            subagentBudgetRows
             subagentFootnote(
                 "Local handoff and RAM-safety for spawn jobs are system settings in Settings → Subagents."
             )
@@ -3465,6 +4035,16 @@ struct AgentDetailView: View {
             subagentFootnote(
                 "Image load policy is a system setting in the Images tab."
             )
+        case .video:
+            videoModelPickerRows
+            subagentPanelDivider
+            subagentPermissionRow(
+                for: SubagentCapabilityRegistry.video.id,
+                label: "Permission"
+            )
+            subagentFootnote(
+                "The approval includes the current price. Queued paid jobs continue recovery after Stop or relaunch."
+            )
         case .appleScript:
             // AppleScript owns its own dedicated model (supportsModelOverride is
             // false, so the generic override row above is skipped): pick which
@@ -3476,6 +4056,14 @@ struct AgentDetailView: View {
             appleScriptExecutionModeRow
             subagentFootnote(
                 "AppleScript runs on this Mac. The first time the agent controls an app, macOS asks you to allow Automation for Osaurus. Download AppleScript models in Settings → Computer Use → Models."
+            )
+        case .browserUse:
+            // The model-override row is rendered generically above (registry
+            // `supportsModelOverride`). Approval behavior follows the shared
+            // Autonomy policy (same read/navigate/edit/consequential gate as
+            // Computer Use), so there is no per-agent permission row here.
+            subagentFootnote(
+                "This agent gets its own isolated browser profile. View sessions and sign-in status in Settings → Browser."
             )
         }
     }
@@ -3502,6 +4090,28 @@ struct AgentDetailView: View {
         }
     }
 
+    private var videoModelPickerRows: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            AgentSheetSectionLabel("Models")
+            subagentModelPicker(
+                title: "Text-to-video",
+                selection: textToVideoModelSelection,
+                candidates: videoCandidates(.textToVideo),
+                currentId: mediaPickerID(for: textToVideoTarget)
+            )
+            subagentModelPicker(
+                title: "Image-to-video",
+                selection: imageToVideoModelSelection,
+                candidates: videoCandidates(.imageToVideo),
+                currentId: mediaPickerID(for: imageToVideoTarget)
+            )
+        }
+    }
+
+    private func videoCandidates(_ kind: MediaGenerationKind) -> [ModelPickerItem] {
+        pickerItems.videoGenerationDelegateCandidates.filter { $0.mediaModel?.kind == kind }
+    }
+
     /// The installed AppleScript models this agent can pick. AppleScript bundles
     /// stay in the picker cache (only hidden from the chat picker), so they're
     /// filtered straight out of `pickerItems`.
@@ -3510,8 +4120,9 @@ struct AgentDetailView: View {
     }
 
     /// AppleScript model picker for the AppleScript card. `nil` (Choose
-    /// automatically) resolves to the first installed catalog model at run time;
-    /// a stored id no longer on disk shows an "(unavailable)" row.
+    /// automatically) inherits the global Computer Use AppleScript model, then
+    /// falls back to the first installed catalog model when no global model is
+    /// configured. A stored id no longer on disk shows an "(unavailable)" row.
     private var appleScriptModelPickerRow: some View {
         VStack(alignment: .leading, spacing: 8) {
             AgentSheetSectionLabel("Model")
@@ -3616,6 +4227,27 @@ struct AgentDetailView: View {
         )
     }
 
+    /// Optional form of the Spawn model override used by the shared
+    /// `SpawnConfigurationEditor`. The other chat-driven capability rows keep
+    /// the string picker binding above.
+    private var spawnModelOverrideBinding: Binding<String?> {
+        Binding(
+            get: { subagentModelOverrides[SubagentCapabilityRegistry.spawn.id] },
+            set: { newValue in
+                if let value = newValue,
+                    let trimmed = normalizedModelSelection(value)
+                {
+                    subagentModelOverrides[SubagentCapabilityRegistry.spawn.id] = trimmed
+                } else {
+                    subagentModelOverrides.removeValue(
+                        forKey: SubagentCapabilityRegistry.spawn.id
+                    )
+                }
+                debouncedSave()
+            }
+        )
+    }
+
     /// Segmented Ask / Deny / Always permission picker for a delegation kind,
     /// bound per-agent. Borderless — it lives inside `subagentConfigPanel`.
     private func subagentPermissionRow(for kindId: String, label: LocalizedStringKey) -> some View {
@@ -3631,96 +4263,18 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Token / turn / wall-clock budget steppers for the Spawn card, tucked
-    /// behind a collapsed-by-default "Limits" disclosure (the normalized defaults
-    /// are sensible, so these are power-user knobs). A one-line summary of the
-    /// current budgets shows on the header when collapsed.
-    private var subagentBudgetRows: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    spawnLimitsExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(theme.tertiaryText)
-                        .rotationEffect(.degrees(spawnLimitsExpanded ? 90 : 0))
-                    AgentSheetSectionLabel("Limits")
-                    Spacer(minLength: 8)
-                    if !spawnLimitsExpanded {
-                        Text(spawnLimitsSummary)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(1)
-                    }
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if spawnLimitsExpanded {
-                VStack(alignment: .leading, spacing: 8) {
-                    subagentBudgetStepper(
-                        title: "Max tokens",
-                        value: subagentBudgetBinding(\.maxDelegateTokens),
-                        range: SubagentBudgets.tokenBounds,
-                        step: 256
-                    )
-                    subagentBudgetStepper(
-                        title: "Max turns",
-                        value: subagentBudgetBinding(\.maxDelegateTurns),
-                        range: SubagentBudgets.turnBounds,
-                        step: 1
-                    )
-                    subagentBudgetStepper(
-                        title: "Max seconds",
-                        value: subagentBudgetBinding(\.maxElapsedSeconds),
-                        range: SubagentBudgets.elapsedBounds,
-                        step: 15
-                    )
-                }
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-    }
-
-    /// Compact "tokens · turns · seconds" summary shown on the collapsed Limits
-    /// header so the current budgets are visible at a glance without expanding.
-    private var spawnLimitsSummary: String {
-        let tokens = subagentBudgetBinding(\.maxDelegateTokens).wrappedValue
-        let turns = subagentBudgetBinding(\.maxDelegateTurns).wrappedValue
-        let seconds = subagentBudgetBinding(\.maxElapsedSeconds).wrappedValue
-        return "\(tokens.formatted()) tok · \(turns) turn\(turns == 1 ? "" : "s") · \(seconds)s"
-    }
-
-    private func subagentBudgetStepper(
-        title: LocalizedStringKey,
-        value: Binding<Int>,
-        range: ClosedRange<Int>,
-        step: Int
-    ) -> some View {
-        subagentControlRow(title) {
-            Stepper(value: value, in: range, step: step) {
-                Text("\(value.wrappedValue)")
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
-                    .frame(width: 64, alignment: .trailing)
-            }
-            .frame(maxWidth: 180)
-        }
-    }
-
     // MARK: - Subagent inline config: bindings
 
     // These bind to `AgentSettings`; the global image settings (defaults,
     // permission, load policy) live in the Image Generation tab.
     private var imageGenerationModelSelection: Binding<String> {
         Binding(
-            get: { imageGenerationModelId ?? "" },
+            get: { mediaPickerID(for: imageGenerationTarget) ?? "" },
             set: {
-                imageGenerationModelId = normalizedModelSelection($0)
+                imageGenerationTarget = mediaTarget(
+                    forPickerID: normalizedModelSelection($0),
+                    candidates: pickerItems.imageGenerationDelegateCandidates
+                )
                 debouncedSave()
             }
         )
@@ -3736,9 +4290,55 @@ struct AgentDetailView: View {
         )
     }
 
-    private var currentImageGenerationModelId: String? { imageGenerationModelId }
+    private var currentImageGenerationModelId: String? {
+        mediaPickerID(for: imageGenerationTarget)
+    }
 
     private var currentImageEditModelId: String? { imageEditModelId }
+
+    private var textToVideoModelSelection: Binding<String> {
+        Binding(
+            get: { mediaPickerID(for: textToVideoTarget) ?? "" },
+            set: {
+                textToVideoTarget = mediaTarget(
+                    forPickerID: normalizedModelSelection($0),
+                    candidates: videoCandidates(.textToVideo)
+                )
+                debouncedSave()
+            }
+        )
+    }
+
+    private var imageToVideoModelSelection: Binding<String> {
+        Binding(
+            get: { mediaPickerID(for: imageToVideoTarget) ?? "" },
+            set: {
+                imageToVideoTarget = mediaTarget(
+                    forPickerID: normalizedModelSelection($0),
+                    candidates: videoCandidates(.imageToVideo)
+                )
+                debouncedSave()
+            }
+        )
+    }
+
+    private func mediaPickerID(for target: MediaModelTarget?) -> String? {
+        guard let target else { return nil }
+        let item = pickerItems.first {
+            ($0.mediaModel?.target ?? MediaModelTarget(backend: .local, modelID: $0.id))
+                == target
+        }
+        return item?.id ?? target.modelID
+    }
+
+    private func mediaTarget(
+        forPickerID pickerID: String?,
+        candidates: [ModelPickerItem]
+    ) -> MediaModelTarget? {
+        guard let pickerID else { return nil }
+        guard let item = candidates.first(where: { $0.id == pickerID }) else { return nil }
+        return item.mediaModel?.target ?? MediaModelTarget(backend: .local, modelID: item.id)
+    }
 
     private var appleScriptModelSelection: Binding<String> {
         Binding(
@@ -3770,455 +4370,17 @@ struct AgentDetailView: View {
         )
     }
 
-    private func subagentBudgetBinding(_ keyPath: WritableKeyPath<SubagentBudgets, Int>) -> Binding<Int> {
-        Binding(
-            get: { subagentBudgets[keyPath: keyPath] },
-            set: {
-                subagentBudgets[keyPath: keyPath] = $0
-                debouncedSave()
-            }
-        )
-    }
-
-    /// Worker tool grant for spawned subagents: text-only (default) or the
-    /// curated read-only file set. What "read-only" reaches is enforced in
-    /// `TextSubagentKind.makeToolset`, not here.
-    private var spawnToolAccessRow: some View {
-        subagentControlRow(
-            "Worker tools",
-            subtitle:
-                "Let spawned workers read files themselves (file_read / file_search) so bulk reading stays out of this agent's context."
-        ) {
-            Picker("", selection: spawnToolAccessSelection) {
-                Text("Text-only", bundle: .module).tag(SpawnToolAccess.none)
-                Text("Read-only files", bundle: .module).tag(SpawnToolAccess.readOnly)
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .frame(maxWidth: 160)
-        }
-    }
-
-    private var spawnToolAccessSelection: Binding<SpawnToolAccess> {
-        Binding(
-            get: { spawnToolAccess },
-            set: {
-                spawnToolAccess = $0
-                debouncedSave()
-            }
-        )
-    }
-
     private func normalizedModelSelection(_ value: String) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    // MARK: - Spawn allow-lists (agents + models)
-
-    /// The agents currently in this editor's `spawn_agent` pool.
-    private var selectedSpawnableAgentNames: [String] { spawnableAgentNames }
-
-    /// The model ids currently in this editor's `spawn_model` pool.
-    private var selectedSpawnableModelNames: [String] { spawnableModelNames }
-
-    /// Per-agent `spawn_agent` allow-list: the OTHER agents this agent may
-    /// launch (it can't spawn itself), shown selected-first as removable chips
-    /// with a searchable "Add" popover. Writes the pool + debounced agent save.
-    private var spawnableAgentsPicker: some View {
-        let candidates = agentManager.agents.filter { $0.id != agent.id }
-        let selected = selectedSpawnableAgentNames
-        let addable = candidates.filter { cand in
-            !selected.contains { $0.caseInsensitiveCompare(cand.name) == .orderedSame }
-        }
-        return VStack(alignment: .leading, spacing: 8) {
-            AgentSheetSectionLabel("Allowed agents")
-            if candidates.isEmpty {
-                spawnEmptyHint("No other agents yet — create another agent to make it spawnable.")
-            } else {
-                if selected.isEmpty {
-                    spawnEmptyHint(
-                        "None yet. Add an agent to delegate a task to it (using its own prompt + model)."
-                    )
-                } else {
-                    FlowLayout(spacing: 6) {
-                        ForEach(selected, id: \.self) { name in
-                            spawnRemovableChip(label: name) {
-                                spawnableMembership(name).wrappedValue = false
-                            }
-                        }
-                    }
-                }
-                spawnAddButton(
-                    title: "Add agent",
-                    isPresented: $spawnAgentPickerPresented,
-                    disabled: addable.isEmpty
-                ) {
-                    spawnAgentAddList()
-                }
-            }
-        }
-    }
-
-    /// Per-agent `spawn_model` allow-list: bare model ids this agent may hand a
-    /// task to directly (no agent), shown selected-first as rows with a
-    /// local/remote badge and an inline "when to use" note, plus a searchable,
-    /// source-grouped "Add" popover. Notes are pruned to the pool on save.
-    private var spawnableModelsPicker: some View {
-        let selected = selectedSpawnableModelNames
-        let addable = pickerItems.chatModelCandidates.filter { !selected.contains($0.id) }
-        return VStack(alignment: .leading, spacing: 8) {
-            AgentSheetSectionLabel("Allowed models")
-            if selected.isEmpty {
-                spawnEmptyHint(
-                    "None yet. Add a local or remote model to delegate to it directly, with no agent attached."
-                )
-            } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(selected, id: \.self) { id in
-                        spawnableModelRow(id)
-                    }
-                }
-            }
-            spawnAddButton(
-                title: "Add model",
-                isPresented: $spawnModelPickerPresented,
-                disabled: addable.isEmpty
-            ) {
-                spawnModelAddList()
-            }
-        }
-    }
-
-    /// One selected `spawn_model` row: display name + local/remote badge, an
-    /// inline optional note field, and a remove button.
-    private func spawnableModelRow(_ id: String) -> some View {
-        let item = spawnModelItem(id)
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text(item?.displayName ?? id)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-                if let badge = spawnModelBadge(item) {
-                    spawnBadgePill(badge)
-                }
-                Spacer(minLength: 8)
-                Button {
-                    spawnableModelMembership(id).wrappedValue = false
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-            spawnModelNoteField(id)
-        }
-        .padding(8)
-        .background(roundedSurface(fill: theme.inputBackground, stroke: theme.inputBorder))
-    }
-
-    /// Inline optional note field for a selected spawnable model.
-    private func spawnModelNoteField(_ id: String) -> some View {
-        let binding = spawnableModelNoteBinding(id)
-        return ZStack(alignment: .leading) {
-            if binding.wrappedValue.isEmpty {
-                Text("When/how to use this model (optional)", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.placeholderText)
-                    .allowsHitTesting(false)
-            }
-            TextField("", text: binding)
-                .textFieldStyle(PlainTextFieldStyle())
-                .font(.system(size: 11))
-                .foregroundColor(theme.primaryText)
-        }
-    }
-
-    /// The picker item for a stored model id (for display name / badge), or nil
-    /// when the model is no longer in the cache.
-    private func spawnModelItem(_ id: String) -> ModelPickerItem? {
-        pickerItems.first { $0.id == id }
-    }
-
-    /// Short local/remote badge text for a model row (provider name for remote).
-    private func spawnModelBadge(_ item: ModelPickerItem?) -> String? {
-        guard let item else { return nil }
-        switch item.source {
-        case .remote(let providerName, _): return providerName
-        case .local, .foundation: return L("Local")
-        case .imageGeneration: return L("Image")
-        }
-    }
-
-    /// A small capsule badge (local/remote/provider) used in the model rows.
-    private func spawnBadgePill(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundColor(theme.tertiaryText)
-            .lineLimit(1)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(theme.tertiaryBackground))
-    }
-
-    /// Empty-state / hint line shared by both spawn selectors.
-    private func spawnEmptyHint(_ text: LocalizedStringKey) -> some View {
-        Text(text, bundle: .module)
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
-    /// A removable chip (selected `spawn_agent` agent).
-    private func spawnRemovableChip(label: String, onRemove: @escaping () -> Void) -> some View {
-        HStack(spacing: 6) {
-            Text(label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(1)
-            Button(action: onRemove) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .buttonStyle(PlainButtonStyle())
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(Capsule().fill(theme.tertiaryBackground))
-        .overlay(Capsule().stroke(theme.inputBorder, lineWidth: 1))
-    }
-
-    /// The "+ Add …" button that reveals a searchable multi-select popover.
-    /// Disabled (greyed) when nothing remains to add.
-    private func spawnAddButton<Content: View>(
-        title: LocalizedStringKey,
-        isPresented: Binding<Bool>,
-        disabled: Bool,
-        @ViewBuilder content: @escaping () -> Content
-    ) -> some View {
-        Button {
-            isPresented.wrappedValue = true
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "plus").font(.system(size: 10, weight: .bold))
-                Text(title, bundle: .module).font(.system(size: 11, weight: .medium))
-            }
-            .foregroundColor(disabled ? theme.tertiaryText : theme.accentColor)
-        }
-        .buttonStyle(PlainButtonStyle())
-        .disabled(disabled)
-        .popover(isPresented: isPresented, arrowEdge: .bottom) {
-            content()
-        }
-    }
-
-    /// Multi-select popover body for adding spawnable agents. Recomputes its
-    /// addable list from live state so a tapped agent leaves the list while the
-    /// popover stays open for more picks.
-    private func spawnAgentAddList() -> some View {
-        let selected = selectedSpawnableAgentNames
-        let addable = agentManager.agents.filter { cand in
-            cand.id != agent.id
-                && !selected.contains { $0.caseInsensitiveCompare(cand.name) == .orderedSame }
-        }
-        let query = spawnAgentSearch.trimmingCharacters(in: .whitespacesAndNewlines)
-        let filtered = addable.filter { cand in
-            query.isEmpty
-                || cand.name.localizedCaseInsensitiveContains(query)
-                || cand.description.localizedCaseInsensitiveContains(query)
-        }
-        return VStack(alignment: .leading, spacing: 8) {
-            SearchField(
-                text: $spawnAgentSearch,
-                placeholder: "Search agents",
-                width: 264,
-                compact: true
-            )
-            ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
-                    if filtered.isEmpty {
-                        spawnEmptyHint("No matching agents.").padding(.vertical, 6)
-                    } else {
-                        ForEach(filtered) { cand in
-                            spawnAddRow(
-                                title: cand.name,
-                                subtitle: cand.description.isEmpty ? nil : cand.description
-                            ) {
-                                spawnableMembership(cand.name).wrappedValue = true
-                            }
-                        }
-                    }
-                }
-            }
-            .frame(maxHeight: 220)
-        }
-        .padding(12)
-        .frame(width: 292)
-    }
-
-    /// Multi-select popover body for adding spawnable models, grouped by source
-    /// (Local / each provider) and searchable. Recomputes from live state.
-    private func spawnModelAddList() -> some View {
-        let selected = selectedSpawnableModelNames
-        let addable = pickerItems.chatModelCandidates.filter { !selected.contains($0.id) }
-        let filtered = addable.filter { $0.matches(searchQuery: spawnModelSearch) }
-        let grouped = filtered.groupedBySource()
-        return VStack(alignment: .leading, spacing: 8) {
-            SearchField(
-                text: $spawnModelSearch,
-                placeholder: "Search models",
-                width: 296,
-                compact: true
-            )
-            ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    if grouped.isEmpty {
-                        spawnEmptyHint("No matching models.").padding(.vertical, 6)
-                    } else {
-                        ForEach(Array(grouped.enumerated()), id: \.offset) { _, group in
-                            Text(group.source.displayName)
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundColor(theme.tertiaryText)
-                                .padding(.top, 4)
-                            ForEach(group.models) { item in
-                                spawnAddRow(
-                                    title: item.displayName,
-                                    subtitle: spawnModelSubtitle(item)
-                                ) {
-                                    spawnableModelMembership(item.id).wrappedValue = true
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            .frame(maxHeight: 260)
-        }
-        .padding(12)
-        .frame(width: 324)
-    }
-
-    /// One tappable add-row inside a spawn popover (title + optional subtitle +
-    /// a leading-to-trailing add affordance).
-    private func spawnAddRow(
-        title: String,
-        subtitle: String?,
-        onAdd: @escaping () -> Void
-    ) -> some View {
-        Button(action: onAdd) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-                    if let subtitle {
-                        Text(subtitle)
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(1)
-                    }
-                }
-                Spacer(minLength: 8)
-                Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.accentColor)
-            }
-            .contentShape(Rectangle())
-            .padding(.vertical, 4)
-            .padding(.horizontal, 4)
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-
-    /// Compact "size · quant · Vision" subtitle for a model add-row.
-    private func spawnModelSubtitle(_ item: ModelPickerItem) -> String? {
-        var parts: [String] = []
-        if let params = item.parameterCount, !params.isEmpty { parts.append(params) }
-        if let quant = item.quantization, !quant.isEmpty { parts.append(quant) }
-        if item.isVLM { parts.append(L("Vision")) }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    /// Case-insensitive membership binding into the spawnable pool, de-duping on
-    /// insert so a duplicate agent name can't stack entries. Matches
-    /// `SubagentToolVisibility.spawnTargetAllowed`'s comparison. Writes
-    /// `AgentSettings.spawnableAgentNames` (debounced agent save).
-    private func spawnableMembership(_ name: String) -> Binding<Bool> {
-        Binding(
-            get: {
-                spawnableAgentNames.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
-            },
-            set: { isOn in
-                var names = spawnableAgentNames.filter {
-                    $0.caseInsensitiveCompare(name) != .orderedSame
-                }
-                if isOn { names.append(name) }
-                spawnableAgentNames = names
-                debouncedSave()
-            }
-        )
-    }
-
-    /// Exact-match membership binding into the spawnable MODEL pool, de-duping on
-    /// insert. Matches `SubagentToolVisibility.spawnModelAllowed` (model ids are
-    /// canonical, so exact, not case-insensitive). Removing a model also drops
-    /// its note. Writes `AgentSettings.spawnableModelNames` (debounced agent save).
-    private func spawnableModelMembership(_ id: String) -> Binding<Bool> {
-        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
-        return Binding(
-            get: { spawnableModelNames.contains(trimmed) },
-            set: { isOn in
-                var names = spawnableModelNames.filter { $0 != trimmed }
-                if isOn {
-                    names.append(trimmed)
-                } else {
-                    spawnableModelNotes.removeValue(forKey: trimmed)
-                }
-                spawnableModelNames = names
-                debouncedSave()
-            }
-        )
-    }
-
-    /// Two-way binding into a spawnable model's note. A blank value clears the
-    /// note. Writes `AgentSettings.spawnableModelNotes` (debounced agent save).
-    private func spawnableModelNoteBinding(_ id: String) -> Binding<String> {
-        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
-        return Binding(
-            get: { spawnableModelNotes[trimmed] ?? "" },
-            set: { newValue in
-                if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    spawnableModelNotes.removeValue(forKey: trimmed)
-                } else {
-                    spawnableModelNotes[trimmed] = newValue
-                }
-                debouncedSave()
-            }
-        )
-    }
-
-    /// Binding-backed feature toggle row. Thin wrapper over `featureCard`
-    /// that writes the binding and triggers the debounced agent save. Used for
-    /// every per-agent `AgentSettings` flag in the Features and Subagents tabs.
-    private func featureToggleRow(title: LocalizedStringKey, subtitle: LocalizedStringKey, isOn: Binding<Bool>)
-        -> some View
-    {
-        featureCard(title: title, subtitle: subtitle, isOn: isOn.wrappedValue) { newValue in
-            isOn.wrappedValue = newValue
-            debouncedSave()
-        }
-    }
-
-    /// The single, canonical toggle-row visual for the Features section.
-    /// Every row — model access, capability gates, data, and code execution —
-    /// renders through this so they share identical padding, card chrome,
-    /// and accent-tinted switch. `interactive: false` dims and disables the
-    /// switch (sandbox rows use it when the container isn't running) while
-    /// keeping the copy readable. Subtitles wrap instead of truncating.
+    /// Plain toggle-row visual used by the Sandbox tab's execution
+    /// permissions and the Appearance tab's greetings switch. The Abilities
+    /// overview renders the richer `AgentAbilityCard` instead.
+    /// `interactive: false` dims and disables the switch (sandbox rows use
+    /// it when the container isn't running) while keeping the copy
+    /// readable. Subtitles wrap instead of truncating.
     private func featureCard(
         title: LocalizedStringKey,
         subtitle: LocalizedStringKey,
@@ -4380,32 +4542,6 @@ struct AgentDetailView: View {
             return String(format: L("At most: %@"), preset.displayLabel)
         }
         return L("Custom")
-    }
-
-    /// Labeled subgroup inside the Features section. Renders a small caps
-    /// header (and an optional one-line description) above its rows so the
-    /// section reads as distinct, self-explaining groups (Model Access /
-    /// Output / Memory & Recall / Autonomy / Data / Code Execution) rather
-    /// than one long undifferentiated toggle list.
-    @ViewBuilder
-    private func featureGroup<Content: View>(
-        _ label: LocalizedStringKey,
-        description: LocalizedStringKey? = nil,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                AgentSheetSectionLabel(label)
-                if let description {
-                    Text(description, bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .padding(.leading, 2)
-            content()
-        }
     }
 
     // MARK: - Plugin Tab Content
@@ -4953,7 +5089,7 @@ struct AgentDetailView: View {
                         icon: "shippingbox",
                         title: "Sandbox unavailable",
                         hint:
-                            "Container-based execution requires macOS 26 or later. Native plugins continue to work normally on this device."
+                            "Sandboxed execution is unavailable on this device. Native plugins continue to work normally."
                     )
                 } else if !sandboxRunning {
                     workspaceFolderRow
@@ -4961,7 +5097,7 @@ struct AgentDetailView: View {
                         icon: "shippingbox",
                         title: "Sandbox not running",
                         hint:
-                            "Start the sandbox container from the Sandbox status bar, then enable autonomous execution and plugin creation under Configure → Features."
+                            "Start the sandbox from the Sandbox status bar, then enable autonomous execution and plugin creation in the Execution section above."
                     )
                     secretsSubsection
                 } else {
@@ -5029,7 +5165,7 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Host Files row (Configure → Features). Lets the user grant this agent a
+    /// Host Files row (Abilities → Overview). Lets the user grant this agent a
     /// real macOS folder it may read and write inside — including over an
     /// authenticated remote agent run (Secure Channel, agent-scoped key). The
     /// grant is a security-scoped bookmark persisted on the agent; writes are
@@ -5040,22 +5176,13 @@ struct AgentDetailView: View {
     private var hostWorkspaceFolderRow: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(hostWorkspacePath ?? L("No folder selected"))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(
-                            hostWorkspacePath == nil ? theme.tertiaryText : theme.primaryText
-                        )
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Text(
-                        "The agent can read and write files within this folder, including over authenticated remote agent runs. Writes stay inside the folder; shell and git remain disabled.",
-                        bundle: .module
+                Text(hostWorkspacePath ?? L("No folder selected"))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(
+                        hostWorkspacePath == nil ? theme.tertiaryText : theme.primaryText
                     )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 Spacer()
                 Button {
                     chooseHostWorkspaceFolder()
@@ -5133,12 +5260,12 @@ struct AgentDetailView: View {
         hostWorkspacePath = nil
     }
 
-    /// Sandbox execution toggles, surfaced inside the Configure tab's
-    /// Features section via the shared `featureCard` visual so they match
-    /// the rest of the section. `interactive` is false when the sandbox is
-    /// unavailable / not running: the rows still render (so the capability
-    /// is discoverable) but the switches are disabled and dimmed, paired
-    /// with an explanatory hint from `sandboxExecSubsection`.
+    /// Sandbox execution toggles, surfaced in the Sandbox tab's Execution
+    /// section via the shared `featureCard` visual. `interactive` is false
+    /// when the sandbox is unavailable / not running: the rows still render
+    /// (so the capability is discoverable) but the switches are disabled
+    /// and dimmed, paired with an explanatory hint from
+    /// `sandboxExecSubsection`.
     @ViewBuilder
     private func sandboxExecToggles(
         execConfig: AutonomousExecConfig?,
@@ -5173,6 +5300,24 @@ struct AgentDetailView: View {
                 updateAutonomousExec(from: execConfig) { $0.sandboxNetworkEnabled = networkOn }
             }
 
+            if execConfig?.sandboxNetworkEnabled ?? true {
+                // The filtering egress proxy is a vmnet construct — on the
+                // Seatbelt backend a domain allowlist would fail closed to
+                // NO network, so don't offer the field there.
+                if SandboxBackend.current == .virtualMachine {
+                    sandboxAllowedDomainsField(execConfig: execConfig, interactive: interactive)
+                } else {
+                    Text(
+                        "Per-domain network allowlists require the VM sandbox (macOS 26 or later). On this device sandbox network access is all-or-nothing — use the Sandbox Network toggle above.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 2)
+                }
+            }
+
             featureCard(
                 title: "Background Processes",
                 subtitle:
@@ -5183,36 +5328,89 @@ struct AgentDetailView: View {
                 updateAutonomousExec(from: execConfig) { $0.backgroundProcessEnabled = backgroundOn }
             }
 
-            featureCard(
-                title: "Read Secret Files",
-                subtitle:
-                    "With a working folder, allow reading .env / keys / credentials. Off by default to keep secrets out of the sandbox.",
-                isOn: execConfig?.allowHostSecretReads ?? false,
-                interactive: interactive
-            ) { allow in
-                updateAutonomousExec(from: execConfig) { $0.allowHostSecretReads = allow }
-            }
+            Text(
+                "Sandbox execution cannot access a selected Mac folder. Disable Sandbox to resume the writable Trusted Folder.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.leading, 2)
         }
     }
 
-    /// Sandbox execution rows for the Features section. Shows the toggles
-    /// in every sandbox state: dimmed + disabled (with an explanatory hint)
-    /// when the sandbox is unavailable or not running, fully interactive
-    /// once it's running. The section gates this on `isCustomAgent`.
+    /// Sandbox execution rows for the Sandbox tab's Execution section.
+    /// Shows the toggles in every sandbox state: dimmed + disabled (with an
+    /// explanatory hint) when the sandbox is unavailable or not running,
+    /// fully interactive once it's running. The tab gates this on
+    /// `isCustomAgent`.
     @ViewBuilder
     private var sandboxExecSubsection: some View {
         let sandboxAvailable = SandboxManager.State.shared.availability.isAvailable
         let sandboxRunning = SandboxManager.State.shared.status == .running
-        let execConfig = agentManager.effectiveAutonomousExec(for: agent.id)
+        let execConfig =
+            abilityPreviewAutonomousConfig
+            ?? agentManager.effectiveAutonomousExec(for: agent.id)
 
         sandboxExecToggles(execConfig: execConfig, interactive: sandboxRunning)
         if !sandboxAvailable {
-            sandboxFeatureHint("Container-based execution requires macOS 26 or later.")
+            sandboxFeatureHint("Sandboxed execution is unavailable on this device.")
         } else if !sandboxRunning {
             sandboxFeatureHint(
-                "Start the sandbox container from the Sandbox status bar to enable these."
+                "Start the sandbox from the Sandbox status bar to enable these."
             )
         }
+    }
+
+    /// Egress domain allowlist editor. Empty keeps unrestricted outbound
+    /// (today's default); a non-empty comma-separated list switches the
+    /// sandbox to host-only networking with the filtering proxy on the
+    /// next boot, limiting outbound connections to the listed domains
+    /// (`example.com` exact, `*.example.com` subdomains) plus domains the
+    /// agent's plugins declare.
+    @ViewBuilder
+    private func sandboxAllowedDomainsField(
+        execConfig: AutonomousExecConfig?,
+        interactive: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Allowed Domains", bundle: .module)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.primaryText)
+            TextField(
+                "Leave empty for unrestricted outbound",
+                text: $sandboxAllowedDomainsText
+            )
+            .textFieldStyle(.roundedBorder)
+            .font(.system(size: 12))
+            .disabled(!interactive)
+            .onSubmit { commitSandboxAllowedDomains(execConfig: execConfig) }
+            .onAppear {
+                sandboxAllowedDomainsText =
+                    execConfig?.sandboxAllowedDomains?.joined(separator: ", ") ?? ""
+            }
+            Text(
+                "Comma-separated (e.g. api.github.com, *.example.com). When set, sandbox traffic goes through a host proxy that only permits these domains. Takes effect on next sandbox start.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.leading, 2)
+        .opacity(interactive ? 1 : 0.5)
+    }
+
+    private func commitSandboxAllowedDomains(execConfig: AutonomousExecConfig?) {
+        let raw = sandboxAllowedDomainsText
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let normalized = SandboxEgressPolicy.normalizedAllowlist(raw)
+        updateAutonomousExec(from: execConfig) {
+            $0.sandboxAllowedDomains = normalized.isEmpty ? nil : normalized
+        }
+        sandboxAllowedDomainsText = normalized.joined(separator: ", ")
     }
 
     /// Small explanatory line shown under the sandbox toggles when they're
@@ -5235,12 +5433,15 @@ struct AgentDetailView: View {
         from current: AutonomousExecConfig?,
         _ mutate: (inout AutonomousExecConfig) -> Void
     ) {
+        let previous = current
         var config = current ?? .default
         mutate(&config)
+        abilityPreviewAutonomousConfig = config
         Task { @MainActor in
             do {
                 try await agentManager.updateAutonomousExec(config, for: agent.id)
             } catch {
+                abilityPreviewAutonomousConfig = previous
                 ToastManager.shared.error(
                     L("Failed to update sandbox access"),
                     message: error.localizedDescription
@@ -5973,7 +6174,7 @@ struct AgentDetailView: View {
                                         let turnCount =
                                             sessionTurnCounts[session.id]
                                             ?? session.turns.count
-                                        Text("\(turnCount) turns", bundle: .module)
+                                        Text(turnCount == 1 ? L("1 turn") : L("\(turnCount) turns"))
                                             .font(.system(size: 10))
                                             .foregroundColor(theme.tertiaryText)
                                         Image(systemName: "arrow.up.right")
@@ -6075,6 +6276,7 @@ struct AgentDetailView: View {
     // MARK: - Data Loading
 
     private func loadAgentData() {
+        let globalSpawnConfiguration = SubagentConfigurationStore.snapshot()
         name = agent.name
         description = agent.description
         systemPrompt = agent.systemPrompt
@@ -6092,6 +6294,9 @@ struct AgentDetailView: View {
         searchMemoryEnabled = agent.settings.searchMemoryEnabled
         webSearchEnabled = agent.settings.webSearchEnabled
         selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
+        knowledgeEnabled = agent.settings.knowledgeEnabled
+        knowledgeCollectionIds = agent.settings.knowledgeCollectionIds
+        knowledgeCuratorEnabled = agent.settings.knowledgeCuratorEnabled
         subagentToggles = SubagentCapabilityRegistry.perAgentToggleFlags.reduce(into: [:]) {
             acc,
             flag in
@@ -6099,33 +6304,29 @@ struct AgentDetailView: View {
         }
         computerUseCeiling = agent.settings.computerUseCeiling
         screenContextEnabled = agent.settings.screenContextEnabled
-        spawnableAgentNames = agent.settings.spawnableAgentNames
+        spawnableAgentIDs = agent.settings.spawnableAgentIDs
         spawnableModelNames = agent.settings.spawnableModelNames
         spawnableModelNotes = agent.settings.spawnableModelNotes
-        imageGenerationModelId = agent.settings.imageGenerationModelId
+        imageGenerationTarget = agent.settings.imageGenerationTarget
         imageEditModelId = agent.settings.imageEditModelId
+        textToVideoTarget = agent.settings.textToVideoTarget
+        imageToVideoTarget = agent.settings.imageToVideoTarget
         appleScriptModelId = agent.settings.appleScriptModelId
         appleScriptExecutionMode = agent.settings.appleScriptExecutionMode
         subagentPermissions = agent.settings.subagentPermissions
-        subagentBudgets = agent.settings.subagentBudgets
+        loadedSubagentPermissions = agent.settings.subagentPermissions
+        subagentBudgets = SpawnBatchConcurrencyContract.applyingSharedLimit(
+            from: globalSpawnConfiguration,
+            to: agent.settings.subagentBudgets
+        )
         subagentModelOverrides = agent.settings.subagentModelOverrides
         spawnToolAccess = agent.settings.spawnToolAccess
         // Snapshot the global subagent config for the spawn-handoff warning.
-        globalSubagentConfig = SubagentConfigurationStore.snapshot()
+        globalSubagentConfig = globalSpawnConfiguration
         hostWorkspacePath = agent.hostWorkspacePath
-        generativeGreetingsEnabled = agent.settings.generativeGreetingsEnabled
-        // Hydrate the Personality editor with the resolved default
-        // (global persona, falling back to built-in) when the agent has
-        // no explicit override. Mirrors the global Settings view: the
-        // editor never shows an empty placeholder, just selectable text
-        // the user can edit or wipe. `saveAgent` collapses an unedited
-        // default back to nil so future changes upstream still flow.
-        let savedPersona = agent.settings.greetingPersona?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        greetingPersona =
-            (savedPersona?.isEmpty ?? true)
-            ? resolvedPersonaDefault
-            : (agent.settings.greetingPersona ?? "")
+        abilityPreviewToolMode = agentManager.effectiveToolSelectionMode(for: agent.id)
+        abilityPreviewToolNames = Set(agentManager.effectiveEnabledToolNames(for: agent.id) ?? [])
+        abilityPreviewAutonomousConfig = agentManager.effectiveAutonomousExec(for: agent.id)
         autoSpeak = agent.autoSpeak ?? false
         ttsVoice = agent.ttsVoice ?? ""
         avatar = agent.avatar
@@ -6141,26 +6342,50 @@ struct AgentDetailView: View {
     }
 
     private func loadMemoryData() {
-        let db = MemoryDatabase.shared
-        if !db.isOpen { try? db.open() }
-        pinnedFacts = (try? db.loadPinnedFacts(agentId: agent.id.uuidString, limit: 200)) ?? []
-        episodes = (try? db.loadEpisodes(agentId: agent.id.uuidString, limit: 100)) ?? []
-        // Counts come from `sessions.turn_count` directly so the row's
-        // "N turns" label is accurate without hydrating each session's
-        // turn array (which only happens on click — the prior root cause
-        // of the persistent "0 turns" display).
-        let agentFilter: UUID? = (agent.id == Agent.defaultId) ? nil : agent.id
-        sessionTurnCounts = ChatHistoryDatabase.shared.turnCounts(forAgent: agentFilter)
+        // Every database call here dispatch-syncs onto the DB's serial queue;
+        // when that queue is busy with background writes the wait has hung
+        // the appear path. Read off the main actor and publish back — same
+        // pattern as `loadAgentSecrets`.
+        let agentId = agent.id
+        Task {
+            let (facts, loadedEpisodes, counts) = await Task.detached(priority: .userInitiated) {
+                let db = MemoryDatabase.shared
+                if !db.isOpen { try? db.open() }
+                let facts = (try? db.loadPinnedFacts(agentId: agentId.uuidString, limit: 200)) ?? []
+                let loadedEpisodes =
+                    (try? db.loadEpisodes(agentId: agentId.uuidString, limit: 100)) ?? []
+                // Counts come from `sessions.turn_count` directly so the row's
+                // "N turns" label is accurate without hydrating each session's
+                // turn array (which only happens on click — the prior root cause
+                // of the persistent "0 turns" display).
+                let agentFilter: UUID? = (agentId == Agent.defaultId) ? nil : agentId
+                let counts = ChatHistoryDatabase.shared.turnCounts(forAgent: agentFilter)
+                return (facts, loadedEpisodes, counts)
+            }.value
+            guard agentId == agent.id else { return }
+            pinnedFacts = facts
+            episodes = loadedEpisodes
+            sessionTurnCounts = counts
+        }
     }
 
     // MARK: - Agent Secrets
 
     private func loadAgentSecrets() {
-        let stored = AgentSecretsKeychain.getAllSecrets(agentId: agent.id)
-        agentSecrets =
-            stored
-            .map { AgentSecretEntry(key: $0.key, value: $0.value, isNew: false) }
-            .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+        // Keychain reads are securityd IPC round-trips (one per secret) and
+        // hung the appear path for 2+ seconds on slow machines. Fetch off
+        // the main actor, publish the result back.
+        let agentId = agent.id
+        Task {
+            let stored = await Task.detached(priority: .userInitiated) {
+                AgentSecretsKeychain.getAllSecrets(agentId: agentId)
+            }.value
+            guard agentId == agent.id else { return }
+            agentSecrets =
+                stored
+                .map { AgentSecretEntry(key: $0.key, value: $0.value, isNew: false) }
+                .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+        }
     }
 
     private func addAgentSecret() {
@@ -6235,7 +6460,13 @@ struct AgentDetailView: View {
         }()
 
         let current = currentAgent
-        // The capability picker writes `manualToolNames`, `manualSkillNames`, and
+        let reconciledSubagentPermissions =
+            SubagentPermissionDefaults.mergingEditorSnapshot(
+                subagentPermissions,
+                loadedBaseline: loadedSubagentPermissions,
+                live: current.settings.subagentPermissions
+            )
+        // The tool picker writes `manualToolNames` and
         // `toolSelectionMode` directly via `AgentManager.update*` calls (so they
         // save instantly without going through this debounced path). We therefore
         // pass through `current.*` values rather than this view's local mirrors,
@@ -6269,7 +6500,6 @@ struct AgentDetailView: View {
             bonjourEnabled: current.bonjourEnabled,
             toolSelectionMode: current.toolSelectionMode,
             manualToolNames: current.manualToolNames,
-            manualSkillNames: current.manualSkillNames,
             toolsEnabled: toolsEnabled,
             memoryEnabled: memoryEnabled,
             avatar: avatar,
@@ -6281,21 +6511,6 @@ struct AgentDetailView: View {
                 dbEnabled: dbEnabled,
                 schedule: current.settings.schedule,
                 limits: current.settings.limits,
-                generativeGreetingsEnabled: generativeGreetingsEnabled,
-                greetingPersona: {
-                    // Collapse an unedited inherited default back to
-                    // nil so the agent stays in "inherit from global"
-                    // mode — that way upstream persona / built-in
-                    // changes still flow through. Trim before
-                    // comparison so trailing whitespace from the
-                    // editor doesn't accidentally diverge.
-                    let trimmed = greetingPersona.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if trimmed.isEmpty { return nil }
-                    let inheritedTrimmed =
-                        resolvedPersonaDefault
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    return trimmed == inheritedTrimmed ? nil : trimmed
-                }(),
                 renderChartEnabled: renderChartEnabled,
                 speakEnabled: speakEnabled,
                 searchMemoryEnabled: searchMemoryEnabled,
@@ -6304,8 +6519,10 @@ struct AgentDetailView: View {
                 computerUseEnabled: computerUseEnabled,
                 computerUseCeiling: computerUseEnabled ? computerUseCeiling : nil,
                 screenContextEnabled: screenContextEnabled,
+                browserUseEnabled: browserUseEnabled,
                 spawnDelegationEnabled: spawnDelegationEnabled,
                 imageEnabled: imageEnabled,
+                videoEnabled: videoEnabled,
                 // AppleScript enable + model + execution mode, declared right
                 // after imageEnabled to match the AgentSettings initializer's
                 // parameter order. Persist unconditionally (like the image
@@ -6314,35 +6531,49 @@ struct AgentDetailView: View {
                 appleScriptEnabled: appleScriptEnabled,
                 appleScriptModelId: appleScriptModelId,
                 appleScriptExecutionMode: appleScriptExecutionMode,
-                // Persist the allow-lists only while spawn is on, so toggling
-                // spawn off doesn't silently retain a stale target list. The
-                // model notes are pruned to the surviving model pool so a removed
-                // model never leaves a dangling note.
-                spawnableAgentNames: spawnDelegationEnabled ? spawnableAgentNames : [],
-                spawnableModelNames: spawnDelegationEnabled
-                    ? SubagentConfiguration.normalizedSpawnableModelNames(spawnableModelNames)
-                    : [],
-                spawnableModelNotes: spawnDelegationEnabled
-                    ? SubagentConfiguration.normalizedSpawnableModelNotes(
-                        spawnableModelNotes,
-                        names: SubagentConfiguration.normalizedSpawnableModelNames(spawnableModelNames)
+                // Persist the configured pools even while Spawn is off. The
+                // capability flag still hides/refuses the tools, while a later
+                // re-enable restores the user's deliberate agents, models, and
+                // routing notes instead of silently destroying them.
+                spawnableAgentIDs: spawnableAgentIDs,
+                spawnableModelNames: SubagentConfiguration.normalizedSpawnableModelNames(
+                    spawnableModelNames
+                ),
+                spawnableModelNotes: SubagentConfiguration.normalizedSpawnableModelNotes(
+                    spawnableModelNotes,
+                    names: SubagentConfiguration.normalizedSpawnableModelNames(
+                        spawnableModelNames
                     )
-                    : [:],
+                ),
                 // Image models / permissions / budgets persist unconditionally —
                 // a stored model id is ignored while the capability is off, so a
                 // toggle round-trip keeps the user's choices (unlike the spawn
                 // allow-list, which gates tool visibility).
-                imageGenerationModelId: imageGenerationModelId,
+                imageGenerationTarget: imageGenerationTarget,
                 imageEditModelId: imageEditModelId,
-                subagentPermissions: subagentPermissions,
+                textToVideoTarget: textToVideoTarget,
+                imageToVideoTarget: imageToVideoTarget,
+                subagentPermissions: reconciledSubagentPermissions,
                 subagentBudgets: subagentBudgets,
                 subagentModelOverrides: subagentModelOverrides,
+                // Knowledge grants persist unconditionally (like the image
+                // model picks): a toggle round-trip keeps the user's
+                // selection, and the tools stay hidden while the feature is
+                // off regardless.
+                knowledgeEnabled: knowledgeEnabled,
+                knowledgeCollectionIds: knowledgeCollectionIds,
+                knowledgeCuratorEnabled: knowledgeCuratorEnabled,
                 spawnToolAccess: spawnToolAccess
             ),
             order: current.order
         )
 
         agentManager.update(updated)
+        // Advance both editor and baseline to the exact state just persisted.
+        // A later unrelated save can now distinguish new local permission edits
+        // from any future live permission-prompt update.
+        subagentPermissions = reconciledSubagentPermissions
+        loadedSubagentPermissions = reconciledSubagentPermissions
         showSaveIndicator()
     }
 
@@ -6962,7 +7193,11 @@ private struct AgentConnectionsSection: View {
         HStack(spacing: 6) {
             Image(systemName: "chart.bar.fill")
                 .font(.system(size: 8))
-            Text("\(activity.requestCount) requests", bundle: .module)
+            Text(
+                activity.requestCount == 1
+                    ? L("1 request")
+                    : L("\(activity.requestCount) requests")
+            )
             if let last = activity.lastUsed {
                 Text(verbatim: "·")
                 Text(
@@ -7086,14 +7321,13 @@ private struct AgentEditorSheet: View {
     /// navigation occurs.
     @State private var inlineCustomize: Bool = false
 
-    /// Draft capability state. Seeded on first appear from the live registries
+    /// Draft tool state. Seeded on first appear from the live registry
     /// (matching what `AgentManager.seedEnabledCapabilitiesIfNeeded` would have
     /// written on first picker open) and then mutated in place by the embedded
-    /// picker. Baked into the saved Agent's `manualToolNames` /
-    /// `manualSkillNames` so the seed step is a no-op for newly created agents.
+    /// picker. Baked into the saved Agent's `manualToolNames` so the seed
+    /// step is a no-op for newly created agents.
     @State private var draftMode: ToolSelectionMode = .auto
     @State private var draftToolNames: Set<String> = []
-    @State private var draftSkillNames: Set<String> = []
     @State private var draftSeeded: Bool = false
 
     @FocusState private var nameFocused: Bool
@@ -7170,7 +7404,6 @@ private struct AgentEditorSheet: View {
         AgentCapabilityManagerView(
             draftMode: $draftMode,
             draftTools: $draftToolNames,
-            draftSkills: $draftSkillNames,
             onDismiss: {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
                     inlineCustomize = false
@@ -7188,7 +7421,6 @@ private struct AgentEditorSheet: View {
         guard !draftSeeded else { return }
         draftSeeded = true
         draftToolNames = Set(ToolRegistry.shared.listDynamicTools().map(\.name))
-        draftSkillNames = Set(SkillManager.shared.skills.map(\.name))
     }
 
     // MARK: Form column
@@ -7355,8 +7587,8 @@ private struct AgentEditorSheet: View {
         }
     }
 
-    /// Capabilities row in the create sheet. Mirrors the Auto-discover affordance
-    /// from the picker but renders against the draft sets so the count line
+    /// Tools row in the create sheet. Mirrors the Auto-discover affordance
+    /// from the picker but renders against the draft set so the count line
     /// stays honest as the user toggles things in the embedded picker pane.
     /// "Customize…" performs an inline view swap (no save) — the embedded
     /// picker writes back to the same draft bindings, so closing it and
@@ -7364,7 +7596,7 @@ private struct AgentEditorSheet: View {
     private var capabilitiesField: some View {
         let isAuto = draftMode == .auto
         return VStack(alignment: .leading, spacing: 6) {
-            AgentSheetSectionLabel("Capabilities")
+            AgentSheetSectionLabel("Tools")
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 10) {
                     Image(systemName: isAuto ? "sparkles" : "list.bullet.rectangle")
@@ -7380,7 +7612,7 @@ private struct AgentEditorSheet: View {
                         )
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Auto-discover relevant capabilities", bundle: .module)
+                        Text("Auto-discover relevant tools", bundle: .module)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(theme.primaryText)
                         Text(capabilitiesSubtitle)
@@ -7434,7 +7666,7 @@ private struct AgentEditorSheet: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .localizedHelp("Pick which tools and skills this agent can use")
+                .localizedHelp("Pick which tools this agent can use")
             }
             .padding(12)
             .background(
@@ -7447,17 +7679,17 @@ private struct AgentEditorSheet: View {
         }
     }
 
-    /// Honest one-liner for the Capabilities row: counts come from the draft
-    /// sets, so editing inside the embedded picker is reflected as soon as
+    /// Honest one-liner for the Tools row: the count comes from the draft
+    /// set, so editing inside the embedded picker is reflected as soon as
     /// the user returns to the form.
     private var capabilitiesSubtitle: String {
         let toolCount = draftToolNames.count
-        let skillCount = draftSkillNames.count
         let modeBlurb =
             draftMode == .auto
-            ? L("Loaded on demand from your enabled set.")
-            : L("All enabled items are sent every turn.")
-        return L("\(toolCount) tools and \(skillCount) skills enabled · \(modeBlurb)")
+            ? L("Loaded on demand from your assigned set.")
+            : L("All assigned tools are sent every turn.")
+        let countLabel = toolCount == 1 ? L("1 tool assigned") : L("\(toolCount) tools assigned")
+        return "\(countLabel) · \(modeBlurb)"
     }
 
     private var promptField: some View {
@@ -7487,7 +7719,7 @@ private struct AgentEditorSheet: View {
                     )
             )
             Text(
-                "Capabilities, generation overrides, and theme are editable after creation in the Configure tab.",
+                "Tools, generation overrides, and theme are editable after creation in the Configure tab.",
                 bundle: .module
             )
             .font(.system(size: 11))
@@ -7652,7 +7884,6 @@ private struct AgentEditorSheet: View {
             autonomousExec: AgentManager.sandboxDefaultAutonomousExec,
             toolSelectionMode: draftMode,
             manualToolNames: Array(draftToolNames),
-            manualSkillNames: Array(draftSkillNames),
             avatar: selectedAvatar
         )
 

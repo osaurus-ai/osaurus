@@ -155,12 +155,24 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        // Lift the default 256-fd soft limit before the NIO server, plugin
+        // host, and storage layer start opening descriptors — SwiftNIO dies
+        // fatally on `kqueue(): Too many open files` (APPLE-MACOS-19T).
+        FileDescriptorLimit.raiseToMaximum()
+
         // sequoia fallback. Tahoe already ran this in
         // `applicationWillFinishLaunching`.
         if #unavailable(macOS 26.0) {
             let hideDockIcon = ServerConfigurationStore.load()?.hideDockIcon ?? false
             NSApp.setActivationPolicy(hideDockIcon ? .accessory : .regular)
         }
+
+        // A first-time redeem code is valid only when redemption is the
+        // wallet's first signed Router action. Prepare this persisted gate
+        // before any launch subsystem can attempt a signed request.
+        RouterCreditAcquisitionCoordinator.shared.prepareForLaunch(
+            isFreshInstall: OnboardingService.shared.isFreshInstall
+        )
 
         // Consolidate any agent records stranded in the legacy `Personas/`
         // directory into `agents/` before the first agent load. Enabling a
@@ -191,9 +203,33 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // (and so an in-app token authenticates the very first request).
         GitHubAuth.preloadInBackground()
 
+        // Warm the memoized default-models-directory resolution off the main
+        // thread. Its first access enumerates candidate folders (and can stall
+        // on iCloud-synced ~/Documents); paying that on a utility queue here
+        // means the first main-thread caller hits the cache.
+        DispatchQueue.global(qos: .utility).async {
+            _ = DirectoryPickerService.defaultModelsDirectory()
+        }
+
+        // Same for the Hugging Face token: the Models → Catalog card reads its
+        // presence synchronously at view-init (on the main thread), so warm the
+        // cache here rather than racing that read from `ModelDownloadService`.
+        HuggingFaceAuth.preloadInBackground()
+
+        // Warm the chat-history database too: the first chat window's
+        // synchronous session load otherwise pays the encrypted SQLite open
+        // on the main thread during launch.
+        ChatSessionStore.preloadInBackground()
+
         // Bring up analytics early so the launch + onboarding funnel is
         // captured. No-ops silently when no Aptabase key is configured.
         TelemetryService.shared.configure()
+
+        // Attribute the `brain_source` dimension for installs that completed
+        // onboarding before the choice existed: stamp `pre_choice` once so
+        // their chat sends land in a named bucket instead of the historical
+        // unattributable coverage gap.
+        FeatureTelemetry.stampLegacyBrainSourceIfNeeded()
 
         // Install the crash + app-hang handler as early as possible so it
         // covers the rest of launch. Crash reporting is opt-out (on unless the
@@ -241,6 +277,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
         // Configure local notifications
         NotificationService.shared.configureOnLaunch()
+
+        // Welcome-credit auto-claim: instantiating the singleton installs its
+        // identity/app-activation observers, and the bootstrap retries a
+        // claim a previous (e.g. offline) session couldn't finish. The claim
+        // is wallet-signed and idempotent server-side.
+        WelcomeCreditService.shared.bootstrapAtLaunch()
 
         // If PocketTTS models are already on disk, preload them so the first
         // speaker tap plays immediately without routing to settings.
@@ -340,17 +382,57 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             MasterKey.warmExistsCacheInBackground()
         }
 
+        // Seed channel credential availability (Keychain bot-token probes +
+        // the iMessage helper digest check) off-main so the first prompt
+        // preview / Settings recompute reads a cached answer instead of
+        // paying a synchronous SecItemCopyMatching on the main thread.
+        AgentChannelCredentialAvailability.shared.seedAllInBackground()
+
         Task { @MainActor in
+            // Await the identity-existence seed before the first
+            // `RemoteProviderManager.shared` touch below: its cold init
+            // runs the managed-router gate, and racing the fire-and-forget
+            // warm above means that gate can still pay a synchronous
+            // keychain probe on the main thread (a reported launch hang).
+            // Its own guard (rather than folding into the block below) keeps
+            // the exact provider-connect gate the keychain-disabled source
+            // policy asserts on.
             if !keychainDisabledTestMode {
-                await MCPProviderManager.shared.connectEnabledProviders()
-                await RemoteProviderManager.shared.connectEnabledProviders()
+                await MasterKey.seedExistsCacheOffMainActor()
+            }
+            if !keychainDisabledTestMode {
+                // MCP and remote-provider startup connects run concurrently:
+                // one slow or unreachable MCP server must not delay every
+                // model provider (each connect has its own timeout and
+                // bounded transient retry inside its manager).
+                async let mcpConnects: Void = MCPProviderManager.shared.connectEnabledProviders()
+                async let remoteConnects: Void =
+                    RemoteProviderManager.shared.connectEnabledProviders()
+                _ = await (mcpConnects, remoteConnects)
                 // Touch the search-provider manager so its one-time migration
                 // of osaurus.search plugin keys runs at launch, not lazily on
                 // the first web_search call / Settings visit.
                 _ = SearchProviderManager.shared
+                // Same for the superseded osaurus.browser plugin: copy each
+                // agent's exact WebKit profile UUID into the native session
+                // catalog so existing sign-ins carry over to Browser Use.
+                BrowserPluginMigration.migrateIfNeeded()
             }
+            await MediaGenerationCoordinator.shared.refreshCloudCatalog()
+            await MediaGenerationCoordinator.shared.resumePendingJobs()
             await ModelPickerItemCache.shared.prewarmModelCache()
         }
+
+        // NOTE: an earlier build pre-warmed NSOpenPanel here (3s after launch)
+        // to move the cold ViewBridge file-picker cost off the user's first
+        // click. Production Sentry data (APPLE-MACOS-1AG, 20 users in one day
+        // on 0.22.12) showed the prewarm itself blocked the main thread for
+        // 3s+ — the launch window is exactly when the machine is most
+        // contended, so the deferred init still stalled inside
+        // `-[NSSavePanel _initBridgeAndStuff]` waiting on the remote service.
+        // The prewarm is intentionally removed: the one-time cost belongs on
+        // an explicit user action (where the beachball is attributable and
+        // rare), not injected into every launch.
 
         // VecturaKit inits run sequentially. Memory DB opens first because
         // MemorySearchService.initialize() needs it for reverse maps.
@@ -452,6 +534,21 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     await MemoryConsolidator.shared.start()
                 }
             }
+        }
+
+        // Incremental knowledge index pass so collection folder changes
+        // made while the app was closed are picked up, then live folder
+        // watching for changes made while it runs. Waits for the embedder
+        // init to avoid competing with it; hash-incremental, so an
+        // unchanged corpus costs one folder scan per collection.
+        Task { @MainActor in
+            await embeddingInitTask.value
+            // The registry now loads off-main after the cold `shared` touch;
+            // wait for that snapshot so the startup pass indexes the real
+            // collection set instead of an empty pre-load array.
+            await KnowledgeManager.shared.ensureLoaded()
+            KnowledgeManager.shared.scheduleIndexAll()
+            KnowledgeFolderWatcher.shared.start()
         }
 
         // Setup global hotkey for Chat overlay (configured)
@@ -575,6 +672,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // choice in onboarding, so this is gated to the no-onboarding path.
             if !keychainDisabledTestMode && !presentOnboarding {
                 maybePromptForTelemetryConsent()
+
+                // One-time Product Hunt launch dialog (July 2026). Delayed
+                // past the consent prompt's own 900ms settle so the two can
+                // never race for a scope; if consent is still pending the
+                // eligibility gate defers to the next activation.
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(2))
+                    self?.presentProductHuntLaunchDialogIfEligible()
+                }
             }
 
             // tear down the Tahoe placeholder observers
@@ -588,16 +694,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 }
             }
 
-            // Once the initial window has had a beat to settle, prewarm
-            // the AI-greeting pool for whichever (agent, model) the
-            // user last had open. This is purely additive: if the user
-            // opens a *different* agent first, the chat view's own
-            // `setActive` / `warmUp` calls will still drive the right
-            // pool — but for the common "reopen the same agent I just
-            // had" workflow this trims the cold inference wait off the
-            // first chat session of the launch.
             if !keychainDisabledTestMode {
-                prewarmGreetingPoolIfEnabled()
                 // Build the Settings/management window graph while idle so the
                 // first open is instant
                 // instead of stalling on a synchronous SwiftUI construct+layout.
@@ -637,23 +734,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         if !keychainDisabledTestMode {
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .seconds(5))
+                // Sparkle's first XPC/installer-status setup runs on the main
+                // thread and has hung for seconds on memory-starved machines.
+                // Wait out resource pressure before arming the check cycle.
+                while Self.isUnderResourcePressure {
+                    try? await Task.sleep(for: .seconds(30))
+                }
                 self?.updater.checkForUpdatesInBackground()
             }
-        }
-    }
-
-    /// Fire-and-forget launch prewarm. Skipped when the last-active
-    /// agent has generative greetings off, when no last-active context
-    /// was ever recorded (fresh install), or when that agent is no
-    /// longer in the store (it was deleted between launches).
-    @MainActor
-    private func prewarmGreetingPoolIfEnabled() {
-        guard let last = GenerativeGreetingPool.lastActiveContext(),
-            let agent = AgentManager.shared.agents.first(where: { $0.id == last.agentId }),
-            agent.shouldUseGenerativeGreetings
-        else { return }
-        Task.detached(priority: .utility) { [agent, model = last.model] in
-            await GenerativeGreetingPool.shared.warmUp(for: agent, model: model)
         }
     }
 
@@ -1006,6 +1094,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         return true
     }
 
+    /// Foreground activation. Many users leave the app running for days, so
+    /// time-window features (the one-time Product Hunt launch dialog) must
+    /// re-check here — a launch-only check would miss them. The dialog's own
+    /// gates make this a cheap no-op outside the campaign window and after
+    /// it has been seen.
+    public func applicationDidBecomeActive(_ notification: Notification) {
+        // Give the activation (window ordering, focus restoration) a beat to
+        // settle so the alert lands in the window the user actually sees.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+            self?.presentProductHuntLaunchDialogIfEligible()
+        }
+    }
+
     // MARK: - Dock Menu
 
     public func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
@@ -1020,6 +1122,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             )
             menu.addItem(
                 NSMenuItem(title: "Preview What's New", action: #selector(dockPreviewWhatsNew), keyEquivalent: "")
+            )
+            menu.addItem(
+                NSMenuItem(
+                    title: "Reset & Test Product Hunt Launch",
+                    action: #selector(dockResetProductHuntLaunch),
+                    keyEquivalent: ""
+                )
+            )
+            menu.addItem(
+                NSMenuItem(
+                    title: "Reset & Test Import History Prompt",
+                    action: #selector(dockResetImportHistoryPrompt),
+                    keyEquivalent: ""
+                )
             )
         #endif
         return menu
@@ -1049,6 +1165,26 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // now force-returns every release's notes and presents the modal
             // regardless of the dev build's bundle version.
             ChatWindowManager.shared.createWindow()
+        }
+
+        /// Clear the campaign's seen flag, bypass only the UTC date window,
+        /// and run the normal eligibility/presentation path — including all
+        /// onboarding/modal/active-work deferrals — so the debug run
+        /// exercises the production coordination. Dismissing the dialog
+        /// re-persists seen; pick this item again to test another pass.
+        @objc private func dockResetProductHuntLaunch() {
+            ProductHuntLaunchCampaign.shared.resetForDebugTesting()
+            presentProductHuntLaunchDialogIfEligible()
+        }
+
+        /// Clear the import prompt's seen flag and run the normal
+        /// eligibility/presentation path — including the modal/alert
+        /// deferrals — without requiring a fresh install or a full
+        /// onboarding pass. Dismissing re-persists seen; pick this item
+        /// again to test another pass.
+        @objc private func dockResetImportHistoryPrompt() {
+            ImportHistoryPromptGate.shared.resetForDebugTesting()
+            presentImportHistoryPromptIfEligible()
         }
     #endif
 
@@ -1115,6 +1251,27 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             replyToTerminationOnce()
         }
 
+        // Last-resort exit backstop, OFF the main thread. Every other safety
+        // net here (the 22s watchdog above, the teardown chain, the bounded
+        // flushes in `applicationWillTerminate`) runs on the main actor — so a
+        // single synchronous call that wedges the main thread disables all of
+        // them at once and the app hangs forever (0.22.11 factory-reset
+        // report: journey stuck on "Quitting Osaurus" with MainThreadWatchdog
+        // logging a blocked main thread for minutes). Once this method runs,
+        // the quit is committed (`isTerminating` is never reset and the reply
+        // is always `true`), and the normal path already ends in
+        // `Darwin._exit(0)` — so hard-exiting from a GCD timer changes nothing
+        // except guaranteeing the process actually dies. 45s comfortably
+        // exceeds the 22s reply watchdog plus every bounded flush in
+        // `applicationWillTerminate` (~10s), so it can only fire when the
+        // main thread is truly stuck; a normal quit exits long before.
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 45) {
+            log.error(
+                "Exit backstop fired 45s after termination began — main thread presumed stuck; forcing exit"
+            )
+            Darwin._exit(0)
+        }
+
         Task { @MainActor in
             // ── Phase 0: freeze everything that can dispatch new work ──
             // All cheap + synchronous (cancel timers / tasks, stop FSEvents,
@@ -1128,6 +1285,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             SystemMonitorService.shared.stopMonitoring()
             ScheduleManager.shared.stop()
             WatcherManager.shared.stop()
+            KnowledgeFolderWatcher.shared.stop()
             await runWithDeadline(seconds: 2) {
                 await AgentChannelTransportSupervisor.shared.stop()
             }
@@ -1250,14 +1408,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         PluginRepositoryService.shared.stopBackgroundRefresh()
         ToastWindowController.shared.teardown()
         NotchWindowController.shared.teardown()
+        // Detach live browser WebViews and close their windows so WebKit's
+        // networking XPC processes wind down before `_exit` (stored profiles
+        // and the session catalog survive for the next run).
+        BrowserSessionManager.shared.shutdownAll()
         SharedConfigurationService.shared.remove()
-        // `applicationWillTerminate` is sync and the process exits as
-        // soon as it returns. Bridge to the actor synchronously so
-        // any debounced greeting-pool entries land on disk — without
-        // this, a quit within the 1s save debounce silently throws
-        // away the latest seeds and the next launch is cold again.
-        flushGreetingPoolSync()
-
+        SharedConfigurationService.shared.flushPendingWork()
         // Tool enable/policy changes persist via a background serial writer to
         // keep the UI snappy; drain it here so a toggle made right before quit
         // isn't lost when `_exit` skips the pending write.
@@ -1265,6 +1421,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
         // Same for the Computer Use autonomy policy (its own coalescing writer).
         ComputerUsePolicyStore.flushPendingWrites()
+
+        // Same for the sandbox and agent-delegation stores.
+        SandboxConfigurationStore.flushPendingWrites()
+        SubagentConfigurationStore.flushPendingWrites()
+
+        // Provider/tool configuration files (remote.json, mcp.json, …) persist
+        // through ConfigDiskWriter's background queue, and credentials persist
+        // through the Keychain serial write queue. Drain both, bounded, so a
+        // provider added or edited right before quit survives relaunch —
+        // otherwise `_exit` below drops the pending write and the provider
+        // comes back disabled or credential-less.
+        ConfigDiskWriter.flushPendingWrites()
+        Keychain.flushPendingWrites()
 
         // Aptabase batches analytics in an in-memory queue and normally drains
         // it from its own `willTerminate` observer — but that flush is async and
@@ -1284,18 +1453,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // that: the kernel reclaims the address space and GPU resources
         // atomically, so no in-flight thread can lose its objects mid-call.
         Darwin._exit(0)
-    }
-
-    /// Synchronously bridge to the greeting-pool actor so its
-    /// debounced save lands before the process exits. Capped at
-    /// 1.5s so a stalled write can't block the user's quit.
-    private func flushGreetingPoolSync() {
-        let done = DispatchSemaphore(value: 0)
-        Task.detached(priority: .userInitiated) {
-            await GenerativeGreetingPool.shared.flushPendingSave()
-            done.signal()
-        }
-        _ = done.wait(timeout: .now() + 1.5)
     }
 
     // MARK: Status Item / Menu
@@ -1450,7 +1607,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // Keep plugin and repository work off the initial bind path;
             // crashes here are handled by the plugin loading marker.
             Task { @MainActor in
-                await PluginManager.shared.loadAll()
+                await PluginManager.shared.ensurePromptCatalogReady()
             }
             PluginRepositoryService.shared.startBackgroundRefresh()
         }
@@ -1568,8 +1725,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         if info.isLowPowerModeEnabled { return true }
         switch info.thermalState {
         case .serious, .critical: return true
-        default: return false
+        default: break
         }
+        // Memory-starved machines hit the same multi-second SwiftUI
+        // realizations the low-power/thermal guards exist for — the launch
+        // prewarms hung in production on devices with ~200MB free that were
+        // neither. Available here counts free + inactive + speculative +
+        // purgeable, so a healthy machine with a big file cache still
+        // prewarms as before.
+        return ChatResidencyHandoff.availableMemoryBytes() < 2 * 1024 * 1024 * 1024
     }
 
     @MainActor func prewarmStatusPanel() {
@@ -1618,6 +1782,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // ensure popover window can join all spaces and appear over full screen apps
         if let popoverWindow = popover.contentViewController?.view.window {
             popoverWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            if #available(macOS 26.0, *) {
+                // Key the popover's own window instead of activating the app:
+                // `NSApp.activate` while another app owns a full-screen space
+                // deactivates that app, the auto-revealed menu bar retracts, and
+                // the transient popover closes with it.
+                popoverWindow.makeKey()
+            }
         }
 
         // Close the popover when the user clicks in another app or on the
@@ -1630,7 +1801,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             self?.popover?.performClose(nil)
         }
 
-        NSApp.activate(ignoringOtherApps: true)
+        if #available(macOS 26.0, *) {
+            // Tahoe: keying the popover window above is enough, and activating
+            // here would close the popover over full-screen apps (see comment
+            // above).
+        } else {
+            // Sequoia and earlier: restore the pre-full-screen-fix activation.
+            // Without it the app is never active, later cooperative
+            // `NSApp.activate()` calls are no-ops under Sequoia's stricter
+            // rules, and windows opened from the popover (settings, chat)
+            // never come to the front.
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     // MARK: - NSPopoverDelegate
@@ -2057,6 +2239,11 @@ extension AppDelegate {
             }
 
             let themeManager = ThemeManager.shared
+            // Read before building the view: `completeOnboarding()` flips
+            // `hasCompletedOnboarding` before `onComplete` runs, so freshness
+            // must be captured up front. Re-onboarding users (version bump)
+            // are not fresh and never see the import prompt.
+            let wasFreshInstall = OnboardingService.shared.isFreshInstall
             let contentView = OnboardingView(
                 onPreferredSizeChange: { [weak self] newSize in
                     self?.resizeOnboardingWindow(to: newSize)
@@ -2070,6 +2257,20 @@ extension AppDelegate {
                     ModelPickerItemCache.shared.invalidateCache()
                     // Open ChatView after onboarding completes
                     self?.showChatOverlay()
+                    Task { @MainActor [weak self] in
+                        try? await Task.sleep(for: .seconds(1))
+                        // Brand-new users get the one-time import-history
+                        // suggestion first, once the chat window is up to
+                        // host it.
+                        if wasFreshInstall {
+                            self?.presentImportHistoryPromptIfEligible()
+                        }
+                        // Fresh installs during the Product Hunt launch window
+                        // deferred the launch dialog behind onboarding; recheck
+                        // now that the chat window is up to host it. Its guard
+                        // defers again while the import prompt is on screen.
+                        self?.presentProductHuntLaunchDialogIfEligible()
+                    }
                 }
             )
             .environment(\.theme, themeManager.currentTheme)
@@ -2193,6 +2394,11 @@ extension AppDelegate {
                 category: "navigation",
                 message: "management.window \(shownTab.rawValue)"
             )
+            // Settings-engagement signal. Every real open funnels through
+            // here (the launch-time prewarm builds the window hidden and
+            // never does), so this — plus the tab-switch emit in
+            // `ManagementView.handleTabChange` — covers settings visits.
+            FeatureTelemetry.settingsOpened(tab: shownTab)
             let windowManager = WindowManager.shared
             let themeManager = ThemeManager.shared
             let root = ManagementView(
@@ -2216,7 +2422,29 @@ extension AppDelegate {
                 if hasDeeplink {
                     // Deeplink targets are baked into the view at creation, so the
                     // hosting controller has to be rebuilt to deliver them.
-                    existingWindow.contentViewController = NSHostingController(rootView: root)
+                    //
+                    // End any attached sheets FIRST: swapping the hosting
+                    // controller tears down the old SwiftUI graph, but a
+                    // SwiftUI `.sheet`'s presentation window stays attached to
+                    // this NSWindow and keeps observing parent frame changes.
+                    // The swap itself resizes the window (the new hosting
+                    // view's constraint pass updates the content-size extrema),
+                    // and the orphaned sheet's size callback then re-enters the
+                    // torn-down graph and traps inside SwiftUI
+                    // (Sentry APPLE-MACOS-EF).
+                    while let sheet = existingWindow.attachedSheet {
+                        existingWindow.endSheet(sheet)
+                    }
+                    let replacement = NSHostingController(rootView: root)
+                    // Match `WindowManager.createWindow`: AppKit owns this
+                    // window's size (defaultSize + frame autosave). Leaving the
+                    // default sizingOptions on lets the swapped-in hosting view
+                    // push its measured size back onto the window every layout
+                    // pass — the frame change seen in the EF crash stack.
+                    if #available(macOS 13.0, *) {
+                        replacement.sizingOptions = []
+                    }
+                    existingWindow.contentViewController = replacement
                 } else if let initialTab {
                     // No deeplink: drive navigation through the shared state the
                     // existing view already observes. Recreating the hosting
@@ -2320,5 +2548,180 @@ extension AppDelegate {
         // Intentionally not shown — it stays registered and hidden until the
         // user opens Settings, at which point `showManagementWindow` reuses it.
         NSLog("[Management] Prewarmed hidden window")
+    }
+}
+
+// MARK: - Product Hunt Launch Dialog
+extension AppDelegate {
+    /// Present the one-time Product Hunt launch thank-you dialog when the
+    /// campaign's own gates pass (inside the UTC window, never seen) AND
+    /// nothing critical is in progress. A blocked attempt does NOT consume
+    /// eligibility — the next launch/foreground activation or onboarding
+    /// completion simply rechecks while the window remains open.
+    @MainActor
+    func presentProductHuntLaunchDialogIfEligible() {
+        guard !keychainDisabledTestMode else { return }
+
+        let campaign = ProductHuntLaunchCampaign.shared
+        guard campaign.isEligible else { return }
+
+        // Defer instead of stacking: onboarding flow (fresh installs see the
+        // dialog after it completes, via the onboarding-completion recheck),
+        // the pending telemetry-consent prompt, any AppKit modal or attached
+        // sheet, any themed alert anywhere, a blocking in-chat or Computer
+        // Use prompt awaiting the user, a streaming chat turn, or an active
+        // background agent task (the current Work Mode equivalent).
+        guard !OnboardingService.shared.shouldShowOnboarding else { return }
+        guard !TelemetryService.shared.needsConsentDecision else { return }
+        guard NSApp.modalWindow == nil else { return }
+        guard !NSApp.windows.contains(where: { $0.attachedSheet != nil }) else { return }
+        guard !ThemedAlertCenter.shared.hasAnyActiveAlert else { return }
+        guard ComputerUsePromptQueue.shared.pending.isEmpty,
+            ComputerUsePromptQueue.shared.pendingConsent.isEmpty
+        else { return }
+        guard !ChatWindowManager.shared.isAnySessionStreaming else { return }
+        guard !ChatWindowManager.shared.hasAnyBlockingPromptOverlay else { return }
+        guard !BackgroundTaskManager.shared.backgroundTasks.values.contains(where: { $0.status.isActive })
+        else { return }
+
+        // Host in the user's landing window (same routing as the telemetry
+        // consent prompt) so the dialog behaves like an app modal and recedes
+        // when Osaurus deactivates; the screen-level toast overlay is only a
+        // last-resort fallback when no app window is up.
+        let scope: ThemedAlertScope
+        if let chatId = ChatWindowManager.shared.lastFocusedWindowId,
+            ChatWindowManager.shared.windowExists(id: chatId) {
+            scope = .chat(chatId)
+        } else if WindowManager.shared.isVisible(.management) {
+            scope = .management
+        } else {
+            scope = .toastOverlay
+        }
+
+        // Seen is persisted at presentation time, so even a force-quit while
+        // the dialog is up can't make it reappear.
+        campaign.willPresent()
+        FeatureTelemetry.productHuntLaunchDialogShown()
+
+        let requestId = UUID()
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: L("We're live on Product Hunt"),
+                message: L(
+                    """
+                    Hey! After 10 months of building in public, today is our official launch on Product Hunt.
+
+                    Osaurus has been shaped by feedback from people like you. If it's been useful to you, come say hi and support the launch. It means a lot to us.
+
+                    Thank you for being here early.
+                    """
+                ),
+                headerImageNames: ["osaurus-thanks", "ph-cat"],
+                headerImageAccessibilityLabel: L(
+                    "Osaurus dinosaur and the Product Hunt kitty saying thank you"),
+                buttons: [
+                    // "Maybe later" carries the cancel role so Escape and an
+                    // outside click follow the same permanent-dismiss path.
+                    .cancel(L("Maybe later")) {
+                        campaign.markSeen()
+                        FeatureTelemetry.productHuntLaunchDialogClicked(action: "later")
+                    },
+                    .primary(L("Check out the launch")) {
+                        campaign.markSeen()
+                        FeatureTelemetry.productHuntLaunchDialogClicked(action: "launch")
+                        // `open` makes a synchronous XPC round-trip to
+                        // LaunchServices that can block for seconds while the
+                        // browser cold-launches and hang the main thread;
+                        // NSWorkspace is thread-safe, so fire it off main.
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            NSWorkspace.shared.open(ProductHuntLaunchCampaign.launchURL)
+                        }
+                    },
+                ],
+                width: 400,
+                onDismiss: {
+                    campaign.didDismiss()
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
+    }
+}
+
+// MARK: - Import History Prompt
+extension AppDelegate {
+    /// Present the one-time post-onboarding "import your chat history"
+    /// suggestion for brand-new users. The caller has already verified
+    /// the completing user is a fresh install; this checks the persisted
+    /// once-per-user gate and defers behind any competing modal. A
+    /// blocked attempt does not consume eligibility, but in practice the
+    /// only trigger is onboarding completion, so a deferred prompt is
+    /// simply never shown — the sidebar's Import button remains the
+    /// discoverable entry point.
+    @MainActor
+    func presentImportHistoryPromptIfEligible() {
+        guard !keychainDisabledTestMode else { return }
+
+        let gate = ImportHistoryPromptGate.shared
+        guard gate.isEligible else { return }
+
+        guard NSApp.modalWindow == nil else { return }
+        guard !NSApp.windows.contains(where: { $0.attachedSheet != nil }) else { return }
+        guard !ThemedAlertCenter.shared.hasAnyActiveAlert else { return }
+
+        // Host in the user's landing window (same routing as the Product
+        // Hunt dialog): the chat window that just opened after onboarding,
+        // else the management window, else the screen-level toast overlay.
+        let scope: ThemedAlertScope
+        if let chatId = ChatWindowManager.shared.lastFocusedWindowId,
+            ChatWindowManager.shared.windowExists(id: chatId) {
+            scope = .chat(chatId)
+        } else if WindowManager.shared.isVisible(.management) {
+            scope = .management
+        } else {
+            scope = .toastOverlay
+        }
+
+        // Seen is persisted at presentation time, so even a force-quit
+        // while the dialog is up can't make it reappear.
+        gate.willPresent()
+        FeatureTelemetry.importHistoryPromptShown()
+
+        let requestId = UUID()
+        let sheet = ImportGuideSheet(showsSkipToggle: false) {
+            FeatureTelemetry.importHistoryPromptClicked(action: "import")
+            ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+            // nil agent = default agent. `onOpen` stays nil: post-onboarding
+            // there is no sidebar selection to route through; imported
+            // sessions still refresh every window via `.chatSessionsImported`.
+            ChatSessionImportCoordinator.run(
+                agentId: nil, scope: scope, source: .onboardingPrompt, onOpen: nil)
+        }
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: L("Import your chat history"),
+                message: nil,
+                // Skip carries the cancel role so the corner X, Escape, and
+                // an outside click all follow the same permanent-dismiss
+                // path — and all count as "skip". Choose File dismisses the
+                // alert directly, so the two actions can't double-fire.
+                buttons: [
+                    .cancel(L("Skip")) {
+                        FeatureTelemetry.importHistoryPromptClicked(action: "skip")
+                    }
+                ],
+                showsCloseButton: true,
+                customContent: AnyView(sheet),
+                width: 470,
+                onDismiss: {
+                    gate.didDismiss()
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
     }
 }

@@ -14,6 +14,51 @@ struct ModelRuntimeRAMFeasibilityTests {
 
     private let gb: Int64 = 1024 * 1024 * 1024
 
+    @Test("Resolved allocator cap cannot be overwritten by weight-scaled cache limit")
+    func resolvedAllocatorCapWins() {
+        let mib = 1024 * 1024
+        #expect(
+            ModelRuntime.effectiveMLXCacheLimit(
+                dynamicLimit: 1024 * mib,
+                configuredLimits: [128 * mib]
+            ) == 128 * mib
+        )
+        #expect(
+            ModelRuntime.effectiveMLXCacheLimit(
+                dynamicLimit: 1024 * mib,
+                configuredLimits: [nil]
+            ) == 1024 * mib
+        )
+        #expect(
+            ModelRuntime.effectiveMLXCacheLimit(
+                dynamicLimit: 1024 * mib,
+                configuredLimits: [nil],
+                uncappedLimit: 16 * 1024 * mib
+            ) == 16 * 1024 * mib
+        )
+        #expect(
+            ModelRuntime.effectiveMLXCacheLimit(
+                dynamicLimit: 1024 * mib,
+                configuredLimits: [1024 * mib, 128 * mib, nil]
+            ) == 128 * mib
+        )
+        #expect(
+            ModelRuntime.effectiveMLXCacheLimit(
+                dynamicLimit: 0,
+                configuredLimits: [128 * mib]
+            ) == 0
+        )
+    }
+
+    @Test("Memory safety bounds live hybrid companion snapshots")
+    func memorySafetyBoundsSSMCompanionSnapshots() {
+        #expect(ModelRuntime.ssmCompanionEntryLimit(for: .performance) == 50)
+        #expect(ModelRuntime.ssmCompanionEntryLimit(for: .balanced) == 8)
+        #expect(ModelRuntime.ssmCompanionEntryLimit(for: .safeAuto) == 2)
+        #expect(ModelRuntime.ssmCompanionEntryLimit(for: .strict) == 1)
+        #expect(ModelRuntime.ssmCompanionEntryLimit(for: .diagnosticDangerous) == 50)
+    }
+
     /// Builds an assessment through the shared verdict math with synthetic
     /// byte counts. Thresholds come from the same store production uses, so
     /// expectations are computed from the resolved values rather than
@@ -34,7 +79,8 @@ struct ModelRuntimeRAMFeasibilityTests {
             inflightOther: inflightOther,
             kvHeadroom: kvHeadroom,
             physical: physical,
-            available: available
+            available: available,
+            automaticMemoryLimitsDisabled: false
         )
     }
 
@@ -68,9 +114,21 @@ struct ModelRuntimeRAMFeasibilityTests {
         let softLimit = Int64(Double(physical) * thresholds.soft)
         let hardLimit = Int64(Double(physical) * thresholds.hard)
 
+        // The soft threshold (0.80 of RAM) sits *above* the GPU working-set
+        // budget (0.75 of RAM on machines over 36 GB), so a single model sized
+        // at the soft limit is already past what Metal will keep resident.
+        // `verdict` keys off physical memory and stays `.ok`; the UI severity
+        // keys off the budget and warns.
         let atLimit = assess(footprint: softLimit, physical: physical, available: physical)
         #expect(atLimit.verdict == .ok)
-        #expect(atLimit.loadPressureSeverity == .none)
+        #expect(atLimit.exceedsGPUBudget)
+        #expect(atLimit.loadPressureSeverity == .warn)
+
+        // Well inside the GPU budget: neither signal fires.
+        let comfortable = assess(footprint: softLimit / 2, physical: physical, available: physical)
+        #expect(comfortable.verdict == .ok)
+        #expect(!comfortable.exceedsGPUBudget)
+        #expect(comfortable.loadPressureSeverity == .none)
 
         let justOver = assess(footprint: softLimit + 1, physical: physical, available: physical)
         #expect(justOver.verdict == .tight)
@@ -92,15 +150,19 @@ struct ModelRuntimeRAMFeasibilityTests {
         #expect(justOver.loadPressureSeverity == .block)
     }
 
-    @Test("Low free pages alone warns but never blocks")
-    func lowAvailableWarnsWithoutBlocking() {
+    @Test("Low free pages alone stays advisory and shows no banner")
+    func lowAvailableIsAdvisoryOnly() {
         let physical = 100 * gb
         let thresholds = ServerRuntimeSettingsStore.modelLoadRAMThresholds()
         let softLimit = Int64(Double(physical) * thresholds.soft)
 
-        // Projection is comfortably inside the soft limit, but immediately
-        // free pages are short — advisory tight, send still allowed (unified
-        // memory can compress/purge to make room).
+        // Projection is comfortably inside both the soft limit and the GPU
+        // budget, but immediately free pages are short. `verdict` records the
+        // pressure for health/logs and the load is never blocked — but the
+        // chat banner must stay silent: on macOS free pages are almost always
+        // scarce (the compressor and file cache return memory on demand), and
+        // warning here popped a disclaimer on every launch for models that fit
+        // with room to spare.
         let f = assess(
             footprint: softLimit / 2,
             physical: physical,
@@ -108,7 +170,8 @@ struct ModelRuntimeRAMFeasibilityTests {
         )
 
         #expect(f.verdict == .tight)
-        #expect(f.loadPressureSeverity == .warn)
+        #expect(!f.exceedsGPUBudget)
+        #expect(f.loadPressureSeverity == .none)
     }
 
     @Test("Shortfall within the on-demand reclaim slack stays ok")
@@ -182,13 +245,17 @@ struct ModelRuntimeRAMFeasibilityTests {
             requiredAvailableBytes: 95 * gb,
             softLimitBytes: 70 * gb,
             hardLimitBytes: 90 * gb,
+            automaticMemoryLimitsDisabled: false,
+            // Isolate the byte math: no budget, so `exceedsGPUBudget` is false.
+            gpuBudgetBytes: 0,
             timestamp: Date()
         )
         #expect(f.loadPressureSeverity == .block)
 
-        // And a .tight verdict with bytes inside the soft limit still warns
-        // (low-available advisory case).
-        let warnOnly = ModelRuntime.RAMFeasibility(
+        // A `.tight` verdict driven only by scarce free pages must stay quiet.
+        // macOS hands memory back from the compressor and file cache on
+        // demand, so a small model on a busy Mac is not worth a banner.
+        let lowAvailableOnly = ModelRuntime.RAMFeasibility(
             modelName: "m",
             verdict: .tight,
             incomingWeightsBytes: 10 * gb,
@@ -201,9 +268,137 @@ struct ModelRuntimeRAMFeasibilityTests {
             requiredAvailableBytes: 10 * gb,
             softLimitBytes: 70 * gb,
             hardLimitBytes: 90 * gb,
+            automaticMemoryLimitsDisabled: false,
+            gpuBudgetBytes: 75 * gb,
             timestamp: Date()
         )
-        #expect(warnOnly.loadPressureSeverity == .warn)
+        #expect(lowAvailableOnly.loadPressureSeverity == .none)
+    }
+
+    @Test("No Automatic Limits downgrades the send block to visible guidance")
+    func noAutomaticLimitsDoesNotBlockSend() {
+        let f = ModelRuntime.buildRAMFeasibility(
+            modelName: "dangerous-test-model",
+            incomingWeightsBytes: 110 * gb,
+            incomingLoadFootprintBytes: 110 * gb,
+            resident: 0,
+            inflightOther: 0,
+            kvHeadroom: 0,
+            physical: 100 * gb,
+            available: 20 * gb,
+            automaticMemoryLimitsDisabled: true
+        )
+
+        #expect(f.automaticMemoryLimitsDisabled)
+        #expect(f.loadPressureSeverity == .warn)
+    }
+
+    // MARK: - GPU working-set budget
+
+    /// Reported against 0.21.10: an M1 Max with 64 GB running Qwen3.6-35B-A3B
+    /// MXFP4 (~25.8 GB to load) got the RAM popup on every launch. The model
+    /// uses barely half the GPU budget and is nowhere near the soft limit —
+    /// only `lowAvailable` fired, because macOS keeps free pages scarce by
+    /// design. Nothing here should warn.
+    @Test("A comfortably-fitting model never warns just because free pages are scarce")
+    func comfortableModelOnBusyMacStaysQuiet() {
+        let physical = 64 * gb
+        let weights = Int64(18.8 * Double(gb))
+        let required = Int64(25.8 * Double(gb))
+        let f = ModelRuntime.buildRAMFeasibility(
+            modelName: "qwen3.6-35b-a3b-mxfp4-mtp",
+            incomingWeightsBytes: weights,
+            incomingLoadFootprintBytes: weights,
+            resident: 0,
+            inflightOther: 0,
+            kvHeadroom: required - weights,
+            physical: physical,
+            // 77% "used" — an ordinary idle macOS desktop.
+            available: Int64(0.23 * Double(physical)),
+            automaticMemoryLimitsDisabled: false
+        )
+        #expect(f.requiredAvailableBytes == required)
+        #expect(!f.exceedsGPUBudget)
+        #expect(f.loadPressureSeverity == .none)
+    }
+
+    /// The Reddit report: a 35B MXFP8 bundle (~42.7 GB) on a 48 GB Mac. Free
+    /// RAM looks ample and every physical-memory threshold is satisfied, but
+    /// the weights don't fit the 36 GB GPU working set, so macOS pages them
+    /// and decode collapses to about a character every ten seconds.
+    @Test("A working set past the GPU budget warns even with RAM to spare")
+    func exceedingGPUBudgetWarnsOnIdleMac() {
+        let physical = 48 * gb
+        let required = Int64(42.7 * Double(gb))
+        let f = ModelRuntime.buildRAMFeasibility(
+            modelName: "ornith-1.0-35b-mxfp8",
+            incomingWeightsBytes: required,
+            incomingLoadFootprintBytes: required,
+            resident: 0,
+            inflightOther: 0,
+            kvHeadroom: 0,
+            physical: physical,
+            available: physical,
+            automaticMemoryLimitsDisabled: false
+        )
+        #expect(f.exceedsGPUBudget)
+        #expect(f.loadPressureSeverity == .warn)
+    }
+
+    /// Hy3-JANG_2K live case: 94.4 GB materialized footprint plus a ~34 GB
+    /// worst-case KV headroom on a 128 GB Mac. The pack loads and decodes
+    /// normally (phys_footprint ~96 GB, ~10 tok/s), but charging the full KV
+    /// allowance against the hard ceiling disabled the send button with
+    /// "needs ~128.3 GB". KV grows lazily under its own runtime cap — the
+    /// block judgment uses the resident working set, not weights + max-KV.
+    @Test("Worst-case KV headroom does not block a pack whose weights fit")
+    func kvHeadroomDoesNotBlockFittingWeights() {
+        let physical = 128 * gb
+        let f = assess(
+            footprint: Int64(94.4 * Double(gb)),
+            kvHeadroom: 34 * gb,
+            physical: physical,
+            available: 100 * gb
+        )
+        #expect(f.loadPressureSeverity != .block)
+    }
+
+    @Test("A 48 GB Mac budgets 36 GB to the GPU")
+    func gpuBudgetForFortyEightGigMac() {
+        #expect(ModelRuntime.gpuBudgetBytes(physicalMemoryBytes: 48 * gb) == 36 * gb)
+    }
+
+    @Test("Strict admission estimate includes picker-equivalent runtime headroom")
+    func strictAdmissionEstimateIncludesHeadroom() throws {
+        let footprint = Int64(12.48 * Double(gb))
+        let estimated = try #require(
+            ModelRuntime.estimatedMemorySafetyWorkingSetBytes(
+                loadFootprintBytes: footprint,
+                physicalMemoryBytes: UInt64(128 * gb)
+            )
+        )
+
+        #expect(Double(estimated) / Double(gb) > 15.59)
+        #expect(Double(estimated) / Double(gb) < 15.61)
+        #expect(
+            ModelRuntime.estimatedMemorySafetyWorkingSetBytes(
+                loadFootprintBytes: 0,
+                physicalMemoryBytes: UInt64(128 * gb)
+            ) == nil
+        )
+    }
+
+    @Test("Admission error does not advertise an unproven cache codec")
+    func admissionErrorUsesArchitectureNeutralAdvice() {
+        let message = ModelRuntime.memorySafetyRequestEstimateMessage(
+            estimatedWorkingSetBytes: 16_700_329_790,
+            resolvedLoadBudgetBytes: 13_743_895_347
+        )
+
+        #expect(message.contains("~15.6 GB"))
+        #expect(message.contains("~12.8 GB"))
+        #expect(!message.localizedCaseInsensitiveContains("TurboQuant"))
+        #expect(!message.localizedCaseInsensitiveContains("cache codec"))
     }
 
     // MARK: - projectedLoadFeasibility guards

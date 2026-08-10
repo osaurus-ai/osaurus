@@ -98,7 +98,7 @@ struct AgentChannelNativeCoexistenceTests {
 
     @Test func connectionManagerRejectsAllNativeProviderIds() throws {
         let manager = AgentChannelConnectionManager()
-        for id in ["discord", "slack", "telegram"] {
+        for id in ["discord", "slack", "telegram", "imessage", "whatsapp"] {
             #expect(throws: AgentChannelConnectionManagerError.reservedConnectionId(id)) {
                 try manager.upsertConnection(
                     AgentChannelConnection(
@@ -196,16 +196,19 @@ struct AgentChannelNativeCoexistenceTests {
             let previousDiscordDirectory = DiscordConnectionConfigurationStore.overrideDirectory
             let previousSlackDirectory = SlackConnectionConfigurationStore.overrideDirectory
             let previousTelegramDirectory = TelegramConnectionConfigurationStore.overrideDirectory
+            let previousWhatsAppDirectory = WhatsAppConnectionConfigurationStore.overrideDirectory
 
             AgentChannelConfigurationStore.overrideDirectory = root.appendingPathComponent("agent-channels")
             DiscordConnectionConfigurationStore.overrideDirectory = root.appendingPathComponent("discord")
             SlackConnectionConfigurationStore.overrideDirectory = root.appendingPathComponent("slack")
             TelegramConnectionConfigurationStore.overrideDirectory = root.appendingPathComponent("telegram")
+            WhatsAppConnectionConfigurationStore.overrideDirectory = root.appendingPathComponent("whatsapp")
             defer {
                 AgentChannelConfigurationStore.overrideDirectory = previousAgentChannelDirectory
                 DiscordConnectionConfigurationStore.overrideDirectory = previousDiscordDirectory
                 SlackConnectionConfigurationStore.overrideDirectory = previousSlackDirectory
                 TelegramConnectionConfigurationStore.overrideDirectory = previousTelegramDirectory
+                WhatsAppConnectionConfigurationStore.overrideDirectory = previousWhatsAppDirectory
                 try? FileManager.default.removeItem(at: root)
             }
 

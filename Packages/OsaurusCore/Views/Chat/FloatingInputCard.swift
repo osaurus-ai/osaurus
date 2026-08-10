@@ -34,12 +34,18 @@ struct FloatingInputCard: View {
     let supportsImages: Bool
     /// Current estimated context token count for the session
     let estimatedContextTokens: Int
+    /// True when the next local send has an enabled tool surface, so an
+    /// untouched toggleable model will use the agent direct-reasoning default.
+    let appliesAgentReasoningDefault: Bool
     /// Per-category breakdown of context token usage
     var contextBreakdown: ContextBreakdown = .zero
     /// Total micro-USD spent on the Osaurus Router this session.
     var sessionSpendMicro: Int = 0
-    /// Whether to show the session spend chip (true only for Osaurus Router sessions).
-    var showSessionSpend: Bool = false
+    /// True when this session's spend is billed via the Osaurus Router (the
+    /// managed cloud provider is the selected model). Drives the credits chip's
+    /// low/empty escalation and the wallet panel's session-spend row; the chip
+    /// itself is shown in every session where the router is usable.
+    var isRouterBilledSession: Bool = false
     @Binding var imageComposerSettings: ImageComposerSettings
     let onSend: (String?) -> Void
     let onStop: () -> Void
@@ -60,6 +66,8 @@ struct FloatingInputCard: View {
     var onClearChat: (() -> Void)? = nil
     /// Callback to capture the current screen as a local chat artifact.
     var onCaptureScreenshot: (() -> Void)?
+    /// Callback to generate an AI title for the current chat (triggered by /title command).
+    var onGenerateTitle: (() -> Void)? = nil
     /// Callback when the user selects a skill slash command. Passes the skill UUID so the
     /// caller can inject that skill's instructions as one-off context for the next send.
     var onSkillSelected: ((UUID) -> Void)? = nil
@@ -77,7 +85,7 @@ struct FloatingInputCard: View {
     var onSendNow: (() -> Void)?
     /// Discard the queued send without sending it. Called by the chip's ×.
     var onCancelQueued: (() -> Void)?
-    /// Invoked when the user taps the credits chip (opens the top-up sheet).
+    /// Invoked by the wallet panel's "Add credits" button (opens the top-up sheet).
     var onAddCredits: (() -> Void)?
     /// Mode 2 (remote agent run): the model is pinned to the remote agent's own
     /// model and the user must not change it. Renders the model chip as a
@@ -110,8 +118,20 @@ struct FloatingInputCard: View {
     var inputHistoryKey: UUID?
     /// When true, the model chip dot reflects warm-up state (yellow/green).
     var warmModelsOnLoadEnabled: Bool = false
+    /// Session-scoped LLM context-compaction state, rendered as inline
+    /// progress / result rows inside the Context Budget popover.
+    var compactionState: ContextCompactionUIState = .idle
+    /// True when the manual "Compact conversation" action is applicable:
+    /// utilization crossed the threshold and there's an uncovered older span.
+    var canCompactConversation: Bool = false
+    /// Invoked by the popover's "Compact conversation" button.
+    var onCompactConversation: (() -> Void)? = nil
     /// Warm-up state for the selected local model in this session.
     @ObservedObject var warmupController: ChatWarmupController = ChatWarmupController()
+    /// THIS chat session's working-folder state. The folder chip, picker,
+    /// refresh/clear actions, and "@" file completion all operate on it, so
+    /// they affect only the owning chat — never other windows.
+    @ObservedObject var folderState: ChatFolderState
 
     init(
         text: Binding<String>,
@@ -126,9 +146,10 @@ struct FloatingInputCard: View {
         isPrivacyReviewSheetVisible: Bool = false,
         supportsImages: Bool,
         estimatedContextTokens: Int,
+        appliesAgentReasoningDefault: Bool = false,
         contextBreakdown: ContextBreakdown = .zero,
         sessionSpendMicro: Int = 0,
-        showSessionSpend: Bool = false,
+        isRouterBilledSession: Bool = false,
         imageComposerSettings: Binding<ImageComposerSettings> = .constant(ImageComposerSettings()),
         onSend: @escaping (String?) -> Void,
         onStop: @escaping () -> Void,
@@ -139,6 +160,7 @@ struct FloatingInputCard: View {
         isEmptyChat: Bool = false,
         onClearChat: (() -> Void)? = nil,
         onCaptureScreenshot: (() -> Void)? = nil,
+        onGenerateTitle: (() -> Void)? = nil,
         onSkillSelected: ((UUID) -> Void)? = nil,
         pendingSkillId: Binding<UUID?> = .constant(nil),
         autoSpeakAssistant: Binding<Bool> = .constant(false),
@@ -153,7 +175,11 @@ struct FloatingInputCard: View {
         inputHistoryProvider: (() -> [String])? = nil,
         inputHistoryKey: UUID? = nil,
         warmModelsOnLoadEnabled: Bool = false,
-        warmupController: ChatWarmupController = ChatWarmupController()
+        compactionState: ContextCompactionUIState = .idle,
+        canCompactConversation: Bool = false,
+        onCompactConversation: (() -> Void)? = nil,
+        warmupController: ChatWarmupController = ChatWarmupController(),
+        folderState: ChatFolderState? = nil
     ) {
         self._text = text
         self._selectedModel = selectedModel
@@ -167,9 +193,10 @@ struct FloatingInputCard: View {
         self.isPrivacyReviewSheetVisible = isPrivacyReviewSheetVisible
         self.supportsImages = supportsImages
         self.estimatedContextTokens = estimatedContextTokens
+        self.appliesAgentReasoningDefault = appliesAgentReasoningDefault
         self.contextBreakdown = contextBreakdown
         self.sessionSpendMicro = sessionSpendMicro
-        self.showSessionSpend = showSessionSpend
+        self.isRouterBilledSession = isRouterBilledSession
         self._imageComposerSettings = imageComposerSettings
         self.onSend = onSend
         self.onStop = onStop
@@ -180,6 +207,7 @@ struct FloatingInputCard: View {
         self.isEmptyChat = isEmptyChat
         self.onClearChat = onClearChat
         self.onCaptureScreenshot = onCaptureScreenshot
+        self.onGenerateTitle = onGenerateTitle
         self.onSkillSelected = onSkillSelected
         self._pendingSkillId = pendingSkillId
         self._autoSpeakAssistant = autoSpeakAssistant
@@ -194,30 +222,63 @@ struct FloatingInputCard: View {
         self.inputHistoryProvider = inputHistoryProvider
         self.inputHistoryKey = inputHistoryKey
         self.warmModelsOnLoadEnabled = warmModelsOnLoadEnabled
+        self.compactionState = compactionState
+        self.canCompactConversation = canCompactConversation
+        self.onCompactConversation = onCompactConversation
         self._warmupController = ObservedObject(wrappedValue: warmupController)
+        self._folderState = ObservedObject(wrappedValue: folderState ?? ChatFolderState())
     }
 
     // Observe managers for reactive updates
     @ObservedObject private var agentManager = AgentManager.shared
-    @ObservedObject private var folderContextService = FolderContextService.shared
-    @ObservedObject private var sandboxState = SandboxManager.State.shared
-    @ObservedObject private var clipboardService = ClipboardService.shared
+    // Deliberately NOT `@ObservedObject`: sandbox provisioning publishes
+    // per-progress-tick during runtime downloads and the clipboard service
+    // publishes on every copy, and an observing card re-ran its whole body
+    // each time. Every body-position read of these two lives inside the
+    // selector-row block, which `ChipObservationScope` wraps with its own
+    // observation — the closure re-reads this live singleton state when the
+    // scope re-renders. Everything else here calls them imperatively.
+    private let sandboxState = SandboxManager.State.shared
+    private let clipboardService = ClipboardService.shared
     @ObservedObject private var appConfig = AppConfiguration.shared
-    /// Drives the composer credits chip (balance + low-balance tinting) for
-    /// Osaurus Router sessions.
+    /// Drives the composer credits chip (balance + low-balance tinting) and the
+    /// wallet panel's recent-activity list.
     @ObservedObject private var accountService = OsaurusRouterAccountService.shared
-    /// Frontmost-app source + Accessibility status for the read-only
-    /// screen-context chip (shown only on the empty/welcome screen). The opt-in
-    /// gate is now per-agent (a child of Computer Use), read via `agentManager`.
-    @ObservedObject private var frontmostApp = FrontmostAppTracker.shared
-    @ObservedObject private var permissionService = SystemPermissionService.shared
-    /// Per-model warm-up progress (load / prefill %) for the chip tooltip.
-    @ObservedObject private var warmupProgressHub = WarmupProgressHub.shared
+    /// Master-switch mirror for the Osaurus Router; the credits chip shows in
+    /// every session while the router is usable (switch on + identity present).
+    @ObservedObject private var remoteProviders = RemoteProviderManager.shared
+    // Frontmost-app + Accessibility observation for the read-only
+    // screen-context row lives inside `ScreenContextIndicator`, and the
+    // warm-up progress observation lives inside `ModelWarmupHelp` — both
+    // scoped to their own view nodes so their publishes can't re-evaluate
+    // this card's whole body.
 
     // MARK: - Slash Command State
 
     private var slashRegistry = SlashCommandRegistry.shared
     @State private var slashSelectedIndex: Int = 0
+    /// Slash query the user dismissed with Escape. Suppresses the popup for
+    /// that exact query so the typed text survives; cleared as soon as the
+    /// query changes (typing resumes) so the popup can reappear.
+    @State private var dismissedSlashQuery: String?
+
+    // MARK: - "@" File Menu State
+
+    /// Highlighted row in the "@" file completion popup.
+    @State private var atSelectedIndex: Int = 0
+    /// Filesystem entries for the current "@" query. Populated off the main
+    /// actor by `atMenuTask` so directory enumeration never blocks the UI.
+    @State private var atMenuItems: [AtFileItem] = []
+    /// Outcome of the latest listing; `.denied` drives the recovery affordance.
+    @State private var atMenuStatus: AtFileMenuStatus = .ok
+    /// Resolved directory for the latest listing; used to label + re-grant a
+    /// denied folder.
+    @State private var atMenuDirectory: String = ""
+    /// True while a listing is in flight for a brand-new query (no prior items
+    /// to keep showing). Suppresses an empty-state flash before results arrive.
+    @State private var atMenuLoading: Bool = false
+    /// In-flight listing task; cancelled and replaced on every query change.
+    @State private var atMenuTask: Task<Void, Never>?
 
     // MARK: - Input History State
 
@@ -250,11 +311,73 @@ struct FloatingInputCard: View {
     }
 
     private var showSlashPopup: Bool {
-        activeSlashQuery != nil && !slashFilteredCommands.isEmpty
+        guard let query = activeSlashQuery else { return false }
+        return query != dismissedSlashQuery && !slashFilteredCommands.isEmpty
     }
 
-    // Local state for text input to prevent parent re-renders on every keystroke
-    @State private var localText: String = ""
+    /// Non-nil when the cursor is inside an "@" file token (e.g. "@src/ma" or
+    /// "look at @src/ma"). The "@" must start the text or follow whitespace.
+    /// Unlike the slash token, the query may contain "/" (a path); it ends only
+    /// at a space or newline. Returns nil once the token is completed/dismissed.
+    private var activeAtQuery: String? {
+        guard let atRange = localText.range(of: "@", options: .backwards) else { return nil }
+
+        // The "@" must be at the start of the text or preceded by whitespace,
+        // so email-style "name@host" tokens don't trigger the menu.
+        let before = localText[..<atRange.lowerBound]
+        if let lastChar = before.last, !lastChar.isWhitespace { return nil }
+
+        // Everything after "@" is the path query; a space or newline ends it.
+        let afterAt = String(localText[atRange.upperBound...])
+        guard !afterAt.contains(" ") && !afterAt.contains("\n") else { return nil }
+
+        return afterAt
+    }
+
+    /// Show the "@" menu when a query is active and there's something useful to
+    /// display: entries, a denied-folder recovery row, or an empty-folder
+    /// notice. Hidden for a not-found path (still being typed) and while the
+    /// first results for a new query are loading (avoids an empty flash).
+    /// Never shown at the same time as the slash popup.
+    private var showAtPopup: Bool {
+        guard activeAtQuery != nil, !showSlashPopup else { return false }
+        if !atMenuItems.isEmpty { return true }
+        switch atMenuStatus {
+        case .denied: return true
+        case .notFound: return false
+        case .ok: return !atMenuLoading  // empty folder / no matches, once loaded
+        }
+    }
+
+    /// Whether the current "@" query is narrowing by a partial name (vs. listing
+    /// a whole directory), used to pick the right empty-state wording.
+    private var atMenuIsFiltering: Bool {
+        guard let query = activeAtQuery else { return false }
+        return !query.isEmpty && !query.hasSuffix("/")
+    }
+
+    // The typed text lives in a reference-type model so keystrokes never
+    // invalidate the card: `@State` tracks only the reference (never
+    // replaced), and mutations publish through the model, re-rendering just
+    // the regions that observe it (`ComposerTextObservationScope` around the
+    // popups + input card, and `ChipObservationScope` for the live token
+    // count). Everything else reads the text imperatively via `localText`.
+    @State private var composerText = ComposerTextModel()
+
+    /// Compatibility accessor over `composerText` so the many existing
+    /// read/write sites keep their exact shape. Writes route through the
+    /// model — they never touch card state.
+    private var localText: String {
+        get { composerText.text }
+        nonmutating set { composerText.text = newValue }
+    }
+
+    /// Binding for `EditableTextView`, scoped to the model so per-keystroke
+    /// writes bypass the card's state storage entirely.
+    private var localTextBinding: Binding<String> {
+        let model = composerText
+        return Binding(get: { model.text }, set: { model.text = $0 })
+    }
     @State private var isFocused: Bool = false
     @State private var isComposing: Bool = false
     /// Keeps focus in the input through the send/queue state cascade.
@@ -265,22 +388,18 @@ struct FloatingInputCard: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var isDragOver = false
     @State private var showModelPicker = false
-    @State private var showModelOptionsPicker = false
     @State private var showImageSizePicker = false
-    @State private var showContextBreakdown = false
-    @State private var contextHoverTask: Task<Void, Never>?
-    /// Delayed dismiss for the context popover. Gives the cursor a grace
-    /// period to travel from the trigger into the popover (which lives in its
-    /// own window, so hovering it doesn't keep the trigger "hovered").
-    @State private var contextDismissTask: Task<Void, Never>?
-    @State private var showBalanceBreakdown = false
-    @State private var balanceHoverTask: Task<Void, Never>?
-    @State private var isSandboxHovered = false
-    @State private var sandboxPulseAmount: CGFloat = 1.0
-    @State private var sandboxPulseTask: Task<Void, Never>? = nil
-    @State private var isClipboardHovered = false
-    @State private var clipboardPulseAmount: CGFloat = 0.0
-    @State private var clipboardPulseOpacity: Double = 0.0
+    /// Width available to the toggle-chip region (the space between the model
+    /// chip and the meta cluster). Measured cheaply via `onGeometryChange` and
+    /// used to decide whether the chips collapse to icon-only — see
+    /// `chipsCompact`. Doing a single width read + one cluster build per frame
+    /// is what keeps the sidebar collapse/expand animation smooth; the earlier
+    /// `ViewThatFits` rebuilt three candidate clusters every frame instead.
+    @State private var chipRegionWidth: CGFloat = 0
+    /// Full width of the selector row. Drives `metaCompact` so the right-edge
+    /// meta cluster (credits CTA + token readout) also sheds its non-essential
+    /// bits when the window is tiled narrow — not just when the sidebar is open.
+    @State private var selectorRowWidth: CGFloat = 0
     // Cache picker items to prevent popover refresh during streaming
     @State private var cachedPickerItems: [ModelPickerItem] = []
 
@@ -301,8 +420,14 @@ struct FloatingInputCard: View {
     /// changes or the projection escalates to a hard block.
     @State private var ramBannerDismissedForModel: String?
     // MARK: - Voice Input State
-    @ObservedObject private var speechService = SpeechService.shared
-    @ObservedObject private var speechModelManager = SpeechModelManager.shared
+    // Deliberately NOT `@ObservedObject`: `SpeechService.audioLevel` publishes
+    // per audio buffer while recording, and an observing card re-ran its whole
+    // body at that rate. Reactive reads live in the extracted children
+    // (`FloatingVoiceOverlayHost`, `FloatingVoiceButton`,
+    // `VoiceStateSyncObservers`), which observe the services themselves;
+    // everything here only calls the services imperatively.
+    private let speechService = SpeechService.shared
+    private let speechModelManager = SpeechModelManager.shared
     @State private var voiceConfig = SpeechConfiguration.default
 
     // Pause detection state
@@ -443,9 +568,23 @@ struct FloatingInputCard: View {
     /// Max context length for the selected model — the SAME resolution the
     /// runtime loop uses (`AgentLoopBudget`), so the chip's denominator and
     /// the trim budget never diverge.
-    private var maxContextTokens: Int? {
+    private var contextWindowResolution: AgentLoopBudget.ContextWindowResolution? {
         guard let model = selectedModel else { return nil }
-        return AgentLoopBudget.resolveContextWindowSync(modelId: model)
+        return AgentLoopBudget.resolveContextWindowResolutionSync(modelId: model)
+    }
+
+    private var maxContextTokens: Int? {
+        contextWindowResolution?.tokens
+    }
+
+    /// The denominator the compactor and overflow gate actually use. The
+    /// model maximum remains visible in the popover, but showing it as the
+    /// chip denominator made an 85%-budget warning look early and made the
+    /// Chat metadata fallback look like a competing cap.
+    private var usableContextTokens: Int? {
+        maxContextTokens.map {
+            ContextBudgetManager(contextLength: $0).effectiveBudget
+        }
     }
 
     // MARK: - Context budget gating
@@ -525,7 +664,29 @@ struct FloatingInputCard: View {
             || isSandboxAvailable
             || isDefaultConfigAgent
             || (appConfig.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent)
-            || showSessionSpend
+            || showCreditsChip
+    }
+
+    /// Whether the credits chip (and its wallet panel) is available at all:
+    /// the router master switch is on, a signing identity exists, and the
+    /// device is online — the balance is spent on cloud services only, so an
+    /// offline composer shows no wallet at all. This gate (without the fetched
+    /// balance below) also keys the balance-refresh task in `body`, so the
+    /// first fetch can run while the chip is still hidden.
+    private var creditsChipAvailable: Bool {
+        remoteProviders.isOsaurusRouterEnabled
+            && !remoteProviders.isOffline
+            && OsaurusIdentity.existsCached()
+    }
+
+    /// Visibility gate for the credits chip. On top of availability, a balance
+    /// must have actually been fetched: with no server-confirmed balance
+    /// (offline at fetch time, router outage, auth failure) the chip's $0 /
+    /// "Add credits" states would be lies, so it stays hidden entirely. Shown
+    /// in every session (not just router-billed ones) because credits are the
+    /// account-level wallet other routed services will draw from too.
+    private var showCreditsChip: Bool {
+        creditsChipAvailable && accountService.balance != nil
     }
 
     private var mainContent: some View {
@@ -541,28 +702,35 @@ struct FloatingInputCard: View {
             // selector row, right-aligned so it stacks directly over the
             // context-token count, rendered as quiet muted text (not a chip)
             // so it reads as passive status rather than a control.
-            if !showVoiceOverlay && (showScreenContextIndicator || showSelectorRow) {
-                VStack(alignment: .trailing, spacing: 7) {
-                    if showScreenContextIndicator {
-                        screenContextIndicator
-                    }
-                    if showSelectorRow {
-                        selectorRow
+            if !showVoiceOverlay {
+                // The scope owns the sandbox/clipboard observation, so
+                // provisioning progress ticks and clipboard arrivals re-render
+                // only this row (including its visibility gate) — never the
+                // whole card body. The closure re-reads the live singleton
+                // state on every scope render.
+                ChipObservationScope(textModel: composerText) {
+                    if screenContextMayShow || showSelectorRow {
+                        VStack(alignment: .trailing, spacing: 7) {
+                            if screenContextMayShow {
+                                ScreenContextIndicator()
+                            }
+                            if showSelectorRow {
+                                selectorRow
+                            }
+                        }
+                        .padding(.top, 8)
+                        .padding(.horizontal, 20)
+                        // Ease the row out while connecting and back in once
+                        // connected, so the composer height changes smoothly
+                        // instead of snapping.
+                        .transition(.opacity)
                     }
                 }
-                .padding(.top, 8)
-                .padding(.horizontal, 20)
-                // Ease the row out while connecting and back in once connected,
-                // so the composer height changes smoothly instead of snapping.
-                .transition(.opacity)
             }
 
             if showVoiceOverlay {
-                VoiceInputOverlay(
+                FloatingVoiceOverlayHost(
                     state: $voiceInputState,
-                    audioLevel: speechService.audioLevel,
-                    transcription: speechService.currentTranscription,
-                    confirmedText: speechService.confirmedTranscription,
                     pauseDuration: voiceConfig.pauseDuration,
                     confirmationDelay: voiceConfig.confirmationDelay,
                     silenceDuration: currentSilenceDuration,
@@ -582,6 +750,21 @@ struct FloatingInputCard: View {
                     )
                 )
             } else {
+                // The scope observes the text model, so keystrokes re-render
+                // only this subtree (popups, input area, send gating) — never
+                // the whole card body.
+                ComposerTextObservationScope(model: composerText) {
+                    composerContent
+                }
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showVoiceOverlay)
+        // Smoothly collapse/reveal the selector row (model chip + balance) as
+        // the remote-agent connection resolves, so the composer doesn't snap.
+        .animation(theme.springAnimation(), value: remoteConnectionPending)
+    }
+
+    private var composerContent: some View {
                 VStack(spacing: 4) {
                     // Slash command popup — appears above the input card
                     if showSlashPopup {
@@ -599,6 +782,9 @@ struct FloatingInputCard: View {
                         )
                     }
 
+                    // "@" file menu popup — appears above the input card
+                    atFileMenuPopupView
+
                     inputCard
                         .padding(.horizontal, 20)
                         .padding(.bottom, 20)
@@ -612,17 +798,37 @@ struct FloatingInputCard: View {
                         removal: .opacity.combined(with: .scale(scale: 0.98))
                     )
                 )
-            }
-        }
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showVoiceOverlay)
-        // Smoothly collapse/reveal the selector row (model chip + balance) as
-        // the remote-agent connection resolves, so the composer doesn't snap.
-        .animation(theme.springAnimation(), value: remoteConnectionPending)
+                .onChange(of: composerText.text) { _, _ in
+                    // Reset popup selection whenever the typed query changes.
+                    // Attached here (inside the text observation scope) so the
+                    // change is detected on scope re-renders — the card itself
+                    // no longer re-renders per keystroke.
+                    slashSelectedIndex = 0
+                    atSelectedIndex = 0
+                    // Typing after an Escape-dismissal re-arms the slash popup
+                    if dismissedSlashQuery != nil, activeSlashQuery != dismissedSlashQuery {
+                        dismissedSlashQuery = nil
+                    }
+                    // Re-list the "@" menu off the main actor for the new query.
+                    // (folds in the registry sync so it costs no extra body chain
+                    // link — the whole chain is at the type-checker's limit.)
+                    refreshAtMenu()
+                }
     }
 
     var body: some View {
         let _ = ChatPerfTrace.shared.count("body.FloatingInputCard")
         mainContent
+            // Refresh the router balance whenever the wallet becomes available
+            // (router on + identity + online). Keyed on availability rather
+            // than chip visibility because the chip stays hidden until a
+            // balance has been fetched — this task is what performs that
+            // first fetch, and it re-fires on the connectivity-recovery edge.
+            .task(id: creditsChipAvailable) {
+                if creditsChipAvailable {
+                    await accountService.refreshBalance()
+                }
+            }
             // Float the configuration-context error ABOVE the card as an
             // overlay so it never reflows the input/selector layout when it
             // appears or clears. Anchored to the card's top edge and shifted
@@ -639,6 +845,12 @@ struct FloatingInputCard: View {
                 )
             )
             .onAppear {
+                // Execution choices are mutually exclusive in both behavior
+                // and presentation. Clear a restored folder if this agent
+                // already has Sandbox enabled when the chat appears.
+                if isSandboxEnabled {
+                    folderState.clearFolder()
+                }
                 refreshLoadFeasibility()
                 let isReappear = !localText.isEmpty || voiceInputState != .idle
                 localText = text
@@ -673,6 +885,13 @@ struct FloatingInputCard: View {
                     if !showVoiceOverlay {
                         showVoiceOverlay = true
                     }
+                }
+            }
+            .onChange(of: isSandboxEnabled) { _, enabled in
+                // The setting is agent-scoped, so this also clears folders in
+                // other visible chats when Sandbox is enabled elsewhere.
+                if enabled {
+                    folderState.clearFolder()
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .startVoiceInputInChat)) { notification in
@@ -752,72 +971,28 @@ struct FloatingInputCard: View {
                     localText = newValue
                 }
             }
-            .onChange(of: localText) { _, _ in
-                // Reset popup selection whenever the typed query changes
-                slashSelectedIndex = 0
-            }
-            .onChange(of: showSlashPopup) { _, isVisible in
+            .onChange(of: showSlashPopup) { _, _ in
                 // Keep registry in sync so the global key monitor can suppress
-                // Escape from closing the window while the popup is open.
-                SlashCommandRegistry.shared.isPopupVisible = isVisible
+                // Escape from closing the window while either popup is open.
+                syncPopupVisibility()
             }
             .onDisappear {
+                atMenuTask?.cancel()
                 SlashCommandRegistry.shared.isPopupVisible = false
             }
             .onChange(of: focusTrigger) { _, _ in
                 isFocused = true
             }
-            .onChange(of: speechService.isRecording) { _, isRecording in
-                print(
-                    "[FloatingInputCard] isRecording changed to: \(isRecording). voiceInputState: \(voiceInputState), showVoiceOverlay: \(showVoiceOverlay)"
+            .modifier(
+                VoiceStateSyncObservers(
+                    voiceInputState: $voiceInputState,
+                    showVoiceOverlay: $showVoiceOverlay,
+                    lastVoiceActivityTime: $lastVoiceActivityTime,
+                    lastSpeechTime: $lastSpeechTime,
+                    hasDetectedSpeechThisTurn: $hasDetectedSpeechThisTurn,
+                    resetPauseDetectionForRecording: resetPauseDetectionForRecording
                 )
-                // Sync voice state with service
-                if isRecording {
-                    if voiceInputState == .idle && showVoiceOverlay {
-                        voiceInputState = .recording
-                        lastVoiceActivityTime = Date()
-                        resetPauseDetectionForRecording()
-                        print("[FloatingInputCard] Recording confirmed - voice input ready")
-                    } else if voiceInputState == .idle {
-                        print("[FloatingInputCard] External recording detected. Overlay: \(showVoiceOverlay)")
-                        voiceInputState = .recording
-                        lastVoiceActivityTime = Date()
-                        resetPauseDetectionForRecording()
-                    }
-                } else {
-                    // If service stopped recording (e.g. via Esc key in ChatView), sync local state.
-                    // Preserve `.sending` so the overlay stays up during LLM cleanup.
-                    if voiceInputState != .idle && voiceInputState != .sending {
-                        voiceInputState = .idle
-                        showVoiceOverlay = false
-                    }
-                }
-            }
-            .onChange(of: speechService.isSpeechDetected) { _, detected in
-                if detected && voiceInputState == .recording {
-                    hasDetectedSpeechThisTurn = true
-                    lastSpeechTime = Date()
-                }
-            }
-            .onChange(of: speechService.currentTranscription) { _, newValue in
-                // When new transcription arrives, user is speaking
-                // Only reset silence timer if there is also active audio detection or meaningful level
-                if voiceInputState == .recording && TranscriptionTextNormalizer.hasVisibleText(newValue) {
-                    if speechService.isSpeechDetected || speechService.audioLevel > 0.05 {
-                        hasDetectedSpeechThisTurn = true
-                        lastSpeechTime = Date()
-                    }
-                }
-            }
-            .onChange(of: speechService.confirmedTranscription) { _, newValue in
-                // When confirmed transcription changes, user was speaking
-                if voiceInputState == .recording && TranscriptionTextNormalizer.hasVisibleText(newValue) {
-                    if speechService.isSpeechDetected || speechService.audioLevel > 0.05 {
-                        hasDetectedSpeechThisTurn = true
-                        lastSpeechTime = Date()
-                    }
-                }
-            }
+            )
             .onChange(of: voiceInputState) { _, newState in
                 if newState == .recording {
                     resetPauseDetectionForRecording()
@@ -957,12 +1132,18 @@ private struct RAMBannerShape: Shape {
         path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
         path.addArc(
             center: CGPoint(x: rect.maxX - r, y: rect.minY + r),
-            radius: r, startAngle: .degrees(-90), endAngle: .degrees(0), clockwise: false
+            radius: r,
+            startAngle: .degrees(-90),
+            endAngle: .degrees(0),
+            clockwise: false
         )
         path.addLine(to: CGPoint(x: rect.maxX, y: bodyBottom - r))
         path.addArc(
             center: CGPoint(x: rect.maxX - r, y: bodyBottom - r),
-            radius: r, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false
+            radius: r,
+            startAngle: .degrees(0),
+            endAngle: .degrees(90),
+            clockwise: false
         )
         path.addLine(to: CGPoint(x: pointerCenterX + halfPointer, y: bodyBottom))
         path.addLine(to: CGPoint(x: pointerCenterX, y: rect.maxY))
@@ -970,12 +1151,18 @@ private struct RAMBannerShape: Shape {
         path.addLine(to: CGPoint(x: rect.minX + r, y: bodyBottom))
         path.addArc(
             center: CGPoint(x: rect.minX + r, y: bodyBottom - r),
-            radius: r, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false
+            radius: r,
+            startAngle: .degrees(90),
+            endAngle: .degrees(180),
+            clockwise: false
         )
         path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
         path.addArc(
             center: CGPoint(x: rect.minX + r, y: rect.minY + r),
-            radius: r, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false
+            radius: r,
+            startAngle: .degrees(180),
+            endAngle: .degrees(270),
+            clockwise: false
         )
         path.closeSubpath()
         return path
@@ -1260,7 +1447,8 @@ extension FloatingInputCard {
             voiceConfig.pauseDuration > 0
         else { return }
 
-        let hasContent = TranscriptionTextNormalizer.hasVisibleText(speechService.currentTranscription)
+        let hasContent =
+            TranscriptionTextNormalizer.hasVisibleText(speechService.currentTranscription)
             || TranscriptionTextNormalizer.hasVisibleText(speechService.confirmedTranscription)
         let silenceDuration = Date().timeIntervalSince(lastSpeechTime)
 
@@ -1325,6 +1513,10 @@ extension FloatingInputCard {
             } else if !hasContent {
                 print("[FloatingInputCard] Silence timeout without content - closing voice input")
                 stopVoiceInputFromTimeout()
+                ToastManager.shared.infoLocalized(
+                    "No Speech Detected",
+                    message: "Nothing was sent."
+                )
             }
         }
     }
@@ -1651,6 +1843,152 @@ extension FloatingInputCard {
         }
     }
 
+    // MARK: - "@" File Menu
+
+    /// Replace the trailing "@…" token with `replacement`, preserving the text
+    /// before the "@".
+    private func replacingAtToken(with replacement: String) -> String {
+        guard let atRange = localText.range(of: "@", options: .backwards) else {
+            return replacement
+        }
+        return String(localText[..<atRange.lowerBound]) + replacement
+    }
+
+    /// Apply a selected file/folder to the input. Folders keep the popup open
+    /// with a trailing "/" so the user can drill deeper CLI-style; files insert
+    /// the path followed by a space, which closes the token.
+    private func applyAtItem(_ item: AtFileItem) {
+        let inserted = item.isDirectory ? "@\(item.path)/" : "@\(item.path) "
+        let newText = replacingAtToken(with: inserted)
+        localText = newText
+        text = newText
+        isFocused = true
+    }
+
+    /// Refresh `atMenuItems` for the current "@" query off the main actor.
+    /// Cancels any prior listing so fast typing can't pile up work. A nil query
+    /// (token dismissed) clears the list synchronously.
+    private func refreshAtMenu() {
+        atMenuTask?.cancel()
+        guard let query = activeAtQuery else {
+            atMenuItems = []
+            atMenuStatus = .ok
+            atMenuLoading = false
+            syncPopupVisibility()
+            return
+        }
+        // Only treat this as a blocking "load" when we have nothing to show yet;
+        // when refining an existing list we keep the current rows visible.
+        atMenuLoading = atMenuItems.isEmpty
+        // Snapshot THIS chat's folder root here (main actor); the enumeration
+        // itself runs detached so filesystem I/O never blocks the UI.
+        let rootPath = folderState.rootPath
+        atMenuTask = Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                AtFileMenu.list(query: query, rootPath: rootPath)
+            }.value
+            if Task.isCancelled { return }
+            atMenuItems = result.items
+            atMenuStatus = result.status
+            atMenuDirectory = result.directory
+            atMenuLoading = false
+            syncPopupVisibility()
+        }
+    }
+
+    /// Recover from a denied folder. macOS won't re-prompt after a denial, but
+    /// because the app is non-sandboxed, the user explicitly picking the folder
+    /// in an open panel re-grants TCC access. On success we re-list so browsing
+    /// resumes in place. The panel is a main-actor modal (user interaction);
+    /// the listing it triggers stays off the main thread.
+    private func grantAtMenuAccess() {
+        let directory = atMenuDirectory
+        guard !directory.isEmpty else { return }
+        Task {
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.canCreateDirectories = false
+            panel.allowsMultipleSelection = false
+            panel.directoryURL = URL(fileURLWithPath: directory)
+            panel.prompt = L("Grant Access")
+            panel.message = L("Grant osaurus access to this folder")
+            guard await panel.beginModal() == .OK else { return }
+            isFocused = true
+            refreshAtMenu()
+        }
+    }
+
+    /// Mirror whether either completion popup is showing into the shared
+    /// registry so the global key monitor can suppress Escape (which would
+    /// otherwise close the window) while a popup is open. Folded into
+    /// `refreshAtMenu` and the slash `onChange` so it adds no body chain link.
+    private func syncPopupVisibility() {
+        SlashCommandRegistry.shared.isPopupVisible = showSlashPopup || showAtPopup
+    }
+
+    // MARK: - Input Key Handling
+
+    /// Return/Enter in the text field: apply the highlighted popup entry when a
+    /// popup is open, otherwise send the message.
+    private func handleInputCommit() {
+        if showSlashPopup {
+            let cmds = slashFilteredCommands
+            if slashSelectedIndex < cmds.count {
+                applySlashCommand(cmds[slashSelectedIndex])
+            }
+        } else if showAtPopup {
+            if atSelectedIndex < atMenuItems.count {
+                applyAtItem(atMenuItems[atSelectedIndex])
+            }
+        } else {
+            syncAndSend()
+        }
+    }
+
+    /// Up arrow: move the open popup's selection, else navigate input history.
+    private func handleInputArrowUp() -> Bool {
+        if showSlashPopup {
+            slashSelectedIndex = max(0, slashSelectedIndex - 1)
+            return true
+        }
+        if showAtPopup {
+            atSelectedIndex = max(0, atSelectedIndex - 1)
+            return true
+        }
+        return handleHistoryArrowUp()
+    }
+
+    /// Down arrow: move the open popup's selection, else navigate input history.
+    private func handleInputArrowDown() -> Bool {
+        if showSlashPopup {
+            slashSelectedIndex = min(slashFilteredCommands.count - 1, slashSelectedIndex + 1)
+            return true
+        }
+        if showAtPopup {
+            atSelectedIndex = min(atMenuItems.count - 1, atSelectedIndex + 1)
+            return true
+        }
+        return handleHistoryArrowDown()
+    }
+
+    /// Escape while a popup is open: dismiss just the popup. The typed text
+    /// (including the slash/"@" token) is left intact; the "@" menu removes
+    /// only its token so surrounding text survives.
+    private func handlePopupEscape() -> Bool {
+        if showSlashPopup {
+            dismissedSlashQuery = activeSlashQuery
+            return true
+        }
+        if showAtPopup {
+            let newText = replacingAtToken(with: "")
+            localText = newText
+            text = newText
+            return true
+        }
+        return false
+    }
+
     private func handleBuiltInSlashAction(_ name: String) {
         switch name {
         case "clear":
@@ -1683,6 +2021,15 @@ extension FloatingInputCard {
                 ToastManager.shared.infoLocalized(
                     "Screenshot Unavailable",
                     message: "Pass an onCaptureScreenshot handler to enable /screenshot"
+                )
+            }
+        case "title":
+            if let generateTitle = onGenerateTitle {
+                generateTitle()
+            } else {
+                ToastManager.shared.infoLocalized(
+                    "Chat Title",
+                    message: "Pass an onGenerateTitle handler to enable /title"
                 )
             }
         case "help":
@@ -1926,9 +2273,56 @@ extension FloatingInputCard {
         return ModelProfileRegistry.options(for: model)
     }
 
-    private var hasNonThinkingOptions: Bool {
-        let thinkingId = selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption?.id }
-        return activeProfileOptions.contains { $0.id != thinkingId }
+    /// Catalog-driven reasoning capabilities for the selected model (Codex
+    /// live catalog / official OpenAI GPT-5.6 contract). When present, the
+    /// effort control renders inline with the model chip instead of the
+    /// separate options chip.
+    private var inlineEffortCapabilities: ModelReasoningCapabilities? {
+        guard let capabilities = selectedPickerItem?.reasoningCapabilities,
+            !capabilities.isEmpty
+        else { return nil }
+        return capabilities
+    }
+
+    /// The reasoning suffix the model chip should display ("· Extra High",
+    /// "· Instruct"): the explicit persisted choice, otherwise the
+    /// catalog/profile default (display-only; an unset option sends no
+    /// override on the wire). Covers both capability-enriched remote models
+    /// and static profiles with a segmented reasoning option.
+    private var inlineReasoningSuffix: String? {
+        guard let model = selectedModel else { return nil }
+        return ModelProfileRegistry.inlineReasoningSuffixLabel(
+            for: model,
+            values: activeModelOptions
+        )
+    }
+
+    /// Effective thinking state for toggle-only reasoning models, shown as a
+    /// brain glyph on the model chip (accent while on, muted while off) so
+    /// the state stays visible at a glance beside the footer control and the
+    /// picker's Model Options row. Nil hides the glyph: models with a
+    /// segmented effort suffix, models without a thinking toggle, and Mode 2
+    /// remote-agent runs — the remote agent owns its generation config
+    /// server-side, so a local state readout would mislead.
+    private var inlineThinkingEnabled: Bool? {
+        guard let model = selectedModel,
+            !isRemoteAgentRun,
+            inlineReasoningSuffix == nil,
+            ModelProfileRegistry.profile(for: model)?.thinkingOption != nil
+        else { return nil }
+        return effectiveThinkingEnabled(for: model)
+    }
+
+    /// Keep the chip and picker on the same policy as dispatch. In a local
+    /// tool-capable chat, an untouched toggleable model defaults to direct
+    /// answers; in ordinary no-tool chat, the bundle template still owns the
+    /// default. An explicit persisted UI choice wins in either context.
+    private func effectiveThinkingEnabled(for model: String) -> Bool {
+        AgentReasoningPolicy.effectiveEnableThinkingForPresentation(
+            isAgentOrToolRequest: appliesAgentReasoningDefault,
+            modelOptions: activeModelOptions,
+            capability: LocalReasoningCapability.capability(forModelId: model)
+        )
     }
 
     private var selectorRow: some View {
@@ -1941,7 +2335,7 @@ extension FloatingInputCard {
             // token-budget semantics — those chips would all be inert. Swap
             // the whole row for the image config controls instead so they sit
             // right beside the model that owns them.
-            if isImageComposerActive {
+            if isMediaComposerActive {
                 // Scroll the config chips horizontally so a narrow (minimum-size)
                 // window can't compress them below their ideal width — that
                 // compression is what made the labels wrap character-by-character.
@@ -1953,51 +2347,129 @@ extension FloatingInputCard {
                 }
                 // The negative prompt sits where the token meter normally would,
                 // as a compact button that opens a themed editor on tap.
-                if imageCapabilities?.negativePrompt == true {
+                if selectedMediaPickerItem?.mediaModel != nil
+                    || imageCapabilities?.negativePrompt == true
+                {
                     negativePromptButton
                 }
             } else {
-                // Mode 2 owns its own generation config (thinking + sampler
-                // options) server-side; the local toggles wouldn't reach the
-                // remote agent, so hide them rather than imply they apply.
-                if !isRemoteAgentRun {
-                    thinkingToggleChip
+                // The interactive toggle chips collapse to icon-only when the
+                // chat area is too narrow to show every label (e.g. the sidebar
+                // is open) — `chipsCompact`, derived from the measured region
+                // width below, drives that. The primary Thinking control and
+                // chips carrying live state (folder name, sandbox download %)
+                // keep their text regardless; every
+                // collapsed chip still names itself on hover via help(). The
+                // ScrollView is the no-wrap safety net: it fills the space
+                // between the model chip and the meta cluster (so the meta
+                // cluster stays right-aligned, just like a Spacer would), and
+                // guarantees the labels never wrap character-by-character even
+                // at the minimum window width. We measure this region rather
+                // than probe layout candidates so the sidebar animation, which
+                // changes this width every frame, only triggers one cheap
+                // cluster build per frame instead of ViewThatFits's three.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    toggleChipCluster(compact: chipsCompact)
+                        .padding(.vertical, 1)
                 }
-
-                if autoSpeakAssistant {
-                    autoSpeakToggleChip
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.width
+                } action: { width in
+                    chipRegionWidth = width
                 }
-
-                if hasNonThinkingOptions, !isRemoteAgentRun {
-                    modelOptionsSelectorChip
-                }
-
-                // Sandbox toggle: visible whenever the sandbox is available on
-                // this system. Hidden for the Default agent (configuration-only).
-                // Hidden in Mode 2: the remote agent runs its own tools server-side.
-                if !isRemoteAgentRun, !isDefaultConfigAgent, isSandboxAvailable {
-                    sandboxToggleChip
-                }
-
-                // Folder context selector: the Default (configuration) agent shows
-                // a quiet "Configuration" indicator instead. Hidden in Mode 2.
-                if !isRemoteAgentRun {
-                    if isDefaultConfigAgent {
-                        configurationOnlyChip
-                    } else {
-                        folderContextChip
-                    }
-                }
-
-                // Clipboard / paste chip — last in the left cluster.
-                if AppConfiguration.shared.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent {
-                    clipboardToggleChip
-                }
-
-                Spacer()
 
                 // Right-aligned "meta" cluster: balance + token usage.
                 metaCluster
+            }
+        }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            selectorRowWidth = width
+        }
+    }
+
+    /// Whether the right-edge meta cluster should shed its non-essential bits
+    /// (the credits icon, the "tokens" caption). True when the caller asked for
+    /// compact (sidebar open) OR the row itself is narrow — the latter is what
+    /// was missing: tiling the window narrow with the sidebar closed left the
+    /// meta cluster at full width and crowded the chips off the row.
+    private var metaCompact: Bool {
+        isCompact || (selectorRowWidth > 0 && selectorRowWidth < 620)
+    }
+
+    /// A tighter tier for genuinely tiny rows (e.g. minimum window width *with*
+    /// the sidebar open, which leaves the chat pane only ~260pt). Here the meta
+    /// cluster gives up its lowest-priority pieces so the toggle chips still fit
+    /// without being clipped mid-icon: the token readout is dropped and the
+    /// credits CTA shrinks to its glyph (hover/tap still opens the wallet).
+    private var metaUltraCompact: Bool {
+        selectorRowWidth > 0 && selectorRowWidth < 430
+    }
+
+    /// Whether the toggle chips should collapse to icon-only. True once the
+    /// measured `chipRegionWidth` is narrower than the labeled chips would
+    /// need. The per-chip width is a deliberate estimate — the ScrollView
+    /// safety net absorbs any error, so this only has to be in the ballpark to
+    /// flip the row to icons a beat before the labels would otherwise scroll.
+    private var chipsCompact: Bool {
+        guard chipRegionWidth > 0 else { return false }
+        let perLabeledChip: CGFloat = 96
+        return chipRegionWidth < CGFloat(visibleToggleChipCount) * perLabeledChip
+    }
+
+    /// Count of toggle chips currently in the cluster, mirroring the visibility
+    /// conditions in `toggleChipCluster`. Drives the `chipsCompact` width
+    /// budget so the collapse point scales with how many chips are actually on
+    /// screen (a remote-agent run, for instance, hides most of them).
+    private var visibleToggleChipCount: Int {
+        var count = 0
+        if autoSpeakAssistant { count += 1 }
+        if !isRemoteAgentRun, !isDefaultConfigAgent, isSandboxAvailable { count += 1 }
+        if !isRemoteAgentRun { count += 1 }  // folder or configuration chip
+        if AppConfiguration.shared.chatConfig.enableClipboardMonitoring
+            && clipboardService.hasNewContent
+        {
+            count += 1
+        }
+        return count
+    }
+
+    /// The interactive toggle chips (auto-speak, sandbox, folder, clipboard)
+    /// as one horizontal group. Thinking is controlled from the model picker
+    /// `Model Options` section and reflected as the brain glyph on the model
+    /// chip, so changing reasoning mode always goes through the model-scoped
+    /// dropdown path. `selectorRow` renders one rendering of this cluster,
+    /// choosing `compact` from the measured region width so the row degrades
+    /// gracefully as it narrows without re-measuring layout candidates every
+    /// frame.
+    @ViewBuilder
+    private func toggleChipCluster(compact: Bool) -> some View {
+        HStack(spacing: 6) {
+            if autoSpeakAssistant {
+                autoSpeakToggleChip(compact: compact)
+            }
+
+            // Sandbox toggle: visible whenever the sandbox is available on
+            // this system. Hidden for the Default agent (configuration-only).
+            // Hidden in Mode 2: the remote agent runs its own tools server-side.
+            if !isRemoteAgentRun, !isDefaultConfigAgent, isSandboxAvailable {
+                sandboxToggleChip(compact: compact)
+            }
+
+            // Folder context selector: the Default (configuration) agent shows
+            // a quiet "Configuration" indicator instead. Hidden in Mode 2.
+            if !isRemoteAgentRun {
+                if isDefaultConfigAgent {
+                    configurationOnlyChip(compact: compact)
+                } else {
+                    folderContextChip(compact: compact)
+                }
+            }
+
+            // Clipboard / paste chip — last in the left cluster.
+            if AppConfiguration.shared.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent {
+                clipboardToggleChip(compact: compact)
             }
         }
     }
@@ -2011,16 +2483,22 @@ extension FloatingInputCard {
     private var metaCluster: some View {
         // Hide the balance/credits chip while a remote agent is connecting —
         // it's not actionable yet and competes with the connect affordance.
-        let showCredits = showSessionSpend && !remoteConnectionPending
+        let showCredits = showCreditsChip && !remoteConnectionPending
         // Mode 2 hides the context-budget chip + popover entirely: a remote
         // agent composes its own system prompt / tools server-side, so a local
         // token breakdown (system prompt, tools, history) doesn't reflect what
         // actually runs and would mislead about the remote agent's budget.
-        let showTokens = displayContextTokens > 0 && !isRemoteAgentRun
+        let showTokens = displayContextTokens > 0 && !isRemoteAgentRun && !metaUltraCompact
         if showCredits || showTokens {
             HStack(alignment: .center, spacing: 8) {
                 if showCredits {
-                    creditsChip
+                    FloatingCreditsChip(
+                        isRouterBilledSession: isRouterBilledSession,
+                        sessionSpendMicro: sessionSpendMicro,
+                        metaCompact: metaCompact,
+                        metaUltraCompact: metaUltraCompact,
+                        onAddCredits: onAddCredits
+                    )
                 }
                 if showCredits && showTokens {
                     Rectangle()
@@ -2028,282 +2506,23 @@ extension FloatingInputCard {
                         .frame(width: 1, height: 12)
                 }
                 if showTokens {
-                    contextIndicatorChip
-                }
-            }
-        }
-    }
-
-    // MARK: - Credits Indicator
-
-    /// Urgency tiers for the balance indicator. Healthy stays quiet (plain muted
-    /// text that blends into the meta cluster); low and empty escalate to an
-    /// amber pill so a top-up is easy to notice. Empty/frozen reads as an "Add
-    /// credits" call to action — deliberately amber, never error-red, so it
-    /// invites action instead of looking like a failure.
-    private enum BalanceLevel {
-        case healthy
-        case low
-        case empty
-    }
-
-    private var balanceLevel: BalanceLevel {
-        let micro = accountService.balanceMicroValue
-        if micro <= 0 || accountService.isFrozen {
-            return .empty
-        }
-        if micro < 1_000_000 {  // < $1.00
-            return .low
-        }
-        return .healthy
-    }
-
-    /// Resolved visual tokens for one `BalanceLevel` so `creditsChip` can render
-    /// declaratively instead of re-deriving each property from the level inline.
-    private struct CreditsChipStyle {
-        let iconName: String
-        let iconColor: Color
-        let textColor: Color
-        let weight: Font.Weight
-        /// Pill fill/stroke; `nil` keeps the chip chrome-free (healthy state).
-        let pill: (fill: Color, stroke: Color)?
-        let glow: Color
-        /// When false, the chip shows the "Add credits" CTA instead of an amount.
-        let showsAmount: Bool
-    }
-
-    private func creditsStyle(for level: BalanceLevel) -> CreditsChipStyle {
-        let amber = theme.warningColor
-        switch level {
-        case .healthy:
-            return CreditsChipStyle(
-                iconName: "creditcard",
-                iconColor: theme.tertiaryText,
-                textColor: theme.secondaryText,
-                weight: .medium,
-                pill: nil,
-                glow: .clear,
-                showsAmount: true
-            )
-        case .low:
-            // The chip shows the router balance, so a low balance escalates the
-            // chip itself to amber text (no pill) — a gentle nudge that stops
-            // short of the empty-state "Add credits" call to action.
-            return CreditsChipStyle(
-                iconName: "creditcard",
-                iconColor: amber,
-                textColor: amber,
-                weight: .semibold,
-                pill: nil,
-                glow: .clear,
-                showsAmount: true
-            )
-        case .empty:
-            return CreditsChipStyle(
-                iconName: "plus.circle.fill",
-                iconColor: amber,
-                textColor: amber,
-                weight: .semibold,
-                pill: (amber.opacity(0.22), amber.opacity(0.5)),
-                glow: amber.opacity(0.25),
-                showsAmount: false
-            )
-        }
-    }
-
-    /// This session's Router spend, formatted for the hover popover. The chip
-    /// surfaces the account balance; spend is shown only in the popover.
-    private var sessionSpendDisplay: String {
-        OsaurusRouter.formatMicroUSDPrecise(String(sessionSpendMicro))
-    }
-
-    /// Accessibility text for the credits chip. Describes the router balance the
-    /// chip shows and the tap action; session spend lives in the popover.
-    private var creditsHelpText: Text {
-        if accountService.isFrozen {
-            return Text("Account paused - add credits to resume.", bundle: .module)
-        }
-        return Text("\(accountService.formattedBalance) router balance. Click to add credits.", bundle: .module)
-    }
-
-    /// Balance indicator for Osaurus Router sessions. Tapping opens the top-up
-    /// sheet; the balance best-effort refreshes on appear so it isn't blank.
-    /// Quiet plain text when funded, escalating to an amber pill / "Add credits"
-    /// CTA as the balance runs low or hits zero (see `BalanceLevel`).
-    @ViewBuilder
-    private var creditsChip: some View {
-        let level = balanceLevel
-        let style = creditsStyle(for: level)
-        let caption = CGFloat(theme.captionSize)
-        // Hide the icon in compact mode to save width, except the empty-state
-        // plus glyph, which signals the chip is actionable.
-        let showIcon = !isCompact || level == .empty
-
-        Button {
-            onAddCredits?()
-        } label: {
-            HStack(spacing: 4) {
-                if showIcon {
-                    Image(systemName: style.iconName)
-                        .font(.system(size: caption - 2))
-                        .foregroundColor(style.iconColor)
-                        .contentTransition(.symbolEffect(.replace))
-                }
-
-                if style.showsAmount {
-                    // Composer shows the overall router balance; this session's
-                    // spend is surfaced only in the hover popover.
-                    Text(verbatim: accountService.formattedBalance)
-                        .font(.system(size: caption - 1, weight: style.weight, design: .monospaced))
-                        .foregroundColor(style.textColor)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                } else {
-                    Text("Add credits", bundle: .module)
-                        .font(theme.font(size: caption - 1, weight: style.weight))
-                        .foregroundColor(style.textColor)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-            }
-            // Chrome only appears in the low/empty attention states; the healthy
-            // chip stays plain text to match the token indicator's weight.
-            .padding(.horizontal, style.pill == nil ? 0 : 10)
-            .padding(.vertical, style.pill == nil ? 0 : 4)
-            .background {
-                if let pill = style.pill {
-                    Capsule()
-                        .fill(pill.fill)
-                        .overlay(Capsule().strokeBorder(pill.stroke, lineWidth: 1))
-                }
-            }
-            // Soft glow on the empty CTA draws the eye without a repeating animation.
-            .shadow(color: style.glow, radius: 5, x: 0, y: 1)
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
-        .accessibilityLabel(creditsHelpText)
-        .onHover { hovering in
-            balanceHoverTask?.cancel()
-            if hovering {
-                balanceHoverTask = Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 300_000_000)
-                    guard !Task.isCancelled else { return }
-                    showBalanceBreakdown = true
-                }
-            } else {
-                showBalanceBreakdown = false
-            }
-        }
-        .popover(isPresented: $showBalanceBreakdown, arrowEdge: .top) {
-            BalanceBreakdownPopover(
-                sessionSpend: sessionSpendDisplay,
-                balance: accountService.formattedBalance,
-                isAttention: level != .healthy,
-                isFrozen: accountService.isFrozen
-            )
-        }
-        .task(id: showSessionSpend) {
-            if showSessionSpend {
-                await accountService.refreshBalance()
-            }
-        }
-    }
-
-    // MARK: - Context Indicator
-
-    @ViewBuilder
-    private var contextIndicatorChip: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-            // Budget-state tinting: amber at ≥85% of the window (soft
-            // warning — compaction will engage), red when the
-            // non-compactable prefix alone can't fit (send is gated).
-            let warningColor: Color? =
-                isContextHardOverflow ? .red : (isContextNearLimit ? .orange : nil)
-
-            if let warningColor {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: CGFloat(theme.captionSize) - 2))
-                    .foregroundColor(warningColor)
-                    .localizedHelp(
-                        isContextHardOverflow
-                            ? "Context is full: the system prompt, tools, and input alone exceed this model's window. Shorten the input, disable tools, or pick a larger-context model."
-                            : "Context is nearly full (≥85% of the model window). Older messages will be compacted; consider starting a fresh chat for best quality."
+                    FloatingContextChip(
+                        displayTokens: displayContextTokens,
+                        usableTokens: usableContextTokens,
+                        modelMaxTokens: maxContextTokens,
+                        windowResolution: contextWindowResolution,
+                        isStreaming: isStreaming,
+                        isNearLimit: isContextNearLimit,
+                        isHardOverflow: isContextHardOverflow,
+                        metaCompact: metaCompact,
+                        formatTokenCount: formatTokenCount,
+                        breakdown: { displayContextBreakdown },
+                        compactionState: compactionState,
+                        canCompact: canCompactConversation && !isStreaming,
+                        onCompact: onCompactConversation
                     )
-            }
-
-            let prefix = isStreaming ? "" : "~"
-            let tokenText =
-                if let maxCtx = maxContextTokens {
-                    "\(prefix)\(formatTokenCount(displayContextTokens)) / \(formatTokenCount(maxCtx))"
-                } else {
-                    "\(prefix)\(formatTokenCount(displayContextTokens))"
-                }
-            Text(tokenText)
-                .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
-                .foregroundColor(
-                    warningColor ?? (isStreaming ? theme.secondaryText : theme.tertiaryText)
-                )
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-
-            if !isCompact {
-                Text("tokens", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
-                    .foregroundColor(theme.tertiaryText.opacity(0.7))
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-            }
-        }
-        .pointingHandCursor()
-        .onHover { hovering in
-            if hovering {
-                openContextBreakdown()
-            } else {
-                scheduleContextDismiss()
-            }
-        }
-        .popover(isPresented: $showContextBreakdown, arrowEdge: .top) {
-            ContextBreakdownPopover(
-                breakdown: displayContextBreakdown,
-                maxTokens: maxContextTokens,
-                isStreaming: isStreaming,
-                formatTokenCount: formatTokenCount
-            )
-            // Keep the popover alive while the cursor is over it, so the user
-            // can travel from the trigger and click the disclosure headers.
-            .onHover { hovering in
-                if hovering {
-                    contextDismissTask?.cancel()
-                } else {
-                    scheduleContextDismiss()
                 }
             }
-        }
-    }
-
-    /// Open the context popover after a short hover dwell, cancelling any
-    /// pending dismiss so a quick re-entry doesn't flicker it closed.
-    private func openContextBreakdown() {
-        contextDismissTask?.cancel()
-        contextHoverTask?.cancel()
-        contextHoverTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            guard !Task.isCancelled else { return }
-            showContextBreakdown = true
-        }
-    }
-
-    /// Dismiss the context popover after a grace period, giving the cursor
-    /// time to cross the gap into the popover window.
-    private func scheduleContextDismiss() {
-        contextHoverTask?.cancel()
-        contextDismissTask?.cancel()
-        contextDismissTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            guard !Task.isCancelled else { return }
-            showContextBreakdown = false
         }
     }
 
@@ -2328,7 +2547,15 @@ extension FloatingInputCard {
     }
 
     private var selectedImagePickerItem: ModelPickerItem? {
-        guard selectedPickerItem?.source.isImageGeneration == true else { return nil }
+        guard
+            selectedPickerItem?.source.isImageGeneration == true
+                || selectedPickerItem?.mediaModel?.kind == .image
+        else { return nil }
+        return selectedPickerItem
+    }
+
+    private var selectedMediaPickerItem: ModelPickerItem? {
+        guard selectedPickerItem?.isMediaGeneration == true else { return nil }
         return selectedPickerItem
     }
 
@@ -2340,6 +2567,10 @@ extension FloatingInputCard {
         selectedImagePickerItem != nil
     }
 
+    private var isMediaComposerActive: Bool {
+        selectedMediaPickerItem != nil
+    }
+
     private var isSelectedModelDeprecated: Bool {
         guard let id = selectedModel else { return false }
         return ModelManager.replacementForDeprecatedModel(id) != nil
@@ -2347,39 +2578,107 @@ extension FloatingInputCard {
 
     private var isSelectedModelLocal: Bool {
         guard let id = selectedModel else { return false }
-        return ModelManager.findInstalledModel(named: id) != nil
+        // Cache-only lookup: this getter runs in view-body context (and on
+        // every 2s memory tick via `refreshLoadFeasibility`), where the
+        // blocking `findInstalledModel(named:)` can park on a cold-cache
+        // disk scan for seconds and hang the app.
+        return ModelManager.findInstalledMLXModelFromCache(named: id) != nil
     }
 
     private var modelWarmupDotColor: Color {
-        if warmModelsOnLoadEnabled, isSelectedModelLocal, !isRemoteAgentRun {
-            return warmupController.isWarmForDisplay ? .green : .yellow
+        // Remote models and remote agent runs execute elsewhere — there is
+        // no local load/warm state to report.
+        guard isSelectedModelLocal, !isRemoteAgentRun else { return .green }
+        if warmModelsOnLoadEnabled {
+            switch warmupController.state {
+            case .cold: return .gray
+            case .warming: return .yellow
+            case .warm: return .green
+            }
         }
-        return .green
+        // Warm-on-load off: no warm-up pass exists, so readiness is
+        // residency. Green only while the model is actually loaded — never a
+        // hardcoded green that survives an idle unload.
+        return warmupController.selectedModelResident ? .green : .gray
     }
 
-    private var modelWarmupDotHelp: String {
-        guard warmModelsOnLoadEnabled, isSelectedModelLocal, !isRemoteAgentRun else {
-            return String(localized: "Model ready", bundle: .module)
-        }
-        if warmupController.isWarmForDisplay {
-            return String(localized: "Model warm — ready for a fast first response", bundle: .module)
-        }
-        guard let model = selectedModel, let phase = warmupProgressHub.phases[model] else {
-            return String(localized: "Warming up…", bundle: .module)
-        }
-        switch phase {
-        case .loadingModel:
-            return String(localized: "Warming up — loading model…", bundle: .module)
-        case .prefilling(let state):
-            guard state.totalUnitCount > 0 else {
-                return String(localized: "Warming up — prefilling context…", bundle: .module)
-            }
-            let percent = Int(state.percentCompleted.rounded())
-            return String(
-                localized:
-                    "Warming up — prefilling context \(percent)% (\(state.completedUnitCount)/\(state.totalUnitCount) tokens)",
-                bundle: .module
+    /// Warm-up tooltip for the model chip, applied as a modifier so the
+    /// `WarmupProgressHub` observation lives in the modifier's own view node —
+    /// per-tick prefill progress no longer re-evaluates the whole card body.
+    private struct ModelWarmupHelp: ViewModifier {
+        let isDeprecated: Bool
+        /// `warmModelsOnLoadEnabled && isSelectedModelLocal && !isRemoteAgentRun`
+        let warmupApplies: Bool
+        /// `isSelectedModelLocal && !isRemoteAgentRun` — a local model whose
+        /// load state is knowable even when warm-on-load is off.
+        let isLocalModelRun: Bool
+        let selectedModel: String?
+        @ObservedObject var warmupController: ChatWarmupController
+        @ObservedObject private var warmupProgressHub = WarmupProgressHub.shared
+
+        func body(content: Content) -> some View {
+            content.help(
+                isDeprecated
+                    ? String(
+                        localized: "This model is outdated. Click to switch to a newer version.",
+                        bundle: .module
+                    )
+                    : helpText
             )
+        }
+
+        private var helpText: String {
+            guard warmupApplies else {
+                guard isLocalModelRun else {
+                    return String(localized: "Model ready", bundle: .module)
+                }
+                return warmupController.selectedModelResident
+                    ? String(localized: "Model loaded — ready to respond", bundle: .module)
+                    : String(
+                        localized: "Model not loaded — your next message loads it first",
+                        bundle: .module
+                    )
+            }
+            switch warmupController.state {
+            case .warm:
+                return String(
+                    localized: "Chat prefix warm — ready for a fast next response",
+                    bundle: .module
+                )
+            case .cold:
+                return warmupController.selectedModelResident
+                    ? String(
+                        localized:
+                            "Chat prefix not pre-warmed — the next response may restore cache or prefill",
+                        bundle: .module
+                    )
+                    : String(
+                        localized:
+                            "Model not loaded — the next response loads the model first",
+                        bundle: .module
+                    )
+            case .warming:
+                guard let model = selectedModel, let phase = warmupProgressHub.phases[model] else {
+                    return String(localized: "Warming up…", bundle: .module)
+                }
+                switch phase {
+                case .loadingModel:
+                    return String(localized: "Warming up — loading model…", bundle: .module)
+                case .prefilling(let state):
+                    guard state.totalUnitCount > 0 else {
+                        return String(
+                            localized: "Warming up — prefilling context…",
+                            bundle: .module
+                        )
+                    }
+                    let percent = Int(state.percentCompleted.rounded())
+                    return state.totalUnitCount == 1
+                        ? L("Warming up — prefilling context \(percent)% (\(state.completedUnitCount)/1 token)")
+                        : L(
+                            "Warming up — prefilling context \(percent)% (\(state.completedUnitCount)/\(state.totalUnitCount) tokens)"
+                        )
+                }
+            }
         }
     }
 
@@ -2441,6 +2740,37 @@ extension FloatingInputCard {
                             .foregroundColor(isSelectedModelDeprecated ? .orange : theme.secondaryText)
                             .lineLimit(1)
 
+                        // Effective reasoning effort/mode for models with a
+                        // segmented reasoning option (Codex catalog, official
+                        // OpenAI GPT-5.6, DSV4/Mistral/Hy3 profiles),
+                        // matching ChatGPT's "model · effort" hierarchy.
+                        // Shows the catalog/profile default when no explicit
+                        // choice exists.
+                        if let suffix = inlineReasoningSuffix {
+                            Text(verbatim: "· \(suffix)")
+                                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                                .foregroundColor(theme.tertiaryText)
+                                .lineLimit(1)
+                        }
+
+                        // Toggle-only thinking state as a glyph: accent while
+                        // on, muted while off. The interactive control remains
+                        // directly available in both the footer and picker.
+                        if let thinkingOn = inlineThinkingEnabled {
+                            Image(systemName: "brain")
+                                .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .semibold))
+                                .foregroundColor(
+                                    thinkingOn ? theme.accentColor : theme.tertiaryText.opacity(0.55)
+                                )
+                                .localizedHelp(thinkingOn ? "Thinking on" : "Thinking off")
+                                .accessibilityLabel(Text("Thinking", bundle: .module))
+                                .accessibilityValue(
+                                    thinkingOn
+                                        ? Text("On", bundle: .module)
+                                        : Text("Off", bundle: .module)
+                                )
+                        }
+
                         // Show VLM indicator
                         if option.isVLM {
                             Image(systemName: "eye")
@@ -2472,16 +2802,21 @@ extension FloatingInputCard {
             }
         }
         // Chip-wide hover target: the 6px dot alone is too small to hover.
-        .help(
-            isSelectedModelDeprecated
-                ? String(localized: "This model is outdated. Click to switch to a newer version.", bundle: .module)
-                : modelWarmupDotHelp
+        .modifier(
+            ModelWarmupHelp(
+                isDeprecated: isSelectedModelDeprecated,
+                warmupApplies: warmModelsOnLoadEnabled && isSelectedModelLocal && !isRemoteAgentRun,
+                isLocalModelRun: isSelectedModelLocal && !isRemoteAgentRun,
+                selectedModel: selectedModel,
+                warmupController: warmupController
+            )
         )
         .popover(isPresented: $showModelPicker, arrowEdge: .top) {
             ModelPickerView(
                 options: cachedPickerItems,
                 selectedModel: $selectedModel,
                 agentId: agentId,
+                optionsControl: modelPickerOptionsControl,
                 onDismiss: dismissModelPicker
             )
         }
@@ -2499,39 +2834,127 @@ extension FloatingInputCard {
         }
     }
 
-    // MARK: - Thinking Toggle
+    /// Inline "Model Options" section for the model popover: the semantic
+    /// Thinking row (when the model has a thinking toggle) plus every other
+    /// option the selected model exposes (catalog-driven effort, static
+    /// profile segments, toggles). Selecting persists an explicit value;
+    /// resetting removes it so the default shows while the backend applies
+    /// it naturally (nothing is sent on the wire).
+    private var modelPickerOptionsControl: ModelPickerOptionsControl? {
+        guard let model = selectedModel else { return nil }
+        let capabilities = inlineEffortCapabilities
+        let thinkingId = ModelProfileRegistry.profile(for: model)?.thinkingOption?.id
+        // The dedicated Thinking row owns the thinking option (semantic
+        // on/off, never the raw inverted bool); the generic rows render
+        // everything else.
+        let options = activeProfileOptions.filter { $0.id != thinkingId }
+        let thinking = modelPickerThinkingControl(for: model)
+        guard !options.isEmpty || thinking != nil else { return nil }
 
-    @ViewBuilder
-    private var thinkingToggleChip: some View {
-        if let model = selectedModel,
-            let thinkingOpt = ModelProfileRegistry.profile(for: model)?.thinkingOption
-        {
-            let isEnabled =
-                ModelProfileRegistry.thinkingEnabled(for: model, values: activeModelOptions)
-                ?? ModelProfileRegistry.thinkingDefaultOn(for: model)
+        // Display-only defaults: the catalog default for capability-enriched
+        // effort, otherwise the static profile's defaults.
+        let defaults: [String: ModelOptionValue]
+        if let capabilities {
+            if let defaultLevel = capabilities.defaultLevelId {
+                defaults = ["reasoningEffort": .string(defaultLevel)]
+            } else {
+                defaults = [:]
+            }
+        } else {
+            defaults = ModelProfileRegistry.defaults(for: model)
+        }
 
-            SelectorChip(isActive: isEnabled) {
-                toggleThinking(id: thinkingOpt.id)
-            } content: {
-                HStack(spacing: 5) {
-                    Image(systemName: isEnabled ? "checkmark.square.fill" : "square")
-                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
-                        .foregroundColor(isEnabled ? theme.accentColor : theme.tertiaryText)
-                        .contentTransition(.symbolEffect(.replace))
-
-                    Text("Thinking", bundle: .module)
-                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                        .foregroundColor(isEnabled ? theme.secondaryText : theme.tertiaryText)
+        return ModelPickerOptionsControl(
+            capabilities: capabilities,
+            thinking: thinking,
+            options: options,
+            values: activeModelOptions,
+            defaults: defaults,
+            onChange: { optionId, newValue in
+                // Deferred write for the same reason as the Thinking row's
+                // saved options: the popover's anchor (the model chip)
+                // renders the effort label from `activeModelOptions`, and
+                // resizing the anchor during the popover's own update
+                // crashes NSPopover.
+                DispatchQueue.main.async {
+                    var updated = activeModelOptions
+                    if let newValue {
+                        updated[optionId] = newValue
+                    } else {
+                        updated.removeValue(forKey: optionId)
+                    }
+                    activeModelOptions = updated
+                    if let model = selectedModel {
+                        ModelOptionsStore.shared.saveOptions(updated, for: model)
+                    }
                 }
             }
-            .localizedHelp("Toggle model reasoning mode")
-        }
+        )
     }
+
+    // MARK: - Thinking Control (model picker)
+
+    /// Semantic Thinking control for the picker's Model Options section.
+    /// Shows the effective state (explicit persisted choice, else the
+    /// model's chat-template default so the row never lies for default-on
+    /// models) and writes the profile-specific stored value through
+    /// `ModelProfileRegistry.thinkingStoredOption`, so inverted options like
+    /// `disableThinking` cannot flip the wrong way. Hidden in Mode 2
+    /// remote-agent runs: the remote agent owns its generation config
+    /// server-side, so a local toggle wouldn't reach it.
+    private func modelPickerThinkingControl(for model: String) -> ModelPickerThinkingControl? {
+        guard !isRemoteAgentRun,
+            ModelProfileRegistry.profile(for: model)?.thinkingOption != nil
+        else { return nil }
+        let explicitEnabled = ModelProfileRegistry.thinkingEnabled(
+            for: model,
+            values: activeModelOptions
+        )
+        return ModelPickerThinkingControl(
+            isEnabled: effectiveThinkingEnabled(for: model),
+            isExplicit: explicitEnabled != nil,
+            onSetEnabled: { enabled in
+                // Deferred write for the same reason as the generic option
+                // rows: the popover's anchor (the model chip) renders the
+                // thinking suffix from `activeModelOptions`, and resizing the
+                // anchor during the popover's own update crashes NSPopover.
+                DispatchQueue.main.async {
+                    persistThinkingOverride(enabled, for: model)
+                }
+            }
+        )
+    }
+
+    /// Single semantic-to-stored write path shared by the footer button and
+    /// the picker row. Inverted profiles such as `disableThinking` must never
+    /// toggle their raw persisted boolean directly.
+    private func persistThinkingOverride(_ enabled: Bool?, for model: String) {
+        guard let thinkingOpt = ModelProfileRegistry.profile(for: model)?.thinkingOption else {
+            return
+        }
+        var updated = activeModelOptions
+        if let enabled,
+            let stored = ModelProfileRegistry.thinkingStoredOption(
+                for: model,
+                enabled: enabled
+            )
+        {
+            updated[stored.id] = stored.value
+        } else {
+            // Reset: remove the override so the model's template default
+            // applies naturally (nothing on the wire).
+            updated.removeValue(forKey: thinkingOpt.id)
+        }
+        activeModelOptions = updated
+        ModelOptionsStore.shared.saveOptions(updated, for: model)
+    }
+
+    // MARK: - Thinking Toggle
 
     // MARK: - Auto-Speak Toggle
 
     @ViewBuilder
-    private var autoSpeakToggleChip: some View {
+    private func autoSpeakToggleChip(compact: Bool) -> some View {
         SelectorChip(isActive: autoSpeakAssistant) {
             withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
                 autoSpeakAssistant.toggle()
@@ -2543,102 +2966,16 @@ extension FloatingInputCard {
                     .foregroundColor(autoSpeakAssistant ? theme.accentColor : theme.tertiaryText)
                     .contentTransition(.symbolEffect(.replace))
 
-                Text("Auto-speak", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(autoSpeakAssistant ? theme.secondaryText : theme.tertiaryText)
+                if !compact {
+                    Text("Auto-speak", bundle: .module)
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        .foregroundColor(autoSpeakAssistant ? theme.secondaryText : theme.tertiaryText)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
             }
         }
         .localizedHelp("Auto-speak every reply in this chat")
-    }
-
-    private func toggleThinking(id: String) {
-        let thinkingOpt = selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption }
-        // Mirror the chip's displayed state (explicit choice, else the model's
-        // template default) so the first tap flips away from what the user sees
-        // rather than from a hardcoded "off".
-        let currentEnabled =
-            selectedModel.flatMap {
-                ModelProfileRegistry.thinkingEnabled(for: $0, values: activeModelOptions)
-                    ?? ModelProfileRegistry.thinkingDefaultOn(for: $0)
-            } ?? false
-        let newEnabled = !currentEnabled
-        let newVal = thinkingOpt?.inverted == true ? !newEnabled : newEnabled
-
-        withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
-            activeModelOptions[id] = .bool(newVal)
-        }
-
-        if let model = selectedModel {
-            ModelOptionsStore.shared.saveOptions(activeModelOptions, for: model)
-        }
-    }
-
-    // MARK: - Model Options Chip
-
-    private var modelOptionsSummary: String {
-        guard let model = selectedModel,
-            ModelProfileRegistry.profile(for: model) != nil
-        else { return "" }
-        let nonDefault = activeProfileOptions.compactMap { option -> String? in
-            guard let current = activeModelOptions[option.id] else { return nil }
-            if case .segmented(let segments) = option.kind {
-                return segments.first(where: { $0.id == current.stringValue })?.label
-            }
-            if case .bool(let v) = current { return v ? option.label : nil }
-            return nil
-        }
-        if nonDefault.isEmpty { return "Default" }
-        return nonDefault.joined(separator: ", ")
-    }
-
-    private var modelOptionsSelectorChip: some View {
-        SelectorChip(isActive: showModelOptionsPicker) {
-            showModelOptionsPicker.toggle()
-        } content: {
-            HStack(spacing: 5) {
-                Image(systemName: "slider.horizontal.3")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-
-                Text(modelOptionsSummary)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(1)
-
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-        }
-        .popover(isPresented: $showModelOptionsPicker, arrowEdge: .top) {
-            ModelOptionsSelectorView(
-                options: activeProfileOptions,
-                values: modelOptionsBinding,
-                profileName: selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.displayName } ?? "",
-                thinkingOptionId: selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption?.id }
-            )
-        }
-    }
-
-    private var modelOptionsBinding: Binding<[String: ModelOptionValue]> {
-        Binding(
-            get: { activeModelOptions },
-            set: { newValues in
-                // Defer the write off the popover's synchronous update. The
-                // selector popover is anchored to a chip whose label reads
-                // `activeModelOptions` (`modelOptionsSummary`); mutating it
-                // inline resizes/replaces that anchor while the popover is
-                // presenting, which makes NSPopover dereference a freed
-                // positioning view (EXC_BAD_ACCESS). Hopping to the next
-                // runloop tick lets the current update finish first.
-                DispatchQueue.main.async {
-                    activeModelOptions = newValues
-                    if let model = selectedModel {
-                        ModelOptionsStore.shared.saveOptions(newValues, for: model)
-                    }
-                }
-            }
-        )
     }
 
     // MARK: - Sandbox Toggle Chip
@@ -2814,13 +3151,14 @@ extension FloatingInputCard {
         let agentId = effectiveAgentId
         let manager = agentManager
         Task {
-            // Sandbox and folder backends now compose: enabling sandbox
-            // while a folder is selected yields combined mode (read-only
-            // host workspace + sandbox exec), so we keep the folder
-            // instead of clearing it. On a provision failure we roll the
-            // sandbox flag back below.
             do {
                 try await manager.updateAutonomousExec(newConfig, for: agentId)
+                // Do not leave two selected-looking execution contexts in the
+                // composer. The onChange above applies the same invariant to
+                // every other visible chat using this agent.
+                if newConfig.enabled {
+                    folderState.clearFolder()
+                }
             } catch {
                 // Don't silently swallow provision failures — log loudly and
                 // roll the persisted toggle back so the chip flips back to
@@ -2836,33 +3174,46 @@ extension FloatingInputCard {
         }
     }
 
-    /// Open the system folder picker. Sandbox and folder now compose
-    /// (combined mode), so selecting a folder no longer disables the
-    /// sandbox — picking a folder while sandbox is on yields a read-only
-    /// host workspace alongside sandbox exec.
+    /// Selecting a trusted folder makes native execution authoritative and
+    /// disables the VM for this agent. The folder picker is presented as a
+    /// sheet on this chat's window so ownership remains unambiguous.
     private func selectFolder() {
+        let window = windowId.flatMap { ChatWindowManager.shared.getNSWindow(id: $0) }
+        let agentId = effectiveAgentId
+        let manager = agentManager
         Task {
-            _ = await folderContextService.selectFolder()
+            guard await folderState.selectFolder(from: window) != nil else { return }
+            var config = manager.effectiveAutonomousExec(for: agentId) ?? .default
+            guard config.enabled else { return }
+            config.enabled = false
+            config.allowHostFolderWrites = false
+            do {
+                try await manager.updateAutonomousExec(config, for: agentId)
+            } catch {
+                // Fail closed: do not leave a UI state that appears trusted
+                // while the VM boundary is still authoritative.
+                folderState.clearFolder()
+                debugLog(
+                    "[Workspace] Could not disable sandbox after folder selection: "
+                        + error.localizedDescription
+                )
+            }
         }
     }
 
-    /// True when sandbox is on AND a folder is selected — combined mode,
-    /// where the host workspace is read-only and exec runs in the VM.
-    private var isCombinedMode: Bool {
-        isSandboxEnabled && folderContextService.hasActiveFolder
-    }
-
-    /// Folder chip tooltip. In combined mode it spells out the read-only
-    /// contract so users don't expect in-place edits.
+    /// Folder chip tooltip makes the active execution boundary explicit.
     private func folderChipHelp(hasFolder: Bool) -> Text {
-        if hasFolder && isSandboxEnabled {
-            return Text(
-                localized: "Working folder is read-only in sandbox mode — code runs in the sandbox"
-            )
+        // Lead with the full path when a folder is active — the chip label
+        // middle-truncates long names, so the tooltip is where the complete
+        // name stays readable.
+        if hasFolder {
+            if let rootPath = folderState.rootPath {
+                return Text(verbatim: rootPath.path) + Text(verbatim: "\n")
+                    + Text(localized: "Change working folder")
+            }
+            return Text(localized: "Change working folder")
         }
-        return hasFolder
-            ? Text(localized: "Change working folder")
-            : Text(localized: "Select a working folder")
+        return Text(localized: "Select a working folder")
     }
 
     private var sandboxHelpText: String {
@@ -2875,9 +3226,6 @@ extension FloatingInputCard {
                 return "\(phase) — click to view progress."
             }
             return "Sandbox is starting up — click to view progress."
-        } else if isCombinedMode {
-            base =
-                "Combined mode: the selected folder is read-only and all code runs in the sandbox. Click to disable."
         } else if isSandboxEnabled && isSandboxRunning {
             base = "Sandbox is active — click to disable. Right-click for settings."
         } else if isSandboxEnabled {
@@ -2905,7 +3253,11 @@ extension FloatingInputCard {
         return theme.tertiaryText
     }
 
-    private var sandboxToggleChip: some View {
+    private func sandboxToggleChip(compact: Bool) -> some View {
+        // HoverScope owns the hover flag (and the pulse modifier owns the
+        // loading pulse), so hover-in/out and pulse ticks re-render only this
+        // chip's subtree — not the whole card body.
+        HoverScope { isSandboxHovered in
         Button(action: handleSandboxChipTap) {
             HStack(spacing: 5) {
                 if isSandboxFailed {
@@ -2928,17 +3280,23 @@ extension FloatingInputCard {
                     .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
                     .foregroundColor(sandboxChipAccent)
 
-                Text(sandboxChipLabel, bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(
-                        isSandboxFailed
-                            ? .red
-                            : (isSandboxEnabled
-                                ? (isSandboxRunning ? theme.primaryText : theme.secondaryText)
-                                : theme.tertiaryText)
-                    )
-                    .lineLimit(1)
-                    .opacity(isSandboxLoading ? sandboxPulseAmount : 1.0)
+                // Keep the label whenever it's carrying live status the icon
+                // alone can't convey ("Downloading runtime…", a failure), even
+                // in the compact row; otherwise collapse to the box icon.
+                if !compact || isSandboxLoading || isSandboxFailed {
+                    Text(sandboxChipLabel, bundle: .module)
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        .foregroundColor(
+                            isSandboxFailed
+                                ? .red
+                                : (isSandboxEnabled
+                                    ? (isSandboxRunning ? theme.primaryText : theme.secondaryText)
+                                    : theme.tertiaryText)
+                        )
+                        .lineLimit(1)
+                        .fixedSize()
+                        .modifier(PulsingOpacity(active: isSandboxLoading))
+                }
 
                 // Inline cold-path download/unpack progress.
                 if let pct = sandboxProgressPercent {
@@ -2960,9 +3318,9 @@ extension FloatingInputCard {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
-            .background(sandboxChipBackground)
+            .background(sandboxChipBackground(isSandboxHovered: isSandboxHovered))
             .clipShape(Capsule())
-            .overlay(sandboxChipBorder)
+            .overlay(sandboxChipBorder(isSandboxHovered: isSandboxHovered))
             .shadow(
                 color: isSandboxFailed
                     ? Color.red.opacity(0.15)
@@ -2981,11 +3339,6 @@ extension FloatingInputCard {
         // through to the Sandbox settings tab and watch the journey
         // unfold. Toggling on/off is intercepted by
         // `handleSandboxChipTap` in that state.
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isSandboxHovered = hovering
-            }
-        }
         .help(sandboxHelpText)
         .contextMenu {
             if isSandboxFailed {
@@ -3001,30 +3354,11 @@ extension FloatingInputCard {
                 Text("Open Sandbox Settings", bundle: .module)
             }
         }
-        .task(id: isSandboxLoading) {
-            sandboxPulseTask?.cancel()
-            guard isSandboxLoading else {
-                sandboxPulseAmount = 1.0
-                return
-            }
-            sandboxPulseTask = Task {
-                while !Task.isCancelled {
-                    withAnimation(.easeInOut(duration: 0.8)) {
-                        sandboxPulseAmount = 0.4
-                    }
-                    try? await Task.sleep(nanoseconds: 800_000_000)
-                    guard !Task.isCancelled else { break }
-                    withAnimation(.easeInOut(duration: 0.8)) {
-                        sandboxPulseAmount = 1.0
-                    }
-                    try? await Task.sleep(nanoseconds: 800_000_000)
-                }
-            }
         }
     }
 
     @ViewBuilder
-    private var sandboxChipBackground: some View {
+    private func sandboxChipBackground(isSandboxHovered: Bool) -> some View {
         ZStack {
             Capsule()
                 .fill(theme.secondaryBackground.opacity(isSandboxHovered || isSandboxEnabled ? 0.95 : 0.8))
@@ -3052,7 +3386,7 @@ extension FloatingInputCard {
     }
 
     @ViewBuilder
-    private var sandboxChipBorder: some View {
+    private func sandboxChipBorder(isSandboxHovered: Bool) -> some View {
         if isSandboxFailed {
             Capsule()
                 .strokeBorder(Color.red.opacity(isSandboxHovered ? 0.45 : 0.30), lineWidth: 1)
@@ -3097,38 +3431,46 @@ extension FloatingInputCard {
         }
     }
 
-    private var clipboardChipLabel: some View {
+    @ViewBuilder
+    private func clipboardChipLabel(compact: Bool) -> some View {
         HStack(spacing: 5) {
             Image(systemName: clipboardChipIcon)
                 .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
                 .foregroundColor(theme.accentColor)
 
-            // Lead with the action word so the chip reads as "Paste" like its
-            // row-mates ("Sandbox", "Folder"); the source app trails as a quiet
-            // suffix so the "from which app" signal isn't lost.
-            Text("Paste", bundle: .module)
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .bold))
-                .foregroundColor(theme.accentColor)
-                .lineLimit(1)
-
-            if let source = clipboardService.lastSourceApp {
-                Text(source)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+            // Collapsed, the chip is just its icon (hover names it) so it can't
+            // be clipped mid-word in the narrow scroll region. Expanded, lead
+            // with the action word so it reads as "Paste" like its row-mates
+            // ("Sandbox", "Folder"), with the source app as a quiet suffix.
+            if !compact {
+                Text("Paste", bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .bold))
+                    .foregroundColor(theme.accentColor)
                     .lineLimit(1)
-                    .truncationMode(.middle)
-            }
+                    .fixedSize()
 
-            Image(systemName: "chevron.right")
-                .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
-                .foregroundColor(theme.tertiaryText.opacity(0.7))
-                .padding(.leading, 2)
+                if let source = clipboardService.lastSourceApp {
+                    Text(source)
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
+                    .foregroundColor(theme.tertiaryText.opacity(0.7))
+                    .padding(.leading, 2)
+            }
         }
     }
 
-    private var clipboardToggleChip: some View {
+    private func clipboardToggleChip(compact: Bool) -> some View {
+        // HoverScope owns the hover flag and ClipboardPulseSweep owns the
+        // arrival-pulse animation state, so neither re-renders the card body.
+        HoverScope { isClipboardHovered in
         Button(action: attachClipboardSnippet) {
-            clipboardChipLabel
+            clipboardChipLabel(compact: compact)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
                 .background(
@@ -3151,45 +3493,15 @@ extension FloatingInputCard {
                             lineWidth: 1
                         )
                 )
-                .overlay(
-                    // animated clockwise border sweep using custom shape to fix vertical frame issue
-                    ClipboardSweepShape()
-                        .trim(from: 0, to: clipboardPulseAmount)
-                        .stroke(
-                            LinearGradient(
-                                colors: [
-                                    theme.glassEdgeLight.opacity(0.8),
-                                    theme.accentColor,
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round)
-                        )
-                        .opacity(clipboardPulseOpacity)
-                )
-                .overlay(
-                    // accompanying glow that follows the sweep
-                    ClipboardSweepShape()
-                        .trim(from: 0, to: clipboardPulseAmount)
-                        .stroke(theme.accentColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                        .opacity(clipboardPulseOpacity * 0.4)
-                        .blur(radius: 3)
-                )
-                .shadow(
-                    color: theme.accentColor.opacity(isClipboardHovered ? 0.35 : (0.05 + clipboardPulseOpacity * 0.2)),
-                    radius: isClipboardHovered ? 6 : (4 + clipboardPulseOpacity * 4),
-                    x: 0,
-                    y: 1
+                .modifier(
+                    ClipboardPulseSweep(
+                        hovered: isClipboardHovered,
+                        trigger: clipboardService.hasNewContent
+                    )
                 )
         }
         .buttonStyle(.plain)
         .pointingHandCursor()
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isClipboardHovered = hovering
-            }
-        }
         .help(Text(localized: "Attach snippet from \(clipboardService.lastSourceApp ?? "clipboard")"))
         .contextMenu {
             Button {
@@ -3229,40 +3541,6 @@ extension FloatingInputCard {
             }
         }
         .transition(.scale(scale: 0.8).combined(with: .opacity))
-        .onAppear {
-            if clipboardService.hasNewContent {
-                triggerPulse()
-            }
-        }
-        .onChange(of: clipboardService.hasNewContent) { _, newValue in
-            if newValue {
-                triggerPulse()
-            }
-        }
-    }
-
-    private func triggerPulse() {
-        // reset state immediately and hide animation layers
-        clipboardPulseAmount = 0
-        clipboardPulseOpacity = 0
-
-        // small delay to ensure the window transition is complete
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            withAnimation(.easeIn(duration: 0.1)) {
-                clipboardPulseOpacity = 1.0
-            }
-
-            // animate the stroke clockwise around the capsule
-            withAnimation(.easeInOut(duration: 0.8)) {
-                clipboardPulseAmount = 1.0
-            }
-
-            // fade out after completion
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
-                withAnimation(.easeOut(duration: 0.4)) {
-                    clipboardPulseOpacity = 0
-                }
-            }
         }
     }
 
@@ -3349,16 +3627,19 @@ extension FloatingInputCard {
     /// agent's job is to configure Osaurus — it doesn't execute code in a
     /// sandbox or work against a host folder — so the controls are absent
     /// by design rather than missing.
-    private var configurationOnlyChip: some View {
+    private func configurationOnlyChip(compact: Bool) -> some View {
         HStack(spacing: 4) {
             Image(systemName: "gearshape.fill")
                 .font(theme.font(size: CGFloat(theme.captionSize) - 2))
                 .foregroundColor(theme.accentColor)
 
-            Text("Configuration", bundle: .module)
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                .foregroundColor(theme.secondaryText)
-                .lineLimit(1)
+            if !compact {
+                Text("Configuration", bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
@@ -3379,23 +3660,16 @@ extension FloatingInputCard {
         .accessibilityLabel(Text("Configuration assistant", bundle: .module))
     }
 
-    /// Accessibility permission, the gate for a useful screen-context capture.
-    private var isAccessibilityGranted: Bool {
-        permissionService.permissionStates[.accessibility] ?? false
-    }
-
-    /// The read-only screen-context indicator is shown only on the welcome/empty
-    /// screen, while the opt-in is on, Accessibility is granted, and we know
-    /// which app the user was just in (the snapshot freezes on the first send,
-    /// so "currently focused" only reads true pre-send).
-    private var showScreenContextIndicator: Bool {
+    /// Cheap, card-level half of the screen-context gate: opt-in on, empty
+    /// chat, not Mode 2. The observed half (Accessibility granted, a known
+    /// frontmost app) lives inside `ScreenContextIndicator` so app switches
+    /// and the 2s permission refresh don't re-evaluate the whole card body.
+    private var screenContextMayShow: Bool {
         // Mode 2 never injects local screen context (the remote agent runs its
         // own context server-side), so don't promise a snapshot we won't send.
         !isRemoteAgentRun
             && agentManager.effectiveCapabilities(for: effectiveAgentId).screenContextEnabled
             && isEmptyChat
-            && isAccessibilityGranted
-            && frontmostApp.lastNonSelfAppName != nil
     }
 
     /// Read-only indicator of the app the frozen screen-context snapshot will be
@@ -3403,26 +3677,38 @@ extension FloatingInputCard {
     /// right-aligned status line above the context-token count — just a
     /// viewfinder glyph plus the app name, in muted text — so it pairs with the
     /// budget readout rather than reading as a control.
-    private var screenContextIndicator: some View {
-        let app = frontmostApp.lastNonSelfAppName ?? "the focused app"
-        return HStack(spacing: 5) {
-            Image(systemName: "viewfinder")
-                .symbolRenderingMode(.hierarchical)
-                .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                .foregroundColor(theme.accentColor.opacity(0.85))
+    ///
+    /// Owns the `FrontmostAppTracker` / `SystemPermissionService` observation
+    /// and self-gates (renders nothing until Accessibility is granted and a
+    /// non-self app has been seen), so those publishes re-render only this row.
+    private struct ScreenContextIndicator: View {
+        @Environment(\.theme) private var theme
+        @ObservedObject private var frontmostApp = FrontmostAppTracker.shared
+        @ObservedObject private var permissionService = SystemPermissionService.shared
 
-            Text(app)
-                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
-                .lineLimit(1)
+        var body: some View {
+            let granted = permissionService.permissionStates[.accessibility] ?? false
+            if granted, let app = frontmostApp.lastNonSelfAppName {
+                HStack(spacing: 5) {
+                    Image(systemName: "viewfinder")
+                        .symbolRenderingMode(.hierarchical)
+                        .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                        .foregroundColor(theme.accentColor.opacity(0.85))
+
+                    Text(app)
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(1)
+                }
+                .help(
+                    Text(
+                        "A read-only snapshot of \(app) is shared with this chat when you send. Manage it in Computer Use settings.",
+                        bundle: .module
+                    )
+                )
+                .accessibilityLabel(Text("Screen context from \(app)", bundle: .module))
+            }
         }
-        .help(
-            Text(
-                "A read-only snapshot of \(app) is shared with this chat when you send. Manage it in Computer Use settings.",
-                bundle: .module
-            )
-        )
-        .accessibilityLabel(Text("Screen context from \(app)", bundle: .module))
     }
 
     /// Floating wrapper for `configContextErrorBanner`: keeps the toast out of
@@ -3481,16 +3767,27 @@ extension FloatingInputCard {
         let usage = "\(ramBannerUsagePercent)"
         let total = "\(ramBannerTotalGB)"
 
-        let message: Text =
-            blocked
-            ? Text(
+        // Over the GPU budget, no amount of freed RAM helps: the working set is
+        // a fixed fraction of installed memory. Say so instead of offering
+        // advice that cannot work.
+        let message: Text
+        if feasibility.exceedsGPUBudget {
+            let budgetGB = Self.formatGigabytes(feasibility.gpuBudgetBytes)
+            message = Text(
+                "This model needs ~\(neededGB) GB, but this Mac can only keep ~\(budgetGB) GB on the GPU. macOS will page the weights and generation will be extremely slow — pick a smaller model or a lower-precision build.",
+                bundle: .module
+            )
+        } else if blocked {
+            message = Text(
                 "This model needs ~\(neededGB) GB to load, but memory is at \(usage)% of \(total) GB. Sending is paused until memory frees — close other apps or pick a smaller model.",
                 bundle: .module
             )
-            : Text(
+        } else {
+            message = Text(
                 "This model needs ~\(neededGB) GB to load and memory is at \(usage)% of \(total) GB. Close other apps for best performance.",
                 bundle: .module
             )
+        }
 
         // One continuous popover silhouette: the rounded rect and the pointer
         // triangle are a single shape, so the fill and the border flow around
@@ -3623,12 +3920,12 @@ extension FloatingInputCard {
 
     // MARK: - Folder Context Chip
 
-    private var folderContextChip: some View {
-        let hasFolder = folderContextService.hasActiveFolder
+    private func folderContextChip(compact: Bool) -> some View {
+        let hasFolder = folderState.hasActiveFolder
 
         return HStack(spacing: 4) {
             Button(action: selectFolder) {
-                folderChipContent(hasFolder: hasFolder, canEdit: true)
+                folderChipContent(hasFolder: hasFolder, canEdit: true, compact: compact)
             }
             .buttonStyle(.plain)
             .pointingHandCursor()
@@ -3645,7 +3942,7 @@ extension FloatingInputCard {
                         }
                     }
                     Button {
-                        Task { await folderContextService.refreshContext() }
+                        Task { await folderState.refreshContext() }
                     } label: {
                         Label {
                             Text("Refresh Context", bundle: .module)
@@ -3655,7 +3952,7 @@ extension FloatingInputCard {
                     }
                     Divider()
                     Button(role: .destructive) {
-                        folderContextService.clearFolder()
+                        folderState.clearFolder()
                     } label: {
                         Label {
                             Text("Clear Folder", bundle: .module)
@@ -3668,7 +3965,7 @@ extension FloatingInputCard {
 
             if hasFolder {
                 Button {
-                    folderContextService.clearFolder()
+                    folderState.clearFolder()
                 } label: {
                     Image(systemName: "xmark")
                         .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
@@ -3687,26 +3984,39 @@ extension FloatingInputCard {
     }
 
     @ViewBuilder
-    private func folderChipContent(hasFolder: Bool, canEdit: Bool) -> some View {
+    private func folderChipContent(hasFolder: Bool, canEdit: Bool, compact: Bool = false) -> some View {
         HStack(spacing: 4) {
             Image(systemName: hasFolder ? "folder.fill" : "folder.badge.plus")
                 .font(theme.font(size: CGFloat(theme.captionSize) - 2))
                 .foregroundColor(hasFolder ? theme.accentColor : theme.tertiaryText)
                 .opacity(canEdit ? 1.0 : 0.7)
 
-            if let context = folderContextService.currentContext {
+            // The selected folder name is live state, so keep it even when
+            // compact; only the "Folder" placeholder collapses to the icon.
+            if let context = folderState.context {
                 Text(context.rootPath.lastPathComponent)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .foregroundColor(canEdit ? theme.secondaryText : theme.tertiaryText)
                     .lineLimit(1)
                     .truncationMode(.middle)
-            } else if canEdit {
+                    // Cap the name so a long folder can't stretch the chip and
+                    // shove the chips after it out of the row. The cluster is
+                    // sized at its ideal width inside the horizontal
+                    // ScrollView, so shorter names still hug — the cap only
+                    // bites (middle-truncating) past this width. The full name
+                    // stays available via the chip's help tooltip.
+                    .frame(maxWidth: 150)
+            } else if canEdit && !compact {
                 Text("Folder", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .foregroundColor(theme.tertiaryText)
+                    .fixedSize()
             }
 
-            if canEdit {
+            // Drop the picker chevron in the compact placeholder state so the
+            // chip shrinks to just the folder glyph; keep it whenever a name
+            // is shown so the affordance to change folders stays visible.
+            if canEdit && (!compact || folderState.context != nil) {
                 Image(systemName: "chevron.up.chevron.down")
                     .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
                     .foregroundColor(theme.tertiaryText)
@@ -3769,58 +4079,22 @@ extension FloatingInputCard {
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(effectiveBorderStyle, lineWidth: isDragOver ? 2 : (isFocused ? 1.5 : 0.5))
+                .strokeBorder(
+                    effectiveBorderStyle,
+                    lineWidth: isDragOver ? 2 : (inputStyle == .shadow ? 0.75 : (isFocused ? 1.5 : 0.5))
+                )
         )
-        /*
         .shadow(
-            color: shadowColor,
-            radius: isFocused ? 12 : 6,
+            color: inputStyle == .shadow ? shadowColor : .clear,
+            radius: inputStyle == .shadow ? (isFocused ? 4.9 : 4) : 0,
             x: 0,
-            y: isFocused ? 4 : 2
+            y: inputStyle == .shadow ? (theme.isDark ? 0 : (isFocused ? 3 : 1)) : 0
         )
-        */
         .animation(.easeOut(duration: 0.15), value: isFocused)
         .animation(.easeOut(duration: 0.1), value: isDragOver)
     }
 
     // MARK: - Voice Input Button
-
-    private var voiceInputButton: some View {
-        // Only render the disabled "loading…" state when mic access has
-        // actually been granted. For `.notDetermined`/`.denied` the model
-        // can't be used yet, and a background autoload (e.g.
-        // `SpeechService.autoLoadIfNeeded` at launch) would otherwise
-        // freeze the button and swallow the tap that needs to surface
-        // either the system mic prompt or the denied alert.
-        let micAuthorized = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        return Group {
-            if speechService.isLoadingModel && micAuthorized {
-                // Original disabled-spinner state — only when mic is
-                // already authorized, since otherwise no model load is
-                // running and the tap must remain free to surface either
-                // the system prompt or the denied alert.
-                InputActionButton(
-                    icon: "mic.fill",
-                    help: "Loading voice model…",
-                    action: {}
-                )
-                .overlay(
-                    ProgressView()
-                        .scaleEffect(0.5)
-                        .allowsHitTesting(false)
-                )
-                .disabled(true)
-                .opacity(0.5)
-            } else {
-                InputActionButton(
-                    icon: "mic.fill",
-                    help: "Voice input (speak to type)",
-                    action: { startVoiceInput() }
-                )
-            }
-        }
-        .transition(.opacity.combined(with: .scale(scale: 0.96)))
-    }
 
     private func appendAttachment(_ attachment: Attachment) {
         withAnimation(theme.springAnimation()) {
@@ -3859,9 +4133,17 @@ extension FloatingInputCard {
     /// substring/regex matcher; tests pin the boundary at
     /// `ModelMediaCapabilitiesMCDCTests`.
     private var mediaCapabilityDescriptor: ModelMediaCapabilities.Descriptor {
-        ModelMediaCapabilities.composerDescriptor(
+        // The local-model scan runs off-main and records config.json's
+        // model_type. Read only its non-blocking snapshot here: this getter is
+        // evaluated from SwiftUI body/layout and must never trigger a disk
+        // scan or synchronously parse a model bundle.
+        let localModelType = selectedModel.flatMap {
+            ModelManager.findInstalledMLXModelFromCache(named: $0)?.modelType
+        }
+        return ModelMediaCapabilities.composerDescriptor(
             modelId: selectedModel,
-            fallbackSupportsImages: supportsImages
+            fallbackSupportsImages: supportsImages,
+            localModelType: localModelType
         )
     }
 
@@ -4019,8 +4301,13 @@ extension FloatingInputCard {
         )
     }
 
-    private static let audioExtensions: Set<String> = [
-        "wav", "mp3", "m4a", "flac", "ogg", "opus", "aac", "wma",
+    /// Extensions accepted by the generic `UTType.audio` picker must also be
+    /// routed here. Otherwise AppKit lets the user select a valid audio file
+    /// and the composer silently falls through to the unsupported-document
+    /// branch. Keep this internal so the picker/router parity is unit tested.
+    static let audioExtensions: Set<String> = [
+        "wav", "wave", "mp3", "mpeg", "m4a", "x-m4a", "flac", "ogg", "opus", "aac", "wma",
+        "aif", "aiff", "aifc", "caf",
     ]
 
     private static let videoExtensions: Set<String> = [
@@ -4143,6 +4430,18 @@ extension FloatingInputCard {
 
     /// Placeholder text for the input field.
     private var placeholderText: String {
+        if let media = selectedMediaPickerItem?.mediaModel {
+            switch media.kind {
+            case .image:
+                return L("Describe the image...")
+            case .textToVideo:
+                return L("Describe the video...")
+            case .imageToVideo:
+                return pendingAttachments.loadImages().isEmpty
+                    ? L("Attach one image, then describe the video...")
+                    : L("Describe how the image should move...")
+            }
+        }
         if selectedImagePickerItem != nil {
             return L("Describe the image...")
         }
@@ -4162,6 +4461,10 @@ extension FloatingInputCard {
     /// chip (the model owns these settings, and the row's normal chips are inert
     /// for image models).
     private var imageComposerChips: some View {
+        Group {
+            if let media = selectedMediaPickerItem?.mediaModel {
+                catalogMediaComposerChips(media)
+            } else {
         HStack(spacing: 6) {
             sizeSelector
             stepsChip
@@ -4171,6 +4474,171 @@ extension FloatingInputCard {
                 strengthChip
             }
         }
+    }
+        }
+    }
+
+    @ViewBuilder
+    private func catalogMediaComposerChips(_ media: MediaModelInfo) -> some View {
+        HStack(spacing: 6) {
+            if media.kind == .image,
+                media.constraints.aspectRatios.isEmpty,
+                media.constraints.resolutions.isEmpty
+            {
+                sizeSelector
+            }
+            if !media.constraints.aspectRatios.isEmpty {
+                mediaChoiceChip(
+                    title: L("Aspect"),
+                    icon: "aspectratio",
+                    options: media.constraints.aspectRatios,
+                    selection: Binding(
+                        get: { imageComposerSettings.aspectRatio },
+                        set: { imageComposerSettings.aspectRatio = $0 }
+                    )
+                )
+            }
+            if !media.constraints.resolutions.isEmpty {
+                mediaChoiceChip(
+                    title: L("Resolution"),
+                    icon: "rectangle.inset.filled",
+                    options: media.constraints.resolutions,
+                    selection: Binding(
+                        get: { imageComposerSettings.resolution },
+                        set: { imageComposerSettings.resolution = $0 }
+                    )
+                )
+            }
+            if !media.constraints.qualities.isEmpty {
+                mediaChoiceChip(
+                    title: L("Quality"),
+                    icon: "sparkles",
+                    options: media.constraints.qualities,
+                    selection: Binding(
+                        get: { imageComposerSettings.quality },
+                        set: { imageComposerSettings.quality = $0 }
+                    )
+                )
+            }
+            if media.kind.isVideo, !media.constraints.durations.isEmpty {
+                mediaChoiceChip(
+                    title: L("Duration"),
+                    icon: "clock",
+                    options: media.constraints.durations,
+                    selection: Binding(
+                        get: { imageComposerSettings.duration },
+                        set: { imageComposerSettings.duration = $0 }
+                    )
+                )
+            }
+            if media.kind.isVideo, media.constraints.audioConfigurable {
+                Button {
+                    imageComposerSettings.audio =
+                        !(imageComposerSettings.audio ?? media.constraints.supportsAudio)
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(
+                            systemName: imageComposerSettings.audio == true
+                                ? "speaker.wave.2.fill" : "speaker.slash.fill"
+                        )
+                        Text(imageComposerSettings.audio == true ? L("Audio") : L("Muted"))
+                    }
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(chipBackground)
+                }
+                .buttonStyle(.plain)
+                .pointingHandCursor()
+            }
+            if media.kind == .image {
+                if media.constraints.defaultSteps != nil || media.constraints.maxSteps != nil {
+                    stepsChip
+                }
+                cfgChip
+                seedChip
+                mediaChoiceChip(
+                    title: L("Format"),
+                    icon: "doc",
+                    options: ImageOutputFormat.allCases.map(\.rawValue),
+                    selection: Binding(
+                        get: { Optional(imageComposerSettings.effectiveOutputFormat.rawValue) },
+                        set: {
+                            imageComposerSettings.outputFormat = $0.flatMap {
+                                ImageOutputFormat(rawValue: $0)
+                            }
+                        }
+                    )
+                )
+                mediaChoiceChip(
+                    title: L("Count"),
+                    icon: "square.stack.3d.up",
+                    options: (1 ... 4).map(String.init),
+                    selection: Binding(
+                        get: { Optional(String(imageComposerSettings.clampedImageCount)) },
+                        set: { imageComposerSettings.imageCount = $0.flatMap { Int($0) } }
+                    )
+                )
+            }
+            if let minimum = media.pricing?.minimumUSD {
+                Text(String(format: "From $%.4f", minimum))
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(chipBackground)
+            }
+            if media.kind == .imageToVideo {
+                Label("1 source image", systemImage: "photo")
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(
+                        pendingAttachments.loadImages().count == 1
+                            ? theme.secondaryText : Color.orange
+                    )
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(chipBackground)
+            }
+        }
+    }
+
+    private func mediaChoiceChip(
+        title: String,
+        icon: String,
+        options: [String],
+        selection: Binding<String?>
+    ) -> some View {
+        Menu {
+            ForEach(options, id: \.self) { option in
+                Button {
+                    selection.wrappedValue = option
+                } label: {
+                    if selection.wrappedValue == option {
+                        Label(option, systemImage: "checkmark")
+                    } else {
+                        Text(option)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .foregroundColor(theme.tertiaryText)
+                Text(selection.wrappedValue ?? title)
+                    .foregroundColor(theme.secondaryText)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(chipBackground)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help(Text(verbatim: title))
     }
 
     /// Shared pill backing so every composer control reads as one family of
@@ -4185,30 +4653,53 @@ extension FloatingInputCard {
     /// speed / detail trade-off (bare pixel numbers don't tell the user what
     /// they're choosing).
     private struct ImageSizeOption: Identifiable {
-        let dimension: Int
+        let width: Int
+        let height: Int
         let title: String
         let detail: String
-        var id: Int { dimension }
+        var id: String { "\(width)x\(height)" }
     }
 
     private var imageSizeOptions: [ImageSizeOption] {
-        [
+        var options = [
             ImageSizeOption(
-                dimension: 512,
+                width: 512,
+                height: 512,
                 title: L("512 × 512"),
                 detail: L("Fast drafts. Lowest detail, quickest to render.")
             ),
             ImageSizeOption(
-                dimension: 768,
+                width: 768,
+                height: 768,
                 title: L("768 × 768"),
                 detail: L("Balanced. Good detail at a moderate speed.")
             ),
             ImageSizeOption(
-                dimension: 1024,
+                width: 1024,
+                height: 1024,
                 title: L("1024 × 1024"),
                 detail: L("Sharpest. The size most models are trained for, but slowest.")
             ),
         ]
+        if selectedMediaPickerItem?.mediaModel != nil {
+            options.append(
+                ImageSizeOption(
+                    width: 1280,
+                    height: 720,
+                    title: L("1280 × 720"),
+                    detail: L("Landscape 16:9 for cinematic and banner compositions.")
+                )
+            )
+            options.append(
+                ImageSizeOption(
+                    width: 720,
+                    height: 1280,
+                    title: L("720 × 1280"),
+                    detail: L("Portrait 9:16 for mobile and vertical compositions.")
+                )
+            )
+        }
+        return options
     }
 
     private var selectedSizeLabel: String {
@@ -4253,11 +4744,11 @@ extension FloatingInputCard {
 
             ForEach(imageSizeOptions) { option in
                 let isSelected =
-                    imageComposerSettings.width == option.dimension
-                    && imageComposerSettings.height == option.dimension
+                    imageComposerSettings.width == option.width
+                    && imageComposerSettings.height == option.height
                 Button {
-                    imageComposerSettings.width = option.dimension
-                    imageComposerSettings.height = option.dimension
+                    imageComposerSettings.width = option.width
+                    imageComposerSettings.height = option.height
                     showImageSizePicker = false
                 } label: {
                     HStack(alignment: .top, spacing: 9) {
@@ -4484,9 +4975,33 @@ extension FloatingInputCard {
         }
     }
 
+    /// The "@" file completion popup, extracted from `mainContent` to keep that
+    /// view builder within the Swift type-checker's reach.
+    @ViewBuilder
+    private var atFileMenuPopupView: some View {
+        if showAtPopup {
+            AtFileMenuPopup(
+                items: atMenuItems,
+                status: atMenuStatus,
+                deniedDirectoryName: (atMenuDirectory as NSString).lastPathComponent,
+                emptyMessage: atMenuIsFiltering ? L("No matching files") : L("This folder is empty"),
+                selectedIndex: $atSelectedIndex,
+                onSelect: applyAtItem,
+                onGrantAccess: grantAtMenuAccess
+            )
+            .padding(.horizontal, 20)
+            .transition(
+                .asymmetric(
+                    insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)),
+                    removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom))
+                )
+            )
+        }
+    }
+
     private var textInputArea: some View {
         EditableTextView(
-            text: $localText,
+            text: localTextBinding,
             fontSize: inputFontSize,
             textColor: theme.primaryText,
             cursorColor: theme.cursorColor,
@@ -4494,35 +5009,11 @@ extension FloatingInputCard {
             isComposing: $isComposing,
             maxHeight: maxHeight,
             focusController: textViewFocusController,
-            onCommit: {
-                if showSlashPopup {
-                    let cmds = slashFilteredCommands
-                    if slashSelectedIndex < cmds.count {
-                        applySlashCommand(cmds[slashSelectedIndex])
-                    }
-                } else {
-                    syncAndSend()
-                }
-            },
+            onCommit: { handleInputCommit() },
             onShiftCommit: nil,
-            onArrowUp: showSlashPopup
-                ? {
-                    slashSelectedIndex = max(0, slashSelectedIndex - 1)
-                    return true
-                } : { handleHistoryArrowUp() },
-            onArrowDown: showSlashPopup
-                ? {
-                    let maxIndex = slashFilteredCommands.count - 1
-                    slashSelectedIndex = min(maxIndex, slashSelectedIndex + 1)
-                    return true
-                } : { handleHistoryArrowDown() },
-            onEscape: showSlashPopup
-                ? {
-                    // Dismiss popup by clearing the slash prefix
-                    localText = ""
-                    text = ""
-                    return true
-                } : nil,
+            onArrowUp: { handleInputArrowUp() },
+            onArrowDown: { handleInputArrowDown() },
+            onEscape: (showSlashPopup || showAtPopup) ? { handlePopupEscape() } : nil,
             onPasteText: { pasted in
                 guard pasted.utf8.count >= Self.pastedContentThreshold else { return false }
                 withAnimation(theme.springAnimation()) {
@@ -4568,11 +5059,11 @@ extension FloatingInputCard {
             HStack(spacing: 6) {
                 mediaButton
                 slashCommandButton
-                if isVoiceConfigured {
-                    voiceInputButton
-                        .disabled(isStreaming)
-                        .opacity(isStreaming ? 0.4 : 1.0)
-                }
+                FloatingVoiceButton(
+                    voiceInputEnabled: voiceConfig.voiceInputEnabled,
+                    isStreaming: isStreaming,
+                    startVoiceInput: startVoiceInput
+                )
             }
 
             Spacer()
@@ -4681,12 +5172,18 @@ extension FloatingInputCard {
                 endPoint: .center
             )
             .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .opacity(inputStyle == .gradient ? 1 : 0)
         }
     }
+
+    private var inputStyle: ThemeInputStyle { theme.customThemeConfig?.inputStyle ?? .gradient }
 
     private var effectiveBorderStyle: AnyShapeStyle {
         if isDragOver {
             return AnyShapeStyle(theme.accentColor)
+        }
+        if inputStyle == .shadow {
+            return AnyShapeStyle(theme.primaryBorder.opacity(theme.isDark ? 0.8 : 0.7))
         }
         return borderGradient
     }
@@ -4719,13 +5216,136 @@ extension FloatingInputCard {
     }
 
     private var shadowColor: Color {
-        isFocused ? theme.accentColor.opacity(0.18) : theme.shadowColor.opacity(0.12)
+        let opacity = isFocused ? (theme.isDark ? 0.18 : 0.14) : 0.07
+        return (theme.isDark ? theme.accentColor : theme.shadowColor).opacity(opacity)
     }
 }
 
 // MARK: - Clipboard Animation Shape
 
 /// A custom capsule shape that starts its path at the top center to allow for clockwise border sweeps
+/// Owns a hover flag in its own view node so hover-in/out re-renders only the
+/// wrapped subtree. Hover state on `FloatingInputCard` itself re-evaluates the
+/// card's entire body per mouse transition (Sentry app-hang cluster).
+private struct HoverScope<Content: View>: View {
+    var animation: Animation = .easeOut(duration: 0.15)
+    @ViewBuilder let content: (Bool) -> Content
+    @State private var hovered = false
+
+    var body: some View {
+        content(hovered)
+            .onHover { hovering in
+                withAnimation(animation) {
+                    hovered = hovering
+                }
+            }
+    }
+}
+
+/// Self-contained 0.4↔1.0 opacity pulse while `active`. The animation state
+/// lives here (not on the card), and `.task(id:)` cancels the loop when
+/// `active` flips or the view leaves the hierarchy.
+private struct PulsingOpacity: ViewModifier {
+    let active: Bool
+    @State private var amount: CGFloat = 1.0
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(active ? amount : 1.0)
+            .task(id: active) {
+                guard active else {
+                    amount = 1.0
+                    return
+                }
+                while !Task.isCancelled {
+                    withAnimation(.easeInOut(duration: 0.8)) { amount = 0.4 }
+                    try? await Task.sleep(nanoseconds: 800_000_000)
+                    guard !Task.isCancelled else { break }
+                    withAnimation(.easeInOut(duration: 0.8)) { amount = 1.0 }
+                    try? await Task.sleep(nanoseconds: 800_000_000)
+                }
+            }
+    }
+}
+
+/// The clipboard chip's arrival animation — clockwise border sweep, trailing
+/// glow, and the hover/pulse-aware shadow — with the animation state scoped
+/// to this modifier so each pulse frame re-renders only the chip.
+private struct ClipboardPulseSweep: ViewModifier {
+    let hovered: Bool
+    /// Rising edge starts a sweep (new clipboard content just arrived).
+    let trigger: Bool
+    @Environment(\.theme) private var theme
+    @State private var amount: CGFloat = 0.0
+    @State private var opacity: Double = 0.0
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                // animated clockwise border sweep using custom shape to fix vertical frame issue
+                ClipboardSweepShape()
+                    .trim(from: 0, to: amount)
+                    .stroke(
+                        LinearGradient(
+                            colors: [
+                                theme.glassEdgeLight.opacity(0.8),
+                                theme.accentColor,
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round)
+                    )
+                    .opacity(opacity)
+            )
+            .overlay(
+                // accompanying glow that follows the sweep
+                ClipboardSweepShape()
+                    .trim(from: 0, to: amount)
+                    .stroke(theme.accentColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .opacity(opacity * 0.4)
+                    .blur(radius: 3)
+            )
+            .shadow(
+                color: theme.accentColor.opacity(hovered ? 0.35 : (0.05 + opacity * 0.2)),
+                radius: hovered ? 6 : (4 + opacity * 4),
+                x: 0,
+                y: 1
+            )
+            .onAppear {
+                if trigger { pulse() }
+            }
+            .onChange(of: trigger) { _, newValue in
+                if newValue { pulse() }
+            }
+    }
+
+    private func pulse() {
+        // reset state immediately and hide animation layers
+        amount = 0
+        opacity = 0
+
+        // small delay to ensure the window transition is complete
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            withAnimation(.easeIn(duration: 0.1)) {
+                opacity = 1.0
+            }
+
+            // animate the stroke clockwise around the capsule
+            withAnimation(.easeInOut(duration: 0.8)) {
+                amount = 1.0
+            }
+
+            // fade out after completion
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                withAnimation(.easeOut(duration: 0.4)) {
+                    opacity = 0
+                }
+            }
+        }
+    }
+}
+
 struct ClipboardSweepShape: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
@@ -5093,6 +5713,41 @@ private extension View {
 /// disclosure so the popover reads as a handful of categories by default and
 /// only fans out to per-section detail on demand. Single-entry groups (Tools,
 /// Memory, …) render as a plain row.
+struct ContextBudgetUtilization: Equatable {
+    let usedTokens: Int
+    let maxTokens: Int?
+    let fraction: Double?
+    let percent: Int?
+    let remainingTokens: Int?
+}
+
+/// Normalizes the popover's window-usage values in one pure, testable place.
+/// Invalid/unknown ceilings remain absent rather than implying a false limit.
+func computeContextBudgetUtilization(
+    usedTokens: Int,
+    maxTokens: Int?
+) -> ContextBudgetUtilization {
+    let used = max(0, usedTokens)
+    guard let maxTokens, maxTokens > 0 else {
+        return ContextBudgetUtilization(
+            usedTokens: used,
+            maxTokens: nil,
+            fraction: nil,
+            percent: nil,
+            remainingTokens: nil
+        )
+    }
+
+    let fraction = min(Double(used) / Double(maxTokens), 1)
+    return ContextBudgetUtilization(
+        usedTokens: used,
+        maxTokens: maxTokens,
+        fraction: fraction,
+        percent: Int((fraction * 100).rounded()),
+        remainingTokens: max(0, maxTokens - used)
+    )
+}
+
 private struct BudgetGroup: Identifiable {
     let id: String
     let label: String
@@ -5114,9 +5769,22 @@ private struct ContextPopoverHeightKey: PreferenceKey {
 
 private struct ContextBreakdownPopover: View {
     let breakdown: ContextBreakdown
+    /// Usable conversation budget (model maximum × safety margin).
     let maxTokens: Int?
+    /// Raw maximum reported by the model bundle/provider fallback.
+    let modelMaxTokens: Int?
+    let modelLimitSource: AgentLoopBudget.ContextWindowSource?
     let isStreaming: Bool
+    let isNearLimit: Bool
+    let isHardOverflow: Bool
     let formatTokenCount: (Int) -> String
+    /// Session compaction state — drives the inline progress / result row.
+    var compactionState: ContextCompactionUIState = .idle
+    /// True when the manual "Compact conversation" button should show
+    /// (utilization past threshold, an uncovered older span exists, and no
+    /// turn is streaming).
+    var canCompact: Bool = false
+    var onCompact: (() -> Void)? = nil
 
     @Environment(\.theme) private var theme
 
@@ -5130,6 +5798,26 @@ private struct ContextBreakdownPopover: View {
 
     /// Cap on the popover height; longer breakdowns scroll past this.
     private let maxPopoverHeight: CGFloat = 420
+
+    private var utilization: ContextBudgetUtilization {
+        computeContextBudgetUtilization(
+            usedTokens: breakdown.total,
+            maxTokens: maxTokens
+        )
+    }
+
+    private var statusColor: Color {
+        if isHardOverflow { return theme.errorColor }
+        if isNearLimit { return theme.warningColor }
+        return theme.accentColor
+    }
+
+    private var statusLabel: String {
+        if isHardOverflow { return L("Over limit") }
+        if isNearLimit { return L("Near limit") }
+        if let percent = utilization.percent { return L("\(percent)% used") }
+        return isStreaming ? L("Live") : L("Estimated")
+    }
 
     /// Scroll-container height: nil until measured (use the content's
     /// natural size), then clamped to `maxPopoverHeight`.
@@ -5242,7 +5930,7 @@ private struct ContextBreakdownPopover: View {
                     }
                 )
         }
-        .frame(width: 240, height: resolvedHeight)
+        .frame(width: 272, height: resolvedHeight)
         .onPreferenceChange(ContextPopoverHeightKey.self) { measuredContentHeight = $0 }
         .popoverCard()
     }
@@ -5251,56 +5939,346 @@ private struct ContextBreakdownPopover: View {
     /// height-bounded `ScrollView` (see `resolvedHeight`).
     private var contentStack: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                Text("Context Budget", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                if isStreaming {
-                    Circle()
-                        .fill(color(for: .green))
-                        .frame(width: 5, height: 5)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 8)
+            hero
 
-            barChart
-                .padding(.horizontal, 12)
-                .padding(.bottom, 10)
+            if utilization.maxTokens != nil {
+                divider
+                utilizationSection
+            }
+
+            divider
+            compositionSection
 
             if let notice = autoDisableNotice {
-                Text(notice)
-                    .font(.system(size: 10).italic())
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 10)
+                divider
+                autoDisableRow(notice)
             }
 
             if !contextGroups.isEmpty {
                 divider
-                contextGroupList.padding(.horizontal, 12).padding(.vertical, 8)
+                sourcesSection
             }
 
             if !breakdown.messages.isEmpty {
                 divider
-                entryGroup(breakdown.messages, highlightOutput: true).padding(.horizontal, 12).padding(.vertical, 8)
+                messagesSection
             }
 
-            divider
-            totalRow.padding(.horizontal, 12).padding(.vertical, 8)
+            if showsCompactionSection {
+                divider
+                compactionSection
+            }
         }
+    }
+
+    // MARK: - Compaction
+
+    /// The compaction row shows whenever there's something to act on or
+    /// report: the manual trigger is available, a run is in flight, or a
+    /// run just completed/failed.
+    private var showsCompactionSection: Bool {
+        if canCompact { return true }
+        switch compactionState {
+        case .idle, .needsModelSelection: return false
+        case .running, .completed, .failed: return true
+        }
+    }
+
+    @ViewBuilder
+    private var compactionSection: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            switch compactionState {
+            case .running(let phase):
+                HStack(spacing: 7) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.6)
+                        .frame(width: 12, height: 12)
+                    Text(verbatim: phase.label)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                    Spacer(minLength: 0)
+                }
+            case .completed(let savedTokens):
+                HStack(spacing: 7) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 10.5))
+                        .foregroundColor(theme.successColor)
+                    Text(
+                        "Compacted — ~\(formatTokenCount(savedTokens)) tokens reclaimed",
+                        bundle: .module
+                    )
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    Spacer(minLength: 0)
+                }
+            case .failed(let message):
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .top, spacing: 7) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 10.5))
+                            .foregroundColor(theme.warningColor)
+                        Text(verbatim: message)
+                            .font(.system(size: 10.5))
+                            .foregroundColor(theme.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if canCompact { compactButton(label: L("Retry compaction")) }
+                }
+            case .idle, .needsModelSelection:
+                if canCompact {
+                    VStack(alignment: .leading, spacing: 5) {
+                        compactButton(label: L("Compact conversation"))
+                        Text(
+                            "Summarizes older messages with your compaction model to free up context. The visible chat is unchanged.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 9.5))
+                        .foregroundColor(theme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private func compactButton(label: String) -> some View {
+        Button {
+            onCompact?()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.down.right.and.arrow.up.left")
+                    .font(.system(size: 9, weight: .semibold))
+                Text(verbatim: label)
+                    .font(.system(size: 10.5, weight: .semibold))
+            }
+            .foregroundColor(theme.accentColor)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4.5)
+            .background(
+                Capsule()
+                    .fill(theme.accentColor.opacity(0.12))
+                    .overlay(
+                        Capsule().strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+    }
+
+    /// Wallet-style hero: the number users are checking first, followed by
+    /// clear headroom rather than a composition chart masquerading as usage.
+    private var hero: some View {
+        let prefix = isStreaming ? "" : "~"
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: "chart.bar.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(statusColor.opacity(0.9))
+                Text("Context Budget", bundle: .module)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                    .textCase(.uppercase)
+                    .kerning(0.8)
+                if isStreaming {
+                    Circle()
+                        .fill(theme.successColor)
+                        .frame(width: 5, height: 5)
+                }
+                Spacer(minLength: 0)
+                Text(verbatim: statusLabel)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(statusColor)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(statusColor.opacity(0.12))
+                            .overlay(
+                                Capsule().strokeBorder(
+                                    statusColor.opacity(0.3),
+                                    lineWidth: 1
+                                )
+                            )
+                    )
+            }
+            .padding(.bottom, 5)
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(verbatim: "\(prefix)\(formatTokenCount(breakdown.total))")
+                    .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                    .foregroundColor(isHardOverflow ? theme.errorColor : theme.primaryText)
+                    .contentTransition(.numericText())
+                Text("tokens used", bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+            }
+
+            if let remaining = utilization.remainingTokens,
+                let maxTokens = utilization.maxTokens
+            {
+                Text(
+                    "\(formatTokenCount(remaining)) remaining of \(formatTokenCount(maxTokens)) usable",
+                    bundle: .module
+                )
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
+                .contentTransition(.numericText())
+            } else {
+                Text("Model context limit unavailable", bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            if let modelMaxTokens {
+                Text(
+                    "\(modelLimitLabel) \(formatTokenCount(modelMaxTokens)) · usable budget \(Int(ContextBudgetManager.safetyMargin * 100))%",
+                    bundle: .module
+                )
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 11)
+        .background(
+            LinearGradient(
+                colors: [statusColor.opacity(0.10), statusColor.opacity(0.02)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+    }
+
+    private var modelLimitLabel: String {
+        switch modelLimitSource {
+        case .foundationFixed:
+            return L("Fixed model maximum")
+        case .bundleMetadata:
+            return L("Bundle model maximum")
+        case .providerMetadata:
+            return L("Provider model maximum")
+        case .metadataFallback:
+            return L("Metadata fallback")
+        case nil:
+            return L("Model maximum")
+        }
+    }
+
+    @ViewBuilder
+    private var utilizationSection: some View {
+        if let maxTokens = utilization.maxTokens,
+            let fraction = utilization.fraction,
+            let percent = utilization.percent
+        {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 6) {
+                    Text("Usable budget", bundle: .module)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                        .textCase(.uppercase)
+                        .kerning(0.8)
+                    Spacer()
+                    Text(
+                        "\(formatTokenCount(utilization.usedTokens)) / \(formatTokenCount(maxTokens))",
+                        bundle: .module
+                    )
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(theme.secondaryText)
+                    .contentTransition(.numericText())
+                    Text(verbatim: "\(percent)%")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundColor(statusColor)
+                        .frame(width: 34, alignment: .trailing)
+                        .contentTransition(.numericText())
+                }
+
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 3.5)
+                            .fill(theme.tertiaryBackground.opacity(0.65))
+                        RoundedRectangle(cornerRadius: 3.5)
+                            .fill(statusColor.opacity(0.9))
+                            .frame(width: proxy.size.width * fraction)
+                    }
+                }
+                .frame(height: 7)
+                .animation(.easeOut(duration: 0.2), value: fraction)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+        }
+    }
+
+    private var compositionSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text("Composition", bundle: .module)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .textCase(.uppercase)
+                    .kerning(0.8)
+                Spacer()
+                Text("share of used context", bundle: .module)
+                    .font(.system(size: 9))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            compositionBar
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private func autoDisableRow(_ notice: String) -> some View {
+        HStack(alignment: .top, spacing: 7) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(theme.warningColor)
+            Text(verbatim: notice)
+                .font(.system(size: 10))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+    }
+
+    private var sourcesSection: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            sectionEyebrow("Sources")
+            contextGroupList
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private var messagesSection: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            sectionEyebrow("Messages")
+            entryGroup(breakdown.messages, highlightOutput: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private func sectionEyebrow(_ title: LocalizedStringKey) -> some View {
+        Text(title, bundle: .module)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundColor(theme.tertiaryText)
+            .textCase(.uppercase)
+            .kerning(0.8)
     }
 
     // MARK: - Stacked Bar
 
-    private var barChart: some View {
+    private var compositionBar: some View {
         let segments = barSegments
-        // The bar shows composition: every segment's share of the current
-        // total, always filling the track. Share-of-budget would render the
-        // whole breakdown as a near-invisible sliver against a huge window;
-        // headroom is conveyed by the "~2.1k / 262k" total row instead.
+        // Composition deliberately fills its own track. Actual model-window
+        // headroom is represented separately by `utilizationSection`.
         let scale = max(breakdown.total, 1)
         return GeometryReader { geo in
             let gapTotal = CGFloat(max(segments.count - 1, 0))
@@ -5324,7 +6302,7 @@ private struct ContextBreakdownPopover: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 4))
         }
-        .frame(height: 6)
+        .frame(height: 7)
         .background(RoundedRectangle(cornerRadius: 4).fill(theme.tertiaryBackground.opacity(0.4)))
     }
 
@@ -5333,7 +6311,7 @@ private struct ContextBreakdownPopover: View {
     /// The context legend at group granularity. Expandable groups render a
     /// tappable header that reveals their per-section rows indented beneath.
     private var contextGroupList: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 9) {
             ForEach(contextGroups) { group in
                 if group.isExpandable {
                     let expanded = expandedGroups.contains(group.id)
@@ -5349,16 +6327,17 @@ private struct ContextBreakdownPopover: View {
                         groupHeader(group, expanded: expanded)
                     }
                     .buttonStyle(.plain)
+                    .pointingHandCursor()
 
                     if expanded {
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 7) {
                             // Key by position, not `entry.id`: a prompt section's
                             // id isn't guaranteed unique across the manifest, so
                             // duplicate ForEach IDs would trap. Positional
                             // identity is what we want for a static,
                             // display-only list anyway.
                             ForEach(Array(group.entries.enumerated()), id: \.offset) { _, entry in
-                                entryRow(entry).padding(.leading, 11)
+                                entryRow(entry).padding(.leading, 25)
                             }
                         }
                     }
@@ -5370,7 +6349,7 @@ private struct ContextBreakdownPopover: View {
     }
 
     private func entryGroup(_ entries: [ContextBreakdown.Entry], highlightOutput: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 7) {
             ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
                 entryRow(entry, highlighted: highlightOutput && entry.id == "output")
             }
@@ -5380,11 +6359,8 @@ private struct ContextBreakdownPopover: View {
     /// Disclosure header for a multi-entry group: swatch, label, rotating
     /// chevron, summed tokens, and the group's share of the budget.
     private func groupHeader(_ group: BudgetGroup, expanded: Bool) -> some View {
-        HStack(spacing: 0) {
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(color(for: group.tint).opacity(0.85))
-                .frame(width: 3, height: 12)
-                .padding(.trailing, 8)
+        HStack(spacing: 7) {
+            legendMarker(group.tint)
 
             Text(group.label)
                 .font(.system(size: 11))
@@ -5394,9 +6370,8 @@ private struct ContextBreakdownPopover: View {
                 .font(.system(size: 7, weight: .semibold))
                 .foregroundColor(theme.tertiaryText)
                 .rotationEffect(.degrees(expanded ? 90 : 0))
-                .padding(.leading, 4)
 
-            Spacer()
+            Spacer(minLength: 8)
 
             Text(formatTokenCount(group.tokens))
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -5411,17 +6386,14 @@ private struct ContextBreakdownPopover: View {
     }
 
     private func entryRow(_ entry: ContextBreakdown.Entry, highlighted: Bool = false) -> some View {
-        HStack(spacing: 0) {
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(color(for: entry.tint).opacity(0.85))
-                .frame(width: 3, height: 12)
-                .padding(.trailing, 8)
+        HStack(spacing: 7) {
+            legendMarker(entry.tint)
 
             Text(entry.label)
                 .font(.system(size: 11))
                 .foregroundColor(theme.secondaryText)
 
-            Spacer()
+            Spacer(minLength: 8)
 
             Text(formatTokenCount(entry.tokens))
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -5435,25 +6407,15 @@ private struct ContextBreakdownPopover: View {
         }
     }
 
-    // MARK: - Total
-
-    private var totalRow: some View {
-        let prefix = isStreaming ? "" : "~"
-        return HStack(spacing: 4) {
-            Text("Total", bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-            Spacer()
-            Text("\(prefix)\(formatTokenCount(breakdown.total))", bundle: .module)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-                .contentTransition(.numericText())
-            if let max = maxTokens {
-                Text("/ \(formatTokenCount(max))", bundle: .module)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-            }
+    private func legendMarker(_ tint: ContextBreakdown.Tint) -> some View {
+        let tintColor = color(for: tint)
+        return ZStack {
+            Circle().fill(tintColor.opacity(0.13))
+            Circle()
+                .fill(tintColor.opacity(0.9))
+                .frame(width: 5, height: 5)
         }
+        .frame(width: 18, height: 18)
     }
 
     // MARK: - Chrome
@@ -5464,78 +6426,355 @@ private struct ContextBreakdownPopover: View {
 
 }
 
-// MARK: - Balance Breakdown Popover
+// MARK: - Wallet Popover
 
-/// Hover card for the composer balance chip, styled to match
-/// `ContextBreakdownPopover` (rounded glass card, 11pt header, hairline
-/// dividers, monospaced values). Replaces the plain OS tooltip so the router
-/// balance reads like the Context Budget breakdown beside it. The balance is
-/// the hero figure (paralleling the budget bar) and tints amber when low/empty.
-private struct BalanceBreakdownPopover: View {
-    let sessionSpend: String
-    let balance: String
+/// The composer wallet panel, styled to match `ContextBreakdownPopover`
+/// (rounded glass card, 11pt headers, hairline dividers, monospaced values).
+/// Opens from the credits chip as a hover preview or a pinned click-through
+/// panel: balance hero, per-session router spend, recent account activity
+/// (model requests + ledger transactions), and Add credits / View all actions.
+/// This is the surface agent-initiated credit transactions will land in — new
+/// ledger `entry_type`s render here via `WalletActivityProjector` without UI
+/// rework.
+private struct WalletPopover: View {
+    /// This session's router spend; nil outside router-billed sessions.
+    let sessionSpend: String?
+    /// True when a low/empty balance should tint amber (router-billed sessions
+    /// only — a $0 wallet doesn't block a local-model chat).
     let isAttention: Bool
-    let isFrozen: Bool
+    let onAddCredits: () -> Void
+    let onViewAll: () -> Void
 
+    @ObservedObject private var accountService = OsaurusRouterAccountService.shared
     @Environment(\.theme) private var theme
 
-    private var accent: Color { theme.accentColor }
+    /// Shared so each row doesn't allocate a formatter; relative labels like
+    /// "3h ago" only need minute resolution.
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
 
-    private var footerText: Text {
-        isFrozen
-            ? Text("Account paused - add credits to resume.", bundle: .module)
-            : Text("Click to add credits", bundle: .module)
+    private var rows: [WalletActivityRow] {
+        WalletActivityProjector().rows(
+            usageItems: accountService.usage,
+            transactions: accountService.transactions,
+            webUsageItems: accountService.webUsage
+        )
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            header
+            if let sessionSpend {
+                divider
+                sessionSpendRow(sessionSpend)
+            }
+            if let searchGrant = accountService.webSettings?.grants?.search,
+                searchGrant.includedTotal > 0
+            {
+                divider
+                webSearchCreditsRow(searchGrant)
+            }
+            if accountService.webSearchNeedsTopUp {
+                divider
+                webSearchFallbackNotice
+            }
+            divider
+            activitySection
+            divider
+            footerActions
+        }
+        .frame(width: 272)
+        .popoverCard()
+        .task {
+            await accountService.refreshBalance()
+            await accountService.refreshUsage(reset: true)
+            await accountService.refreshTransactions(reset: true)
+            await accountService.refreshWebUsage(reset: true)
+            await accountService.refreshWebSettings()
+        }
+    }
+
+    // MARK: Sections
+
+    /// Hero balance over a soft accent wash — the "card face" of the wallet.
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
-                Image(systemName: "chart.bar.fill")
+                Image(systemName: "creditcard.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(theme.accentColor.opacity(0.85))
+                Text("Wallet", bundle: .module)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(theme.secondaryText)
-                Text("This Session", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 8)
-
-            HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(accent.opacity(0.85))
-                    .frame(width: 3, height: 16)
-                Text(verbatim: sessionSpend)
-                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
+                    .textCase(.uppercase)
+                    .kerning(0.8)
                 Spacer(minLength: 0)
+                if accountService.isFrozen {
+                    Text("Paused", bundle: .module)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(theme.warningColor)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule()
+                                .fill(theme.warningColor.opacity(0.14))
+                                .overlay(
+                                    Capsule().strokeBorder(
+                                        theme.warningColor.opacity(0.35),
+                                        lineWidth: 1
+                                    )
+                                )
+                        )
+                }
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 10)
+            .padding(.bottom, 5)
 
-            divider
-            HStack(spacing: 0) {
-                Text("Router balance", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                Spacer()
-                Text(verbatim: balance)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(isAttention ? theme.warningColor : theme.primaryText)
+            Text(verbatim: accountService.formattedBalance)
+                .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                .foregroundColor(
+                    (isAttention || accountService.isFrozen)
+                        ? theme.warningColor : theme.primaryText
+                )
+                .contentTransition(.numericText())
+
+            if accountService.isFrozen {
+                Text("Account paused - add credits to resume.", bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("Available balance", bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-
-            divider
-            footerText
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
         }
-        .frame(width: 200)
-        .popoverCard()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 11)
+        .background(
+            LinearGradient(
+                colors: [theme.accentColor.opacity(0.10), theme.accentColor.opacity(0.02)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+    }
+
+    private func sessionSpendRow(_ spend: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "chart.bar.fill")
+                .font(.system(size: 8))
+                .foregroundColor(theme.tertiaryText)
+            Text("This session", bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+            Spacer()
+            Text(verbatim: spend)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundColor(theme.primaryText)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    /// The account's search credit balance, mirrored from the Credits tab so
+    /// the balance the user actually spends on web search is visible where
+    /// they check their wallet. Reads like the dollar balance above it — a
+    /// single remaining count, amber once spent (searches then bill the
+    /// shared balance or fall back to the built-in sources).
+    private func webSearchCreditsRow(_ grant: OsaurusRouterWebAllowance) -> some View {
+        let exhausted = grant.remainingTotal <= 0
+        return HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 8))
+                .foregroundColor(exhausted ? theme.warningColor : theme.tertiaryText)
+            Text("Search credits", bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+            Spacer()
+            Text(verbatim: "\(grant.remainingTotal)")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundColor(exhausted ? theme.warningColor : theme.primaryText)
+                .contentTransition(.numericText())
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    /// Premium web search ran out of credits and is quietly using the
+    /// built-in sources — the graceful-fallback state made visible where the
+    /// user checks their wallet, per spec: billing outcomes reach the UI even
+    /// when the search itself succeeded via fallback.
+    private var webSearchFallbackNotice: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(theme.warningColor)
+            Text(
+                "Premium search is paused - add credits to resume.",
+                bundle: .module
+            )
+            .font(.system(size: 10))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    private var activitySection: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("Recent activity", bundle: .module)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(theme.tertiaryText)
+                .textCase(.uppercase)
+                .kerning(0.8)
+
+            if rows.isEmpty {
+                emptyActivity
+            } else {
+                VStack(alignment: .leading, spacing: 9) {
+                    ForEach(rows) { row in
+                        activityRow(row)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 11)
+    }
+
+    private var emptyActivity: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "moon.zzz")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText.opacity(0.7))
+            Text("No activity yet", bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.vertical, 6)
+    }
+
+    private func activityRow(_ row: WalletActivityRow) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            ZStack {
+                Circle()
+                    .fill(badgeTint(for: row).opacity(0.13))
+                Image(systemName: iconName(for: row))
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundColor(badgeTint(for: row))
+            }
+            .frame(width: 20, height: 20)
+
+            VStack(alignment: .leading, spacing: 1) {
+                // Transaction and web-usage titles are the projector's fixed
+                // vocabulary ("Credits added", "Web search", ...) and localize
+                // via key lookup. Model-usage titles are model/provider ids
+                // and must render verbatim — LocalizedStringKey would treat
+                // underscores in ids as markdown emphasis.
+                Group {
+                    if row.kind == .usage {
+                        Text(verbatim: row.title)
+                    } else {
+                        Text(LocalizedStringKey(row.title), bundle: .module)
+                    }
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                if let timeLabel = timeLabel(for: row) {
+                    Text(verbatim: timeLabel)
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.tertiaryText)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            Text(verbatim: row.amountLabel)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundColor(row.isCredit ? theme.successColor : theme.secondaryText)
+        }
+    }
+
+    private var footerActions: some View {
+        HStack(spacing: 8) {
+            Button(action: onAddCredits) {
+                HStack(spacing: 4) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 9, weight: .bold))
+                    Text("Add credits", bundle: .module)
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(theme.accentColor))
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+
+            Spacer(minLength: 0)
+
+            Button(action: onViewAll) {
+                HStack(spacing: 3) {
+                    Text("View all", bundle: .module)
+                        .font(.system(size: 11, weight: .medium))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 7, weight: .semibold))
+                }
+                .foregroundColor(theme.secondaryText)
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            .localizedHelp("Open the Credits tab for full usage and transaction history.")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    // MARK: Row styling
+
+    private func iconName(for row: WalletActivityRow) -> String {
+        switch row.kind {
+        case .transaction:
+            return row.isCredit ? "arrow.down.left" : "arrow.up.right"
+        case .usage:
+            return "sparkles"
+        case .webUsage:
+            return "magnifyingglass"
+        }
+    }
+
+    /// Badge + icon tint. Money-in reads green; spends stay neutral unless the
+    /// request itself needs attention (stopped/error states from the ledger).
+    /// Hosted web searches render in the premium (accent) family — a touch
+    /// stronger when the request used a search credit.
+    private func badgeTint(for row: WalletActivityRow) -> Color {
+        if row.isCredit { return theme.successColor }
+        switch row.stateKind {
+        case .warning: return theme.warningColor
+        case .error: return theme.errorColor
+        case .success, .secondary:
+            if row.kind == .webUsage {
+                return row.isIncludedWebRequest
+                    ? theme.accentColor : theme.accentColor.opacity(0.7)
+            }
+            return theme.secondaryText
+        }
+    }
+
+    private func timeLabel(for row: WalletActivityRow) -> String? {
+        guard let date = row.date else { return nil }
+        return Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 
     private var divider: some View {
@@ -5678,191 +6917,6 @@ private struct SelectorChip<Content: View>: View {
                 lineWidth: 1
             )
     }
-}
-
-// MARK: - Model Options Selector View
-
-/// Popover that groups all model-specific options into a single panel.
-private struct ModelOptionsSelectorView: View {
-    let options: [ModelOptionDefinition]
-    @Binding var values: [String: ModelOptionValue]
-    let profileName: String
-    let thinkingOptionId: String?
-
-    @Environment(\.theme) private var theme
-
-    private var hasExplicitOptions: Bool { !values.isEmpty }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider().background(theme.primaryBorder.opacity(0.3))
-            optionRows
-        }
-        .frame(width: 300)
-        .popoverCard(
-            cornerRadius: 12,
-            accentOpacity: (0.06, 0.04),
-            borderOpacity: 0.15,
-            shadowOpacity: 0.25,
-            shadowRadius: 20,
-            shadowOffsetY: 10
-        )
-    }
-
-    // MARK: - Header
-
-    private var header: some View {
-        HStack {
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-
-            Text(profileName)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-            Spacer()
-
-            if hasExplicitOptions {
-                Button {
-                    values = [:]
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.uturn.backward")
-                            .font(.system(size: 9))
-                        Text("Reset", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(theme.secondaryBackground.opacity(0.8))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .strokeBorder(theme.primaryBorder.opacity(0.12), lineWidth: 1)
-                    )
-                }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-    }
-
-    // MARK: - Option Rows
-
-    private var optionRows: some View {
-        let filteredOptions = options.filter { $0.id != thinkingOptionId }
-
-        return VStack(spacing: 0) {
-            ForEach(Array(filteredOptions.enumerated()), id: \.element.id) { index, option in
-                if index > 0 {
-                    Divider().background(theme.primaryBorder.opacity(0.15)).padding(.horizontal, 14)
-                }
-                switch option.kind {
-                case .segmented(let segments):
-                    segmentedRow(option: option, segments: segments)
-                case .toggle(let defaultValue):
-                    toggleRow(option: option, defaultValue: defaultValue)
-                }
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func segmentedRow(option: ModelOptionDefinition, segments: [ModelOptionSegment]) -> some View {
-        let currentId = values[option.id]?.stringValue ?? segments.first?.id ?? ""
-        let isExplicit = values[option.id] != nil
-
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                if let icon = option.icon {
-                    Image(systemName: icon)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(isExplicit ? theme.accentColor : theme.tertiaryText)
-                }
-                Text(option.label)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-            }
-
-            wrappedSegments(segments: segments, currentId: currentId, optionId: option.id)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-    }
-
-    private func wrappedSegments(segments: [ModelOptionSegment], currentId: String, optionId: String) -> some View {
-        FlowLayout(spacing: 6) {
-            ForEach(segments) { segment in
-                let isSelected = segment.id == currentId
-                Button {
-                    values[optionId] = .string(segment.id)
-                } label: {
-                    Text(segment.label)
-                        .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
-                        .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(
-                                    isSelected
-                                        ? theme.accentColor.opacity(theme.isDark ? 0.15 : 0.1)
-                                        : theme.secondaryBackground.opacity(0.6)
-                                )
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .strokeBorder(
-                                    isSelected
-                                        ? theme.accentColor.opacity(0.3)
-                                        : theme.primaryBorder.opacity(0.12),
-                                    lineWidth: 1
-                                )
-                        )
-                }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-            }
-        }
-    }
-
-    private func toggleRow(option: ModelOptionDefinition, defaultValue: Bool) -> some View {
-        let isOn = values[option.id]?.boolValue ?? defaultValue
-        let isExplicit = values[option.id] != nil
-
-        return HStack(spacing: 6) {
-            if let icon = option.icon {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(isExplicit ? theme.accentColor : theme.tertiaryText)
-            }
-            Text(option.label)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-            Spacer()
-
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { isOn },
-                    set: { values[option.id] = .bool($0) }
-                )
-            )
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-    }
-
 }
 
 // MARK: - Input Action Button
@@ -6288,3 +7342,655 @@ private struct SendNowButton: View {
         }
     }
 #endif
+
+// MARK: - Meta Cluster Chips
+
+/// Balance indicator shown in every session where the router is usable.
+/// Extracted from `FloatingInputCard` so wallet-panel hover/pin state and
+/// account-service updates re-render only this chip, never the whole card.
+/// Hovering previews the wallet panel; clicking pins it so its actions
+/// (Add credits → top-up sheet, View all → Credits tab) are reachable.
+/// Quiet plain text normally, escalating to an amber pill / "Add credits"
+/// CTA as the balance runs low or hits zero — router-billed sessions only.
+private struct FloatingCreditsChip: View {
+    let isRouterBilledSession: Bool
+    /// Total micro-USD spent on the Osaurus Router this session (popover row).
+    let sessionSpendMicro: Int
+    let metaCompact: Bool
+    let metaUltraCompact: Bool
+    let onAddCredits: (() -> Void)?
+
+    @ObservedObject private var accountService = OsaurusRouterAccountService.shared
+    @Environment(\.theme) private var theme
+
+    /// Wallet panel presentation. Hovering the chip opens it as a passive
+    /// preview (dismissed on hover exit); clicking pins it so its actions
+    /// (Add credits, View all) are reachable.
+    @State private var showWalletPanel = false
+    /// True when the wallet panel was opened by click; hover exit no longer
+    /// dismisses it, only outside-click / an action does.
+    @State private var walletPanelPinned = false
+    @State private var balanceHoverTask: Task<Void, Never>?
+    /// Delayed dismiss for the hover-opened wallet panel. Gives the cursor a
+    /// grace period to travel from the chip into the panel (which lives in its
+    /// own window, so hovering it doesn't keep the chip "hovered"); the panel's
+    /// own hover cancels it so its buttons stay clickable.
+    @State private var walletDismissTask: Task<Void, Never>?
+
+    /// Urgency tiers for the balance indicator. Healthy stays quiet (plain muted
+    /// text that blends into the meta cluster); low and empty escalate to an
+    /// amber pill so a top-up is easy to notice. Empty/frozen reads as an "Add
+    /// credits" call to action — deliberately amber, never error-red, so it
+    /// invites action instead of looking like a failure. The escalation only
+    /// applies to router-billed sessions; see `creditsStyle(for:)`.
+    private enum BalanceLevel {
+        case healthy
+        case low
+        case empty
+    }
+
+    private var balanceLevel: BalanceLevel {
+        let micro = accountService.balanceMicroValue
+        if micro <= 0 || accountService.isFrozen {
+            return .empty
+        }
+        if micro < 1_000_000 {  // < $1.00
+            return .low
+        }
+        return .healthy
+    }
+
+    /// Resolved visual tokens for one `BalanceLevel` so the body can render
+    /// declaratively instead of re-deriving each property from the level inline.
+    private struct CreditsChipStyle {
+        let iconName: String
+        let iconColor: Color
+        let textColor: Color
+        let weight: Font.Weight
+        /// Pill fill/stroke; `nil` keeps the chip chrome-free (healthy state).
+        let pill: (fill: Color, stroke: Color)?
+        let glow: Color
+        /// When false, the chip shows the "Add credits" CTA instead of an amount.
+        let showsAmount: Bool
+    }
+
+    private func creditsStyle(for level: BalanceLevel) -> CreditsChipStyle {
+        let amber = theme.warningColor
+        // Outside router-billed sessions the chip never escalates: the balance
+        // doesn't block the current session, so a $0/unknown wallet reads as
+        // quiet muted "Add credits" text instead of an amber call to action.
+        guard isRouterBilledSession else {
+            return CreditsChipStyle(
+                iconName: "creditcard",
+                iconColor: theme.tertiaryText,
+                textColor: theme.secondaryText,
+                weight: .medium,
+                pill: nil,
+                glow: .clear,
+                showsAmount: level != .empty
+            )
+        }
+        switch level {
+        case .healthy:
+            return CreditsChipStyle(
+                iconName: "creditcard",
+                iconColor: theme.tertiaryText,
+                textColor: theme.secondaryText,
+                weight: .medium,
+                pill: nil,
+                glow: .clear,
+                showsAmount: true
+            )
+        case .low:
+            // The chip shows the router balance, so a low balance escalates the
+            // chip itself to amber text (no pill) — a gentle nudge that stops
+            // short of the empty-state "Add credits" call to action.
+            return CreditsChipStyle(
+                iconName: "creditcard",
+                iconColor: amber,
+                textColor: amber,
+                weight: .semibold,
+                pill: nil,
+                glow: .clear,
+                showsAmount: true
+            )
+        case .empty:
+            return CreditsChipStyle(
+                iconName: "plus.circle.fill",
+                iconColor: amber,
+                textColor: amber,
+                weight: .semibold,
+                pill: (amber.opacity(0.22), amber.opacity(0.5)),
+                glow: amber.opacity(0.25),
+                showsAmount: false
+            )
+        }
+    }
+
+    /// This session's Router spend, formatted for the hover popover. The chip
+    /// surfaces the account balance; spend is shown only in the popover.
+    private var sessionSpendDisplay: String {
+        OsaurusRouter.formatMicroUSDPrecise(String(sessionSpendMicro))
+    }
+
+    /// Accessibility text for the credits chip. Describes the router balance the
+    /// chip shows and the tap action; session spend lives in the wallet panel.
+    private var creditsHelpText: Text {
+        if accountService.isFrozen {
+            return Text("Account paused - add credits to resume.", bundle: .module)
+        }
+        return Text("\(accountService.formattedBalance) router balance. Click to open the wallet.", bundle: .module)
+    }
+
+    var body: some View {
+        let level = balanceLevel
+        let style = creditsStyle(for: level)
+        let caption = CGFloat(theme.captionSize)
+        // Hide the icon in compact mode to save width, except the empty-state
+        // plus glyph, which signals the chip is actionable. In the ultra-compact
+        // tier we always keep the icon, since it becomes the whole chip.
+        let showIcon = !metaCompact || level == .empty || metaUltraCompact
+        // At the tightest width the chip is icon-only (glyph carries the state,
+        // hover/tap opens the wallet) so the row's toggle chips aren't clipped.
+        let showLabel = !metaUltraCompact
+
+        Button {
+            // Click pins the wallet panel (rather than jumping straight to the
+            // top-up sheet) so its actions stay reachable; a second click while
+            // pinned closes it.
+            balanceHoverTask?.cancel()
+            walletDismissTask?.cancel()
+            if showWalletPanel && walletPanelPinned {
+                showWalletPanel = false
+                walletPanelPinned = false
+            } else {
+                walletPanelPinned = true
+                showWalletPanel = true
+            }
+        } label: {
+            HStack(spacing: 4) {
+                if showIcon {
+                    Image(systemName: style.iconName)
+                        .font(.system(size: caption - 2))
+                        .foregroundColor(style.iconColor)
+                        .contentTransition(.symbolEffect(.replace))
+                }
+
+                if showLabel {
+                    if style.showsAmount {
+                        // Composer shows the overall router balance; this session's
+                        // spend is surfaced only in the hover popover.
+                        Text(verbatim: accountService.formattedBalance)
+                            .font(.system(size: caption - 1, weight: style.weight, design: .monospaced))
+                            .foregroundColor(style.textColor)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    } else {
+                        Text("Add credits", bundle: .module)
+                            .font(theme.font(size: caption - 1, weight: style.weight))
+                            .foregroundColor(style.textColor)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+            }
+            // Chrome only appears in the low/empty attention states; the healthy
+            // chip stays plain text to match the token indicator's weight.
+            .padding(.horizontal, style.pill == nil ? 0 : 10)
+            .padding(.vertical, style.pill == nil ? 0 : 4)
+            .background {
+                if let pill = style.pill {
+                    Capsule()
+                        .fill(pill.fill)
+                        .overlay(Capsule().strokeBorder(pill.stroke, lineWidth: 1))
+                }
+            }
+            // Soft glow on the empty CTA draws the eye without a repeating animation.
+            .shadow(color: style.glow, radius: 5, x: 0, y: 1)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .accessibilityLabel(creditsHelpText)
+        .onHover { hovering in
+            balanceHoverTask?.cancel()
+            if hovering {
+                walletDismissTask?.cancel()
+                balanceHoverTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    guard !Task.isCancelled else { return }
+                    showWalletPanel = true
+                }
+            } else if !walletPanelPinned {
+                scheduleWalletDismiss()
+            }
+        }
+        .popover(isPresented: $showWalletPanel, arrowEdge: .top) {
+            WalletPopover(
+                sessionSpend: isRouterBilledSession ? sessionSpendDisplay : nil,
+                isAttention: isRouterBilledSession && balanceLevel != .healthy,
+                onAddCredits: {
+                    closeWalletPanel()
+                    onAddCredits?()
+                },
+                onViewAll: {
+                    closeWalletPanel()
+                    AppDelegate.shared?.showManagementWindow(initialTab: .credits)
+                }
+            )
+            // Keep the panel alive while the cursor is over it, so the user
+            // can travel from the chip and click Add credits / View all.
+            .onHover { hovering in
+                if hovering {
+                    walletDismissTask?.cancel()
+                } else if !walletPanelPinned {
+                    scheduleWalletDismiss()
+                }
+            }
+        }
+        .onChange(of: showWalletPanel) { _, isShown in
+            // Outside-click dismissal flips the binding directly; unpin so the
+            // next hover preview behaves normally.
+            if !isShown { walletPanelPinned = false }
+        }
+    }
+
+    /// Dismiss the hover-opened wallet panel after a grace period, giving the
+    /// cursor time to cross the gap into the panel window.
+    private func scheduleWalletDismiss() {
+        balanceHoverTask?.cancel()
+        walletDismissTask?.cancel()
+        walletDismissTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            showWalletPanel = false
+        }
+    }
+
+    private func closeWalletPanel() {
+        walletDismissTask?.cancel()
+        balanceHoverTask?.cancel()
+        showWalletPanel = false
+        walletPanelPinned = false
+    }
+}
+
+/// Context/token indicator on the right edge of the selector row. Extracted
+/// from `FloatingInputCard` so popover hover/pin state re-renders only this
+/// chip. All budget math stays in the parent (it also gates sending); this
+/// view just renders the passed values. `breakdown` is a closure so the
+/// popover's content is computed only when it actually opens, matching the
+/// lazy evaluation the inline `.popover` closure had before extraction.
+private struct FloatingContextChip: View {
+    let displayTokens: Int
+    let usableTokens: Int?
+    let modelMaxTokens: Int?
+    let windowResolution: AgentLoopBudget.ContextWindowResolution?
+    let isStreaming: Bool
+    let isNearLimit: Bool
+    let isHardOverflow: Bool
+    let metaCompact: Bool
+    let formatTokenCount: (Int) -> String
+    let breakdown: () -> ContextBreakdown
+    /// LLM compaction state + manual trigger, rendered inside the popover.
+    var compactionState: ContextCompactionUIState = .idle
+    var canCompact: Bool = false
+    var onCompact: (() -> Void)? = nil
+
+    @Environment(\.theme) private var theme
+
+    @State private var showContextBreakdown = false
+    /// True when the context panel was opened by click. Hover previews dismiss
+    /// automatically; pinned panels remain interactive until an outside click
+    /// or a second click on the trigger.
+    @State private var contextPanelPinned = false
+    @State private var contextHoverTask: Task<Void, Never>?
+    /// Delayed dismiss for the context popover. Gives the cursor a grace
+    /// period to travel from the trigger into the popover (which lives in its
+    /// own window, so hovering it doesn't keep the trigger "hovered").
+    @State private var contextDismissTask: Task<Void, Never>?
+
+    var body: some View {
+        let warningColor: Color? =
+            isHardOverflow ? .red : (isNearLimit ? .orange : nil)
+        let prefix = isStreaming ? "" : "~"
+        let tokenText =
+            if let maxCtx = usableTokens {
+                "\(prefix)\(formatTokenCount(displayTokens)) / \(formatTokenCount(maxCtx))"
+            } else {
+                "\(prefix)\(formatTokenCount(displayTokens))"
+            }
+
+        Button {
+            contextHoverTask?.cancel()
+            contextDismissTask?.cancel()
+            if showContextBreakdown && contextPanelPinned {
+                showContextBreakdown = false
+                contextPanelPinned = false
+            } else {
+                contextPanelPinned = true
+                showContextBreakdown = true
+            }
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                // Budget-state tinting: amber at ≥85% of the window (soft
+                // warning — compaction will engage), red when the
+                // non-compactable prefix alone can't fit (send is gated).
+                if let warningColor {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: CGFloat(theme.captionSize) - 2))
+                        .foregroundColor(warningColor)
+                        .localizedHelp(
+                            isHardOverflow
+                                ? "Context is full: the system prompt, tools, and input alone exceed this model's window. Shorten the input, disable tools, or pick a larger-context model."
+                                : "Context is nearly full (≥85% of the model window). Older messages will be compacted; consider starting a fresh chat for best quality."
+                        )
+                }
+
+                Text(tokenText)
+                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
+                    .foregroundColor(
+                        warningColor ?? (isStreaming ? theme.secondaryText : theme.tertiaryText)
+                    )
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+
+                if !metaCompact {
+                    Text("tokens", bundle: .module)
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                        .foregroundColor(theme.tertiaryText.opacity(0.7))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .accessibilityLabel(
+            Text("Context budget: \(tokenText) tokens", bundle: .module)
+        )
+        .onHover { hovering in
+            if hovering {
+                openContextBreakdown()
+            } else if !contextPanelPinned {
+                scheduleContextDismiss()
+            }
+        }
+        .popover(isPresented: $showContextBreakdown, arrowEdge: .top) {
+            ContextBreakdownPopover(
+                breakdown: breakdown(),
+                maxTokens: usableTokens,
+                modelMaxTokens: modelMaxTokens,
+                modelLimitSource: windowResolution?.source,
+                isStreaming: isStreaming,
+                isNearLimit: isNearLimit,
+                isHardOverflow: isHardOverflow,
+                formatTokenCount: formatTokenCount,
+                compactionState: compactionState,
+                canCompact: canCompact,
+                onCompact: onCompact
+            )
+            // Keep the popover alive while the cursor is over it, so the user
+            // can travel from the trigger and click the disclosure headers.
+            .onPopoverHover { hovering in
+                if hovering {
+                    contextDismissTask?.cancel()
+                } else if !contextPanelPinned {
+                    scheduleContextDismiss()
+                }
+            }
+        }
+        .onChange(of: showContextBreakdown) { _, isShown in
+            // Outside-click dismissal flips the binding directly. Clear the
+            // pinned state so the next hover behaves as a passive preview.
+            if !isShown { contextPanelPinned = false }
+        }
+    }
+
+    /// Open the context popover after a short hover dwell, cancelling any
+    /// pending dismiss so a quick re-entry doesn't flicker it closed.
+    private func openContextBreakdown() {
+        contextDismissTask?.cancel()
+        contextHoverTask?.cancel()
+        contextHoverTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
+            showContextBreakdown = true
+        }
+    }
+
+    /// Dismiss the context popover after a grace period, giving the cursor
+    /// time to cross the gap into the popover window.
+    private func scheduleContextDismiss() {
+        contextHoverTask?.cancel()
+        contextDismissTask?.cancel()
+        contextDismissTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            showContextBreakdown = false
+        }
+    }
+}
+
+// MARK: - Voice Children
+
+/// Hosts `VoiceInputOverlay` and feeds it the live speech fields
+/// (`audioLevel` publishes per audio buffer while recording) from its own
+/// observation, so those high-frequency updates re-render only the overlay —
+/// never the whole card. All non-speech parameters pass through from the
+/// parent unchanged.
+private struct FloatingVoiceOverlayHost: View {
+    @Binding var state: VoiceInputState
+    let pauseDuration: Double
+    let confirmationDelay: Double
+    let silenceDuration: Double
+    let silenceTimeoutDuration: Double
+    let silenceTimeoutProgress: Double
+    let isContinuousMode: Bool
+    let isStreaming: Bool
+    let transcriptionStopMode: TranscriptionStopMode
+    let onCancel: () -> Void
+    let onSend: (String) -> Void
+    let onEdit: () -> Void
+
+    @ObservedObject private var speechService = SpeechService.shared
+
+    var body: some View {
+        VoiceInputOverlay(
+            state: $state,
+            audioLevel: speechService.audioLevel,
+            transcription: speechService.currentTranscription,
+            confirmedText: speechService.confirmedTranscription,
+            pauseDuration: pauseDuration,
+            confirmationDelay: confirmationDelay,
+            silenceDuration: silenceDuration,
+            silenceTimeoutDuration: silenceTimeoutDuration,
+            silenceTimeoutProgress: silenceTimeoutProgress,
+            isContinuousMode: isContinuousMode,
+            isStreaming: isStreaming,
+            transcriptionStopMode: transcriptionStopMode,
+            onCancel: onCancel,
+            onSend: onSend,
+            onEdit: onEdit
+        )
+    }
+}
+
+/// Mic button for the composer button bar. Owns the reactive reads that
+/// gate and style it (`downloadedModelsCount`, `isLoadingModel`) so speech
+/// service updates re-render only this button. Renders nothing when voice
+/// is not configured — the same visibility the parent's inline
+/// `if isVoiceConfigured` gate produced.
+private struct FloatingVoiceButton: View {
+    /// `voiceConfig.voiceInputEnabled` from the parent's loaded configuration.
+    let voiceInputEnabled: Bool
+    let isStreaming: Bool
+    let startVoiceInput: () -> Void
+
+    @ObservedObject private var speechService = SpeechService.shared
+    @ObservedObject private var speechModelManager = SpeechModelManager.shared
+
+    private var isVoiceConfigured: Bool {
+        voiceInputEnabled && speechModelManager.downloadedModelsCount > 0
+    }
+
+    var body: some View {
+        if isVoiceConfigured {
+            button
+                .disabled(isStreaming)
+                .opacity(isStreaming ? 0.4 : 1.0)
+        }
+    }
+
+    private var button: some View {
+        // Only render the disabled "loading…" state when mic access has
+        // actually been granted. For `.notDetermined`/`.denied` the model
+        // can't be used yet, and a background autoload (e.g.
+        // `SpeechService.autoLoadIfNeeded` at launch) would otherwise
+        // freeze the button and swallow the tap that needs to surface
+        // either the system mic prompt or the denied alert.
+        let micAuthorized = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        return Group {
+            if speechService.isLoadingModel && micAuthorized {
+                // Original disabled-spinner state — only when mic is
+                // already authorized, since otherwise no model load is
+                // running and the tap must remain free to surface either
+                // the system prompt or the denied alert.
+                InputActionButton(
+                    icon: "mic.fill",
+                    help: "Loading voice model…",
+                    action: {}
+                )
+                .overlay(
+                    ProgressView()
+                        .scaleEffect(0.5)
+                        .allowsHitTesting(false)
+                )
+                .disabled(true)
+                .opacity(0.5)
+            } else {
+                InputActionButton(
+                    icon: "mic.fill",
+                    help: "Voice input (speak to type)",
+                    action: { startVoiceInput() }
+                )
+            }
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+    }
+}
+
+/// Syncs the card's voice state with `SpeechService` transitions. Lives in
+/// its own modifier node (like `VoiceDebugObservers`) so observing the
+/// service — whose `audioLevel` publishes per audio buffer while recording —
+/// re-runs only this modifier's lightweight body, not the card's. The
+/// side effects write back through bindings, which invalidate the card only
+/// when a watched transition actually fires.
+private struct VoiceStateSyncObservers: ViewModifier {
+    @Binding var voiceInputState: VoiceInputState
+    @Binding var showVoiceOverlay: Bool
+    @Binding var lastVoiceActivityTime: Date
+    @Binding var lastSpeechTime: Date
+    @Binding var hasDetectedSpeechThisTurn: Bool
+    let resetPauseDetectionForRecording: () -> Void
+
+    @ObservedObject private var speechService = SpeechService.shared
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: speechService.isRecording) { _, isRecording in
+                print(
+                    "[FloatingInputCard] isRecording changed to: \(isRecording). voiceInputState: \(voiceInputState), showVoiceOverlay: \(showVoiceOverlay)"
+                )
+                // Sync voice state with service
+                if isRecording {
+                    if voiceInputState == .idle && showVoiceOverlay {
+                        voiceInputState = .recording
+                        lastVoiceActivityTime = Date()
+                        resetPauseDetectionForRecording()
+                        print("[FloatingInputCard] Recording confirmed - voice input ready")
+                    } else if voiceInputState == .idle {
+                        print("[FloatingInputCard] External recording detected. Overlay: \(showVoiceOverlay)")
+                        voiceInputState = .recording
+                        lastVoiceActivityTime = Date()
+                        resetPauseDetectionForRecording()
+                    }
+                } else {
+                    // If service stopped recording (e.g. via Esc key in ChatView), sync local state.
+                    // Preserve `.sending` so the overlay stays up during LLM cleanup.
+                    if voiceInputState != .idle && voiceInputState != .sending {
+                        voiceInputState = .idle
+                        showVoiceOverlay = false
+                    }
+                }
+            }
+            .onChange(of: speechService.isSpeechDetected) { _, detected in
+                if detected && voiceInputState == .recording {
+                    hasDetectedSpeechThisTurn = true
+                    lastSpeechTime = Date()
+                }
+            }
+            .onChange(of: speechService.currentTranscription) { _, newValue in
+                // When new transcription arrives, user is speaking
+                // Only reset silence timer if there is also active audio detection or meaningful level
+                if voiceInputState == .recording && TranscriptionTextNormalizer.hasVisibleText(newValue) {
+                    if speechService.isSpeechDetected || speechService.audioLevel > 0.05 {
+                        hasDetectedSpeechThisTurn = true
+                        lastSpeechTime = Date()
+                    }
+                }
+            }
+            .onChange(of: speechService.confirmedTranscription) { _, newValue in
+                // When confirmed transcription changes, user was speaking
+                if voiceInputState == .recording && TranscriptionTextNormalizer.hasVisibleText(newValue) {
+                    if speechService.isSpeechDetected || speechService.audioLevel > 0.05 {
+                        hasDetectedSpeechThisTurn = true
+                        lastSpeechTime = Date()
+                    }
+                }
+            }
+    }
+}
+
+/// Observation firewall for the selector row. Sandbox provisioning publishes
+/// per-progress-tick during runtime downloads and the clipboard service
+/// publishes on every copy; hosting those subscriptions here means their
+/// updates re-render only this subtree. The wrapped closure captures the
+/// card value and re-reads the live singleton state (via the card's derived
+/// properties) each time this scope's body runs, so the chips always render
+/// current sandbox/clipboard state without the card observing either object.
+private struct ChipObservationScope<Content: View>: View {
+    @ObservedObject private var sandboxState = SandboxManager.State.shared
+    @ObservedObject private var clipboardService = ClipboardService.shared
+    /// The card's composer text model: the row's context chip shows a live
+    /// token count that includes what's being typed, so the row re-renders
+    /// per keystroke here instead of the whole card observing the text.
+    @ObservedObject var textModel: ComposerTextModel
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+    }
+}
+
+/// Observation firewall for the popups + input card subtree. Keystrokes
+/// publish through `ComposerTextModel`, re-rendering only this scope's
+/// content — the card holds the model as plain `@State` (the reference never
+/// changes) so typing never invalidates the card body. The closure re-reads
+/// the model's current text through the card's derived properties on every
+/// scope render.
+private struct ComposerTextObservationScope<Content: View>: View {
+    @ObservedObject var model: ComposerTextModel
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+    }
+}
+
+/// Reference-type home for the composer's typed text. See
+/// `FloatingInputCard.composerText` for the invalidation contract.
+final class ComposerTextModel: ObservableObject {
+    @Published var text: String = ""
+}

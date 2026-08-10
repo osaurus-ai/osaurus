@@ -1,0 +1,18 @@
+{
+  "id": "agent_loop.cancel-after-two-calls-no-zombie",
+  "domain": "agent_loop",
+  "label": "agent loop • cancellation after two calls leaves no work beyond the cancel point",
+  "query": "Create these files one at a time, one per turn, in order: first alpha.txt with the word ALPHA, then beta.txt with the word BETA, then gamma.txt with the word GAMMA, then delta.txt with the word DELTA.",
+  "notes": "Cancellation at a later checkpoint: the loop runs two processed tool calls, then cancels. Exit must be 'cancelled' and the tail work must not have run — delta.txt (the last step) must never exist. Pins that cancellation stops the loop promptly rather than draining the queued plan. The ResourceSampler footprint rides along for the RAM-recovery signal in the report. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "cancelAfterToolCalls": 2,
+      "allowedExits": ["cancelled"],
+      "files": [
+        { "path": "delta.txt", "exists": false }
+      ]
+    }
+  }
+}

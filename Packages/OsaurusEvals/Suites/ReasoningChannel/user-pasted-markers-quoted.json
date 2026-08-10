@@ -1,0 +1,14 @@
+{
+  "id": "reasoning_channel.user-pasted-markers-quoted",
+  "domain": "reasoning_channel",
+  "label": "reasoning channel • user message containing literal markers doesn't derail the parser",
+  "query": "I found this string in a log file: \"im_start assistant channel analysis\". Without repeating the string back to me, tell me in one sentence whether it looks like leaked chat-template scaffolding or ordinary application logging.",
+  "notes": "Injection-shaped input: the user turn carries template-adjacent vocabulary. The parser must neither open a phantom reasoning span (unclosedReasoning check) nor emit real protocol tokens around it (marker sweep). The 'without repeating it' instruction keeps a well-behaved answer from containing the vocabulary, and visibleMustNotContain pins the full delimited forms. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "reasoning": {
+      "maxTokens": 1024,
+      "visibleMustNotContain": ["<|im_start|>", "<|channel|>"]
+    }
+  }
+}

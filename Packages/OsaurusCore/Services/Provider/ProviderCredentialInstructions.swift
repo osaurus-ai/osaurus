@@ -193,6 +193,16 @@ public enum ProviderCredentialInstructionsCatalog {
                 storageAuthType: .apiKey,
                 presetId: preset.rawValue
             )
+        case .fireworks:
+            return ProviderCredentialInstructions(
+                providerType: providerType,
+                displayName: L("Fireworks AI"),
+                authMethod: .apiKey,
+                getKeyURL: getKeyURL,
+                keyFormatHint: L("Get a key from app.fireworks.ai."),
+                storageAuthType: .apiKey,
+                presetId: preset.rawValue
+            )
         case .mistral:
             return ProviderCredentialInstructions(
                 providerType: providerType,

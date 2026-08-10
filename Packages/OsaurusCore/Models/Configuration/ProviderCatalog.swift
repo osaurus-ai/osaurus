@@ -185,6 +185,7 @@ enum ProviderCatalog {
         ProviderCatalogEntry(.atlasCloud, authMethods: [.apiKey], placement: .apiKey),
         ProviderCatalogEntry(.azureOpenAI, authMethods: [.apiKey], placement: .apiKey),
         ProviderCatalogEntry(.deepseek, authMethods: [.apiKey], placement: .apiKey),
+        ProviderCatalogEntry(.fireworks, authMethods: [.apiKey], placement: .apiKey),
         ProviderCatalogEntry(.google, authMethods: [.apiKey], placement: .apiKey),
         ProviderCatalogEntry(.mistral, authMethods: [.apiKey], placement: .apiKey),
         ProviderCatalogEntry(.minimax, authMethods: [.apiKey], placement: .apiKey),

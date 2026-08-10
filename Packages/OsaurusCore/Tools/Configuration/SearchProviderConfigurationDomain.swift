@@ -22,7 +22,7 @@ enum SearchProviderConfigurationDomain {
         id: "search_providers",
         displayName: "Web Search Providers",
         summary:
-            "Native web-search providers (Tavily, Brave, free scrapers, …). List, add, remove, enable, reorder the fallback ranking.",
+            "Configure native web-search providers (Tavily, Brave, free scrapers, …). This does not search the web or retrieve data.",
         menuHint: "add / remove / enable / reorder web-search providers",
         searchKeywords: [
             "search", "web search", "search provider", "search engine",
@@ -50,7 +50,8 @@ enum SearchProviderConfigurationDomain {
 public final class OsaurusSearchTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     public let name = "osaurus_search"
     public let description =
-        "Manage native web-search providers. `action`: list (providers in fallback order, plus addable "
+        "Configure native web-search providers only. This tool never searches the web or retrieves data; "
+        + "use web_search/search_and_extract for research. `action`: list (providers in fallback order, plus addable "
         + "catalog entries), add (needs `id` from the catalog; keyed providers return `needs_secrets: true` — "
         + "send the user to Settings → Search for the API key, never accept secrets as arguments), "
         + "remove (needs `id`), enable / disable (needs `id`), reorder (needs `order`: array of provider ids, "
@@ -77,7 +78,8 @@ public final class OsaurusSearchTool: OsaurusTool, PermissionedTool, @unchecked 
                 "type": .string("array"),
                 "items": .object(["type": .string("string")]),
                 "description": .string(
-                    "Provider ids in the new fallback order. Required for reorder."),
+                    "Provider ids in the new fallback order. Required for reorder."
+                ),
             ]),
             "enabled": .object([
                 "type": .string("boolean"),
@@ -102,7 +104,9 @@ public final class OsaurusSearchTool: OsaurusTool, PermissionedTool, @unchecked 
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
         let actionReq = requireAction(
-            args, allowed: ["list", "add", "remove", "enable", "disable", "reorder"])
+            args,
+            allowed: ["list", "add", "remove", "enable", "disable", "reorder"]
+        )
         guard case .value(let action) = actionReq else { return actionReq.failureEnvelope ?? "" }
 
         switch action {

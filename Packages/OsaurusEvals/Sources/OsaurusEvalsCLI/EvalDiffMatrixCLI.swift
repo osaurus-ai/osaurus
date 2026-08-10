@@ -262,8 +262,14 @@ extension OsaurusEvalsCLI {
         }
 
         do {
-            let matrices = try EvalCompatBuilder.loadContributions(in: dir)
-            let report = EvalCompatBuilder.build(from: matrices)
+            // Files that predate the self-declared `contributor` provenance
+            // are attributed to the git author who added them (best-effort;
+            // nil outside a git checkout).
+            let contributions = try EvalCompatBuilder.loadContributionFiles(
+                in: dir,
+                fallbackContributor: gitAddAuthor(of:)
+            )
+            let report = EvalCompatBuilder.build(from: contributions)
             let worst = report.models.filter { $0.verdict == .broken }.map { CompatibilityReport.shortModel($0.model) }
             print(
                 "compat: \(report.models.count) model(s) across \(report.contributions) contribution(s)"
@@ -281,6 +287,37 @@ extension OsaurusEvalsCLI {
         } catch {
             return failCompat(error.localizedDescription)
         }
+    }
+
+    /// Author of the commit that ADDED `file` (`git log --diff-filter=A`),
+    /// the attribution fallback for contributions whose environment predates
+    /// the `contributor` field. nil when git is unavailable, the file is
+    /// untracked, or the lookup fails for any reason.
+    static func gitAddAuthor(of file: URL) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [
+            "git", "-C", file.deletingLastPathComponent().path,
+            "log", "--diff-filter=A", "--follow", "--format=%an", "--", file.path,
+        ]
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        process.standardError = Pipe()
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        // Oldest listed last — the true "added" commit if the file was ever
+        // deleted and re-added.
+        let authors = String(decoding: data, as: UTF8.self)
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return authors.last
     }
 
     private static func failCompat(_ message: String) -> Int32 {

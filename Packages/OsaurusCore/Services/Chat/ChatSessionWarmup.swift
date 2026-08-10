@@ -9,7 +9,7 @@ import Foundation
 
 extension ChatSession: ChatWarmupSessionContext {
     func makeWarmupEngine() -> ChatEngineProtocol {
-        chatEngineFactory()
+        chatEngineFactory(source.inferenceSource)
     }
 
     func makeWarmupPayload() async -> ChatWarmupPayload? {
@@ -21,6 +21,12 @@ extension ChatSession: ChatWarmupSessionContext {
         let effectiveAgentId = agentId ?? Agent.defaultId
         let executionMode = await prepareChatExecutionMode(agentId: effectiveAgentId)
 
+        // The plugin catalog is part of the static system/tool prefix. Wait
+        // for its one-time launch snapshot before warming, otherwise the same
+        // installed plugins can render a different prefix across process
+        // restarts and bypass an otherwise valid disk-L2 cache entry.
+        await PluginManager.shared.ensurePromptCatalogReady()
+
         let liveToolMode = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId)
         let liveFingerprint = SessionToolState.fingerprint(
             executionMode: executionMode,
@@ -30,9 +36,17 @@ extension ChatSession: ChatWarmupSessionContext {
         let cachedSession: SessionToolState?
         if let sid = sessionId {
             let key = sid.uuidString
+            // Same preserve set as the send path (`ChatView`): warm-up and
+            // send must resolve one identical tool union after a fingerprint
+            // flip, or the warmed `<tools>` prefill diverges from the bytes
+            // the real send composes and the warm work is wasted.
+            let modeIndependentDynamicNames = Set(
+                ToolRegistry.shared.listDynamicTools().map(\.name)
+            )
             await SessionToolStateStore.shared.invalidateIfFingerprintChanged(
                 key,
-                liveFingerprint: liveFingerprint
+                liveFingerprint: liveFingerprint,
+                preservingLoadedToolNames: modeIndependentDynamicNames
             )
             cachedSession = await SessionToolStateStore.shared.get(key)
         } else {
@@ -44,15 +58,19 @@ extension ChatSession: ChatWarmupSessionContext {
             return ChatMessage(role: "user", content: t.content)
         }
 
+        let committedTurns = warmupCommittedTurns
+
         let context = await SystemPromptComposer.composeChatContext(
             agentId: effectiveAgentId,
             executionMode: executionMode,
             model: model,
+            modelType: selectedPickerItem?.modelType,
             query: "",
             messages: priorUserMessages,
             toolsDisabled: chatCfg.disableTools,
             additionalToolNames: cachedSession?.loadedToolNames ?? [],
             frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
+            frozenToolSpecs: cachedSession?.initialToolSpecs,
             frozenManifest: cachedSession?.frozenManifest,
             frozenSoul: cachedSession?.frozenSoul,
             trace: nil
@@ -70,11 +88,27 @@ extension ChatSession: ChatWarmupSessionContext {
         }
 
         let toolSpecs = context.tools
-        let messages = buildWarmupMessages(systemPrompt: sys)
+        let messages = buildWarmupMessages(systemPrompt: sys, turnsToWarm: committedTurns)
 
-        let historyFingerprint = turns.map { turn in
+        // Fingerprint over the COMMITTED turns only (same set the messages
+        // above serialize). During the DSV4 pre-send handshake the pending
+        // user turn is already in `turns`; hashing it here made the handshake
+        // fingerprint differ from the idle warm-up that just completed, so
+        // `performWarmup` could never short-circuit and one Send ran a third
+        // full prefill of bytes the real request then diverged from anyway.
+        let historyFingerprint = committedTurns.map { turn in
             "\(turn.role.rawValue):\(turn.id.uuidString):\(turn.content.count)"
         }.joined(separator: "|")
+
+        // LLM context compaction replaces the covered turns with one summary
+        // message in the composed bytes WITHOUT changing `turns`, so the
+        // summary must be part of the warm identity. Otherwise a pre-compaction
+        // warm-up keeps claiming a hot prefix for bytes the post-compaction
+        // send no longer composes (and vice versa when a summary is
+        // invalidated), and the send cold-re-prefills everything past the
+        // static system prefix.
+        let summaryFingerprint =
+            activeWarmupSummary.map { "\($0.id.uuidString):\($0.coveredTurnIds.count)" } ?? "none"
 
         // Options like the Thinking toggle change the rendered prompt and
         // the runtime cache salt, so they're part of the warm identity.
@@ -83,25 +117,92 @@ extension ChatSession: ChatWarmupSessionContext {
             .sorted()
             .joined(separator: ",")
 
-        let fingerprint = "\(model)|\(context.cacheHint)|\(optionsFingerprint)|\(historyFingerprint)"
+        // Hash of the FULL rendered system prompt (static + dynamic sections
+        // + plugin instructions), not just `cacheHint`. `cacheHint` covers
+        // only the static prefix and tool schemas, so an edit that rewrites a
+        // dynamic section — a channel-destination mode change, an agent DB
+        // schema change, a sandbox-state flip — left the old fingerprint
+        // intact and the controller kept claiming a warm prefix for bytes
+        // the next send would no longer compose. The send then diverged
+        // inside the system message and cold-re-prefilled the entire
+        // conversation. Folding the rendered bytes in makes such edits
+        // re-warm with the current prompt instead.
+        let promptFingerprint = PromptSurfaceEvaluator.fnv1a(sys)
+
+        let fingerprint =
+            "\(model)|\(context.cacheHint)|\(promptFingerprint)|\(optionsFingerprint)|\(summaryFingerprint)|\(historyFingerprint)"
 
         return ChatWarmupPayload(
             model: model,
             messages: messages,
             tools: toolSpecs.isEmpty ? nil : toolSpecs,
             modelOptions: activeModelOptions.isEmpty ? nil : activeModelOptions,
+            cacheStableSystemPrefix: context.staticPrefix,
             fingerprint: fingerprint
         )
     }
 
-    private func buildWarmupMessages(systemPrompt: String) -> [ChatMessage] {
+    /// The compaction summary the next send will inject, or nil when there is
+    /// none / it no longer lines up with the transcript. Same validity rule as
+    /// the send path (`validateConversationSummary` runs at the top of every
+    /// send), applied inline because warm-up composes at arbitrary times.
+    var activeWarmupSummary: ConversationSummary? {
+        guard let summary = conversationSummary,
+            ContextCompactionService.summaryIsValid(summary, for: turns)
+        else { return nil }
+        return summary
+    }
+
+    /// The transcript a warm-up may safely prefill: every turn EXCEPT
+    /// trailing user turns that have not been dispatched yet. A pending turn
+    /// (pre-appended by `send()` so the message is visible during the DSV4
+    /// pre-send handshake) gets its injected context prefix — the
+    /// `[Current Time]` block, memory, screen context — frozen only at
+    /// dispatch, so its final wire bytes do not exist yet. Warming it
+    /// prefills bytes the real request never composes: observed live as a
+    /// third prefill per Send whose tokens past the static prefix could
+    /// never be reused. Dropping it keeps the warm transcript a strict
+    /// byte-prefix of the real request.
+    var warmupCommittedTurns: [ChatTurn] {
+        var eligible = turns
+        while let last = eligible.last, last.role == .user, last.injectedContextPrefix == nil {
+            eligible.removeLast()
+        }
+        return eligible
+    }
+
+    func buildWarmupMessages(
+        systemPrompt: String,
+        turnsToWarm: [ChatTurn]? = nil
+    ) -> [ChatMessage] {
+        let warmable = turnsToWarm ?? warmupCommittedTurns
         var msgs: [ChatMessage] = []
         if !systemPrompt.isEmpty {
             msgs.append(ChatMessage(role: "system", content: systemPrompt))
         }
 
-        for (index, turn) in turns.enumerated() {
-            let isLastTurn = index == turns.count - 1
+        // Mirror the send path's non-destructive LLM compaction (see
+        // `buildMessages` in the send loop): covered turns are replaced by ONE
+        // byte-stable summary message. Warm-up must serialize the identical
+        // shape, or the prefill it stores (memory + disk L2) diverges from the
+        // real send right after the system prompt and the warm work is wasted.
+        let summary = activeWarmupSummary
+        let coveredIds = summary.map { Set($0.coveredTurnIds) } ?? []
+        var summaryInjected = false
+
+        for turn in warmable {
+            if let summary, coveredIds.contains(turn.id) {
+                if !summaryInjected {
+                    msgs.append(ChatMessage(role: "user", content: summary.contextMessageText))
+                    summaryInjected = true
+                }
+                continue
+            }
+            // Last-turn position is judged against the FULL transcript, not
+            // the warmable slice: when a pending user turn was dropped above,
+            // the real request renders the final assistant turn as a
+            // non-last message, and the warm bytes must match that.
+            let isLastTurn = turn.id == turns.last?.id
             if let msg = warmupTurnToMessage(turn, isLastTurn: isLastTurn) {
                 msgs.append(msg)
             }
@@ -109,26 +210,15 @@ extension ChatSession: ChatWarmupSessionContext {
         return msgs
     }
 
-    private func warmupTurnToMessage(_ turn: ChatTurn, isLastTurn: Bool) -> ChatMessage? {
+    func warmupTurnToMessage(_ turn: ChatTurn, isLastTurn: Bool) -> ChatMessage? {
         switch turn.role {
         case .assistant:
-            if isLastTurn && turn.contentIsBlank && turn.thinkingIsBlank && turn.toolCalls == nil {
-                return nil
-            }
-            if turn.contentIsBlank && turn.thinkingIsBlank && (turn.toolCalls == nil || turn.toolCalls!.isEmpty) {
-                return nil
-            }
-            let content: String? = turn.contentIsBlank ? nil : turn.content
-            let reasoning: String? = turn.thinkingIsBlank ? nil : turn.thinking
-            return ChatMessage(
-                role: "assistant",
-                content: content,
-                tool_calls: turn.toolCalls,
-                tool_call_id: nil,
-                reasoning_content: reasoning,
-                reasoning_item_id: turn.reasoningItemId,
-                reasoning_encrypted: turn.reasoningEncrypted
-            )
+            // Warm-up and the real request must serialize one identical
+            // transcript. In particular, a reasoning-only attempt abandoned
+            // by the bounded retry remains visible in the UI but carries
+            // `modelContextExcluded`; warming it would prefill poisoned
+            // history that the next real send correctly omits.
+            return Self.modelVisibleAssistantMessage(turn, isLastTurn: isLastTurn)
         case .tool:
             return ChatMessage(
                 role: "tool",
@@ -160,9 +250,16 @@ extension ChatSession: ChatWarmupSessionContext {
     /// previous local model should not stay resident just because the user
     /// moved off local models entirely.
     func performModelResidencySwitch(evictOthers: Bool) async {
+        // The GC below is an explicit unload, not a load, so the runtime's
+        // load-intent refusal can't cover it — but the decision still has to be
+        // made *inside* the actor. `skipIfLoadInFlight` does that: a model that
+        // is mid-load is in `loadingTasks`, not `modelCache`, and holds no lease,
+        // so it is invisible to both the window snapshot and the lease check, and
+        // a sweep would tear the runtime down around it. That is the 94 GB HY3
+        // load we watched die to a stale-selection warm-up.
         if evictOthers {
             let active = ChatWindowManager.shared.activeLocalModelNames()
-            await ModelRuntime.shared.unloadModelsNotIn(active)
+            await ModelRuntime.shared.unloadModelsNotIn(active, skipIfLoadInFlight: true)
         }
 
         guard !ChatConfigurationStore.load().warmModelsOnLoad else { return }
@@ -177,19 +274,48 @@ extension ChatSession: ChatWarmupSessionContext {
         {
             return
         }
-        try? await ModelRuntime.shared.preload(name: model)
+        // Speculative: it only exists to hide the load cost of a selection the
+        // user has not sent to yet. It must never be the reason someone else's
+        // model gets evicted, so it declines rather than disturb residency.
+        try? await ModelRuntime.shared.preload(name: model, intent: .background)
     }
 
     func notifySessionBecameActive() {
-        warmupController.scheduleWarmup(session: self)
+        warmupController.handleSessionBecameActive(session: self)
     }
 
-    func handleWarmupAfterRunCompleted() {
-        warmupController.scheduleWarmup(session: self)
+    func handleWarmupAfterRunCompleted(wasCancelled: Bool, hadError: Bool) {
+        // Scope tool-activity detection to the CURRENT run (from the last
+        // user turn onward), not the whole session. Scanning every historical
+        // turn permanently disabled post-response warmup for any chat that
+        // ever used a tool — so a session that ran one tool call at turn 5
+        // paid a cold multi-turn prefill tax on every send from turn 6
+        // through turn 500. The re-render bytes stored by a warmup for a
+        // clean assistant turn remain a valid prefix of the next send's
+        // prompt regardless of what happened many turns ago, because the
+        // committed history is what the next send re-renders and warms
+        // against on both sides of the fingerprint gate.
+        let currentRunTurns: ArraySlice<ChatTurn> = {
+            guard
+                let lastUserIndex = turns.lastIndex(where: { $0.role == .user })
+            else { return turns[...] }
+            return turns[lastUserIndex...]
+        }()
+        let hadToolActivity = currentRunTurns.contains { turn in
+            turn.role == .tool
+                || !(turn.toolCalls?.isEmpty ?? true)
+                || !turn.toolResults.isEmpty
+                || turn.hasRemoteToolActivity
+        }
+        warmupController.handleRunCompleted(
+            session: self,
+            wasCancelled: wasCancelled,
+            hadError: hadError,
+            hadToolActivity: hadToolActivity
+        )
     }
 
     func invalidateWarmupAfterContextShapeChange() {
-        warmupController.invalidateWarmState()
-        warmupController.scheduleWarmup(session: self)
+        warmupController.handleContextShapeChange(session: self)
     }
 }

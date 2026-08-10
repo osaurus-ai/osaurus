@@ -273,7 +273,7 @@ struct SelectableTextView: NSViewRepresentable {
         }
 
         // Render and append changed/new blocks
-        let scale = Typography.scale(for: baseWidth)
+        let scale = Typography.scale(for: Typography.baseWidth)
         let bodyFontSize = CGFloat(theme.bodySize) * scale
 
         for i in diffIndex ..< newBlocks.count {
@@ -320,7 +320,7 @@ struct SelectableTextView: NSViewRepresentable {
 
     func buildAttributedString(coordinator: Coordinator) -> NSMutableAttributedString {
         let result = NSMutableAttributedString()
-        let scale = Typography.scale(for: baseWidth)
+        let scale = Typography.scale(for: Typography.baseWidth)
         let bodyFontSize = CGFloat(theme.bodySize) * scale
         var lengths: [Int] = []
 
@@ -1080,7 +1080,17 @@ struct SelectableTextView: NSViewRepresentable {
 /// Custom NSTextView that handles link clicks, cursor changes, blockquote bars, and heading underlines.
 /// Code blocks are now rendered as standalone `CodeBlockView` / `CodeNSTextView` — no code-block
 /// drawing happens here.
-final class SelectableNSTextView: NSTextView {
+final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
+
+    /// Slice of the thread-wide cross-block selection (see ChatCrossSelection).
+    /// Painted at the top of `draw(_:)` — drawsBackground is false here, so
+    /// AppKit's own background/selection pass never runs.
+    var crossSelectionRange: NSRange? {
+        didSet {
+            guard oldValue != crossSelectionRange else { return }
+            needsDisplay = true
+        }
+    }
 
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -1151,6 +1161,15 @@ final class SelectableNSTextView: NSTextView {
             }
         }
 
+        // Single-click drags route to the cross-block selection controller
+        // so the highlight can span past this block (each block is its own
+        // text view — native tracking can't cross that boundary, #2129).
+        // Multi-clicks (word/paragraph select) keep native behavior.
+        if event.clickCount == 1 {
+            ChatCrossSelection.shared.beginDrag(from: self, with: event)
+            return
+        }
+        ChatCrossSelection.shared.clear()
         super.mouseDown(with: event)
     }
 
@@ -1215,8 +1234,28 @@ final class SelectableNSTextView: NSTextView {
     /// `updateTrackingAreas()` pass; nil when hover tracking is disabled.
     private var redactionHoverTrackingArea: NSTrackingArea?
 
+    /// Drives the I-beam/pointing-hand cursor. Legacy cursor rects don't
+    /// survive layer-backed table-cell recycling, so the cursor comes from
+    /// a `.cursorUpdate` tracking area (see `chatTextCursorUpdate`).
+    private var cursorTrackingArea: NSTrackingArea?
+
+    override func cursorUpdate(with event: NSEvent) {
+        chatTextCursorUpdate(with: event)
+    }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
+        if let cursorTrackingArea {
+            removeTrackingArea(cursorTrackingArea)
+        }
+        let cursorArea = NSTrackingArea(
+            rect: bounds,
+            options: [.cursorUpdate, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(cursorArea)
+        cursorTrackingArea = cursorArea
         // Reconcile only the area we own (tracked by reference). NSTextView
         // manages its own areas — for the I-beam cursor etc. — via
         // `super`, and we must not disturb those. Remove-then-add against
@@ -1252,6 +1291,7 @@ final class SelectableNSTextView: NSTextView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        drawCrossSelectionHighlight()
         guard let layoutManager = layoutManager,
             let textContainer = textContainer,
             let textStorage = textStorage

@@ -6,6 +6,12 @@
 //  (`click_element`, `type_text`, `press_key`) crossed `/mcp/call` and
 //  dereferenced Accessibility/AppKit objects from a plugin queue.
 //
+//  Contract: accessibility/automation tools get one-at-a-time execution on
+//  the shared off-main AX serial queue (`AccessibilityManager.serialQueue`)
+//  — the same queue the native Computer Use driver uses — never on the
+//  plugin's concurrent queue (dangling-element crash) and never
+//  synchronously on the main thread (UI beachball for the whole call).
+//
 
 import Foundation
 import Testing
@@ -16,19 +22,19 @@ import Testing
 struct PluginAccessibilityInvocationTests {
     final class InvokeRecorder: @unchecked Sendable {
         private let lock = NSLock()
-        private var calls: [(id: String, payload: String, mainThread: Bool)] = []
+        private var calls: [(id: String, payload: String, mainThread: Bool, queueLabel: String)] = []
 
-        var snapshots: [(id: String, payload: String, mainThread: Bool)] {
+        var snapshots: [(id: String, payload: String, mainThread: Bool, queueLabel: String)] {
             lock.withLock { calls }
         }
 
-        func record(id: String, payload: String, mainThread: Bool) {
-            lock.withLock { calls.append((id, payload, mainThread)) }
+        func record(id: String, payload: String, mainThread: Bool, queueLabel: String) {
+            lock.withLock { calls.append((id, payload, mainThread, queueLabel)) }
         }
     }
 
     @Test
-    func accessibilityPluginToolsInvokeOnMainThread() async throws {
+    func accessibilityPluginToolsInvokeOnAXSerialQueue() async throws {
         let recorder = InvokeRecorder()
         let (plugin, retain) = makePlugin(recorder: recorder)
         defer {
@@ -52,7 +58,11 @@ struct PluginAccessibilityInvocationTests {
         let call = try #require(recorder.snapshots.first)
         #expect(call.id == "type_text")
         #expect(call.payload == #"{"text":"hello"}"#)
-        #expect(call.mainThread)
+        #expect(!call.mainThread, "accessibility plugin calls must never block the main thread")
+        #expect(
+            call.queueLabel == "com.osaurus.computeruse.driver",
+            "accessibility plugin calls must serialize on the shared AX driver queue"
+        )
     }
 
     @Test
@@ -97,7 +107,8 @@ struct PluginAccessibilityInvocationTests {
                 recorder.record(
                     id: String(cString: idPtr),
                     payload: String(cString: payloadPtr),
-                    mainThread: Thread.isMainThread
+                    mainThread: Thread.isMainThread,
+                    queueLabel: String(cString: __dispatch_queue_get_label(nil))
                 )
                 return UnsafePointer(strdup(#"{"ok":true}"#))
             },

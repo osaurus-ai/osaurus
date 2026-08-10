@@ -21,6 +21,9 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
     let agentId: String
     let agentName: String
 
+    /// Registration runs plugin setup scripts inside the agent home.
+    var mutatesSandboxWorkspace: Bool { true }
+
     var parameters: JSONValue? {
         .object([
             "type": .string("object"),
@@ -36,6 +39,14 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
+        let context = await SandboxToolRequestContext.resolve(
+            fallbackAgentId: agentId,
+            fallbackAgentName: agentName
+        )
+        if let rejection = context.rejection(for: .pluginCreate, tool: name) {
+            return rejection
+        }
+
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
@@ -49,11 +60,15 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
             return pluginIdReq.failureEnvelope ?? ""
         }
 
-        switch loadPlugin(pluginId: pluginId) {
+        let requestTool = SandboxPluginRegisterTool(
+            agentId: context.agentId,
+            agentName: context.agentName
+        )
+        switch requestTool.loadPlugin(pluginId: pluginId) {
         case .envelope(let envelope):
             return envelope
         case .plugin(let plugin):
-            return await runRegistration(plugin: plugin)
+            return await requestTool.runRegistration(plugin: plugin)
         }
     }
 
@@ -66,11 +81,17 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
                 agentId: agentId,
                 source: .agentTool
             )
+            try await Self.bufferRegisteredToolSchemas(
+                outcome.registeredTools.map(\.name)
+            )
             return ToolEnvelope.success(
                 tool: name,
                 result: [
                     "plugin_id": outcome.plugin.id,
                     "plugin_name": outcome.plugin.name,
+                    "installed_dependencies": [
+                        "apk": outcome.plugin.dependencies ?? []
+                    ],
                     "tools": outcome.registeredTools.map {
                         ["name": $0.name, "description": $0.description]
                     },
@@ -90,6 +111,34 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
                 tool: name,
                 retryable: true
             )
+        }
+    }
+
+    /// Buffer every hot-registered schema before the registration tool returns.
+    /// The execution loop drains synchronously after this result, so awaiting
+    /// here removes the drain-before-add race that stranded a new tool until a
+    /// later turn.
+    static func bufferRegisteredToolSchemas(_ names: [String]) async throws {
+        let specs = await MainActor.run {
+            ToolRegistry.shared.specs(forTools: names)
+        }
+        let specsByName = Dictionary(
+            uniqueKeysWithValues: specs.map { ($0.function.name, $0) }
+        )
+        for name in names {
+            guard let spec = specsByName[name] else {
+                throw SandboxPluginRegistrationError.executionError(
+                    "Registered tool schema '\(name)' was not found in the registry.",
+                    retryable: false
+                )
+            }
+            if let diagnostic = await CapabilityLoadBuffer.shared.add(spec) {
+                throw SandboxPluginRegistrationError.executionError(
+                    "Registered tool schema '\(name)' could not be activated: "
+                        + diagnostic.message,
+                    retryable: false
+                )
+            }
         }
     }
 
@@ -221,7 +270,14 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
 
         var text: [String: String] = [:]
         var binary: [String] = []
-        let basePath = directory.standardizedFileURL.path
+        // Resolve symlinks on BOTH sides of the relative-path computation.
+        // The enumerator resolves symlinks in the URLs it yields, so when
+        // `directory` itself is reached through a symlink (e.g. the evals
+        // harness symlinks `container/` from its isolated root into the real
+        // container dir) an unresolved base no longer prefixes the resolved
+        // children — `dropFirst` then produced empty/garbage keys and
+        // registration failed with "Invalid file paths: Empty path".
+        let basePath = directory.resolvingSymlinksInPath().path
 
         for case let fileURL as URL in enumerator {
             guard
@@ -229,9 +285,9 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
                 values.isRegularFile == true
             else { continue }
 
-            let relativePath = String(
-                fileURL.standardizedFileURL.path.dropFirst(basePath.count + 1)
-            )
+            let resolvedPath = fileURL.resolvingSymlinksInPath().path
+            guard resolvedPath.hasPrefix(basePath + "/") else { continue }
+            let relativePath = String(resolvedPath.dropFirst(basePath.count + 1))
             if relativePath == "plugin.json" { continue }
 
             if let content = try? String(contentsOf: fileURL, encoding: .utf8) {

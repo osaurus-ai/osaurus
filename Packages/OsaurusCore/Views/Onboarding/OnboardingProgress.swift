@@ -83,3 +83,45 @@ struct OnboardingShimmerBar: View {
         .clipped()
     }
 }
+
+// MARK: - Shimmer Label
+
+/// Text with a repeating highlight sweep, for indeterminate wait states
+/// (e.g. "Preparing to download…" before the first bytes arrive). Same
+/// animation cadence as `OnboardingShimmerBar` so the two read as one
+/// family when adjacent.
+struct OnboardingShimmerLabel: View {
+    let text: String
+    let font: Font
+    let baseColor: Color
+    let highlightColor: Color
+
+    @State private var shimmerOffset: CGFloat = -1
+
+    var body: some View {
+        Text(text)
+            .font(font)
+            .foregroundColor(baseColor)
+            .overlay(
+                GeometryReader { geometry in
+                    LinearGradient(
+                        colors: [
+                            highlightColor.opacity(0),
+                            highlightColor.opacity(0.9),
+                            highlightColor.opacity(0),
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: max(40, geometry.size.width * 0.45))
+                    .offset(x: shimmerOffset * geometry.size.width)
+                }
+                .mask(Text(text).font(font))
+            )
+            .onAppear {
+                withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: false)) {
+                    shimmerOffset = 2
+                }
+            }
+    }
+}

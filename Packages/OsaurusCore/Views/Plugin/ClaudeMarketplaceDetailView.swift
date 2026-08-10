@@ -434,7 +434,7 @@ struct ClaudeMarketplaceDetailView: View {
                 )
             }
             if summary.mcp {
-                componentGroup(kind: .mcp, count: 1, names: ["MCP server(s)"])
+                componentGroup(kind: .mcp, count: 1, names: [L("MCP server")])
             }
         }
     }

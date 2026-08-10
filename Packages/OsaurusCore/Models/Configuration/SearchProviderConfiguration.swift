@@ -368,15 +368,24 @@ public struct SearchProviderConfiguration: Codable, Sendable {
     public var routing: [String: [String]]
     /// One-time migration marker: keys copied from the osaurus.search plugin.
     public var pluginKeysMigrated: Bool
+    /// Premium (Osaurus Router hosted) search preference. `nil` = never
+    /// resolved: the manager decides the default once — on for free-only
+    /// setups, off when the user already runs their own API/custom providers
+    /// (their configuration is never reordered or overridden). Explicit user
+    /// choices persist here and are never flipped by exhaustion: a 402 falls
+    /// back per request and premium recovers after a top-up.
+    public var hostedSearchEnabled: Bool?
 
     public init(
         providers: [SearchProvider] = [],
         routing: [String: [String]] = [:],
-        pluginKeysMigrated: Bool = false
+        pluginKeysMigrated: Bool = false,
+        hostedSearchEnabled: Bool? = nil
     ) {
         self.providers = providers
         self.routing = routing
         self.pluginKeysMigrated = pluginKeysMigrated
+        self.hostedSearchEnabled = hostedSearchEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -384,6 +393,7 @@ public struct SearchProviderConfiguration: Codable, Sendable {
         self.providers = try c.decodeIfPresent([SearchProvider].self, forKey: .providers) ?? []
         self.routing = try c.decodeIfPresent([String: [String]].self, forKey: .routing) ?? [:]
         self.pluginKeysMigrated = try c.decodeIfPresent(Bool.self, forKey: .pluginKeysMigrated) ?? false
+        self.hostedSearchEnabled = try c.decodeIfPresent(Bool.self, forKey: .hostedSearchEnabled)
     }
 
     /// Default configuration: the three free scrapers enabled, so search

@@ -143,6 +143,29 @@ struct SchemaValidatorAdvancedTests {
         #expect((result.errorMessage ?? "").contains("pattern"))
     }
 
+    @Test func stringLengthBoundsAreEnforced() {
+        let schema: JSONValue = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "value": .object([
+                    "type": .string("string"),
+                    "minLength": .number(2),
+                    "maxLength": .number(4),
+                ])
+            ]),
+        ])
+
+        #expect(
+            !SchemaValidator.validate(arguments: ["value": "x"], against: schema).isValid
+        )
+        #expect(
+            SchemaValidator.validate(arguments: ["value": "four"], against: schema).isValid
+        )
+        let tooLong = SchemaValidator.validate(arguments: ["value": "12345"], against: schema)
+        #expect(!tooLong.isValid)
+        #expect(tooLong.field == "value")
+    }
+
     // MARK: - minimum / maximum
 
     private let rangeSchema: JSONValue = .object([

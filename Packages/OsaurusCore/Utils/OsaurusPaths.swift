@@ -147,12 +147,26 @@ public enum OsaurusPaths {
         root().appendingPathComponent("cache", isDirectory: true)
     }
 
+    /// Downloaded, digest-pinned helper executables (e.g. the iMessage `imsg`
+    /// helper), one subdirectory per helper name + pinned version.
+    public static func helpers() -> URL {
+        root().appendingPathComponent("helpers", isDirectory: true)
+    }
+
     /// Output directory for locally generated images (vMLXFlux). The image
     /// engine writes the final PNG here and returns the URL; the chat layer
     /// copies the bytes into its attachment store and HTTP `response_format:url`
     /// callers receive a `file://` path under this directory.
     public static func generatedImages() -> URL {
         root().appendingPathComponent("generated-images", isDirectory: true)
+    }
+
+    public static func generatedVideos() -> URL {
+        root().appendingPathComponent("generated-videos", isDirectory: true)
+    }
+
+    static func mediaJobsFile() -> URL {
+        runtime().appendingPathComponent("media-jobs.json", isDirectory: false)
     }
 
     /// Disk KV cache directory used by vmlx-swift's `DiskCache` (L2 tier).
@@ -285,6 +299,39 @@ public enum OsaurusPaths {
     /// Methods system data directory
     public static func methods() -> URL {
         root().appendingPathComponent("methods", isDirectory: true)
+    }
+
+    /// Knowledge system data directory (`~/.osaurus/knowledge/`)
+    public static func knowledge() -> URL {
+        root().appendingPathComponent("knowledge", isDirectory: true)
+    }
+
+    /// Knowledge collection registry directory — one JSON file per collection.
+    public static func knowledgeCollections() -> URL {
+        knowledge().appendingPathComponent("collections", isDirectory: true)
+    }
+
+    /// Derived knowledge index database: `~/.osaurus/knowledge/knowledge.sqlite`.
+    /// Rebuildable from the collection folders (the markdown source of truth).
+    public static func knowledgeDatabaseFile() -> URL {
+        knowledge().appendingPathComponent("knowledge.sqlite")
+    }
+
+    /// Per-collection VecturaKit vector index directory. Like the memory
+    /// vectors, always a derivable artifact of the indexed corpus.
+    public static func knowledgeVecturaDirectory(for id: UUID) -> URL {
+        knowledge()
+            .appendingPathComponent("vectura", isDirectory: true)
+            .appendingPathComponent(id.uuidString, isDirectory: true)
+    }
+
+    /// Managed content directory for a collection cloned from a git
+    /// remote: `~/.osaurus/knowledge/<uuid>/content/`. Collections that
+    /// point at a user-chosen folder never use this.
+    public static func knowledgeManagedContentDirectory(for id: UUID) -> URL {
+        knowledge()
+            .appendingPathComponent(id.uuidString, isDirectory: true)
+            .appendingPathComponent("content", isDirectory: true)
     }
 
     /// On-device Osaurus Router billing ledger directory (`~/.osaurus/billing/`).
@@ -442,6 +489,17 @@ public enum OsaurusPaths {
     public static func computerUseConfigFile() -> URL {
         config().appendingPathComponent("computer-use.json")
     }
+    /// Native Browser Use config (the Default agent's opt-in lives here since
+    /// the built-in Default agent has no per-agent settings editor).
+    public static func browserConfigFile() -> URL {
+        config().appendingPathComponent("browser.json")
+    }
+    /// Persistent catalog of native browser sessions (agent id → WebKit
+    /// profile UUID + last-known page + observed auth status). The WebKit
+    /// on-disk store itself is owned by `WKWebsiteDataStore(forIdentifier:)`.
+    public static func browserSessionsFile() -> URL {
+        config().appendingPathComponent("browser-sessions.json")
+    }
     public static func toastConfigFile() -> URL { config().appendingPathComponent("toast.json") }
     public static func sandboxConfigFile() -> URL { config().appendingPathComponent("sandbox.json") }
     public static func speechConfigFile() -> URL { voiceConfig().appendingPathComponent("speech.json") }
@@ -455,12 +513,6 @@ public enum OsaurusPaths {
     /// User-created declarative search-provider definitions (one JSON each).
     public static func searchProviderDefinitionsDirectory() -> URL {
         providers().appendingPathComponent("search-definitions", isDirectory: true)
-    }
-    /// On-disk cache for `GenerativeGreetingPool` so app-launches start
-    /// with already-warmed greetings instead of a cold inference path.
-    /// One JSON file, tiny payload (a handful of strings per agent).
-    public static func greetingPoolCacheFile() -> URL {
-        cache().appendingPathComponent("greeting-pool.json")
     }
     /// On-disk cache for model download sizes (see `ModelSizeCache`).
     /// Keyed by repo id, persisted so sizes survive relaunch and only

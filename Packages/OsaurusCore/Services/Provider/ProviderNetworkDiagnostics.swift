@@ -175,12 +175,15 @@ public enum ProviderNetworkDiagnostics {
         }
 
         if state?.isConnected == true {
+            let count = state?.modelCount ?? 0
             return ProviderDiagnosticRow(
                 id: "connection",
                 title: L("Connection"),
                 value: L("Connected"),
                 severity: .ok,
-                detail: L("\(state?.modelCount ?? 0) model(s) currently available.")
+                detail: count == 1
+                    ? L("1 model currently available.")
+                    : L("\(count) models currently available.")
             )
         }
 
@@ -347,6 +350,17 @@ public enum ProviderNetworkDiagnostics {
                 action: hasManual ? nil : L("Add at least one deployment/model ID in Advanced.")
             )
         case .openaiLegacy, .openResponses:
+            if RemoteProviderService.isFireworksProvider(provider) {
+                return ProviderDiagnosticRow(
+                    id: "models",
+                    title: L("Model discovery"),
+                    value: L("/models + Fireworks catalog"),
+                    severity: .info,
+                    detail: L(
+                        "Combines the /models response with Fireworks' serverless model catalog, since /models only lists the account's deployed models."
+                    )
+                )
+            }
             let manual = provider.mergedModelIds(discovered: [])
             let detail =
                 manual.isEmpty
@@ -471,7 +485,8 @@ public enum ProviderNetworkDiagnostics {
             )
         }
         if state?.isConnected == true {
-            var detail = L("\(state?.discoveredToolCount ?? 0) tool(s) discovered.")
+            let count = state?.discoveredToolCount ?? 0
+            var detail = count == 1 ? L("1 tool discovered.") : L("\(count) tools discovered.")
             if let connectedAt = state?.lastConnectedAt {
                 let formatted = connectedAt.formatted(date: .abbreviated, time: .shortened)
                 detail += " " + L("Last connected \(formatted).")

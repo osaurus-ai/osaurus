@@ -1,0 +1,15 @@
+{
+  "id": "reasoning_channel.instruction-following-exact",
+  "domain": "reasoning_channel",
+  "label": "reasoning channel • exact-output instruction lands on the visible channel",
+  "query": "Reply with exactly the single word BANANA in capital letters. No punctuation, no explanation, nothing else.",
+  "notes": "Tightest possible visible-channel pin: a reasoning model may deliberate as much as it likes on the hidden channel, but the visible channel must carry exactly the requested token — a model that leaks deliberation into visible text fails visibleMustNotContain on obvious deliberation phrases. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "reasoning": {
+      "maxTokens": 512,
+      "visibleContains": ["BANANA"],
+      "visibleMustNotContain": ["the user wants", "I should", "let me think"]
+    }
+  }
+}

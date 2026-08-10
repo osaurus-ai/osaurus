@@ -32,6 +32,52 @@ struct OAuthLoopbackServerTests {
         #expect(port > 1024, "ephemeral ports should be in the unprivileged range")
     }
 
+    @Test func boundedWait_timesOutWhenNoCallbackArrives() async throws {
+        // The provider sign-in flows (Codex/xAI/OpenRouter/MCP) all use the
+        // bounded variant so an abandoned browser tab can't pin the sign-in
+        // task forever. A short deadline with no incoming callback must
+        // throw `.callbackTimeout` rather than suspend.
+        let server = try OAuthLoopbackServer(
+            expectedState: "state-timeout",
+            port: .ephemeral,
+            callbackPath: "/callback"
+        )
+        try await server.start()
+        defer { server.stop() }
+
+        do {
+            _ = try await server.waitForCallback(timeout: 0.2)
+            Issue.record("Expected callbackTimeout to be thrown")
+        } catch let error as OAuthLoopbackError {
+            guard case .callbackTimeout = error else {
+                Issue.record("Expected .callbackTimeout, got \(error)")
+                return
+            }
+        }
+    }
+
+    @Test func boundedWait_deliversCallbackBeforeDeadline() async throws {
+        let server = try OAuthLoopbackServer(
+            expectedState: "state-bounded-ok",
+            port: .ephemeral,
+            callbackPath: "/callback"
+        )
+        try await server.start()
+        defer { server.stop() }
+
+        let port = try #require(server.boundPort)
+        let task = Task { try await server.waitForCallback(timeout: 10) }
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let callbackURL = URL(
+            string: "http://127.0.0.1:\(port)/callback?state=state-bounded-ok&code=bounded-code"
+        )!
+        _ = try? await URLSession.shared.data(from: callbackURL)
+
+        let parsed = try await task.value
+        #expect(parsed.code == "bounded-code")
+    }
+
     @Test func successCallbackResolvesAwaiter() async throws {
         let server = try OAuthLoopbackServer(
             expectedState: "expected-state",

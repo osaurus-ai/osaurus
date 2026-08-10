@@ -4,7 +4,9 @@ import SwiftUI
 // MARK: - Configuration View
 struct ConfigurationView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var onboardingService = OnboardingService.shared
     @EnvironmentObject private var updater: UpdaterViewModel
+    @EnvironmentObject private var server: ServerController
 
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -25,6 +27,7 @@ struct ConfigurationView: View {
     @State private var tempCoreModelProvider: String = ""
     @State private var tempCoreModelName: String = ""
     @State private var coreModelPickerItems: [ModelPickerItem] = []
+    @State private var showCoreModelPicker = false
 
     // Server / Local Inference settings now live in the Server →
     // Settings tab. Their state was deleted with the inline UI.
@@ -55,12 +58,12 @@ struct ConfigurationView: View {
     /// thread each (auto-)save.
     @State private var loadedServerConfig: ServerConfiguration = .default
 
-    /// System runtime knobs for subagent helper jobs (local handoff, RAM-safety
-    /// preflight, image load policy). Backed by `SubagentConfigurationStore`;
-    /// the per-agent spawn/image config lives in each agent's Subagents tab.
-    /// Saved immediately on change (like the toast toggles), not through the
-    /// debounced `saveConfiguration` path.
+    /// Built-in/main-chat Spawn policy plus system runtime knobs for subagent
+    /// helper jobs. Backed by `SubagentConfigurationStore`; custom agents keep
+    /// their own policy in their Subagents tab. Saved immediately on change
+    /// (like the toast toggles), not through the debounced configuration path.
     @State private var subagentConfiguration = SubagentConfigurationStore.snapshot()
+    @State private var subagentConfigurationBaseline = SubagentConfigurationStore.snapshot()
 
     // Search (passed from sidebar)
     @Binding var searchText: String
@@ -103,7 +106,8 @@ struct ConfigurationView: View {
     // section reliably surfaces the empty state instead of a blank pane.
     private static let generalKeywords = [
         "General", "System", "Hotkey", "Login", "Start at Login", "Beta", "Updates",
-        "Core Model", "CLI", "Command Line", "Install", "Symlink", "Maintenance",
+        "Core Model",
+        "CLI", "Command Line", "Install", "Symlink", "Maintenance",
         "Reset", "Factory Reset", "Wipe",
     ]
     private static let notificationsKeywords = [
@@ -304,8 +308,8 @@ struct ConfigurationView: View {
         }
     }
 
-    /// The relocated subagent runtime knobs (was the dedicated Spawn tab). The
-    /// component wraps itself in a `SettingsSection` card, so this only adds the
+    /// Main-chat Spawn policy and shared subagent runtime knobs. The component
+    /// wraps itself in a `SettingsSection` card, so this only adds the
     /// search-visibility gate.
     @ViewBuilder private var subagentSection: some View {
         if matchesSearch(Self.subagentKeywords) {
@@ -474,10 +478,6 @@ struct ConfigurationView: View {
                         .ignoresSafeArea()
 
                     VStack(spacing: 24) {
-                        ProgressView()
-                            .scaleEffect(1.5)
-                            .tint(theme.accentColor)
-
                         VStack(spacing: 8) {
                             Text("Resetting Osaurus", bundle: .module)
                                 .font(.system(size: 18, weight: .bold))
@@ -486,6 +486,29 @@ struct ConfigurationView: View {
                             Text("Deleting data and preferences. Please wait…", bundle: .module)
                                 .font(.system(size: 14))
                                 .foregroundColor(theme.secondaryText)
+                        }
+
+                        if let journey = onboardingService.resetJourney {
+                            VStack(alignment: .leading, spacing: 10) {
+                                ForEach(journey.steps) { step in
+                                    FactoryResetStepRow(step: step)
+                                }
+                            }
+                            .frame(width: 260)
+                            .padding(14)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(theme.primaryBackground.opacity(0.5))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(theme.cardBorder, lineWidth: 1)
+                                    )
+                            )
+                            .animation(.easeOut(duration: 0.2), value: journey)
+                        } else {
+                            ProgressView()
+                                .scaleEffect(1.5)
+                                .tint(theme.accentColor)
                         }
                     }
                     .padding(40)
@@ -506,10 +529,26 @@ struct ConfigurationView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
+        // Wipe-failure notice: `.contained` so it layers above the reset
+        // overlay in this view rather than routing to the window host. The
+        // binding's setter fires on dismiss and resumes `performFactoryReset`,
+        // which then terminates the app.
+        .themedAlert(
+            "Factory Reset Incomplete",
+            isPresented: Binding(
+                get: { onboardingService.wipeFailureMessage != nil },
+                set: { if !$0 { OnboardingService.shared.acknowledgeWipeFailure() } }
+            ),
+            message: onboardingService.wipeFailureMessage,
+            buttons: [.destructive(L("Quit")) {}],
+            presentationStyle: .contained
+        )
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             loadConfiguration()
-            subagentConfiguration = SubagentConfigurationStore.snapshot()
+            let latest = SubagentConfigurationStore.snapshot()
+            subagentConfigurationBaseline = latest
+            subagentConfiguration = latest
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
@@ -521,13 +560,41 @@ struct ConfigurationView: View {
         // `saveConfiguration`). The re-snapshot on the change notification keeps
         // this in sync if an agent's Subagents tab edits the shared store.
         .onChange(of: subagentConfiguration) { _, newValue in
-            SubagentConfigurationStore.save(newValue)
+            // Only a direct edit of this form's batch limit may turn Server
+            // Concurrent Sessions from Automatic into an explicit number.
+            // Store notifications update the baseline before they update the
+            // form, so their mirrored value compares equal here and cannot
+            // echo back as a new user-authored Server override.
+            let batchLimitWasExplicitlyEdited =
+                SpawnBatchConcurrencyContract.configuredLimit(for: newValue)
+                != SpawnBatchConcurrencyContract.configuredLimit(
+                    for: subagentConfigurationBaseline
+                )
+            let saved = SubagentConfigurationStore.saveEditorSnapshot(
+                newValue,
+                loadedBaseline: subagentConfigurationBaseline
+            )
+            subagentConfigurationBaseline = saved
+            if saved != newValue { subagentConfiguration = saved }
+            if batchLimitWasExplicitlyEdited {
+                Task { @MainActor in
+                    await server.applyMainChatBatchLimit(from: saved)
+                }
+            }
         }
         .onReceive(
             NotificationCenter.default.publisher(for: .subagentConfigurationChanged)
         ) { _ in
             let latest = SubagentConfigurationStore.snapshot()
-            if latest != subagentConfiguration { subagentConfiguration = latest }
+            let reconciled = SubagentConfiguration.mergingEditorSnapshot(
+                subagentConfiguration,
+                loadedBaseline: subagentConfigurationBaseline,
+                live: latest
+            )
+            subagentConfigurationBaseline = latest
+            if reconciled != subagentConfiguration {
+                subagentConfiguration = reconciled
+            }
         }
         // Any edit to a save-relevant field reschedules the debounced save.
         // `currentFormState` is the same snapshot the dirty check uses, so
@@ -771,9 +838,9 @@ struct ConfigurationView: View {
 
         // Load-modify-write: this view owns only the global hotkey and the
         // core model within `ChatConfiguration`. The chat-mode generation
-        // knobs (context length, top-P, tool attempts, clipboard, greeting
-        // persona) are owned by the Chat tab, so we preserve whatever is on
-        // disk for them rather than reconstructing the whole struct.
+        // knobs (context length, top-P, tool attempts, clipboard) are owned by
+        // the Chat tab, so we preserve whatever is on disk for them rather
+        // than reconstructing the whole struct.
         var chatCfg = previousChatCfg
         chatCfg.hotkey = tempChatHotkey
         chatCfg.coreModelProvider = tempCoreModelProvider.isEmpty ? nil : tempCoreModelProvider
@@ -832,28 +899,93 @@ struct ConfigurationView: View {
         )
     }
 
+    /// Bridges the ""-means-fallback identifier binding to the picker's
+    /// optional selection.
+    private var coreModelSelectionBinding: Binding<String?> {
+        Binding(
+            get: {
+                let id = coreModelIdentifierBinding.wrappedValue
+                return id.isEmpty ? nil : id
+            },
+            set: { coreModelIdentifierBinding.wrappedValue = $0 ?? "" }
+        )
+    }
+
+    /// Trigger button + rich `ModelPickerView` popover. Replaced the native
+    /// `Picker`, which dumped every provider's models into one flat context
+    /// menu; the rich picker brings provider tabs, unified search, and the
+    /// Add Model shortcut into the Models tab.
     private var coreModelPicker: some View {
-        Picker("", selection: coreModelIdentifierBinding) {
-            // Empty tag = "use chat model fallback". Renamed from the
-            // previous "None" footgun (GitHub issue #823).
-            Text("Use chat model (default)", bundle: .module).tag("")
-            // Surface persisted-but-uninstalled values (e.g. "foundation"
-            // on macOS < 26, a disconnected remote model) with an
-            // "(unavailable)" hint so the row isn't an unlabelled orphan.
-            if !coreModelIdentifierBinding.wrappedValue.isEmpty,
-                !coreModelPickerItems.contains(where: { $0.id == coreModelIdentifierBinding.wrappedValue })
-            {
-                Text("\(coreModelIdentifierBinding.wrappedValue) (unavailable)", bundle: .module)
-                    .tag(coreModelIdentifierBinding.wrappedValue)
+        let currentId = coreModelIdentifierBinding.wrappedValue
+        let currentItem = coreModelPickerItems.first { $0.id == currentId }
+        return HStack(spacing: 8) {
+            Button {
+                showCoreModelPicker.toggle()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "cube.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(currentId.isEmpty ? theme.tertiaryText : theme.accentColor)
+                    if currentId.isEmpty {
+                        // Empty = "use chat model fallback". Renamed from the
+                        // previous "None" footgun (GitHub issue #823).
+                        Text("Use chat model (default)", bundle: .module)
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.placeholderText)
+                    } else if let currentItem {
+                        Text(currentItem.displayName)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+                            .lineLimit(1)
+                    } else {
+                        // Persisted-but-uninstalled values (e.g. "foundation"
+                        // on macOS < 26, a disconnected remote model) keep an
+                        // "(unavailable)" hint so the row isn't an orphan.
+                        Text("\(currentId) (unavailable)", bundle: .module)
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.secondaryText)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
             }
-            ForEach(coreModelPickerItems) { option in
-                Text(option.displayName)
-                    .tag(option.id)
+            .buttonStyle(PlainButtonStyle())
+            .popover(isPresented: $showCoreModelPicker, arrowEdge: .bottom) {
+                ModelPickerView(
+                    options: coreModelPickerItems,
+                    selectedModel: coreModelSelectionBinding,
+                    agentId: nil,
+                    onDismiss: { showCoreModelPicker = false }
+                )
+            }
+
+            if !currentId.isEmpty {
+                Button {
+                    coreModelIdentifierBinding.wrappedValue = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .buttonStyle(.plain)
+                .localizedHelp("Use chat model (default)")
             }
         }
-        .labelsHidden()
-        .frame(maxWidth: 280)
+        .frame(maxWidth: 320)
     }
+
 }
 
 // MARK: - CLI Install Helper
@@ -867,18 +999,15 @@ extension ConfigurationView {
             return
         }
 
-        // Candidate target directories
-        let brewBin = URL(fileURLWithPath: "/opt/homebrew/bin", isDirectory: true)
+        // Candidate target directories. /opt/homebrew/bin is intentionally
+        // NOT a candidate: it's a directory Homebrew owns and manages, and
+        // Osaurus isn't distributed via a Homebrew formula — its presence
+        // on a user's machine for unrelated packages isn't a reason for
+        // this app to write into it. See osaurus-ai/osaurus#2137.
         let usrLocalBin = URL(fileURLWithPath: "/usr/local/bin", isDirectory: true)
         let userLocalBin = fm.homeDirectoryForCurrentUser
             .appendingPathComponent(".local", isDirectory: true)
             .appendingPathComponent("bin", isDirectory: true)
-
-        if tryInstall(cliURL: cliURL, into: brewBin) {
-            cliInstallSuccess = true
-            cliInstallMessage = "Installed to \(brewBin.appendingPathComponent("osaurus").path)"
-            return
-        }
 
         if tryInstall(cliURL: cliURL, into: usrLocalBin) {
             cliInstallSuccess = true
@@ -1132,3 +1261,64 @@ private struct ToastPositionPicker: View {
 // `SettingsButtonStyle`) now live in
 // `Packages/OsaurusCore/Views/Settings/Shared/SettingsPrimitives.swift`
 // so the Server → Settings tab can reuse them.
+
+// MARK: - Factory Reset Journey Row
+
+/// One row of the factory-reset overlay: status icon + phase label, in the
+/// same visual language as the sandbox provisioning journey's `StepRow`.
+private struct FactoryResetStepRow: View {
+    let step: FactoryResetJourney.Step
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: 10) {
+            statusIcon
+                .frame(width: 16)
+            Text(label)
+                .font(.system(size: 13, weight: step.status == .inProgress ? .semibold : .regular))
+                .foregroundColor(labelColor)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var label: String {
+        switch step.id {
+        case .browser: return L("Clearing browser data")
+        case .keychain: return L("Removing Keychain secrets")
+        case .preferences: return L("Clearing preferences")
+        case .data: return L("Deleting app data")
+        case .quit: return L("Quitting Osaurus")
+        }
+    }
+
+    @ViewBuilder
+    private var statusIcon: some View {
+        switch step.status {
+        case .completed:
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 14))
+                .foregroundColor(theme.successColor)
+        case .inProgress:
+            ProgressView()
+                .controlSize(.small)
+                .scaleEffect(0.7)
+        case .pending:
+            Image(systemName: "circle")
+                .font(.system(size: 14))
+                .foregroundColor(theme.tertiaryText.opacity(0.6))
+        case .failed:
+            Image(systemName: "xmark.octagon.fill")
+                .font(.system(size: 14))
+                .foregroundColor(theme.errorColor)
+        }
+    }
+
+    private var labelColor: Color {
+        switch step.status {
+        case .completed, .inProgress: return theme.primaryText
+        case .pending: return theme.tertiaryText
+        case .failed: return theme.errorColor
+        }
+    }
+}

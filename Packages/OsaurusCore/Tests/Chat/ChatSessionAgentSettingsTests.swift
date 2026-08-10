@@ -33,7 +33,7 @@ struct ChatSessionAgentSettingsTests {
             let engine = AgentSettingsCaptureEngine()
             let session = ChatSession()
             session.agentId = agent.id
-            session.chatEngineFactory = { engine }
+            session.chatEngineFactory = { _ in engine }
 
             session.send("Use the configured sampling values.")
 

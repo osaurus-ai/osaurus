@@ -20,7 +20,9 @@ struct RequestValidationTests {
 
     private func makeRequest(
         n: Int? = nil,
-        responseFormatType: String? = nil
+        responseFormatType: String? = nil,
+        logprobs: Bool? = nil,
+        topLogprobs: Int? = nil
     ) -> ChatCompletionRequest {
         var req = ChatCompletionRequest(
             model: "default",
@@ -40,6 +42,8 @@ struct RequestValidationTests {
         if let type = responseFormatType {
             req.response_format = ResponseFormat(type: type)
         }
+        req.logprobs = logprobs
+        req.top_logprobs = topLogprobs
         return req
     }
 
@@ -75,6 +79,66 @@ struct RequestValidationTests {
         let reason = HTTPHandler.unsupportedSamplerReason(req)
         #expect(reason != nil)
         #expect((reason ?? "").contains("json_schema"))
+    }
+
+    /// Log-probabilities are surfaced by neither local MLX decode nor the
+    /// remote provider proxy — a truthy `logprobs`/`top_logprobs` must be
+    /// rejected with a typed 400 instead of returning a response that
+    /// silently lacks the field.
+    @Test func logprobsTrueIsRejected() {
+        let req = makeRequest(logprobs: true)
+        let reason = HTTPHandler.unsupportedSamplerReason(req)
+        #expect(reason != nil)
+        #expect((reason ?? "").contains("logprobs"))
+    }
+
+    @Test func logprobsFalseIsAccepted() {
+        let req = makeRequest(logprobs: false)
+        #expect(HTTPHandler.unsupportedSamplerReason(req) == nil)
+    }
+
+    @Test func topLogprobsPositiveIsRejected() {
+        let req = makeRequest(topLogprobs: 5)
+        let reason = HTTPHandler.unsupportedSamplerReason(req)
+        #expect(reason != nil)
+        #expect((reason ?? "").contains("top_logprobs"))
+    }
+
+    @Test func topLogprobsZeroIsAccepted() {
+        let req = makeRequest(topLogprobs: 0)
+        #expect(HTTPHandler.unsupportedSamplerReason(req) == nil)
+    }
+
+    // Migrated from the retired OsaurusEvals RequestValidation suite
+    // (pure type-level pins with no model in the loop — the live HTTP
+    // rejection contract is covered by the evals `http_api` typed-error
+    // cases against a real in-process server).
+
+    @Test func unknownResponseFormatIsRejected() {
+        // Anything outside {json_object, text} is unsupported: a made-up
+        // type like `yaml` must be rejected with a reason that steers the
+        // client, complementing the specific known-unsupported json_schema.
+        let req = makeRequest(responseFormatType: "yaml")
+        let reason = HTTPHandler.unsupportedSamplerReason(req)
+        #expect(reason != nil)
+        #expect((reason ?? "").contains("not supported"))
+    }
+
+    @Test func nLargeIsRejectedLikeNTwo() {
+        // The n>1 rejection is not off-by-one: a clearly-batched n=8 is
+        // rejected with the same single-request guidance as n=2.
+        let req = makeRequest(n: 8)
+        let reason = HTTPHandler.unsupportedSamplerReason(req)
+        #expect(reason != nil)
+        #expect((reason ?? "").contains("n"))
+    }
+
+    @Test func jsonObjectWithNOneTogetherAreAccepted() {
+        // Composition pin: a request that sets BOTH a supported
+        // response_format (json_object) AND n=1 must pass — neither
+        // dimension trips the other.
+        let req = makeRequest(n: 1, responseFormatType: "json_object")
+        #expect(HTTPHandler.unsupportedSamplerReason(req) == nil)
     }
 
     @Test func chatRequestIgnoresFIMFieldsWithoutDroppingTools() throws {

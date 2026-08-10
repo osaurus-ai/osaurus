@@ -16,6 +16,14 @@ import Testing
 @MainActor
 struct InferenceProgressManagerTests {
 
+    @Test func progressStageTitlesDistinguishCacheWorkFromPrefill() {
+        #expect(PrefillProgressStage.queued.localizedDisplayTitle == L("Queued"))
+        #expect(PrefillProgressStage.cacheLookup.localizedDisplayTitle == L("Checking cache"))
+        #expect(PrefillProgressStage.cacheRestore.localizedDisplayTitle == L("Restored"))
+        #expect(PrefillProgressStage.prefill.localizedDisplayTitle == L("Prefill"))
+        #expect(PrefillProgressStage.complete.localizedDisplayTitle == L("Prefill"))
+    }
+
     // Each test creates an isolated InferenceProgressManager via _testMake() so
     // tests don't share state with the global .shared singleton.
 

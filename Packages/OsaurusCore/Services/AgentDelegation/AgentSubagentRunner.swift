@@ -62,14 +62,47 @@ struct AgentSubagentRunResult: Sendable {
 
 /// Optional child toolset for a subagent run. When `nil`, the run is text-only
 /// (every tool call is refused). When present, the child sees `specs` and the
-/// runner dispatches allowed calls through `execute` (the kind enforces its own
-/// allowlist + error conversion inside `execute`).
+/// runner dispatches allowed calls through an owned operation (the kind
+/// enforces its own allowlist + error conversion inside the operation).
 struct AgentSubagentToolset: Sendable {
     var specs: [Tool]
-    /// Execute one child tool call and return the result envelope. The kind
-    /// owns the allowlist check, dispatch, and error→envelope conversion; the
-    /// runner owns message bookkeeping and child-session scoping.
-    var execute: @Sendable (_ invocation: ServiceToolInvocation) async -> String
+    var beginExecution:
+        @Sendable (_ invocation: ServiceToolInvocation) -> OwnedSubagentOperation<String>
+
+    init(
+        specs: [Tool],
+        beginExecution:
+            @escaping @Sendable (ServiceToolInvocation) -> OwnedSubagentOperation<String>
+    ) {
+        self.specs = specs
+        self.beginExecution = beginExecution
+    }
+
+    /// Compatibility initializer for private/injected dispatchers. The
+    /// resulting task is still explicitly owned: cancellation requests abort
+    /// and the runner drains it before the turn can finish.
+    init(
+        specs: [Tool],
+        execute: @escaping @Sendable (ServiceToolInvocation) async -> String
+    ) {
+        self.init(
+            specs: specs,
+            beginExecution: { invocation in
+                OwnedSubagentOperation {
+                    await execute(invocation)
+                }
+            }
+        )
+    }
+
+    func execute(_ invocation: ServiceToolInvocation) async -> String {
+        let operation = beginExecution(invocation)
+        do {
+            return try await operation.value()
+        } catch {
+            return ToolEnvelope.fromError(error, tool: invocation.toolName)
+        }
+    }
 }
 
 enum AgentSubagentRunner {
@@ -77,6 +110,18 @@ enum AgentSubagentRunner {
     /// current step and the last reported decode speed (nil until the runtime
     /// reports one).
     typealias Progress = @Sendable (_ completionTokens: Int, _ tokensPerSecond: Double?) -> Void
+    /// One real model-channel delta in producer order. Reasoning is emitted
+    /// only when the runtime supplied `reasoning_content`; visible content is
+    /// never folded into or out of that channel.
+    enum ChannelDelta: Sendable, Equatable {
+        case reasoning(String)
+        case content(String)
+    }
+    typealias ChannelObserver = @Sendable (ChannelDelta) -> Void
+    /// Injectable stream producer used by deterministic runner regressions.
+    /// Production callers omit it and continue through `ChatEngine`.
+    typealias StreamProvider =
+        @Sendable (ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error>
 
     /// Internal cancel signal carrying its cause. Thrown out of the stream
     /// consumption (or its watchdog) and converted to a `.cancelled` exit at
@@ -107,12 +152,15 @@ enum AgentSubagentRunner {
         deadline: Date,
         sessionId: String,
         temperature: Float? = nil,
+        enableThinking: Bool? = nil,
         isAgentRequest: Bool = true,
         stopOnToolRejection: Bool = false,
         treatEmptyChoicesAsFinal: Bool = false,
         isInterrupted: @escaping @Sendable () -> Bool = { false },
         toolset: AgentSubagentToolset? = nil,
-        onProgress: Progress? = nil
+        onProgress: Progress? = nil,
+        onChannelDelta: ChannelObserver? = nil,
+        streamProvider: StreamProvider? = nil
     ) async throws -> AgentSubagentRunResult {
         var messages = seedMessages
         var finalDigest: String?
@@ -187,14 +235,32 @@ enum AgentSubagentRunner {
                 // the model bundle's own generation defaults.
                 request.samplingParametersAreImplicit = true
                 request.isAgentRequest = isAgentRequest
+                request.enable_thinking = enableThinking
+                // A child is user-visible work, but its cold load must not
+                // evict an unrelated resident owned by HTTP/plugin traffic.
+                // The runtime's background intent is atomic: same-model cache
+                // hits and empty/flexible slots proceed, conflicting strict or
+                // over-budget loads fail honestly before eviction.
+                request.backgroundModelLoad = true
+                request.preserveExistingResidencyOwner = true
 
                 let stepStarted = Date()
-                let stream = try await engine.streamChat(request: request)
+                let stream: AsyncThrowingStream<String, Error>
+                if let streamProvider {
+                    stream = try await streamProvider(request)
+                } else {
+                    stream = try await engine.streamChat(request: request)
+                }
                 let outcome = try await Self.consumeStream(
                     stream,
                     cancelCause: cancelCause,
-                    onProgress: onProgress
+                    onProgress: onProgress,
+                    onChannelDelta: onChannelDelta
                 )
+                // A Stop can land after the producer's final delta but before
+                // this model-step hook classifies the accumulated text. Never
+                // promote that partial/terminal buffer to a successful digest.
+                try Self.rejectTerminalCancellation(cancelCause)
 
                 // Usage: prompt of the last step (largest composed prompt),
                 // completions summed. Estimator fallback for providers that
@@ -207,14 +273,11 @@ enum AgentSubagentRunner {
                         + TokenEstimator.estimate(outcome.reasoning)
                 }
                 usage.completionTokens += stepCompletion
-                if let tps = outcome.tokensPerSecond {
-                    usage.tokensPerSecond = tps
-                } else if stepCompletion > 0 {
-                    let elapsed = Date().timeIntervalSince(stepStarted)
-                    if elapsed > 0.5 {
-                        usage.tokensPerSecond = Double(stepCompletion) / elapsed
-                    }
-                }
+                usage.tokensPerSecond = resolvedTokensPerSecond(
+                    reported: outcome.tokensPerSecond,
+                    completionTokens: stepCompletion,
+                    elapsed: Date().timeIntervalSince(stepStarted)
+                ) ?? usage.tokensPerSecond
 
                 if !outcome.toolCalls.isEmpty {
                     // Frame the assistant tool_calls message exactly as the
@@ -237,7 +300,10 @@ enum AgentSubagentRunner {
                             role: "assistant",
                             content: nil,
                             tool_calls: calls,
-                            tool_call_id: nil
+                            tool_call_id: nil,
+                            reasoning_content: outcome.reasoning.isEmpty
+                                ? nil
+                                : outcome.reasoning
                         )
                     )
                     return .toolCalls(
@@ -272,8 +338,9 @@ enum AgentSubagentRunner {
                     let envelope = ToolEnvelope.failure(
                         kind: .rejected,
                         message:
-                            "Tool '\(invocation.toolName)' is not available inside a spawned subagent. "
-                            + "Subagent jobs are text-only.",
+                            "Tool '\(invocation.toolName)' is not available inside this spawned run — "
+                            + "it has no tools. Answer from the information you already have, and say "
+                            + "plainly when the task needs a tool you don't have.",
                         tool: invocation.toolName,
                         retryable: false
                     )
@@ -287,11 +354,34 @@ enum AgentSubagentRunner {
                     )
                     return AgentLoopToolExecution(result: envelope, isError: true)
                 }
-                // Ephemeral child session id; `currentAgentId` stays inherited
-                // from the parent so sandbox routing + the exec limiter hit the
-                // same agent budget.
-                let result = await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-                    await toolset.execute(invocation)
+                // Ephemeral child session id. The surrounding run inherits the
+                // launcher `currentAgentId`; a configured target toolset may
+                // temporarily bind its target id inside the individual
+                // operation so registry policy follows the child's persona.
+                let operation = ChatExecutionContext.$currentSessionId.withValue(sessionId) {
+                    toolset.beginExecution(invocation)
+                }
+                let result: String
+                do {
+                    result = try await operation.value(
+                        cancellationRequested: { cancelCause() != nil }
+                    )
+                } catch is CancellationError {
+                    // `OwnedSubagentOperation.value` has already requested
+                    // abort and drained the child operation. The loop hook is
+                    // non-throwing, so record the sticky cause and return one
+                    // honest tool envelope; the loop's next cancellation
+                    // boundary produces the canonical `.cancelled` exit.
+                    let cause = cancelCause() ?? .parentTask
+                    recordedCancelCause = cause
+                    result = ToolEnvelope.failure(
+                        kind: .executionError,
+                        message: "Spawned tool operation was cancelled (\(cause.rawValue)).",
+                        tool: invocation.toolName,
+                        retryable: false
+                    )
+                } catch {
+                    result = ToolEnvelope.fromError(error, tool: invocation.toolName)
                 }
                 messages.append(
                     ChatMessage(
@@ -339,6 +429,26 @@ enum AgentSubagentRunner {
         }
     }
 
+    /// Prefer a provider/runtime decode rate when it is genuinely populated.
+    /// Remote providers that report token counts but omit throughput currently
+    /// encode `0` in the terminal stats hint; treat that sentinel value as
+    /// unavailable and fall back to measured end-to-end model-step throughput.
+    /// This is deliberately conservative (the elapsed interval includes TTFT)
+    /// but remains real telemetry rather than a synthetic sampler default.
+    static func resolvedTokensPerSecond(
+        reported: Double?,
+        completionTokens: Int,
+        elapsed: TimeInterval
+    ) -> Double? {
+        if let reported, reported.isFinite, reported > 0 {
+            return reported
+        }
+        guard completionTokens > 0, elapsed.isFinite, elapsed > 0 else {
+            return nil
+        }
+        return Double(completionTokens) / elapsed
+    }
+
     // MARK: - Stream consumption
 
     /// Consume one model step's stream with chunk-granular cancellation and a
@@ -349,7 +459,8 @@ enum AgentSubagentRunner {
     private static func consumeStream(
         _ stream: AsyncThrowingStream<String, Error>,
         cancelCause: @escaping @Sendable () -> SubagentCancelCause?,
-        onProgress: Progress?
+        onProgress: Progress?,
+        onChannelDelta: ChannelObserver?
     ) async throws -> StepOutcome {
         try await withThrowingTaskGroup(of: StepOutcome?.self) { group in
             group.addTask {
@@ -373,6 +484,7 @@ enum AgentSubagentRunner {
                         if let reasoningDelta = StreamingReasoningHint.decode(delta) {
                             outcome.reasoning += reasoningDelta
                             visibleChars += reasoningDelta.count
+                            onChannelDelta?(.reasoning(reasoningDelta))
                         } else if StreamingToolHint.isSentinel(delta) {
                             // Other in-band hints (tool/args fragments, prefill
                             // progress, billing) — not visible text.
@@ -380,6 +492,9 @@ enum AgentSubagentRunner {
                         } else {
                             outcome.text += delta
                             visibleChars += delta.count
+                            if !delta.isEmpty {
+                                onChannelDelta?(.content(delta))
+                            }
                         }
                         if !sawStats {
                             outcome.completionTokens =
@@ -396,18 +511,11 @@ enum AgentSubagentRunner {
                 } catch let single as ServiceToolInvocation {
                     outcome.toolCalls = [single]
                 }
-                // The producer FINISHES (rather than throws) when its own task
-                // is cancelled, so re-probe after a clean stream end: a stream
-                // torn down by a cancel must not be mistaken for a complete
-                // answer. If the step still produced usable output (tool calls
-                // or non-empty text), keep it — the cancel landed at natural
-                // completion and honesty favors the finished result.
-                if outcome.toolCalls.isEmpty,
-                    outcome.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                    let cause = cancelCause()
-                {
-                    throw RunCancelled(cause: cause)
-                }
+                // The producer can FINISH (rather than throw) when its own
+                // task is cancelled. Re-probe after every clean stream end:
+                // buffered text/tool fragments are not proof the model
+                // reached a valid terminal boundary, so Stop always wins.
+                try Self.rejectTerminalCancellation(cancelCause)
                 return outcome
             }
             group.addTask {
@@ -431,6 +539,17 @@ enum AgentSubagentRunner {
                 group.cancelAll()
                 throw error
             }
+        }
+    }
+
+    /// The shared post-stream cancellation boundary. Internal for a
+    /// deterministic regression test: a stream that buffered visible text
+    /// before Stop must still exit as cancelled, never as a final answer.
+    static func rejectTerminalCancellation(
+        _ cancelCause: @escaping @Sendable () -> SubagentCancelCause?
+    ) throws {
+        if let cause = cancelCause() {
+            throw RunCancelled(cause: cause)
         }
     }
 }

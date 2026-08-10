@@ -120,6 +120,25 @@ struct SystemPromptDefaultIdentityTests {
         #expect(block.contains("share_artifact"))
     }
 
+    @Test("shared agent-loop guidance preserves optional todo and structured complete")
+    func sharedAgentLoopGuidancePreservesFamilyScope() {
+        for block in [
+            SystemPromptTemplates.agentLoopGuidance,
+            SystemPromptTemplates.agentLoopGuidanceCompact,
+        ] {
+            #expect(block.contains("OPTIONAL"))
+            #expect(block.contains("3+"))
+            #expect(block.contains("never") && block.contains("complete(...)"))
+            #expect(block.contains("advisory"))
+            #expect(block.contains("never overrides a final response"))
+            #expect(block.contains("Never repeat"))
+            #expect(!block.contains("unchecked items keep"))
+            #expect(!block.contains("runtime may require"))
+            #expect(!block.contains("once no todo items remain unchecked"))
+            #expect(!block.contains("SAME message"))
+        }
+    }
+
     /// Same sanity for the capability-discovery nudge — still names
     /// `capabilities_discover` / `capabilities_load` because that block is
     /// gated on `capabilities_discover` actually being in the tools[] array.
@@ -130,6 +149,8 @@ struct SystemPromptDefaultIdentityTests {
         #expect(block.contains("capabilities_load"))
         #expect(block.contains(#"capabilities_discover({"query": "<what you need>"})"#))
         #expect(!block.contains(#"capabilities_discover({"queries": "#))
+        #expect(!block.contains("tool/sandbox_exec"))
+        #expect(!block.contains("skill/plot-data"))
     }
 }
 
@@ -149,6 +170,9 @@ struct SoulSectionTests {
         let rendered = SystemPromptTemplates.soulSection("- prefer Postgres")
         #expect(rendered.contains("## SOUL"))
         #expect(rendered.contains("the user's instructions in earlier sections take precedence"))
+        #expect(rendered.contains("call a function only when it appears in the current tool schema"))
+        #expect(rendered.contains("only with an exact capability id"))
+        #expect(rendered.contains("libraries are not capabilities"))
         #expect(rendered.contains("- prefer Postgres"))
     }
 

@@ -114,6 +114,16 @@ public final class RampartModelManager: ObservableObject {
         state = .idle
     }
 
+    /// Exposed separately from `downloadBundle` so tests can inspect the
+    /// session's proxy configuration directly without needing access to the
+    /// private `HFRedirectAuthStripper` type -- matches the sibling
+    /// `PrivacyFilterModelDownloader.makeDownloadSession`, which this file
+    /// was inconsistent with before (this downloader built a plain
+    /// `URLSession(configuration: .default)`, bypassing the global proxy).
+    nonisolated static func makeDownloadSession(delegate: URLSessionTaskDelegate) -> URLSession {
+        GlobalProxySettings.makeSession(base: .default, delegate: delegate, delegateQueue: nil)
+    }
+
     /// Fetch each file from HuggingFace into a temp dir, then atomically
     /// move the completed set into place. Runs off the main thread.
     nonisolated private static func downloadBundle(
@@ -126,7 +136,7 @@ public final class RampartModelManager: ObservableObject {
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: staging) }
 
-        let session = URLSession(configuration: .default)
+        let session = makeDownloadSession(delegate: HFRedirectAuthStripper.shared)
         for (index, file) in files.enumerated() {
             try Task.checkCancellation()
             guard let url = resolveURL(file: file) else {

@@ -140,12 +140,10 @@ struct ContextBudgetPreviewTests {
 
     // MARK: - Tools on (auto)
 
-    /// Auto-mode with tools on hits the always-loaded baseline and prices
-    /// capability discovery ahead of time. The agent-loop cheat sheet is
-    /// schema-gated: loop tools are in the always-loaded baseline, so the
-    /// preview prices it from turn 1 (it never flips mid-session).
-    @Test("preview: tools on (auto) surfaces capability discovery and agent loop")
-    func toolsOn_auto_includesCapabilityNudgeOnly() async {
+    /// Auto mode keeps the identity prompt lean while exposing the complete
+    /// lifecycle schema needed for a multi-step turn.
+    @Test("preview: tools on (auto) keeps lean identity and complete lifecycle schema")
+    func toolsOn_auto_keepsLeanIdentityAndCompactGateway() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let preview = SystemPromptComposer.composePreviewContext(
                 agentId: agentId,
@@ -154,27 +152,24 @@ struct ContextBudgetPreviewTests {
             let ids = sectionIds(preview)
             #expect(ids.contains("platform"))
             #expect(ids.contains("persona"))
-            #expect(ids.contains("agentLoopGuidance"))
-            #expect(ids.contains("capabilityNudge"))
+            #expect(ids == ["platform", "persona"])
             // No model-family hint without a model id, no skills configured.
             #expect(ids.contains("modelFamilyGuidance") == false)
             #expect(ids.contains("skills") == false)
             // Tools row is non-zero (always-loaded baseline JSON schemas).
             #expect(preview.toolTokens > 0)
-            #expect(preview.tools.contains { $0.function.name == "todo" })
-            #expect(preview.tools.contains { $0.function.name == "capabilities_discover" })
+            #expect(preview.tools.contains { $0.function.name == "capabilities" })
+            #expect(Set(preview.tools.map { $0.function.name })
+                .isSuperset(of: SystemPromptComposer.agentLoopToolNames))
+            #expect(preview.tools.contains { $0.function.name == "get_current_time" })
+            #expect(!preview.tools.contains { $0.function.name == "capabilities_discover" })
         }
     }
 
-    /// Manual mode still includes the capability discovery tools in the
-    /// schema. The prompt
-    /// must explain those tools whenever they are callable; otherwise the
-    /// model sees an opaque `capabilities_discover` function and #789-style
-    /// "search is enabled but never found" failures are hard to diagnose.
-    /// Loop guidance is schema-gated: present exactly when a loop tool
-    /// resolves into the manual schema.
-    @Test("preview: manual mode keeps capability nudge; loop guidance tracks schema")
-    func toolsOn_manual_keepsCapabilityNudge() async {
+    /// Manual mode exposes the explicitly pinned tool without restoring
+    /// legacy gateway or lifecycle prose.
+    @Test("preview: manual mode exposes only the pinned optional capability")
+    func toolsOn_manual_exposesPinnedCapability() async {
         await withAgent(
             toolSelectionMode: .manual,
             manualToolNames: ["render_chart"]
@@ -184,10 +179,8 @@ struct ContextBudgetPreviewTests {
                 executionMode: .none
             )
             let ids = sectionIds(preview)
-            let loopNames: Set<String> = ["todo", "complete", "clarify", "share_artifact"]
-            let hasLoopTool = preview.tools.contains { loopNames.contains($0.function.name) }
-            #expect(ids.contains("agentLoopGuidance") == hasLoopTool)
-            #expect(ids.contains("capabilityNudge"))
+            #expect(!ids.contains("agentLoopGuidance"))
+            #expect(!ids.contains("capabilityNudge"))
             #expect(preview.tools.contains { $0.function.name == "render_chart" })
         }
     }
@@ -226,33 +219,37 @@ struct ContextBudgetPreviewTests {
         }
     }
 
-    /// A greeting should not carry dynamic discovery prompt text or enter
-    /// the local tool-template path. Keep the always-loaded baseline frozen
-    /// separately so turn 2 can grow into real work.
-    @Test("compose: trivial greeting suppresses tool schema and dynamic prompt sections")
-    func trivialGreeting_suppressesToolSchemaAndDynamicPromptSections() async {
+    /// Query wording is runtime data, not a prompt-shape input. A greeting and
+    /// a work request with identical settings must produce byte-identical
+    /// system prompts and tool schemas.
+    @Test("compose: cold first-turn prompt and tools ignore query wording")
+    func coldFirstTurn_promptAndToolsIgnoreQueryWording() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
-            let context = await SystemPromptComposer.composeChatContext(
+            let greeting = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
                 executionMode: .none,
                 query: "hi!"
             )
-            let ids = sectionIds(context)
-            #expect(SystemPromptComposer.isTrivialUserQuery("hi!"))
-            #expect(ids.contains("capabilityNudge") == false)
-            #expect(ids.contains("pluginCreator") == false)
-            #expect(ids.contains("agentLoopGuidance") == false)
-            #expect(context.tools.isEmpty)
-            #expect(context.toolTokens == 0)
-            #expect(context.alwaysLoadedNames.contains("capabilities_load"))
+            let work = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                query: "summarize this project"
+            )
+            #expect(!greeting.tools.isEmpty)
+            #expect(greeting.prompt == work.prompt)
+            #expect(greeting.staticPrefix == work.staticPrefix)
+            #expect(greeting.cacheHint == work.cacheHint)
+            #expect(
+                greeting.tools.map { $0.canonicalHashPayload() }
+                    == work.tools.map { $0.canonicalHashPayload() }
+            )
         }
     }
 
-    /// The greeting-only fast path must not poison the session freeze. After
-    /// a trivial first turn, a real request still gets the bootstrap catalog
-    /// needed to load/discover capabilities.
-    @Test("compose: real task after greeting restores bootstrap tools")
-    func realTaskAfterGreeting_restoresBootstrapTools() async {
+    /// A frozen session baseline must preserve that same query-independent
+    /// shape on the next turn.
+    @Test("compose: frozen follow-up remains query invariant")
+    func frozenFollowUp_remainsQueryInvariant() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let greeting = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
@@ -266,19 +263,22 @@ struct ContextBudgetPreviewTests {
                 frozenAlwaysLoadedNames: greeting.alwaysLoadedNames
             )
 
-            #expect(greeting.tools.isEmpty)
-            #expect(greeting.alwaysLoadedNames.contains("capabilities_load"))
-            #expect(followUp.tools.contains { $0.function.name == "capabilities_load" })
-            #expect(followUp.tools.contains { $0.function.name == "capabilities_discover" })
-            #expect(followUp.toolTokens > 0)
+            #expect(greeting.alwaysLoadedNames.contains("capabilities"))
+            #expect(followUp.tools.contains { $0.function.name == "capabilities" })
+            #expect(!followUp.tools.contains { $0.function.name == "capabilities_load" })
+            #expect(!followUp.tools.contains { $0.function.name == "capabilities_discover" })
+            #expect(greeting.prompt == followUp.prompt)
+            #expect(greeting.staticPrefix == followUp.staticPrefix)
+            #expect(
+                greeting.tools.map { $0.canonicalHashPayload() }
+                    == followUp.tools.map { $0.canonicalHashPayload() }
+            )
         }
     }
 
-    /// "ok" is only harmless on a clean first turn. Once the session has
-    /// cached tool state or prior task history, an acknowledgement can be the
-    /// user's confirmation for a `clarify`/loop step and must keep schemas.
-    @Test("compose: trivial continuation with cached state keeps bootstrap tools")
-    func trivialContinuationWithCachedState_keepsBootstrapTools() async {
+    /// An acknowledgement with cached state keeps the same bootstrap tools.
+    @Test("compose: acknowledgement with cached state keeps bootstrap tools")
+    func acknowledgementWithCachedState_keepsBootstrapTools() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let frozen = LoadedTools(
                 ToolRegistry.shared.alwaysLoadedSpecs(mode: .none).map(\.function.name)
@@ -291,22 +291,17 @@ struct ContextBudgetPreviewTests {
                 frozenAlwaysLoadedNames: frozen
             )
 
-            #expect(SystemPromptComposer.isTrivialUserQuery("ok"))
-            #expect(context.tools.contains { $0.function.name == "capabilities_load" })
-            #expect(context.tools.contains { $0.function.name == "capabilities_discover" })
+            #expect(context.tools.contains { $0.function.name == "capabilities" })
+            #expect(!context.tools.contains { $0.function.name == "capabilities_load" })
+            #expect(!context.tools.contains { $0.function.name == "capabilities_discover" })
             #expect(context.toolTokens > 0)
         }
     }
 
-    /// Warm-up parity: warm-up composes with `query: ""` (never trivial), so
-    /// a trivial first send ("hey") in sandbox mode must render the exact
-    /// same static prefix — including the `capabilityNudge` section — or the
-    /// warmed KV misses and the model re-prefills from 0. Regression for the
-    /// live "green dot but full re-prefill on 'hey'" bug where the trivial
-    /// gate dropped just the Capability Discovery section while the tool
-    /// schema stayed.
-    @Test("compose: sandbox trivial first send matches warmup compose byte-for-byte")
-    func sandboxTrivialFirstSend_matchesWarmupCompose() async {
+    /// Warm-up parity: the unknown query used for warm-up and the actual first
+    /// send must render the exact same static prefix.
+    @Test("compose: sandbox first send matches warmup compose byte-for-byte")
+    func sandboxFirstSend_matchesWarmupCompose() async {
         await withAgent(toolSelectionMode: .auto, autonomous: true) { agentId in
             BuiltinSandboxTools.register(
                 agentId: agentId.uuidString,
@@ -326,11 +321,8 @@ struct ContextBudgetPreviewTests {
                 query: "hey"
             )
 
-            #expect(SystemPromptComposer.isTrivialUserQuery("hey"))
-            // Sandbox mode keeps the schema (the trivial fast path is
-            // `.none`-only), so the nudge must stay too.
             #expect(!send.tools.isEmpty)
-            #expect(sectionIds(send).contains("capabilityNudge"))
+            #expect(!sectionIds(send).contains("capabilityNudge"))
             #expect(sectionIds(send) == sectionIds(warmup))
             #expect(send.staticPrefix == warmup.staticPrefix)
             #expect(send.prompt == warmup.prompt)
@@ -341,12 +333,10 @@ struct ContextBudgetPreviewTests {
         }
     }
 
-    /// Mid-session KV stability: a trivial acknowledgement ("thanks") in a
-    /// session with history must not rewrite the system prompt — dropping the
-    /// `capabilityNudge` section there would bust the entire conversation KV
-    /// for zero prefill savings.
-    @Test("compose: trivial mid-conversation turn keeps capability nudge section")
-    func trivialMidConversation_keepsCapabilityNudgeSection() async {
+    /// Mid-session KV stability: an acknowledgement must not rewrite the
+    /// system prompt.
+    @Test("compose: acknowledgement keeps the mid-conversation prompt stable")
+    func acknowledgement_keepsMidConversationPromptStable() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let frozen = LoadedTools(
                 ToolRegistry.shared.alwaysLoadedSpecs(mode: .none).map(\.function.name)
@@ -367,46 +357,42 @@ struct ContextBudgetPreviewTests {
                 frozenAlwaysLoadedNames: frozen
             )
 
-            #expect(SystemPromptComposer.isTrivialUserQuery("thanks"))
-            #expect(sectionIds(thanks).contains("capabilityNudge"))
+            #expect(!sectionIds(thanks).contains("capabilityNudge"))
             #expect(sectionIds(thanks) == sectionIds(steady))
             #expect(thanks.staticPrefix == steady.staticPrefix)
             #expect(thanks.prompt == steady.prompt)
         }
     }
 
-    /// The loop cheat-sheet is schema-gated: it renders from the FIRST
-    /// real turn whenever loop tools resolve into the schema, so the model
-    /// sees the "when to call which" guide on its first multi-step task
-    /// and the section never flips mid-session (KV-prefix stable).
-    @Test("compose: loop tools in schema enable agent loop guidance on turn 1")
-    func loopToolsInSchema_enableAgentLoopGuidance() async {
+    /// Custom auto agents keep the lifecycle schema while retaining the lean
+    /// custom-agent prompt (the schemas carry the tool contract).
+    @Test("compose: ordinary work keeps lifecycle tools in lean custom prompt")
+    func ordinaryWork_keepsLifecycleContract() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let context = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
                 executionMode: .none,
                 query: "refactor the parser and add tests"
             )
-            #expect(context.tools.contains { $0.function.name == "todo" })
-            #expect(sectionIds(context).contains("agentLoopGuidance"))
+            let names = Set(context.tools.map { $0.function.name })
+            #expect(names.isSuperset(of: SystemPromptComposer.agentLoopToolNames))
+            #expect(names.contains("get_current_time"))
+            #expect(!sectionIds(context).contains("agentLoopGuidance"))
         }
     }
 
     // MARK: - Computer Use
 
-    /// The reported gap: enabling Computer Use injected the `computer_use`
-    /// tool (folded into the aggregate `Tools` line) but added no prompt
-    /// section, so the budget popover showed nothing labelled "Computer Use".
-    /// Now an enabled custom agent surfaces a dedicated `computerUse` section
-    /// AND the tool, so the capability is visible in the context list.
-    @Test("preview: computer use enabled surfaces computerUse section + tool")
-    func computerUseEnabled_surfacesSectionAndTool() async {
+    /// Explicit Computer Use remains callable without adding capability prose
+    /// to the minimal prompt.
+    @Test("preview: computer use enabled exposes tool without prompt section")
+    func computerUseEnabled_exposesToolWithoutSection() async {
         await withAgent(toolSelectionMode: .auto, computerUseEnabled: true) { agentId in
             let preview = SystemPromptComposer.composePreviewContext(
                 agentId: agentId,
                 executionMode: .none
             )
-            #expect(sectionIds(preview).contains("computerUse"))
+            #expect(!sectionIds(preview).contains("computerUse"))
             #expect(preview.tools.contains { $0.function.name == ComputerUseTool.toolName })
         }
     }
@@ -447,7 +433,7 @@ struct ContextBudgetPreviewTests {
                 query: ""
             )
             #expect(sectionIds(preview) == real.manifest.sections.map(\.id))
-            #expect(sectionIds(preview).contains("computerUse"))
+            #expect(!sectionIds(preview).contains("computerUse"))
         }
     }
 
@@ -456,8 +442,8 @@ struct ContextBudgetPreviewTests {
     /// Family hints fire when the model id matches a known family
     /// substring. Pricing them ahead of time matters because some
     /// blocks (Gemma in particular) are several hundred tokens.
-    @Test("preview: gemma model triggers Model Family Guidance row")
-    func toolsOn_gemmaModel_includesModelFamilyGuidance() async {
+    @Test("preview: gemma model omits family prose from minimal contract")
+    func toolsOn_gemmaModel_omitsModelFamilyGuidance() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let preview = SystemPromptComposer.composePreviewContext(
                 agentId: agentId,
@@ -465,12 +451,12 @@ struct ContextBudgetPreviewTests {
                 model: "google/gemma-3-12b-it"
             )
             let ids = sectionIds(preview)
-            #expect(ids.contains("modelFamilyGuidance"))
+            #expect(!ids.contains("modelFamilyGuidance"))
         }
     }
 
-    @Test("preview: DSV4 model triggers act-now Model Family Guidance row")
-    func toolsOn_dsv4Model_includesModelFamilyGuidance() async {
+    @Test("preview: DSV4 model omits family prose from minimal contract")
+    func toolsOn_dsv4Model_omitsModelFamilyGuidance() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let preview = SystemPromptComposer.composePreviewContext(
                 agentId: agentId,
@@ -478,8 +464,8 @@ struct ContextBudgetPreviewTests {
                 model: "JANGQ/DeepSeek-V4-Flash-JANGTQ2"
             )
             let ids = sectionIds(preview)
-            #expect(ids.contains("modelFamilyGuidance"))
-            #expect(preview.prompt.contains("Do not say you will do it and then stop."))
+            #expect(!ids.contains("modelFamilyGuidance"))
+            #expect(!preview.prompt.contains("Do not say you will do it and then stop."))
         }
     }
 
@@ -489,16 +475,63 @@ struct ContextBudgetPreviewTests {
     /// prohibition sections and read as refusal-prone — the regression this
     /// fix targets. The block is the one for `.other`, kept short so it
     /// doesn't bias the prompt the way a full universal addendum would.
-    @Test("preview: unknown model family → default obedience guidance row")
-    func toolsOn_unknownModelFamily_usesDefaultGuidance() async {
+    @Test("preview: unknown model family omits default guidance prose")
+    func toolsOn_unknownModelFamily_omitsDefaultGuidance() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let preview = SystemPromptComposer.composePreviewContext(
                 agentId: agentId,
                 executionMode: .none,
                 model: "mystery/llama-finetune-x"
             )
-            #expect(sectionIds(preview).contains("modelFamilyGuidance"))
-            #expect(preview.prompt.contains(ModelFamilyGuidance.defaultGuidance))
+            #expect(!sectionIds(preview).contains("modelFamilyGuidance"))
+            #expect(!preview.prompt.contains(ModelFamilyGuidance.defaultGuidance))
+        }
+    }
+
+    /// Local discovery first publishes a cheap id-only row, then enriches the
+    /// same id from config.json. The metadata-only picker update must evict the
+    /// cached generic preview so the next budget/warm-up/send all use the
+    /// authoritative architecture guidance. Before this regression fix the
+    /// picker showed the refreshed item while the preview and green warm claim
+    /// remained tied to the old generic prompt.
+    @Test("same-id model_type enrichment invalidates the cached family preview")
+    func sameIdModelTypeEnrichment_invalidatesFamilyPreview() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            var chatConfig = ChatConfigurationStore.load()
+            chatConfig.warmModelsOnLoad = false
+            ChatConfigurationStore.save(chatConfig)
+
+            let modelId = "local/renamed-backbone"
+            let session = ChatSession()
+            session.agentId = agentId
+            session.pickerItems = [
+                ModelPickerItem(
+                    id: modelId,
+                    displayName: "Renamed Backbone",
+                    source: .local
+                )
+            ]
+            session.selectedModel = modelId
+
+            @MainActor func familyTokens() -> Int {
+                session.estimatedContextBreakdown.context
+                    .first { $0.id == "modelFamilyGuidance" }?.tokens ?? 0
+            }
+
+            let genericTokens = familyTokens()
+            #expect(genericTokens == 0)
+
+            session.applyPickerItems([
+                ModelPickerItem(
+                    id: modelId,
+                    displayName: "Renamed Backbone",
+                    source: .local,
+                    modelType: "qwen3_5"
+                )
+            ])
+
+            #expect(session.selectedPickerItem?.modelType == "qwen3_5")
+            #expect(familyTokens() == genericTokens)
         }
     }
 
@@ -508,18 +541,11 @@ struct ContextBudgetPreviewTests {
     /// discovered via `capabilities_discover` and pulled in via
     /// `capabilities_load`, never auto-injected into the system prompt
     /// at compose time. Both compose paths must omit the `skills`
-    /// section regardless of the agent's enabled-skills allowlist.
-    @Test("compose: no `skills` section, even when the agent has skills enabled")
+    /// section even though every installed skill is universally
+    /// available to the agent.
+    @Test("compose: no `skills` section, even though all installed skills are available")
     func bagOfSkills_neverInjected() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
-            // Simulate the "all skills enabled" allowlist that the
-            // capability seeder used to write — exactly the state that
-            // produced the 55k Skills row in the original screenshot.
-            AgentManager.shared.updateEnabledSkillNames(
-                SkillManager.shared.skills.map(\.name),
-                for: agentId
-            )
-
             let preview = SystemPromptComposer.composePreviewContext(
                 agentId: agentId,
                 executionMode: .none
@@ -688,6 +714,268 @@ struct ContextBudgetPreviewTests {
             #expect(preview.contextDisable == real.contextDisable)
         }
     }
+
+    // MARK: - Ability draft preview (Abilities → Overview)
+
+    /// A `Draft` mirroring the flags `withAgent` persists (tools on,
+    /// memory on, everything else off — `AgentSettings.defaultDisabled`).
+    private func persistedMatchingDraft(
+        toolsEnabled: Bool = true,
+        memoryEnabled: Bool = true,
+        dbEnabled: Bool = false,
+        model: String? = nil
+    ) -> AgentAbilityContextPreview.Draft {
+        AgentAbilityContextPreview.Draft(
+            toolsEnabled: toolsEnabled,
+            memoryEnabled: memoryEnabled,
+            dbEnabled: dbEnabled,
+            renderChartEnabled: false,
+            speakEnabled: false,
+            searchMemoryEnabled: false,
+            webSearchEnabled: true,
+            selfSchedulingEnabled: false,
+            knowledgeEnabled: false,
+            knowledgeCuratorEnabled: false,
+            codeExecutionEnabled: false,
+            model: model
+        )
+    }
+
+    /// The core honesty guarantee of the Abilities hero: a draft that
+    /// mirrors the PERSISTED flags must price the exact same sections and
+    /// tool tokens as the capture-based preview compose the chat popover
+    /// uses. If the draft-snapshot path drifted, the editor would show a
+    /// different number than the next real send.
+    @Test("ability draft matching persisted state == capture-based preview")
+    func abilityDraft_matchingPersisted_isIdenticalToCapturePreview() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let captureBased = SystemPromptComposer.composePreviewContext(
+                agentId: agentId,
+                executionMode: .none
+            )
+            let preview = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft()
+            )
+            let captureBreakdown = ContextBreakdown.from(context: captureBased)
+            #expect(preview.breakdown.allEntries.map(\.id) == captureBreakdown.allEntries.map(\.id))
+            #expect(preview.staticTokens == captureBreakdown.total)
+        }
+    }
+
+    /// Toggling an ability in the DRAFT (before any save) must move the
+    /// estimate: enabling the Agent DB adds its onboarding prompt section,
+    /// so the priced startup context strictly grows.
+    @Test("ability draft: enabling Database grows the startup estimate")
+    func abilityDraft_dbToggle_changesEstimate() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let dbOff = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(dbEnabled: false)
+            )
+            let dbOn = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(dbEnabled: true)
+            )
+            #expect(dbOn.staticTokens > dbOff.staticTokens)
+        }
+    }
+
+    @Test("ability draft: manual tool picks reprice before persistence")
+    func abilityDraft_manualTools_repriceImmediately() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            var automatic = persistedMatchingDraft(memoryEnabled: false)
+            automatic.renderChartEnabled = true
+            automatic.toolMode = .auto
+            automatic.manualToolNames = ["render_chart"]
+
+            var manual = automatic
+            manual.toolMode = .manual
+
+            let automaticPreview = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: automatic
+            )
+            let manualPreview = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: manual
+            )
+
+            #expect(automaticPreview.toolMode == .auto)
+            #expect(manualPreview.toolMode == .manual)
+            #expect(manualPreview.staticTokens != automaticPreview.staticTokens)
+        }
+    }
+
+    @Test("ability draft: subagent gate reprices before persistence")
+    func abilityDraft_subagentGate_repricesImmediately() async {
+        await withAgent(toolSelectionMode: .auto, computerUseEnabled: false) { agentId in
+            var disabled = persistedMatchingDraft(memoryEnabled: false)
+            disabled.computerUseEnabled = false
+            var enabled = disabled
+            enabled.computerUseEnabled = true
+
+            let offPreview = AgentAbilityContextPreview.compute(agentId: agentId, draft: disabled)
+            let onPreview = AgentAbilityContextPreview.compute(agentId: agentId, draft: enabled)
+
+            #expect(onPreview.staticTokens > offPreview.staticTokens)
+        }
+    }
+
+    @Test("ability draft: sandbox configuration reprices before persistence")
+    func abilityDraft_sandboxConfig_repricesImmediately() async {
+        await withAgent(toolSelectionMode: .auto, autonomous: false) { agentId in
+            var disabled = persistedMatchingDraft(memoryEnabled: false)
+            disabled.autonomousConfig = AutonomousExecConfig(enabled: false)
+            var enabled = disabled
+            enabled.autonomousConfig = AutonomousExecConfig(enabled: true)
+
+            let offPreview = AgentAbilityContextPreview.compute(agentId: agentId, draft: disabled)
+            let onPreview = AgentAbilityContextPreview.compute(agentId: agentId, draft: enabled)
+
+            #expect(onPreview.staticTokens > offPreview.staticTokens)
+            #expect(onPreview.breakdown.context.contains { $0.id == "sandbox" })
+        }
+    }
+
+    /// Tools-off in the draft collapses the estimate to the base prompt:
+    /// no tool schema tokens, platform + persona only — matching the
+    /// tools-off behavior of the real compose path.
+    @Test("ability draft: tools off collapses to base prompt")
+    func abilityDraft_toolsOff_collapsesToBase() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let toolsOn = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(toolsEnabled: true, memoryEnabled: false)
+            )
+            let toolsOff = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(toolsEnabled: false, memoryEnabled: false)
+            )
+            #expect(toolsOff.staticTokens < toolsOn.staticTokens)
+            #expect(toolsOff.breakdown.allEntries.map(\.id) == ["platform", "persona"])
+        }
+    }
+
+    /// Memory is a per-turn injection, not a static prompt section, so it
+    /// must surface as a RANGE: upper bound = the configured memory budget,
+    /// and off → a single-value estimate. `withAgent` saves the default
+    /// config with memory enabled, so the budget is the validated default.
+    @Test("ability draft: memory widens the estimate into a budget-capped range")
+    func abilityDraft_memoryProducesRange() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let expectedBudget = MemoryConfigurationStore.load().validated().memoryBudgetTokens
+
+            let memoryOn = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(memoryEnabled: true)
+            )
+            #expect(memoryOn.isRange)
+            #expect(memoryOn.memoryUpperTokens == expectedBudget)
+            #expect(memoryOn.highTokens == memoryOn.staticTokens + expectedBudget)
+
+            let memoryOff = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(memoryEnabled: false)
+            )
+            #expect(memoryOff.isRange == false)
+            #expect(memoryOff.memoryUpperTokens == 0)
+            #expect(memoryOff.lowTokens == memoryOff.highTokens)
+        }
+    }
+
+    /// Tiny-window models (Foundation) auto-disable tools + memory. The
+    /// ability preview must report the disable info AND zero out the
+    /// memory upper bound — claiming a memory range the composer will
+    /// never inject would be a lie.
+    @Test("ability draft: tiny model reports auto-disable and drops the memory range")
+    func abilityDraft_tinyModel_disablesMemoryRange() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let preview = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(memoryEnabled: true, model: "foundation")
+            )
+            guard let info = preview.disable else {
+                Issue.record("disable info missing for foundation model")
+                return
+            }
+            #expect(info.sizeClass == .tiny)
+            #expect(info.disabledMemory)
+            #expect(preview.memoryUpperTokens == 0)
+            #expect(preview.isRange == false)
+            // Foundation's window is resolvable, so the ratio is computable.
+            #expect(preview.contextWindow != nil)
+        }
+    }
+}
+
+// MARK: - Ability preview math
+
+/// Pure unit tests for `AgentAbilityContextPreview`'s derived values —
+/// the range/ratio/format logic the Abilities hero renders. No composer
+/// or agent state involved.
+@MainActor
+struct AgentAbilityContextPreviewMathTests {
+
+    private func preview(
+        staticTokens: Int,
+        memoryUpper: Int = 0,
+        window: Int? = nil
+    ) -> AgentAbilityContextPreview {
+        AgentAbilityContextPreview(
+            breakdown: ContextBreakdown.from(manifest: PromptManifest(sections: [])),
+            staticTokens: staticTokens,
+            memoryUpperTokens: memoryUpper,
+            contextWindow: window,
+            disable: nil
+        )
+    }
+
+    @Test func rangeBoundsFollowMemoryUpper() {
+        let fixed = preview(staticTokens: 2000)
+        #expect(fixed.lowTokens == 2000)
+        #expect(fixed.highTokens == 2000)
+        #expect(fixed.isRange == false)
+
+        let ranged = preview(staticTokens: 2000, memoryUpper: 800)
+        #expect(ranged.lowTokens == 2000)
+        #expect(ranged.highTokens == 2800)
+        #expect(ranged.isRange)
+    }
+
+    @Test func windowFractionUsesWorstCaseAndClamps() {
+        #expect(preview(staticTokens: 1000, window: nil).windowFraction == nil)
+        #expect(preview(staticTokens: 1000, window: 0).windowFraction == nil)
+
+        let quarter = preview(staticTokens: 500, memoryUpper: 500, window: 4000)
+        #expect(quarter.windowFraction == 0.25)
+
+        // Worst case above the window clamps to 1 rather than overflowing
+        // the hero's usage bar.
+        let over = preview(staticTokens: 5000, memoryUpper: 1000, window: 4000)
+        #expect(over.windowFraction == 1.0)
+    }
+
+    @Test func usableWindowUsesRuntimeSafetyMargin() {
+        let result = preview(staticTokens: 500, memoryUpper: 500, window: 4000)
+        #expect(result.usableContextWindow == 3400)
+        #expect(result.usableWindowFraction == Double(1000) / Double(3400))
+    }
+
+    @Test func severityIsRestrainedAndWindowRelative() {
+        #expect(preview(staticTokens: 1000, window: nil).severity == .normal)
+        #expect(preview(staticTokens: 849, window: 4000).severity == .normal)
+        #expect(preview(staticTokens: 850, window: 4000).severity == .warning)
+        #expect(preview(staticTokens: 3400, window: 4000).severity == .critical)
+    }
+
+    @Test func tokenFormattingIsCompact() {
+        #expect(AgentAbilityContextPreview.format(tokens: 0) == "0")
+        #expect(AgentAbilityContextPreview.format(tokens: 999) == "999")
+        #expect(AgentAbilityContextPreview.format(tokens: 1000) == "1.0K")
+        #expect(AgentAbilityContextPreview.format(tokens: 3260) == "3.3K")
+        #expect(AgentAbilityContextPreview.format(tokens: 262_144) == "262K")
+    }
 }
 
 // MARK: - Bar Segment Widths
@@ -819,6 +1107,73 @@ struct ContextBudgetSegmentWidthsTests {
             fillsTrack: true
         )
         #expect(zeroTotal == [0, 0, 0])
+    }
+}
+
+// MARK: - Window Utilization
+
+@Suite
+struct ContextBudgetUtilizationTests {
+
+    @Test("known model window reports usage and remaining headroom")
+    func knownWindow_reportsUsageAndHeadroom() {
+        let usage = computeContextBudgetUtilization(
+            usedTokens: 9_000,
+            maxTokens: 36_000
+        )
+
+        #expect(usage.usedTokens == 9_000)
+        #expect(usage.maxTokens == 36_000)
+        #expect(usage.fraction == 0.25)
+        #expect(usage.percent == 25)
+        #expect(usage.remainingTokens == 27_000)
+    }
+
+    @Test("chat denominator uses the same 85 percent budget as compaction")
+    func usableBudget_matchesRuntimeCompactionBudget() {
+        let modelMaximum = 262_144
+        let usable =
+            ContextBudgetManager(
+                contextLength: modelMaximum
+            ).effectiveBudget
+        let usage = computeContextBudgetUtilization(
+            usedTokens: 111_411,
+            maxTokens: usable
+        )
+
+        #expect(usable == 222_822)
+        #expect(usage.maxTokens == 222_822)
+        #expect(usage.fraction == 0.5)
+        #expect(usage.remainingTokens == 111_411)
+    }
+
+    @Test("usage above the model window clamps visual metrics")
+    func overflow_clampsVisualMetrics() {
+        let usage = computeContextBudgetUtilization(
+            usedTokens: 5_000,
+            maxTokens: 4_000
+        )
+
+        #expect(usage.usedTokens == 5_000)
+        #expect(usage.fraction == 1)
+        #expect(usage.percent == 100)
+        #expect(usage.remainingTokens == 0)
+    }
+
+    @Test("unknown or invalid model windows stay absent")
+    func unknownWindow_omitsCapacityMetrics() {
+        for maxTokens in [nil, 0, -1] as [Int?] {
+            let usage = computeContextBudgetUtilization(
+                usedTokens: -10,
+                maxTokens: maxTokens
+            )
+
+            #expect(usage.usedTokens == 0)
+            #expect(usage.maxTokens == nil)
+            #expect(usage.fraction == nil)
+            #expect(usage.percent == nil)
+            #expect(usage.remainingTokens == nil)
+        }
     }
 }
 

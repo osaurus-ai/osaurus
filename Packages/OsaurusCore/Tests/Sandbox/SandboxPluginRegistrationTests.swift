@@ -103,6 +103,24 @@ struct SandboxPluginRegistrationTests {
     }
 
     @Test
+    func validateAndStage_rejectsDependencyOptionInjection() {
+        var plugin = SandboxPlugin(
+            name: "Unsafe Dependencies",
+            description: "Attempts package-manager option injection",
+            dependencies: ["--repository=https://evil.example"],
+            tools: [.init(id: "echo", description: "echo", run: "echo hi")]
+        )
+        let message = expectInvalidArgs {
+            try SandboxPluginRegistration.validateAndStage(
+                &plugin,
+                agentId: UUID().uuidString
+            )
+        }
+        #expect(message?.contains("Invalid system dependencies") == true)
+        #expect(message?.contains("starts with `-`") == true)
+    }
+
+    @Test
     func validateAndStage_rejectsMissingSecrets() {
         AgentSecretsKeychain._withInMemoryStoreForTesting {
             let agentId = UUID()
@@ -138,6 +156,127 @@ struct SandboxPluginRegistrationTests {
         }
     }
 
+    @Test
+    func registerTool_buffersHotRegisteredSchemaBeforeReturning() async throws {
+        _ = await CapabilityLoadBuffer.shared.drain()
+        let plugin = SandboxPlugin(
+            name: "Buffer Fixture \(UUID().uuidString)",
+            description: "Tests same-run schema activation",
+            tools: [
+                .init(
+                    id: "probe",
+                    description: "Return a deterministic probe result",
+                    run: "printf '{}'"
+                )
+            ]
+        )
+        ToolRegistry.shared.registerSandboxPluginTools(plugin: plugin)
+        defer {
+            ToolRegistry.shared.unregisterSandboxPluginTools(pluginId: plugin.id)
+        }
+        let toolName = "\(plugin.id)_probe"
+
+        try await SandboxPluginRegisterTool.bufferRegisteredToolSchemas([toolName])
+        let buffered = await CapabilityLoadBuffer.shared.drain()
+        let remaining = await CapabilityLoadBuffer.shared.drain()
+        #expect(buffered.map(\.function.name) == [toolName])
+        #expect(remaining.isEmpty)
+    }
+
+    @Test
+    func activationTriggersCoverChatAndEvalGrowthTools() {
+        #expect(CapabilityLoadBuffer.shouldActivate(after: "capabilities"))
+        #expect(CapabilityLoadBuffer.shouldActivate(after: "capabilities_load"))
+        #expect(
+            CapabilityLoadBuffer.shouldActivate(
+                after: BuiltinSandboxTools.initPendingToolName
+            )
+        )
+        #expect(CapabilityLoadBuffer.shouldActivate(after: "sandbox_plugin_register"))
+        #expect(!CapabilityLoadBuffer.shouldActivate(after: "file_read"))
+    }
+
+    @Test
+    func settingsActivation_publishesAndReplacesSchemasImmediately() {
+        let suffix = UUID().uuidString
+        let original = SandboxPlugin(
+            name: "Settings Original \(suffix)",
+            description: "Original Settings recipe",
+            tools: [
+                .init(id: "keep", description: "Original tool", run: "echo original"),
+                .init(id: "remove", description: "Removed tool", run: "echo removed"),
+            ]
+        )
+        let updated = SandboxPlugin(
+            name: "Settings Renamed \(suffix)",
+            description: "Updated Settings recipe",
+            tools: [.init(id: "keep", description: "Updated tool", run: "echo updated")]
+        )
+        defer {
+            ToolRegistry.shared.unregisterSandboxPluginTools(pluginId: original.id)
+            ToolRegistry.shared.unregisterSandboxPluginTools(pluginId: updated.id)
+        }
+
+        SandboxToolRegistrar.shared.activateLibraryPlugin(original)
+        #expect(ToolRegistry.shared.entry(named: "\(original.id)_keep") != nil)
+        #expect(ToolRegistry.shared.entry(named: "\(original.id)_remove") != nil)
+
+        SandboxToolRegistrar.shared.activateLibraryPlugin(
+            updated,
+            replacing: original.id
+        )
+        #expect(ToolRegistry.shared.entry(named: "\(original.id)_keep") == nil)
+        #expect(ToolRegistry.shared.entry(named: "\(original.id)_remove") == nil)
+        #expect(
+            ToolRegistry.shared.entry(named: "\(updated.id)_keep")?.description
+                == "Updated tool"
+        )
+    }
+
+    @Test
+    func settingsActivation_invalidatesFrozenCapabilityManifests() async {
+        let sessionId = UUID().uuidString
+        let plugin = SandboxPlugin(
+            name: "Settings Invalidation \(UUID().uuidString)",
+            description: "Invalidates existing capability snapshots",
+            tools: [.init(id: "probe", description: "Probe", run: "echo probe")]
+        )
+        defer {
+            ToolRegistry.shared.unregisterSandboxPluginTools(pluginId: plugin.id)
+        }
+        await SessionToolStateStore.shared.setInitial(
+            sessionId,
+            alwaysLoadedNames: ["capabilities"],
+            fingerprint: "sandbox/auto",
+            manifest: "stale manifest"
+        )
+        #expect(await SessionToolStateStore.shared.get(sessionId) != nil)
+
+        let invalidation = SandboxToolRegistrar.shared.activateLibraryPlugin(plugin)
+        await invalidation.value
+
+        #expect(await SessionToolStateStore.shared.get(sessionId) == nil)
+    }
+
+    @Test
+    func startupActivation_includesLibraryRecipesBeforeFirstAgentInstall() {
+        let suffix = UUID().uuidString
+        let libraryPlugin = SandboxPlugin(
+            name: "Library Startup \(suffix)",
+            description: "Library recipe without an agent install",
+            tools: [.init(id: "current", description: "Current recipe", run: "echo current")]
+        )
+        defer {
+            ToolRegistry.shared.unregisterSandboxPluginTools(pluginId: libraryPlugin.id)
+        }
+
+        SandboxToolRegistrar.shared.registerAllPluginTools(
+            libraryPlugins: [libraryPlugin]
+        )
+
+        #expect(ToolRegistry.shared.entry(named: "\(libraryPlugin.id)_current") != nil)
+    }
+
     // MARK: - SandboxPluginRegisterTool early-failure paths
 
     @Test
@@ -160,6 +299,47 @@ struct SandboxPluginRegistrationTests {
             let payload = try failurePayload(result)
             #expect(payload["kind"] as? String == "execution_error")
             #expect((payload["message"] as? String ?? "").contains("plugin.json not found"))
+        }
+    }
+
+    @Test
+    func registerTool_prefersRequestAgentOverCapturedAgent() async throws {
+        try await withIsolatedContainerWorkspace {
+            let config = AutonomousExecConfig(enabled: true, pluginCreate: true)
+            let requestAgent = Agent(name: "Request Agent", autonomousExec: config)
+            let capturedAgent = Agent(name: "Captured Agent", autonomousExec: config)
+            AgentStore.save(requestAgent)
+            AgentStore.save(capturedAgent)
+            AgentManager.shared.refresh()
+
+            let requestName = SandboxAgentProvisioner.linuxName(
+                for: requestAgent.id.uuidString
+            )
+            let capturedName = SandboxAgentProvisioner.linuxName(
+                for: capturedAgent.id.uuidString
+            )
+            let pluginId = "routing-\(UUID().uuidString.prefix(6))"
+            try writePluginFile(
+                agentName: requestName,
+                pluginId: pluginId,
+                relativePath: "plugin.json",
+                contents: "{ invalid request-agent json }"
+            )
+
+            let tool = SandboxPluginRegisterTool(
+                agentId: capturedAgent.id.uuidString,
+                agentName: capturedName
+            )
+            let result = try await ChatExecutionContext.$currentAgentId.withValue(
+                requestAgent.id
+            ) {
+                try await tool.execute(
+                    argumentsJSON: #"{"plugin_id":"\#(pluginId)"}"#
+                )
+            }
+            let payload = try failurePayload(result)
+            #expect(payload["kind"] as? String == "invalid_args")
+            #expect((payload["message"] as? String ?? "").contains("Invalid plugin.json"))
         }
     }
 
@@ -316,10 +496,12 @@ struct SandboxPluginRegistrationTests {
             do {
                 let value = try await body()
                 OsaurusPaths.overrideRoot = previousRoot
+                await MainActor.run { AgentManager.shared.refresh() }
                 try? FileManager.default.removeItem(at: root)
                 return value
             } catch {
                 OsaurusPaths.overrideRoot = previousRoot
+                await MainActor.run { AgentManager.shared.refresh() }
                 try? FileManager.default.removeItem(at: root)
                 throw error
             }

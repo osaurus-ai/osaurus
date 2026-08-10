@@ -43,4 +43,14 @@ enum ConfigDiskWriter {
             }
         }
     }
+
+    /// Block until every write enqueued so far has landed, bounded by
+    /// `timeout`. Called from `applicationWillTerminate` so a configuration
+    /// change made right before quit (e.g. enabling a provider) isn't dropped
+    /// when `_exit` skips the pending async write.
+    static func flushPendingWrites(timeout: TimeInterval = 3.0) {
+        let done = DispatchSemaphore(value: 0)
+        queue.async { done.signal() }
+        _ = done.wait(timeout: .now() + timeout)
+    }
 }

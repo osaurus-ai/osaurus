@@ -285,7 +285,9 @@ struct PluginsView: View {
                         _ = await claudeSkillManager.importSkillsFromMarkdown(skills)
                         showGitHubImport = false
                         claudeAggregator.refresh()
-                        showSuccess(L("Imported \(skills.count) items"))
+                        showSuccess(
+                            skills.count == 1 ? L("Imported 1 item") : L("Imported \(skills.count) items")
+                        )
                     }
                 },
                 onCancel: { showGitHubImport = false },
@@ -298,7 +300,7 @@ struct PluginsView: View {
                             report.totalImportedSkills + report.totalImportedAgents
                             + report.totalImportedCommands + report.totalImportedMCPProviders
                         if total > 0 {
-                            showSuccess(L("Installed \(total) items"))
+                            showSuccess(total == 1 ? L("Installed 1 item") : L("Installed \(total) items"))
                         }
                     }
                 }
@@ -453,11 +455,14 @@ struct PluginsView: View {
         }
 
         // A superseded plugin that isn't installed has no Browse card to land
-        // on (native search replaced it) — send the deeplink to the Search
-        // settings tab instead of dead-ending.
+        // on (a native feature replaced it) — send the deeplink to the owning
+        // native settings tab instead of dead-ending.
         if PluginManager.supersededPluginIds.contains(pluginId), !plugin.isInstalled {
             managementState.pendingPluginDetailId = nil
-            AppDelegate.shared?.showManagementWindow(initialTab: .search)
+            AppDelegate.shared?.showManagementWindow(
+                initialTab: PluginManager.nativeSettingsTab(forSupersededPlugin: pluginId)
+                    ?? .plugins
+            )
             return
         }
 
@@ -573,16 +578,10 @@ struct PluginsView: View {
                             )
                         }
                         if pluginsWithMissingPermissionsCount > 0 {
-                            ToolPermissionBanner(count: pluginsWithMissingPermissionsCount)
+                            ToolPermissionBanner(count: pluginsWithMissingPermissionsCount, subject: .plugins)
                         }
 
-                        LazyVGrid(
-                            columns: [
-                                GridItem(.flexible(minimum: 300), spacing: 20),
-                                GridItem(.flexible(minimum: 300), spacing: 20),
-                            ],
-                            spacing: 20
-                        ) {
+                        LazyVGrid(columns: responsiveGrid, spacing: 20) {
                             ForEach(Array(installedPlugins.enumerated()), id: \.element.id) { index, plugin in
                                 PluginCard(
                                     plugin: plugin,
@@ -643,10 +642,11 @@ struct PluginsView: View {
 
     // MARK: - Browse Tab
 
-    private var twoColumnGrid: [GridItem] {
+    /// Keep cards readable in the management window's compact layout, while
+    /// still using multiple columns when the window has enough room.
+    private var responsiveGrid: [GridItem] {
         [
-            GridItem(.flexible(minimum: 300), spacing: 20),
-            GridItem(.flexible(minimum: 300), spacing: 20),
+            GridItem(.adaptive(minimum: 340), spacing: 20, alignment: .top)
         ]
     }
 
@@ -711,7 +711,7 @@ struct PluginsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 GitHubTokenCard()
-                LazyVGrid(columns: twoColumnGrid, spacing: 20) {
+                LazyVGrid(columns: responsiveGrid, spacing: 20) {
                     ForEach(Array(filteredPlugins.enumerated()), id: \.element.id) { index, plugin in
                     PluginCard(
                         plugin: plugin,
@@ -772,7 +772,7 @@ struct PluginsView: View {
         } else {
             // Installed plugins are excluded upstream (they live in the
             // Installed tab), so this grid is purely available discovery.
-            LazyVGrid(columns: twoColumnGrid, spacing: 20) {
+            LazyVGrid(columns: responsiveGrid, spacing: 20) {
                 ForEach(Array(filteredMarketplaceEntries.enumerated()), id: \.element.name) {
                     index,
                     entry in
@@ -789,7 +789,7 @@ struct PluginsView: View {
     }
 
     private var marketplaceLoadingGrid: some View {
-        LazyVGrid(columns: twoColumnGrid, spacing: 20) {
+        LazyVGrid(columns: responsiveGrid, spacing: 20) {
             ForEach(0 ..< 6, id: \.self) { _ in
                 MarketplaceSkeletonCard()
             }
@@ -1762,10 +1762,18 @@ private struct PluginDetailView: View {
                         let toolCount = caps.tools?.count ?? 0
                         let skillCount = caps.skills?.count ?? 0
                         if toolCount > 0 {
-                            heroStatBadge(icon: "wrench.and.screwdriver", text: L("\(toolCount) tools"), color: .orange)
+                            heroStatBadge(
+                                icon: "wrench.and.screwdriver",
+                                text: toolCount == 1 ? L("1 tool") : L("\(toolCount) tools"),
+                                color: .orange
+                            )
                         }
                         if skillCount > 0 {
-                            heroStatBadge(icon: "lightbulb", text: L("\(skillCount) skills"), color: .cyan)
+                            heroStatBadge(
+                                icon: "lightbulb",
+                                text: skillCount == 1 ? L("1 skill") : L("\(skillCount) skills"),
+                                color: .cyan
+                            )
                         }
                     }
                     if loadedPlugin?.webConfig != nil {
@@ -1953,10 +1961,18 @@ private struct PluginDetailView: View {
         PluginManager.supersededPluginIds.contains(plugin.pluginId) && plugin.isInstalled
     }
 
-    /// Native search replaced this plugin's tools; point the user at the
-    /// Search settings tab instead of the plugin's own configuration.
+    /// A native feature replaced this plugin's tools; point the user at the
+    /// owning settings tab instead of the plugin's own configuration.
     private var supersededBanner: some View {
-        detailCard {
+        let nativeTab = PluginManager.nativeSettingsTab(forSupersededPlugin: plugin.pluginId)
+        let detail: LocalizedStringKey =
+            switch plugin.pluginId {
+            case "osaurus.browser":
+                "The browser is now a native feature. This plugin's tools and skill are no longer loaded — enable Browser Use on a custom agent's Subagents tab, and manage sessions in Settings → Browser. You can uninstall this plugin."
+            default:
+                "Web search is now a native feature. This plugin's tools are no longer loaded — configure providers in Settings → Search. You can uninstall this plugin."
+            }
+        return detailCard {
             HStack(spacing: 12) {
                 Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: 20))
@@ -1966,28 +1982,47 @@ private struct PluginDetailView: View {
                     Text("Built into Osaurus", bundle: .module)
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(theme.primaryText)
-                    Text(
-                        "Web search is now a native feature. This plugin's tools are no longer loaded — configure providers in Settings → Search. You can uninstall this plugin.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    Text(detail, bundle: .module)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
                 }
 
                 Spacer()
 
+                if let nativeTab {
+                    Button {
+                        AppDelegate.shared?.showManagementWindow(initialTab: nativeTab)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: nativeTab.icon).font(.system(size: 10))
+                            Text("Open \(nativeTab.label) Settings", bundle: .module)
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(theme.accentColor))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+
+                // One-click cleanup: routes to the same destructive-confirm
+                // alert the header trash button uses.
                 Button {
-                    AppDelegate.shared?.showManagementWindow(initialTab: .search)
+                    showDeleteConfirm = true
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: "magnifyingglass").font(.system(size: 10))
-                        Text("Open Search Settings", bundle: .module)
+                        Image(systemName: "trash").font(.system(size: 10))
+                        Text("Uninstall", bundle: .module)
                             .font(.system(size: 12, weight: .semibold))
                     }
-                    .foregroundColor(.white)
+                    .foregroundColor(theme.errorColor)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.accentColor))
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.errorColor.opacity(0.1))
+                    )
                 }
                 .buttonStyle(PlainButtonStyle())
             }

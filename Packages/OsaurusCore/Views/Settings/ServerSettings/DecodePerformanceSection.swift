@@ -3,9 +3,9 @@
 //  osaurus
 //
 //  User-facing controls for `VMLXServerRuntimeSettings.performance`:
-//  the tied-LM-head load codec and the experimental compiled decode
-//  toggle. Both act through `ModelRuntime.applyPerformancePolicy(_:)`
-//  on the next model load; compiled decode additionally flows through
+//  the tied-LM-head load codec, DSV4 activation-QAT graph, and experimental
+//  compiled decode toggle. Load-time choices flow through the resolved vMLX
+//  `LoadConfiguration`; compiled decode additionally flows through
 //  `makeGenerateParameters` per request.
 //
 //  Measured context (M5 Max, Gemma 4 E2B QAT, greedy, 2026-06-12):
@@ -45,6 +45,16 @@ struct DecodePerformanceSection: View {
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
+            }
+
+            SettingsField(
+                label: "Official DSV4 0731 Activation QAT",
+                hint:
+                    "Optionally replays the checkpoint's activation-QAT simulation graph for DeepSeek V4 Flash 0731 (post-RoPE E4M3 KV and Hadamard/E2M1 indexer activations). Off by default because current Release measurements show a throughput cost and do not yet prove a user-visible quality gain. Saving unloads the resident model; QAT-on and QAT-off prefix caches are isolated so state cannot cross modes."
+            ) {
+                Toggle("", isOn: performanceBinding.deepseekV4ActivationQAT)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
             }
 
             SettingsField(

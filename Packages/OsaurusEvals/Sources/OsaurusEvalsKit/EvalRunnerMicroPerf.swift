@@ -58,6 +58,37 @@ extension EvalRunner {
         let prompt = Array(repeating: testCase.query, count: repeatCount)
             .joined(separator: " ")
 
+        if let lifecycle = exp.lifecycle {
+            switch lifecycle {
+            case "cold_load":
+                return await runLifecycleCase(
+                    testCase,
+                    label: label,
+                    modelId: modelId,
+                    prompt: prompt,
+                    maxTokens: exp.maxTokens,
+                    reps: exp.reps
+                )
+            case "cold_load_cancel", "midgen_cancel":
+                return await runCancellationCase(
+                    testCase,
+                    expectations: exp,
+                    label: label,
+                    modelId: modelId,
+                    prompt: prompt,
+                    coldLoad: lifecycle == "cold_load_cancel"
+                )
+            default:
+                return Self.errored(
+                    testCase,
+                    label: label,
+                    modelId: modelId,
+                    note: "unknown microPerf.lifecycle '\(lifecycle)' "
+                        + "(supported: cold_load, cold_load_cancel, midgen_cancel)"
+                )
+            }
+        }
+
         let overallStart = Date()
         let transcript = await MicroPerfEvaluator.run(
             prompt: prompt,
@@ -202,6 +233,229 @@ extension EvalRunner {
                 prefillTokensPerSecond: prefillStats?.median,
                 ttftMs: ttftStats?.median,
                 completionTokens: counts.count == samples.count ? counts.reduce(0, +) : nil
+            )
+        )
+    }
+
+    /// Cancellation rows (`lifecycle: "cold_load_cancel"` / `"midgen_cancel"`):
+    /// SCORED reliability rows, unlike the trend-only cold-load lane. A pass
+    /// requires all of:
+    ///   - the cancelled stream terminated within `maxCancelLatencyMs`
+    ///     (default 15 s) of the cancel signal — no wedged cancel;
+    ///   - a full recovery generation succeeded afterwards with tokens —
+    ///     no zombie load, no wedged engine;
+    ///   - no unexpected stream error surfaced by the cancel.
+    /// Footprint before / after-cancel / after-recovery is recorded for
+    /// growth triage (telemetry, not a hard gate — cold-cancel may
+    /// legitimately leave the model resident when the load won the race).
+    private static func runCancellationCase(
+        _ testCase: EvalCase,
+        expectations exp: EvalCase.MicroPerfExpectations,
+        label: String,
+        modelId: String,
+        prompt: String,
+        coldLoad: Bool
+    ) async -> EvalCaseReport {
+        let cancelAfterMs = exp.cancelAfterMs ?? 750
+        let maxCancelLatencyMs = exp.maxCancelLatencyMs ?? 15_000
+
+        let sampler = ResourceSampler.start()
+        let overallStart = Date()
+        let transcript = await MicroPerfEvaluator.runCancellation(
+            prompt: prompt,
+            maxTokens: exp.maxTokens,
+            coldLoad: coldLoad,
+            cancelAfterMs: cancelAfterMs
+        )
+        let totalWallMs = Date().timeIntervalSince(overallStart) * 1000
+        let sample = sampler.stop()
+
+        if let reason = transcript.skipReason {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .skipped,
+                notes: ["SKIP: \(reason)"],
+                modelId: modelId
+            )
+        }
+
+        var notes: [String] = [
+            "protocol: \(transcript.phase) cancel · cancel at +\(Int(cancelAfterMs))ms "
+                + (coldLoad ? "after dispatch (inside cold load)" : "after first delta")
+                + " · recovery generation max_tokens \(exp.maxTokens)"
+        ]
+        var passed = true
+        func check(_ ok: Bool, pass: String, fail: String) {
+            if ok {
+                notes.append("ok: \(pass)")
+            } else {
+                passed = false
+                notes.append("FAIL: \(fail)")
+            }
+        }
+
+        if let err = transcript.error {
+            passed = false
+            notes.append("FAIL: \(err)")
+        }
+
+        if let latency = transcript.cancelLatencyMs {
+            check(
+                latency <= maxCancelLatencyMs,
+                pass: String(
+                    format: "stream terminated %.0f ms after cancel (ceiling %.0f ms)",
+                    latency, maxCancelLatencyMs
+                ),
+                fail: String(
+                    format: "stream took %.0f ms to terminate after cancel — EXCEEDS %.0f ms",
+                    latency, maxCancelLatencyMs
+                )
+            )
+        }
+        notes.append("deltas before termination: \(transcript.deltasBeforeTermination)")
+
+        if let recovery = transcript.recoverySample {
+            let tokens = recovery.tokenCount ?? 0
+            check(
+                tokens > 0 || recovery.contentChars > 0,
+                pass: "recovery generation produced \(tokens) tokens "
+                    + "(\(recovery.contentChars) chars) — no zombie state",
+                fail: "recovery generation produced no output"
+            )
+            if let tps = recovery.decodeTokensPerSecond {
+                notes.append(String(format: "recovery decode tok/s: %.1f", tps))
+            }
+            if let ttft = recovery.ttftMs {
+                notes.append(String(format: "recovery TTFT ms: %.0f", ttft))
+            }
+        } else if transcript.error == nil {
+            passed = false
+            notes.append("FAIL: no recovery generation ran")
+        }
+
+        func mb(_ value: Double?) -> String {
+            value.map { String(format: "%.0f", $0) } ?? "—"
+        }
+        notes.append(
+            "footprint MB: before \(mb(transcript.footprintBeforeMb)) · "
+                + "after-cancel \(mb(transcript.footprintAfterCancelMb)) · "
+                + "after-recovery \(mb(transcript.footprintAfterRecoveryMb))"
+        )
+        notes.append("total wall: \(Int(totalWallMs))ms")
+
+        return EvalCaseReport(
+            id: testCase.id,
+            label: label,
+            domain: testCase.domain,
+            query: nil,
+            outcome: passed ? .passed : .failed,
+            notes: notes,
+            modelId: modelId,
+            latencyMs: transcript.cancelLatencyMs,
+            telemetry: EvalCaseTelemetry(
+                decodeTokensPerSecond: transcript.recoverySample?.decodeTokensPerSecond,
+                ttftMs: transcript.recoverySample?.ttftMs,
+                peakPhysFootprintMb: sample.peakPhysFootprintMb
+            )
+        )
+    }
+
+    /// Model-lifecycle rows (`lifecycle: "cold_load"`): each rep pays a
+    /// full unload → reload → first-token cycle, so the median cold TTFT
+    /// IS the user-visible model-swap latency. Trend telemetry only — no
+    /// hard floors (cold-load time is machine- and model-size-specific);
+    /// the diff/history tooling is the gate.
+    private static func runLifecycleCase(
+        _ testCase: EvalCase,
+        label: String,
+        modelId: String,
+        prompt: String,
+        maxTokens: Int,
+        reps: Int
+    ) async -> EvalCaseReport {
+        let overallStart = Date()
+        let transcript = await MicroPerfEvaluator.runLifecycle(
+            prompt: prompt,
+            maxTokens: maxTokens,
+            reps: reps
+        )
+        let totalWallMs = Date().timeIntervalSince(overallStart) * 1000
+
+        if let reason = transcript.skipReason {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .skipped,
+                notes: ["SKIP: \(reason)"],
+                modelId: modelId
+            )
+        }
+        if let err = transcript.error {
+            return EvalCaseReport(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                query: nil,
+                outcome: .errored,
+                notes: [
+                    "lifecycle run failed: \(err)",
+                    "completed cold reps: \(transcript.coldSamples.count)",
+                ],
+                modelId: modelId,
+                latencyMs: totalWallMs
+            )
+        }
+
+        var notes: [String] = [
+            "protocol: \(reps) cold reps (clearAll → generate) + 1 warm contrast · "
+                + "max_tokens \(maxTokens)"
+        ]
+        let coldTtft = MicroPerfStats(nonEmpty: transcript.coldSamples.compactMap(\.ttftMs))
+        if let coldTtft {
+            notes.append(
+                "cold-load TTFT ms: \(coldTtft.formatted(digits: 0)) (n=\(coldTtft.count)) — "
+                    + "includes full model load"
+            )
+        }
+        if let warm = transcript.warmSample, let warmTtft = warm.ttftMs {
+            notes.append(String(format: "warm TTFT ms: %.0f (model resident)", warmTtft))
+            if let coldTtft {
+                notes.append(
+                    String(
+                        format: "swap penalty: cold median − warm = %.0f ms",
+                        coldTtft.median - warmTtft
+                    )
+                )
+            }
+        }
+        let coldWall = MicroPerfStats(nonEmpty: transcript.coldSamples.map(\.wallMs))
+        if let coldWall {
+            notes.append(
+                "cold wall ms/rep: \(coldWall.formatted(digits: 0)) · total \(Int(totalWallMs))ms"
+            )
+        }
+        let decodeStats = MicroPerfStats(
+            nonEmpty: transcript.coldSamples.compactMap(\.decodeTokensPerSecond)
+        )
+        if let decodeStats {
+            notes.append("decode tok/s (cold reps): \(decodeStats.formatted(digits: 1))")
+        }
+
+        return EvalCaseReport(
+            id: testCase.id,
+            label: label,
+            domain: testCase.domain,
+            query: nil,
+            outcome: .passed,  // measurement row: trend telemetry, no floors
+            notes: notes,
+            modelId: modelId,
+            latencyMs: coldTtft?.median,
+            telemetry: EvalCaseTelemetry(
+                decodeTokensPerSecond: decodeStats?.median,
+                ttftMs: coldTtft?.median
             )
         )
     }

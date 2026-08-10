@@ -46,10 +46,15 @@ if [[ ${#SOURCES[@]} -eq 0 ]]; then
   exit 0
 fi
 
-# Install a pinned sentry-cli into a temp dir (no sudo) if it isn't already on
-# PATH. The official installer honors INSTALL_DIR + SENTRY_CLI_VERSION.
+# Reuse a previously installed pinned sentry-cli, or install one into a temp
+# dir (no sudo). PATH exports don't survive across workflow steps, so check
+# the install dir directly — the installer hard-fails ("sentry-cli is already
+# installed") when rerun against a populated INSTALL_DIR.
+INSTALL_DIR="${RUNNER_TEMP:-/tmp}/sentry-cli-bin"
+if [[ -x "${INSTALL_DIR}/sentry-cli" ]]; then
+  export PATH="${INSTALL_DIR}:${PATH}"
+fi
 if ! command -v sentry-cli >/dev/null 2>&1; then
-  INSTALL_DIR="${RUNNER_TEMP:-/tmp}/sentry-cli-bin"
   mkdir -p "${INSTALL_DIR}"
   echo "Installing sentry-cli ${SENTRY_CLI_VERSION} into ${INSTALL_DIR} ..."
   curl -sL https://sentry.io/get-cli/ | INSTALL_DIR="${INSTALL_DIR}" SENTRY_CLI_VERSION="${SENTRY_CLI_VERSION}" bash

@@ -120,6 +120,11 @@ struct AgentChannelTransportHealthView: View {
         if state.lastReceivedCount > 0 || state.lastStoredCount > 0 {
             parts.append("received \(state.lastReceivedCount), stored \(state.lastStoredCount)")
         }
+        if state.dispatchAttemptedCount > 0 || state.dispatchSuppressedCount > 0 {
+            parts.append(
+                "dispatched \(state.dispatchAttemptedCount), suppressed \(state.dispatchSuppressedCount)"
+            )
+        }
         return parts
     }
 
@@ -148,5 +153,108 @@ struct AgentChannelTransportHealthView: View {
         )
         state = refreshed
         return refreshed
+    }
+}
+
+/// Recent per-event inbound stages (received → stored → dispatched → replied,
+/// or the exact rejection/suppression boundary) so users can see what
+/// happened to the message they just sent instead of a generic "connected".
+struct AgentChannelInboundActivityListView: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    let connectionId: String
+    let emptyHint: String
+    var limit: Int = 8
+    /// Bump from the parent to re-fetch the activity records.
+    var refreshToken: Int = 0
+
+    @State private var events: [AgentChannelInboundActivityEvent] = []
+
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Recent incoming events", bundle: .module)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+
+            if events.isEmpty {
+                Text(LocalizedStringKey(emptyHint), bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(events) { event in
+                    eventRow(event)
+                }
+            }
+        }
+        .task(id: refreshToken) {
+            events = await AgentChannelInboundActivityCenter.shared.recent(
+                connectionId: connectionId,
+                limit: limit
+            )
+        }
+    }
+
+    private func eventRow(_ event: AgentChannelInboundActivityEvent) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Image(systemName: Self.icon(for: event.stage))
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(Self.tone(for: event.stage).color(theme))
+                    .frame(width: 14)
+                Text(AgentChannelInboundActivityPresentation.label(for: event.stage))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                Spacer(minLength: 6)
+                Text(event.recordedAt, style: .time)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            if let guidance = AgentChannelInboundActivityPresentation.guidance(
+                stage: event.stage,
+                reason: event.reason
+            ) {
+                Text(guidance)
+                    .font(.system(size: 9))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 20)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    static func icon(for stage: AgentChannelInboundActivityStage) -> String {
+        switch stage {
+        case .received:
+            return "tray.and.arrow.down"
+        case .rejected:
+            return "hand.raised.fill"
+        case .stored:
+            return "internaldrive"
+        case .dispatchSuppressed:
+            return "pause.circle"
+        case .dispatched:
+            return "paperplane"
+        case .agentReplied:
+            return "text.bubble"
+        case .replySent:
+            return "checkmark.bubble"
+        case .failed:
+            return "xmark.octagon"
+        }
+    }
+
+    static func tone(for stage: AgentChannelInboundActivityStage) -> AgentChannelStatusTone {
+        switch stage {
+        case .received, .stored, .dispatched, .agentReplied, .replySent:
+            return .success
+        case .dispatchSuppressed:
+            return .warning
+        case .rejected, .failed:
+            return .error
+        }
     }
 }

@@ -13,14 +13,26 @@ import SwiftUI
 
 struct CacheSection: View {
     @Binding var draft: VMLXServerRuntimeSettings
+    @Binding var metadataFallbackTokens: Int?
+    let savedSettings: VMLXServerRuntimeSettings
+    let savedMetadataFallbackTokens: Int?
+
+    @State private var loadedModels: [ModelRuntime.ModelCacheSummary] = []
 
     var body: some View {
         ServerSettingsCard(
             section: .cache,
             status: .engineReady,
             blurb:
-                "Reuses previously-computed prompt prefixes so the second turn of a conversation starts faster than the first."
+                "One place for conversation limits, live KV retention, paged RAM, and SSD-backed prefix reuse. Model maximum and conversation budget are not KV-cache capacity."
         ) {
+            SettingsSubsection(label: "Context & KV Policy") {
+                contextAndKVPolicyControls
+            }
+            .settingsLandingAnchor("settings.chat.contextLength")
+
+            SettingsDivider()
+
             SettingsToggle(
                 title: L("Prefix Cache"),
                 description:
@@ -35,7 +47,7 @@ struct CacheSection: View {
                     SettingsToggle(
                         title: L("Enable GPU Cache"),
                         description:
-                            "Block-based KV cache held in GPU memory. Required for cross-request sharing.",
+                            "Optional hot tier held in GPU memory. SSD cache can still restore prefixes across requests when this is off.",
                         isOn: $draft.cache.pagedKV.enabled
                     )
 
@@ -57,7 +69,7 @@ struct CacheSection: View {
 
             SettingsDivider()
 
-            SettingsSubsection(label: "Disk Spillover") {
+            SettingsSubsection(label: "SSD Cache (L2)") {
                 diskCacheControls
             }
 
@@ -65,29 +77,6 @@ struct CacheSection: View {
 
             SettingsSubsection(label: "On-the-fly Compression") {
                 liveKVCodecControls
-            }
-
-            SettingsDivider()
-
-            SettingsSubsection(label: "Per-Session Window Cap") {
-                VStack(alignment: .leading, spacing: 12) {
-                    OptionalIntField(
-                        label: "Per-Session Window (tokens)",
-                        placeholder: "Blank = engine default",
-                        help:
-                            "Maximum cached tokens per chat slot. 65 536 is the recommended default.",
-                        value: $draft.cache.defaultMaxKVSize
-                    )
-
-                    OptionalDoubleField(
-                        label: "Long-Prompt Window Multiplier",
-                        placeholder: "Default 2.0",
-                        help:
-                            "Allow prompts up to (window × multiplier) before the cap kicks in.",
-                        value: longPromptBinding,
-                        format: "%.2f"
-                    )
-                }
             }
 
             SettingsDivider()
@@ -105,53 +94,129 @@ struct CacheSection: View {
                 plannedControls
             }
         }
+        .task {
+            while !Task.isCancelled {
+                loadedModels = await ModelRuntime.shared.cachedModelSummaries()
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
     }
 
     // MARK: - Subviews
 
-    @ViewBuilder
-    private var diskCacheControls: some View {
+    private var contextAndKVPolicyControls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if draft.cache.pagedKV.enabled {
-                SettingsToggle(
-                    title: L("Disk Cache"),
-                    description:
-                        "Spill paged blocks to disk so cache survives restarts and shares across processes.",
-                    isOn: $draft.cache.blockDisk.enabled
-                )
-                OptionalDoubleField(
-                    label: "Disk Cache Size (GB)",
-                    placeholder: "Blank = engine default (10 GB)",
-                    help: "Soft cap before older entries are evicted.",
-                    value: $draft.cache.blockDisk.maxSizeGB,
-                    format: "%.1f"
-                )
-                OptionalStringField(
-                    label: "Disk Cache Directory",
-                    placeholder: "Blank = Osaurus default cache directory",
-                    help: "Absolute path or ~/... path for persisted block-cache entries.",
-                    value: $draft.cache.blockDisk.directory
-                )
-            } else {
-                SettingsToggle(
-                    title: L("Legacy Disk Cache"),
-                    description: "Used when the GPU paged cache is off.",
-                    isOn: $draft.cache.legacyDisk.enabled
-                )
-                OptionalDoubleField(
-                    label: "Disk Cache Size (GB)",
-                    placeholder: "Blank = engine default (10 GB)",
-                    help: "Soft cap before older entries are evicted.",
-                    value: $draft.cache.legacyDisk.maxSizeGB,
-                    format: "%.1f"
-                )
-                OptionalStringField(
-                    label: "Legacy Disk Cache Directory",
-                    placeholder: "Blank = Osaurus default cache directory",
-                    help: "Absolute path or ~/... path for legacy disk-cache entries.",
-                    value: $draft.cache.legacyDisk.directory
+            policyRow(
+                label: "Model maximum",
+                value: "Per selected model",
+                detail:
+                    "Read from the active model's bundle metadata and shown in that chat's Context Budget popover."
+            )
+            policyRow(
+                label: "Usable conversation budget",
+                value: "\(Int(ContextBudgetManager.safetyMargin * 100))% of model maximum",
+                detail:
+                    "The chat compactor reserves the remaining margin for token-estimation error. This is not the KV retention cap."
+            )
+
+            OptionalIntField(
+                label: "Unknown-Model Metadata Fallback (tokens)",
+                placeholder: "Default 128 000",
+                help:
+                    "Used only when a model/provider does not report a context maximum. Changing it applies to the next request; known local bundle metadata still wins.",
+                value: $metadataFallbackTokens,
+                clamp: 2_048 ... 4_194_304
+            )
+
+            OptionalIntField(
+                label: "KV Retention Override (tokens)",
+                placeholder: "Blank = Memory Safety profile",
+                help:
+                    "The one explicit per-session KV retention override. Blank lets Memory Safety resolve the cap. Saving a changed cap unloads resident models so their next load cannot retain stale coordinator settings.",
+                value: $draft.cache.defaultMaxKVSize,
+                clamp: 1_024 ... 4_194_304
+            )
+
+            OptionalDoubleField(
+                label: "Long-Prompt Window Multiplier",
+                placeholder: "Default 2.0",
+                help:
+                    "A blank request inherits the KV cap only after its prompt exceeds (resolved cap × multiplier).",
+                value: longPromptBinding,
+                format: "%.2f"
+            )
+
+            SettingsDivider()
+
+            policyRow(
+                label: "Saved metadata fallback",
+                value: tokenSummary(savedMetadataFallbackTokens, defaultValue: 128_000),
+                detail: "Currently persisted for unknown-metadata models."
+            )
+            policyRow(
+                label: "Saved resolved KV cap",
+                value: tokenSummary(savedResolvedKVCap),
+                detail:
+                    savedSettings.cache.defaultMaxKVSize == nil
+                    ? "Resolved from the saved Memory Safety profile."
+                    : "Resolved from the saved explicit Cache override."
+            )
+
+            if pendingResolvedKVCap != savedResolvedKVCap
+                || metadataFallbackTokens != savedMetadataFallbackTokens
+            {
+                policyRow(
+                    label: "Pending after Save",
+                    value:
+                        "fallback \(tokenSummary(metadataFallbackTokens, defaultValue: 128_000)); KV \(tokenSummary(pendingResolvedKVCap))",
+                    detail:
+                        "Unsaved draft. A KV-policy change unloads resident models; an unknown-model fallback change applies on the next request."
                 )
             }
+
+            if loadedModels.isEmpty {
+                policyRow(
+                    label: "Active loaded policy",
+                    value: "No model loaded",
+                    detail: "The next local model load will capture the saved resolved policy."
+                )
+            } else {
+                ForEach(loadedModels, id: \.name) { model in
+                    if let active = model.activeCachePolicy {
+                        policyRow(
+                            label: "Active · \(model.name)",
+                            value:
+                                "KV \(tokenSummary(active.maxKVSize)); RAM \(active.pagedRAMEnabled ? "on" : "off"); SSD \(active.diskL2Enabled ? diskSizeSummary(active.diskL2MaxGB) : "off")",
+                            detail:
+                                "Live coordinator captured at this model's last load. It is intentionally not inferred from the saved draft."
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private var diskCacheControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SettingsToggle(
+                title: L("Disk Cache"),
+                description:
+                    "Persist content-addressed prompt checkpoints on SSD. Works with paged RAM cache off and restores the longest matching prefix after restart; turn off to disable disk reuse.",
+                isOn: $draft.cache.blockDisk.enabled
+            )
+            OptionalDoubleField(
+                label: "Disk Cache Size (GB)",
+                placeholder: "Blank = engine default (10 GB)",
+                help: "Soft cap before older entries are evicted.",
+                value: $draft.cache.blockDisk.maxSizeGB,
+                format: "%.1f"
+            )
+            OptionalStringField(
+                label: "Disk Cache Directory",
+                placeholder: "Blank = Osaurus default cache directory",
+                help: "Absolute path or ~/... path for persisted disk-cache entries.",
+                value: $draft.cache.blockDisk.directory
+            )
         }
     }
 
@@ -237,6 +302,48 @@ struct CacheSection: View {
                 guard value > 0 else { return }
                 draft.cache.longPromptMultiplier = value
             }
+        )
+    }
+
+    private var savedResolvedKVCap: Int? {
+        ServerRuntimeSettingsStore.resolvedKVRetentionCap(for: savedSettings)
+    }
+
+    private var pendingResolvedKVCap: Int? {
+        ServerRuntimeSettingsStore.resolvedKVRetentionCap(for: draft)
+    }
+
+    private func tokenSummary(_ value: Int?, defaultValue: Int? = nil) -> String {
+        if let value { return value.formatted() + " tokens" }
+        if let defaultValue { return defaultValue.formatted() + " tokens (default)" }
+        return "Unlimited"
+    }
+
+    private func diskSizeSummary(_ gigabytes: Double) -> String {
+        String(format: "%.1f GB", gigabytes)
+    }
+
+    private func policyRow(label: String, value: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(LocalizedStringKey(label), bundle: .module)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(value)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .multilineTextAlignment(.trailing)
+                    .textSelection(.enabled)
+            }
+            Text(LocalizedStringKey(detail), bundle: .module)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.primary.opacity(0.04))
         )
     }
 }

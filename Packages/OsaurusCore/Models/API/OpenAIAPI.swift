@@ -723,6 +723,12 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// `{"include_usage": true}` instructs the SSE producer to emit a
     /// final chunk carrying `usage` (prompt/completion/total tokens).
     var stream_options: StreamOptions? = nil
+    /// OpenAI `logprobs`/`top_logprobs`. Neither local MLX decode nor the
+    /// remote proxy surfaces token log-probabilities, so these are decoded
+    /// purely for request validation: a truthy value is rejected with a
+    /// typed 400 instead of being silently dropped.
+    var logprobs: Bool? = nil
+    var top_logprobs: Int? = nil
     /// Model-specific options from the active ModelProfile (not serialized to JSON).
     var modelOptions: [String: ModelOptionValue]? = nil
     /// Optional TTFT trace for diagnostic timing (not serialized to JSON).
@@ -785,6 +791,30 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// required for sliding-window models whose caches cannot be trimmed to
     /// a boundary at store time.
     var warmupPrefill: Bool = false
+    /// Local-only: byte-exact reusable leading system-prompt text from
+    /// `SystemPromptComposer.staticPrefix`. vmlx uses this only as a
+    /// tokenizer-validated SSD-prefix boundary hint after the full prompt has
+    /// already been rendered; it is not decoded from OpenAI JSON and is not
+    /// forwarded to remote providers.
+    var cacheStableSystemPrefix: String? = nil
+    /// Local-only: when true, this request's model load must not disturb a model
+    /// that is already resident or already loading — the runtime refuses the load
+    /// instead of evicting. Set by housekeeping that nobody is waiting on
+    /// (speculative warm-up, transcript cleanup, memory distillation). Never
+    /// set for a request a human is waiting on: those are
+    /// entitled to the GPU.
+    ///
+    /// Not decoded from OpenAI JSON, not sent to providers.
+    var backgroundModelLoad: Bool = false
+    /// Local-only: a nested subagent may reuse a model that another surface
+    /// already owns (for example an HTTP API model under manual multi-model
+    /// residency). In that case the child request must not relabel the
+    /// resident as Chat UI-owned, because the surrounding chat handoff would
+    /// then be allowed to unload unrelated API/plugin work. New child-loaded
+    /// models still acquire the normal Chat UI ownership marker.
+    ///
+    /// Not decoded from OpenAI JSON, not sent to providers.
+    var preserveExistingResidencyOwner: Bool = false
 
     /// Resolved max tokens, preferring max_tokens then max_completion_tokens.
     var resolvedMaxTokens: Int? { max_tokens ?? max_completion_tokens }
@@ -795,6 +825,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         case frequency_penalty, presence_penalty, stop, n
         case tools, tool_choice, session_id
         case seed, response_format, stream_options
+        case logprobs, top_logprobs
         case enable_thinking, reasoning_effort
     }
 
@@ -833,6 +864,14 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.remoteAgentProviderId = remoteAgentProviderId
         copy.suppressProgressUI = suppressProgressUI
         copy.warmupPrefill = warmupPrefill
+        copy.cacheStableSystemPrefix = cacheStableSystemPrefix
+        // Must be copied with the other local-only flags. Dropping it silently
+        // promotes a background request back to interactive — and an interactive
+        // request is allowed to evict the model someone is using.
+        copy.backgroundModelLoad = backgroundModelLoad
+        copy.preserveExistingResidencyOwner = preserveExistingResidencyOwner
+        copy.logprobs = logprobs
+        copy.top_logprobs = top_logprobs
         return copy
     }
 
@@ -875,6 +914,14 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.remoteAgentProviderId = remoteAgentProviderId
         copy.suppressProgressUI = suppressProgressUI
         copy.warmupPrefill = warmupPrefill
+        copy.cacheStableSystemPrefix = cacheStableSystemPrefix
+        // Must be copied with the other local-only flags. Dropping it silently
+        // promotes a background request back to interactive — and an interactive
+        // request is allowed to evict the model someone is using.
+        copy.backgroundModelLoad = backgroundModelLoad
+        copy.preserveExistingResidencyOwner = preserveExistingResidencyOwner
+        copy.logprobs = logprobs
+        copy.top_logprobs = top_logprobs
         return copy
     }
 }
@@ -913,6 +960,8 @@ extension ChatCompletionRequest {
         seed = try container.decodeIfPresent(Int.self, forKey: .seed)
         response_format = try container.decodeIfPresent(ResponseFormat.self, forKey: .response_format)
         stream_options = try container.decodeIfPresent(StreamOptions.self, forKey: .stream_options)
+        logprobs = try container.decodeIfPresent(Bool.self, forKey: .logprobs)
+        top_logprobs = try container.decodeIfPresent(Int.self, forKey: .top_logprobs)
         enable_thinking = try container.decodeIfPresent(Bool.self, forKey: .enable_thinking)
         reasoning_effort = try container.decodeIfPresent(String.self, forKey: .reasoning_effort)
     }
@@ -1064,8 +1113,17 @@ struct DeltaContent: Codable, Sendable {
 /// Streaming choice
 struct StreamChoice: Codable, Sendable {
     let index: Int
-    let delta: DeltaContent
+    /// Optional on decode: OpenAI-compatible providers (DeepSeek among them)
+    /// omit `delta` on the final finish/usage chunk. Osaurus's own stream
+    /// writers always populate it.
+    let delta: DeltaContent?
     let finish_reason: String?
+
+    init(index: Int, delta: DeltaContent, finish_reason: String?) {
+        self.index = index
+        self.delta = delta
+        self.finish_reason = finish_reason
+    }
 }
 
 /// Chat completion chunk for streaming

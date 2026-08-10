@@ -108,7 +108,7 @@ final class ModelManager: NSObject, ObservableObject {
 
         /// Filters the list by `MLXModel.compatibility(totalMemoryGB:)` —
         /// the same hardware-fit assessment used for the per-row
-        /// "Runs Well / Tight Fit / Too Large" badges. Exposes the
+        /// "Runs Well / Memory May Be Tight / Not Recommended" badges. Exposes the
         /// already-computed attribute rather than introducing a new one.
         /// When `totalMemoryGB == 0` (monitor hasn't reported yet) this
         /// filter is treated as a no-op so the list isn't emptied during
@@ -116,24 +116,25 @@ final class ModelManager: NSObject, ObservableObject {
         /// hardware info and we let everything through until we know.
         enum PerformanceFilter: String, CaseIterable, Identifiable {
             /// Only include models whose `compatibility` is `.compatible`
-            /// (memory usage below the 75 % ratio threshold).
-            case runsWell = "Runs Well"
+            /// (working set at or below 85 % of the GPU memory budget).
+            case runsWell = "Runs well"
             /// Only include models whose `compatibility` is `.tight`
-            /// (memory usage between 75 % and 95 % of total RAM)
-            case tightFit = "Tight Fit"
+            /// (working set between 85 % and 110 % of the GPU memory budget).
+            case tightFit = "Memory may be tight"
             /// Exclude models whose advisory `compatibility` is `.tooLarge`
-            /// (memory usage above the 95 % ratio threshold). This filter is
-            /// user-selected catalog triage only; runtime load/download does
-            /// not block RAM pressure from this estimate.
-            case hideTooLarge = "Hide Too Large"
+            /// (working set above 110 % of the GPU memory budget — macOS would
+            /// page the weights). This filter is user-selected catalog triage
+            /// only; runtime load/download does not block RAM pressure from
+            /// this estimate.
+            case hideTooLarge = "Hide not recommended"
 
             var id: String { rawValue }
 
             var displayName: String {
                 switch self {
-                case .runsWell: return L("Runs Well")
-                case .tightFit: return L("Tight Fit")
-                case .hideTooLarge: return L("Hide Too Large")
+                case .runsWell: return ModelCompatibility.compatible.displayName
+                case .tightFit: return ModelCompatibility.tight.displayName
+                case .hideTooLarge: return L("Hide not recommended")
                 }
             }
 
@@ -270,9 +271,10 @@ final class ModelManager: NSObject, ObservableObject {
     func loadAvailableModels() {
         // Seed sizes synchronously from the on-disk cache so the first
         // paint shows last-known-accurate download sizes even offline.
-        // Sizes are no longer hand-coded; they're fetched + cached by the
-        // OsaurusAI org refresh / on-demand estimate and persisted in
-        // `ModelSizeCache`.
+        // Sizes normally come from the OsaurusAI org refresh / on-demand
+        // estimate and persist in `ModelSizeCache`. A model whose mixed
+        // precision cannot be inferred from its id may carry a bootstrap size;
+        // a cached Hub measurement still replaces it here.
         let curated = Self.curatedSuggestedModels.map { model in
             model.withDownloadSize(ModelSizeCache.bytes(forId: model.id))
         }
@@ -293,7 +295,10 @@ final class ModelManager: NSObject, ObservableObject {
         // stays main-actor isolated so `self` never crosses actor boundaries.
         Task { [weak self] in
             let localModels = await Self.discoverLocalModelsOffMain()
-            self?.mergeAvailable(with: localModels)
+            self?.mergeAvailable(
+                with: localModels,
+                refreshLocalInstallationMetadata: true
+            )
         }
 
         isLoadingModels = false
@@ -337,7 +342,10 @@ final class ModelManager: NSObject, ObservableObject {
             }.value
             guard let self else { return }
             self.downloadService.syncStates(for: models)
-            self.mergeAvailable(with: localModels)
+            self.mergeAvailable(
+                with: localModels,
+                refreshLocalInstallationMetadata: true
+            )
             self.checkForDeprecatedModels()
         }
     }
@@ -471,10 +479,11 @@ final class ModelManager: NSObject, ObservableObject {
     /// Resolve a model only if the Hugging Face repository is MLX-compatible.
     /// Policy:
     ///   - `mlx-community/*`: trust the org; HF compat check confirms.
-    ///   - `OsaurusAI/*`: must already exist in the registry (curated or org-fetched)
-    ///     unknown OsaurusAI ids are rejected.
-    ///   - Other orgs: require an MLX/vMLX artifact-family hint in the repo id
-    ///     AND HF metadata confirming MLX compatibility.
+    ///   - `OsaurusAI/*`: public repos must already exist in the registry;
+    ///     authenticated private repos may be imported directly.
+    ///   - Other orgs: authenticated HF metadata must confirm MLX compatibility.
+    ///     Private repos may use their actual file layout instead of a public
+    ///     naming/tag convention.
     func resolveModelIfMLXCompatible(byRepoId repoId: String) async -> MLXModel? {
         let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -482,17 +491,12 @@ final class ModelManager: NSObject, ObservableObject {
         if let existing = findExistingModel(id: trimmed).model { return existing }
 
         let lower = trimmed.lowercased()
-        if lower.hasPrefix("osaurusai/") {
-            // Not in registry (would have returned above) — reject.
+        let compatibility = await HuggingFaceService.shared.mlxCompatibility(repoId: trimmed)
+        guard compatibility.isCompatible else { return nil }
+        if lower.hasPrefix("osaurusai/"), !compatibility.isPrivate {
+            // Unknown public OsaurusAI repos remain registry-gated so other
+            // product bundles do not leak into the language-model catalog.
             return nil
-        }
-
-        if lower.hasPrefix("mlx-community/") {
-            guard await HuggingFaceService.shared.isMLXCompatible(repoId: trimmed) else { return nil }
-        } else {
-            guard Self.nameLooksLikeMLX(trimmed),
-                await HuggingFaceService.shared.isMLXCompatible(repoId: trimmed)
-            else { return nil }
         }
 
         let model = MLXModel(
@@ -531,7 +535,12 @@ final class ModelManager: NSObject, ObservableObject {
         downloadService.download(model)
     }
 
-    func downloadModel(_ model: MLXModel) { downloadService.download(model) }
+    func downloadModel(
+        _ model: MLXModel,
+        route: ModelDownloadService.DownloadRoute = .direct
+    ) {
+        downloadService.download(model, route: route)
+    }
     func cancelDownload(_ modelId: String) { downloadService.cancel(modelId) }
     func pauseDownload(_ modelId: String) { downloadService.pause(modelId) }
     func resumeDownload(_ modelId: String) {
@@ -542,6 +551,32 @@ final class ModelManager: NSObject, ObservableObject {
 
     func estimateDownloadSize(for model: MLXModel) async -> Int64? {
         await downloadService.estimateSize(for: model)
+    }
+
+    /// Publish a size resolved on demand by the detail sheet back into the
+    /// in-memory catalog. `ModelSizeCache` already persists the measurement;
+    /// this keeps cards, filters, onboarding, and a reopened sheet from
+    /// continuing to render the name-derived fallback until the next launch.
+    func applyResolvedDownloadSize(_ bytes: Int64, for modelId: String) {
+        guard bytes > 0 else { return }
+
+        func updating(_ models: [MLXModel]) -> ([MLXModel], Bool) {
+            var changed = false
+            let updated = models.map { model in
+                guard model.id.caseInsensitiveCompare(modelId) == .orderedSame,
+                    model.downloadSizeBytes != bytes
+                else { return model }
+                changed = true
+                return model.withDownloadSize(bytes)
+            }
+            return (updated, changed)
+        }
+
+        let available = updating(availableModels)
+        if available.1 { availableModels = available.0 }
+
+        let suggested = updating(suggestedModels)
+        if suggested.1 { suggestedModels = suggested.0 }
     }
 
     func effectiveDownloadState(for model: MLXModel) -> DownloadState {
@@ -655,6 +690,7 @@ extension ModelManager {
         id: String,
         description: String,
         isTopSuggestion: Bool = false,
+        bootstrapDownloadSizeBytes: Int64? = nil,
         modelType: String? = nil,
         releasedAt: Date? = nil,
         useCase: ModelUseCase? = nil
@@ -665,7 +701,7 @@ extension ModelManager {
             description: description,
             downloadURL: "https://huggingface.co/\(id)",
             isTopSuggestion: isTopSuggestion,
-            downloadSizeBytes: nil,
+            downloadSizeBytes: bootstrapDownloadSizeBytes,
             modelType: modelType,
             releasedAt: releasedAt,
             useCase: useCase
@@ -692,7 +728,9 @@ extension ModelManager {
         // Onboarding recommendation spine (2026-07-08, GUI-verified in the
         // dev-built app — every model below loads, calls tools, reasons with
         // thinking on, and leaks no markup into visible content):
-        //   • Larger RAM  → Ornith 1.0 MXFP8 (9B / 35B, below).
+        //   • Mainstream RAM → Bonsai 27B, selecting its 1-bit or ternary
+        //                      variant from the machine's model-memory budget.
+        //   • Larger RAM     → Ornith 1.0 MXFP8 (9B / 35B, below).
         //   • Smaller RAM → official OsaurusAI Gemma 4 at the highest non-QAT,
         //                    non-MXFP4 precision that exists: `12B-it-MXFP8`
         //                    (the only MXFP8 Gemma the org ships) and the
@@ -856,6 +894,40 @@ extension ModelManager {
             isTopSuggestion: true,
             modelType: "qwen3_5_moe",
             releasedAt: date("2026-06-26"),
+            useCase: .vision
+        ),
+
+        // MARK: Bonsai (prism-ml, Qwen 3.5 dense backbone)
+        //
+        // Extreme low-bit dense 27B vision-language models converted from
+        // prism-ml's Bonsai checkpoints. Text matrices use affine JANG
+        // (schema-2 discrete storage — not JANGTQ/MXTQ or a codebook
+        // sidecar); vision components stay 4-bit affine. Same `qwen3_5`
+        // runtime class as Qwen 3.6 / Ornith dense builds. Both variants are
+        // Top Picks so the normalized Bonsai family can select the best build
+        // for this Mac. Their mixed text/vision precision cannot be estimated
+        // accurately from `27B × bit-width`, so the current Hub sizes bootstrap
+        // first-launch hardware selection until `ModelSizeCache` refreshes.
+
+        curated(
+            id: "OsaurusAI/Bonsai-27b-Ternary-JANG",
+            description:
+                "Bonsai 27B dense vision model on a Qwen 3.5 backbone. Ternary (2-bit slot) affine JANG text weights — ~8 GB on disk.",
+            isTopSuggestion: true,
+            bootstrapDownloadSizeBytes: 8_040_700_199,
+            modelType: "qwen3_5",
+            releasedAt: date("2026-07-14"),
+            useCase: .vision
+        ),
+
+        curated(
+            id: "OsaurusAI/Bonsai-27b-1bit-JANG",
+            description:
+                "Bonsai 27B dense vision model on a Qwen 3.5 backbone. 1-bit affine JANG text weights — smallest of the family at ~4.7 GB.",
+            isTopSuggestion: true,
+            bootstrapDownloadSizeBytes: 4_679_030_015,
+            modelType: "qwen3_5",
+            releasedAt: date("2026-07-14"),
             useCase: .vision
         ),
 
@@ -1309,22 +1381,78 @@ extension ModelManager {
     /// Find an installed model by user-provided name.
     /// Accepts repo name (case-insensitive) or full id (case-insensitive).
     nonisolated static func findInstalledMLXModel(named name: String) -> MLXModel? {
+        matchInstalledMLXModel(named: name, in: discoverLocalModels())
+    }
+
+    /// Non-blocking variant of `findInstalledMLXModel(named:)` backed by
+    /// `localModelsSnapshotNonBlocking()`. View bodies and per-render getters
+    /// must use this: with a cold cache `discoverLocalModels()` parks on the
+    /// scan condition (up to ~10s) and beachballs the main thread.
+    nonisolated static func findInstalledMLXModelFromCache(named name: String) -> MLXModel? {
+        let key = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !key.isEmpty else { return nil }
+
+        // This runs from view bodies on every 2s memory tick (RAM-feasibility
+        // refresh). Rebuilding the merged model list and re-splitting every id
+        // per call is wasted main-thread work — and under memory pressure it
+        // shows up in hang reports. Memoize per name, invalidated when either
+        // the local scan cache or the external registry changes.
+        localModelsCacheCondition.lock()
+        let localGen = localModelsCacheGen
+        localModelsCacheCondition.unlock()
+        let externalGen = ExternalModelLocator.registryGeneration()
+
+        matchMemoLock.lock()
+        if matchMemoLocalGen == localGen, matchMemoExternalGen == externalGen,
+            let hit = matchMemo[key]
+        {
+            matchMemoLock.unlock()
+            return hit
+        }
+        matchMemoLock.unlock()
+
+        let result = matchInstalledMLXModel(named: name, in: localModelsSnapshotNonBlocking())
+
+        matchMemoLock.lock()
+        if matchMemoLocalGen != localGen || matchMemoExternalGen != externalGen {
+            matchMemo.removeAll(keepingCapacity: true)
+            matchMemoLocalGen = localGen
+            matchMemoExternalGen = externalGen
+        }
+        matchMemo[key] = result
+        matchMemoLock.unlock()
+        return result
+    }
+
+    private static nonisolated let matchMemoLock = NSLock()
+    private static nonisolated(unsafe) var matchMemo: [String: MLXModel?] = [:]
+    private static nonisolated(unsafe) var matchMemoLocalGen: UInt64 = .max
+    private static nonisolated(unsafe) var matchMemoExternalGen: UInt64 = .max
+
+    nonisolated static func matchInstalledMLXModel(
+        named name: String,
+        in models: [MLXModel]
+    ) -> MLXModel? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        let models = discoverLocalModels()
+        let key = trimmed.lowercased()
 
-        // Try repo component first
-        if let match = models.first(where: { m in
-            m.id.split(separator: "/").last.map(String.init)?.lowercased() == trimmed.lowercased()
-        }) {
+        // A full installed id is the stable identity and must win even when a
+        // different organization has a bundle with the same final component.
+        if let match = models.first(where: { $0.id.lowercased() == key }) {
             return match
         }
 
-        // Try full id match
-        if let match = models.first(where: { m in m.id.lowercased() == trimmed.lowercased() }) {
-            return match
+        // Short bundle aliases remain convenient only when they identify one
+        // stable installed id. Silently choosing the first of two
+        // `Org-A/Shared` / `Org-B/Shared` bundles can load or batch the wrong
+        // model, so ambiguous aliases fail resolution instead.
+        let shortMatches = models.filter { model in
+            model.id.split(separator: "/").last.map(String.init)?.lowercased() == key
         }
-        return nil
+        let stableIds = Set(shortMatches.map { $0.id.lowercased() })
+        guard stableIds.count == 1 else { return nil }
+        return shortMatches.first
     }
 
     /// Find an installed model by user-provided name, returning the canonical
@@ -1333,6 +1461,19 @@ extension ModelManager {
     /// externally-discovered and symlinked bundles keep their real path.
     nonisolated static func findInstalledModel(named name: String) -> (name: String, id: String)? {
         guard let match = findInstalledMLXModel(named: name) else { return nil }
+        let repo =
+            match.id.split(separator: "/").last.map(String.init)?.lowercased()
+            ?? name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return (repo, match.id)
+    }
+
+    /// Cache-only variant of `findInstalledModel(named:)` for main-thread /
+    /// view-body callers: never waits on the disk scan (returns nil misses
+    /// until it lands).
+    nonisolated static func findInstalledModelFromCache(named name: String) -> (
+        name: String, id: String
+    )? {
+        guard let match = findInstalledMLXModelFromCache(named: name) else { return nil }
         let repo =
             match.id.split(separator: "/").last.map(String.init)?.lowercased()
             ?? name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -1403,6 +1544,7 @@ extension ModelManager {
     fileprivate static func requestHFModels(at url: URL) async throws -> [HFModel] {
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        HuggingFaceAuth.authorize(&request)
         let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             return []
@@ -1435,7 +1577,10 @@ extension ModelManager {
         return nil
     }
 
-    fileprivate func mergeAvailable(with newModels: [MLXModel]) {
+    fileprivate func mergeAvailable(
+        with newModels: [MLXModel],
+        refreshLocalInstallationMetadata: Bool = false
+    ) {
         // Repo tail (everything after the last "/") is the basename a user actually
         // recognises; when two ids share a tail, treat them as the same model — this
         // collapses cases like flat-layout `Nemotron-3-...` colliding with curated
@@ -1454,10 +1599,38 @@ extension ModelManager {
 
         var appended: [MLXModel] = []
         var replacements: [(oldId: String, new: MLXModel)] = []
+        var refreshedExactMatch = false
 
         for m in newModels {
             let key = m.id.lowercased()
-            if existingLower.contains(key) { continue }
+            if existingLower.contains(key) {
+                // An exact local/curated id collision used to discard the
+                // local entry wholesale, including its authoritative bundle
+                // size. Refresh only installation metadata so editorial
+                // catalog fields still win. Only background local discovery
+                // may take this path; registry and Hub merges must never be
+                // mistaken for installed metadata just because a future
+                // response also carries a byte estimate.
+                if refreshLocalInstallationMetadata {
+                    if let idx = availableModels.firstIndex(where: {
+                        $0.id.caseInsensitiveCompare(m.id) == .orderedSame
+                    }) {
+                        let merged = availableModels[idx]
+                            .mergingLocalInstallationMetadata(from: m)
+                        availableModels[idx] = merged
+                        refreshedExactMatch = true
+                    }
+                    if let idx = suggestedModels.firstIndex(where: {
+                        $0.id.caseInsensitiveCompare(m.id) == .orderedSame
+                    }) {
+                        let merged = suggestedModels[idx]
+                            .mergingLocalInstallationMetadata(from: m)
+                        suggestedModels[idx] = merged
+                        refreshedExactMatch = true
+                    }
+                }
+                continue
+            }
 
             let mTail = tail(m.id)
             if let existing = existingTails[mTail], existing.id.lowercased() != key {
@@ -1492,7 +1665,7 @@ extension ModelManager {
             }
         }
 
-        guard !appended.isEmpty || !replacements.isEmpty else { return }
+        guard !appended.isEmpty || !replacements.isEmpty || refreshedExactMatch else { return }
         availableModels.append(contentsOf: appended)
         downloadService.syncStates(for: appended + replacements.map { $0.new })
     }
@@ -1503,6 +1676,9 @@ extension ModelManager {
 extension ModelManager {
     /// HF org whose entire repo listing is auto-discovered into the Recommended tab.
     fileprivate static let osaurusOrgAuthor = "OsaurusAI"
+    /// Keep this above the org's current repository count so low-download and
+    /// newly published models are not truncated from the downloads-sorted API.
+    fileprivate static let osaurusOrgFetchLimit = 200
 
     /// True if `id` is `"<osaurusOrgAuthor>/<repo>"` (case-insensitive).
     fileprivate static func isOsaurusOrgRepo(_ id: String) -> Bool {
@@ -1539,7 +1715,7 @@ extension ModelManager {
             let url = Self.makeHFModelsURL(
                 author: Self.osaurusOrgAuthor,
                 search: "",
-                limit: 100
+                limit: Self.osaurusOrgFetchLimit
             )
         else { return }
 
@@ -1693,6 +1869,10 @@ extension ModelManager {
     // MARK: - Local Models Cache (in-memory, cleared on app restart)
     private static nonisolated let localModelsCacheCondition = NSCondition()
     private static nonisolated(unsafe) var cachedLocalModels: [MLXModel]?
+    /// Bumped whenever `cachedLocalModels` changes (invalidate or scan
+    /// landing). Combined with `ExternalModelLocator.registryGeneration()`
+    /// this versions the full merged model list for read-side memo caches.
+    private static nonisolated(unsafe) var localModelsCacheGen: UInt64 = 0
     private static nonisolated(unsafe) var localModelsScanInFlight = false
     private static nonisolated let localModelsScanWaitLimit: TimeInterval = 10
     private static nonisolated(unsafe) var lastLocalModelsScanDiagnostic: [String: Any]?
@@ -1703,6 +1883,7 @@ extension ModelManager {
         localModelsCacheCondition.lock()
         cachedLocalModels = nil
         localModelsScanInFlight = false
+        localModelsCacheGen &+= 1
         localModelsCacheCondition.broadcast()
         localModelsCacheCondition.unlock()
         LocalReasoningCapability.invalidate()
@@ -1769,16 +1950,7 @@ extension ModelManager {
 
         let waitLimit = localModelsScanWaitLimitOverrideForTests ?? localModelsScanWaitLimit
         let deadline = Date().addingTimeInterval(waitLimit)
-        localModelsScanInFlight = true
-        DispatchQueue.global(qos: .utility).async {
-            let scanned = scanLocalModels()
-
-            localModelsCacheCondition.lock()
-            cachedLocalModels = scanned
-            localModelsScanInFlight = false
-            localModelsCacheCondition.broadcast()
-            localModelsCacheCondition.unlock()
-        }
+        startLocalModelsScanLocked()
 
         if let cached = waitForLocalModelsScan(until: deadline) {
             localModelsCacheCondition.unlock()
@@ -1790,12 +1962,73 @@ extension ModelManager {
         }
     }
 
+    /// True once the background disk scan has populated the local-models
+    /// cache. Lets memoizing callers distinguish "model not installed" from
+    /// "scan hasn't landed yet" when using the non-blocking lookups.
+    nonisolated static var isLocalModelsCacheWarm: Bool {
+        localModelsCacheCondition.lock()
+        defer { localModelsCacheCondition.unlock() }
+        return cachedLocalModels != nil
+    }
+
+    /// Local models from the warm cache, never waiting on a scan. On a cold
+    /// cache this kicks off the background scan and returns the (possibly
+    /// empty) current state immediately — callers re-render once the scan
+    /// lands via their normal refresh ticks. This is the only local-models
+    /// entry point safe to call from a view body on the main thread.
+    nonisolated static func localModelsSnapshotNonBlocking() -> [MLXModel] {
+        localModelsCacheCondition.lock()
+        let cached = cachedLocalModels
+        if cached == nil && !localModelsScanInFlight {
+            startLocalModelsScanLocked()
+        }
+        localModelsCacheCondition.unlock()
+        return mergeExternalModels(into: cached ?? [])
+    }
+
+    /// Kick off the background disk scan. Caller must hold
+    /// `localModelsCacheCondition` with `localModelsScanInFlight == false`.
+    private nonisolated static func startLocalModelsScanLocked() {
+        localModelsScanInFlight = true
+        DispatchQueue.global(qos: .utility).async {
+            let scanned = scanLocalModels()
+
+            localModelsCacheCondition.lock()
+            cachedLocalModels = scanned
+            localModelsScanInFlight = false
+            localModelsCacheGen &+= 1
+            localModelsCacheCondition.broadcast()
+            localModelsCacheCondition.unlock()
+
+            // A cold scan may outlive discoverLocalModels()'s bounded wait.
+            // In that case launch-time picker builders have already published
+            // their partial snapshot, so merely filling cachedLocalModels is
+            // invisible until some unrelated download/provider event happens.
+            // Publish completion after the cache is ready so every local-model
+            // consumer rebuilds from the finished scan. The next discovery is
+            // cache-only, so this cannot recursively start another scan.
+            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+
+            // Warm the per-model capability caches while still on the scan
+            // queue. Both are lazily computed from on-disk config files, and a
+            // cold lookup otherwise happens on the main thread the first time
+            // a model is clicked or rendered (chat-template read, config.json
+            // vision probe) — an observed hang under disk pressure.
+            for model in scanned {
+                _ = LocalReasoningCapability.capability(forModelId: model.id)
+                _ = VLMDetection.isVLM(modelId: model.id)
+            }
+        }
+    }
+
     private nonisolated static func mergeExternalModels(into scanned: [MLXModel]) -> [MLXModel] {
         // Append externally-discovered bundles (HF cache, LM Studio, custom folders). Read
-        // fresh from the locator's in-memory registry each call (cheap) so a
-        // background rescan is reflected without invalidating the disk-scan
-        // cache above. Locally-present models win on id collision.
-        let external = ExternalModelLocator.models()
+        // from the locator's non-blocking snapshot: this runs on view-body
+        // call paths, and the locator's cold build reads every bundle's
+        // config.json plus weight sizes. A background rescan is reflected
+        // without invalidating the disk-scan cache above. Locally-present
+        // models win on id collision.
+        let external = ExternalModelLocator.modelsSnapshotNonBlocking()
         guard !external.isEmpty else { return scanned }
         let scannedIds = Set(scanned.map { $0.id.lowercased() })
         return scanned + external.filter { !scannedIds.contains($0.id.lowercased()) }
@@ -2004,7 +2237,13 @@ extension ModelManager {
                         id: id,
                         name: ModelMetadataParser.friendlyName(from: id),
                         description: L("Local model (detected)"),
-                        downloadURL: "https://huggingface.co/\(id)"
+                        downloadURL: "https://huggingface.co/\(id)",
+                        downloadSizeBytes: MLXModel.localBundleWeightSizeBytes(at: resolved),
+                        // The scan already runs off-main. Preserve the bundle's
+                        // architecture tag here so hot UI paths can distinguish
+                        // image-only from video-capable local VLMs without
+                        // re-reading config.json during SwiftUI layout.
+                        modelType: VLMDetection.readModelType(at: resolved)
                     )
                     models.append(model)
                 }

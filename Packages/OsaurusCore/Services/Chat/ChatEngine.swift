@@ -11,6 +11,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     private let services: [ModelService]
     private let installedModelsProvider: @Sendable () -> [String]
     private let remoteServicesProvider: @Sendable () async -> [ModelService]
+    private let reasoningCapabilityProvider: @Sendable (String) -> LocalReasoningCapability.Capability
+    private let agentModelOptionsProvider:
+        @Sendable (String) async -> [String: ModelOptionValue]?
 
     /// Source of the inference (for logging purposes)
     private var inferenceSource: InferenceSource = .httpAPI
@@ -25,11 +28,25 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 RemoteProviderManager.shared.connectedServices().map { $0 as ModelService }
             }
         },
+        reasoningCapabilityProvider:
+            @escaping @Sendable (String) ->
+            LocalReasoningCapability.Capability = {
+                LocalReasoningCapability.capability(forModelId: $0)
+            },
+        agentModelOptionsProvider:
+            @escaping @Sendable (String) async ->
+            [String: ModelOptionValue]? = { modelId in
+                await MainActor.run {
+                    ModelOptionsStore.shared.loadOptions(for: modelId)
+                }
+            },
         source: InferenceSource = .httpAPI
     ) {
         self.services = services
         self.installedModelsProvider = installedModelsProvider
         self.remoteServicesProvider = remoteServicesProvider
+        self.reasoningCapabilityProvider = reasoningCapabilityProvider
+        self.agentModelOptionsProvider = agentModelOptionsProvider
         self.inferenceSource = source
     }
     /// Errors thrown by `ChatEngine` that carry a classification so the
@@ -54,6 +71,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             /// to model-string routing, which could silently retarget a
             /// different local provider. Maps to 503.
             case remoteAgentUnavailable
+            /// An HTTP-origin request routed to the Osaurus Router without
+            /// spend authorization. Router requests are signed with the
+            /// user's master key and spend real credits, so key-less
+            /// loopback-trusted callers are refused unless the user opted in.
+            /// Maps to 403.
+            case routerSpendNotAuthorized
         }
 
         let kind: Kind
@@ -66,6 +89,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 return "No service is currently available to handle model '\(requested)'."
             case .remoteAgentUnavailable:
                 return "The selected remote agent isn't connected. Reconnect to the agent and try again."
+            case .routerSpendNotAuthorized:
+                return
+                    "This model routes through the Osaurus Router and spends account credits. Include a valid Osaurus access key (Authorization: Bearer <key>), or enable 'Allow local API access without a key' for the Router in Osaurus Credits settings."
             }
         }
 
@@ -75,6 +101,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             case .modelNotFound: return 404
             case .noServiceAvailable: return 503
             case .remoteAgentUnavailable: return 503
+            case .routerSpendNotAuthorized: return 403
             }
         }
     }
@@ -117,9 +144,27 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let repPenalty: Float? = nil
         let seedBits: UInt64? = request.seed.map { UInt64(bitPattern: Int64($0)) }
         let isJSONObject = (request.response_format?.type == "json_object")
+        // Internal UI-owned agent loops (Computer Use, AppleScript, and
+        // delegated text agents) construct fresh requests on every step. They
+        // do not own a composer-local option snapshot, so resolve the same
+        // persisted per-model choice the visible picker writes. Keep this
+        // strictly on `.chatUI` + explicit agent requests: ordinary chat,
+        // OpenAI tool requests, plugins, scheduled work, P2P, and remote-agent
+        // execution must not silently inherit GUI preferences.
+        let requestModelOptions: [String: ModelOptionValue]? =
+            if let explicit = request.modelOptions {
+                explicit
+            } else if inferenceSource == .chatUI,
+                request.isAgentRequest,
+                !request.runAsRemoteAgent
+            {
+                await agentModelOptionsProvider(request.model)
+            } else {
+                nil
+            }
         var modelOptions = Self.normalizedModelOptions(
             for: request.model,
-            requestOptions: request.modelOptions
+            requestOptions: requestModelOptions
         )
         let isHy3 = Hy3ReasoningProfile.matches(modelId: request.model)
         let requestReasoningEffort: String? = {
@@ -130,6 +175,36 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             else { return nil }
             return value
         }()
+
+        // An agent/tool run must not inherit a toggleable template's
+        // reasoning-on default merely because the caller stayed silent. That
+        // made every Ornith tool step spend thousands of hidden tokens before
+        // trivial calls. Detect the contract from the installed bundle rather
+        // than a model-name alias, and preserve every explicit UI/API choice.
+        // A schema paired with OpenAI `tool_choice: none` is an ordinary
+        // no-tool request, not an agent turn. Explicit agent markers still
+        // win because cap finalizers intentionally remove their tool schema.
+        let hasEnabledToolSurface =
+            request.tools?.isEmpty == false
+            && Self.allowsLocalToolDispatch(request.tool_choice)
+        let isAgentOrToolRequest = request.isAgentRequest || hasEnabledToolSurface
+        let usesReasoningEffortControl = ModelProfileRegistry.options(for: request.model)
+            .contains { $0.id == "reasoningEffort" }
+        if !request.runAsRemoteAgent,
+            !isHy3,
+            let agentEnableThinking = AgentReasoningPolicy.defaultEnableThinking(
+                isAgentOrToolRequest: isAgentOrToolRequest,
+                explicitEnableThinking: request.enable_thinking,
+                explicitReasoningEffort: requestReasoningEffort,
+                modelOptions: modelOptions,
+                usesReasoningEffortControl: usesReasoningEffortControl,
+                capability: reasoningCapabilityProvider(request.model)
+            ),
+            request.enable_thinking == nil,
+            modelOptions["disableThinking"] == nil
+        {
+            modelOptions["disableThinking"] = .bool(!agentEnableThinking)
+        }
 
         if isHy3 {
             if let requestReasoningEffort {
@@ -150,6 +225,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 modelOptions["reasoningEffort"] = .string(requestReasoningEffort)
             }
         }
+        ComputerUseTraceLog.recordEffectiveDispatch(
+            request: request,
+            modelOptions: modelOptions
+        )
+        AppleScriptTraceLog.recordEffectiveDispatch(
+            request: request,
+            modelOptions: modelOptions
+        )
 
         let params = GenerationParameters(
             temperature: temperature,
@@ -171,7 +254,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             runAsRemoteAgent: request.runAsRemoteAgent,
             suppressProgressUI: request.suppressProgressUI,
             warmupPrefill: request.warmupPrefill,
-            requestSource: inferenceSource
+            cacheStableSystemPrefix: request.cacheStableSystemPrefix,
+            requestSource: inferenceSource,
+            loadIntent: request.backgroundModelLoad ? .background : .interactive,
+            preserveExistingResidencyOwner: request.preserveExistingResidencyOwner
         )
 
         // Mode 2 (remote agent run): route to the *selected agent's provider*,
@@ -227,6 +313,47 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         return Dispatch(route: route, params: params, remoteServices: remoteServices)
     }
 
+    // MARK: - Osaurus Router spend gate
+
+    /// Pure decision core for the Router credit-spend gate, split out so the
+    /// policy is unit-testable without a live provider or HTTP channel.
+    ///
+    /// Osaurus Router requests are signed with the user's master key and
+    /// spend real credits, while the loopback HTTP API is deliberately
+    /// unauthenticated. Without this gate any local process could silently
+    /// drain the user's Router balance. Policy: HTTP-origin requests may
+    /// route to the Router only when the caller proved possession of a valid
+    /// access key, or the user explicitly opted in to key-less loopback
+    /// spend. App-internal sources (chat UI, plugins with their own
+    /// permission model, P2P) are not affected.
+    static func routerSpendAuthorizationError(
+        serviceIsOsaurusRouter: Bool,
+        source: InferenceSource,
+        callerHasVerifiedAccessKey: Bool,
+        allowsUnkeyedLoopbackSpend: Bool
+    ) -> EngineError? {
+        guard serviceIsOsaurusRouter, source == .httpAPI else { return nil }
+        if callerHasVerifiedAccessKey || allowsUnkeyedLoopbackSpend { return nil }
+        return EngineError(kind: .routerSpendNotAuthorized)
+    }
+
+    /// Enforce the Router spend gate for a resolved route. Must run in the
+    /// caller's task (before any detached producer) so the
+    /// `HTTPCallerContext` task-local bound by `HTTPHandler.runRequestTask`
+    /// is still visible.
+    private func checkRouterSpendAuthorization(service: ModelService) throws {
+        let isRouter =
+            (service as? RemoteProviderService)?.provider.providerType == .osaurusRouter
+        if let error = Self.routerSpendAuthorizationError(
+            serviceIsOsaurusRouter: isRouter,
+            source: inferenceSource,
+            callerHasVerifiedAccessKey: HTTPCallerContext.current?.hasVerifiedAccessKey == true,
+            allowsUnkeyedLoopbackSpend: OsaurusRouter.allowsUnkeyedLoopbackSpend
+        ) {
+            throw error
+        }
+    }
+
     /// Emit the opt-in `message_sent` KPI event for a top-level chat turn.
     ///
     /// De-dup rule (no protocol/flag plumbing): a "message" is a fresh
@@ -262,7 +389,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         guard let requestOptions else {
             return [:]
         }
-        guard ModelProfileRegistry.profile(for: model) != nil else {
+        guard
+            ModelProfileRegistry.profile(for: model) != nil
+                || ModelProfileRegistry.reasoningCapabilities(for: model) != nil
+        else {
             return requestOptions
         }
         return ModelProfileRegistry.normalizedOptions(for: model, persisted: requestOptions)
@@ -334,7 +464,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     static func serializeResponseForLog(_ response: ChatCompletionResponse) -> String? {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(response),
+        let recorded = SecretArgumentScrubber.recordedResponse(response)
+        guard let data = try? encoder.encode(recorded),
             let s = String(data: data, encoding: .utf8)
         else { return nil }
         return s
@@ -387,11 +518,15 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         toolInvocation: (name: String, args: String)?
     ) -> String? {
         if let (name, args) = toolInvocation {
+            let recordedArgs = SecretArgumentScrubber.recordedArguments(
+                toolName: name,
+                argumentsJSON: args
+            )
             // Try to embed `args` as a parsed JSON object so the UI can
             // pretty-print it; fall back to a string if it isn't valid JSON.
             let argsValue: Any =
-                (args.data(using: .utf8)
-                    .flatMap { try? JSONSerialization.jsonObject(with: $0) }) ?? args
+                (recordedArgs.data(using: .utf8)
+                    .flatMap { try? JSONSerialization.jsonObject(with: $0) }) ?? recordedArgs
             let envelope: [String: Any] = [
                 "tool_calls": [["name": name, "arguments": argsValue]]
             ]
@@ -405,6 +540,28 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             }
         }
         return accumulated.isEmpty ? nil : accumulated
+    }
+
+    /// Raw provider responses can contain model-emitted secret arguments.
+    /// Omit that diagnostic snapshot for secret-setting calls; the structured
+    /// response and tool-call log remain available in redacted form.
+    static func wireResponseBodyForLog(
+        _ body: Data?,
+        parsedToolNames: [String],
+        secretToolWasExposed: Bool
+    ) -> Data? {
+        guard let body, !body.isEmpty else { return nil }
+        // Fail closed when the request exposed the secret-setting capability:
+        // malformed provider output may defeat invocation parsing while still
+        // leaving raw secret material in the captured response. Also inspect
+        // every parsed invocation because a batch may place the secret call
+        // after an ordinary tool.
+        guard !secretToolWasExposed,
+            !parsedToolNames.contains(where: SecretArgumentScrubber.isSecretSetToolName(_:))
+        else {
+            return nil
+        }
+        return body
     }
 
     private static func canonicalToolArgumentsJSON(
@@ -494,6 +651,15 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         return value
     }
 
+    /// Insights describes user-visible/API work, not the hidden KV prefill
+    /// generations used to warm a chat session.
+    static func shouldLogInferenceToInsights(
+        source: InferenceSource,
+        warmupPrefill: Bool
+    ) -> Bool {
+        source == .chatUI && !warmupPrefill
+    }
+
     /// Build a non-stream OpenAI-style response from one or more tool
     /// invocations parsed out of a single completion. Local models can emit
     /// multiple `<tool_call>` blocks per response; OpenAI clients expect a
@@ -515,12 +681,17 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         requestBodyJSON: String? = nil,
         tools: [Tool]? = nil,
         connection: RequestConnectionInfo? = nil,
-        logPath: String? = nil
+        logPath: String? = nil,
+        warmupPrefill: Bool = false
     ) -> ChatCompletionResponse {
         let schemasByName = Dictionary(
             uniqueKeysWithValues: (tools ?? []).map { ($0.function.name, $0.function.parameters) }
         )
         let toolCalls: [ToolCall] = invocations.map { inv in
+            ComputerUseTraceLog.recordRawInvocation(
+                toolName: inv.toolName,
+                arguments: inv.jsonArguments
+            )
             let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
             let callId = inv.toolCallId ?? "call_" + String(raw.prefix(24))
             return ToolCall(
@@ -567,7 +738,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             system_fingerprint: nil
         )
 
-        if inferenceSource == .chatUI {
+        if Self.shouldLogInferenceToInsights(
+            source: inferenceSource,
+            warmupPrefill: warmupPrefill
+        ) {
             let durationMs = Date().timeIntervalSince(startTime) * 1000
             InsightsService.logInference(
                 source: inferenceSource,
@@ -580,7 +754,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 temperature: temperature,
                 maxTokens: maxTokens,
                 toolCalls: invocations.map {
-                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
+                    ToolCallLog(
+                        name: $0.toolName,
+                        arguments: SecretArgumentScrubber.recordedArguments(
+                            toolName: $0.toolName,
+                            argumentsJSON: $0.jsonArguments
+                        )
+                    )
                 },
                 finishReason: .toolCalls,
                 requestBody: requestBodyJSON,
@@ -622,6 +802,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
         switch route {
         case .service(let service, let effectiveModel):
+            try checkRouterSpendAuthorization(service: service)
             emitMessageSentIfPrimaryTurn(
                 request: request,
                 service: service,
@@ -674,9 +855,19 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             )
             let temp = temperature
             let maxTok = maxTokens
+            let warmupPrefill = request.warmupPrefill
+            let shouldLogToInsights = Self.shouldLogInferenceToInsights(
+                source: source,
+                warmupPrefill: warmupPrefill
+            )
             // Capture the request body up-front so the producer task does not
             // need to retain `request` (a non-Sendable in Swift 6 strict mode).
-            let requestBodyJSON = source == .chatUI ? Self.serializeRequestForLog(request) : nil
+            let requestBodyJSON =
+                shouldLogToInsights ? Self.serializeRequestForLog(request) : nil
+            let secretToolWasExposed =
+                request.tools?.contains {
+                    SecretArgumentScrubber.isSecretSetToolName($0.function.name)
+                } ?? false
             // `turnId` is a Sendable UUID, so capturing it (unlike `request`)
             // is safe for the detached producer — correlates the log back to
             // the chat assistant turn for the per-message Insights button.
@@ -695,7 +886,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 requestBodyJSON: requestBodyJSON,
                 connection: remoteConn?.info,
                 logPath: remoteConn?.path,
-                wireProbe: wireProbe
+                wireProbe: wireProbe,
+                secretToolWasExposed: secretToolWasExposed,
+                warmupPrefill: warmupPrefill
             )
 
         case .none:
@@ -828,9 +1021,15 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         requestBodyJSON: String? = nil,
         connection: RequestConnectionInfo? = nil,
         logPath: String? = nil,
-        wireProbe: WireTransportProbe? = nil
+        wireProbe: WireTransportProbe? = nil,
+        secretToolWasExposed: Bool = false,
+        warmupPrefill: Bool = false
     ) -> AsyncThrowingStream<String, Error> {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+        let shouldLogToInsights = Self.shouldLogInferenceToInsights(
+            source: source,
+            warmupPrefill: warmupPrefill
+        )
 
         // Capture the background-task id at construction time (still on
         // the parent task) so the detached producer below can forward
@@ -897,6 +1096,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             var finishReason: InferenceLog.FinishReason = .stop
             var errorMsg: String? = nil
             var toolInvocation: (name: String, args: String)? = nil
+            var parsedToolNames: [String] = []
             var lastDeltaTime = startTime
             // Accumulate the streamed assistant text so the Insights Response
             // tab can show what was produced. Only retained when logging is
@@ -905,7 +1105,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             // (Chat UI source). HTTP API requests are logged by HTTPHandler
             // with the upstream body, so accumulating here would just waste
             // memory as the buffer grows with the stream.
-            let shouldAccumulate = source == .chatUI
+            let shouldAccumulate = shouldLogToInsights
             var responseAccumulator = ""
 
             print("[Osaurus][Stream] Starting stream wrapper for model: \(model)")
@@ -1048,6 +1248,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 }
             } catch let invs as ServiceToolInvocations {
                 print("[Osaurus][Stream] Tool invocations (batch): count=\(invs.invocations.count)")
+                parsedToolNames = invs.invocations.map(\.toolName)
                 if let first = invs.invocations.first {
                     toolInvocation = (first.toolName, first.jsonArguments)
                 }
@@ -1055,6 +1256,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 continuation.finish(throwing: invs)
             } catch let inv as ServiceToolInvocation {
                 print("[Osaurus][Stream] Tool invocation: \(inv.toolName)")
+                parsedToolNames = [inv.toolName]
                 toolInvocation = (inv.toolName, inv.jsonArguments)
                 finishReason = .toolCalls
                 continuation.finish(throwing: inv)
@@ -1072,9 +1274,19 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             }
 
             // Log the completed inference (only for Chat UI - HTTP requests are logged by HTTPHandler)
-            if source == .chatUI {
+            if shouldLogToInsights {
                 let durationMs = Date().timeIntervalSince(startTime) * 1000
-                let toolCallsLog = toolInvocation.map { [ToolCallLog(name: $0.name, arguments: $0.args)] }
+                let toolCallsLog = toolInvocation.map {
+                    [
+                        ToolCallLog(
+                            name: $0.name,
+                            arguments: SecretArgumentScrubber.recordedArguments(
+                                toolName: $0.name,
+                                argumentsJSON: $0.args
+                            )
+                        )
+                    ]
+                }
 
                 // Snapshot the real wire bytes (post-scrub request + raw
                 // pre-unscrub response) so the Insights "Server" toggle shows
@@ -1102,7 +1314,11 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         toolInvocation: toolInvocation
                     ),
                     wireRequestBody: wireSnapshot?.request,
-                    wireResponseBody: (wireSnapshot?.response).flatMap { $0.isEmpty ? nil : $0 },
+                    wireResponseBody: Self.wireResponseBodyForLog(
+                        wireSnapshot?.response,
+                        parsedToolNames: parsedToolNames,
+                        secretToolWasExposed: secretToolWasExposed
+                    ),
                     connection: connection,
                     path: logPath ?? "/chat/completions"
                 )
@@ -1133,10 +1349,15 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let inputTokens = estimateInputTokens(messages)
         let temperature = request.temperature
         let maxTokens = request.resolvedMaxTokens ?? 16384
+        let shouldLogToInsights = Self.shouldLogInferenceToInsights(
+            source: inferenceSource,
+            warmupPrefill: request.warmupPrefill
+        )
         // Capture the request body once so all four downstream log paths
         // (text-only, text-with-tools, tool-calls batch, tool-calls single)
         // surface the same prompt + tools in the Insights detail pane.
-        let requestBodyJSON = inferenceSource == .chatUI ? Self.serializeRequestForLog(request) : nil
+        let requestBodyJSON =
+            shouldLogToInsights ? Self.serializeRequestForLog(request) : nil
         let requestId = request.idempotencyKey
         // Carry the caller's `ttftTrace` through to non-streaming requests
         // for parity with `streamChat` — useful when an HTTP route runs the
@@ -1151,6 +1372,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
         switch route {
         case .service(let service, let effectiveModel):
+            try checkRouterSpendAuthorization(service: service)
             emitMessageSentIfPrimaryTurn(
                 request: request,
                 service: service,
@@ -1277,7 +1499,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     )
 
                     // Log the inference (only for Chat UI - HTTP requests are logged by HTTPHandler)
-                    if inferenceSource == .chatUI {
+                    if shouldLogToInsights {
                         let durationMs = Date().timeIntervalSince(startTime) * 1000
                         InsightsService.logInference(
                             source: inferenceSource,
@@ -1315,7 +1537,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         requestBodyJSON: requestBodyJSON,
                         tools: tools,
                         connection: remoteConn?.info,
-                        logPath: loggedPath
+                        logPath: loggedPath,
+                        warmupPrefill: request.warmupPrefill
                     )
                 } catch let inv as ServiceToolInvocation {
                     return Self.makeToolCallResponse(
@@ -1334,7 +1557,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         requestBodyJSON: requestBodyJSON,
                         tools: tools,
                         connection: remoteConn?.info,
-                        logPath: loggedPath
+                        logPath: loggedPath,
+                        warmupPrefill: request.warmupPrefill
                     )
                 }
             }
@@ -1406,7 +1630,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             )
 
             // Log the inference (only for Chat UI - HTTP requests are logged by HTTPHandler)
-            if inferenceSource == .chatUI {
+            if shouldLogToInsights {
                 let durationMs = Date().timeIntervalSince(startTime) * 1000
                 InsightsService.logInference(
                     source: inferenceSource,

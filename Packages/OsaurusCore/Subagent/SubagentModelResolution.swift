@@ -9,7 +9,8 @@
 //  and stash the plan for `makeHandoff()`. This folds that into one precedence
 //  (`pickModel`) + one availability gate (`availableOverride`) + one live
 //  `resolve`, so a new chat-driven kind gets the whole behaviour for free and
-//  the three kinds can never drift on precedence, the availability fallback, or
+//  the three kinds can never drift on precedence, fail-closed override
+//  availability, or
 //  the eval-bypasses-residency invariant.
 //
 //  Image is deliberately NOT a client: it owns its own model system
@@ -31,7 +32,21 @@ enum SubagentModelResolution {
     /// will run. Bundled so a kind stores one value and returns one model.
     struct Resolved: Sendable {
         let model: String
+        /// Canonical full installed id for a local bundle. The user-facing
+        /// `model` string may be a short alias, but admission and batching must
+        /// never collapse two organizations that publish the same basename.
+        let installedModelID: String?
         let decision: SubagentResidencyDecision
+
+        init(
+            model: String,
+            installedModelID: String? = nil,
+            decision: SubagentResidencyDecision
+        ) {
+            self.model = model
+            self.installedModelID = installedModelID
+            self.decision = decision
+        }
     }
 
     /// Pure model precedence: the eval seam (forced run model) wins, then an
@@ -58,9 +73,10 @@ enum SubagentModelResolution {
         return trimmed
     }
 
-    /// The stored override id IF it is still usable, else `nil` so the caller
-    /// falls back to the kind default instead of hard-failing on a model that
-    /// was deleted or whose provider disconnected. Local installs are
+    /// The stored override id IF it is still usable, else `nil`. A caller with
+    /// a non-empty configured override must treat nil as unavailable rather
+    /// than silently running the kind default: that would execute an
+    /// unconfigured model. Local installs are
     /// authoritative (the picker cache may not list every bundle); a remote id
     /// is checked against `ModelPickerItemCache`, which mirrors connected
     /// providers. A cold cache can't disprove availability, so the id is
@@ -69,6 +85,15 @@ enum SubagentModelResolution {
     static func availableOverride(_ id: String?) -> String? {
         guard let trimmed = trimmedNonEmpty(id) else { return nil }
         if ModelManager.findInstalledModel(named: trimmed) != nil { return trimmed }
+        if let remote = RemoteProviderManager.shared.connectedSpawnModelTarget(
+            forStoredId: trimmed
+        ) {
+            return remote.id
+        }
+        // A canonical spawn-only remote id must always be backed by a live
+        // connected provider/service. Do not let a cold picker cache turn a
+        // disconnected or removed UUID target into a trusted opaque model id.
+        if SpawnRemoteModelIdentity.parse(trimmed) != nil { return nil }
         guard ModelPickerItemCache.shared.isLoaded else { return trimmed }
         return ModelPickerItemCache.shared.items.contains { $0.id == trimmed } ? trimmed : nil
     }
@@ -80,29 +105,29 @@ enum SubagentModelResolution {
     ///   the uniform eval-bypasses-residency invariant, so a deterministic lane
     ///   never depends on live GPU residency.
     /// - Otherwise: resolves the launching agent's `settings`, reads the
-    ///   per-agent `effectiveSubagentModel` override, drops it through
-    ///   `availableOverride`, falls back to `defaultModel()`, then runs the
+    ///   per-agent `effectiveSubagentModel` override, requires it to pass
+    ///   `availableOverride` when configured, otherwise uses `defaultModel()`,
+    ///   then runs the
     ///   shared `SubagentResidency.resolve` (reject-before-evict).
     ///
     /// `agentId` is the launching agent whose override map + settings are read
     /// (spawn/computer_use pass `scope.agentId`). `defaultModel` is the kind's
-    /// default model source, evaluated on the
-    /// main actor only when no usable override is present.
+    /// default model source, evaluated on the main actor only when no override
+    /// is configured. An unavailable configured override fails closed.
     ///
-    /// `requestedModel` is an EXPLICIT run-model target the caller resolved
-    /// itself (the `spawn_model` tool's `model` argument). Unlike `evalModel` it
-    /// does NOT bypass residency — it is used as-is (trusted; the kind already
-    /// pool-gated it) and still runs the live `SubagentResidency` decision so a
-    /// local target evicts the resident chat model and a remote one does not. It
-    /// ranks above the per-agent override and the kind default, and deliberately
-    /// skips the `availableOverride` cache check so an explicit target isn't
-    /// silently swapped for a default — an unavailable id surfaces a real load
-    /// error from residency instead.
+    /// `requestedModel` is an EXPLICIT run-model target (the `spawn_model`
+    /// tool's `model` argument, including each `spawn_batch` model job). Unlike
+    /// `evalModel` it does NOT bypass residency. It ranks above the per-agent
+    /// override and kind default, but its persisted allow-list membership is
+    /// not treated as proof of current availability: the target must still be
+    /// Foundation, an installed local model, or a model advertised by a
+    /// currently connected provider before the residency decision can run.
     static func resolve(
         capabilityId: String,
         agentId: UUID?,
         evalModel: String?,
         requestedModel: String? = nil,
+        invokingParentModelName: String? = nil,
         idleWaitSeconds: Int,
         deniedMessage: String,
         unavailableMessage: String,
@@ -118,20 +143,33 @@ enum SubagentModelResolution {
 
         let config = SubagentConfigurationStore.snapshot()
         let isDefault = agentId == Agent.defaultId
-        let model: String? = await MainActor.run {
+        let requested = await MainActor.run {
+            currentRequestedTarget(requestedModel)
+        }
+        if trimmedNonEmpty(requestedModel) != nil, requested == nil {
+            throw SubagentError.unavailable(unavailableMessage)
+        }
+        let model: String? = try await MainActor.run {
             // Explicit target (spawn_model) wins over the override/default, but
-            // still flows into the residency decision below (not a bypass).
-            if let requested = trimmedNonEmpty(requestedModel) { return requested }
+            // only after current availability was proven above. It still flows
+            // into the residency decision below (not a bypass).
+            if let requested { return requested }
             let settings = agentId.flatMap { AgentManager.shared.agent(for: $0)?.settings }
-            let override = SubagentToolVisibility.effectiveSubagentModel(
+            let configuredOverride = SubagentToolVisibility.effectiveSubagentModel(
                 capabilityId: capabilityId,
                 isDefault: isDefault,
                 config: config,
                 settings: settings
             )
+            if let configuredOverride = trimmedNonEmpty(configuredOverride) {
+                guard let available = availableOverride(configuredOverride) else {
+                    throw SubagentError.unavailable(unavailableMessage)
+                }
+                return available
+            }
             return pickModel(
                 evalModel: nil,
-                availableOverride: availableOverride(override),
+                availableOverride: nil,
                 defaultModel: defaultModel()
             )
         }
@@ -143,8 +181,38 @@ enum SubagentModelResolution {
             modelName: model,
             config: config,
             idleWaitSeconds: idleWaitSeconds,
-            deniedMessage: deniedMessage
+            deniedMessage: deniedMessage,
+            invokingParentModelName: invokingParentModelName
         )
-        return Resolved(model: model, decision: decision)
+        let installedModelID =
+            decision.isLocal ? ModelManager.findInstalledModel(named: model)?.id : nil
+        return Resolved(
+            model: model,
+            installedModelID: installedModelID,
+            decision: decision
+        )
+    }
+
+    /// Normalize and validate one explicit model-only spawn target against
+    /// current runtime truth. This is intentionally independent of the picker
+    /// cache: a cache row can be cold or stale, while local installation state
+    /// and the connected provider catalog are the owning sources used during
+    /// preparation. Both `spawn_model` and `spawn_batch` reuse this check via
+    /// `resolve`, before admission or any model unload/load can occur.
+    @MainActor
+    static func currentRequestedTarget(_ id: String?) -> String? {
+        guard let trimmed = trimmedNonEmpty(id) else { return nil }
+        if trimmed == ModelPickerItem.foundation().id {
+            return AppConfiguration.shared.foundationModelAvailable ? trimmed : nil
+        }
+        if ModelManager.findInstalledModel(named: trimmed) != nil {
+            return trimmed
+        }
+        if let remote = RemoteProviderManager.shared.connectedSpawnModelTarget(
+            forStoredId: trimmed
+        ) {
+            return remote.id
+        }
+        return nil
     }
 }

@@ -607,6 +607,43 @@ struct MemoryRelevanceGateTests {
         #expect(verdict == .transcript)
     }
 
+    @Test func exactOutputDirectiveDoesNotInjectTranscript() {
+        for query in [
+            "Reply exactly DELTA-OK.",
+            "Use the get_current_time tool exactly once, then reply exactly DONE.",
+            "Repeat this verbatim: CURRENT-TASK.",
+            "Copy the supplied paragraph word for word.",
+            "Use the exact words ALPHA-OK.",
+        ] {
+            let verdict = MemoryRelevanceGate.decide(
+                query: query,
+                identity: nil,
+                knownEntities: [],
+                mode: .heuristic
+            )
+            #expect(verdict == .none)
+        }
+    }
+
+    @Test func exactlyWithExplicitPriorWordsReturnsTranscript() {
+        for query in [
+            "What were my exact words about the deploy?",
+            "Exact words ultramarine prism-441",
+            "What exact words did I type for the memory fixture?",
+            "What exactly did I say about the deployment?",
+            "What did I write exactly?",
+            "Repeat back what I typed.",
+        ] {
+            let verdict = MemoryRelevanceGate.decide(
+                query: query,
+                identity: nil,
+                knownEntities: [],
+                mode: .heuristic
+            )
+            #expect(verdict == .transcript)
+        }
+    }
+
     @Test func unrelatedQueryReturnsNone() {
         let verdict = MemoryRelevanceGate.decide(
             query: "What's 2 + 2?",
@@ -633,6 +670,39 @@ struct MemoryRelevanceGateTests {
             query: "let me know",
             identity: nil,
             knownEntities: ["AI"],
+            mode: .heuristic
+        )
+        #expect(verdict == .none)
+    }
+
+    @Test func possessiveReferenceReturnsPinned() {
+        // "my X" is a direct memory signal: only the store knows what the
+        // user's own things are called.
+        let verdict = MemoryRelevanceGate.decide(
+            query: "What is the name of my boat?",
+            identity: nil,
+            knownEntities: [],
+            mode: .heuristic
+        )
+        #expect(verdict == .pinned)
+    }
+
+    @Test func possessiveReferenceMidSentenceReturnsPinned() {
+        let verdict = MemoryRelevanceGate.decide(
+            query: "Draft an invitation that names my favorite restaurant.",
+            identity: nil,
+            knownEntities: [],
+            mode: .heuristic
+        )
+        #expect(verdict == .pinned)
+    }
+
+    @Test func bareMyWithoutNounDoesNotTrigger() {
+        // Trailing "my" with no referent shouldn't open the gate.
+        let verdict = MemoryRelevanceGate.decide(
+            query: "oh my",
+            identity: nil,
+            knownEntities: [],
             mode: .heuristic
         )
         #expect(verdict == .none)

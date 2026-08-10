@@ -111,6 +111,62 @@ struct ProviderPresetsTests {
         )
     }
 
+    @Test func fireworksPreset_configurationMatchesOfficialAPI() throws {
+        let config = ProviderPreset.fireworks.configuration
+
+        #expect(config.name == "Fireworks AI")
+        #expect(config.host == "api.fireworks.ai")
+        #expect(config.providerProtocol == .https)
+        #expect(config.port == nil)
+        #expect(config.basePath == "/inference/v1")
+        #expect(config.authType == .apiKey)
+        #expect(config.providerType == .openaiLegacy)
+    }
+
+    @Test func fireworksPreset_isListedAsKnownPreset() throws {
+        #expect(ProviderPreset.knownPresets.contains(.fireworks))
+    }
+
+    @Test func matching_providerWithFireworksHost_resolvesToFireworksPreset() throws {
+        let provider = RemoteProvider(
+            name: "My Fireworks",
+            host: "api.fireworks.ai",
+            basePath: "/inference/v1",
+            authType: .apiKey,
+            providerType: .openaiLegacy
+        )
+
+        #expect(ProviderPreset.matching(provider: provider) == .fireworks)
+    }
+
+    @Test func fireworksPreset_chatEndpointResolvesToChatCompletions() throws {
+        let provider = RemoteProvider(
+            name: "Fireworks AI",
+            host: ProviderPreset.fireworks.configuration.host,
+            basePath: ProviderPreset.fireworks.configuration.basePath,
+            authType: .apiKey,
+            providerType: ProviderPreset.fireworks.configuration.providerType
+        )
+
+        #expect(
+            provider.url(for: provider.providerType.chatEndpoint)?.absoluteString
+                == "https://api.fireworks.ai/inference/v1/chat/completions"
+        )
+    }
+
+    @Test func fireworksPreset_isDetectedByFireworksModelDiscovery() throws {
+        let config = ProviderPreset.fireworks.configuration
+        let provider = RemoteProvider(
+            name: config.name,
+            host: config.host,
+            basePath: config.basePath,
+            authType: config.authType,
+            providerType: config.providerType
+        )
+
+        #expect(RemoteProviderService.isFireworksProvider(provider))
+    }
+
     @Test func minimaxPreset_configurationMatchesOfficialAPI() throws {
         let config = ProviderPreset.minimax.configuration
 

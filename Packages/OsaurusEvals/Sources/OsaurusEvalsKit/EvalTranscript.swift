@@ -18,6 +18,15 @@
 
 import Foundation
 
+struct EvalTrialIdentity: Sendable, Equatable {
+    let ordinal: Int
+    let total: Int
+}
+
+enum EvalTrialExecutionContext {
+    @TaskLocal static var current: EvalTrialIdentity?
+}
+
 /// A persisted transcript for one failed/errored case. Field coverage
 /// intentionally follows the union of the runner transcripts
 /// (`AgentLoopTranscript`, `CapabilityClaimsTranscript`); optional fields
@@ -48,6 +57,115 @@ public struct EvalCaseTranscript: Codable, Sendable {
         }
     }
 
+    public struct StepEvent: Codable, Sendable {
+        public let step: Int
+        public let stopReason: String?
+        public let contentCharacterCount: Int
+        public let reasoningCharacterCount: Int
+        public let contentPreview: String?
+        public let reasoningPreview: String?
+        public let sawToolCallProgress: Bool
+        public let pendingToolName: String?
+        public let toolArgumentCharacters: Int
+        public let completionTokens: Int?
+        public let decodeTokensPerSecond: Double?
+        /// Always populated for current artifacts. Historical transcripts that
+        /// predate this field decode as `unavailable_legacy_transcript`.
+        public let decodeThroughputAttribution: String
+        public let requestedEnableThinking: Bool?
+        public let thinkingState: String?
+
+        public init(
+            step: Int,
+            stopReason: String?,
+            contentCharacterCount: Int,
+            reasoningCharacterCount: Int,
+            contentPreview: String?,
+            reasoningPreview: String?,
+            sawToolCallProgress: Bool,
+            pendingToolName: String?,
+            toolArgumentCharacters: Int,
+            completionTokens: Int? = nil,
+            decodeTokensPerSecond: Double? = nil,
+            decodeThroughputAttribution: String? = nil,
+            requestedEnableThinking: Bool?,
+            thinkingState: String? = nil
+        ) {
+            self.step = step
+            self.stopReason = stopReason
+            self.contentCharacterCount = contentCharacterCount
+            self.reasoningCharacterCount = reasoningCharacterCount
+            self.contentPreview = contentPreview
+            self.reasoningPreview = reasoningPreview
+            self.sawToolCallProgress = sawToolCallProgress
+            self.pendingToolName = pendingToolName
+            self.toolArgumentCharacters = toolArgumentCharacters
+            self.completionTokens = completionTokens
+            self.decodeTokensPerSecond = decodeTokensPerSecond
+            self.decodeThroughputAttribution = decodeThroughputAttribution
+                ?? (decodeTokensPerSecond != nil
+                    ? "measured_vmlx_info"
+                    : "unavailable_no_vmlx_info")
+            self.requestedEnableThinking = requestedEnableThinking
+            self.thinkingState = thinkingState
+                ?? requestedEnableThinking.map {
+                    $0 ? "explicitEnabled" : "explicitDisabled"
+                } ?? "runtimeDefault"
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case step
+            case stopReason
+            case contentCharacterCount
+            case reasoningCharacterCount
+            case contentPreview
+            case reasoningPreview
+            case sawToolCallProgress
+            case pendingToolName
+            case toolArgumentCharacters
+            case completionTokens
+            case decodeTokensPerSecond
+            case decodeThroughputAttribution
+            case requestedEnableThinking
+            case thinkingState
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            step = try container.decode(Int.self, forKey: .step)
+            stopReason = try container.decodeIfPresent(String.self, forKey: .stopReason)
+            contentCharacterCount = try container.decode(Int.self, forKey: .contentCharacterCount)
+            reasoningCharacterCount = try container.decode(
+                Int.self,
+                forKey: .reasoningCharacterCount
+            )
+            contentPreview = try container.decodeIfPresent(String.self, forKey: .contentPreview)
+            reasoningPreview = try container.decodeIfPresent(String.self, forKey: .reasoningPreview)
+            sawToolCallProgress = try container.decode(Bool.self, forKey: .sawToolCallProgress)
+            pendingToolName = try container.decodeIfPresent(String.self, forKey: .pendingToolName)
+            toolArgumentCharacters = try container.decode(Int.self, forKey: .toolArgumentCharacters)
+            completionTokens = try container.decodeIfPresent(Int.self, forKey: .completionTokens)
+            decodeTokensPerSecond = try container.decodeIfPresent(
+                Double.self,
+                forKey: .decodeTokensPerSecond
+            )
+            decodeThroughputAttribution = try container.decodeIfPresent(
+                String.self,
+                forKey: .decodeThroughputAttribution
+            ) ?? (decodeTokensPerSecond != nil
+                ? "measured_vmlx_info"
+                : "unavailable_legacy_transcript")
+            requestedEnableThinking = try container.decodeIfPresent(
+                Bool.self,
+                forKey: .requestedEnableThinking
+            )
+            thinkingState = try container.decodeIfPresent(String.self, forKey: .thinkingState)
+                ?? requestedEnableThinking.map {
+                    $0 ? "explicitEnabled" : "explicitDisabled"
+                } ?? "runtimeDefault"
+        }
+    }
+
     public let caseId: String
     public let domain: String
     public let modelId: String
@@ -67,6 +185,12 @@ public struct EvalCaseTranscript: Codable, Sendable {
     public let exit: String?
     /// Driver-staged transient notices (budget warnings, dedupe, nudges).
     public let notices: [String]?
+    /// Bounded per-model-step generation/tool-envelope forensics.
+    public let stepDiagnostics: [StepEvent]?
+    /// Repeat-run identity. nil for ordinary one-shot cases and reports
+    /// produced before per-trial evidence preservation.
+    public let trial: Int?
+    public let trialCount: Int?
     public let error: String?
 
     public init(
@@ -83,6 +207,9 @@ public struct EvalCaseTranscript: Codable, Sendable {
         iterations: Int? = nil,
         exit: String? = nil,
         notices: [String]? = nil,
+        stepDiagnostics: [StepEvent]? = nil,
+        trial: Int? = nil,
+        trialCount: Int? = nil,
         error: String? = nil
     ) {
         self.caseId = caseId
@@ -98,6 +225,9 @@ public struct EvalCaseTranscript: Codable, Sendable {
         self.iterations = iterations
         self.exit = exit
         self.notices = notices
+        self.stepDiagnostics = stepDiagnostics
+        self.trial = trial ?? EvalTrialExecutionContext.current?.ordinal
+        self.trialCount = trialCount ?? EvalTrialExecutionContext.current?.total
         self.error = error
     }
 }
@@ -106,8 +236,8 @@ public struct EvalCaseTranscript: Codable, Sendable {
 /// `<report>.transcripts/` when `--transcripts` is set; runners hand it
 /// every LLM-case transcript and it persists ONLY failed/errored rows
 /// (a passing case's transcript is rarely interesting and multiplies
-/// disk fast). Repeat trials overwrite the same file — only failing
-/// trials write, so the file always holds a failing trial's forensics.
+/// disk fast). Repeat failures carry a trial ordinal and write distinct files,
+/// so stochastic protocol failures do not overwrite one another.
 @MainActor
 public enum EvalTranscriptStore {
     /// Destination directory; nil (default) disables persistence.
@@ -142,7 +272,10 @@ public enum EvalTranscriptStore {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
             let data = try encoder.encode(transcript)
             let safeName = transcript.caseId.replacingOccurrences(of: "/", with: "-")
-            try data.write(to: directory.appendingPathComponent("\(safeName).json"))
+            let suffix = transcript.trial.map { ".trial-\($0)" } ?? ""
+            try data.write(
+                to: directory.appendingPathComponent("\(safeName)\(suffix).json")
+            )
             writtenCount += 1
         } catch {
             FileHandle.standardError.write(

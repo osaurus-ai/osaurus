@@ -146,31 +146,49 @@ private struct AnimatedTabButton<Tab: AnimatedTabItem>: View {
 // MARK: - Tools Tab (for ToolsManagerView)
 
 enum ToolsTab: String, CaseIterable, AnimatedTabItem {
-    case available = "Available"
-    case remote = "Remote"
-    case sandbox = "Sandbox"
+    case all = "All"
+    case connections = "Connections"
+    case custom = "Custom"
 
     var title: String {
         switch self {
-        case .available: return L("Available")
-        case .remote: return L("Remote")
-        case .sandbox: return L("Sandbox")
+        case .all: return L("All")
+        case .connections: return L("Connections")
+        case .custom: return L("Custom")
+        }
+    }
+
+    /// Resolves a deep-link raw value, accepting the legacy tab names
+    /// ("Available" / "Remote" / "Sandbox") that pre-date the
+    /// All / Connections / Custom information architecture.
+    static func resolved(from rawValue: String) -> ToolsTab? {
+        if let tab = ToolsTab(rawValue: rawValue) { return tab }
+        switch rawValue.lowercased() {
+        case "available": return .all
+        case "remote": return .connections
+        case "sandbox": return .custom
+        default: return nil
         }
     }
 }
 
 // MARK: - Skills Tab (for SkillsView)
 
+/// Source-based filters for the Skills library. Every installed skill is
+/// automatically available to custom agents, so the tabs slice by where a
+/// skill came from rather than by an enablement state.
 enum SkillsTab: String, CaseIterable, AnimatedTabItem {
     case all = "All"
-    case installed = "Installed"
-    case defaults = "Default"
+    case builtIn = "Built-in"
+    case yours = "Yours"
+    case fromPlugins = "From Plugins"
 
     var title: String {
         switch self {
         case .all: return L("All")
-        case .installed: return L("Installed")
-        case .defaults: return L("Default")
+        case .builtIn: return L("Built-in")
+        case .yours: return L("Yours")
+        case .fromPlugins: return L("From Plugins")
         }
     }
 }
@@ -197,7 +215,7 @@ enum PluginsTab: String, CaseIterable, AnimatedTabItem {
     #Preview {
         struct PreviewWrapper: View {
             @State private var modelTab: ModelListTab = .all
-            @State private var toolsTab: ToolsTab = .available
+            @State private var toolsTab: ToolsTab = .all
             @State private var pluginsTab: PluginsTab = .installed
 
             var body: some View {
@@ -208,8 +226,7 @@ enum PluginsTab: String, CaseIterable, AnimatedTabItem {
                     )
 
                     AnimatedTabSelector(
-                        selection: $toolsTab,
-                        counts: [.available: 8, .remote: 2]
+                        selection: $toolsTab
                     )
 
                     AnimatedTabSelector(

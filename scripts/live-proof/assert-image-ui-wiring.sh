@@ -24,8 +24,8 @@ checks = [
     ("Chat sends image generation options", "ImageGenerationParameters(" in chat and "negativePrompt: settings.normalizedNegativePrompt" in chat),
     ("Chat sends image edit options", "ImageEditParameters(" in chat and "sourceImages: sourceImages" in chat and "strength: settings.clampedStrength" in chat),
     ("Floating input accepts image settings binding", "@Binding var imageComposerSettings: ImageComposerSettings" in floating),
-    ("Floating input shows image controls", "private var imageComposerControls" in floating),
-    ("Floating input passes negative prompt", "private var negativePrompt: Binding<String>" in floating and "imageComposerSettings.negativePrompt" in floating),
+    ("Floating input shows image controls", "private var imageComposerChips" in floating),
+    ("Floating input passes negative prompt", "private var negativePromptButton" in floating and "imageComposerSettings.negativePrompt" in floating),
     ("Floating input exposes steps and guidance", "imageComposerSettings.steps" in floating and "imageComposerSettings.guidance" in floating),
 ]
 

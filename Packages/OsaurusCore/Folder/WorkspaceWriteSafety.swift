@@ -5,7 +5,46 @@
 //  Shared guardrails for host-folder write tools.
 //
 
+import CryptoKit
 import Foundation
+
+/// Shared source-vs-document routing for workspace tools.
+///
+/// UTF-8 text is source, even when the extension also names a renderable
+/// format (HTML, RTF, SVG). Binary document packages take the parser path and
+/// cannot be fabricated by the UTF-8 text writer.
+enum WorkspaceFileFormatPolicy {
+    static let parserPreferredExtensions: Set<String> = [
+        "pdf",
+        "doc", "docx", "docm", "dot", "dotx", "dotm", "rtfd",
+        "xls", "xlsx", "xlsm", "xlsb", "xlt", "xltx", "xltm",
+        "ppt", "pptx", "pptm", "pot", "potx", "potm", "pps", "ppsx", "ppsm",
+        "pages", "numbers", "key",
+        "odt", "ods", "odp",
+    ]
+
+    /// Files whose successful persistence is not evidence that the delivered
+    /// program or interactive artifact actually runs.
+    static let runnableArtifactExtensions: Set<String> = [
+        "html", "htm",
+        "js", "mjs", "cjs", "jsx",
+        "ts", "tsx",
+        "py", "rb", "php",
+        "sh", "bash", "zsh",
+        "swift", "c", "cc", "cpp", "cxx", "h", "hpp",
+        "java", "kt", "kts", "go", "rs",
+    ]
+
+    static func prefersDocumentExtraction(_ ext: String) -> Bool {
+        parserPreferredExtensions.contains(ext.lowercased())
+    }
+
+    static func isRunnableArtifact(path: String) -> Bool {
+        runnableArtifactExtensions.contains(
+            URL(fileURLWithPath: path).pathExtension.lowercased()
+        )
+    }
+}
 
 /// Shared preview, diff, and output-safety helpers for host workspace writes.
 ///
@@ -58,6 +97,38 @@ enum WorkspaceWriteSafety {
             label: "structured workbook package",
             pivot: "Use a spreadsheet/XLSX tool for workbook output, or write CSV/TSV text instead."
         ),
+        "xlt": StructuredTarget(
+            label: "legacy binary workbook template",
+            pivot: "Use a spreadsheet creation path that emits a real workbook template, or write CSV/TSV text instead."
+        ),
+        "docx": StructuredTarget(
+            label: "structured Word document package",
+            pivot: "Use a document creation path that emits a real DOCX package, or write Markdown/HTML text instead."
+        ),
+        "docm": StructuredTarget(
+            label: "structured Word document package",
+            pivot: "Use a document creation path that emits a real DOCM package, or write Markdown/HTML text instead."
+        ),
+        "doc": StructuredTarget(
+            label: "legacy binary Word document",
+            pivot: "Use a document creation path that emits a real Word document, or write Markdown/HTML text instead."
+        ),
+        "dot": StructuredTarget(
+            label: "legacy binary Word template",
+            pivot: "Use a document creation path that emits a real Word template, or write Markdown/HTML text instead."
+        ),
+        "dotx": StructuredTarget(
+            label: "structured Word template package",
+            pivot: "Use a document creation path that emits a real DOTX package, or write Markdown/HTML text instead."
+        ),
+        "dotm": StructuredTarget(
+            label: "structured Word template package",
+            pivot: "Use a document creation path that emits a real DOTM package, or write Markdown/HTML text instead."
+        ),
+        "rtfd": StructuredTarget(
+            label: "rich-text document package",
+            pivot: "Use a rich-document creation path that emits a real RTFD package, or write RTF/Markdown/HTML text instead."
+        ),
         "pdf": StructuredTarget(
             label: "PDF document",
             pivot: "Use a PDF/document creation path that emits a real PDF package."
@@ -89,6 +160,38 @@ enum WorkspaceWriteSafety {
         "ppt": StructuredTarget(
             label: "presentation document",
             pivot: "Use a presentation/PPTX creation path instead of writing plain text to a presentation extension."
+        ),
+        "pot": StructuredTarget(
+            label: "legacy binary presentation template",
+            pivot: "Use a presentation creation path that emits a real template package."
+        ),
+        "pps": StructuredTarget(
+            label: "legacy binary presentation slideshow",
+            pivot: "Use a presentation creation path that emits a real slideshow package."
+        ),
+        "pages": StructuredTarget(
+            label: "Apple Pages document package",
+            pivot: "Use a document creation path that emits a real Pages package, or write Markdown/HTML text instead."
+        ),
+        "numbers": StructuredTarget(
+            label: "Apple Numbers document package",
+            pivot: "Use a spreadsheet creation path that emits a real Numbers package, or write CSV/TSV text instead."
+        ),
+        "key": StructuredTarget(
+            label: "Apple Keynote document package",
+            pivot: "Use a presentation creation path that emits a real Keynote package."
+        ),
+        "odt": StructuredTarget(
+            label: "OpenDocument text package",
+            pivot: "Use a document creation path that emits a real ODT package, or write Markdown/HTML text instead."
+        ),
+        "ods": StructuredTarget(
+            label: "OpenDocument spreadsheet package",
+            pivot: "Use a spreadsheet creation path that emits a real ODS package, or write CSV/TSV text instead."
+        ),
+        "odp": StructuredTarget(
+            label: "OpenDocument presentation package",
+            pivot: "Use a presentation creation path that emits a real ODP package."
         ),
     ]
 
@@ -142,6 +245,7 @@ enum WorkspaceWriteSafety {
         proposedContent: String,
         operation: String,
         dryRun: Bool,
+        overwritesExistingFile: Bool,
         createsParentDirectories: Bool,
         fileURL: URL
     ) -> Preview {
@@ -158,6 +262,7 @@ enum WorkspaceWriteSafety {
             path: path,
             fileURL: fileURL,
             existed: existed,
+            overwritesExistingFile: overwritesExistingFile,
             createsParentDirectories: createsParentDirectories,
             proposedContent: proposedContent
         )
@@ -178,13 +283,55 @@ enum WorkspaceWriteSafety {
             "risk_level": riskLevel,
             "diff": diff.text,
             "diff_truncated": diff.truncated,
+            "content_sha256": contentSHA256(proposedContent),
         ]
+        if let previousContent {
+            payload["before_content_sha256"] = contentSHA256(previousContent)
+        }
+        annotateMutationResult(
+            &payload,
+            path: path,
+            dryRun: dryRun,
+            diffTruncated: diff.truncated
+        )
         let text =
             dryRun
             ? "Dry run for \(operation) \(path): \(action), \(lineCount) lines, \(proposedContent.count) characters.\n\(diff.text)"
             : "\(action == "create" ? "Created" : "Updated") \(path) (\(lineCount) lines, \(proposedContent.count) characters)"
         payload["text"] = text
         return Preview(payload: payload, warnings: warnings, text: text)
+    }
+
+    /// Make the result semantics explicit for small models: a capped review
+    /// diff never means the write was partial, and saving runnable code never
+    /// proves that it executes correctly.
+    static func annotateMutationResult(
+        _ payload: inout [String: Any],
+        path: String,
+        dryRun: Bool,
+        diffTruncated: Bool
+    ) {
+        payload["content_write_complete"] = !dryRun
+        if diffTruncated {
+            payload["diff_truncation_note"] =
+                dryRun
+                ? "Only the review diff preview is truncated; the proposed content is complete."
+                : "Only the review diff preview is truncated; the full content was applied."
+        }
+        if !dryRun, WorkspaceFileFormatPolicy.isRunnableArtifact(path: path) {
+            payload["verification"] = [
+                "status": "not_run",
+                "reason": "A successful file mutation proves persistence, not runtime correctness.",
+                "next_action":
+                    "Run an available syntax, build, test, or behavior check before claiming the artifact works.",
+            ]
+        }
+    }
+
+    static func contentSHA256(_ content: String) -> String {
+        SHA256.hash(data: Data(content.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 
     /// Capped unified-diff text for callers that only need the diff (e.g. the
@@ -228,11 +375,12 @@ enum WorkspaceWriteSafety {
         path: String,
         fileURL: URL,
         existed: Bool,
+        overwritesExistingFile: Bool,
         createsParentDirectories: Bool,
         proposedContent: String
     ) -> [String] {
         var warnings: [String] = []
-        if existed {
+        if existed, overwritesExistingFile {
             warnings.append(
                 "This will overwrite an existing file; use dry_run first when replacing more than a small edit."
             )

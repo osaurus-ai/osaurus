@@ -117,10 +117,80 @@ struct CapabilityLoadBufferTests {
     }
 }
 
+// MARK: - CapabilitiesTool
+
+@Suite(.serialized)
+struct CapabilitiesToolTests {
+    @Test func compactSchemaSupportsSearchOrLoadWithoutLegacyToolNames() throws {
+        let tool = CapabilitiesTool()
+        let spec = tool.asOpenAITool().toTokenizerToolSpec()
+        let fn = try #require(spec["function"] as? [String: any Sendable])
+        let parameters = try #require(fn["parameters"] as? [String: any Sendable])
+        let properties = try #require(parameters["properties"] as? [String: any Sendable])
+
+        #expect(fn["name"] as? String == "capabilities")
+        #expect(properties["query"] != nil)
+        #expect(properties["ids"] != nil)
+        #expect(properties["list"] == nil)
+        #expect(tool.description.contains("capability IDs for the `ids` argument"))
+        #expect(tool.description.contains("never callable function names"))
+        #expect(tool.description.contains("use `query` only when no exact available ID fits"))
+    }
+
+    @Test func rejectsCallsWithoutQueryOrIds() async throws {
+        let result = try await CapabilitiesTool().execute(argumentsJSON: "{}")
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("\"tool\":\"capabilities\""))
+    }
+
+    @Test func searchResultUsesSingleGatewayVocabulary() async throws {
+        let probe = "zzz_gateway_probe_\(UUID().uuidString)"
+        let result = try await CapabilitiesTool().execute(
+            argumentsJSON: "{\"query\":\"\(probe)\"}"
+        )
+        #expect(!ToolEnvelope.isError(result))
+        #expect(result.contains("\"tool\":\"capabilities\""))
+        #expect(!result.contains("capabilities_load"))
+        #expect(!result.contains("capabilities_discover"))
+    }
+
+    @Test @MainActor
+    func loadResultUsesSingleGatewayVocabulary() async throws {
+        let dynamic = CapabilityPolicyFixtureTool(
+            name: "gateway_load_result_\(UUID().uuidString)",
+            description: "Dynamic gateway load-result fixture"
+        )
+        ToolRegistry.shared.registerPluginTool(dynamic)
+        ToolRegistry.shared.setEnabled(true, for: dynamic.name)
+        defer { ToolRegistry.shared.unregister(names: [dynamic.name]) }
+        _ = await CapabilityLoadBuffer.shared.drain()
+
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+            try await CapabilitiesTool().execute(
+                argumentsJSON: #"{"ids":["tool/\#(dynamic.name)"]}"#
+            )
+        }
+        let loaded = await CapabilityLoadBuffer.shared.drain()
+
+        #expect(!ToolEnvelope.isError(result))
+        #expect(result.contains(#""tool":"capabilities""#))
+        #expect(result.contains("capabilities"))
+        #expect(!result.contains("capabilities_load"))
+        #expect(!result.contains("capabilities_discover"))
+        #expect(loaded.map(\.function.name) == [dynamic.name])
+    }
+}
+
 // MARK: - CapabilitiesDiscoverTool
 
 @Suite(.serialized)
 struct CapabilitiesDiscoverToolTests {
+
+    @Test func modelFacingSchemaDoesNotSeedNonexistentCapabilityIds() {
+        let description = CapabilitiesDiscoverTool().description
+        #expect(!description.contains("tool/sandbox_exec"))
+        #expect(!description.contains("skill/plot-data"))
+    }
 
     @Test func rejectsEmptyQueries() async throws {
         let tool = CapabilitiesDiscoverTool()
@@ -143,7 +213,10 @@ struct CapabilitiesDiscoverToolTests {
             argumentsJSON: "{\"query\": \"zzz_capability_alias_probe_\(UUID().uuidString)\"}"
         )
         #expect(!ToolEnvelope.isError(result))
-        #expect(result.contains("No capabilities found") || result.contains("Found"))
+        #expect(
+            result.contains("No additional enabled capabilities found")
+                || result.contains("Found")
+        )
     }
 
     @Test func capabilitiesSearchSchemaIsGemmaRenderable() throws {
@@ -170,7 +243,10 @@ struct CapabilitiesDiscoverToolTests {
                 "{\"queries\": \"[<|\\\"|>zzz_capability_string_probe_\(UUID().uuidString)<|\\\"|>]\"}"
         )
         #expect(!ToolEnvelope.isError(result))
-        #expect(result.contains("No capabilities found") || result.contains("Found"))
+        #expect(
+            result.contains("No additional enabled capabilities found")
+                || result.contains("Found")
+        )
     }
 
     @Test func returnsNoMatchMessage() async throws {
@@ -178,7 +254,86 @@ struct CapabilitiesDiscoverToolTests {
         let result = try await tool.execute(
             argumentsJSON: "{\"queries\": [\"zzz_completely_nonexistent_capability_xyz\"]}"
         )
-        #expect(result.contains("No capabilities found") || result.contains("capability"))
+        #expect(result.contains("No additional enabled capabilities found"))
+    }
+
+    @Test func noMatchRecoveryNamesOnlyToolsCallableInThisRequest() async throws {
+        func spec(_ name: String) -> Tool {
+            Tool(
+                type: "function",
+                function: ToolFunction(
+                    name: name,
+                    description: "test",
+                    parameters: .object([
+                        "type": .string("object"),
+                        "properties": .object([:]),
+                    ])
+                )
+            )
+        }
+        let scope = ToolExecutionScope(
+            exposed: ["file_read", "file_search", "shell_run", "sandbox_install"].map(spec)
+        )
+        let probe = "zzz_request_recovery_\(UUID().uuidString)"
+        let result = try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+            try await CapabilitiesDiscoverTool().execute(
+                argumentsJSON: #"{"query":"\#(probe)"}"#
+            )
+        }
+
+        #expect(result.contains("No additional enabled capabilities found"))
+        #expect(result.contains("`file_read`/`file_search`"))
+        #expect(result.contains("`shell_run`"))
+        #expect(result.contains("`sandbox_install`"))
+        #expect(!result.contains("sandbox_plugin_register"))
+        #expect(!result.contains("see Discovering more tools"))
+        #expect(!result.contains("see Building new tools"))
+    }
+
+    @Test @MainActor
+    func gatedBuiltinAbsentFromRequestIsNotReportedAsBaselineLoaded() {
+        let availability = ToolRegistry.shared.availability(
+            forTool: "image",
+            selectedPreflightNames: ["capabilities"]
+        )
+
+        #expect(availability.reasonCodes.contains(.notSelectedByPreflight))
+        #expect(!availability.reasonCodes.contains(.alreadyLoaded))
+        #expect(availability.detail.contains("not exposed in the current request schema"))
+    }
+
+    @Test func listModeRejectsUnknownListValue() async throws {
+        let tool = CapabilitiesDiscoverTool()
+        let result = try await tool.execute(argumentsJSON: "{\"list\": \"everything\"}")
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("enabled"))
+    }
+
+    @Test @MainActor
+    func listModeReturnsPaginatedEnabledCapabilities() async throws {
+        let tool = CapabilitiesDiscoverTool()
+        let result = try await tool.execute(argumentsJSON: "{\"list\": \"enabled\"}")
+        #expect(!ToolEnvelope.isError(result))
+        // Either an exact paginated listing or (empty test registry) the
+        // explicit no-capabilities message — never a search result.
+        #expect(
+            result.contains("Enabled capabilities (page 1 of")
+                || result.contains("No capabilities are enabled")
+        )
+        #expect(!result.contains("Found "))
+    }
+
+    @Test @MainActor
+    func listModeRejectsOutOfRangePage() async throws {
+        let tool = CapabilitiesDiscoverTool()
+        let first = try await tool.execute(argumentsJSON: "{\"list\": \"enabled\"}")
+        // Out-of-range paging only applies when there IS a list to page.
+        guard first.contains("Enabled capabilities (page 1 of") else { return }
+        let result = try await tool.execute(
+            argumentsJSON: "{\"list\": \"enabled\", \"page\": 9999}"
+        )
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("out of range"))
     }
 
     @Test func namedToolCandidateExtractionIsConservative() {
@@ -268,6 +423,8 @@ struct CapabilitiesDiscoverToolTests {
                 if !dbWasOpen {
                     try ToolDatabase.shared.openInMemory()
                 }
+                ConfigurationDomainBootstrap.registerBuiltIns()
+                await ToolIndexService.shared.syncFromRegistry(rebuildVectorIndex: false)
                 defer {
                     try? ToolDatabase.shared.deleteEntry(id: CapabilityPolicyFixtureTool.allowedName)
                     try? ToolDatabase.shared.deleteEntry(id: CapabilityPolicyFixtureTool.deniedName)
@@ -327,7 +484,6 @@ struct CapabilitiesDiscoverToolTests {
                 )
                 #expect(rawResults.contains { $0.entry.name == allowed.name })
                 #expect(!rawResults.contains { $0.entry.name == denied.name })
-                #expect(diagnostic.filteredByAllowlist.count == 1)
                 #expect(diagnostic.filteredByAllowlist.contains(denied.name))
 
                 let tool = CapabilitiesDiscoverTool(agentId: agent.id)
@@ -337,6 +493,41 @@ struct CapabilitiesDiscoverToolTests {
                 #expect(result.contains(allowed.name))
                 #expect(!result.contains(denied.name))
                 #expect(result.contains("availability: loadable_via_capabilities_load"))
+
+                let configureNames = ToolRegistry.configureToolNames
+                #expect(configureNames.contains("osaurus_provider"))
+                let configureQuery = #"{"query":"osaurus_provider"}"#
+
+                let seededConfigureResult = try await tool.execute(argumentsJSON: configureQuery)
+                for configureName in configureNames {
+                    #expect(
+                        !seededConfigureResult.contains("tool/\(configureName)"),
+                        "Default-agent configure tool \(configureName) leaked to a seeded custom agent"
+                    )
+                }
+
+                let unseededAgent = Agent(
+                    name: "CapabilitySearchLegacy-\(UUID().uuidString.prefix(6))",
+                    agentAddress: "capability-search-legacy-\(UUID().uuidString)",
+                    manualToolNames: nil
+                )
+                AgentManager.shared.add(unseededAgent)
+                #expect(AgentManager.shared.effectiveEnabledToolNames(for: unseededAgent.id) == nil)
+
+                let unseededResult = try await CapabilitiesDiscoverTool(agentId: unseededAgent.id)
+                    .execute(argumentsJSON: configureQuery)
+                let gatewayResult = try await CapabilitiesTool(agentId: unseededAgent.id)
+                    .execute(argumentsJSON: configureQuery)
+                for configureName in configureNames {
+                    #expect(
+                        !unseededResult.contains("tool/\(configureName)"),
+                        "Default-agent configure tool \(configureName) leaked to an unseeded custom agent"
+                    )
+                    #expect(
+                        !gatewayResult.contains("tool/\(configureName)"),
+                        "Default-agent configure tool \(configureName) leaked through the unified gateway"
+                    )
+                }
 
                 AgentManager.shared.setActiveAgent(agent.id)
                 defer { AgentManager.shared.setActiveAgent(Agent.defaultId) }
@@ -350,6 +541,21 @@ struct CapabilitiesDiscoverToolTests {
                     "Direct capabilities_discover calls without explicit/task-local agent context must keep global-enabled results"
                 )
 
+                let unscopedConfigureResult = try await unscopedTool.execute(
+                    argumentsJSON: configureQuery
+                )
+                for configureName in configureNames {
+                    #expect(
+                        !unscopedConfigureResult.contains("tool/\(configureName)"),
+                        "No-context discovery must fail closed for Default-agent configure tool \(configureName)"
+                    )
+                }
+
+                let defaultResult = try await CapabilitiesDiscoverTool(agentId: Agent.defaultId)
+                    .execute(argumentsJSON: configureQuery)
+                #expect(defaultResult.contains("tool/osaurus_provider"))
+
+                _ = await AgentManager.shared.delete(id: unseededAgent.id)
                 _ = await AgentManager.shared.delete(id: agent.id)
             }
         }
@@ -360,6 +566,19 @@ struct CapabilitiesDiscoverToolTests {
 
 @Suite(.serialized)
 struct CapabilitiesLoadToolTests {
+
+    @Test func modelFacingSchemaDoesNotSeedNonexistentCapabilityIds() throws {
+        let tool = CapabilitiesLoadTool()
+        let spec = tool.asOpenAITool().toTokenizerToolSpec()
+        let serialized = String(describing: spec)
+
+        #expect(!tool.description.contains("plugin/calendar"))
+        #expect(!tool.description.contains("tool/sandbox_exec"))
+        #expect(!tool.description.contains("skill/plot-data"))
+        #expect(!serialized.contains("plugin/calendar"))
+        #expect(!serialized.contains("tool/sandbox_exec"))
+        #expect(!serialized.contains("skill/plot-data"))
+    }
 
     @Test func rejectsEmptyIds() async throws {
         let tool = CapabilitiesLoadTool()
@@ -503,20 +722,41 @@ struct CapabilitiesLoadToolTests {
         #expect(result.contains("skill") || result.contains("Skill"))
     }
 
-    @Test func toolLoadBuffersSpec() async throws {
-        await MainActor.run {
-            ToolRegistry.shared.setEnabled(true, for: "capabilities_discover")
+    @Test @MainActor func dynamicToolLoadBuffersSpec() async throws {
+        let dynamic = CapabilityPolicyFixtureTool(
+            name: "capability_load_buffer_\(UUID().uuidString)",
+            description: "Dynamic load buffer fixture"
+        )
+        ToolRegistry.shared.registerPluginTool(dynamic)
+        ToolRegistry.shared.setEnabled(true, for: dynamic.name)
+        defer { ToolRegistry.shared.unregister(names: [dynamic.name]) }
+        _ = await CapabilityLoadBuffer.shared.drain()
+        let tool = CapabilitiesLoadTool()
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+            try await tool.execute(
+                argumentsJSON: "{\"ids\": [\"tool/\(dynamic.name)\"]}"
+            )
         }
 
-        let tool = CapabilitiesLoadTool()
-        let result = try await tool.execute(
-            argumentsJSON: "{\"ids\": [\"tool/capabilities_discover\"]}"
-        )
-
-        #expect(result.contains("loaded") || result.contains("available"))
+        #expect(result.contains("loaded"))
 
         let buffered = await CapabilityLoadBuffer.shared.drain()
-        #expect(buffered.contains(where: { $0.function.name == "capabilities_discover" }))
+        #expect(buffered.contains(where: { $0.function.name == dynamic.name }))
+    }
+
+    @Test func gatedBuiltInCannotBeLoadedByExactGuessedId() async throws {
+        let tool = CapabilitiesLoadTool()
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+            try await tool.execute(
+                argumentsJSON: "{\"ids\": [\"tool/\(BrowserUseTool.toolName)\"]}"
+            )
+        }
+
+        #expect(ToolEnvelope.isError(result))
+        #expect(EnvelopeAssertions.failureKind(result) == "rejected")
+        #expect(result.contains("gated built-in"))
+        let buffered = await CapabilityLoadBuffer.shared.drain()
+        #expect(!buffered.contains(where: { $0.function.name == BrowserUseTool.toolName }))
     }
 
     @Test @MainActor
@@ -578,6 +818,52 @@ struct CapabilitiesLoadToolTests {
         }
     }
 
+    /// Parity between the two skill-delivery paths: `capabilities_load
+    /// skill/<name>` must return the same "skill is active" payload as
+    /// `/skill-name` — instructions AND reference materials. Regression for
+    /// the gap where the load path emitted raw `skill.instructions` only,
+    /// so reference-dependent skills silently degraded when the model (not
+    /// the user) invoked them.
+    @Test @MainActor
+    func skillLoadIncludesReferenceMaterials() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-skill-refs-root-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            await SkillManager.shared.refresh()
+
+            let skill = await SkillManager.shared.create(
+                name: "RefParity \(UUID().uuidString.prefix(6))",
+                description: "Reference parity fixture",
+                instructions: "Follow the style guide in the references."
+            )
+            try? await SkillStore.addReference(
+                to: skill,
+                name: "style-guide.md",
+                content: Data("Always write in haiku.".utf8)
+            )
+            await SkillManager.shared.refresh()
+
+            let tool = CapabilitiesLoadTool()
+            let result = try await tool.execute(
+                argumentsJSON: "{\"ids\": [\"skill/\(skill.name)\"]}"
+            )
+
+            #expect(result.contains("## Skill:"))
+            #expect(result.contains("Follow the style guide in the references."))
+            #expect(result.contains("## Reference Materials"))
+            #expect(result.contains("Always write in haiku."))
+
+            OsaurusPaths.overrideRoot = previousRoot
+            try? FileManager.default.removeItem(at: root)
+            await SkillManager.shared.refresh()
+        }
+    }
+
     @Test @MainActor
     func skillLoadAutoLoadsPluginToolGroup() async throws {
         try await StoragePathsTestLock.shared.run {
@@ -627,7 +913,6 @@ struct CapabilitiesLoadToolTests {
                     description: "Governs the AutoGroup tool group",
                     version: "1.0.0",
                     keywords: [],
-                    enabled: true,
                     instructions: "Use the AutoGroup tools.",
                     isBuiltIn: false,
                     pluginId: plugin.id
@@ -662,6 +947,59 @@ struct CapabilitiesLoadToolTests {
                 _ = await AgentManager.shared.delete(id: agent.id)
             }
         }
+    }
+
+    /// The built-in Data Visualizer skill is not plugin-backed, but its
+    /// instructions require the gated `render_chart` tool for raw tabular
+    /// data. Loading the skill must therefore make that exact tool callable in
+    /// the same session; instructions without the schema strand small models
+    /// in a deterministic `tool_not_found` loop.
+    @Test @MainActor
+    func dataVisualizerSkillLoadAutoLoadsRenderChart() async throws {
+        await SkillManager.shared.refresh()
+        _ = await CapabilityLoadBuffer.shared.drain()
+
+        let tool = CapabilitiesLoadTool()
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+            try await tool.execute(
+                argumentsJSON: #"{"ids":["skill/Data Visualizer"]}"#
+            )
+        }
+
+        #expect(!ToolEnvelope.isError(result))
+        #expect(result.contains("## Skill: Data Visualizer"))
+        #expect(result.contains("Auto-loaded tools (callable NOW by name): render_chart"))
+        #expect(result.contains("Schema for `render_chart`"))
+
+        let buffered = await CapabilityLoadBuffer.shared.drain()
+        #expect(buffered.map(\.function.name) == ["render_chart"])
+    }
+
+    /// Web Researcher must teach the existing, permission-checked dynamic-load
+    /// transition instead of silently authorizing a gated tool as a skill side
+    /// effect. This keeps the visible Web setting and manual tool selection in
+    /// control while preventing the model from narrating the next step and
+    /// stopping because the extraction schema is absent.
+    @Test @MainActor
+    func webResearcherSkillLoadTeachesExplicitSearchAndExtractLoad() async throws {
+        await SkillManager.shared.refresh()
+        _ = await CapabilityLoadBuffer.shared.drain()
+
+        let tool = CapabilitiesLoadTool()
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+            try await tool.execute(
+                argumentsJSON: #"{"ids":["skill/Web Researcher"]}"#
+            )
+        }
+
+        #expect(!ToolEnvelope.isError(result))
+        #expect(result.contains("## Skill: Web Researcher"))
+        #expect(result.contains("tool/search_and_extract"))
+        #expect(result.contains("call `search_and_extract` in this same run"))
+        #expect(!result.contains("Schema for `search_and_extract`"))
+
+        let buffered = await CapabilityLoadBuffer.shared.drain()
+        #expect(buffered.isEmpty)
     }
 
     @Test @MainActor

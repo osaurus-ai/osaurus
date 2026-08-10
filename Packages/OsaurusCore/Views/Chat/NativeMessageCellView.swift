@@ -54,6 +54,17 @@ struct CellRenderingContext {
     /// closed. Message cells paint every case-insensitive occurrence in
     /// their body text via `NativeMarkdownView.setSearchHighlight`.
     var searchHighlightQuery: String = ""
+    /// Turn owning the find bar's *current* match, or nil when no match is
+    /// current (bar closed / no matches).
+    var searchCurrentTurnId: UUID? = nil
+    /// Zero-based occurrence index of the current match within its turn's
+    /// content. Meaningless when `searchCurrentTurnId` is nil.
+    var searchCurrentOccurrence: Int = 0
+    /// Coordinator-scoped lookup: number of query occurrences in the
+    /// searchable blocks that precede the given block id within its turn.
+    /// Cells subtract it from `searchCurrentOccurrence` to translate the
+    /// turn-relative index into a block-local one.
+    var searchOccurrenceOffset: ((String) -> Int)? = nil
     /// Coordinator-scoped predicate: has the chart with this block id ever
     /// been drawn (and thus already played its entry animation) in the
     /// current chat? Used by `configureAsChart` to suppress the animation
@@ -81,6 +92,16 @@ struct CellRenderingContext {
     /// replaying.
     var cachedToolGroupView: ((String) -> NativeToolCallGroupView?)? = nil
     var cacheToolGroupView: ((String, NativeToolCallGroupView) -> Void)? = nil
+
+    /// Block-local occurrence index of the find bar's current match, or nil
+    /// when the current match isn't in this block's turn (or precedes this
+    /// block). Indices past this block's own occurrences are handled by the
+    /// renderer, which simply paints no current match for them.
+    func searchCurrentIndex(forBlock block: ContentBlock) -> Int? {
+        guard let searchCurrentTurnId, searchCurrentTurnId == block.turnId else { return nil }
+        let local = searchCurrentOccurrence - (searchOccurrenceOffset?(block.id) ?? 0)
+        return local >= 0 ? local : nil
+    }
 }
 
 // MARK: - Cell-Isolated ExpandedBlocksStore Proxy
@@ -1054,6 +1075,13 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
     private var didApplyInitialFocus = false
     private var lastLayoutWidth: CGFloat = 0
 
+    /// Undo state scoped to this editor's lifetime. Without this, NSTextView
+    /// registers undo actions with the WINDOW's undo manager; after the edit
+    /// UI is torn down those stale actions still target the deallocated text
+    /// view, and a later Cmd+Z crashes in `-[NSUndoManager undoNestedGroup]`
+    /// (production crash APPLE-MACOS-TG).
+    private let editorUndoManager = UndoManager()
+
     override init(frame frameRect: NSRect) {
         // TextKit 1 from birth — avoids the lazy TextKit 2 → 1 downgrade on
         // first `.layoutManager` access (see EditableTextView.makeNSView).
@@ -1367,6 +1395,10 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         onConfirm?()
     }
 
+    func undoManager(for view: NSTextView) -> UndoManager? {
+        editorUndoManager
+    }
+
     func textDidChange(_ notification: Notification) {
         guard let tv = notification.object as? NSTextView, tv === textView else { return }
         setText(tv.string)
@@ -1440,7 +1472,7 @@ final class NativeStatsView: NSView {
             parts.append(String(format: L("%.1f tok/s"), tps))
         }
         if let count = tokenCount {
-            parts.append(L("\(count) tokens"))
+            parts.append(count == 1 ? L("1 token") : L("\(count) tokens"))
         }
         // Trailing diagnostic chip — vmlx tells us the model never emitted
         // `</think>` (or the family's close tag) before EOS / max_tokens.
@@ -1591,7 +1623,9 @@ final class NativeMessageCellView: NSTableCellView {
     // Native views (no NSHostingView)
     private var nativeMarkdownView: NativeMarkdownView?
     private var nativeThinkingView: NativeThinkingView?
+    private var nativeCompactionMarkerView: NativeCompactionMarkerView?
     private var nativeToolCallGroupView: NativeToolCallGroupView?
+    private var nativeActivityGroupView: NativeActivityGroupView?
     private var userMessageContainer: NSView?
     private var userTextView: NativeMarkdownView?
     private var userInlineEditView: UserMessageInlineEditView?
@@ -1619,6 +1653,18 @@ final class NativeMessageCellView: NSTableCellView {
 
     private var currentKindTag: ContentBlockKindTag?
     private var currentBlockId: String?
+
+    /// Bounding rect (in this cell's coordinate space) of the find-match
+    /// occurrence at `index` within this cell's rendered text, or nil when
+    /// the cell renders no searchable text or the index is out of range.
+    /// Used by the table coordinator to scroll to the exact line of the
+    /// current match inside messages taller than the viewport.
+    func searchOccurrenceRect(_ index: Int) -> NSRect? {
+        guard let mv = nativeMarkdownView ?? userTextView,
+            let rect = mv.rectOfSearchOccurrence(index)
+        else { return nil }
+        return mv.convert(rect, to: self)
+    }
 
     /// tracks inline edit vs read-only markdown so we rebuild when edit mode toggles (same block kind)
     private var userMessageInlineEditActive: Bool = false
@@ -1750,6 +1796,9 @@ final class NativeMessageCellView: NSTableCellView {
         case let .toolCallGroup(calls):
             configureAsToolCallGroup(block: block, calls: calls, context: context, sameKind: sameKind)
 
+        case let .activityGroup(children):
+            configureAsActivityGroup(block: block, children: children, context: context, sameKind: sameKind)
+
         case let .userMessage(text, attachments, timestamp, responseTurnId):
             configureAsUserMessage(
                 block: block,
@@ -1789,6 +1838,16 @@ final class NativeMessageCellView: NSTableCellView {
                 tokensPerSecond: tokensPerSecond,
                 tokenCount: tokenCount,
                 unclosedReasoning: unclosedReasoning,
+                context: context,
+                sameKind: sameKind
+            )
+
+        case let .compactionMarker(savedTokens, modelName, summaryText):
+            configureAsCompactionMarker(
+                block: block,
+                savedTokens: savedTokens,
+                modelName: modelName,
+                summaryText: summaryText,
                 context: context,
                 sameKind: sameKind
             )
@@ -1942,7 +2001,11 @@ final class NativeMessageCellView: NSTableCellView {
             Self.buildHighlights(from: context.sessionRedactions, direction: .inbound),
             theme: context.theme
         )
-        mv.setSearchHighlight(query: context.searchHighlightQuery, theme: context.theme)
+        mv.setSearchHighlight(
+            query: context.searchHighlightQuery,
+            currentIndex: context.searchCurrentIndex(forBlock: block),
+            theme: context.theme
+        )
 
         // Apply assistant bubble background only when the target value actually changes —
         // configure() runs on every streaming token, so unconditional CGColor assignment
@@ -2034,6 +2097,52 @@ final class NativeMessageCellView: NSTableCellView {
         )
     }
 
+    // MARK: - Compaction Marker (NativeCompactionMarkerView)
+
+    private func configureAsCompactionMarker(
+        block: ContentBlock,
+        savedTokens: Int,
+        modelName: String,
+        summaryText: String,
+        context: CellRenderingContext,
+        sameKind: Bool
+    ) {
+        if !sameKind || nativeCompactionMarkerView == nil {
+            removeAllContentViews()
+            let mv = NativeCompactionMarkerView()
+            mv.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(mv)
+            NSLayoutConstraint.activate([
+                mv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+                mv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+                mv.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            ])
+            nativeCompactionMarkerView = mv
+        }
+        let isExpanded = context.expandedIds.contains(block.id)
+        nativeCompactionMarkerView?.configure(
+            savedTokens: savedTokens,
+            modelName: modelName,
+            summaryText: summaryText,
+            width: context.width - 32,
+            isExpanded: isExpanded,
+            theme: context.theme,
+            blockId: block.id,
+            onToggle: { [weak self] in
+                guard let self else { return }
+                context.onToggleExpand(block.id)
+                self.nativeCompactionMarkerView?.onHeightChanged?()
+            },
+            onHeightChanged: { [weak self] in
+                guard let self, let mv = self.nativeCompactionMarkerView,
+                    let id = self.currentBlockId
+                else { return }
+                let h = mv.measuredHeight() + 8
+                context.onHeightMeasured?(h, id)
+            }
+        )
+    }
+
     // MARK: - Tool Call Group (NativeToolCallGroupView)
 
     private func configureAsToolCallGroup(
@@ -2089,6 +2198,49 @@ final class NativeMessageCellView: NSTableCellView {
             onHeightChanged: { [weak self] in
                 guard let self, let gv = self.nativeToolCallGroupView, let id = self.currentBlockId else { return }
                 let h = gv.measuredHeight() + 8
+                context.onHeightMeasured?(h, id)
+            }
+        )
+    }
+
+    // MARK: - Activity Group (NativeActivityGroupView)
+
+    private func configureAsActivityGroup(
+        block: ContentBlock,
+        children: [ContentBlock],
+        context: CellRenderingContext,
+        sameKind: Bool
+    ) {
+        if !sameKind || nativeActivityGroupView == nil {
+            removeAllContentViews()
+            let av = NativeActivityGroupView()
+            av.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(av)
+            NSLayoutConstraint.activate([
+                av.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+                av.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+                av.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            ])
+            nativeActivityGroupView = av
+        }
+        let av = nativeActivityGroupView!
+        av.configure(
+            children: children,
+            expandedIds: context.expandedIds,
+            width: context.width - 32,
+            theme: context.theme,
+            isStreaming: context.isStreaming,
+            blockId: block.id,
+            sessionRedactions: context.sessionRedactions,
+            onToggleChild: { id in context.onToggleExpand(id) },
+            onToggle: { [weak self] in
+                guard let self else { return }
+                context.onToggleExpand(block.id)
+                self.nativeActivityGroupView?.onHeightChanged?()
+            },
+            onHeightChanged: { [weak self] in
+                guard let self, let av = self.nativeActivityGroupView, let id = self.currentBlockId else { return }
+                let h = av.measuredHeight() + 8
                 context.onHeightMeasured?(h, id)
             }
         )
@@ -2349,7 +2501,11 @@ final class NativeMessageCellView: NSTableCellView {
                 Self.buildHighlights(from: context.sessionRedactions, direction: .outbound),
                 theme: theme
             )
-            mv.setSearchHighlight(query: context.searchHighlightQuery, theme: theme)
+            mv.setSearchHighlight(
+                query: context.searchHighlightQuery,
+                currentIndex: context.searchCurrentIndex(forBlock: block),
+                theme: theme
+            )
         }
 
         if let stack = userImageStack {
@@ -2769,12 +2925,14 @@ final class NativeMessageCellView: NSTableCellView {
         nativeMarkdownView?.tearDownForReuse()
         nativeMarkdownView?.removeFromSuperview(); nativeMarkdownView = nil
         nativeThinkingView?.removeFromSuperview(); nativeThinkingView = nil
+        nativeCompactionMarkerView?.removeFromSuperview(); nativeCompactionMarkerView = nil
         // Coordinator-cached views: only call `removeFromSuperview` if
         // we're still the parent. After cache reuse the view may live
         // in a sibling cell already; blindly calling `removeFromSuperview`
         // would yank the view out of its new home and the row-now-owning
         // cell would render empty until the next reconfigure.
         detachIfStillParented(nativeToolCallGroupView); nativeToolCallGroupView = nil
+        nativeActivityGroupView?.removeFromSuperview(); nativeActivityGroupView = nil
         nativePendingView?.removeFromSuperview(); nativePendingView = nil
         nativeTypingView?.removeFromSuperview(); nativeTypingView = nil
         nativeArtifactView?.removeFromSuperview(); nativeArtifactView = nil
@@ -3031,9 +3189,9 @@ private func cgColorsEqual(_ lhs: CGColor?, _ rhs: CGColor?) -> Bool {
 
 /// Lightweight discriminator used to detect kind changes without comparing full associated values.
 enum ContentBlockKindTag: Equatable {
-    case header, paragraph, toolCallGroup, thinking, userMessage, pendingToolCall
+    case header, paragraph, toolCallGroup, thinking, activityGroup, userMessage, pendingToolCall
     case generationStats, typingIndicator, groupSpacer, sharedArtifact, chart
-    case assistantActions, emptyResponseNotice, fileDiff, other
+    case assistantActions, emptyResponseNotice, fileDiff, compactionMarker, other
 }
 
 extension ContentBlockKind {
@@ -3043,6 +3201,7 @@ extension ContentBlockKind {
         case .paragraph: return .paragraph
         case .toolCallGroup: return .toolCallGroup
         case .thinking: return .thinking
+        case .activityGroup: return .activityGroup
         case .userMessage: return .userMessage
         case .pendingToolCall: return .pendingToolCall
         case .generationStats: return .generationStats
@@ -3053,6 +3212,7 @@ extension ContentBlockKind {
         case .fileDiff: return .fileDiff
         case .assistantActions: return .assistantActions
         case .emptyResponseNotice: return .emptyResponseNotice
+        case .compactionMarker: return .compactionMarker
         }
     }
 }
@@ -3125,6 +3285,16 @@ enum NativeCellHeightEstimator {
             let lines = max(1, (text.count + charsPerLine - 1) / charsPerLine)
             return 58 + min(CGFloat(lines) * 22 + 32, 356)
 
+        case let .compactionMarker(_, _, summaryText):
+            // Collapsed: 4 top inset + 32 header + 8 cell gap. Expanded adds
+            // the summary text, estimated like thinking; the cell corrects
+            // via the measured-height report.
+            if !isExpanded { return 44 }
+            let innerW = max(width - 60, 100)
+            let charsPerLine = max(Int(innerW / 7), 20)
+            let lines = max(1, (summaryText.count + charsPerLine - 1) / charsPerLine)
+            return 44 + 8 + CGFloat(lines) * 22 + 10
+
         case let .paragraph(_, text, _, _):
             let innerW = max(width - 32, 100)
             let cacheKey = "\(block.id)-w\(Int(innerW))"
@@ -3174,6 +3344,16 @@ enum NativeCellHeightEstimator {
         case let .toolCallGroup(calls):
             // each row self-sizes at the node header height + 1pt reserved gap
             return CGFloat(calls.count) * (NativeToolCallRowView.rowHeaderHeight + 1) + 8
+
+        case let .activityGroup(children):
+            // collapsed: 44pt header + 4pt inset + 8pt cell gap (matches thinking)
+            if !isExpanded { return 56 }
+            // expanded: header + separator/gaps + children estimated collapsed;
+            // per-child expansion is corrected by the measured-height report
+            let childrenH = children.reduce(CGFloat(0)) { acc, child in
+                acc + estimatedHeight(for: child, width: width - 28, theme: theme, isExpanded: false)
+            }
+            return 44 + 1 + 8 + childrenH + 10 + 8
 
         case let .sharedArtifact(artifact):
             // matches NativeArtifactCardView: inner top 12 + bottom 8 (footerVerticalGap), symmetric gap above/below footer row

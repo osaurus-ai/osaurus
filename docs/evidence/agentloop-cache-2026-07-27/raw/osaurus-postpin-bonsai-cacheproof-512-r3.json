@@ -1,0 +1,64 @@
+{
+  "cases" : [
+    {
+      "domain" : "cache_proof",
+      "id" : "cache_proof.cross-session-partial-disk-restore",
+      "label" : "cache proof • a new chat restores the longest valid partial prefix from SSD",
+      "latencyMs" : 42960.58062712351,
+      "modelId" : "dealign.ai/Bonsai-27b-Ternary-JANG-CRACK",
+      "notes" : [
+        "trials: 2/3 passed — FLAKY",
+        "trial 1: passed, trial 2: passed, trial 3: failed",
+        "note: True disk-only new-chat proof. Both chats share the same long system/tool boundary but use different user instructions. This is a processor-valid prefix checkpoint, unlike an arbitrary matching substring inside a changed user message. Run with OSAURUS_EVALS_KV_REGIME=disk-l2 and OSAURUS_EVALS_PAGED_KV=off. The score requires vMLX's structured cacheRestore event to report tier=disk, at least 128 restored tokens, and a nonzero remaining prefill. Aggregate hit counters or UI color alone cannot pass this row.",
+        "turns: 2 · topology: hybrid-SSM",
+        "deltas: kvHits +0 · kvMisses +0 · ssmHits +1 · ssmReDerives +0 · diskHits +1 · diskStores +3",
+        "turn 1 session 1: restore=none remaining=unknown tier=none ttft=1205ms prefill=443.8 tok/s stop=stop",
+        "turn 2 session 2: restore=245 remaining=21 tier=disk ttft=915ms prefill=887.6 tok/s stop=stop",
+        "ok: disk-L2 hits +1 ≥ 1",
+        "ok: disk-L2 stores +3 ≥ 1",
+        "ok: structured cache restore 245 tokens ≥ 128",
+        "ok: partial restore proved on turn 2: 245 restored + 21 freshly prefetched",
+        "ok: structured disk restore proved on turn 2",
+        "ok: every turn produced non-empty visible content",
+        "ok: reasoning closed on every turn",
+        "ok: hybrid rule: companion hits moved with KV hits",
+        "ok: hybrid disk rule: companion (+1 hits/+0 rederives) AND disk-L2 (+1 hits/+3 stores) both moved",
+        "footprint after each turn (MB): 2244 → 2033",
+        "decode tok/s: 18.2"
+      ],
+      "outcome" : "passed",
+      "query" : "Reply with exactly the words ALPHA REFERENCE STORED.",
+      "telemetry" : {
+        "decodeTokensPerSecond" : 18.2413,
+        "diskL2HitsDelta" : 1,
+        "diskL2MissesDelta" : 7,
+        "diskL2StoresDelta" : 3,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "meanCpuPercent" : 109.86823486057833,
+        "peakCpuPercent" : 118.91698190431134,
+        "peakPhysFootprintMb" : 3027.8927993774414,
+        "ssmCompanionHitsDelta" : 1,
+        "ssmCompanionReDerivesDelta" : 0
+      },
+      "trials" : 3,
+      "trialsPassed" : 2
+    }
+  ],
+  "environment" : {
+    "caseCount" : 1,
+    "catalogHash" : "309b9fe021ebfb80",
+    "chip" : "Apple M5 Max",
+    "cpuCores" : 18,
+    "judge" : "self-judge",
+    "kvRegime" : "disk-l2",
+    "lowPowerMode" : false,
+    "osVersion" : "26.4.0",
+    "powerSource" : "AC",
+    "runModel" : "dealign.ai/Bonsai-27b-Ternary-JANG-CRACK",
+    "thermalState" : "fair",
+    "totalRamMb" : 131072
+  },
+  "modelId" : "dealign.ai/Bonsai-27b-Ternary-JANG-CRACK",
+  "startedAt" : "2026-07-27T09:26:51Z"
+}

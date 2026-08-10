@@ -1,0 +1,59 @@
+{
+  "osaurusBase": "5929b0d9b7021b1f7b0ca506833816b4716fa84e",
+  "vmlxRevision": "64b6ca2433c12af2dd6955f317366f0f9626e061",
+  "osaurusCoreFocused": {
+    "result": "Passed",
+    "passed": 186,
+    "failed": 0,
+    "skipped": 0,
+    "xcresult": "Test-OsaurusCoreTests-2026.07.27_03-22-02--0700.xcresult"
+  },
+  "osaurusEvalsFocused": {
+    "result": "Passed",
+    "passed": 3,
+    "failed": 0
+  },
+  "vmlxFocused": {
+    "result": "Passed",
+    "tokenIteratorCacheRestoreProgress": 1,
+    "cacheCoordinator": 13,
+    "diskCache": 16,
+    "canonicalCacheBoundaries": 7,
+    "total": 37
+  },
+  "liveReleaseUi": {
+    "result": "Passed",
+    "scope": "Exact current-main, merged-pin Gemma 4 terminal lifecycle and effective cache settings",
+    "app": "/private/tmp/osaurus-agentloop-cache-mergedpin-release-derived-20260727/Build/Products/Release/osaurus.app",
+    "bundleId": "com.dinoki.osaurus.agentloopcacheproofmerged20260727",
+    "executableSha256": "f2e1c1ae63069a482378336b6748e46f08e81a899d03f3c825a4c741cd8814e4",
+    "firstTurn": {
+      "final": "CURRENT_MAIN_FINAL",
+      "todo": "1/2",
+      "fileWriteCount": 1,
+      "fileBytes": 16,
+      "fileSha256": "2e5f668bb9e2548b033f7824e811700ca14667c8f496aef45e1cbe626ffa12d8",
+      "ttftSeconds": 0.47,
+      "decodeTokensPerSecond": 67.8,
+      "terminalUi": true
+    },
+    "followUp": {
+      "final": "CURRENT_MAIN_FOLLOW_UP",
+      "ttftSeconds": 0.91,
+      "decodeTokensPerSecond": 81.1,
+      "terminalUi": true
+    },
+    "effectiveCache": {
+      "kvTokens": 65536,
+      "prefixCache": true,
+      "pagedRam": false,
+      "diskL2": true,
+      "diskLimitGb": 10.0,
+      "codec": "Engine Selected",
+      "turboQuantCompressions": 0,
+      "diskHits": 5,
+      "diskMisses": 45,
+      "diskStores": 11
+    }
+  }
+}

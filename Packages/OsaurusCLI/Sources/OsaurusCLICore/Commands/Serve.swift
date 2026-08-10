@@ -130,17 +130,23 @@ public struct ServeCommand: Command {
             }
             try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms
         }
-        // Improved guidance on failure
-        let altPort = min(max(portToCheck + 1, 1), 65535)
+        let diagnostic = await InstallationDiagnostics.collect(
+            requestedPort: portToCheck,
+            includeSignatureChecks: false,
+            startupAttempted: true,
+            includeModelInventory: false,
+            includeComprehensiveAppSearch: false
+        )
+        if diagnostic.serverHealthy {
+            print("listening on http://127.0.0.1:\(portToCheck)")
+            exit(EXIT_SUCCESS)
+        }
         fputs(
             """
             Failed to start server on port \(portToCheck)
-            Hints:
-              - The port may be busy. Try: osaurus serve --port \(altPort)
-              - Ensure Osaurus.app is installed: brew install --cask osaurus
-              - Try launching the app first, then serve:
-                open -a /Applications/Osaurus.app && osaurus serve
-              - You can also open the UI: osaurus ui
+            Diagnosis: \(diagnostic.diagnosis.rawValue)
+            Next step: \(diagnostic.recommendation)
+            Run `osaurus doctor --redact` for a shareable installation report.
             """.appending("\n"),
             stderr
         )

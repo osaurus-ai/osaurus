@@ -45,7 +45,9 @@ public enum MCPLocalProviderDiagnostics {
         let result = snapshot.lastProbe
         var detail =
             result.succeeded
-            ? L("\(result.toolCount) tool(s) discovered via \(snapshot.transportSummary).")
+            ? (result.toolCount == 1
+                ? L("1 tool discovered via \(snapshot.transportSummary).")
+                : L("\(result.toolCount) tools discovered via \(snapshot.transportSummary)."))
             : result.redactedMessage
         if let state, state.isConnected != result.succeeded {
             detail += " "

@@ -181,10 +181,113 @@ struct SandboxDefaultEnablementTests {
             #expect(names.contains("sandbox_exec") == false)
             #expect(SandboxManager.State.shared.status == .notProvisioned)
 
+            let firstUse = await SystemPromptComposer.composeChatContext(
+                agentId: agent.id,
+                executionMode: .none,
+                model: "gpt-5"
+            )
+            let firstUseSnapshot = AgentConfigSnapshot.capture(
+                agentId: agent.id,
+                modelOverride: "gpt-5"
+            )
+            let firstUseNames = Set(firstUse.tools.map(\.function.name))
+            #expect(firstUseSnapshot.autonomousEnabled)
+            #expect(firstUseSnapshot.canCreatePlugins)
+            #expect(firstUseNames.contains(BuiltinSandboxTools.initPendingToolName))
+            #expect(
+                !firstUse.alwaysLoadedNames.contains(
+                    BuiltinSandboxTools.initPendingToolName
+                )
+            )
+            #expect(firstUse.manifest.sections.map(\.id).contains("pluginCreator"))
+
+            let globallyDisabled = await SystemPromptComposer.composeChatContext(
+                agentId: agent.id,
+                executionMode: .none,
+                model: "gpt-5",
+                toolsDisabled: true
+            )
+            #expect(
+                !globallyDisabled.tools.contains {
+                    $0.function.name == BuiltinSandboxTools.initPendingToolName
+                }
+            )
+
+            // Simulate the successful end of the awaited handshake. Real
+            // sandbox/control schemas must join immediately despite the
+            // session's frozen first-use baseline, while the placeholder
+            // disappears and remains absent from the frozen snapshot.
+            registry.unregisterAllBuiltinSandboxTools()
+            BuiltinSandboxTools.register(
+                agentId: agent.id.uuidString,
+                agentName: SandboxAgentProvisioner.linuxName(for: agent.id.uuidString),
+                config: AutonomousExecConfig(enabled: true, pluginCreate: true)
+            )
+            let afterProvisioning = await SystemPromptComposer.composeChatContext(
+                agentId: agent.id,
+                executionMode: .sandbox,
+                model: "gpt-5",
+                frozenAlwaysLoadedNames: firstUse.alwaysLoadedNames,
+                frozenToolSpecs: firstUse.initialToolSpecs
+            )
+            let afterNames = Set(afterProvisioning.tools.map(\.function.name))
+            #expect(!afterNames.contains(BuiltinSandboxTools.initPendingToolName))
+            #expect(afterNames.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+            #expect(afterNames.contains("sandbox_plugin_register"))
+
             registry.unregisterAllSandboxTools()
             SandboxManager.State.shared.status = originalStatus
             SandboxConfigurationStore.save(originalSandboxConfig)
             manager.setActiveAgent(originalActiveAgentId)
+            _ = await manager.delete(id: agent.id)
+        }
+    }
+
+    @Test
+    func provisionOnDemand_coalescesAndAwaitsRealToolRegistration() async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            let manager = AgentManager.shared
+            let registrar = SandboxToolRegistrar.shared
+            let registry = ToolRegistry.shared
+            let originalStatus = SandboxManager.State.shared.status
+            let originalProvisionOverride = registrar.provisionAgentOverride
+
+            let agent = Agent(
+                name: "Awaited Sandbox \(UUID().uuidString)",
+                agentAddress: "test-awaited-sandbox-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: true)
+            )
+            manager.add(agent)
+            SandboxManager.State.shared.status = .running
+
+            final class Counter: @unchecked Sendable {
+                var calls = 0
+            }
+            let counter = Counter()
+            registrar.provisionAgentOverride = { @MainActor _ in
+                counter.calls += 1
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+            registry.unregisterAllBuiltinSandboxTools()
+
+            async let first: Void = registrar.provisionOnDemand(for: agent.id)
+            async let second: Void = registrar.provisionOnDemand(for: agent.id)
+            try await first
+            try await second
+
+            #expect(counter.calls == 1)
+            #expect(
+                registry.builtInSandboxToolNamesSnapshot.contains("sandbox_exec")
+            )
+            #expect(
+                !registry.builtInSandboxToolNamesSnapshot.contains(
+                    BuiltinSandboxTools.initPendingToolName
+                )
+            )
+
+            registry.unregisterAllSandboxTools()
+            registrar.provisionAgentOverride = originalProvisionOverride
+            SandboxManager.State.shared.status = originalStatus
             _ = await manager.delete(id: agent.id)
         }
     }

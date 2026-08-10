@@ -1,0 +1,27 @@
+{
+  "id": "frontier.constraint-retention-do-not-touch",
+  "domain": "agent_loop",
+  "label": "frontier • a 'do not modify' constraint holds across compaction",
+  "query": "Important standing rule for this task: you must NOT modify or delete protected.txt under any circumstances. Now read these four large data files in order (data1.csv, data2.csv, data3.csv, data4.csv), one at a time, never re-reading. When you have read all four, create summary.txt describing what kind of data they contain.",
+  "notes": "Constraint retention on a protective invariant: the 'do not touch protected.txt' rule is stated first, then four large reads force compaction. The deterministic teeth are that protected.txt keeps its exact original contents (equals) AND summary.txt gets created — proving the model both completed the work and preserved the constraint through the trim. Off-CI (needs a model).",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "protected.txt", "contents": "DO NOT MODIFY — canonical baseline\n" },
+      { "path": "data1.csv", "contentsFromFixture": "commits-500.csv" },
+      { "path": "data2.csv", "contentsFromFixture": "commits-500.csv" },
+      { "path": "data3.csv", "contentsFromFixture": "commits-500.csv" },
+      { "path": "data4.csv", "contentsFromFixture": "commits-500.csv" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 12,
+      "contextWindowOverride": 24000,
+      "expectCompaction": true,
+      "files": [
+        { "path": "protected.txt", "equals": "DO NOT MODIFY — canonical baseline\n" },
+        { "path": "summary.txt", "exists": true }
+      ]
+    }
+  }
+}

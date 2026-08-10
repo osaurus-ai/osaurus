@@ -86,6 +86,28 @@ import Testing
         #expect(!VLMDetection.isVLM(at: tmp))
     }
 
+    /// Nemotron Omni's outer multimodal contract lives in config_omni.json;
+    /// config.json intentionally remains the inner text decoder config. The
+    /// picker detector must make the same sidecar decision as vMLX's
+    /// VLMModelFactory or an installed Omni bundle is displayed/routed as a
+    /// text model even though the runtime loads NemotronHOmni.
+    @Test func isVLMAtDirectory_trueForNemotronOmniSidecar() throws {
+        let tmp = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        try writeConfig(
+            at: tmp,
+            json: #"{"model_type": "nemotron_h", "_jang_modality": "text"}"#
+        )
+        try #"{"model_type": "NemotronH_Nano_Omni_Reasoning_V3"}"#
+            .write(
+                to: tmp.appendingPathComponent("config_omni.json"),
+                atomically: true,
+                encoding: .utf8
+            )
+
+        #expect(VLMDetection.isVLM(at: tmp))
+    }
+
     @Test func isVLMAtDirectory_falseWhenConfigMissing() {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

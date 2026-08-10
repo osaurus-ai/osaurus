@@ -30,6 +30,7 @@ struct SandboxEvalFixtureTests {
                   "backgroundProcessEnabled": true,
                   "networkEnabled": false,
                   "allowHostSecretReads": true,
+                  "allowHostFolderWrites": true,
                   "maxCommandsPerTurn": 4,
                   "hostFolder": true,
                   "seedFiles": [
@@ -45,6 +46,9 @@ struct SandboxEvalFixtureTests {
                   "sandboxFiles": [
                     { "path": "out.txt", "contains": "ok" },
                     { "path": "gone.txt", "exists": false }
+                  ],
+                  "toolUsageAudit": [
+                    { "tool": "file_read", "minCalls": 1, "minErrors": 1 }
                   ]
                 }
               }
@@ -57,6 +61,7 @@ struct SandboxEvalFixtureTests {
         #expect(sandbox.backgroundProcessEnabled == true)
         #expect(sandbox.networkEnabled == false)
         #expect(sandbox.allowHostSecretReads == true)
+        #expect(sandbox.allowHostFolderWrites == true)
         #expect(sandbox.maxCommandsPerTurn == 4)
         #expect(sandbox.hostFolder == true)
         #expect(sandbox.seedFiles?.first?.path == "data/info.txt")
@@ -67,6 +72,7 @@ struct SandboxEvalFixtureTests {
         #expect(sandboxFiles.count == 2)
         #expect(sandboxFiles[0].contains == "ok")
         #expect(sandboxFiles[1].exists == false)
+        #expect(testCase.expect.agentLoop?.toolUsageAudit?.first?.minErrors == 1)
     }
 
     @Test func nonSandboxCaseDecodesWithNilFixture() throws {
@@ -92,6 +98,7 @@ struct SandboxEvalFixtureTests {
         #expect(config.maxCommandsPerTurn == 10)
         #expect(config.pluginCreate)
         #expect(!config.allowHostSecretReads)
+        #expect(!config.allowHostFolderWrites)
         #expect(config.sandboxNetworkEnabled)
         #expect(!config.backgroundProcessEnabled)
     }
@@ -103,6 +110,7 @@ struct SandboxEvalFixtureTests {
                 backgroundProcessEnabled: true,
                 networkEnabled: false,
                 allowHostSecretReads: true,
+                allowHostFolderWrites: true,
                 maxCommandsPerTurn: 3
             )
         )
@@ -110,6 +118,7 @@ struct SandboxEvalFixtureTests {
         #expect(config.maxCommandsPerTurn == 3)
         #expect(!config.pluginCreate)
         #expect(config.allowHostSecretReads)
+        #expect(config.allowHostFolderWrites)
         #expect(!config.sandboxNetworkEnabled)
         #expect(config.backgroundProcessEnabled)
     }
@@ -140,6 +149,7 @@ struct SandboxEvalFixtureTests {
         // Containerization can't boot or is in failure cool-down.
         #expect(EvalRunner.sandboxKindIsHostCapability(.containerUnavailable))
         #expect(EvalRunner.sandboxKindIsHostCapability(.startupFailed))
+        #expect(EvalRunner.sandboxKindIsHostCapability(.vmnetOwnedByOtherProcess))
         // A per-agent provisioning failure is a real setup bug and must
         // still surface as ERROR, not be masked as a skip.
         #expect(!EvalRunner.sandboxKindIsHostCapability(.provisioningFailed))
@@ -202,16 +212,18 @@ struct SandboxEvalFixtureTests {
         #expect(suite.decodeFailures.isEmpty, "decode failures: \(suite.decodeFailures)")
         // Floor, not exact: new cases must not break this smoke — only
         // deletions or decode drift should.
-        #expect(suite.cases.count >= 17, "SandboxFrontier suite shrank; got \(suite.cases.count)")
+        #expect(suite.cases.count >= 16, "SandboxFrontier suite shrank; got \(suite.cases.count)")
         for testCase in suite.cases {
             #expect(testCase.domain == "agent_loop")
             #expect(testCase.fixtures.sandbox != nil, "\(testCase.id) missing fixtures.sandbox")
         }
-        // Combined-mode cases must carry a host workspace to read from.
+        // The only legacy hostFolder spelling left is the explicit isolation
+        // proof; it seeds a host file solely to prove the VM cannot see it.
         for testCase in suite.cases where testCase.fixtures.sandbox?.hostFolder == true {
+            #expect(testCase.id == "sandbox.vm-host-isolation")
             #expect(
                 !(testCase.fixtures.workspaceFiles ?? []).isEmpty,
-                "\(testCase.id) is combined-mode but seeds no host workspaceFiles"
+                "\(testCase.id) must seed the host fixture whose isolation it proves"
             )
         }
     }

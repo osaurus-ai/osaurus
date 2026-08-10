@@ -109,14 +109,20 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         self.permissionStates = loadedStates
     }
 
-    /// Centralized helper to set permission and persist state
+    /// Centralized helper to set permission and persist state.
+    /// Skips the no-op assignment: writing an unchanged `@Published` dict still
+    /// fires the whole SwiftUI fan-out, and the periodic refresh calls this
+    /// every 2s — observers (e.g. the composer card) would re-render each tick.
     private func setPermission(_ permission: SystemPermission, isGranted: Bool) {
+        guard permissionStates[permission] != isGranted else { return }
         permissionStates[permission] = isGranted
         savePermissionStates()
     }
 
-    /// Batch update permissions and persist
+    /// Batch update permissions and persist. Same no-op guard as
+    /// `setPermission` so the periodic refresh only publishes real changes.
     private func setPermissions(_ states: [SystemPermission: Bool]) {
+        guard states.contains(where: { permissionStates[$0.key] != $0.value }) else { return }
         for (permission, isGranted) in states {
             permissionStates[permission] = isGranted
         }
@@ -145,6 +151,8 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             return checkCalendarAutomationPermission()
         case .automationMail:
             return checkMailPermission()
+        case .automationMessages:
+            return checkMessagesPermission()
         case .calendar:
             return checkCalendarPermission()
         case .reminders:
@@ -204,7 +212,8 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             return AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         case .screenRecording:
             return SystemPermissionProbe.screenRecordingGranted()
-        case .location, .automation, .automationCalendar, .automationMail, .notes, .maps:
+        case .location, .automation, .automationCalendar, .automationMail, .automationMessages,
+            .notes, .maps:
             return nil
         }
     }
@@ -301,6 +310,8 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             requestCalendarAutomationPermission()
         case .automationMail:
             requestMailPermission()
+        case .automationMessages:
+            requestMessagesPermission()
         case .calendar:
             requestCalendarPermission()
         case .reminders:
@@ -352,7 +363,7 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         case .location:
             requestLocationPermission()
             return checkLocationPermission()
-        case .automation, .automationCalendar, .automationMail, .notes, .maps:
+        case .automation, .automationCalendar, .automationMail, .automationMessages, .notes, .maps:
             requestPermission(permission)
             return permissionStates[permission] ?? false
         case .accessibility, .disk, .screenRecording:
@@ -616,6 +627,35 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
 
             if !granted {
                 self.openSystemSettings(for: .automationMail)
+            }
+        }
+    }
+
+    // MARK: - Messages Automation Permission
+
+    private func checkMessagesPermission() -> Bool {
+        // Return cached state for Messages (Automation)
+        return permissionStates[.automationMessages] ?? false
+    }
+
+    private func requestMessagesPermission() {
+        Task { @MainActor in
+            let alreadyGranted = checkMessagesPermission()
+            if alreadyGranted {
+                refreshAllPermissions()
+                return
+            }
+
+            let granted: Bool = await Task.detached { [weak self] in
+                guard self != nil else { return false }
+                let result = SystemPermissionService.debugTestMessagesAccess()
+                return result.hasPrefix("SUCCESS")
+            }.value
+
+            setPermission(.automationMessages, isGranted: granted)
+
+            if !granted {
+                self.openSystemSettings(for: .automationMessages)
             }
         }
     }
@@ -952,7 +992,9 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             // Try to fetch calendars to verify
             let calendars = store.calendars(for: .event)
             if !calendars.isEmpty {
-                return L("SUCCESS: Authorized (Found \(calendars.count) calendars)")
+                return calendars.count == 1
+                    ? L("SUCCESS: Authorized (Found 1 calendar)")
+                    : L("SUCCESS: Authorized (Found \(calendars.count) calendars)")
             } else {
                 return L("SUCCESS: Authorized (No calendars found)")
             }
@@ -977,7 +1019,9 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             let store = EKEventStore()
             let calendars = store.calendars(for: .reminder)
             if !calendars.isEmpty {
-                return L("SUCCESS: Authorized (Found \(calendars.count) lists)")
+                return calendars.count == 1
+                    ? L("SUCCESS: Authorized (Found 1 list)")
+                    : L("SUCCESS: Authorized (Found \(calendars.count) lists)")
             } else {
                 return L("SUCCESS: Authorized (No lists found)")
             }
@@ -1056,6 +1100,42 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         let script = NSAppleScript(
             source: """
                 tell application "Maps"
+                    return name
+                end tell
+                """
+        )
+
+        var errorInfo: NSDictionary?
+        let result = script?.executeAndReturnError(&errorInfo)
+
+        if let error = errorInfo {
+            let errorNumber = error[NSAppleScript.errorNumber] as? Int ?? -1
+            let errorMessage = error[NSAppleScript.errorMessage] as? String ?? "Unknown error"
+
+            var guidance = ""
+            if errorNumber == -1743 {
+                guidance = " → Permission denied. Grant in System Settings → Privacy & Security → Automation"
+            }
+
+            return "ERROR [\(errorNumber)]: \(errorMessage)\(guidance)"
+        }
+
+        if let resultValue = result?.stringValue {
+            return L("SUCCESS: Connected to \(resultValue)")
+        }
+
+        return L("NO RESULT")
+    }
+
+    // MARK: - Debug: Test Messages Access
+
+    /// Debug function to test if Messages access works via Apple Events.
+    /// Sends a read-only query (app name) — this is the same class of Apple
+    /// Event `imsg send` uses, so a SUCCESS here proves the TCC grant.
+    nonisolated static func debugTestMessagesAccess() -> String {
+        let script = NSAppleScript(
+            source: """
+                tell application "Messages"
                     return name
                 end tell
                 """

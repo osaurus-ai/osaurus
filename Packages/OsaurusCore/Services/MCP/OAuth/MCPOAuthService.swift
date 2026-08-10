@@ -226,20 +226,7 @@ public enum MCPOAuthService {
         // 6. Wait for callback (bounded so a closed browser tab can't hang forever).
         let callback: OAuthCallbackResult
         do {
-            callback = try await withThrowingTaskGroup(of: OAuthCallbackResult.self) { group in
-                group.addTask { try await server.waitForCallback() }
-                group.addTask {
-                    try await Task.sleep(
-                        nanoseconds: UInt64(Self.signInCallbackTimeout * 1_000_000_000)
-                    )
-                    throw OAuthLoopbackError.callbackTimeout
-                }
-                guard let result = try await group.next() else {
-                    throw OAuthLoopbackError.callbackTimeout
-                }
-                group.cancelAll()
-                return result
-            }
+            callback = try await server.waitForCallback(timeout: Self.signInCallbackTimeout)
         } catch let error as OAuthLoopbackError {
             throw MCPOAuthError.loopback(error)
         }
@@ -273,8 +260,12 @@ public enum MCPOAuthService {
             serverMetadataCachedAt: Date(),
             loopbackPort: provider.oauth?.loopbackPort
         )
-        if persist {
-            MCPProviderKeychain.saveOAuthTokens(tokens, for: provider.id)
+        if persist, !MCPProviderKeychain.saveOAuthTokens(tokens, for: provider.id),
+            !KeychainQueryHelpers.disablesKeychainForProcess {
+            // The in-memory tokens still serve this session; what failed is
+            // relaunch durability. Surface it instead of silently signing the
+            // user out on next launch.
+            NSLog("MCPOAuthService: failed to persist OAuth tokens to Keychain after sign-in")
         }
         return MCPOAuthSignInResult(config: config, tokens: tokens)
     }
@@ -344,8 +335,11 @@ public enum MCPOAuthService {
             expiresAt: raw.expiresAt,
             scope: raw.scope ?? tokens.scope
         )
-        if persist {
-            MCPProviderKeychain.saveOAuthTokens(refreshed, for: provider.id)
+        if persist, !MCPProviderKeychain.saveOAuthTokens(refreshed, for: provider.id),
+            !KeychainQueryHelpers.disablesKeychainForProcess {
+            // The refreshed tokens still serve this request; what failed is
+            // relaunch durability (and rotated refresh tokens may be lost).
+            NSLog("MCPOAuthService: failed to persist refreshed OAuth tokens to Keychain")
         }
         return refreshed
     }

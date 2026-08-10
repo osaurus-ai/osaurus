@@ -27,9 +27,19 @@ import SwiftUI
 /// body. Applies the shared `scrollContentBuffer` so glass-card hover
 /// shadows clear the chrome's body clip on top/bottom edges. Step files
 /// should always reach for this instead of building a `ScrollView` inline.
+///
+/// Edge affordance: when content overflows, a subtle "sleeve" shadow is
+/// drawn on the edge that has more content behind it (bottom shadow while
+/// there's more below, top shadow once scrolled down). Each shadow fades
+/// out as its edge is reached, so a fully-scrolled list reads as finished.
 struct OnboardingScrollContainer<Content: View>: View {
     let alignment: Alignment
     let content: Content
+
+    @State private var canScrollUp = false
+    @State private var canScrollDown = false
+
+    @Environment(\.theme) private var theme
 
     init(
         alignment: Alignment = .topLeading,
@@ -46,6 +56,42 @@ struct OnboardingScrollContainer<Content: View>: View {
                 .padding(OnboardingMetrics.scrollContentBuffer)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
+        .onScrollGeometryChange(for: ScrollEdgeState.self) { geometry in
+            ScrollEdgeState(
+                canScrollUp: geometry.contentOffset.y + geometry.contentInsets.top > 1,
+                canScrollDown: geometry.contentOffset.y + geometry.containerSize.height
+                    < geometry.contentSize.height + geometry.contentInsets.bottom - 1
+            )
+        } action: { _, newState in
+            canScrollUp = newState.canScrollUp
+            canScrollDown = newState.canScrollDown
+        }
+        .overlay(alignment: .top) {
+            edgeShadow(.top).opacity(canScrollUp ? 1 : 0)
+        }
+        .overlay(alignment: .bottom) {
+            edgeShadow(.bottom).opacity(canScrollDown ? 1 : 0)
+        }
+        .animation(.easeInOut(duration: 0.18), value: canScrollUp)
+        .animation(.easeInOut(duration: 0.18), value: canScrollDown)
+    }
+
+    private struct ScrollEdgeState: Equatable {
+        let canScrollUp: Bool
+        let canScrollDown: Bool
+    }
+
+    private func edgeShadow(_ edge: VerticalEdge) -> some View {
+        LinearGradient(
+            colors: [
+                Color.black.opacity(theme.isDark ? 0.28 : 0.10),
+                Color.black.opacity(0),
+            ],
+            startPoint: edge == .top ? .top : .bottom,
+            endPoint: edge == .top ? .bottom : .top
+        )
+        .frame(height: 24)
+        .allowsHitTesting(false)
     }
 }
 

@@ -1026,7 +1026,7 @@ struct ClaudePluginSpecTests {
                 ],
                 pluginId: pluginA
             ),
-            Skill(name: "Aether", description: "a desc", enabled: false, pluginId: pluginA),
+            Skill(name: "Aether", description: "a desc", pluginId: pluginA),
             // User-authored skill — should not project onto any plugin.
             Skill(name: "User Skill", description: "x"),
             // Foreign plugin id — also ignored.
@@ -1096,8 +1096,6 @@ struct ClaudePluginSpecTests {
         let alpha = result[0]
         // Skills sorted by name (case-insensitive): Aether, Zeta.
         #expect(alpha.skills.map(\.name) == ["Aether", "Zeta"])
-        #expect(alpha.skills.first { $0.name == "Aether" }?.enabled == false)
-        #expect(alpha.skills.first { $0.name == "Zeta" }?.enabled == true)
         // Preview-driving skill fields.
         let zeta = alpha.skills.first { $0.name == "Zeta" }
         #expect(zeta?.instructions == "Read carefully and respond.")

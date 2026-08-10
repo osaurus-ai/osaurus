@@ -16,6 +16,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
     case automationCalendar = "automation_calendar"
     /// AppleScript automation permission for Mail.app
     case automationMail = "automation_mail"
+    /// AppleScript automation permission for Messages.app
+    case automationMessages = "automation_messages"
     /// EventKit Calendar access permission
     case calendar
     /// EventKit Reminders access permission
@@ -46,6 +48,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return L("Automation (Calendar)")
         case .automationMail:
             return L("Automation (Mail)")
+        case .automationMessages:
+            return L("Automation (Messages)")
         case .calendar:
             return L("Calendar")
         case .reminders:
@@ -78,6 +82,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return L("Allows plugins to read and create events in Calendar.app via AppleScript.")
         case .automationMail:
             return L("Allows plugins to read and send emails in Mail.app via AppleScript.")
+        case .automationMessages:
+            return L("Allows Osaurus to send messages through Messages.app via Apple Events.")
         case .calendar:
             return L("Allows plugins to access your calendar to read and create events directly.")
         case .reminders:
@@ -110,6 +116,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "calendar"
         case .automationMail:
             return "envelope"
+        case .automationMessages:
+            return "message"
         case .calendar:
             return "calendar.badge.plus"
         case .reminders:
@@ -142,6 +150,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "calendar"
         case .automationMail:
             return "envelope.fill"
+        case .automationMessages:
+            return "message.fill"
         case .calendar:
             return "calendar"
         case .reminders:
@@ -169,7 +179,7 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
     /// These permissions are skipped during periodic refresh to avoid launching apps.
     var isAutomationBased: Bool {
         switch self {
-        case .automation, .automationCalendar, .automationMail, .notes, .maps:
+        case .automation, .automationCalendar, .automationMail, .automationMessages, .notes, .maps:
             return true
         default:
             return false
@@ -187,6 +197,9 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")
         case .automationMail:
             // Opens Privacy & Security > Automation (Mail is listed under the app)
+            return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")
+        case .automationMessages:
+            // Opens Privacy & Security > Automation (Messages is listed under the app)
             return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")
         case .calendar:
             // Opens Privacy & Security > Calendars

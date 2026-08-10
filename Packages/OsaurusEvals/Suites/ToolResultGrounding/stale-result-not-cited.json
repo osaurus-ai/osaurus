@@ -1,0 +1,50 @@
+{
+  "id": "tool_result_grounding.stale-result-not-cited",
+  "domain": "tool_result_grounding",
+  "label": "tool result grounding: after a retry, the answer cites the fresh result not the stale one",
+  "query": "Check the build status, and if it's still running, check again and report the final status.",
+  "fixtures": {},
+  "notes": "Retry-freshness pin, distinct from latest-result-wins: the first result says 'running' (not an error, just not final), the retry says 'passed'. The grounded answer must cite the fresh terminal status and must not report the transient 'running' state as final.",
+  "expect": {
+    "toolResultGrounding": {
+      "events": [
+        {
+          "kind": "toolCall",
+          "callId": "build-check-1",
+          "tool": "ci_status",
+          "arguments": "{\"job\":\"build\"}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "build-check-1",
+          "tool": "ci_status",
+          "content": "{\"state\":\"running\",\"pct\":60}"
+        },
+        {
+          "kind": "toolCall",
+          "callId": "build-check-2",
+          "tool": "ci_status",
+          "arguments": "{\"job\":\"build\"}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "build-check-2",
+          "tool": "ci_status",
+          "content": "{\"state\":\"passed\",\"pct\":100}"
+        },
+        {
+          "kind": "assistant",
+          "content": "The build finished — its final status is passed."
+        }
+      ],
+      "assertions": [
+        {
+          "callId": "build-check-2",
+          "answerMustContain": ["passed"],
+          "answerMustNotContain": ["running"],
+          "resultMustContain": ["\"state\":\"passed\""]
+        }
+      ]
+    }
+  }
+}

@@ -287,6 +287,13 @@ public struct AgentExecuteResult: Codable, Sendable, Equatable {
 // MARK: - AgentDatabase
 
 public final class AgentDatabase: @unchecked Sendable {
+    /// Column declarations accepted by the typed database surface. Constraints
+    /// are separate fields and must never be smuggled into the type string.
+    public static let supportedColumnTypes = [
+        "TEXT", "INTEGER", "REAL", "BLOB", "NUMERIC",
+        "BOOLEAN", "DATE", "DATETIME", "JSON",
+    ]
+
     public let agentId: UUID
 
     private static let schemaVersion = 1
@@ -438,6 +445,7 @@ public final class AgentDatabase: @unchecked Sendable {
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.agentDirectory(for: agentId))
             try openConnection()
             try runMigrations()
+            try hydrateNativeSavedViewsUnlocked()
         }
     }
 
@@ -450,6 +458,7 @@ public final class AgentDatabase: @unchecked Sendable {
                 applyPerfPragmas: false
             )
             try runMigrations()
+            try hydrateNativeSavedViewsUnlocked()
         }
     }
 
@@ -550,19 +559,58 @@ public final class AgentDatabase: @unchecked Sendable {
     /// System tables (`_tables_meta`, `_changelog`, `_views`) are excluded
     /// — they are an implementation detail of the agent's DB layer.
     public func schema() throws -> AgentDatabaseSchema {
-        try queue.sync {
-            guard db != nil else { throw AgentDatabaseError.notOpen }
-
-            let tableNames = try listUserTablesUnlocked()
-            var tables: [AgentTableSchema] = []
-            for name in tableNames {
-                let table = try schemaForTableUnlocked(name)
-                tables.append(table)
-            }
-
-            let views = try listViewsUnlocked()
-            return AgentDatabaseSchema(tables: tables, views: views)
+        let result = try queue.sync {
+            try schemaUnlocked()
         }
+        schemaCacheLock.lock()
+        cachedSchemaValue = result
+        schemaCacheLock.unlock()
+        return result
+    }
+
+    /// Last schema computed by `schema()` (or a background refresh), without
+    /// touching the serial DB queue. The queue can be parked on SQLite's WAL
+    /// file lock for seconds when another connection holds it, so main-thread
+    /// callers (the prompt-preview estimate) must use this instead of
+    /// `schema()`. Returns nil until a first computation lands; kicks an
+    /// async refresh each call so the value converges after writes.
+    public func schemaNonBlocking() -> AgentDatabaseSchema? {
+        schemaCacheLock.lock()
+        let cached = cachedSchemaValue
+        let shouldRefresh = !schemaRefreshInFlight
+        if shouldRefresh { schemaRefreshInFlight = true }
+        schemaCacheLock.unlock()
+
+        if shouldRefresh {
+            queue.async { [weak self] in
+                guard let self else { return }
+                let fresh = try? self.schemaUnlocked()
+                self.schemaCacheLock.lock()
+                if let fresh { self.cachedSchemaValue = fresh }
+                self.schemaRefreshInFlight = false
+                self.schemaCacheLock.unlock()
+            }
+        }
+        return cached
+    }
+
+    private let schemaCacheLock = NSLock()
+    private var cachedSchemaValue: AgentDatabaseSchema?
+    private var schemaRefreshInFlight = false
+
+    /// Must run on `queue`.
+    private func schemaUnlocked() throws -> AgentDatabaseSchema {
+        guard db != nil else { throw AgentDatabaseError.notOpen }
+
+        let tableNames = try listUserTablesUnlocked()
+        var tables: [AgentTableSchema] = []
+        for name in tableNames {
+            let table = try schemaForTableUnlocked(name)
+            tables.append(table)
+        }
+
+        let views = try listViewsUnlocked()
+        return AgentDatabaseSchema(tables: tables, views: views)
     }
 
     /// Convenience: schema for a single user table.
@@ -622,6 +670,11 @@ public final class AgentDatabase: @unchecked Sendable {
             // budget ran out). Honoring the declared column preserves the
             // model's intent; SQLite still enforces single-PK rules.
             var columns = columns
+            guard columns.filter(\.primaryKey).count <= 1 else {
+                throw AgentDatabaseError.invalidArgument(
+                    "createTable: declare at most one `primary_key` column"
+                )
+            }
             let hasPK = columns.contains(where: { $0.primaryKey })
             if !hasPK,
                 let idIndex = columns.firstIndex(where: { $0.name.lowercased() == "id" })
@@ -645,10 +698,11 @@ public final class AgentDatabase: @unchecked Sendable {
             for col in columns {
                 try Self.validateIdentifier(col.name)
                 try Self.requireNotReservedColumn(col.name)
-                var def = "\(col.name) \(Self.normalizeType(col.type))"
+                let normalizedType = try Self.normalizeType(col.type)
+                var def = "\(col.name) \(normalizedType)"
                 if col.primaryKey {
                     def += " PRIMARY KEY"
-                    if col.type.uppercased() == "INTEGER" {
+                    if normalizedType == "INTEGER" {
                         // sqlite-only AUTOINCREMENT shorthand on integer PK.
                         def += " AUTOINCREMENT"
                     }
@@ -742,6 +796,7 @@ public final class AgentDatabase: @unchecked Sendable {
         for col in additions {
             try Self.validateIdentifier(col.name)
             try Self.requireNotReservedColumn(col.name)
+            _ = try Self.normalizeType(col.type)
         }
 
         return try inTransaction { _ in
@@ -750,14 +805,14 @@ public final class AgentDatabase: @unchecked Sendable {
             }
             var applied: [String] = []
             for col in additions {
-                var def = "\(col.name) \(Self.normalizeType(col.type))"
+                var def = "\(col.name) \(try Self.normalizeType(col.type))"
                 if !col.nullable {
                     // SQLite rejects NOT NULL ADD COLUMN without a DEFAULT
                     // on a non-empty table (spec §16 Q5). If the caller
                     // didn't supply one, fall back to a type-appropriate
                     // value so the migration always applies cleanly.
                     if col.defaultValue == nil {
-                        def += " NOT NULL DEFAULT \(Self.derivedDefault(forType: col.type))"
+                        def += " NOT NULL DEFAULT \(try Self.derivedDefault(forType: col.type))"
                     } else {
                         def += " NOT NULL"
                     }
@@ -1106,6 +1161,107 @@ public final class AgentDatabase: @unchecked Sendable {
                 )
             }
             return affected
+        }
+    }
+
+    /// Soft-delete many rows by primary key in ONE transaction. The
+    /// per-row `softDelete(table:whereClause:)` path costs a full
+    /// transaction + changelog write per call, which makes the UI's
+    /// bulk delete O(n) serial transactions; this variant batches the
+    /// UPDATE (chunked to stay under SQLite's bind-variable limit)
+    /// while still logging one `_changelog` row per affected row so
+    /// the audit trail stays row-granular.
+    @discardableResult
+    public func softDeleteMany(
+        table: String,
+        ids: [AgentSQLValue],
+        actor: AgentDatabaseActor,
+        runId: UUID? = nil
+    ) throws -> Int {
+        try Self.validateIdentifier(table)
+        try Self.requireNotReservedTable(table)
+        guard !ids.isEmpty else { return 0 }
+
+        return try inTransaction { _ in
+            guard try self.tableHasColumnUnlocked(table, column: "_deleted_at") else {
+                throw AgentDatabaseError.invalidArgument(
+                    "table '\(table)' has no `_deleted_at` column (it was created "
+                        + "with raw SQL, not db_create_table), so soft delete isn't "
+                        + "available. Use `db_execute` with a DELETE statement to "
+                        + "remove rows from this table."
+                )
+            }
+            guard try self.tableHasColumnUnlocked(table, column: "id") else {
+                throw AgentDatabaseError.invalidArgument(
+                    "table '\(table)' has no `id` column, so bulk soft delete by id isn't available."
+                )
+            }
+
+            var totalAffected = 0
+            // Chunk to stay well under SQLITE_MAX_VARIABLE_NUMBER (999
+            // historically) even if a caller passes a huge selection.
+            let chunkSize = 400
+            var index = 0
+            while index < ids.count {
+                let chunk = Array(ids[index ..< min(index + chunkSize, ids.count)])
+                index += chunkSize
+
+                let placeholders = (1 ... chunk.count).map { "?\($0)" }.joined(separator: ", ")
+
+                // Capture before-rows for the changelog (live rows only —
+                // already-deleted rows are untouched by the UPDATE below).
+                var beforeRows: [[String: AgentSQLValue]] = []
+                let selectSQL =
+                    "SELECT * FROM \(table) WHERE id IN (\(placeholders)) AND _deleted_at IS NULL"
+                var stmt: OpaquePointer?
+                guard sqlite3_prepare_v2(self.db, selectSQL, -1, &stmt, nil) == SQLITE_OK,
+                    let s = stmt
+                else {
+                    throw AgentDatabaseError.failedToPrepare(String(cString: sqlite3_errmsg(self.db)))
+                }
+                for (i, value) in chunk.enumerated() {
+                    Self.bind(s, index: i + 1, value: value)
+                }
+                let colCount = Int(sqlite3_column_count(s))
+                var colNames: [String] = []
+                for c in 0 ..< colCount {
+                    colNames.append(sqlite3_column_name(s, Int32(c)).map { String(cString: $0) } ?? "")
+                }
+                while sqlite3_step(s) == SQLITE_ROW {
+                    var row: [String: AgentSQLValue] = [:]
+                    for c in 0 ..< colCount {
+                        row[colNames[c]] = Self.readColumn(s, index: c)
+                    }
+                    beforeRows.append(row)
+                }
+                sqlite3_finalize(s)
+
+                let updateSQL = """
+                        UPDATE \(table) SET _deleted_at = strftime('%s','now')
+                        WHERE id IN (\(placeholders)) AND _deleted_at IS NULL
+                    """
+                try self.transactionalStep(updateSQL) { stmt in
+                    for (i, value) in chunk.enumerated() {
+                        Self.bind(stmt, index: i + 1, value: value)
+                    }
+                }
+                totalAffected += Int(sqlite3_changes(self.db))
+
+                for row in beforeRows {
+                    let pk = Self.stringifyPK(row["id"] ?? row.first?.value)
+                    try self.appendChangelogUnlocked(
+                        runId: runId,
+                        actor: actor,
+                        op: .softDelete,
+                        tableName: table,
+                        rowPK: pk,
+                        beforeJSON: Self.jsonEncode(row),
+                        afterJSON: nil,
+                        sql: nil
+                    )
+                }
+            }
+            return totalAffected
         }
     }
 
@@ -1676,12 +1832,13 @@ public final class AgentDatabase: @unchecked Sendable {
 
     // MARK: - Public: saved views
 
-    /// Insert or update a saved view (spec §6.3). Saved views are
-    /// just SELECT/CTE statements stored by name in `_views`; the
-    /// agent reuses them via `runView` and the UI surfaces them on
-    /// the Home / Views tabs. The SQL is validated against the same
-    /// `forbiddenReason` lattice as `execute` so a SELECT-only view
-    /// can never accidentally hide a destructive statement.
+    /// Insert or update a saved view (spec §6.3). `_views` remains the
+    /// metadata source of truth, while a connection-local SQLite view makes
+    /// the definition composable from `db_query`, `db_export`, and other
+    /// saved views. The agent can also execute it directly via `runView`, and
+    /// the UI surfaces it on the Home / Views tabs. The SQL is validated
+    /// against the same `forbiddenReason` lattice as `execute` so a
+    /// SELECT-only view can never accidentally hide a destructive statement.
     public func defineView(
         name: String,
         sql: String,
@@ -1721,6 +1878,13 @@ public final class AgentDatabase: @unchecked Sendable {
             if try self.existsUserTableUnlocked(name) {
                 throw AgentDatabaseError.invalidArgument(
                     "defineView: a user table named `\(name)` already exists; pick a different view name"
+                )
+            }
+            do {
+                try self.replaceNativeSavedViewUnlocked(name: name, sql: sql, validate: true)
+            } catch {
+                throw AgentDatabaseError.invalidArgument(
+                    "defineView: invalid saved-view SQL: \(error.localizedDescription)"
                 )
             }
             // Use INSERT ... ON CONFLICT(name) DO UPDATE so we keep
@@ -1795,6 +1959,7 @@ public final class AgentDatabase: @unchecked Sendable {
                 if sqlite3_step(stmt) == SQLITE_ROW { existed = true }
             }
             if !existed { return }
+            try self.executeRaw("DROP VIEW IF EXISTS temp.\(name)")
             try self.transactionalStep("DELETE FROM _views WHERE name = ?1") { stmt in
                 Self.bind(stmt, index: 1, value: .text(name))
             }
@@ -2031,6 +2196,49 @@ public final class AgentDatabase: @unchecked Sendable {
         return views
     }
 
+    /// Rebuild the connection-local SQLite view mirror from `_views`.
+    ///
+    /// Legacy versions accepted stored definitions without preparing them.
+    /// Keep startup resilient by skipping an individual legacy definition
+    /// that SQLite can no longer create; redefining it through `db_define_view`
+    /// will return a precise validation error.
+    private func hydrateNativeSavedViewsUnlocked() throws {
+        for view in try listViewsUnlocked() {
+            do {
+                try replaceNativeSavedViewUnlocked(name: view.name, sql: view.sql, validate: false)
+            } catch {
+                try? executeRaw("DROP VIEW IF EXISTS temp.\(view.name)")
+            }
+        }
+    }
+
+    /// Replace one temporary SQLite view. Callers must validate `name` before
+    /// interpolation. When requested, preparing a zero-row read resolves the
+    /// complete dependency graph and catches missing tables/columns, circular
+    /// definitions, and parameterized SQL before metadata is committed.
+    private func replaceNativeSavedViewUnlocked(
+        name: String,
+        sql: String,
+        validate: Bool
+    ) throws {
+        try executeRaw("DROP VIEW IF EXISTS temp.\(name)")
+        try executeRaw("CREATE TEMP VIEW \(name) AS \(sql)")
+        guard validate, let connection = db else { return }
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(
+            connection,
+            "SELECT * FROM temp.\(name) LIMIT 0",
+            -1,
+            &statement,
+            nil
+        ) == SQLITE_OK, let prepared = statement
+        else {
+            throw AgentDatabaseError.failedToPrepare(String(cString: sqlite3_errmsg(connection)))
+        }
+        sqlite3_finalize(prepared)
+    }
+
     private func existsUserTableUnlocked(_ name: String) throws -> Bool {
         var found = false
         try executeRaw(
@@ -2157,6 +2365,9 @@ public final class AgentDatabase: @unchecked Sendable {
         let s = collapseWhitespace(stripComments(rawSQL.uppercased()))
         if s.contains("DROP TABLE") {
             return "DROP TABLE is not allowed; rename + deprecate is the agent path."
+        }
+        if s.contains("DROP VIEW") {
+            return "DROP VIEW is not allowed; use db_drop_view so metadata and audit history stay in sync."
         }
         if s.contains("TRUNCATE") {
             return "TRUNCATE is not allowed."
@@ -2287,17 +2498,25 @@ public final class AgentDatabase: @unchecked Sendable {
         }
     }
 
-    private static func normalizeType(_ raw: String) -> String {
+    private static func normalizeType(_ raw: String) throws -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespaces)
-        if trimmed.isEmpty { return "TEXT" }
-        return trimmed.uppercased()
+        let normalized = trimmed.uppercased()
+        guard supportedColumnTypes.contains(normalized) else {
+            throw AgentDatabaseError.invalidArgument(
+                "unsupported column type `\(raw)`. Use one of: "
+                    + supportedColumnTypes.joined(separator: ", ")
+                    + ". Put PRIMARY KEY, AUTOINCREMENT, DEFAULT, and NOT NULL "
+                    + "in their dedicated column fields."
+            )
+        }
+        return normalized
     }
 
     /// Default value used to backfill a `NOT NULL ADD COLUMN` when the
     /// agent didn't supply one and the table has rows (spec §16 Q5).
     /// Picks a benign zero / empty value matching the column's affinity.
-    static func derivedDefault(forType raw: String) -> String {
-        switch normalizeType(raw) {
+    static func derivedDefault(forType raw: String) throws -> String {
+        switch try normalizeType(raw) {
         case "INTEGER", "REAL", "NUMERIC": return "0"
         case "BLOB": return "X''"
         default: return "''"

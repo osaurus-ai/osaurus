@@ -39,7 +39,7 @@ struct SubagentCapabilityRegistryTests {
         agentId: UUID,
         spawn: Bool = false,
         image: Bool = false,
-        targets: [String] = [],
+        targets: [UUID] = [],
         models: [String] = []
     ) -> AgentConfigSnapshot {
         AgentConfigSnapshot(
@@ -54,7 +54,7 @@ struct SubagentCapabilityRegistryTests {
             dbEnabled: false,
             spawnDelegationEnabled: spawn,
             imageEnabled: image,
-            spawnableAgentNames: targets,
+            spawnableAgentIDs: targets,
             spawnableModelNames: models
         )
     }
@@ -62,10 +62,12 @@ struct SubagentCapabilityRegistryTests {
     @Test("the Default agent uses its own pools/image; a custom agent its own per-agent toggles + lists")
     func delegationVisibilitySemantics() {
         let custom = UUID()
+        let helper = UUID()
+        let nested = UUID()
         // There is no master switch: the Default / main chat's own AGENT pool has
         // one agent, its MODEL pool has one model, and its image switch is on.
         let config = SubagentConfiguration(
-            spawnableAgentNames: ["Helper"],
+            spawnableAgentIDs: [helper],
             imageDelegationEnabled: true,
             spawnableModelNames: ["pool-model"]
         )
@@ -79,39 +81,39 @@ struct SubagentCapabilityRegistryTests {
                 snapshot: snapshot(agentId: Agent.defaultId),
                 config: config,
                 hasReadyImageModel: true
-            ) == ["spawn_agent", "spawn_model", "image"]
+            ) == ["spawn_agent", "spawn_model", "spawn_batch", "image"]
         )
 
         // Custom agent: each spawn tool needs its own toggle AND a non-empty pool
         // of its own kind; image needs its own toggle. Here spawn on with an AGENT
-        // target only → just spawn_agent.
+        // target only → spawn_agent plus the batch surface for that pool.
         #expect(
             SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: custom,
-                snapshot: snapshot(agentId: custom, spawn: true, image: false, targets: ["X"]),
+                snapshot: snapshot(agentId: custom, spawn: true, image: false, targets: [nested]),
                 config: config,
                 hasReadyImageModel: true
-            ) == ["spawn_agent"]
+            ) == ["spawn_agent", "spawn_batch"]
         )
 
-        // Custom agent with a MODEL pool only → just spawn_model.
+        // Custom agent with a MODEL pool only → spawn_model plus batch.
         #expect(
             SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: custom,
                 snapshot: snapshot(agentId: custom, spawn: true, models: ["m"]),
                 config: config,
                 hasReadyImageModel: true
-            ) == ["spawn_model"]
+            ) == ["spawn_model", "spawn_batch"]
         )
 
-        // Custom agent with both pools → both spawn tools.
+        // Custom agent with both pools → both compatibility tools plus batch.
         #expect(
             SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: custom,
-                snapshot: snapshot(agentId: custom, spawn: true, targets: ["X"], models: ["m"]),
+                snapshot: snapshot(agentId: custom, spawn: true, targets: [nested], models: ["m"]),
                 config: config,
                 hasReadyImageModel: true
-            ) == ["spawn_agent", "spawn_model"]
+            ) == ["spawn_agent", "spawn_model", "spawn_batch"]
         )
 
         // Custom agent with spawn on but BOTH pools empty → spawn hidden.
@@ -143,7 +145,7 @@ struct SubagentCapabilityRegistryTests {
         // must withhold `image` so the model is never offered an image
         // capability the runtime can't satisfy; spawn is unaffected.
         let config = SubagentConfiguration(
-            spawnableAgentNames: ["Helper"],
+            spawnableAgentIDs: [UUID()],
             imageDelegationEnabled: true,
             spawnableModelNames: ["pool-model"]
         )
@@ -153,7 +155,7 @@ struct SubagentCapabilityRegistryTests {
                 snapshot: snapshot(agentId: Agent.defaultId),
                 config: config,
                 hasReadyImageModel: false
-            ) == ["spawn_agent", "spawn_model"]
+            ) == ["spawn_agent", "spawn_model", "spawn_batch"]
         )
         // A custom agent with its image toggle on but no installed model → no
         // `image` either.
@@ -170,13 +172,16 @@ struct SubagentCapabilityRegistryTests {
 
     @Test("spawn target validation: Default uses its own pool; custom uses its own allow-list")
     func spawnTargetValidation() {
+        let helper = UUID()
+        let coder = UUID()
+        let other = UUID()
         let config = SubagentConfiguration(
-            spawnableAgentNames: ["Helper"]
+            spawnableAgentIDs: [helper]
         )
-        // Default: the global pool decides (case-insensitive).
+        // Default: the global UUID pool decides exactly.
         #expect(
             SubagentToolVisibility.spawnTargetAllowed(
-                "helper",
+                helper,
                 isDefault: true,
                 config: config,
                 perAgentTargets: []
@@ -184,27 +189,27 @@ struct SubagentCapabilityRegistryTests {
         )
         #expect(
             !SubagentToolVisibility.spawnTargetAllowed(
-                "Other",
+                other,
                 isDefault: true,
                 config: config,
-                perAgentTargets: ["Other"]
+                perAgentTargets: [other]
             )
         )
         // Custom: only the agent's OWN list counts, not the global pool.
         #expect(
             SubagentToolVisibility.spawnTargetAllowed(
-                "Coder",
+                coder,
                 isDefault: false,
                 config: config,
-                perAgentTargets: ["Coder"]
+                perAgentTargets: [coder]
             )
         )
         #expect(
             !SubagentToolVisibility.spawnTargetAllowed(
-                "Helper",
+                helper,
                 isDefault: false,
                 config: config,
-                perAgentTargets: ["Coder"]
+                perAgentTargets: [coder]
             )
         )
     }
@@ -266,8 +271,12 @@ struct SubagentCapabilityRegistryTests {
         // Image generation + editing now share the single `image` tool.
         #expect(SubagentCapabilityRegistry.image.primaryToolName == "image")
         #expect(SubagentCapabilityRegistry.image.guidance != nil)
-        // The spawn family lists both sibling tools; `spawn_agent` is primary.
-        #expect(SubagentCapabilityRegistry.spawn.toolNames == ["spawn_agent", "spawn_model"])
+        // The spawn family lists both compatibility tools plus bounded batch;
+        // `spawn_agent` remains primary.
+        #expect(
+            SubagentCapabilityRegistry.spawn.toolNames
+                == ["spawn_agent", "spawn_model", "spawn_batch"]
+        )
         #expect(SubagentCapabilityRegistry.spawn.primaryToolName == "spawn_agent")
         // Spawn has no inline capability guidance — its prompt block is rendered
         // by a dedicated dynamic `.static` section in the composer instead.
@@ -277,28 +286,30 @@ struct SubagentCapabilityRegistryTests {
     @Test("the registry represents every shipped kind")
     func allRepresentsEveryKind() {
         let ids = Set(SubagentCapabilityRegistry.all.map(\.id))
-        #expect(ids == ["computer_use", "spawn", "image", "applescript"])
+        #expect(ids == ["computer_use", "browser_use", "spawn", "image", "video", "applescript"])
     }
 
     @Test("the modelSource axis records how each kind resolves its model")
     func modelSourceAxis() {
-        // The image coordinator owns a dedicated, separately-configured model.
+        // The media coordinators own dedicated, separately-configured models.
         #expect(SubagentCapabilityRegistry.image.modelSource == .dedicatedConfigured)
+        #expect(SubagentCapabilityRegistry.video.modelSource == .dedicatedConfigured)
         // spawn runs the chosen agent's own model (local or remote).
         #expect(SubagentCapabilityRegistry.spawn.modelSource == .agent)
         // computer_use reuses the parent agent's model.
         #expect(SubagentCapabilityRegistry.computerUse.modelSource == .inheritsParent)
     }
 
-    @Test("supportsModelOverride is true for the chat-driven kinds and false for image")
+    @Test("supportsModelOverride is true for chat-driven kinds and false for media")
     func supportsModelOverrideFlag() {
         // The chat-driven kinds share the standard per-agent model picker
         // (`subagentModelOverrides` → `effectiveSubagentModel` →
         // `SubagentModelResolution`).
         #expect(SubagentCapabilityRegistry.computerUse.supportsModelOverride)
         #expect(SubagentCapabilityRegistry.spawn.supportsModelOverride)
-        // image owns its own dedicated gen/edit model system → no shared row.
+        // Media kinds own dedicated generation model systems → no shared row.
         #expect(!SubagentCapabilityRegistry.image.supportsModelOverride)
+        #expect(!SubagentCapabilityRegistry.video.supportsModelOverride)
     }
 
     @Test("capability(forPerAgentFlag:) maps each toggle flag to its descriptor")
@@ -309,6 +320,7 @@ struct SubagentCapabilityRegistryTests {
         )
         #expect(SubagentCapabilityRegistry.capability(forPerAgentFlag: .spawn)?.id == "spawn")
         #expect(SubagentCapabilityRegistry.capability(forPerAgentFlag: .image)?.id == "image")
+        #expect(SubagentCapabilityRegistry.capability(forPerAgentFlag: .video)?.id == "video")
         #expect(
             SubagentCapabilityRegistry.capability(forPerAgentFlag: .appleScript)?.id == "applescript"
         )
@@ -322,15 +334,14 @@ struct SubagentCapabilityRegistryTests {
         }
     }
 
-    @Test("per-agent toggle flags are computer_use, spawn, image, applescript (each independent)")
+    @Test(
+        "per-agent toggle flags include independent image and video controls"
+    )
     func perAgentToggleFlagsAreDistinct() {
-        // One card per *flag*: computer_use, spawn, image, and applescript are
-        // each their own per-agent toggle (image split out of the old shared
-        // spawn flag; applescript is its own kind), so the Subagents tab renders
-        // exactly four cards in registry order.
+        // One card per flag; image and video are independent media capabilities.
         #expect(
             SubagentCapabilityRegistry.perAgentToggleFlags
-                == [.computerUse, .spawn, .image, .appleScript]
+                == [.computerUse, .browserUse, .spawn, .image, .video, .appleScript]
         )
     }
 
@@ -345,6 +356,7 @@ struct SubagentCapabilityRegistryTests {
         #expect(SubagentToolVisibility.delegationToolNames == ToolRegistry.agentDelegationAllToolNames)
         #expect(ToolRegistry.agentDelegationSpawnToolNames == Set(SubagentCapabilityRegistry.spawn.toolNames))
         #expect(ToolRegistry.agentDelegationImageToolNames == Set(SubagentCapabilityRegistry.image.toolNames))
+        #expect(ToolRegistry.agentDelegationVideoToolNames == Set(SubagentCapabilityRegistry.video.toolNames))
         #expect(
             ToolRegistry.agentDelegationAppleScriptToolNames
                 == Set(SubagentCapabilityRegistry.appleScript.toolNames)
@@ -354,6 +366,7 @@ struct SubagentCapabilityRegistryTests {
             ToolRegistry.agentDelegationAllToolNames
                 == ToolRegistry.agentDelegationSpawnToolNames
                 .union(ToolRegistry.agentDelegationImageToolNames)
+                .union(ToolRegistry.agentDelegationVideoToolNames)
                 .union(ToolRegistry.agentDelegationAppleScriptToolNames)
         )
     }
@@ -425,6 +438,55 @@ struct SubagentCapabilityRegistryTests {
         )
     }
 
+    @Test("effectiveAppleScriptModel: automatic custom agents inherit the global default")
+    func effectiveAppleScriptModelResolves() {
+        let config = SubagentConfiguration(
+            defaultAppleScriptModelId: "global-applescript"
+        )
+        var custom = AgentSettings.defaultDisabled
+        custom.appleScriptModelId = "agent-applescript"
+
+        #expect(
+            SubagentToolVisibility.effectiveAppleScriptModel(
+                isDefault: true,
+                config: config,
+                settings: custom
+            ) == "global-applescript"
+        )
+        #expect(
+            SubagentToolVisibility.effectiveAppleScriptModel(
+                isDefault: false,
+                config: config,
+                settings: custom
+            ) == "agent-applescript"
+        )
+
+        custom.appleScriptModelId = nil
+        #expect(
+            SubagentToolVisibility.effectiveAppleScriptModel(
+                isDefault: false,
+                config: config,
+                settings: custom
+            ) == "global-applescript"
+        )
+        #expect(
+            SubagentToolVisibility.effectiveAppleScriptModel(
+                isDefault: false,
+                config: config,
+                settings: nil
+            ) == "global-applescript"
+        )
+
+        let emptyGlobal = SubagentConfiguration(defaultAppleScriptModelId: "  ")
+        #expect(
+            SubagentToolVisibility.effectiveAppleScriptModel(
+                isDefault: false,
+                config: emptyGlobal,
+                settings: AgentSettings.defaultDisabled
+            ) == nil
+        )
+    }
+
     @Test("effectivePermission: Default uses the global map; a custom agent its own; missing → .ask")
     func effectivePermissionResolves() {
         var globalPerms = SubagentPermissionDefaults()
@@ -475,50 +537,59 @@ struct SubagentCapabilityRegistryTests {
         )
     }
 
-    @Test("effectiveBudgets: Default uses the global budgets; a custom agent its own; both normalized")
+    @Test("effectiveBudgets: every launcher shares parallel fan-out while custom agents keep other budgets")
     func effectiveBudgetsResolves() {
         let config = SubagentConfiguration(
             budgets: SubagentBudgets(
                 maxDelegateTokens: 4096,
                 maxDelegateTurns: 3,
-                maxElapsedSeconds: 240
+                maxElapsedSeconds: 240,
+                maxParallelSpawns: 7
             )
         )
         var custom = AgentSettings.defaultDisabled
         custom.subagentBudgets = SubagentBudgets(
             maxDelegateTokens: 1024,
             maxDelegateTurns: 2,
-            maxElapsedSeconds: 60
+            maxElapsedSeconds: 60,
+            maxParallelSpawns: 2
         )
+        let sharedParallelLimit = 7
 
         // Default / main chat → global budgets.
         let def = SubagentToolVisibility.effectiveBudgets(
             isDefault: true,
             config: config,
-            settings: custom
+            settings: custom,
+            sharedParallelLimit: sharedParallelLimit
         )
         #expect(def.maxDelegateTokens == 4096)
         #expect(def.maxDelegateTurns == 3)
         #expect(def.maxElapsedSeconds == 240)
+        #expect(def.maxParallelSpawns == 7)
 
-        // Custom agent → its own budgets.
+        // Custom agent → its own non-concurrency budgets plus shared fan-out.
         let cus = SubagentToolVisibility.effectiveBudgets(
             isDefault: false,
             config: config,
-            settings: custom
+            settings: custom,
+            sharedParallelLimit: sharedParallelLimit
         )
         #expect(cus.maxDelegateTokens == 1024)
         #expect(cus.maxDelegateTurns == 2)
         #expect(cus.maxElapsedSeconds == 60)
+        #expect(cus.maxParallelSpawns == 7)
 
-        // nil settings (custom) → normalized defaults.
-        #expect(
-            SubagentToolVisibility.effectiveBudgets(
-                isDefault: false,
-                config: config,
-                settings: nil
-            ) == SubagentBudgets().normalized
+        // Missing custom settings still inherit the shared fan-out while the
+        // other fields retain their normalized defaults.
+        let missing = SubagentToolVisibility.effectiveBudgets(
+            isDefault: false,
+            config: config,
+            settings: nil,
+            sharedParallelLimit: sharedParallelLimit
         )
+        #expect(missing.maxDelegateTokens == SubagentBudgets().maxDelegateTokens)
+        #expect(missing.maxParallelSpawns == 7)
     }
 
     // MARK: - BUG E parity guard
@@ -535,22 +606,19 @@ struct SubagentCapabilityRegistryTests {
         try String(contentsOf: packageRoot().appendingPathComponent(relativePath), encoding: .utf8)
     }
 
-    /// The original BUG E was a *surface split*: the native composer strip and
-    /// the HTTP enrich path each decided subagent tool visibility from their
-    /// own hardcoded `["image_generate","image_edit","local_delegate","spawn"]`
-    /// list, so they could disagree on what an agent sees. Both must now resolve
-    /// from the single `SubagentToolVisibility` SSOT and never re-introduce a
-    /// hardcoded delegation list. This is a source-level standing guard (mirrors
-    /// `RuntimePolicySourceTests`) so a future edit to either surface that
-    /// re-hardcodes the set fails CI instead of silently re-splitting them.
-    @Test("native + HTTP tool-visibility surfaces both read the shared SSOT, never a hardcoded list")
+    /// The original BUG E was a surface split: native and HTTP each resolved
+    /// subagent visibility independently. Native composition owns the resolver;
+    /// HTTP must consume that exact composed toolset without a second pass.
+    @Test("HTTP consumes the native composed toolset without a second visibility resolver")
     func surfacesShareTheResolver() throws {
         let composer = try Self.source("Services/Chat/SystemPromptComposer.swift")
         let http = try Self.source("Networking/HTTPHandler.swift")
 
-        // Both entry points resolve per-agent visibility through the shared SSOT…
+        // Native composition resolves per-agent visibility through the SSOT;
+        // HTTP consumes `composed.tools` and never re-injects from config alone.
         #expect(composer.contains("SubagentToolVisibility.visibleDelegationToolNames"))
-        #expect(http.contains("SubagentToolVisibility.visibleDelegationToolNames"))
+        #expect(http.contains("mergeAgentContextTools(\n            composed.tools,"))
+        #expect(!http.contains("SubagentToolVisibility.visibleDelegationToolNames"))
 
         // …and neither re-introduces the BUG E hardcoded delegation list.
         for legacy in ["\"local_delegate\"", "\"image_generate\"", "\"image_edit\""] {

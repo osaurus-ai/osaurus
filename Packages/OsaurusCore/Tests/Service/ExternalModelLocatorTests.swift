@@ -278,9 +278,18 @@ struct ExternalModelLocatorTests {
 
         let bundle = customRoot.appendingPathComponent("publisher/repo", isDirectory: true)
         writeBundle(at: bundle)
+        try? Data(#"{"model_type":"gemma4"}"#.utf8)
+            .write(to: bundle.appendingPathComponent("config.json"))
+        try? Data(#"{"metadata":{"total_size":44298536392}}"#.utf8)
+            .write(to: bundle.appendingPathComponent("model.safetensors.index.json"))
 
         ExternalModelLocator.testRootsOverride = [(root: customRoot, source: .customModelFolder)]
         ExternalModelLocator.rescan()
+
+        let report = ExternalModelLocator.lastScanReport()
+        // Exercise the app-relaunch path: the persisted registry carries no
+        // architecture field, so `models()` must rehydrate it from the bundle.
+        ExternalModelLocator.invalidateInMemory()
 
         let resolved = ExternalModelLocator.path(forId: "publisher/repo")
         #expect(resolved?.standardizedFileURL.path == bundle.standardizedFileURL.path)
@@ -288,11 +297,13 @@ struct ExternalModelLocatorTests {
         let models = ExternalModelLocator.models()
         #expect(
             models.contains {
-                $0.id == "publisher/repo" && $0.externalSource == "Custom model folder"
+                $0.id == "publisher/repo"
+                    && $0.externalSource == "Custom model folder"
+                    && $0.modelType == "gemma4"
+                    && $0.downloadSizeBytes == 44_298_536_392
             }
         )
 
-        let report = ExternalModelLocator.lastScanReport()
         #expect(report?.discovered.contains { $0.id == "publisher/repo" } == true)
         #expect(report?.skipped.isEmpty == true)
     }

@@ -380,4 +380,33 @@ struct ModelMediaCapabilitiesMCDCTests {
             ) == .omni
         )
     }
+
+    @Test("Composer upgrades an opaque local Qwen 3.5 VLM name to image plus video")
+    func composerCapabilities_usesScannedLocalModelTypeForVideo() {
+        #expect(
+            ModelMediaCapabilities.composerCapabilities(
+                modelId: "bonsai-27b-1bit-jang",
+                fallbackSupportsImages: true,
+                localModelType: "qwen3_5"
+            ) == .imageVideo
+        )
+        #expect(
+            ModelMediaCapabilities.composerDescriptor(
+                modelId: "bonsai-27b-1bit-jang",
+                fallbackSupportsImages: true,
+                localModelType: "QWEN3_5"
+            ).video.reason.contains("local bundle model_type")
+        )
+    }
+
+    @Test("Local Qwen model_type alone never grants media to a text-only bundle")
+    func composerCapabilities_localModelTypeNeedsVisionProof() {
+        #expect(
+            ModelMediaCapabilities.composerCapabilities(
+                modelId: "opaque-qwen-checkpoint",
+                fallbackSupportsImages: false,
+                localModelType: "qwen3_5"
+            ) == .textOnly
+        )
+    }
 }

@@ -20,26 +20,16 @@ import Testing
 @MainActor
 struct FolderToolRegistrationTests {
 
-    /// Register folder tools for a synthetic context, run `body`, then
-    /// unregister. The tool inits only stash `rootPath`; they don't stat
-    /// or open the directory at register time, so a non-existent path is
-    /// safe here.
+    /// Ensure the canonical folder-tool registration, run `body`, then
+    /// unregister via the test seam. Registration is per-process and
+    /// root-free now — tool bodies resolve the root from the TaskLocal
+    /// execution scope, so no synthetic `FolderContext` is needed here.
     private func withRegisteredFolderTools(
-        projectType: ProjectType = .unknown,
-        isGitRepo: Bool = false,
         body: (FolderToolManager) -> Void
     ) {
         let manager = FolderToolManager.shared
-        let context = FolderContext(
-            rootPath: URL(fileURLWithPath: "/tmp/osaurus-folder-tool-test-\(UUID().uuidString)"),
-            projectType: projectType,
-            tree: "",
-            manifest: nil,
-            gitStatus: nil,
-            isGitRepo: isGitRepo
-        )
-        manager.registerFolderTools(for: context)
-        defer { manager.unregisterFolderTools() }
+        manager.ensureFolderToolsRegistered()
+        defer { manager._unregisterAllForTesting() }
         body(manager)
     }
 

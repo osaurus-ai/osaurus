@@ -103,7 +103,8 @@ struct ChatSessionQueuedSendTests {
     func naturalCompletion_autoFlushesQueuedSend() async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()
-            session.chatEngineFactory = { SlowFinishingChatEngine(delayMs: 60) }
+            session.forceChatEngineRouteForTests = true
+            session.chatEngineFactory = { _ in SlowFinishingChatEngine(delayMs: 60) }
 
             session.send("first")
             // Wait for the streaming flag to flip so the queued send
@@ -129,7 +130,8 @@ struct ChatSessionQueuedSendTests {
     func stop_doesNotAutoFlushAndLeavesQueueIntact() async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()
-            session.chatEngineFactory = { SlowFinishingChatEngine(delayMs: 500) }
+            session.forceChatEngineRouteForTests = true
+            session.chatEngineFactory = { _ in SlowFinishingChatEngine(delayMs: 500) }
 
             session.send("first")
             try await waitUntil(timeout: .seconds(1)) { session.isStreaming }
@@ -155,7 +157,8 @@ struct ChatSessionQueuedSendTests {
     func sendNowInterrupting_stopsAndDispatchesAsNewUserTurn() async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()
-            session.chatEngineFactory = { SlowFinishingChatEngine(delayMs: 500) }
+            session.forceChatEngineRouteForTests = true
+            session.chatEngineFactory = { _ in SlowFinishingChatEngine(delayMs: 500) }
 
             session.send("first")
             try await waitUntil(timeout: .seconds(1)) { session.isStreaming }
@@ -194,7 +197,8 @@ struct ChatSessionQueuedSendTests {
     func send_attachmentOnlyTurnPersistsBeforeAssistantCompletes() async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()
-            session.chatEngineFactory = { SlowFinishingChatEngine(delayMs: 500) }
+            session.forceChatEngineRouteForTests = true
+            session.chatEngineFactory = { _ in SlowFinishingChatEngine(delayMs: 500) }
             let attachment = Attachment.document(
                 filename: "assessment.txt",
                 content: "rubric details",
@@ -221,7 +225,8 @@ struct ChatSessionQueuedSendTests {
     func send_plainTextPersistsBeforeAssistantCompletes() async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()
-            session.chatEngineFactory = { SlowFinishingChatEngine(delayMs: 500) }
+            session.forceChatEngineRouteForTests = true
+            session.chatEngineFactory = { _ in SlowFinishingChatEngine(delayMs: 500) }
 
             session.send("persist while streaming")
             try await waitUntil(timeout: .seconds(1)) { session.isStreaming }
@@ -241,7 +246,8 @@ struct ChatSessionQueuedSendTests {
     func privacyCancelRemovesPersistedTransientUserTurn() async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()
-            session.chatEngineFactory = { CancellingBeforeDeltaChatEngine() }
+            session.forceChatEngineRouteForTests = true
+            session.chatEngineFactory = { _ in CancellingBeforeDeltaChatEngine() }
 
             session.send("review will cancel")
 
@@ -260,9 +266,10 @@ struct ChatSessionQueuedSendTests {
     func privacyCancelRemovesPersistedTurnFromPremintedEmptySession() async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()
+            session.forceChatEngineRouteForTests = true
             let premintedId = UUID()
             session.sessionId = premintedId
-            session.chatEngineFactory = { CancellingBeforeDeltaChatEngine() }
+            session.chatEngineFactory = { _ in CancellingBeforeDeltaChatEngine() }
 
             session.send("review will cancel")
 
@@ -288,8 +295,9 @@ struct ChatSessionQueuedSendTests {
             ChatSessionsManager.shared.save(existing)
 
             let session = ChatSession()
+            session.forceChatEngineRouteForTests = true
             session.load(from: existing)
-            session.chatEngineFactory = { CancellingBeforeDeltaChatEngine() }
+            session.chatEngineFactory = { _ in CancellingBeforeDeltaChatEngine() }
 
             session.send("review will cancel")
 
@@ -308,7 +316,8 @@ struct ChatSessionQueuedSendTests {
     func privacyCancelLeavesQueuedSendPending() async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()
-            session.chatEngineFactory = { DelayedCancellingBeforeDeltaChatEngine(delayMs: 120) }
+            session.forceChatEngineRouteForTests = true
+            session.chatEngineFactory = { _ in DelayedCancellingBeforeDeltaChatEngine(delayMs: 120) }
 
             session.send("review will cancel")
             try await waitUntil(timeout: .seconds(1)) { session.isStreaming }
@@ -338,7 +347,8 @@ struct ChatSessionQueuedSendTests {
     func stopBeforeFirstDeltaKeepsPersistedUserTurn() async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()
-            session.chatEngineFactory = { SlowFinishingChatEngine(delayMs: 500) }
+            session.forceChatEngineRouteForTests = true
+            session.chatEngineFactory = { _ in SlowFinishingChatEngine(delayMs: 500) }
 
             session.send("keep this after stop")
             try await waitUntil(timeout: .seconds(1)) { session.isStreaming }
@@ -369,8 +379,9 @@ struct ChatSessionQueuedSendTests {
             ChatSessionsManager.shared.save(existing)
 
             let session = ChatSession()
+            session.forceChatEngineRouteForTests = true
             session.load(from: existing)
-            session.chatEngineFactory = { CancellingBeforeDeltaChatEngine() }
+            session.chatEngineFactory = { _ in CancellingBeforeDeltaChatEngine() }
             let assistantId = try #require(session.turns.last?.id)
 
             session.regenerate(turnId: assistantId)
@@ -400,8 +411,9 @@ struct ChatSessionQueuedSendTests {
             ChatSessionsManager.shared.save(existing)
 
             let session = ChatSession()
+            session.forceChatEngineRouteForTests = true
             session.load(from: existing)
-            session.chatEngineFactory = { CancellingBeforeDeltaChatEngine() }
+            session.chatEngineFactory = { _ in CancellingBeforeDeltaChatEngine() }
             let userId = try #require(session.turns.first?.id)
 
             session.editAndRegenerate(turnId: userId, newContent: "edited question")
@@ -431,6 +443,7 @@ struct ChatSessionQueuedSendTests {
             ChatSessionsManager.shared.save(existing)
 
             let session = ChatSession()
+            session.forceChatEngineRouteForTests = true
             session.load(from: existing)
             let assistantId = try #require(session.turns.last?.id)
 
@@ -440,7 +453,7 @@ struct ChatSessionQueuedSendTests {
 
             #expect(session.turns.map(\.content) == ["original question", "original answer"])
 
-            session.chatEngineFactory = { CancellingBeforeDeltaChatEngine() }
+            session.chatEngineFactory = { _ in CancellingBeforeDeltaChatEngine() }
             session.send("later normal message")
 
             try await waitUntil(timeout: .seconds(2)) {

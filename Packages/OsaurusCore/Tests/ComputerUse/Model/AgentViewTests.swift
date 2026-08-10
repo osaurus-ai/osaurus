@@ -127,6 +127,44 @@ final class AgentViewTests: XCTestCase {
         XCTAssertEqual(next.item(mark: 2)?.changed, true)
     }
 
+    func testDuplicateTextareasStayBoundToTheirWindowsAndRenderWindowContext() {
+        let windows = [
+            CUWindowSummary(id: 10, title: "Target", focused: true, x: 0, y: 0, w: 400, h: 300),
+            CUWindowSummary(id: 20, title: "Other", focused: false, x: 10, y: 10, w: 400, h: 300),
+        ]
+        func multiSnapshot(_ first: String, _ second: String, id: Int) -> CUSnapshot {
+            CUSnapshot(
+                snapshotId: id,
+                pid: 1,
+                app: "TextEdit",
+                focusedWindow: "Target",
+                tier: .ax,
+                truncated: false,
+                windows: windows,
+                elements: [
+                    CUElement(id: "target", role: "textarea", value: first, windowId: 10),
+                    CUElement(id: "other", role: "textarea", value: second, windowId: 20),
+                ],
+                image: nil
+            )
+        }
+
+        let previous = AgentView.build(
+            from: multiSnapshot("Hello from OracHQ", "Hello again", id: 1),
+            previous: nil
+        )
+        let next = AgentView.build(
+            from: multiSnapshot("Hello again", "Hello again", id: 2),
+            previous: previous
+        )
+
+        XCTAssertEqual(next.item(mark: 1)?.windowTitle, "Target")
+        XCTAssertEqual(next.item(mark: 1)?.changed, true)
+        XCTAssertEqual(next.item(mark: 2)?.changed, false)
+        XCTAssertTrue(next.renderForModel().contains("[window \"Target\", focused]"))
+        XCTAssertTrue(next.renderForModel().contains("[window \"Other\"]"))
+    }
+
     // MARK: - Rendering
 
     func testTruncationHintBeyond120() {

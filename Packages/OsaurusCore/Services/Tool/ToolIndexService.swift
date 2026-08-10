@@ -112,9 +112,28 @@ public actor ToolIndexService {
         )
         do {
             try ToolDatabase.shared.upsertEntry(entry)
+        } catch ToolDatabaseError.notOpen {
+            // Expected, not a failure: built-in tools register during app init, which races
+            // ahead of the async task that opens the tool database. `syncFromRegistry` runs
+            // straight after that open and indexes the whole registry, so these tools are
+            // picked up — nothing is actually lost.
+            //
+            // This used to be logged at error level, which meant every launch emitted a wall
+            // of "Failed to index registered tool …" for every built-in. That is worse than
+            // useless: a real indexing failure would have been invisible in the noise.
+            ToolIndexLogger.service.debug(
+                "Tool '\(name)' registered before the index opened; syncFromRegistry will index it"
+            )
         } catch {
             ToolIndexLogger.service.error("Failed to index registered tool '\(name)': \(error)")
         }
+
+        // Dynamic tools (notably MCP providers) can arrive before or after the
+        // persistent vector service initializes. `indexEntry` queues the latest
+        // registration when initialization is still in flight, then drains it
+        // once VecturaKit is ready. It never initializes or rebuilds the index
+        // from this registration path.
+        await ToolSearchService.shared.indexEntry(entry, parameters: parameters)
     }
 
     /// Remove a tool from the index when unregistered.

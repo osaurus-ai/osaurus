@@ -1,0 +1,18 @@
+{
+  "id": "cache_proof.prefix-reuse-second-turn",
+  "domain": "cache_proof",
+  "label": "cache proof • second turn in one session must reuse the shared prefix",
+  "query": "Summarize in one sentence: the quick brown fox jumps over the lazy dog, again and again, every single morning before breakfast.",
+  "notes": "The minimal scored reuse row: two turns in one session share the system-prompt + turn-1 prefix, so turn 2 must carry a typed cacheRestore event. This is tier-neutral and remains meaningful with paged RAM off and disk L2 on; raw RAM/companion counters remain available to topology-specific cases. SKIPs on hosts with no local MLX engine. Off-CI (needs a local model).",
+  "fixtures": {},
+  "expect": {
+    "cacheProof": {
+      "followUpTurns": [
+        "Now say the same thing but as a haiku."
+      ],
+      "maxTokens": 128,
+      "minStructuredCacheRestoreTurns": 1,
+      "requirePrefillProgressAccounting": true
+    }
+  }
+}

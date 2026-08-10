@@ -80,4 +80,22 @@ struct EvalJudgeModelTests {
         )
         #expect(resolution.modelId == "anthropic/claude-sonnet-4-5")
     }
+
+    @Test func judgesConfigParsesAndLeadsWithXAI() {
+        // Config/judges.json is the source of truth for the roster; the
+        // source-anchored fallback path inside loadJudgeCandidates must
+        // find it from a test run regardless of cwd.
+        let loaded = EvalJudgeModel.loadJudgeCandidates(environment: [:])
+        #expect(loaded != nil)
+        #expect(loaded?.first?.envKey == "XAI_API_KEY")
+        #expect(loaded?.first?.modelId == "xai/grok-4.3")
+        // File and built-in fallback must stay in sync so behavior is
+        // identical whether or not the checkout file is reachable.
+        #expect(
+            loaded?.map(\.modelId) == EvalJudgeModel.builtInJudgeCandidates.map(\.modelId)
+        )
+        #expect(
+            loaded?.map(\.envKey) == EvalJudgeModel.builtInJudgeCandidates.map(\.envKey)
+        )
+    }
 }

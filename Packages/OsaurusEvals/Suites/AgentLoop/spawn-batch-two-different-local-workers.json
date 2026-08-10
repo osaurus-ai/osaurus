@@ -1,0 +1,125 @@
+{
+  "id": "agent_loop.spawn-batch-two-different-local-workers",
+  "domain": "agent_loop",
+  "label": "agent loop • two different local workers serialize and finalize once",
+  "query": "Fan out exactly two independent jobs in one spawn_batch call. Job id `nanbeige` must use target_type `agent`, target the exact allowed UUID `A11CE001-0000-4000-8000-000000000101` (Osaurus Eval Nanbeige Worker), and ask it to return exactly DIFFERENT_LOCAL_ALPHA. Job id `ornith` must use target_type `agent`, target the exact allowed UUID `A11CE001-0000-4000-8000-000000000102` (Osaurus Eval Ornith Worker), and ask it to return exactly DIFFERENT_LOCAL_BETA. Preserve that job order. After both results return, answer once with both tokens and stop. Do not call spawn_agent or spawn_model.",
+  "notes": "Production agent-loop proof row for two explicit installed local worker models. The two model ids are portable Hub-style ids rather than host paths. Each worker keeps nil sampler overrides so its own generation_config/JANG bundle defaults remain authoritative. Run on a host where both named bundles are installed.",
+  "fixtures": {
+    "agentCapabilities": {
+      "spawnAgents": [
+        {
+          "id": "A11CE001-0000-4000-8000-000000000101",
+          "name": "Osaurus Eval Nanbeige Worker",
+          "description": "Returns the exact requested validation token using the installed Nanbeige worker.",
+          "systemPrompt": "Complete the bounded delegated task. Return only the exact token requested, with no preamble or explanation.",
+          "modelId": "JANGQ-AI/Nanbeige4.2-3B-JANG_4M"
+        },
+        {
+          "id": "A11CE001-0000-4000-8000-000000000102",
+          "name": "Osaurus Eval Ornith Worker",
+          "description": "Returns the exact requested validation token using the installed Ornith worker.",
+          "systemPrompt": "Complete the bounded delegated task. Return only the exact token requested, with no preamble or explanation.",
+          "modelId": "JANGQ-AI/Ornith-1.0-9B-JANG_4M"
+        }
+      ],
+      "maxParallelSpawns": 2
+    },
+    "runtimeConcurrency": {
+      "continuousBatching": true,
+      "maxConcurrentSequences": 2
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "maxModelSteps": 4,
+      "mustCallTools": [
+        "spawn_batch"
+      ],
+      "mustNotCallTools": [
+        "spawn_agent",
+        "spawn_model"
+      ],
+      "maxToolCalls": 1,
+      "noDuplicateExecutedCalls": true,
+      "noToolErrors": true,
+      "allowedExits": [
+        "finalResponse"
+      ],
+      "finalTextContains": [
+        "DIFFERENT_LOCAL_ALPHA",
+        "DIFFERENT_LOCAL_BETA"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "spawn_batch",
+          "minCalls": 1,
+          "maxCalls": 1,
+          "maxErrors": 0,
+          "argsMustContain": "A11CE001-0000-4000-8000-000000000101"
+        },
+        {
+          "tool": "spawn_batch",
+          "minCalls": 1,
+          "maxCalls": 1,
+          "maxErrors": 0,
+          "argsMustContain": "A11CE001-0000-4000-8000-000000000102"
+        }
+      ],
+      "spawnBatch": {
+        "exactCallCount": 1,
+        "expectedJobIds": [
+          "nanbeige",
+          "ornith"
+        ],
+        "expectedSucceeded": 2,
+        "expectedFailed": 0,
+        "expectedMaxParallel": 2,
+        "requireEveryRowSettled": true,
+        "requireReportedCountsMatchRows": true,
+        "expectedAggregateStatus": "succeeded",
+        "expectedRows": [
+          {
+            "id": "nanbeige",
+            "targetType": "agent",
+            "target": "A11CE001-0000-4000-8000-000000000101",
+            "ok": true,
+            "model": "JANGQ-AI/Nanbeige4.2-3B-JANG_4M",
+            "summaryContains": [
+              "DIFFERENT_LOCAL_ALPHA"
+            ]
+          },
+          {
+            "id": "ornith",
+            "targetType": "agent",
+            "target": "A11CE001-0000-4000-8000-000000000102",
+            "ok": true,
+            "model": "JANGQ-AI/Ornith-1.0-9B-JANG_4M",
+            "summaryContains": [
+              "DIFFERENT_LOCAL_BETA"
+            ]
+          }
+        ],
+        "expectedExecutionWaves": [
+          {
+            "wave": 1,
+            "remoteJobs": 0,
+            "effectiveLocalSlots": 1,
+            "localSubwaves": [
+              1
+            ]
+          },
+          {
+            "wave": 2,
+            "remoteJobs": 0,
+            "effectiveLocalSlots": 1,
+            "localSubwaves": [
+              1
+            ]
+          }
+        ],
+        "requireEveryExecutionWaveWellFormed": true
+      }
+    }
+  }
+}

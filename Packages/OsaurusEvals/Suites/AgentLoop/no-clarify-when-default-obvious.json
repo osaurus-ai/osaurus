@@ -1,0 +1,25 @@
+{
+  "id": "agent_loop.no-clarify-when-default-obvious",
+  "domain": "agent_loop",
+  "label": "agent loop • a task with one sensible default proceeds without clarifying",
+  "query": "There's one markdown file in here. Add a top-level title heading '# Notes' as the first line, keeping the rest.",
+  "notes": "The 'reasonable default' side of abstention: there is exactly one markdown file, so 'the markdown file' is unambiguous in context — asking which file would be a needless stall. The agent should find it and prepend the heading. Guards over-clarification while the sibling clarify cases guard under-clarification. Off-CI (needs a model).",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "readme.md", "contents": "This project renders charts.\nRun make to build.\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "mustNotCallTools": ["clarify"],
+      "files": [
+        { "path": "readme.md", "exists": true, "contains": "# Notes" }
+      ],
+      "rubric": [
+        "Prepends '# Notes' as the first line of readme.md and preserves the existing content.",
+        "Does not ask which file — there was only one markdown file."
+      ]
+    }
+  }
+}

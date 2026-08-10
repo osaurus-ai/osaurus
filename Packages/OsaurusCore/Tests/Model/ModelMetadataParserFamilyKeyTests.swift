@@ -75,6 +75,15 @@ struct ModelMetadataParserFamilyKeyTests {
         )
     }
 
+    @Test func bonsaiLowBitVariantsShareOneNormalizedFamily() {
+        let ternary = "OsaurusAI/Bonsai-27b-Ternary-JANG"
+        let oneBit = "OsaurusAI/Bonsai-27b-1bit-JANG"
+        #expect(ModelMetadataParser.familyKey(from: ternary) == "osaurusai/bonsai-27b")
+        #expect(ModelMetadataParser.familyKey(from: ternary) == ModelMetadataParser.familyKey(from: oneBit))
+        #expect(ModelMetadataParser.familyDisplayName(from: ternary) == "Bonsai 27b")
+        #expect(ModelMetadataParser.familyDisplayName(from: oneBit) == "Bonsai 27b")
+    }
+
     @Test func idWithoutVariantTokensIsItsOwnFamily() {
         #expect(
             ModelMetadataParser.familyKey(from: "OsaurusAI/rampart-mlx")

@@ -9,6 +9,7 @@
 //
 
 import Foundation
+import MLX
 import MLXLMCommon
 import Testing
 
@@ -17,100 +18,184 @@ import Testing
 @Suite(.serialized)
 struct MLXBatchAdapterTests {
 
-    /// The default flipped from 4 → 1 so the vmlx compile path engages
-    /// (Stage 1B.3 promotion gates require `maxBatchSize == 1`). See the
-    /// `mlxBatchEngineMaxBatchSize` doc comment in InferenceFeatureFlags
-    /// for the full rationale + the pending Stage 1B.4 work that would
-    /// lift the constraint. If you change the default again, update both
-    /// this test AND the doc comment so they stay aligned.
-    @Test func maxBatchSize_defaultsToOne_forCompileEngagement() {
-        let defaults = isolatedDefaults()
-        #expect(InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(in: defaults) == 1)
+    @Test func processLifetimeDiagnosticsKeepOccupancyLiveAndCountersMonotonic() {
+        var retired = ProcessLifetimeBatchCounters(
+            activeHighWatermark: 3,
+            decodeSplitCount: 4,
+            turboQuantCompressions: 5,
+            prefixHits: 10,
+            prefixMisses: 11,
+            pagedEvictions: 12,
+            diskL2Hits: 13,
+            diskL2Misses: 14,
+            diskL2Stores: 15,
+            ssmCompanionHits: 16,
+            ssmCompanionMisses: 17,
+            ssmCompanionReDerives: 18
+        )
+        retired.absorb(
+            ProcessLifetimeBatchCounters(
+                activeHighWatermark: 2,
+                prefixHits: 1,
+                diskL2Hits: 2,
+                ssmCompanionHits: 3
+            )
+        )
+        let live = BatchDiagnosticsSnapshot(
+            pendingCount: 2,
+            activeCount: 1,
+            activeHighWatermark: 2,
+            configuredEngineCapacity: 6,
+            nominalAvailableCapacity: 3,
+            engineCapacitySummary: "model-b: 6",
+            decodeSplitCount: 6,
+            turboQuantCompressions: 7,
+            isAcceptingRequests: false,
+            loadedModelCount: 1,
+            nativeMTPModelCount: 1,
+            nativeMTPDepthSummary: "d3",
+            cacheEnabledModelCount: 1,
+            hybridModelCount: 1,
+            pagedIncompatibleModelCount: 1,
+            prefixHits: 20,
+            prefixMisses: 21,
+            pagedEvictions: 22,
+            diskL2Hits: 23,
+            diskL2Misses: 24,
+            diskL2Stores: 25,
+            ssmCompanionHits: 26,
+            ssmCompanionMisses: 27,
+            ssmCompanionReDerives: 28
+        )
+
+        let merged = retired.mergingCounters(into: live)
+
+        #expect(merged.pendingCount == 2)
+        #expect(merged.activeCount == 1)
+        #expect(merged.configuredEngineCapacity == 6)
+        #expect(merged.nominalAvailableCapacity == 3)
+        #expect(merged.engineCapacitySummary == "model-b: 6")
+        #expect(!merged.isAcceptingRequests)
+        #expect(merged.loadedModelCount == 1)
+        #expect(merged.nativeMTPModelCount == 1)
+        #expect(merged.cacheEnabledModelCount == 1)
+        #expect(merged.hybridModelCount == 1)
+        #expect(merged.pagedIncompatibleModelCount == 1)
+        #expect(merged.activeHighWatermark == 3)
+        #expect(merged.decodeSplitCount == 10)
+        #expect(merged.turboQuantCompressions == 12)
+        #expect(merged.prefixHits == 31)
+        #expect(merged.prefixMisses == 32)
+        #expect(merged.pagedEvictions == 34)
+        #expect(merged.diskL2Hits == 38)
+        #expect(merged.diskL2Misses == 38)
+        #expect(merged.diskL2Stores == 40)
+        #expect(merged.ssmCompanionHits == 45)
+        #expect(merged.ssmCompanionMisses == 44)
+        #expect(merged.ssmCompanionReDerives == 46)
     }
 
-    @Test func maxBatchSize_respectsUserDefaults() {
-        let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
-        let defaults = isolatedDefaults()
-        defaults.set(8, forKey: key)
-        // Server deployments override to multi-slot at the cost of the
-        // compile path — same value the test pinned before; only the
-        // default changed.
-        #expect(InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(in: defaults) == 8)
+    @Test func processLifetimeDiagnosticsClampNegativeInputsAndSaturateOverflow() {
+        var counters = ProcessLifetimeBatchCounters(
+            decodeSplitCount: Int.max - 1,
+            prefixHits: -7,
+            diskL2Hits: Int.max
+        )
+        counters.absorb(
+            ProcessLifetimeBatchCounters(
+                decodeSplitCount: 10,
+                prefixHits: 2,
+                diskL2Hits: 1
+            )
+        )
+
+        #expect(counters.decodeSplitCount == Int.max)
+        #expect(counters.prefixHits == 2)
+        #expect(counters.diskL2Hits == Int.max)
     }
 
-    @Test func maxBatchSize_clampsAbsurdValues() {
-        let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
-        let defaults = isolatedDefaults()
-        defaults.set(9999, forKey: key)
-        // Clamp to 32 so a typo doesn't blow out wired memory.
-        #expect(InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(in: defaults) == 32)
-    }
-
-    @Test func maxBatchSize_zeroFallsBackToDefault_one() {
-        let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
-        let defaults = isolatedDefaults()
-        defaults.set(0, forKey: key)
-        // Zero is treated as "unset" — falls back to the compile-friendly
-        // default of 1 (was 4 prior to fa694e9e).
-        #expect(InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(in: defaults) == 1)
-    }
-
-    @Test func maxBatchSize_runtimeSettingsOverrideUserDefaults() {
-        let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
-        let defaults = isolatedDefaults()
-        defaults.set(2, forKey: key)
-        // The vmlx runtime contract trumps the legacy UserDefaults
-        // key; this is the path the Server → Settings panel uses to
-        // persist user choice.
-        var runtime = VMLXServerRuntimeSettings()
-        runtime.concurrency.maxConcurrentSequences = 6
+    @Test func maxBatchSize_safeAutoProfileResolvesToOne() {
+        let runtime = VMLXServerRuntimeSettings()
         #expect(
-            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
-                in: defaults,
-                runtime: runtime
-            ) == 6
+            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(runtime: runtime)
+                == 1
         )
     }
 
-    @Test func maxBatchSize_continuousBatchingTogglePinsSingleSlotWhenOff() {
-        let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
-        let defaults = isolatedDefaults()
-        defaults.set(8, forKey: key)
+    @Test func maxBatchSize_performanceAndBalancedProfilesResolveToTwo() {
+        var runtime = VMLXServerRuntimeSettings()
+        runtime.memorySafety.mode = .performance
+        #expect(
+            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(runtime: runtime)
+                == 2
+        )
 
+        runtime.memorySafety.mode = .balanced
+        #expect(
+            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(runtime: runtime)
+                == 2
+        )
+    }
+
+    @Test func maxBatchSize_explicitServerConcurrencyOverridesProfile() {
         var runtime = VMLXServerRuntimeSettings()
         runtime.concurrency.maxConcurrentSequences = 6
+        runtime.memorySafety.mode = .safeAuto
+
+        #expect(
+            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(runtime: runtime)
+                == 6
+        )
+    }
+
+    @Test func maxBatchSize_continuousBatchingOffPinsOne() {
+        var runtime = VMLXServerRuntimeSettings()
+        runtime.memorySafety.mode = .performance
+        runtime.concurrency.maxConcurrentSequences = 6
         runtime.concurrency.continuousBatching = false
+
+        #expect(
+            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(runtime: runtime)
+                == 1
+        )
+    }
+
+    @Test func maxBatchSize_clampsExplicitValuesToEngineCeiling() {
+        var runtime = VMLXServerRuntimeSettings()
+        runtime.concurrency.maxConcurrentSequences = 200
+        #expect(
+            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(runtime: runtime)
+                == 32
+        )
+    }
+
+    @Test func maxBatchSize_usesExplicitMemorySafetySequenceOverride() {
+        var runtime = VMLXServerRuntimeSettings()
+        runtime.concurrency.continuousBatching = true
+        runtime.concurrency.maxConcurrentSequences = 8
+        runtime.memorySafety.customMaxConcurrentSequences = 3
+
+        #expect(
+            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(runtime: runtime)
+                == 3
+        )
+    }
+
+    @Test func maxBatchSize_ignoresStaleLegacyUserDefaultsAfterMigration() {
+        let defaults = isolatedDefaults()
+        defaults.set(
+            8,
+            forKey: "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
+        )
+        var runtime = VMLXServerRuntimeSettings()
+        runtime.memorySafety.mode = .safeAuto
+        runtime.concurrency.maxConcurrentSequences = nil
 
         #expect(
             InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
                 in: defaults,
                 runtime: runtime
             ) == 1
-        )
-    }
-
-    @Test func maxBatchSize_runtimeSettingsClampsAndFallsBackOnNil() {
-        let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
-        let defaults = isolatedDefaults()
-        defaults.set(4, forKey: key)
-        var runtime = VMLXServerRuntimeSettings()
-        runtime.concurrency.maxConcurrentSequences = 200
-        // Clamp to 32 just like the legacy path.
-        #expect(
-            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
-                in: defaults,
-                runtime: runtime
-            ) == 32
-        )
-
-        // Absent runtime value defers to UserDefaults so users who
-        // never opened the panel keep their existing override.
-        runtime.concurrency.maxConcurrentSequences = nil
-        #expect(
-            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
-                in: defaults,
-                runtime: runtime
-            ) == 4
         )
     }
 
@@ -230,6 +315,73 @@ struct MLXBatchAdapterTests {
         #expect(!effective.compiledBatchDecode)
     }
 
+    /// An agent-level `temperature: 0` silently defeats the bundle's sampler.
+    ///
+    /// Per-request always wins, and `AgentManager.effectiveTemperature` returns
+    /// the agent's stored value — so an agent saved with 0 forces argmax and
+    /// makes `top_p` inert, no matter what the model bundle ships.
+    ///
+    /// Observed live 2026-08-02: an agent stored `"temperature": 0` while
+    /// DSV4's generation_config declares `do_sample: true, temperature: 1.0,
+    /// top_p: 0.95`. Greedy decoding at ~12.5k tokens produced a verbatim
+    /// reasoning loop — the same five sentences repeating indefinitely. At
+    /// temperature 1.0 / top_p 0.95 verbatim repetition is essentially
+    /// impossible, which is what identified the sampler rather than the KV
+    /// cache or the tool parser.
+    ///
+    /// This pins the mechanism so the footgun is visible: `topP` still resolves
+    /// to 0.95 here, but it cannot influence an argmax sampler.
+    @Test func effectiveGenerationSettings_agentTemperatureZeroForcesGreedy() {
+        let generation = GenerationParameters(
+            temperature: 0,
+            maxTokens: 16_384,
+            maxTokensExplicit: false,
+            topPOverride: nil,
+            minPOverride: nil,
+            repetitionPenalty: nil
+        )
+        let defaults = LocalGenerationDefaults.Defaults(
+            maxTokens: 300,
+            temperature: 1.0,
+            topP: 0.95,
+            topK: 0,
+            minP: nil,
+            repetitionPenalty: nil,
+            doSample: true
+        )
+
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "dsv4/deepseek-v4-flash",
+            generation: generation,
+            runtimeDefaults: VMLXServerGenerationDefaults(topP: nil),
+            maxBatchSize: 1,
+            modelDefaults: defaults
+        )
+
+        #expect(
+            effective.temperature == 0,
+            "a stored agent temperature must still win — this is the documented precedence")
+        #expect(
+            effective.topP == 0.95,
+            "top_p is still resolved from the bundle, but argmax ignores it")
+    }
+
+    @Test func lastEffectiveGenerationTelemetry_excludesChatPrefillWarmups() {
+        let visibleRequest = GenerationParameters(
+            temperature: nil,
+            maxTokens: 256,
+            maxTokensExplicit: false
+        )
+        let prefillWarmup = GenerationParameters(
+            temperature: 0,
+            maxTokens: 1,
+            warmupPrefill: true
+        )
+
+        #expect(MLXBatchAdapter.shouldRecordAsLastEffectiveGeneration(visibleRequest))
+        #expect(!MLXBatchAdapter.shouldRecordAsLastEffectiveGeneration(prefillWarmup))
+    }
+
     @Test func effectiveGenerationSettings_preservesNemotronUltraBundleDefaultsWithoutInventingTopK() {
         let generation = GenerationParameters(
             temperature: nil,
@@ -298,6 +450,52 @@ struct MLXBatchAdapterTests {
         #expect(effective.topK == 32)
         #expect(effective.minP == 0.01)
         #expect(effective.repetitionPenalty == 1.02)
+    }
+
+    @Test func effectiveGenerationSettings_explicitTopKWinsAfterLagunaXS21BundleRepair() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("osaurus-laguna-xs-effective-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try #"{"model_type":"laguna"}"#.write(
+            to: tmp.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"temperature":1.0,"top_p":1.0,"top_k":64}"#.write(
+            to: tmp.appendingPathComponent("generation_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"source_model":{"name":"Laguna-XS-2.1"},"chat":{"sampling_defaults":{"top_k":64}}}"#
+            .write(
+                to: tmp.appendingPathComponent("jang_config.json"),
+                atomically: true,
+                encoding: .utf8
+            )
+
+        _ = try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+            at: tmp,
+            modelName: "Laguna XS 2.1 JANG 4M"
+        )
+        let repairedDefaults = LocalGenerationDefaults.load(fromDirectory: tmp)
+        #expect(repairedDefaults.topK == 20)
+
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "Laguna XS 2.1 JANG 4M",
+            generation: GenerationParameters(
+                temperature: nil,
+                maxTokens: 128,
+                maxTokensExplicit: true,
+                topKOverride: 32
+            ),
+            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            maxBatchSize: 1,
+            modelDefaults: repairedDefaults
+        )
+
+        #expect(effective.topK == 32)
     }
 
     @Test func effectiveGenerationSettings_nativeMTPPreservesBundleDefaultsWhenRequestIsOmitted() {
@@ -609,35 +807,145 @@ struct MLXBatchAdapterTests {
         #expect(effective.repetitionPenalty == engineDefaults.repetitionPenalty)
     }
 
+    /// A model name is not a model identity.
+    ///
+    /// Re-bake a pack (MXFP4 -> MXFP8, a re-quant, any weight edit) and install it
+    /// over the old one under the same name: the layer count, head dims and KV mode
+    /// are all unchanged, so every tag the cache key used to carry is unchanged too.
+    /// The key was therefore byte-identical across the swap, and the NEW weights
+    /// would restore the OLD weights' KV and keep generating from activations that
+    /// never came from them — silently, and looking for all the world like a bad
+    /// quant. Re-quantizing under a stable name is a routine operation here, so this
+    /// was reachable in normal use.
+    @Test func cacheCoordinatorModelKey_isolatesWeightsRebakedUnderTheSameName() {
+        let beforeRebake = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "Ornith-1.0-9B",
+            kvModeTag: "fp16",
+            weightsFingerprint: "aaaaaaaaaaaaaaaa"
+        )
+        let afterRebake = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "Ornith-1.0-9B",  // same name, same topology, new weights
+            kvModeTag: "fp16",
+            weightsFingerprint: "bbbbbbbbbbbbbbbb"
+        )
+
+        #expect(
+            beforeRebake != afterRebake,
+            "re-baked weights under the same name must not inherit the old pack's KV cache")
+        #expect(beforeRebake.contains("weights=aaaaaaaaaaaaaaaa"))
+        #expect(afterRebake.contains("weights=bbbbbbbbbbbbbbbb"))
+
+        // ...and the same weights must still hit, or we have traded a correctness
+        // bug for a cache that never warms.
+        let reload = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "Ornith-1.0-9B",
+            kvModeTag: "fp16",
+            weightsFingerprint: "aaaaaaaaaaaaaaaa"
+        )
+        #expect(reload == beforeRebake, "an unchanged pack must still reuse its cache")
+    }
+
+    /// The fingerprint has to survive a relaunch. Swift seeds `Hasher` per process,
+    /// so a `hashValue`-derived key would change on every launch and the prefix
+    /// cache would never hit again — a correctness fix that quietly becomes a
+    /// performance bug. FNV-1a is stable; this pins that it stays that way.
+    @Test func weightsFingerprint_isStableAndDeterministic() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fp-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        try Data("weights".utf8).write(to: dir.appendingPathComponent("model.safetensors"))
+        try Data("{}".utf8).write(to: dir.appendingPathComponent("config.json"))
+
+        let first = ModelRuntime.weightsFingerprint(for: dir)
+        let second = ModelRuntime.weightsFingerprint(for: dir)
+        #expect(first == second, "the same bundle must fingerprint identically every time")
+        #expect(first.count == 16, "a 64-bit hex digest")
+        #expect(first != "empty")
+
+        // Editing a shard must change it, or a re-bake still slips through.
+        try Data("different weights entirely".utf8)
+            .write(to: dir.appendingPathComponent("model.safetensors"))
+        #expect(
+            ModelRuntime.weightsFingerprint(for: dir) != first,
+            "a changed shard must invalidate the cache")
+    }
+
+    /// An unreadable bundle must take a cold prefill rather than risk reusing some
+    /// other pack's KV: fail toward a slow request, never toward a wrong one.
+    @Test func weightsFingerprint_unreadableBundleNeverMatches() {
+        let missing = URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)")
+        let a = ModelRuntime.weightsFingerprint(for: missing)
+        let b = ModelRuntime.weightsFingerprint(for: missing)
+        #expect(a != b, "an unreadable bundle must never produce a reusable cache key")
+    }
+
     @Test func cacheCoordinatorModelKey_namespacesPathDependentCacheTopologies() {
         let dsv4 = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "DeepSeek-V4-Flash-JANGTQ2",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
         let zaya = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "ZAYA1-8B-JANGTQ4",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
         let ling = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "Ling-2.6-flash-JANGTQ2-CRACK",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
         let omni = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "Nemotron-Omni-Nano-JANGTQ4-CRACK",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
         let generic = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "Mistral-Medium-3.5-128B-MXFP4",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
 
         #expect(dsv4.contains("kv=fp16"))
         #expect(dsv4.contains("cachefmt=2"))
         #expect(dsv4.contains("restore=fullhit-trim-eval1"))
+        #expect(dsv4.contains("warmup=recurrent-safe-seed-v2"))
         #expect(dsv4.contains("layers=deepseekV4"))
         #expect(dsv4.contains("prefix=hybrid-pool-disk"))
         #expect(dsv4.contains("decode=max-rp110"))
+        #expect(dsv4.contains("activation-qat=off"))
         #expect(!dsv4.contains("layers=hybrid-ssm"))
+
+        let dsv4QATOn = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "DeepSeek-V4-Flash-JANGTQ2",
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp",
+            deepseekV4ActivationQAT: true
+        )
+        #expect(dsv4QATOn.contains("activation-qat=on"))
+        #expect(dsv4QATOn != dsv4)
+
+        let renamedDSV4Topology = ModelCacheTopologySnapshot(
+            layerCount: 43,
+            rotatingKVLayerCount: 2,
+            hybridPoolLayerCount: 41)
+        let renamedDSV4Off = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "my-renamed-local-model",
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp",
+            cacheTopology: renamedDSV4Topology,
+            deepseekV4ActivationQAT: false)
+        let renamedDSV4On = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "my-renamed-local-model",
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp",
+            cacheTopology: renamedDSV4Topology,
+            deepseekV4ActivationQAT: true)
+        #expect(renamedDSV4Off.contains("activation-qat=off"))
+        #expect(renamedDSV4On.contains("activation-qat=on"))
+        #expect(renamedDSV4Off != renamedDSV4On)
 
         #expect(zaya.contains("layers=zayaCCA"))
         #expect(zaya.contains("prefix=path-dependent-disk"))
@@ -649,6 +957,13 @@ struct MLXBatchAdapterTests {
         #expect(!generic.contains("layers=zayaCCA"))
         #expect(!generic.contains("layers=hybrid-ssm"))
         #expect(!generic.contains("media=omni-audio-video"))
+
+        let genericQATOn = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "Mistral-Medium-3.5-128B-MXFP4",
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp",
+            deepseekV4ActivationQAT: true)
+        #expect(genericQATOn == generic)
 
         #expect(Set([dsv4, zaya, ling, omni, generic]).count == 5)
     }
@@ -821,7 +1136,8 @@ struct MLXBatchAdapterTests {
         ] {
             let key = ModelRuntime.cacheCoordinatorModelKey(
                 modelName: name,
-                kvModeTag: "fp16"
+                kvModeTag: "fp16",
+                weightsFingerprint: "testfp"
             )
             #expect(
                 key.contains("layers=hybrid-ssm"),
@@ -831,14 +1147,16 @@ struct MLXBatchAdapterTests {
 
         let omni = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "Nemotron-Omni-Nano-JANGTQ4-CRACK",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
         #expect(omni.contains("layers=hybrid-ssm"))
         #expect(omni.contains("media=omni-audio-video"))
 
         let zaya = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "ZAYA1-8B-JANGTQ4",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
         #expect(zaya.contains("layers=zayaCCA"))
         #expect(!zaya.contains("layers=hybrid-ssm"))
@@ -859,6 +1177,7 @@ struct MLXBatchAdapterTests {
         let key = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "unrecognized-local-bundle",
             kvModeTag: "turbo(4,3)",
+            weightsFingerprint: "testfp",
             cacheTopology: topology
         )
 
@@ -887,6 +1206,7 @@ struct MLXBatchAdapterTests {
         let key = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
             kvModeTag: "fp16",
+            weightsFingerprint: "testfp",
             cacheTopology: topology
         )
 
@@ -1015,6 +1335,13 @@ struct MLXBatchAdapterTests {
     @Test func compiledBatchDecodeDisabledForKnownUnsafeSoloModels() {
         #expect(
             !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "DeepSeek-V4-Flash-0731-JANG",
+                maxBatchSize: 1
+            ),
+            "DSV4 automatically uses its model-native compiled gate/SwiGLU path; Osaurus must not request the incompatible generic whole-cache compiler"
+        )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
                 modelName: "JANGQ-AI/Hy3-preview-JANGTQ",
                 maxBatchSize: 1
             ),
@@ -1085,6 +1412,84 @@ struct MLXBatchAdapterTests {
                 maxBatchSize: 1
             )
         )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "OsaurusAI/Bonsai-27b-1bit-JANG",
+                maxBatchSize: 1
+            ),
+            "Bonsai is a qwen3_5 dense-VL hybrid (48 linear_attention MambaCache layers) under a bundle id with no qwen substring — the compiled-trace opt-out must apply"
+        )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "OsaurusAI/Bonsai-27b-Ternary-JANG",
+                maxBatchSize: 1
+            )
+        )
+    }
+
+    @Test func compiledBatchDecodeIsTopologyDrivenWhenCacheShapeIsKnown() {
+        // Architecture beats the name matcher: a hybrid cache shape (SSM /
+        // Arrays companion or composite CacheList layers) denies the compiled
+        // trace even for a bundle id the matcher has never heard of — vmlx's
+        // CacheFamily for those slots is not compile-eligible, so requesting
+        // it only buys a per-iterator eval(cache) + failed promotion.
+        let hybridShape = ModelCacheTopologySnapshot(
+            layerCount: 64,
+            kvLayerCount: 16,
+            mambaLayerCount: 48
+        )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "some-org/unrecognized-hybrid-bundle",
+                maxBatchSize: 1,
+                cacheTopology: hybridShape
+            )
+        )
+        let cacheListShape = ModelCacheTopologySnapshot(
+            layerCount: 32,
+            cacheListLayerCount: 32
+        )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "some-org/composite-cache-bundle",
+                maxBatchSize: 1,
+                cacheTopology: cacheListShape
+            )
+        )
+        let dsv4HybridPoolShape = ModelCacheTopologySnapshot(
+            layerCount: 43,
+            rotatingKVLayerCount: 43,
+            hybridPoolLayerCount: 41
+        )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "some-org/unrecognized-dsv4-bundle",
+                maxBatchSize: 1,
+                cacheTopology: dsv4HybridPoolShape
+            ),
+            "a DSV4-style hybrid-pool cache must keep its native compiled micrographs and skip the generic whole-cache trace even when the bundle name is unknown"
+        )
+        // A plain full-attention shape keeps the name-based rules in force:
+        // eligible for a dense model, still denied for a known-unsafe family.
+        let denseShape = ModelCacheTopologySnapshot(
+            layerCount: 28,
+            kvLayerCount: 28
+        )
+        #expect(
+            MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "mlx-community/Llama-3.2-3B-Instruct-4bit",
+                maxBatchSize: 1,
+                cacheTopology: denseShape
+            )
+        )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "JANGQ-AI/Hy3-preview-JANGTQ",
+                maxBatchSize: 1,
+                cacheTopology: denseShape
+            ),
+            "a dense topology must not clear a family that is denied for non-topology reasons (Hy3 diverges on the compiled trace)"
+        )
     }
 
     @Test func registry_shutdownNonexistentIsNoop() async {
@@ -1115,7 +1520,7 @@ struct MLXBatchAdapterTests {
         }
 
         let gate = MLXBatchAdapter.SoloGenerationGate()
-        let first = await gate.acquire(modelName: "minimax-m2.7-jangtq")
+        let first = try #require(await gate.acquire(modelName: "minimax-m2.7-jangtq"))
         let secondAcquired = Flag()
         let second = Task {
             let lease = await gate.acquire(modelName: "minimax-m2.7-jangtq")
@@ -1130,7 +1535,7 @@ struct MLXBatchAdapterTests {
         )
 
         await first.release()
-        let secondLease = await second.value
+        let secondLease = try #require(await second.value)
         #expect(secondAcquired.get())
         await secondLease.release()
     }
@@ -1154,7 +1559,7 @@ struct MLXBatchAdapterTests {
         }
 
         let gate = MLXBatchAdapter.SoloGenerationGate()
-        let first = await gate.acquire(modelName: "minimax-m2.7-jangtq")
+        let first = try #require(await gate.acquire(modelName: "minimax-m2.7-jangtq"))
         let secondAcquired = Flag()
         let second = Task {
             let lease = await gate.acquire(modelName: "qwen3.5-30b-a3b-jangtq")
@@ -1169,9 +1574,28 @@ struct MLXBatchAdapterTests {
         )
 
         await first.release()
-        let secondLease = await second.value
+        let secondLease = try #require(await second.value)
         #expect(secondAcquired.get())
         await secondLease.release()
+    }
+
+    @Test func soloGenerationGate_removesCancelledWaiterWithoutTakingLease() async throws {
+        let gate = MLXBatchAdapter.SoloGenerationGate()
+        let first = try #require(await gate.acquire(modelName: "bonsai"))
+
+        let cancelled = Task {
+            await gate.acquire(modelName: "ornith")
+        }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        cancelled.cancel()
+        #expect(await cancelled.value == nil)
+
+        let next = Task {
+            await gate.acquire(modelName: "gemma-4")
+        }
+        await first.release()
+        let nextLease = try #require(await next.value)
+        await nextLease.release()
     }
 
     @Test func additionalContext_mapsDisableThinkingToEnableThinkingKwarg() {
@@ -1326,6 +1750,31 @@ struct MLXBatchAdapterTests {
         #expect(instruct["enable_thinking"] as? Bool == false)
         #expect(instruct["reasoning_effort"] == nil)
 
+        let low = MLXBatchAdapter.additionalContext(
+            for: GenerationParameters(
+                temperature: nil,
+                maxTokens: 16,
+                modelOptions: ["reasoningEffort": .string("low")]
+            ),
+            modelName: modelName
+        )
+        #expect(low["enable_thinking"] as? Bool == true)
+        #expect(low["reasoning_effort"] as? String == "low")
+
+        let invalid = MLXBatchAdapter.additionalContext(
+            for: GenerationParameters(
+                temperature: nil,
+                maxTokens: 16,
+                modelOptions: ["reasoningEffort": .string("medium")]
+            ),
+            modelName: modelName
+        )
+        #expect(invalid["enable_thinking"] as? Bool == true)
+        #expect(
+            invalid["reasoning_effort"] as? String == "medium",
+            "Invalid explicit efforts must reach vmlx's typed validation instead of being coerced"
+        )
+
         let reasoning = MLXBatchAdapter.additionalContext(
             for: GenerationParameters(
                 temperature: nil,
@@ -1360,7 +1809,10 @@ struct MLXBatchAdapterTests {
             modelName: modelName
         )
         #expect(legacyToggle["enable_thinking"] as? Bool == true)
-        #expect(legacyToggle["reasoning_effort"] as? String == "high")
+        #expect(
+            legacyToggle["reasoning_effort"] == nil,
+            "A legacy thinking-on toggle must preserve the bundle's default effort"
+        )
     }
 
     @Test func additionalContext_threadsRequiredToolChoiceToLocalTemplates() {
@@ -2212,6 +2664,58 @@ struct MLXBatchAdapterTests {
         #expect(boundary == 4)
     }
 
+    @Test func warmupTruncation_marksExactPrefixAndPreservesTheMarkerAcrossToolCopies() {
+        let input = LMInput(
+            tokens: MLXArray([Int32(1), 5, 6, 7, 90, 91])
+                .expandedDimensions(axis: 0),
+            tokenIds: [1, 5, 6, 7, 90, 91],
+            cachePrefixTokenCounts: [4]
+        )
+
+        let warmup = MLXBatchAdapter.truncatingToCanonicalCacheBoundary(input)
+
+        #expect(warmup.text.tokenIds == [1, 5, 6, 7])
+        #expect(warmup.cachePromptIntent == .reusablePrefixWarmup)
+        #expect(
+            warmup.withToolSchemas(nil).cachePromptIntent
+                == .reusablePrefixWarmup)
+    }
+
+    @Test func bothWarmupConstructionPathsSetTheTypedCacheIntent() throws {
+        let coreRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: coreRoot.appendingPathComponent(
+                "Services/ModelRuntime/MLXBatchAdapter.swift"
+            ),
+            encoding: .utf8)
+
+        #expect(
+            source.components(
+                separatedBy: "cachePromptIntent: .reusablePrefixWarmup"
+            ).count - 1 == 2)
+    }
+
+    @Test func requiredToolChoiceRequestsFreshDiskBackedSelection() throws {
+        let coreRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: coreRoot.appendingPathComponent(
+                "Services/ModelRuntime/MLXBatchAdapter.swift"
+            ),
+            encoding: .utf8)
+        let prepareInput = try #require(source.range(of: "private static func prepareInput("))
+        let preparedInputSource = source[prepareInput.lowerBound...]
+
+        #expect(preparedInputSource.contains("if toolChoiceRequiresLocalCall(toolChoice)"))
+        #expect(preparedInputSource.contains(
+            "lmInput = lmInput.withCacheRestorePolicy(.freshRequiredToolSelection)"))
+    }
+
     /// VLM processors (e.g. Gemma 4) never populate `cachePrefixTokenCounts`,
     /// which is exactly the live "warm dot but prefill from 0" failure: the
     /// warm-up stored a full prompt ending in generation tokens that the real
@@ -2293,6 +2797,39 @@ struct MLXBatchAdapterTests {
         #expect(
             MLXBatchAdapter.warmupSendInvariantBoundary(probeA: [], probeB: []) == nil
         )
+    }
+
+    @Test func warmupStableBoundaries_requireBothProbesAndFitInsideInvariantPrefix() {
+        #expect(
+            MLXBatchAdapter.agreedWarmupStableBoundaries(
+                probeA: [20, 80, 120, 160],
+                probeB: [20, 120, 160, 200],
+                invariantPrefixCount: 160
+            ) == [20, 120]
+        )
+        #expect(
+            MLXBatchAdapter.agreedWarmupStableBoundaries(
+                probeA: [120],
+                probeB: [],
+                invariantPrefixCount: 160
+            ).isEmpty
+        )
+        #expect(
+            MLXBatchAdapter.agreedWarmupStableBoundaries(
+                probeA: [1],
+                probeB: [1],
+                invariantPrefixCount: 1
+            ).isEmpty
+        )
+    }
+
+    @Test func warmupStableBoundaries_areAlsoPersistedAsOrdinaryBoundaries() {
+        let boundaries = MLXBatchAdapter.warmupCacheBoundaryLists(
+            stableBoundaries: [120, 20, 120, 0, -1]
+        )
+
+        #expect(boundaries.all == [20, 120])
+        #expect(boundaries.stable == [20, 120])
     }
 
     /// Simulates the Ornith / qwen3_5 failure: the native template REQUIRES

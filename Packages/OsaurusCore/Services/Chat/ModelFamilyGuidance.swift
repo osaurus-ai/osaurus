@@ -51,7 +51,14 @@ enum ModelFamilyGuidance {
     /// Resolve the family for a model id (e.g. "gpt-4o", "gemma-4-26b-it", "qwen3-32b-mlx").
     /// Markers checked in order of specificity — `gpt`/`codex`/`o-series`
     /// first because a finetune name might mention multiple families.
-    static func family(for modelId: String?) -> ModelFamily {
+    static func family(for modelId: String?, modelType: String? = nil) -> ModelFamily {
+        // Local bundles provide the authoritative architecture contract in
+        // config.json. Prefer it over owner/repository marketing names so a
+        // renamed Qwen derivative (or a misleading owner namespace) cannot
+        // silently receive the wrong operational guidance.
+        if let rawModelType = normalizedModelType(modelType) {
+            return family(forNormalizedModelType: rawModelType)
+        }
         guard let raw = modelId?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines),
             !raw.isEmpty
         else { return .other }
@@ -72,6 +79,16 @@ enum ModelFamilyGuidance {
         for (family, markers) in groups where markers.contains(where: raw.contains) {
             return family
         }
+        // Ornith and Bonsai bundles use a Qwen 3.5 backbone but their public
+        // repo/display ids intentionally omit the word "qwen". Route only
+        // exact alias tokens into the existing Qwen operational contract;
+        // substring matching would misclassify unrelated ids such as
+        // `notornith` or `bonsaified`. This is guidance routing only — runtime,
+        // tokenizer, parser, and cache-family detection continue to use their
+        // own bundle-derived contracts.
+        if containsToken(repositoryTail(of: raw), in: qwenBackboneAliasTokens) {
+            return .glmQwen
+        }
         // LFM2 uses the precise name matcher (rejects adjacent future
         // families like `lfm21`) rather than a bare substring so it stays
         // consistent with the rest of the runtime's family detection.
@@ -86,10 +103,39 @@ enum ModelFamilyGuidance {
     /// `/`, `.`, spaces…), so `o1-preview`, `openai/o3-mini`, and a bare
     /// `o4` match while `molmo3`, `yolo11`, and `turbo4` do not.
     private static let oSeriesTokens: Set<String> = ["o1", "o3", "o4"]
+    private static let qwenBackboneAliasTokens: Set<String> = ["ornith", "bonsai"]
+
+    private static func normalizedModelType(_ modelType: String?) -> String? {
+        guard let raw = modelType?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines),
+            !raw.isEmpty
+        else { return nil }
+        return raw
+    }
+
+    /// A present bundle architecture is authoritative even when it is not one
+    /// of the families with targeted guidance. Falling back to the repository
+    /// id for an unknown-but-present type would let an owner such as
+    /// `qwen-owner` misroute an unrelated Llama bundle. Only absent metadata
+    /// may use the legacy id fallback above.
+    private static func family(forNormalizedModelType raw: String) -> ModelFamily {
+        if raw.contains("qwen") || raw.contains("glm") { return .glmQwen }
+        if raw.contains("gemma") { return .googleGemma }
+        if raw.contains("deepseek") { return .deepSeek }
+        if ModelFamilyNames.isLFM2Family(raw) { return .lfm2 }
+        return .other
+    }
+
+    private static func repositoryTail(of raw: String) -> String {
+        raw.split(separator: "/").last.map(String.init) ?? raw
+    }
 
     private static func containsOSeriesToken(_ raw: String) -> Bool {
+        containsToken(raw, in: oSeriesTokens)
+    }
+
+    private static func containsToken(_ raw: String, in tokens: Set<String>) -> Bool {
         raw.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-            .contains { oSeriesTokens.contains(String($0)) }
+            .contains { tokens.contains(String($0)) }
     }
 
     /// The guidance block for a family. Every family — including `.other` —
@@ -135,11 +181,15 @@ enum ModelFamilyGuidance {
     ///
     /// `compact` selects the small-context variant where one exists (see
     /// `compactGuidance(for:)`); callers pass `sizeClass == .small`.
-    static func guidance(forModelId modelId: String?, compact: Bool = false) -> String? {
+    static func guidance(
+        forModelId modelId: String?,
+        modelType: String? = nil,
+        compact: Bool = false
+    ) -> String? {
         guard let raw = modelId?.trimmingCharacters(in: .whitespacesAndNewlines),
             !raw.isEmpty
         else { return nil }
-        let resolved = family(for: raw)
+        let resolved = family(for: raw, modelType: modelType)
         return compact ? compactGuidance(for: resolved) : guidance(for: resolved)
     }
 
@@ -327,9 +377,9 @@ enum ModelFamilyGuidance {
         - You have tools. When a listed tool can satisfy the request, call it — \
         do not decline, and do not just describe what you would do.
         - When NO listed tool directly fits a live-data request (weather, prices, \
-        web pages, current state), don't decline — fetch it yourself with \
-        sandbox_exec (e.g. curl) or run capabilities_discover first. Treating a \
-        missing purpose-built tool as a dead end is an error.
+        web pages, current state), don't decline — use a listed shell/network \
+        tool to fetch it, or use the listed capability gateway to search first. \
+        Treating a missing purpose-built tool as a dead end is an error.
         - For local, reversible work (reading, editing a file, running a test), \
         just proceed. Ask a clarifying question only when guessing wrong would \
         change the result.

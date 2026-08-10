@@ -23,14 +23,21 @@ final class MacQueryTool: OsaurusTool, @unchecked Sendable {
     let name = MacQueryTool.toolName
 
     static let toolDescription =
-        "Read information from the user's Mac or its apps by generating and running a READ-ONLY "
+        "ONLY use this tool when the current user's requested outcome is read-only. If the current "
+        + "request asks to change anything, NEVER call `mac_query` first as a preflight; call "
+        + "`applescript` directly, because that automation validates its live target before editing. "
+        + "Read information from the user's Mac or its apps by generating and running a READ-ONLY "
         + "AppleScript, and get the values back. Ask the WHOLE question in `question` — a self-contained "
         + "subagent writes a read-only script, runs it (no confirmation needed, since it changes "
         + "nothing), and returns the actual value(s) plus a per-step transcript. Use it to READ state: "
         + "the front Safari tab/URL, selected Finder items, the current Music track, unread Mail, "
         + "Calendar events, clipboard, window titles, or system state (volume, brightness, battery, "
-        + "running apps). To CHANGE anything, use `applescript` instead. Not for shell, files, or web "
-        + "requests — those have dedicated tools."
+        + "running apps). Call it only when the current user request asks for Mac/app state, or that "
+        + "state is necessary to complete the requested task. Never invent a state question merely "
+        + "to acknowledge feedback or conversation. Do not preflight an exact change when the user "
+        + "already supplied the target and values; call `applescript` directly and let that operation "
+        + "validate its live target. To CHANGE anything, use `applescript` instead. "
+        + "Not for shell, files, or web requests — those have dedicated tools."
 
     let description = MacQueryTool.toolDescription
 
@@ -42,7 +49,11 @@ final class MacQueryTool: OsaurusTool, @unchecked Sendable {
                 "type": .string("string"),
                 "description": .string(
                     "The information to read from the Mac, in plain language, naming the app when it "
-                        + "matters. Example: \"What is the URL of the front Safari tab?\""
+                        + "matters. The current user's requested outcome must itself be read-only. If "
+                        + "the request asks to change anything, do not call this tool even as a "
+                        + "preflight; call `applescript` directly. Do not invent a question for "
+                        + "conversational acknowledgements. Example: "
+                        + "\"What is the URL of the front Safari tab?\""
                 ),
             ]),
             "content": .object([
@@ -80,6 +91,14 @@ final class MacQueryTool: OsaurusTool, @unchecked Sendable {
     // Like `applescript`, the loop drives a model over many turns, so it opts
     // out of the registry's 120s race and relies on its own `RunLimits`.
     var bypassRegistryTimeout: Bool { true }
+
+    func normalizeArgumentsBeforeValidation(_ argumentsJSON: String) -> String {
+        AppleScriptToolDispatch.removingSiblingField(
+            argumentsJSON,
+            siblingField: "task",
+            requiredField: "question"
+        )
+    }
 
     init() {}
 

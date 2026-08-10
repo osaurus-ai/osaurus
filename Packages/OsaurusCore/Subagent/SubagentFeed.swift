@@ -33,6 +33,11 @@ public struct SubagentActivityEvent: Sendable, Identifiable, Equatable {
         case progress
         /// Free-form human-readable narration.
         case narrate
+        /// Model-provided `reasoning_content`. This is an observation channel,
+        /// not a synthesized thinking rail.
+        case reasoning
+        /// Model-provided visible `content`.
+        case response
         /// Terminal outcome.
         case outcome
         /// An error step.
@@ -91,6 +96,8 @@ public struct SubagentActivityEvent: Sendable, Identifiable, Equatable {
         case .phase: return "circle.dashed"
         case .progress: return "gauge.with.dots.needle.33percent"
         case .narrate: return "text.bubble"
+        case .reasoning: return "brain"
+        case .response: return "text.bubble.fill"
         case .outcome: return "flag.checkered"
         case .error: return "exclamationmark.triangle"
         case .perceive: return "eye"
@@ -130,6 +137,16 @@ public final class SubagentFeed: @unchecked Sendable {
 
     private let lock = NSLock()
     private var _events: [SubagentActivityEvent] = []
+    private var eventRevision: UInt64 = 0
+    /// Serializes `CurrentValueSubject.send` without holding the event-buffer
+    /// lock across subscriber callbacks. Recursive locking keeps a synchronous
+    /// subscriber that emits another event from deadlocking the feed.
+    private let eventPublicationLock = NSRecursiveLock()
+    private var lastPublishedEventRevision: UInt64 = 0
+    /// Deterministic seam for the publication-order regression. Production
+    /// construction always leaves it nil.
+    private let beforeEventPublicationForTesting:
+        (@Sendable (_ revision: UInt64) -> Void)?
 
     /// Upper bound on retained events. Long computer-use / spawn runs emit
     /// continuously (act/verify/tool rows), and every emission republishes the
@@ -137,15 +154,37 @@ public final class SubagentFeed: @unchecked Sendable {
     /// each published copy. When the cap is hit the oldest rows are dropped;
     /// the UI shows the most recent activity, which is what matters mid-run.
     private static let maxRetainedEvents = 2_000
+    /// A streamed reasoning/response row is UI evidence, not the canonical
+    /// child transcript. Keep a bounded tail so a verbose reasoning model
+    /// cannot make one SwiftUI row retain and lay out tens of thousands of
+    /// characters. The runner still retains the complete channel separately.
+    private static let maxStreamingDetailCharacters = 4_096
 
     private nonisolated(unsafe) let eventsSubject: CurrentValueSubject<[SubagentActivityEvent], Never>
     private nonisolated(unsafe) let statusSubject: CurrentValueSubject<SubagentRunStatus, Never>
 
-    public init(toolCallId: String, kindId: String, title: String) {
+    public convenience init(toolCallId: String, kindId: String, title: String) {
+        self.init(
+            toolCallId: toolCallId,
+            kindId: kindId,
+            title: title,
+            beforeEventPublicationForTesting: nil
+        )
+    }
+
+    init(
+        toolCallId: String,
+        kindId: String,
+        title: String,
+        beforeEventPublicationForTesting:
+            (@Sendable (_ revision: UInt64) -> Void)?
+    ) {
         self.toolCallId = toolCallId
         self.kindId = kindId
         self.title = title
         self.startedAt = Date()
+        self.beforeEventPublicationForTesting =
+            beforeEventPublicationForTesting
         self.eventsSubject = CurrentValueSubject([])
         self.statusSubject = CurrentValueSubject(.running)
     }
@@ -167,8 +206,12 @@ public final class SubagentFeed: @unchecked Sendable {
     public func currentStatus() -> SubagentRunStatus { statusSubject.value }
 
     /// Mutate the event buffer under the lock and publish the resulting
-    /// snapshot — the single funnel every event change flows through, so the
-    /// lock and the `send` can never drift apart.
+    /// snapshot through a revision-aware serial funnel.
+    ///
+    /// Buffer mutation and subscriber delivery use separate locks so callbacks
+    /// may safely read or mutate the feed. A later mutation is allowed to
+    /// publish first, but an older delayed snapshot is then discarded instead
+    /// of regressing the subject's current value.
     private func mutateEvents(_ body: (inout [SubagentActivityEvent]) -> Void) {
         lock.lock()
         body(&_events)
@@ -176,13 +219,37 @@ public final class SubagentFeed: @unchecked Sendable {
             _events.removeFirst(_events.count - Self.maxRetainedEvents)
         }
         let snapshot = _events
+        eventRevision &+= 1
+        let revision = eventRevision
         lock.unlock()
+
+        beforeEventPublicationForTesting?(revision)
+        eventPublicationLock.lock()
+        defer { eventPublicationLock.unlock() }
+        guard revision > lastPublishedEventRevision else { return }
+        lastPublishedEventRevision = revision
         eventsSubject.send(snapshot)
     }
 
     /// Append an event and notify observers.
     public func emit(_ event: SubagentActivityEvent) {
         mutateEvents { $0.append(event) }
+    }
+
+    /// Insert or update an event by identity.
+    ///
+    /// Batch feeds relay private child snapshots. Progress and streamed text
+    /// rows update in place under a stable id, so the parent must replace the
+    /// prior value rather than dropping the update or appending duplicate
+    /// SwiftUI ids.
+    public func upsert(_ event: SubagentActivityEvent) {
+        mutateEvents { events in
+            if let index = events.firstIndex(where: { $0.id == event.id }) {
+                events[index] = event
+            } else {
+                events.append(event)
+            }
+        }
     }
 
     /// Convenience: emit a lifecycle phase row.
@@ -221,6 +288,54 @@ public final class SubagentFeed: @unchecked Sendable {
                 events.append(event)
             }
         }
+    }
+
+    /// Append a real model-channel delta to the live feed.
+    ///
+    /// Consecutive deltas on the same channel coalesce into one row. A channel
+    /// transition (reasoning → response), a tool event, or any lifecycle event
+    /// starts a new row, preserving the actual streamed order without
+    /// inventing `<think>` markers or moving text between channels.
+    public func emitStreamDelta(
+        kind: SubagentActivityEvent.Kind,
+        title: String,
+        delta: String
+    ) {
+        guard kind == .reasoning || kind == .response, !delta.isEmpty else {
+            return
+        }
+        mutateEvents { events in
+            let coalesce =
+                events.last.map {
+                    $0.kind == kind && $0.title == title
+                } ?? false
+            if coalesce {
+                let previous = events[events.count - 1]
+                events[events.count - 1] = SubagentActivityEvent(
+                    id: previous.id,
+                    timestamp: previous.timestamp,
+                    step: previous.step,
+                    kind: kind,
+                    title: title,
+                    detail: Self.cappedStreamingDetail(
+                        (previous.detail ?? "") + delta
+                    )
+                )
+            } else {
+                events.append(
+                    SubagentActivityEvent(
+                        kind: kind,
+                        title: title,
+                        detail: Self.cappedStreamingDetail(delta)
+                    )
+                )
+            }
+        }
+    }
+
+    private static func cappedStreamingDetail(_ value: String) -> String {
+        guard value.count > maxStreamingDetailCharacters else { return value }
+        return "…\n" + String(value.suffix(maxStreamingDetailCharacters))
     }
 
     /// Mark the run finished. Idempotent.

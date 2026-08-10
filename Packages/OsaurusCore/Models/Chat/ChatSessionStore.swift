@@ -16,7 +16,21 @@ enum ChatSessionStore {
     /// Only metadata is loaded (turns are empty). Use `load(id:)` for full session data.
     static func loadAll() -> [ChatSessionData] {
         ensureOpen()
-        return ChatHistoryDatabase.shared.loadAllMetadata()
+        var sessions = ChatHistoryDatabase.shared.loadAllMetadata()
+        // Overlay writes still deferred behind a closed/rotating DB so a
+        // notification-driven refresh can't drop a chat the user just
+        // created: the disk snapshot doesn't have the row yet, but the
+        // pending queue does. Sessions already on disk keep their pending
+        // (newer) snapshot; brand-new ones are inserted in recency order.
+        guard !pendingSaves.isEmpty else { return sessions }
+        for (id, pending) in pendingSaves {
+            if let index = sessions.firstIndex(where: { $0.id == id }) {
+                sessions[index] = pending
+            } else {
+                sessions.append(pending)
+            }
+        }
+        return sessions.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     /// Load a specific session by ID
@@ -84,7 +98,67 @@ enum ChatSessionStore {
             pendingSaves[session.id] = session
             return
         }
-        ChatHistoryDatabase.shared.saveSessionAsync(session)
+        // The enqueue-time open check above races key rotation: the DB can
+        // close before the queued write runs. Requeue such drops as deferred
+        // saves so the write survives to the next readiness flush (and the
+        // `loadAll` pending overlay keeps the row visible meanwhile).
+        ChatHistoryDatabase.shared.saveSessionAsync(session) { dropped in
+            Task { @MainActor in
+                requeueDroppedAsyncSave(dropped)
+            }
+        }
+    }
+
+    /// Re-queue an async save whose write found the DB closed at dequeue
+    /// time. Skips ids deleted meanwhile and never clobbers a newer pending
+    /// snapshot of the same session.
+    private static func requeueDroppedAsyncSave(_ session: ChatSessionData) {
+        guard !pendingDeletes.contains(session.id) else { return }
+        if let existing = pendingSaves[session.id], existing.updatedAt > session.updatedAt {
+            return
+        }
+        pendingSaves[session.id] = session
+    }
+
+    /// Title-only async update for the auto-title path. Never routes through
+    /// `saveSession`, whose incremental turn upsert would interpret a
+    /// metadata-only session copy (empty `turns`) as "delete every turn".
+    /// While the DB is deferred, retitles the pending snapshot if one is
+    /// queued; otherwise the rename is dropped, matching `saveAsync`'s
+    /// best-effort contract (the preview title simply stands).
+    static func renameTitleAsync(id: UUID, title: String, updatedAt: Date? = nil) {
+        guard !pendingDeletes.contains(id) else { return }
+        ensureOpen()
+        guard didOpen else {
+            pendingSaves[id]?.title = title
+            if let updatedAt { pendingSaves[id]?.updatedAt = updatedAt }
+            return
+        }
+        ChatHistoryDatabase.shared.updateSessionTitleAsync(
+            id: id, title: title, updatedAt: updatedAt)
+    }
+
+    /// Flag-only async updates for the sidebar's archive/pin toggles. Same
+    /// contract as `renameTitleAsync`: a targeted UPDATE that can never touch
+    /// turn rows, handed to the database's serial queue.
+    static func setArchivedAsync(id: UUID, archived: Bool) {
+        guard !pendingDeletes.contains(id) else { return }
+        ensureOpen()
+        guard didOpen else {
+            pendingSaves[id]?.archived = archived
+            return
+        }
+        ChatHistoryDatabase.shared.updateSessionArchivedAsync(id: id, archived: archived)
+    }
+
+    static func setPinnedAsync(id: UUID, pinned: Bool) {
+        guard !pendingDeletes.contains(id) else { return }
+        ensureOpen()
+        guard didOpen else {
+            pendingSaves[id]?.pinned = pinned
+            return
+        }
+        ChatHistoryDatabase.shared.updateSessionPinnedAsync(id: id, pinned: pinned)
     }
 
     /// Sessions whose writes were deferred because the chat-history DB wasn't
@@ -161,6 +235,28 @@ enum ChatSessionStore {
 
     private static var didOpen = false
 
+    /// Warm the chat-history database off the main thread so the first
+    /// window's synchronous `loadAll()` finds it already open. The launch
+    /// path (`presentInitialWindow` → `ChatWindowState.init` →
+    /// `ChatSessionsManager.shared` → `loadAll`) otherwise pays the encrypted
+    /// SQLite open (Keychain read + WAL open + migrations) on the main
+    /// thread and trips the app-hang watchdog on slow disks.
+    ///
+    /// `ChatHistoryDatabase.open()` is idempotent and serialized on its own
+    /// queue, so racing the main-thread `ensureOpen()` is safe — whichever
+    /// runs second no-ops.
+    nonisolated static func preloadInBackground() {
+        Task.detached(priority: .userInitiated) {
+            guard StorageKeyManager.shared.isStorageReadyForWrites else { return }
+            StorageMutationGate.blockingAwaitNotMutating()
+            do {
+                try ChatHistoryDatabase.shared.open()
+            } catch {
+                print("[ChatSessionStore] Background chat-history prewarm failed: \(error)")
+            }
+        }
+    }
+
     /// Open the database (idempotent) on first call. Safe to invoke from any
     /// session-touching code path.
     ///
@@ -200,6 +296,24 @@ enum ChatSessionStore {
             )
         {
             print("[ChatSessionStore] Deferring chat-history open: storage key not yet resident")
+            return
+        }
+        // Never run (or wait behind) the actual open on the main thread.
+        // `open()` is serialized on the database's own queue, so even when
+        // the background prewarm is already mid-open, `queue.sync` here
+        // parks the main thread for the whole slow open (file open + WAL +
+        // migrations on a cold/slow disk — seen as launch hangs in the
+        // field). Defer instead: `loadAll` returns [] until the DB is open,
+        // and `ChatSessionsManager` reloads on
+        // `ChatHistoryDatabase.didOpenNotification`.
+        // Skipped under tests: suites drive `ensureOpen` from the main
+        // thread and expect a synchronous open, and the background prewarm
+        // this kicks would race the storage-converge suites.
+        if Thread.isMainThread, !RuntimeEnvironment.isUnderTests,
+            !ChatHistoryDatabase.shared.isOpenNonBlocking
+        {
+            print("[ChatSessionStore] Deferring chat-history open: not yet open, staying off main")
+            preloadInBackground()
             return
         }
         StorageMutationGate.blockingAwaitNotMutating()

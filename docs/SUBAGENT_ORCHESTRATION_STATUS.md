@@ -1,4 +1,9 @@
 # Local Subagent Orchestration — Engineering Status & Design
+
+> **Archived 2026-07-29.** This is a historical architecture/build log and is
+> no longer authoritative for release status. Use
+> `SUBAGENT_BATCHING_CAMPAIGN_2026_07_27.md` for the current implementation,
+> safety contract, exact SHAs, and live UI evidence.
 Branch: `feat/image-generation-vmlxflux`. Last updated 2026-06-25 (unified subagent architecture).
 
 - **Product requirements (the vision/spec):** `docs/SPAWN_IMAGEGEN_REQUIREMENTS.md`.

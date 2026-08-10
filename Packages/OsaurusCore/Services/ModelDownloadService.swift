@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import os
 
 /// Manages MLX model file downloads, cancellation, deletion, and progress tracking.
 @MainActor
@@ -172,7 +173,26 @@ final class ModelDownloadService: ObservableObject {
         ".gitattributes",
     ]
 
+    /// How a download's file URLs are obtained. `.direct` is the plain
+    /// anonymous `huggingface.co/resolve` URL. `.onboardingProxy` resolves
+    /// presigned CDN URLs through the Osaurus model download proxy — used only for the
+    /// onboarding flow, where the user hasn't had a chance to add their own
+    /// HF token yet and anonymous throttling drives drop-off.
+    enum DownloadRoute {
+        case direct
+        case onboardingProxy
+    }
+
     private var activeDownloadTasks: [String: Task<Void, Never>] = [:]
+    /// Route chosen when the download started; survives pause/resume so a
+    /// paused onboarding download keeps its fast path.
+    private var downloadRoutes: [String: DownloadRoute] = [:]
+    /// Commit each proxy-routed model was pinned to by its first resolve, so
+    /// a mid-download repo update can't mix shards from different revisions.
+    private var proxyPinnedCommits: [String: String] = [:]
+    /// Models whose proxy route failed; their remaining files silently fall
+    /// back to the direct anonymous URL — slow beats failed in onboarding.
+    private var proxyDisabledModels: Set<String> = []
     /// Live downloaders keyed by model id, then by remote file path — one
     /// per in-flight file, since several files transfer concurrently.
     private var activeDownloaders: [String: [String: DirectDownloader]] = [:]
@@ -212,6 +232,22 @@ final class ModelDownloadService: ObservableObject {
         case failed(path: String, error: Error)
     }
 
+    private enum ModelDeletionError: Error, LocalizedError, Sendable {
+        case unsafeUnload
+        case filesystem(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .unsafeUnload:
+                return
+                    "Could not safely unload the model before deleting its files. "
+                    + "Wait for active generation to finish and try again."
+            case .filesystem(let message):
+                return "Could not delete model: \(message)"
+            }
+        }
+    }
+
     init() {
         HuggingFaceAuth.preloadInBackground()
         refreshTotalDownloadedSize()
@@ -228,7 +264,10 @@ final class ModelDownloadService: ObservableObject {
 
     // MARK: - Download Methods
 
-    func download(_ model: MLXModel) {
+    func download(_ model: MLXModel, route: DownloadRoute = .direct) {
+        downloadRoutes[model.id] = route
+        proxyPinnedCommits[model.id] = nil
+        proxyDisabledModels.remove(model.id)
         startOrchestration(model: model, resuming: nil)
     }
 
@@ -309,6 +348,30 @@ final class ModelDownloadService: ObservableObject {
             defer {
                 Task { @MainActor [weak self] in
                     self?.activeDownloadTasks[model.id] = nil
+                }
+            }
+
+            // Proxy route: signing needs the wallet identity, which onboarding
+            // normally creates only at completion. On a fresh install
+            // `OsaurusIdentity.setup()` is silent (no biometric prompt); the
+            // later `configureImplicitDefaults` gates on `exists()` and no-ops.
+            // If the identity still isn't available, disable the proxy up
+            // front so every file takes the anonymous fallback.
+            if await MainActor.run(body: { self.downloadRoutes[model.id] }) == .onboardingProxy {
+                // `exists()` is a synchronous keychain query (blocks on
+                // securityd's mutex) and `setup()` does key generation plus
+                // iCloud keychain writes — keep the whole probe off the main
+                // actor, which this orchestration Task otherwise inherits.
+                // The probe races a 10s timeout: a wedged securityd or slow
+                // attestation must degrade to the anonymous route, never
+                // stall the download itself.
+                let identityReady = await Self.firstResult(timeoutSeconds: 10, fallback: false) {
+                    if OsaurusIdentity.exists() { return true }
+                    _ = try? await OsaurusIdentity.setup()
+                    return OsaurusIdentity.exists()
+                }
+                if !identityReady {
+                    await MainActor.run { _ = self.proxyDisabledModels.insert(model.id) }
                 }
             }
 
@@ -609,7 +672,7 @@ final class ModelDownloadService: ObservableObject {
                 forRemotePath: file.path,
                 under: model.localDirectory
             ),
-            let downloadURL = Self.resolveURL(repoId: model.id, path: file.path)
+            let directURL = Self.resolveURL(repoId: model.id, path: file.path)
         else {
             // Unresolvable path: skip; the manifest completion check reports it.
             return .completed
@@ -642,6 +705,35 @@ final class ModelDownloadService: ObservableObject {
             guard downloadTokens[model.id] == token else {
                 return .failed(path: file.path, error: CancellationError())
             }
+            let proxyRoute =
+                downloadRoutes[model.id] == .onboardingProxy
+                && !proxyDisabledModels.contains(model.id)
+            var downloadURL = directURL
+            // Resume data continues the previous attempt's URL, so a fresh
+            // resolve is only needed when starting the file from scratch.
+            if proxyRoute, resumeDataForAttempt == nil {
+                // Same orphaning timeout as the identity probe: the signing
+                // step reads the master key, and a keychain wedged behind a
+                // pending ACL dialog must degrade to the anonymous URL, not
+                // freeze the transfer.
+                let revision = proxyPinnedCommits[model.id] ?? "main"
+                let repoId = model.id
+                let filePath = file.path
+                if let resolved = await Self.firstResult(timeoutSeconds: 15, fallback: nil, operation: {
+                    await OnboardingModelsProxy.shared.resolve(
+                        repoId: repoId,
+                        revision: revision,
+                        path: filePath
+                    )
+                }) {
+                    downloadURL = resolved.url
+                    if proxyPinnedCommits[model.id] == nil, let commit = resolved.commit {
+                        proxyPinnedCommits[model.id] = commit
+                    }
+                } else {
+                    proxyDisabledModels.insert(model.id)
+                }
+            }
             do {
                 try await downloader.download(
                     from: downloadURL,
@@ -664,8 +756,25 @@ final class ModelDownloadService: ObservableObject {
                 // A failed attempt's URLSession temp file is gone; any retry
                 // restarts this file from byte zero.
                 resumeDataForAttempt = nil
-                guard attempt < Self.maxTransferAttempts, Self.isRetryableTransferError(error)
+                // Presigned proxy URLs expire after hours; a CDN 403 on the
+                // proxy route just means "re-resolve on the next attempt",
+                // not a real failure.
+                let isExpiredProxyURL =
+                    proxyRoute
+                    && (error as? DirectDownloader.HTTPStatusError)?.statusCode == 403
+                guard
+                    attempt < Self.maxTransferAttempts,
+                    isExpiredProxyURL || Self.isRetryableTransferError(error)
                 else {
+                    // The proxy is an accelerator, not a gatekeeper: never
+                    // surface a proxy-routed failure. Disable the proxy for
+                    // this model and restart the file on the plain anonymous
+                    // HF URL with a fresh retry budget.
+                    if proxyRoute {
+                        proxyDisabledModels.insert(model.id)
+                        attempt = 1
+                        continue
+                    }
                     return .failed(path: file.path, error: error)
                 }
                 let delay = Self.transferRetryDelay(attempt: attempt, error: error)
@@ -810,70 +919,93 @@ final class ModelDownloadService: ObservableObject {
     }
 
     func delete(_ model: MLXModel) async {
-        // Use-after-free guard: free any resident GPU buffers and drain
-        // in-flight per-request leases for this model BEFORE removing its
-        // on-disk weights. `ModelRuntime.unload` shuts the BatchEngine, waits
-        // for the lease count to hit zero, and frees the container. Deleting
-        // the files out from under a live `ModelContainer` would let Metal
-        // touch freed-then-reused memory (the `notifyExternalReferencesNonZero
-        // OnDealloc` class). `unload` is a no-op when the model isn't resident.
-        // Some callers (the "remove old id" migration notice) pass a synthetic
-        // model with an empty name; skip the unload there since the runtime is
-        // keyed by name and there's nothing to drain.
-        if !model.name.isEmpty {
-            await ModelRuntime.shared.unload(name: model.name)
-        }
-
         releaseOrchestrationResources(for: model.id)
         pausedDownloads[model.id] = nil
         clearDownloadTracking(for: model.id)
 
-        // Externally-discovered bundles (HF cache, LM Studio) are read-only
-        // references — Osaurus never owns those files. "Deleting" one only
-        // forgets it from the catalog; the source on disk is left untouched.
-        if model.bundleDirectory != nil || model.externalSource != nil {
-            ExternalModelLocator.forget(id: model.id)
-            downloadStates[model.id] = .notStarted
-            ModelManager.invalidateLocalModelsCache()
-            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
-            return
-        }
-
-        // Off the main actor: removing a downloaded model unlinks every
-        // weight file in the tree, which blocks for seconds on multi-GB
-        // models. Only the resulting state is published back here.
+        let modelID = model.id
+        let modelName = model.name
+        let isExternal = model.bundleDirectory != nil || model.externalSource != nil
         let localPath = model.localDirectory.path
         let cacheDirName = "models--\(model.id.replacingOccurrences(of: "/", with: "--"))"
         let cacheRoots = Self.hfCacheRoots()
-        let removalError: (any Error)? = await Task.detached(priority: .userInitiated) {
-            () -> (any Error)? in
-            let fm = FileManager.default
-            if fm.fileExists(atPath: localPath) {
-                do {
-                    try fm.removeItem(atPath: localPath)
-                } catch {
-                    return error
-                }
-            }
-            for cacheRoot in cacheRoots {
-                let cacheModelDir = cacheRoot.appendingPathComponent(cacheDirName)
-                if fm.fileExists(atPath: cacheModelDir.path) {
-                    try? fm.removeItem(at: cacheModelDir)
-                }
-            }
-            return nil
-        }.value
 
-        if let removalError {
+        // The runtime quarantine starts before unload and remains closed
+        // through filesystem mutation plus catalog invalidation. A request
+        // that arrives after deletion begins therefore waits, then resolves
+        // against the refreshed catalog instead of cold-loading weights in
+        // the old unload-to-unlink window.
+        let performDeletion: @Sendable () async throws -> Void = {
+            defer {
+                ModelManager.invalidateLocalModelsCache()
+                NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+            }
+
+            // Use-after-free guard: shut down the BatchEngine and drain the
+            // stream-lifetime ModelLease before touching any owned files.
+            if !modelName.isEmpty {
+                let unloaded = await ModelRuntime.shared.unload(name: modelName)
+                guard unloaded,
+                    await ModelRuntime.shared.residencyIdentity(named: modelName) == nil
+                else {
+                    throw ModelDeletionError.unsafeUnload
+                }
+            }
+
+            // Externally-discovered bundles (HF cache, LM Studio) are
+            // read-only references. Forget the catalog record but never
+            // unlink the source directory.
+            if isExternal {
+                ExternalModelLocator.forget(id: modelID)
+                return
+            }
+
+            // Multi-GB recursive unlinks stay off MainActor while the actor
+            // lease continues to quarantine this canonical model identity.
+            let removalError: String? = await Task.detached(priority: .userInitiated) {
+                () -> String? in
+                let fm = FileManager.default
+                if fm.fileExists(atPath: localPath) {
+                    do {
+                        try fm.removeItem(atPath: localPath)
+                    } catch {
+                        return error.localizedDescription
+                    }
+                }
+                for cacheRoot in cacheRoots {
+                    let cacheModelDir = cacheRoot.appendingPathComponent(cacheDirName)
+                    if fm.fileExists(atPath: cacheModelDir.path) {
+                        try? fm.removeItem(at: cacheModelDir)
+                    }
+                }
+                return nil
+            }.value
+            if let removalError {
+                throw ModelDeletionError.filesystem(removalError)
+            }
+        }
+
+        do {
+            // Synthetic migration entries can have no runtime name. They do
+            // not participate in model loading, so retain the historical
+            // direct-delete path while still refreshing the catalog.
+            if modelName.isEmpty {
+                try await performDeletion()
+            } else {
+                try await ModelRuntime.shared.withModelDeletionLease(
+                    modelID: modelID,
+                    modelName: modelName,
+                    operation: performDeletion
+                )
+            }
+        } catch {
             downloadStates[model.id] = .failed(
-                error: "Could not delete model: \(removalError.localizedDescription)"
+                error: error.localizedDescription
             )
             return
         }
 
         downloadStates[model.id] = .notStarted
-        ModelManager.invalidateLocalModelsCache()
-        NotificationCenter.default.post(name: .localModelsChanged, object: nil)
     }
 
     func estimateSize(for model: MLXModel) async -> Int64? {
@@ -1069,6 +1201,36 @@ final class ModelDownloadService: ObservableObject {
             return min(after, 120)
         }
         return min(pow(2.0, Double(attempt - 1)), 15)
+    }
+
+    /// Run `operation` detached and return its result, or `fallback` if it
+    /// hasn't finished within `timeoutSeconds`. Unlike a task group, this
+    /// never waits on the operation after the deadline: a child stuck in an
+    /// uncancellable syscall (e.g. a keychain read blocked behind a pending
+    /// ACL permission dialog) is simply orphaned, and the caller moves on.
+    nonisolated static func firstResult<T: Sendable>(
+        timeoutSeconds: UInt64,
+        fallback: T,
+        operation: @escaping @Sendable () async -> T
+    ) async -> T {
+        await withCheckedContinuation { continuation in
+            let resumed = OSAllocatedUnfairLock(initialState: false)
+            @Sendable func resumeOnce(_ value: T) {
+                let shouldResume = resumed.withLock { alreadyResumed -> Bool in
+                    if alreadyResumed { return false }
+                    alreadyResumed = true
+                    return true
+                }
+                if shouldResume { continuation.resume(returning: value) }
+            }
+            Task.detached(priority: .userInitiated) {
+                resumeOnce(await operation())
+            }
+            Task.detached(priority: .userInitiated) {
+                try? await Task.sleep(nanoseconds: timeoutSeconds * 1_000_000_000)
+                resumeOnce(fallback)
+            }
+        }
     }
 
     nonisolated static func resolveURL(repoId: String, path: String) -> URL? {
@@ -1385,6 +1547,12 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
     /// `cancelByProducingResumeData` callback owns the continuation
     /// resumption with `PauseInfo`.
     private var pauseRequested = false
+    /// Set under `lock` before `invalidateAndCancel()`. Creating a task on an
+    /// invalidated `URLSession` raises an uncatchable NSGenericException, and
+    /// orchestration teardown (`invalidate()` in a `defer` / pause + cancel)
+    /// races with the next `download(...)` call; the flag turns that race
+    /// into a thrown `URLError(.cancelled)` instead of a crash.
+    private var isInvalidated = false
     private static let progressInterval: CFAbsoluteTime = 0.25
 
     /// Non-nil while a large file is being fetched as parallel Range requests.
@@ -1435,6 +1603,11 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
         }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             lock.lock()
+            if self.isInvalidated {
+                lock.unlock()
+                continuation.resume(throwing: URLError(.cancelled))
+                return
+            }
             self.currentContinuation = continuation
             self.currentDestination = destination
             self.currentExpectedSize = expectedSize
@@ -1447,7 +1620,13 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
                 task = session.downloadTask(withResumeData: resumeData)
             } else {
                 var request = URLRequest(url: url)
-                HuggingFaceAuth.authorize(&request)
+                // Presigned CDN URLs (the onboarding proxy route) carry their
+                // auth in the query string; same token-hygiene rule as the
+                // redirect handler below — the user's HF token only ever
+                // travels to huggingface.co itself.
+                if url.host == "huggingface.co" {
+                    HuggingFaceAuth.authorize(&request)
+                }
                 task = session.downloadTask(with: request)
             }
             self.currentDownloadTask = task
@@ -1506,10 +1685,29 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
 
     func invalidate() {
         lock.lock()
+        isInvalidated = true
         let chunked = self.chunked
         lock.unlock()
         chunked?.invalidate()
         session.invalidateAndCancel()
+    }
+
+    /// Terminal session teardown. Flush any continuation the per-task
+    /// callbacks didn't get to (e.g. a task cancelled by
+    /// `invalidateAndCancel()` racing the flag set above) so the awaiting
+    /// downloader never deadlocks.
+    func urlSession(_: URLSession, didBecomeInvalidWithError error: Error?) {
+        lock.lock()
+        isInvalidated = true
+        let continuation = currentContinuation
+        currentContinuation = nil
+        currentDownloadTask = nil
+        currentDestination = nil
+        currentExpectedSize = nil
+        onProgress = nil
+        pauseRequested = false
+        lock.unlock()
+        continuation?.resume(throwing: error ?? URLError(.cancelled))
     }
 
     /// `resolve/main` URLs 302-redirect to Hugging Face's CDN. Don't leak the

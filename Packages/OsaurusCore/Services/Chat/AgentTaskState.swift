@@ -33,6 +33,12 @@ public enum ToolResultClass: Equatable, Sendable {
     case partialListing
     /// File content (`kind: "file"`).
     case fileContent
+    /// File content whose RENDERED output was cut by the character cap
+    /// and which carries an exact continuation range (`next_start_line`
+    /// / `next_end_line`). Distinct from `.fileContent` so the harness
+    /// can stage a continuation notice instead of letting the model
+    /// review a truncated file as if it were complete (issue #2098).
+    case partialFileContent(path: String, nextStartLine: Int, nextEndLine: Int)
     /// A referenced path does not exist (`kind: "not_found"`).
     case notFound
     /// Any other failure envelope.
@@ -88,12 +94,16 @@ public final class AgentTaskState {
     /// whose `path` freshness is invalidated by a write to the same path.
     private static let readLikeTools: Set<String> = [
         "file_read", "file_search", "sandbox_read_file", "sandbox_search_files",
+        "web_search", "search_and_extract",
     ]
 
-    /// Search tools' results depend on MANY paths, so any write — not just
-    /// one to the searched path — invalidates their fresh entries.
+    /// Search tools have path-less freshness entries. Local search results
+    /// depend on MANY paths, so any write — not just one to the searched path
+    /// — invalidates them. Applying the same conservative invalidation to web
+    /// results permits a deliberate refresh after intervening work while still
+    /// replaying an immediate identical re-issue.
     private static let searchLikeTools: Set<String> = [
-        "file_search", "sandbox_search_files",
+        "file_search", "sandbox_search_files", "web_search", "search_and_extract",
     ]
 
     /// Tools that mutate a path; recording one invalidates any fresh read
@@ -132,12 +142,26 @@ public final class AgentTaskState {
         "file_read", "file_search", "file_edit", "capabilities_load",
     ]
 
+    /// Read-like tools that can explicitly classify a failure as
+    /// non-retryable for the exact same arguments. `search_and_extract` uses
+    /// this for challenge/blocked/empty pages: immediately repeating the same
+    /// URL batch cannot produce page evidence and previously shifted a search
+    /// loop into an extraction loop.
+    private static let deterministicAsIsFailureTools: Set<String> = [
+        "search_and_extract",
+    ]
+
     /// Error kinds eligible for held-error replay. Both depend only on the
     /// arguments + current file state, never on transient conditions.
     private static let deterministicErrorKinds: Set<String> = [
         ToolEnvelope.Kind.invalidArgs.rawValue,
         ToolEnvelope.Kind.notFound.rawValue,
     ]
+
+    /// One execution plus one same-signature retry for a transient extraction
+    /// failure. The third request is replayed as an explicit retry-exhausted
+    /// failure instead of reaching the network again.
+    private static let maxTransientAsIsRetries = 1
 
     /// The listing nudge is REACTIVE, not proactive: it fires only once the
     /// model has produced this many listings without an intervening read —
@@ -153,6 +177,23 @@ public final class AgentTaskState {
     /// reach this counter. Never hard-blocks: the call still executes, the
     /// model just gets told it's looping.
     private static let repeatedCallThreshold = 3
+
+    /// `web_search` is discovery-only: it returns ranked URLs and snippets,
+    /// not the page body or downloadable dataset. Several searches can be
+    /// legitimate research, but a longer uninterrupted run — especially with
+    /// reworded queries — means the model is failing to transition to
+    /// extraction/download. Keep this separate from the generic planning
+    /// detector so productive consecutive calls to other web tools stay valid.
+    private static let webDiscoveryRunThreshold = 4
+
+    /// Concrete transitions that consume or process discovered data. Meta
+    /// operations such as capability discovery/loading and provider
+    /// configuration deliberately do not reset the search budget: the live
+    /// Bonsai loop used those as a detour and resumed rephrased discovery.
+    private static let webDiscoveryProgressTools: Set<String> = [
+        "search_and_extract", "render_chart", "browser_use", "http_request",
+        "file_read", "sandbox_read_file", "shell_run", "sandbox_exec",
+    ]
 
     // MARK: State
 
@@ -174,6 +215,22 @@ public final class AgentTaskState {
         let envelope: String
     }
 
+    /// A successful exact append held only for the current user message.
+    /// Replaying it is a typed no-op, preventing an accidental second
+    /// non-idempotent append while preserving ordinary writes and any append
+    /// after an intervening mutation.
+    private struct HeldAppend {
+        let canonicalPath: String
+        let payload: [String: Any]
+    }
+
+    /// One-shot protection against a whole-file overwrite that exactly
+    /// restores the snapshot from before the most recent targeted edit.
+    private struct SuccessfulEditSnapshot {
+        let beforeSHA256: String
+        let afterSHA256: String
+    }
+
     /// The class of the most recently recorded result.
     public private(set) var lastResultClass: ToolResultClass?
     /// The most recent directory listing (survives across messages in
@@ -190,8 +247,12 @@ public final class AgentTaskState {
     private var freshReads: [CallSignature: FreshRead] = [:]
     /// Deterministic folder-tool errors held for replay, keyed by signature.
     private var heldErrors: [CallSignature: HeldError] = [:]
+    private var heldAppends: [CallSignature: HeldAppend] = [:]
     /// How many times each held error has been replayed (drives escalation).
     private var heldErrorReplays: [CallSignature: Int] = [:]
+    /// Number of retryable failures executed for a selected read-like tool.
+    /// This is per exact canonical argument signature and per user message.
+    private var transientFailureExecutions: [CallSignature: Int] = [:]
     /// Notice produced by the most recent `heldResult` hit when it replayed
     /// a held ERROR (nil for fresh-read replays — the driver's standard
     /// dedupe notice covers those). The driver stages this verbatim.
@@ -210,6 +271,12 @@ public final class AgentTaskState {
     /// reworded-planning-loop nudge (e.g. `todo` re-issued every turn).
     private var planningRunName: String?
     private var planningRunCount = 0
+    /// `web_search` executions since the last concrete retrieval/processing
+    /// action, regardless of argument changes or intervening meta tools.
+    private var webDiscoveryRunCount = 0
+    /// Armed only until the next same-path mutation attempt. This catches the
+    /// observed stale rewrite without becoming a persistent rollback policy.
+    private var successfulEditSnapshots: [String: SuccessfulEditSnapshot] = [:]
 
     public init(biasEnabled: Bool = true) {
         self.biasEnabled = biasEnabled
@@ -226,23 +293,29 @@ public final class AgentTaskState {
         lastToolName = nil
         freshReads.removeAll(keepingCapacity: true)
         heldErrors.removeAll(keepingCapacity: true)
+        heldAppends.removeAll(keepingCapacity: true)
         heldErrorReplays.removeAll(keepingCapacity: true)
+        transientFailureExecutions.removeAll(keepingCapacity: true)
         lastReplayNotice = nil
         consecutiveListingsWithoutRead = 0
         nonReadCallCounts.removeAll(keepingCapacity: true)
         repeatedCallName = nil
         planningRunName = nil
         planningRunCount = 0
+        webDiscoveryRunCount = 0
+        successfulEditSnapshots.removeAll(keepingCapacity: true)
     }
 
     // MARK: Dedupe
 
-    /// True when `name` participates in dedupe replay (read-like tools).
+    /// True when `name` can participate in dedupe replay. `file_write` is
+    /// included so exact append siblings in one parallel batch are deferred
+    /// until the first result is known; non-append writes still re-execute.
     /// The loop driver uses this to recognise duplicate read siblings
     /// inside a single parallel batch — non-read duplicates always
     /// re-execute by design (they may legitimately differ).
     public static func isReplayEligible(name: String) -> Bool {
-        readLikeTools.contains(name)
+        readLikeTools.contains(name) || name == "file_write" || name == "sandbox_write_file"
     }
 
     /// If this call re-issues something the loop already holds the exact
@@ -251,10 +324,11 @@ public final class AgentTaskState {
     ///   1. Fresh reads — a still-fresh read (same tool + canonical args,
     ///      not invalidated by an intervening write to its path).
     ///   2. Held deterministic errors — an `invalid_args`/`not_found` error
-    ///      from a deterministic folder tool, with no intervening write/exec
-    ///      that could change the outcome. Replaying it (with an escalating
-    ///      notice via `lastReplayNotice`) converts an observed N-execution
-    ///      failure spiral into one execution + cached replays.
+    ///      from a deterministic folder tool, or an explicitly non-retryable
+    ///      exact-arguments failure from a read-like tool such as
+    ///      `search_and_extract`. Replaying it (with an escalating notice via
+    ///      `lastReplayNotice`) converts an observed N-execution failure
+    ///      spiral into one execution + cached replays.
     /// Returns nil for novel calls or invalidated entries. The replay is
     /// verbatim — never a collapsed/summarized form — so it is neutral.
     public func heldResult(name: String, argsJSON: String) -> String? {
@@ -263,7 +337,26 @@ public final class AgentTaskState {
         if Self.readLikeTools.contains(name), let fresh = freshReads[sig] {
             return fresh.envelope
         }
-        if Self.deterministicErrorTools.contains(name), let held = heldErrors[sig] {
+        if let held = heldAppends[sig] {
+            var payload = held.payload
+            payload["action"] = "noop"
+            payload["applied"] = false
+            payload["deduped"] = true
+            payload["reason"] = "exact_append_already_applied"
+            payload.removeValue(forKey: "operation_id")
+            payload.removeValue(forKey: "diff")
+            return ToolEnvelope.success(
+                tool: name,
+                result: payload,
+                warnings: [
+                    "An identical append already succeeded in this task with no intervening mutation; the duplicate side effect was suppressed."
+                ]
+            )
+        }
+        if Self.deterministicErrorTools.contains(name)
+            || Self.deterministicAsIsFailureTools.contains(name),
+            let held = heldErrors[sig]
+        {
             let replays = (heldErrorReplays[sig] ?? 0) + 1
             heldErrorReplays[sig] = replays
             let failures = replays + 1  // original execution + replays
@@ -272,6 +365,61 @@ public final class AgentTaskState {
             return held.envelope
         }
         return nil
+    }
+
+    /// Return a synthetic, structured transition result when the model keeps
+    /// issuing discovery searches after the bounded research window. Unlike
+    /// the bias notice, this is load-bearing: the next `web_search` is not sent
+    /// to a provider, so a small model cannot burn the rest of the run on
+    /// rephrased discovery queries and network latency. It remains a success
+    /// envelope because this is an agent-loop routing decision, not a provider
+    /// failure; the model can continue immediately with retrieval or report a
+    /// truthful blocker when retrieval is unavailable.
+    public func guardedResult(name: String, argsJSON: String = "{}") -> String? {
+        if name == "file_write" || name == "sandbox_write_file",
+            !Self.isAppendWrite(name: name, argsJSON: argsJSON),
+            let target = pathArgument(argsJSON),
+            let content = Self.stringArgument("content", argsJSON: argsJSON)
+        {
+            let canonical = Self.canonicalPath(target)
+            // The guard is deliberately one-shot. A rejected stale attempt
+            // gets an actionable error; any other overwrite proceeds and
+            // supersedes the edit snapshot.
+            if let edit = successfulEditSnapshots.removeValue(forKey: canonical),
+                WorkspaceWriteSafety.contentSHA256(content) == edit.beforeSHA256
+            {
+                return ToolEnvelope.failure(
+                    kind: .rejected,
+                    message:
+                        "Refused stale whole-file rewrite of '\(target)': its content exactly matches the snapshot from before the successful targeted edit and would silently undo that edit. Read the current file and make a targeted correction, or call file_undo for an intentional rollback.",
+                    field: "content",
+                    expected:
+                        "content based on the current post-edit file; use file_undo to intentionally restore the prior snapshot",
+                    tool: name,
+                    retryable: false,
+                    metadata: [
+                        "reason": "stale_pre_edit_rewrite",
+                        "path": target,
+                        "current_content_sha256": edit.afterSHA256,
+                    ]
+                )
+            }
+        }
+
+        guard name == "web_search", webDiscoveryRunCount >= Self.webDiscoveryRunThreshold else {
+            return nil
+        }
+        return ToolEnvelope.success(
+            tool: name,
+            result: [
+                "kind": "transition_required",
+                "executed": false,
+                "reason": "discovery_limit_reached",
+                "message":
+                    "Discovery is complete. Do not issue another web_search. Retrieve a selected result with search_and_extract using its direct url, then process it and call render_chart when requested. If retrieval or chart rendering is unavailable, report that blocker now.",
+                "next_tools": ["search_and_extract", "render_chart"],
+            ]
+        )
     }
 
     /// Convenience boolean mirror of `heldResult`.
@@ -285,6 +433,9 @@ public final class AgentTaskState {
     public func record(name: String, argsJSON: String, result: String) {
         let sig = signature(name: name, argsJSON: argsJSON)
         let resultClass = Self.classify(result)
+        let successPayload =
+            ToolEnvelope.isSuccess(result)
+            ? ToolEnvelope.successPayload(result) as? [String: Any] : nil
 
         let previousToolName = lastToolName
         lastResultEnvelope = result
@@ -299,7 +450,10 @@ public final class AgentTaskState {
         if Self.execLikeTools.contains(name) {
             freshReads.removeAll(keepingCapacity: true)
             heldErrors.removeAll(keepingCapacity: true)
+            heldAppends.removeAll(keepingCapacity: true)
             heldErrorReplays.removeAll(keepingCapacity: true)
+            transientFailureExecutions.removeAll(keepingCapacity: true)
+            successfulEditSnapshots.removeAll(keepingCapacity: true)
         }
 
         // A write/edit invalidates any fresh read of the same path so the
@@ -321,26 +475,89 @@ public final class AgentTaskState {
                 if Self.searchLikeTools.contains(entry.key.name) { return false }
                 return entry.value.canonicalPath != targetCanonical
             }
+            heldAppends = heldAppends.filter {
+                $0.value.canonicalPath != targetCanonical
+            }
+            if Self.isAppendWrite(name: name, argsJSON: argsJSON),
+                ToolEnvelope.isSuccess(result),
+                let payload = successPayload
+            {
+                heldAppends[sig] = HeldAppend(
+                    canonicalPath: targetCanonical,
+                    payload: payload
+                )
+            }
+            if ToolEnvelope.isSuccess(result),
+                let payload = successPayload,
+                payload["dry_run"] as? Bool != true,
+                payload["applied"] as? Bool != false
+            {
+                let isTargetedEdit =
+                    name == "file_edit"
+                    || (name == "sandbox_write_file"
+                        && Self.stringArgument("old_string", argsJSON: argsJSON) != nil)
+                if isTargetedEdit,
+                    let before = payload["before_content_sha256"] as? String,
+                    let after = payload["content_sha256"] as? String
+                {
+                    successfulEditSnapshots[targetCanonical] = SuccessfulEditSnapshot(
+                        beforeSHA256: before,
+                        afterSHA256: after
+                    )
+                } else {
+                    // Any successful whole-file or append mutation supersedes
+                    // the targeted-edit snapshot for this path.
+                    successfulEditSnapshots[targetCanonical] = nil
+                }
+            }
+        }
+
+        if name == "file_undo", let payload = successPayload {
+            clearEditSnapshotsUndone(by: payload)
         }
 
         // Capture (or clear) a held deterministic error for this signature.
-        // Only `invalid_args`/`not_found` from the deterministic folder tools
-        // qualify: given an unchanged filesystem, re-executing the identical
-        // call must return the identical error, so replaying is honest.
-        if Self.deterministicErrorTools.contains(name) {
-            if ToolEnvelope.isError(result),
-                let kind = Self.errorKind(result),
-                Self.deterministicErrorKinds.contains(kind)
-            {
+        // Folder/capability tools qualify by deterministic error kind;
+        // selected read-like tools may also qualify by an explicit
+        // `retryable:false` contract. Transient extraction failures therefore
+        // execute again, while an unchanged challenge-page request is replayed
+        // rather than sent to the network indefinitely.
+        if Self.deterministicErrorTools.contains(name)
+            || Self.deterministicAsIsFailureTools.contains(name)
+        {
+            let holdsByKind = Self.errorKind(result).map(Self.deterministicErrorKinds.contains)
+                ?? false
+            let holdsAsIs = Self.deterministicAsIsFailureTools.contains(name)
+                && Self.errorRetryable(result) == false
+            if ToolEnvelope.isError(result), holdsByKind || holdsAsIs {
                 heldErrors[sig] = HeldError(
                     canonicalPath: pathArgument(argsJSON).map(Self.canonicalPath),
                     envelope: result
                 )
+                transientFailureExecutions[sig] = nil
+            } else if ToolEnvelope.isError(result),
+                Self.deterministicAsIsFailureTools.contains(name),
+                Self.errorRetryable(result) == true
+            {
+                let executions = (transientFailureExecutions[sig] ?? 0) + 1
+                transientFailureExecutions[sig] = executions
+                if executions > Self.maxTransientAsIsRetries,
+                    let exhausted = Self.retryExhaustedEnvelope(result, tool: name)
+                {
+                    heldErrors[sig] = HeldError(
+                        canonicalPath: pathArgument(argsJSON).map(Self.canonicalPath),
+                        envelope: exhausted
+                    )
+                } else {
+                    heldErrors[sig] = nil
+                    heldErrorReplays[sig] = nil
+                }
             } else {
                 // A success (or non-deterministic error) supersedes any held
                 // error for this exact call.
                 heldErrors[sig] = nil
                 heldErrorReplays[sig] = nil
+                transientFailureExecutions[sig] = nil
             }
         }
 
@@ -376,6 +593,17 @@ public final class AgentTaskState {
             planningRunCount = 0
         }
 
+        // Discovery-to-retrieval transition guard. Different query text and
+        // meta-tool detours must not defeat it: the observed Bonsai failure
+        // repeatedly rephrased the same request, then loaded/discovered more
+        // capabilities, then resumed searching. Only real retrieval or
+        // processing disarms the budget.
+        if name == "web_search" {
+            webDiscoveryRunCount += 1
+        } else if Self.webDiscoveryProgressTools.contains(name), ToolEnvelope.isSuccess(result) {
+            webDiscoveryRunCount = 0
+        }
+
         // Wandering counter: a listing is a step that hasn't reached a file
         // yet, so it increments. ONLY a successful file read counts as
         // progress and resets it. A `not_found` / `error` is a FAILED read —
@@ -387,11 +615,14 @@ public final class AgentTaskState {
         case .emptyListing, .populatedListing, .partialListing:
             consecutiveListingsWithoutRead += 1
             lastListing = parseListing(result)
-        case .fileContent:
+        case .fileContent, .partialFileContent:
+            // A partial read is still a successful descent into a file —
+            // progress for the wandering counter; its continuation steer is
+            // handled by `nextStepBias`, not here.
             consecutiveListingsWithoutRead = 0
         case .notFound, .error, .nativeImageGeneration, .other:
             break
-        }  // nativeImageGeneration carries associated values; matched without binding
+        }  // associated-value cases matched without binding
 
         // Mark a successful read-like result as fresh (with its exact
         // envelope) so a re-issue replays it until a write invalidates it.
@@ -423,6 +654,20 @@ public final class AgentTaskState {
     public func nextStepBias() -> String? {
         guard biasEnabled, let last = lastResultClass else { return nil }
 
+        if lastToolName == "file_write",
+            let envelope = lastResultEnvelope,
+            Self.isFileWriteContentTooLarge(envelope) {
+            return
+                "The previous `file_write` did not execute because `content` exceeded the per-call limit. Do not regenerate another complete oversized payload. Split the content now: send a first chunk under \(WorkspaceToolContract.recommendedWriteChunkCharacters) characters with overwrite mode, then send only each remaining chunk with `mode: \"append\"`."
+        }
+
+        if let tool = lastToolName,
+            let envelope = lastResultEnvelope,
+            let notice = Self.runnableMutationNotice(tool: tool, envelope: envelope)
+        {
+            return notice
+        }
+
         // Repeated identical write/exec call: the strongest stuck signal we
         // have, so it outranks the result-class nudges. Reactive (3rd
         // identical call) and advisory only — the call still executed.
@@ -438,6 +683,16 @@ public final class AgentTaskState {
         if let name = planningRunName {
             return
                 "You have called `\(name)` \(Self.repeatedCallThreshold)+ times in a row without taking any other action. Re-planning is not progress — if you already have what you need, execute the next concrete step or finish the task; otherwise call a different tool. Do not issue another `\(name)` now."
+        }
+
+        // Reworded discovery loop: the model has URLs/snippets but keeps
+        // searching instead of retrieving or processing a selected source.
+        // Name the real tool boundary and the dynamic-load path; if those
+        // capabilities are unavailable, require a truthful blocker instead of
+        // another cosmetic query rewrite.
+        if webDiscoveryRunCount >= Self.webDiscoveryRunThreshold {
+            return
+                "You have called `web_search` \(Self.webDiscoveryRunThreshold)+ times in a row. `web_search` is discovery-only and returns URLs/snippets, not page bodies or downloadable data. Stop searching. Use a returned source with an available extraction, download, or file tool; if available, load `tool/search_and_extract` with `capabilities_load`, then process the retrieved data and call `render_chart` when that tool is available. If retrieval or chart rendering is unavailable, report that blocker clearly instead of rephrasing the search again."
         }
 
         // Listing nudges are reactive: suppressed until the model is observed
@@ -483,6 +738,12 @@ public final class AgentTaskState {
                 + "without `source_paths` again (that produces a brand-new unrelated image, not an "
                 + "edit of this one). Only if no such follow-up was requested should you give a brief "
                 + "final confirmation. Do not narrate the edit as the final answer instead of calling the tool."
+        case .partialFileContent(let path, let nextStart, let nextEnd):
+            // Reactive by nature — the read is observed incomplete. Without
+            // this steer, models treated the truncated render as the whole
+            // file and reviewed 426 of 499 lines as complete (issue #2098).
+            return
+                "The `file_read` of `\(path)` was truncated by the output cap — you have only seen part of the requested range. Before drawing conclusions about the whole file, call `file_read` again with {\"path\": \"\(path)\", \"start_line\": \(nextStart), \"end_line\": \(nextEnd)} to read the rest."
         case .fileContent, .error, .other:
             return nil
         }
@@ -512,6 +773,24 @@ public final class AgentTaskState {
             if payload["truncated"] as? Bool == true { return .partialListing }
             return .populatedListing
         case "file":
+            // A rendered-cap truncation with an exact continuation range is
+            // its own state: the tool read the whole file but the model only
+            // saw a prefix, and `next_start_line`/`next_end_line` say exactly
+            // how to resume. Raw byte-capped reads (`raw_bytes_truncated`)
+            // deliberately carry no continuation fields — a line-ranged
+            // re-read cannot reach bytes that were never loaded — so they
+            // stay plain `.fileContent` and keep the tool's own split-the-
+            // file guidance.
+            if payload["truncated"] as? Bool == true,
+                let nextStart = payload["next_start_line"] as? Int,
+                let nextEnd = payload["next_end_line"] as? Int
+            {
+                return .partialFileContent(
+                    path: payload["path"] as? String ?? "",
+                    nextStartLine: nextStart,
+                    nextEndLine: nextEnd
+                )
+            }
             return .fileContent
         case "native_image_generation_job":
             let paths = nativeImagePaths(from: payload)
@@ -548,6 +827,69 @@ public final class AgentTaskState {
             let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         return dict["kind"] as? String
+    }
+
+    /// Pull the canonical retryability bit from an error envelope.
+    private static func errorRetryable(_ envelope: String) -> Bool? {
+        guard let data = envelope.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return dict["retryable"] as? Bool
+    }
+
+    private static func isFileWriteContentTooLarge(_ envelope: String) -> Bool {
+        guard ToolEnvelope.isError(envelope),
+            let data = envelope.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            dict["kind"] as? String == ToolEnvelope.Kind.invalidArgs.rawValue,
+            dict["field"] as? String == "content",
+            let message = dict["message"] as? String
+        else { return false }
+        return message.contains("must contain at most")
+    }
+
+    private static func runnableMutationNotice(tool: String, envelope: String) -> String? {
+        guard writeLikeTools.contains(tool),
+            ToolEnvelope.isSuccess(envelope),
+            let payload = ToolEnvelope.successPayload(envelope) as? [String: Any],
+            payload["dry_run"] as? Bool != true,
+            payload["applied"] as? Bool != false,
+            let verification = payload["verification"] as? [String: Any],
+            verification["status"] as? String == "not_run"
+        else { return nil }
+
+        let path = payload["path"] as? String ?? "the runnable artifact"
+        let diffNotice: String
+        if payload["diff_truncated"] as? Bool == true {
+            diffNotice =
+                " `diff_truncated:true` means only the review preview was shortened; the full file mutation completed. Do not rewrite the whole file because the diff preview was truncated."
+        } else {
+            diffNotice = ""
+        }
+        return
+            "The previous `\(tool)` succeeded for `\(path)`.\(diffNotice) Saving bytes proves persistence, not that runnable code works. Before claiming completion, use `shell_run` or another available syntax/build/test/behavior check; if no checker exists, inspect the critical initialization path. Fix only an evidenced defect rather than regenerating the whole file."
+    }
+
+    /// Convert a second identical transient extraction failure into the
+    /// stable result replayed on subsequent requests. Preserve every original
+    /// diagnostic field while making the exhausted retry contract explicit.
+    private static func retryExhaustedEnvelope(_ envelope: String, tool: String) -> String? {
+        guard let data = envelope.data(using: .utf8),
+            var dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        dict["retryable"] = false
+        dict["retry_exhausted"] = true
+        dict["message"] =
+            "The identical \(tool) retrieval failed on its initial attempt and one retry. "
+            + "Do not execute the same arguments again; change the source or report the blocker."
+        dict["next_action"] = [
+            "instruction":
+                "Choose a materially different retrievable source or report the blocker. Do not claim the failed page was inspected."
+        ]
+        return try? String(
+            data: JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]),
+            encoding: .utf8
+        )
     }
 
     // MARK: - Path canonicalization (shared)
@@ -598,6 +940,33 @@ public final class AgentTaskState {
         if let p = dict["path"] as? String, !p.isEmpty { return p }
         if let p = dict["file_path"] as? String, !p.isEmpty { return p }
         return nil
+    }
+
+    private static func isAppendWrite(name: String, argsJSON: String) -> Bool {
+        guard name == "file_write" || name == "sandbox_write_file",
+            let data = argsJSON.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return (dict["mode"] as? String)?.lowercased() == "append"
+    }
+
+    private static func stringArgument(_ key: String, argsJSON: String) -> String? {
+        guard let data = argsJSON.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return dict[key] as? String
+    }
+
+    private func clearEditSnapshotsUndone(by payload: [String: Any]) {
+        guard let undone = payload["undone"] as? [[String: Any]] else { return }
+        for entry in undone {
+            if let path = entry["path"] as? String {
+                successfulEditSnapshots[Self.canonicalPath(path)] = nil
+            }
+            if let destination = entry["destination_path"] as? String {
+                successfulEditSnapshots[Self.canonicalPath(destination)] = nil
+            }
+        }
     }
 
     private func parseListing(_ envelope: String) -> ListingSnapshot? {

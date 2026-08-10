@@ -34,4 +34,17 @@ extension NSSavePanel {
             begin { continuation.resume(returning: $0) }
         }
     }
+
+    /// Sheet variant of `beginModal()`: attaches the panel to `window`
+    /// instead of opening a detached panel window. A detached panel has to
+    /// steal key status from (and reorder around) the presenting window —
+    /// visibly flickery when the chat window is a floating `NSPanel` — while
+    /// a sheet never competes for key status or window level. Equally
+    /// non-blocking (no nested modal run loop, no watchdog false hangs).
+    @MainActor
+    func beginSheetModal(for window: NSWindow) async -> NSApplication.ModalResponse {
+        await withCheckedContinuation { continuation in
+            beginSheetModal(for: window) { continuation.resume(returning: $0) }
+        }
+    }
 }

@@ -194,7 +194,8 @@ extension CreditsActivityRow {
 
     /// Map a raw server status onto the same vocabulary used for local outcomes,
     /// so a row reads the same whether or not this device has the local record.
-    private static func state(
+    /// Internal (not private) so `WalletActivityRow` shares the vocabulary.
+    static func state(
         forStatus status: String
     ) -> (label: String, kind: CreditsActivityStateKind) {
         switch status.lowercased() {

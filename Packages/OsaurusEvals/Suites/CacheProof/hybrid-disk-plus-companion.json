@@ -1,0 +1,21 @@
+{
+  "id": "cache_proof.hybrid-disk-plus-companion",
+  "domain": "cache_proof",
+  "label": "cache proof • hybrid rows need companion AND disk-L2 evidence, gated to the resolved RAM budget",
+  "query": "Summarize in three sentences how a lock-free queue differs from a mutex-guarded one.",
+  "notes": "The strong hybrid pin for Qwen 3.5-class rows (Bonsai): companion movement alone is not full reuse proof — older boundaries must demonstrably reach the disk-L2 lane (stores) or come back from it (hits), per the AGENTS.md rule that a KV (or companion) hit alone is not enough for hybrids. The peak-footprint gate is tied to the PRODUCTION-resolved memory-safety load budget — which is the simulated 16 GiB Safe Auto budget when OSAURUS_EVALS_SIM_RAM_GB=16 is in force — so the verdict tracks the same math real loads run under instead of a hand-picked MB. Skipped-with-note on non-hybrid topologies. Off-CI (needs a local model).",
+  "fixtures": {},
+  "expect": {
+    "cacheProof": {
+      "followUpTurns": [
+        "Give one concrete failure mode of each approach.",
+        "Which would you pick for a single-producer single-consumer audio thread, and why?"
+      ],
+      "maxTokens": 160,
+      "minSsmCompanionHitsDelta": 1,
+      "requireCompanionOnHybrid": true,
+      "requireDiskL2EvidenceOnHybrid": true,
+      "gatePeakFootprintToResolvedBudget": true
+    }
+  }
+}

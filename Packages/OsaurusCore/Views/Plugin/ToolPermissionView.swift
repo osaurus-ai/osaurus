@@ -21,6 +21,7 @@ struct ToolPermissionView: View {
     let onAllow: () -> Void
     let onDeny: () -> Void
     let onAlwaysAllow: () -> Void
+    var onAllowForRun: (() -> Void)? = nil
     /// First-use spawn-model picker. When `spawnModelOptions` is non-empty the
     /// prompt shows a labelled picker so the user chooses the spawn model the
     /// same time they grant permission; `onModelSelected` reports each change so
@@ -86,16 +87,20 @@ struct ToolPermissionView: View {
                     .offset(y: appeared ? 0 : -8)
 
                 if !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(description)
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.secondaryText)
-                        .multilineTextAlignment(.center)
-                        .lineSpacing(2)
-                        .padding(.top, 8)
-                        .padding(.horizontal, 24)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .opacity(appeared ? 1 : 0)
-                        .offset(y: appeared ? 0 : -4)
+                    ScrollView(.vertical, showsIndicators: true) {
+                        Text(description)
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.secondaryText)
+                            .multilineTextAlignment(.center)
+                            .lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .frame(maxHeight: 140)
+                    .padding(.top, 8)
+                    .padding(.horizontal, 24)
+                    .opacity(appeared ? 1 : 0)
+                    .offset(y: appeared ? 0 : -4)
                 }
 
                 if hasArguments {
@@ -128,7 +133,7 @@ struct ToolPermissionView: View {
                     .offset(y: appeared ? 0 : 8)
             }
         }
-        .frame(width: 380)
+        .frame(width: 460)
         .fixedSize(horizontal: true, vertical: true)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
@@ -280,7 +285,12 @@ struct ToolPermissionView: View {
                     action: onAllow
                 )
             }
-            AlwaysAllowButton(action: { showAlwaysAllowConfirm = true })
+            HStack(spacing: 10) {
+                if let onAllowForRun {
+                    RunAllowButton(action: onAllowForRun)
+                }
+                AlwaysAllowButton(action: { showAlwaysAllowConfirm = true })
+            }
         }
     }
 
@@ -292,6 +302,32 @@ struct ToolPermissionView: View {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             withAnimation(theme.animationQuick()) { copied = false }
         }
+    }
+}
+
+private struct RunAllowButton: View {
+    let action: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Label {
+                Text("Allow for This Task", bundle: .module)
+            } icon: {
+                Image(systemName: "checkmark.circle")
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(theme.tertiaryBackground.opacity(isHovered ? 0.8 : 0.5)))
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(isHovered ? 1.02 : 1.0)
+        .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .onHover { isHovered = $0 }
     }
 }
 
@@ -313,7 +349,7 @@ private struct PermissionButton: View {
             VStack(spacing: 4) {
                 Label(title, systemImage: icon)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(isPrimary ? (theme.isDark ? theme.primaryBackground : .white) : theme.primaryText)
+                    .foregroundColor(isPrimary ? .white : theme.primaryText)
                 KeyboardShortcutBadge(shortcut: shortcutHint, isPrimary: isPrimary)
             }
             .frame(maxWidth: .infinity)

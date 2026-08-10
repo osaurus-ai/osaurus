@@ -92,9 +92,11 @@ struct BackgroundTaskToastView: View {
 
     private var statusIconState: StatusIconState {
         switch taskState.status {
+        case .queued: return .pending
         case .running: return .active
-        case .awaitingClarification: return .pending
-        case .completed(let success, _): return success ? .completed : .failed
+        case .waitingForInput: return .pending
+        case .completed: return .completed
+        case .failed: return .failed
         case .cancelled: return .failed
         }
     }
@@ -104,13 +106,13 @@ struct BackgroundTaskToastView: View {
     @ViewBuilder
     private var contentSection: some View {
         switch taskState.status {
-        case .running, .awaitingClarification:
-            // Chat tasks never enter `awaitingClarification` from the manager —
-            // chat clarifications surface inline via the `clarify` agent
-            // intercept rendered in the chat window. Treat the case as a
-            // running task here for back-compat with any legacy state.
+        case .queued, .running, .waitingForInput:
+            // `.waitingForInput` for chat tasks surfaces inline via the
+            // `clarify` agent intercept rendered in the chat window; here it
+            // renders as a running task with a "Waiting..." step. Queued
+            // tasks show their "Queued" step over the same layout.
             runningContent
-        case .completed(_, let summary):
+        case .completed(let summary), .failed(let summary):
             completedContent(summary: summary)
         case .cancelled:
             cancelledContent
@@ -306,9 +308,11 @@ struct BackgroundTaskToastView: View {
 
     private var accentColor: Color {
         switch taskState.status {
+        case .queued: return theme.tertiaryText
         case .running: return theme.accentColorLight
-        case .awaitingClarification: return theme.warningColor
-        case .completed(let success, _): return success ? theme.successColor : theme.errorColor
+        case .waitingForInput: return theme.warningColor
+        case .completed: return theme.successColor
+        case .failed: return theme.errorColor
         case .cancelled: return theme.tertiaryText
         }
     }

@@ -28,6 +28,16 @@ struct SessionToolState: Sendable {
     /// `capabilities_load` path (which writes loadedToolNames).
     /// `nil` means "no snapshot yet" — the next compose will record one.
     var initialAlwaysLoadedNames: LoadedTools?
+    /// Exact canonical tool specifications exposed by the first compose of
+    /// this session. Freezing names alone is insufficient: some registered
+    /// tools derive their JSON schema from asynchronously discovered runtime
+    /// state (for example, the available web-search categories). A name can
+    /// therefore remain stable while its parameters change, invalidating the
+    /// tokenizer prefix and forcing a full prefill. Subsequent composes reuse
+    /// these payloads for tools that remain visible; an explicit
+    /// `capabilities_load` is still allowed to replace a compact bootstrap
+    /// spec with the live full contract.
+    var initialToolSpecs: [Tool]?
     /// Compact signature of the (executionMode, toolSelectionMode) that
     /// captured this state. The send path compares the live signature on
     /// every turn and invalidates on a flip, so dynamically-loaded tools
@@ -61,6 +71,7 @@ struct SessionToolState: Sendable {
     init(
         loadedToolNames: LoadedTools = [],
         initialAlwaysLoadedNames: LoadedTools? = nil,
+        initialToolSpecs: [Tool]? = nil,
         sessionFingerprint: String? = nil,
         frozenManifest: String? = nil,
         frozenSoul: String? = nil,
@@ -68,6 +79,7 @@ struct SessionToolState: Sendable {
     ) {
         self.loadedToolNames = loadedToolNames
         self.initialAlwaysLoadedNames = initialAlwaysLoadedNames
+        self.initialToolSpecs = initialToolSpecs
         self.sessionFingerprint = sessionFingerprint
         self.frozenManifest = frozenManifest
         self.frozenSoul = frozenSoul
@@ -76,17 +88,36 @@ struct SessionToolState: Sendable {
 
     /// Canonical fingerprint string for a (mode, toolSelectionMode) pair.
     /// Centralised so the read and write sides cannot drift in shape.
+    /// The folder ROOT is part of the identity: folders are per chat
+    /// session now, and switching this chat's folder (or restoring a
+    /// session against a different root) must invalidate cached tool
+    /// state — the composed folder sections and git-tool availability
+    /// both depend on which root is mounted, and a stale entry from the
+    /// old root would silently keep composing against it.
     static func fingerprint(executionMode: ExecutionMode, toolMode: ToolSelectionMode) -> String {
         let modeTag: String
         switch executionMode {
-        case .hostFolder: modeTag = "host"
-        // Combined sandbox + host-read carries a different tool surface
-        // (host read tools present) than plain sandbox, so it gets its
-        // own fingerprint — toggling a folder on/off while sandbox stays
-        // on must invalidate any cached tool state for the prior surface.
-        case .sandbox(let hostRead): modeTag = hostRead == nil ? "sandbox" : "sandbox+hostread"
+        case .hostFolder(let context):
+            modeTag = "host@\(folderIdentity(context))"
+        case .sandbox:
+            modeTag = "sandbox"
         case .none: modeTag = "none"
         }
         return "\(modeTag)/\(toolMode.rawValue)"
+    }
+
+    /// Stable, non-sensitive identity for a mounted folder: a short hash of
+    /// the standardized root path (the raw path never enters logs that print
+    /// fingerprints).
+    private static func folderIdentity(_ context: FolderContext) -> String {
+        let path = context.rootPath.standardizedFileURL.path
+        // FNV-1a rather than `Hasher` — Swift's Hasher is randomly seeded
+        // per process, and this identity must be stable across composes.
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in path.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x1_0000_01b3
+        }
+        return String(format: "%016llx", hash)
     }
 }

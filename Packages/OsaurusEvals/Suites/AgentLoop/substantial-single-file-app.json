@@ -1,0 +1,36 @@
+{
+  "id": "agent_loop.substantial-single-file-app",
+  "domain": "agent_loop",
+  "label": "agent loop • substantial single-file app with direct delivery",
+  "query": "Create a polished single-file web app at index.html: a responsive personal kanban board with three columns (Backlog, Doing, Done), an add-task form, drag-and-drop between columns, delete buttons, task counts, and localStorage persistence. Use only embedded HTML/CSS/JavaScript with no external dependencies. After writing it, run a concrete shell check that verifies the file contains the three columns and localStorage code. The workspace file itself is the deliverable.",
+  "notes": "Reproduces the substantial single-file app workload from harness feedback. The explicit 8,192-token rail is shared across harnesses because Bonsai's complete tool envelope exceeds 4,096 tokens. Scores correct file delivery and verification while treating lifecycle/discovery calls as friction.",
+  "fixtures": {},
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 4,
+      "maxTokens": 8192,
+      "maxModelSteps": 4,
+      "maxToolCalls": 4,
+      "noDuplicateExecutedCalls": true,
+      "mustCallTools": ["file_write", "shell_run"],
+      "mustNotCallTools": [
+        "todo",
+        "complete",
+        "clarify",
+        "share_artifact",
+        "capabilities_discover"
+      ],
+      "toolUsageAudit": [
+        { "tool": "file_write", "minCalls": 1, "maxCalls": 2, "maxErrors": 0 },
+        { "tool": "shell_run", "minCalls": 1, "maxCalls": 2, "maxErrors": 0 }
+      ],
+      "files": [
+        { "path": "index.html", "contains": "Backlog" },
+        { "path": "index.html", "contains": "Doing" },
+        { "path": "index.html", "contains": "Done" },
+        { "path": "index.html", "contains": "localStorage" },
+        { "path": "index.html", "contains": "dragstart" }
+      ]
+    }
+  }
+}

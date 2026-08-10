@@ -282,6 +282,55 @@ struct CustomJSONAgentChannelRunnerTests {
         #expect(client.requestCount == 0)
     }
 
+    @Test func richWriteActionsExecuteConfiguredMappings() async throws {
+        let client = RecordingAgentChannelHTTPClient { request in
+            if request.url?.path.hasSuffix("/edit") == true {
+                return jsonResponse(
+                    for: request,
+                    body: #"{"id":"m1","channel_id":"room-1","content":"updated"}"#
+                )
+            }
+            return jsonResponse(for: request, body: #"{"ok":true}"#)
+        }
+        let runner = makeRunner(client: client)
+        let connection = makeConnection(
+            customHTTP: makeConfiguration(
+                actions: [
+                    .editMessage: AgentChannelCustomHTTPAction(
+                        method: "POST",
+                        path: "/rooms/{{input.room_id}}/messages/{{input.message_id}}/edit",
+                        bodyTemplate: #"{"content":{{input.content}}}"#
+                    ),
+                    .addReaction: AgentChannelCustomHTTPAction(
+                        method: "POST",
+                        path: "/rooms/{{input.room_id}}/messages/{{input.message_id}}/reactions",
+                        bodyTemplate: #"{"reaction":{{input.reaction}}}"#
+                    ),
+                ]
+            )
+        )
+
+        let edit = try await runner.editMessage(
+            connection: connection,
+            roomId: "room-1",
+            messageId: "m1",
+            content: "updated",
+            confirmSend: true
+        )
+        let reaction = try await runner.setReaction(
+            connection: connection,
+            roomId: "room-1",
+            messageId: "m1",
+            reaction: "✅",
+            adding: true,
+            confirmSend: true
+        )
+
+        #expect((edit["message"] as? [String: Any])?["content"] as? String == "updated")
+        #expect(reaction["standard_kind"] as? String == AgentChannelAction.addReaction.rawValue)
+        #expect(client.requestCount == 2)
+    }
+
     @Test func secretReferencesAreRedactedFromDiagnosticsAndProviderErrors() async {
         let secret = "super-secret-token"
         let client = RecordingAgentChannelHTTPClient { request in
@@ -960,19 +1009,25 @@ private func expectCustomJSONError<T>(
 private func withIsolatedAgentChannelConfiguration(
     body: @Sendable () async throws -> Void
 ) async throws {
+    // BOTH process-wide locks (in this fixed order everywhere):
+    // `AgentChannelConfigurationStore.overrideDirectory` is also mutated by
+    // suites that hold only `AgentChannelConfigurationTestLock` (native
+    // coexistence), so holding only `StoragePathsTestLock` races them.
     try await StoragePathsTestLock.shared.run {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "osaurus-agent-channel-\(UUID().uuidString)",
-            isDirectory: true
-        )
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let previousDirectory = AgentChannelConfigurationStore.overrideDirectory
-        AgentChannelConfigurationStore.overrideDirectory = directory
-        defer {
-            AgentChannelConfigurationStore.overrideDirectory = previousDirectory
-            try? FileManager.default.removeItem(at: directory)
+        try await AgentChannelConfigurationTestLock.shared.run {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-agent-channel-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let previousDirectory = AgentChannelConfigurationStore.overrideDirectory
+            AgentChannelConfigurationStore.overrideDirectory = directory
+            defer {
+                AgentChannelConfigurationStore.overrideDirectory = previousDirectory
+                try? FileManager.default.removeItem(at: directory)
+            }
+            try await body()
         }
-        try await body()
     }
 }
 

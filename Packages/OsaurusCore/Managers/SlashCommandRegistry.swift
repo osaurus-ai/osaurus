@@ -2,7 +2,7 @@
 //  SlashCommandRegistry.swift
 //  osaurus
 //
-//  Merges built-in commands, user-defined commands, and enabled Skills into a
+//  Merges built-in commands, user-defined commands, and installed Skills into a
 //  single list. Provides fuzzy filtering used by the slash command popup.
 //
 
@@ -141,8 +141,21 @@ public final class SlashCommandRegistry {
         SlashCommand.builtIns.forEach(append)
         customCommands.forEach(append)
 
-        // Surface enabled skills as template commands
-        for skill in SkillManager.shared.skills where skill.enabled {
+        // Surface every installed skill as a template command. Iterate in
+        // the same precedence order as `SkillManager.skill(named:)` (user
+        // skills, then built-ins, then plugin skills) so a slug collision
+        // dedupes to the same skill the loader would resolve — otherwise
+        // `/name` and `capabilities_load skill/<name>` could invoke two
+        // different skills.
+        let precedenceOrdered = SkillManager.shared.skills.sorted { a, b in
+            func tier(_ s: Skill) -> Int {
+                if s.isFromPlugin { return 2 }
+                return s.isBuiltIn ? 1 : 0
+            }
+            if tier(a) != tier(b) { return tier(a) < tier(b) }
+            return a.id.uuidString < b.id.uuidString
+        }
+        for skill in precedenceOrdered {
             let slug = skill.name
                 .lowercased()
                 .replacingOccurrences(of: " ", with: "-")

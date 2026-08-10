@@ -19,6 +19,7 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
     var longPollingEnabled: Bool
     var longPollingLimit: Int
     var longPollingTimeoutSeconds: Int
+    var inboundDispatch: AgentChannelInboundDispatchConfiguration
 
     enum CodingKeys: String, CodingKey {
         case readableChatIds
@@ -32,6 +33,7 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
         case longPollingEnabled
         case longPollingLimit
         case longPollingTimeoutSeconds
+        case inboundDispatch
     }
 
     init(
@@ -45,7 +47,10 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
         receiveStorageEnabled: Bool = true,
         longPollingEnabled: Bool = false,
         longPollingLimit: Int = 100,
-        longPollingTimeoutSeconds: Int = 20
+        longPollingTimeoutSeconds: Int = 20,
+        inboundDispatch: AgentChannelInboundDispatchConfiguration = AgentChannelInboundDispatchConfiguration(
+            requireMention: false
+        )
     ) {
         self.readableChatIds = Self.normalizedIds(readableChatIds)
         self.writableChatIds = Self.normalizedIds(writableChatIds)
@@ -58,6 +63,7 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
         self.longPollingEnabled = longPollingEnabled
         self.longPollingLimit = Self.clampLongPollingLimit(longPollingLimit)
         self.longPollingTimeoutSeconds = Self.clampLongPollingTimeoutSeconds(longPollingTimeoutSeconds)
+        self.inboundDispatch = inboundDispatch
     }
 
     init(from decoder: Decoder) throws {
@@ -79,7 +85,11 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
             longPollingTimeoutSeconds: try container.decodeIfPresent(
                 Int.self,
                 forKey: .longPollingTimeoutSeconds
-            ) ?? 20
+            ) ?? 20,
+            inboundDispatch: try container.decodeIfPresent(
+                AgentChannelInboundDispatchConfiguration.self,
+                forKey: .inboundDispatch
+            ) ?? AgentChannelInboundDispatchConfiguration(requireMention: false)
         )
     }
 
@@ -95,7 +105,8 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
             receiveStorageEnabled: receiveStorageEnabled,
             longPollingEnabled: longPollingEnabled,
             longPollingLimit: longPollingLimit,
-            longPollingTimeoutSeconds: longPollingTimeoutSeconds
+            longPollingTimeoutSeconds: longPollingTimeoutSeconds,
+            inboundDispatch: inboundDispatch
         )
     }
 
@@ -218,14 +229,19 @@ enum TelegramCredentialStore {
 
     @discardableResult
     static func saveBotToken(_ token: String) -> Bool {
+        saveBotTokenOutcome(token).isSuccess
+    }
+
+    static func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome {
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        return ToolSecretsKeychain.saveSecret(
+        guard !trimmed.isEmpty else { return .emptyValue }
+        let outcome = ToolSecretsKeychain.saveSecretOutcome(
             trimmed,
             id: botTokenKey,
             for: pluginId,
             agentId: Agent.defaultId
         )
+        return outcome == .success ? .success : .keychainFailure(outcome)
     }
 
     static func botToken() -> String? {
@@ -259,11 +275,24 @@ protocol TelegramCredentialStorage: Sendable {
     func botToken() -> String?
     func hasBotToken() -> Bool
     func deleteBotToken() -> Bool
+    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome
+}
+
+extension TelegramCredentialStorage {
+    // Bool-only stores (test doubles) fall back to an undetailed outcome; the
+    // Keychain-backed store overrides this with the real failure reason.
+    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome {
+        saveBotToken(token) ? .success : .unknownFailure
+    }
 }
 
 struct KeychainTelegramCredentialStorage: TelegramCredentialStorage {
     func saveBotToken(_ token: String) -> Bool {
         TelegramCredentialStore.saveBotToken(token)
+    }
+
+    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome {
+        TelegramCredentialStore.saveBotTokenOutcome(token)
     }
 
     func botToken() -> String? {

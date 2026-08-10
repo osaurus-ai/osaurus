@@ -8,22 +8,27 @@ Skills are packages of instructions, context, and resources that give your AI sp
 
 ## Quick Start
 
-Osaurus comes with 6 built-in skills ready to use:
+Osaurus comes with 9 built-in skills ready to use. Each one teaches the AI a concrete workflow built on real Osaurus tools:
 
 | Skill | Description |
 |-------|-------------|
-| **Research Analyst** | Structured research with source evaluation and citation |
-| **Creative Brainstormer** | Ideation and creative problem solving |
-| **Study Tutor** | Educational guidance using the Socratic method |
-| **Productivity Coach** | Task management and productivity optimization |
-| **Content Summarizer** | Distill long content into concise summaries |
-| **Debug Assistant** | Systematic debugging methodology |
+| **Web Researcher** | Live web research with source retrieval, cross-checking, and cited reports |
+| **Content Summarizer** | Retrieve pages or files, then distill them into structured summaries |
+| **Mac Automator** | Control and query Mac apps with AppleScript automation |
+| **Personal Organizer** | Manage calendar events, reminders, email, and messages |
+| **Document Builder** | Create spreadsheets and presentations, delivered as downloadable files |
+| **Workspace Assistant** | Read, edit, search, and commit files in the mounted working folder |
+| **Data Keeper** | Keep structured records across chats in the agent's private database |
+| **Autonomous Scheduler** | Set up recurring or delayed self-running tasks with notifications |
+| **Data Visualizer** | Render charts and graphs from attached, retrieved, or computed data |
 
 **To get started:**
 
 1. Open Management window (`⌘ Shift M`) → **Skills**
-2. Enable a skill by toggling it on
-3. Start a new chat — the AI now has access to the skill's expertise
+2. Browse the library — every installed skill is automatically available to your custom agents
+3. Start a chat — the AI discovers and loads relevant skills on demand, or type `/skill-name` to invoke one explicitly for a single message
+
+There are no enable/disable toggles and no per-agent assignment: installing or creating a skill puts it in the library, and deleting it (or uninstalling its plugin) removes it. The built-in Osaurus configuration agent is the one exception — it does not use skills.
 
 ---
 
@@ -68,9 +73,9 @@ Local file imports are checked before they are saved:
 
 ## Managing Skills
 
-### Enable/Disable
+### Library Filters
 
-Toggle skills on or off from the Skills view. Disabled skills won't be available to the AI.
+The Skills view groups the library by source: **All**, **Built-in**, **Yours**, and **From Plugins**. Built-ins are view-only, your own skills support the full edit/export/delete lifecycle, and plugin skills are removed by uninstalling their plugin.
 
 ### Edit
 
@@ -114,6 +119,7 @@ Create your own skills with the built-in editor:
    - **Name** — A clear, descriptive name
    - **Description** — Brief summary (shown in the skill list)
    - **Category** — Optional grouping (e.g., "Development", "Writing")
+   - **Keywords** — Comma-separated discovery terms (see below)
    - **Instructions** — Detailed guidance for the AI (Markdown supported)
 3. Click **Save**
 
@@ -124,6 +130,8 @@ Create your own skills with the built-in editor:
 - Define any frameworks or methodologies to follow
 - Specify output formats when relevant
 
+**Keywords are how the AI finds your skill.** The capability search indexes the skill's name, keywords, and description — not its instructions. Add the words a user would actually say when they need the skill ("summarize, tldr, key points" rather than "text processing"). Every built-in skill ships a rich keyword list for exactly this reason; a custom skill without keywords is only found through its name and description.
+
 ---
 
 ## Skill Format
@@ -132,22 +140,22 @@ Osaurus follows the [Agent Skills specification](https://agentskills.io/), using
 
 ```markdown
 ---
-name: Research Analyst
-description: Structured research with source evaluation
+name: Web Researcher
+description: Live web research with source retrieval and cited reports
 category: Research
 version: 1.0.0
 author: Your Name
 ---
 
-# Research Analyst
+# Web Researcher
 
-You are a research analyst specializing in thorough, well-sourced research.
+You are a web researcher specializing in thorough, well-sourced research.
 
 ## Methodology
 
 1. Understand the research question
-2. Identify reliable sources
-3. Evaluate source credibility
+2. Search the web for candidate sources
+3. Retrieve and evaluate each source
 4. Synthesize findings
 5. Present with citations
 
@@ -166,7 +174,7 @@ Skills are stored as directories:
 
 ```
 ~/.osaurus/skills/
-└── research-analyst/
+└── web-researcher/
     ├── SKILL.md           # Main skill file
     ├── references/        # Optional: files loaded into context
     │   └── guidelines.txt
@@ -191,17 +199,19 @@ Add context files that are automatically loaded when the skill is active:
 - Process documentation
 - Example templates
 
+References ride along on both delivery paths: `/skill-name` invocation includes them in full, and model-initiated loading (`capabilities_load`) includes them up to a size budget — past it, remaining files are named in an omission note so the AI knows they exist.
+
 **Limits:** Each reference file can be up to 100KB.
 
 ---
 
 ## Automated Capability Discovery
 
-Osaurus gives the agent a complete, statically-ordered view of every enabled capability and lets it load the ones it needs on demand. No manual per-turn configuration is needed -- the right skills surface as the conversation evolves.
+Osaurus gives the agent a complete, statically-ordered view of every available capability and lets it load the ones it needs on demand. No manual per-turn configuration is needed -- the right skills surface as the conversation evolves.
 
 ### How It Works
 
-Each agent session's system prompt carries an **enabled-capabilities manifest** that lists every skill (as well as methods and tools) the agent is allowed to use. The manifest is frozen at session start so the static prompt prefix stays byte-stable across turns. Skill instructions themselves are not all injected up front — the agent pulls in the ones it needs at runtime via `capabilities_discover` / `capabilities_load`, which use hybrid BM25 + vector matching over the indexed catalog.
+Each agent session's system prompt carries a **capabilities manifest** that lists every installed skill (as well as methods and the agent's assigned tools). The manifest is frozen at session start so the static prompt prefix stays byte-stable across turns. Skill instructions themselves are not all injected up front — the agent pulls in the ones it needs at runtime via `capabilities_discover` / `capabilities_load`, which use hybrid BM25 + vector matching over the indexed catalog.
 
 ### Runtime Discovery
 
@@ -224,15 +234,16 @@ The AI starts with the manifest plus a fixed "hot set" of always-loaded tools, t
 
 ## Agent Integration
 
-Skills are available to all agents automatically. The enabled-capabilities manifest lists relevant skills for each agent, and `capabilities_discover` reaches the full catalog regardless of which agent is active.
+Skills are available to all custom agents automatically. The capabilities manifest lists the installed skill library for each agent, and `capabilities_discover` reaches the full catalog regardless of which custom agent is active.
 
 **How it works with agents:**
 
 - Each agent's system prompt guides its behavior and specialization
-- The enabled-capabilities manifest tells the agent which skills it can use
+- The capabilities manifest tells the agent which skills exist in the library
 - The agent loads skill instructions on demand via `capabilities_discover` / `capabilities_load`
+- Typing `/skill-name` forces a specific skill for a single message
 
-No per-agent skill configuration is needed. The system automatically matches the right skills to the right tasks.
+No per-agent skill configuration is needed — agent configuration only scopes **tools**. The built-in Osaurus configuration agent does not use skills.
 
 ---
 
@@ -240,10 +251,12 @@ No per-agent skill configuration is needed. The system automatically matches the
 
 ### Skills not appearing in chat
 
-- Verify the skill is enabled (toggle is on)
-- Check that the skill's description clearly describes its purpose (the RAG search uses this)
-- Start a new chat session
-- Try setting a wider search mode in chat configuration
+- Verify the skill appears in the Skills library (Management window → Skills)
+- Add **keywords** to the skill (edit it in the library): the capability search indexes name + keywords + description, and keywords carry the most weight
+- Check that the skill's description clearly describes its purpose (the search uses this too)
+- Start a new chat session — the capabilities manifest is frozen when a chat starts, so skills added mid-conversation aren't listed until the next chat (they remain reachable via `capabilities_discover`)
+- Type `/skill-name` to invoke the skill explicitly for one message — this injects the full instructions deterministically and doesn't depend on search at all
+- Skills require **Auto** tool mode with tools enabled; Manual tool mode and the built-in Osaurus configuration agent don't use the skill library
 
 ### GitHub import fails
 

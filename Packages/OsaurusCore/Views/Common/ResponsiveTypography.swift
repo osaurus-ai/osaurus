@@ -9,10 +9,11 @@
 import SwiftUI
 
 enum Typography {
+    static let baseWidth: CGFloat = 640
     static func scale(for width: CGFloat) -> CGFloat {
         // Map 640→1.0, 1024→1.15, 1400→1.25
-        let clamped = max(640.0, min(1400.0, width))
-        let s = (clamped - 640.0) / (1400.0 - 640.0)
+        let clamped = max(baseWidth, min(1400.0, width))
+        let s = (clamped - baseWidth) / (1400.0 - baseWidth)
         return 1.0 + s * 0.25
     }
 

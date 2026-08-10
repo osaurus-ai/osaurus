@@ -147,7 +147,8 @@ struct InsightsView: View {
 
             Spacer()
 
-            Text("\(insightsService.totalRequestCount) requests", bundle: .module)
+            let requestCount = insightsService.totalRequestCount
+            Text(requestCount == 1 ? L("1 request") : L("\(requestCount) requests"))
                 .font(.system(size: 11, weight: .medium))
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
@@ -535,6 +536,8 @@ private struct ToolsBadge: View {
     let count: Int
 
     var body: some View {
+        let helpText: LocalizedStringKey =
+            count == 1 ? "1 tool sent" : "\(count) tools sent"
         InlineTag(tint: .teal) {
             HStack(spacing: 3) {
                 Image(systemName: "wrench.and.screwdriver.fill")
@@ -543,7 +546,7 @@ private struct ToolsBadge: View {
                     .font(.system(size: 9, weight: .bold, design: .monospaced))
             }
         }
-        .localizedHelp("\(count) tool(s) sent")
+        .localizedHelp(helpText)
     }
 }
 
@@ -630,6 +633,7 @@ private struct SourceBadge: View {
         case .httpAPI: return .blue
         case .plugin: return .teal
         case .p2p: return .purple
+        case .scheduled: return .orange
         }
     }
 }
@@ -641,6 +645,7 @@ extension RequestSource {
         case .httpAPI: return "HTTP"
         case .plugin: return "Plugin"
         case .p2p: return "P2P"
+        case .scheduled: return "Scheduled"
         }
     }
 }

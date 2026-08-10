@@ -24,31 +24,36 @@ struct StorageMutationGateTests {
     @Test
     @MainActor
     func awaitNotMutating_parksWhileMutatingAndUnblocksOnEnd() async throws {
-        let gate = StorageMutationGate.shared
+        // Isolated instance: parallel suites (storage migration/rotation)
+        // call `endMutating()` on `shared` and would wake the probe early.
+        let gate = StorageMutationGate.makeForTesting()
 
         // Park `awaitNotMutating` in a Task so we can observe whether
         // it returns prematurely.
         gate.beginMutating()
+        // Monotonic clock: wall-clock `Date` values can tie (or step
+        // backward under NTP slew) at this resolution, which made the
+        // ordering assertion flaky.
         let probe = Task { @MainActor in
             await gate.awaitNotMutating()
-            return Date()
+            return ContinuousClock.now
         }
 
         // Sleep a tick to let the probe park.
         try await Task.sleep(nanoseconds: 50_000_000)
         #expect(!probe.isCancelled)
 
-        let beforeEnd = Date()
+        let beforeEnd = ContinuousClock.now
         gate.endMutating()
         let returnedAt = await probe.value
-        // Probe must have returned strictly after we called endMutating.
+        // Probe must have returned after we called endMutating.
         #expect(returnedAt >= beforeEnd)
     }
 
     @Test
     @MainActor
     func endMutating_drainsAllParkedWaiters() async throws {
-        let gate = StorageMutationGate.shared
+        let gate = StorageMutationGate.makeForTesting()
         gate.beginMutating()
 
         // Park multiple awaiters concurrently.

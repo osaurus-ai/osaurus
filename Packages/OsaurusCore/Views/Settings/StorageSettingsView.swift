@@ -689,27 +689,23 @@ public struct StorageSettingsView: View {
                     self.isWorking = false
                     self.desiredEncrypted = enabled
                     if !report.locked.isEmpty {
-                        self.errorMessage = String(
-                            format: L(
-                                "%lld store(s) couldn't be converted because the encryption key is unavailable."
-                            ),
-                            report.locked.count
-                        )
+                        let count = report.locked.count
+                        self.errorMessage = count == 1
+                            ? L("1 store couldn't be converted because the encryption key is unavailable.")
+                            : L("\(count) stores couldn't be converted because the encryption key is unavailable.")
                     } else if !report.failed.isEmpty {
-                        self.errorMessage = String(
-                            format: L("%lld store(s) failed to convert."),
-                            report.failed.count
-                        )
+                        let count = report.failed.count
+                        self.errorMessage = count == 1
+                            ? L("1 store failed to convert.")
+                            : L("\(count) stores failed to convert.")
                     } else if enabled {
-                        self.lastSummary = String(
-                            format: L("Encrypted %lld store(s) at rest."),
-                            report.converted
-                        )
+                        self.lastSummary = report.converted == 1
+                            ? L("Encrypted 1 store at rest.")
+                            : L("Encrypted \(report.converted) stores at rest.")
                     } else {
-                        self.lastSummary = String(
-                            format: L("Decrypted %lld store(s); now plaintext at rest."),
-                            report.converted
-                        )
+                        self.lastSummary = report.converted == 1
+                            ? L("Decrypted 1 store; now plaintext at rest.")
+                            : L("Decrypted \(report.converted) stores; now plaintext at rest.")
                     }
                 }
                 await refresh()

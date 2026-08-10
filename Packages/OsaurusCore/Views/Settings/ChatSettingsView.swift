@@ -8,9 +8,9 @@
 //
 //  Persistence is scoped to the fields this view owns. Saving does a
 //  load-modify-write on `ChatConfiguration` touching only the chat-owned
-//  fields (context length, top-P, tool attempts, clipboard, greeting
-//  persona) so the General settings' hotkey + core-model values — which
-//  live in the same struct — are never clobbered. The default-agent
+//  fields (top-P, tool attempts, clipboard, greeting
+//  persona, compaction model) so the General settings' hotkey + core-model
+//  values — which live in the same struct — are never clobbered. The default-agent
 //  persona / generation knobs persist to `DefaultAgentConfiguration`.
 //  Tools and memory are deliberately not surfaced here: the default
 //  agent's tools toggle lives in the Agents tab and the global memory
@@ -25,6 +25,7 @@ import SwiftUI
 
 struct ChatSettingsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var taskManager = BackgroundTaskManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -32,11 +33,14 @@ struct ChatSettingsView: View {
     @State private var tempSystemPrompt: String = ""
     @State private var tempChatTemperature: String = ""
     @State private var tempChatMaxTokens: String = ""
-    @State private var tempChatContextLength: String = ""
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
     @State private var tempEnableClipboardMonitoring: Bool = false
     @State private var tempWarmModelsOnLoad: Bool = true
+    /// AI-generated chat titles from the first completed exchange. Default
+    /// off while the feature bakes across releases (see
+    /// `ChatConfiguration.autoGenerateChatTitles`).
+    @State private var tempAutoGenerateChatTitles: Bool = false
     /// Smooth streaming: pace the visible reveal at ~180 tok/s regardless
     /// of how fast / bursty the network delivers tokens. Default on.
     /// Bound to `UserDefaults` key `chatSmoothStreamingEnabled` which
@@ -50,22 +54,58 @@ struct ChatSettingsView: View {
     /// immediately, so it's excluded from the debounced save baseline.
     @AppStorage("chatExpandThinkingWhileStreamingEnabled")
     private var expandThinkingWhileStreamingEnabled: Bool = false
-    /// Free-text "voice" instruction for AI-generated empty-state
-    /// greetings — the global default voice. The on/off is per-agent
-    /// (`AgentSettings.generativeGreetingsEnabled`). Empty = use the
-    /// built-in playful default. Per-agent overrides live on
-    /// `AgentSettings.greetingPersona`.
-    @State private var tempGreetingPersona: String = ""
+    /// Auto-allow all tool calls without showing the approval card. Default
+    /// off. Bound to `UserDefaults` key `ToolApprovalSettings
+    /// .autoAllowAllDefaultsKey`, read by `ToolRegistry` at each `.ask`-policy
+    /// tool invocation. Applied immediately, so it's excluded from the
+    /// debounced save baseline.
+    @AppStorage(ToolApprovalSettings.autoAllowAllDefaultsKey)
+    private var autoAllowAllToolsEnabled: Bool = false
+    /// Turning auto-allow ON disables a security gate for every tool, so the
+    /// toggle's binding intercepts the off→on flip and routes it through a
+    /// confirmation alert; only confirming persists the value. Turning it
+    /// off applies immediately.
+    @State private var showAutoAllowAllConfirm = false
+    /// Roll up runs of consecutive thinking / tool-call rows into a single
+    /// expandable "Worked for …" row so agent loops don't push the
+    /// conversation out of view. Default off. Bound to `UserDefaults` key
+    /// `ContentBlock.ActivityRollupSetting.defaultsKey`, read by
+    /// `BlockMemoizer` on every display rebuild. Applied immediately (a
+    /// notification rebuilds open chats), so it's excluded from the
+    /// debounced save baseline.
+    @AppStorage(ContentBlock.ActivityRollupSetting.defaultsKey)
+    private var activityRollupEnabled: Bool = false
+    /// Make ⌘N start a new chat in the frontmost chat window (the sidebar
+    /// "New Chat" action) instead of opening a new window; "New Window" then
+    /// moves to ⇧⌘N. Default off to preserve the historical ⌘N behavior.
+    /// Bound to `UserDefaults` key `NewChatShortcutSetting.defaultsKey`,
+    /// read by the app's File menu commands. Applied immediately, so it's
+    /// excluded from the debounced save baseline.
+    @AppStorage(NewChatShortcutSetting.defaultsKey)
+    private var cmdNStartsNewChatInCurrentWindow: Bool = false
+    /// Model that runs LLM context compaction (summarizing older messages
+    /// when a chat outgrows its context window). Same provider/name split
+    /// as the Core Model picker; empty = "ask on first use" (the first-run
+    /// dialog persists the user's choice back into these fields).
+    @State private var tempCompactionModelProvider: String = ""
+    @State private var tempCompactionModelName: String = ""
+    @State private var showCompactionModelPicker = false
+    @State private var compactionModelPickerItems: [ModelPickerItem] = []
 
-    /// Placement of the task-progress notch overlay. Off (default) keeps it
-    /// below the menu bar so it never covers the clock / battery / status
-    /// controls; on anchors it to the top of the display so it sits on the
-    /// menu bar (issue #1951). Bound to `UserDefaults` key
+    /// Placement of the task-progress notch overlay. With no saved preference,
+    /// it defaults on for hardware-notch displays and off elsewhere. Off keeps
+    /// it below the menu bar; on anchors it to the top of the display. Bound
+    /// to `UserDefaults` key
     /// `NotchOverlayPlacement.defaultsKey`, stored as the enum raw value and
     /// read by `NotchWindowController` when it repositions the panel. Applied
     /// immediately, so it's excluded from the debounced save baseline.
     @AppStorage(NotchOverlayPlacement.defaultsKey) private var notchPlacementRaw: String =
-        NotchOverlayPlacement.belowMenuBar.rawValue
+        NotchOverlayPlacement.current.rawValue
+
+    /// Prevent idle system sleep while agent sessions are actively running
+    /// or queued. Display sleep and explicit system sleep remain available.
+    @AppStorage(AgentRunPowerManager.keepAwakeDefaultsKey)
+    private var keepMacAwakeForAgentRuns: Bool = true
 
     @State private var hasAppeared = false
     @State private var successMessage: String?
@@ -94,6 +134,8 @@ struct ChatSettingsView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 24) {
+                            agentPowerSection
+
                             chatSection
 
                             generationSection
@@ -135,10 +177,41 @@ struct ChatSettingsView: View {
                 hasAppeared = true
             }
         }
+        // Shared model catalog for the compaction-model picker (same source
+        // the General tab's Core Model picker reads).
+        .onReceive(ModelPickerItemCache.shared.$items) { options in
+            compactionModelPickerItems = options
+        }
         // Any edit to a save-relevant field reschedules the debounced save.
         .onChange(of: currentFormState) { _, _ in scheduleAutoSave() }
+        .onChange(of: keepMacAwakeForAgentRuns) { _, _ in
+            taskManager.refreshPowerAssertion()
+        }
         // Persist a pending edit if the user leaves before the debounce fires.
         .onDisappear { flushPendingSave() }
+        .themedAlert(
+            L("Auto-Allow All Tool Calls?"),
+            isPresented: $showAutoAllowAllConfirm,
+            message: L(
+                "Every tool call will run immediately without asking for approval, including tools that can execute code, modify files, or send data. You can turn this off at any time in Chat settings."
+            ),
+            primaryButton: .destructive(L("Auto-Allow All")) { autoAllowAllToolsEnabled = true },
+            secondaryButton: .cancel(L("Cancel"))
+        )
+    }
+
+    /// See `showAutoAllowAllConfirm`: off→on asks first, on→off is immediate.
+    private var autoAllowAllToolsBinding: Binding<Bool> {
+        Binding(
+            get: { autoAllowAllToolsEnabled },
+            set: { isOn in
+                if isOn && !autoAllowAllToolsEnabled {
+                    showAutoAllowAllConfirm = true
+                } else {
+                    autoAllowAllToolsEnabled = isOn
+                }
+            }
+        )
     }
 
     /// Bridges the string-backed placement preference to the boolean
@@ -154,6 +227,54 @@ struct ChatSettingsView: View {
                 NotchWindowController.shared.refreshPlacement()
             }
         )
+    }
+
+    // MARK: - Agent Power Section
+
+    @ViewBuilder private var agentPowerSection: some View {
+        SettingsSection(title: L("Agent Sessions"), icon: "bolt.horizontal.circle.fill") {
+            VStack(alignment: .leading, spacing: 14) {
+                SettingsToggle(
+                    title: L("Keep Mac Awake While Agents Run"),
+                    description: L(
+                        "Prevent idle system sleep while agent sessions are running or queued, so long tasks can finish. The display may still sleep, and closing a MacBook lid or choosing Sleep always takes priority."
+                    ),
+                    isOn: $keepMacAwakeForAgentRuns
+                )
+                .settingsLandingAnchor("settings.chat.keepAwakeForAgentRuns")
+
+                if keepMacAwakeForAgentRuns {
+                    HStack(spacing: 9) {
+                        Image(
+                            systemName: taskManager.isPreventingIdleSystemSleep
+                                ? "bolt.fill"
+                                : "moon.stars.fill"
+                        )
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(
+                            taskManager.isPreventingIdleSystemSleep
+                                ? Color.accentColor
+                                : theme.tertiaryText
+                        )
+
+                        Text(
+                            taskManager.isPreventingIdleSystemSleep
+                                ? L("Keeping this Mac awake while agents work")
+                                : L("Ready — activates automatically with the next agent run")
+                        )
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(theme.tertiaryBackground.opacity(0.45))
+                    )
+                }
+            }
+        }
     }
 
     // MARK: - Header
@@ -215,6 +336,34 @@ struct ChatSettingsView: View {
                 )
 
                 SettingsToggle(
+                    title: L("Group Thinking & Tool Activity"),
+                    description:
+                        "Group consecutive thinking and tool-call rows into a single expandable summary row, so long agent runs don't push the conversation out of view. Turn off to always show every step as its own row.",
+                    isOn: $activityRollupEnabled
+                )
+                .onChange(of: activityRollupEnabled) { _, _ in
+                    NotificationCenter.default.post(
+                        name: ContentBlock.activityRollupSettingChanged,
+                        object: nil
+                    )
+                }
+
+                SettingsToggle(
+                    title: L("Auto-Allow All Tool Calls"),
+                    description:
+                        "Run every tool call without asking for approval, including tools that would normally show a confirmation card. Convenient for multi-step agent workflows, but tools can execute code and modify files. Enable only if you trust the tools you have installed. Per-tool Deny policies still apply.",
+                    isOn: autoAllowAllToolsBinding
+                )
+
+                SettingsToggle(
+                    title: L("⌘+N Starts a New Chat in the Current Window"),
+                    description:
+                        "Make ⌘+N start a new chat in the frontmost chat window, like the sidebar's New Chat button. New Window moves to ⇧+⌘+N, matching other chat apps. Turn off to keep ⌘+N opening a new window.",
+                    isOn: $cmdNStartsNewChatInCurrentWindow
+                )
+                .settingsLandingAnchor("settings.chat.cmdNNewChat")
+
+                SettingsToggle(
                     title: L("Clipboard Monitoring"),
                     description:
                         "Automatically detect and offer text from any app as context. Includes 'grab selection' feature when summoning Osaurus.",
@@ -224,9 +373,11 @@ struct ChatSettingsView: View {
                 SettingsToggle(
                     title: L("Automatically Warm Models on Load"),
                     description:
-                        "Preload the selected local model and prefill your chat context so the first response starts faster. The model selector shows yellow while warming and green when ready.",
+                        "Preload the selected local model and prefill your chat context so the first response starts faster. The model selector shows yellow while warming and green when warmed; with this off, it shows green only while the model is loaded.",
                     isOn: $tempWarmModelsOnLoad
                 )
+
+                autoTitleToggleRow
 
                 SettingsToggle(
                     title: L("Show Notch Overlay on Menu Bar"),
@@ -238,18 +389,20 @@ struct ChatSettingsView: View {
 
                 SettingsDivider()
 
-                SettingsSubsection(label: "Generative Greetings") {
-                    VStack(alignment: .leading, spacing: 12) {
+                SettingsSubsection(
+                    label: "Compaction Model", anchorId: "settings.chat.compactionModel"
+                ) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        compactionModelPicker
                         Text(
-                            "Default voice for AI-generated greetings + quick actions. Turn greetings on per agent under the agent's Features tab; each agent can also override this voice in its Customization tab.",
+                            "Model used to summarize older messages when a chat outgrows its context window (context compaction). Remote models pass through your Privacy Filter. If unset, you'll be asked to pick a model the first time compaction runs.",
                             bundle: .module
                         )
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
-
-                        personalityEditorBlock
                     }
                 }
+
             }
         }
     }
@@ -272,22 +425,14 @@ struct ChatSettingsView: View {
                     anchorId: "settings.chat.temperature"
                 )
                 SettingsStepperField(
-                    label: "Max Tokens",
-                    help: "Maximum response tokens",
+                    label: "Default Agent Max Output Tokens",
+                    help:
+                        "Optional per-response output cap for the default agent. Leave blank to inherit the active model bundle's generation_config maximum. This is not the model context window or KV retention.",
                     text: $tempChatMaxTokens,
                     range: 1 ... 65536,
                     step: 1024,
                     defaultValue: 16384,
                     anchorId: "settings.chat.maxTokens"
-                )
-                SettingsStepperField(
-                    label: "Context Length",
-                    help: "Context window for remote models",
-                    text: $tempChatContextLength,
-                    range: 2048 ... 256000,
-                    step: 1024,
-                    defaultValue: 128000,
-                    anchorId: "settings.chat.contextLength"
                 )
                 SettingsSliderField(
                     label: "Top P Override",
@@ -312,56 +457,177 @@ struct ChatSettingsView: View {
         }
     }
 
-    private var personalityEditorBlock: some View {
-        let defaultText = GenerativeGreetingService.defaultPersonaInstruction
-        let isAtDefault =
-            tempGreetingPersona.trimmingCharacters(in: .whitespacesAndNewlines)
-            == defaultText.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("Personality (default for all agents)", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                Spacer()
-                if !isAtDefault {
-                    Button {
-                        tempGreetingPersona = defaultText
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.uturn.backward")
-                                .font(.system(size: 10, weight: .semibold))
-                            Text("Reset to Default", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
+    /// Hand-built `SettingsToggle` twin: the stock control only takes a plain
+    /// string description, and this one styles "core model" as an underlined
+    /// accent-colored deep link into the General tab's Core Model picker —
+    /// same pattern as the transcription cleanup toggle.
+    private var autoTitleToggleRow: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Automatically Name Chats", bundle: .module)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(theme.primaryText)
+                Text(autoTitleDescription)
+                    .font(.system(size: 11))
+                    .tint(theme.accentColor)
+                    .environment(
+                        \.openURL,
+                        OpenURLAction { _ in
+                            navigateToCoreModelSetting()
+                            return .handled
                         }
-                        .foregroundColor(theme.accentColor)
-                    }
-                    .buttonStyle(.plain)
-                }
+                    )
             }
 
-            TextEditor(text: $tempGreetingPersona)
-                .font(.system(size: 13, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 100, maxHeight: 200)
-                .padding(10)
+            Spacer()
+
+            Toggle("", isOn: $tempAutoGenerateChatTitles)
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .labelsHidden()
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.inputBorder, lineWidth: 1)
+                )
+        )
+        .settingsLandingAnchor("settings.chat.autoGenerateTitles")
+    }
+
+    /// Description for the auto-title toggle, with "core model" rendered as
+    /// an underlined link in the theme's accent color.
+    private var autoTitleDescription: AttributedString {
+        var text = AttributedString(
+            L(
+                "Use the core model to generate a short descriptive title after a chat's first response, replacing the first-message preview. Runs in the background and never interrupts your conversation; manual renames always win."
+            )
+        )
+        text.foregroundColor = theme.tertiaryText
+        if let range = text.range(of: L("core model")) {
+            text[range].foregroundColor = theme.accentColor
+            text[range].underlineStyle = .single
+            text[range].link = URL(string: "osaurus-settings://core-model")
+        }
+        return text
+    }
+
+    /// Deep-links to the Core Model picker in the General settings tab.
+    private func navigateToCoreModelSetting() {
+        SettingsHighlightCoordinator.shared.request("settings.general.coreModel")
+        ManagementStateManager.shared.selectedTab = .settings
+    }
+
+    // MARK: - Compaction Model Picker
+
+    private var compactionModelIdentifierBinding: Binding<String> {
+        Binding(
+            get: {
+                if tempCompactionModelName.isEmpty { return "" }
+                return tempCompactionModelProvider.isEmpty
+                    ? tempCompactionModelName
+                    : "\(tempCompactionModelProvider)/\(tempCompactionModelName)"
+            },
+            set: { newValue in
+                if newValue.isEmpty {
+                    tempCompactionModelProvider = ""
+                    tempCompactionModelName = ""
+                    return
+                }
+                let parts = newValue.split(separator: "/", maxSplits: 1)
+                if parts.count == 2 {
+                    tempCompactionModelProvider = String(parts[0])
+                    tempCompactionModelName = String(parts[1])
+                } else {
+                    tempCompactionModelProvider = ""
+                    tempCompactionModelName = newValue
+                }
+            }
+        )
+    }
+
+    private var compactionModelSelectionBinding: Binding<String?> {
+        Binding(
+            get: {
+                let id = compactionModelIdentifierBinding.wrappedValue
+                return id.isEmpty ? nil : id
+            },
+            set: { compactionModelIdentifierBinding.wrappedValue = $0 ?? "" }
+        )
+    }
+
+    /// Same trigger + rich `ModelPickerView` popover as the General tab's
+    /// Core Model picker, with "unset" meaning "ask on first compaction run"
+    /// rather than a chat-model fallback.
+    private var compactionModelPicker: some View {
+        let currentId = compactionModelIdentifierBinding.wrappedValue
+        let currentItem = compactionModelPickerItems.first { $0.id == currentId }
+        return HStack(spacing: 8) {
+            Button {
+                showCompactionModelPicker.toggle()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.down.right.and.arrow.up.left")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(currentId.isEmpty ? theme.tertiaryText : theme.accentColor)
+                    if currentId.isEmpty {
+                        Text("Ask on first use (default)", bundle: .module)
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.placeholderText)
+                    } else if let currentItem {
+                        Text(currentItem.displayName)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+                            .lineLimit(1)
+                    } else {
+                        // Persisted-but-uninstalled values (e.g. a disconnected
+                        // remote model) keep an "(unavailable)" hint so the row
+                        // isn't an orphan.
+                        Text("\(currentId) (unavailable)", bundle: .module)
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.secondaryText)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
                 .background(
                     RoundedRectangle(cornerRadius: 10)
                         .fill(theme.inputBackground)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.inputBorder, lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1)
                         )
                 )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .popover(isPresented: $showCompactionModelPicker, arrowEdge: .bottom) {
+                ModelPickerView(
+                    options: compactionModelPickerItems,
+                    selectedModel: compactionModelSelectionBinding,
+                    agentId: nil,
+                    onDismiss: { showCompactionModelPicker = false }
+                )
+            }
 
-            Text(
-                "Shapes the voice of AI-generated empty-state greetings and quick actions. Each agent can override this in its Customization tab.",
-                bundle: .module
-            )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            if !currentId.isEmpty {
+                Button {
+                    compactionModelIdentifierBinding.wrappedValue = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .buttonStyle(.plain)
+                .localizedHelp("Ask on first use (default)")
+            }
         }
+        .frame(maxWidth: 320)
     }
 
     // MARK: - Success Toast
@@ -394,28 +660,21 @@ struct ChatSettingsView: View {
     ) {
         // The Default agent's persona and generation knobs live on
         // `DefaultAgentConfiguration` (split off from `ChatConfiguration`);
-        // the numeric generation knobs (context length, top-P, tool
-        // attempts) and clipboard / greeting voice live on `ChatConfiguration`.
+        // the numeric generation knobs (top-P and tool
+        // attempts) and clipboard settings live on `ChatConfiguration`.
         // Tools and memory are intentionally NOT surfaced here: the default
         // agent's tools toggle lives in the Agents tab and the global memory
         // switch lives in the Memory tab.
         tempSystemPrompt = defaultAgent.systemPrompt
         tempChatTemperature = defaultAgent.temperature.map { String($0) } ?? ""
         tempChatMaxTokens = defaultAgent.maxTokens.map(String.init) ?? ""
-        tempChatContextLength = chat.contextLength.map(String.init) ?? ""
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
         tempEnableClipboardMonitoring = chat.enableClipboardMonitoring
         tempWarmModelsOnLoad = chat.warmModelsOnLoad
-        // Storage convention: empty string = "use the built-in default."
-        // The editor never displays an empty state — we hydrate it with the
-        // built-in default so the text is editable in place. `saveConfiguration`
-        // collapses an unedited default back to "" so future updates to the
-        // built-in copy still propagate to users who never changed it.
-        tempGreetingPersona =
-            chat.greetingPersona.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? GenerativeGreetingService.defaultPersonaInstruction
-            : chat.greetingPersona
+        tempAutoGenerateChatTitles = chat.autoGenerateChatTitles
+        tempCompactionModelProvider = chat.compactionModelProvider ?? ""
+        tempCompactionModelName = chat.compactionModelName ?? ""
 
         // Capture the pristine baseline so the auto-save stays idle until the
         // user actually edits something.
@@ -430,12 +689,13 @@ struct ChatSettingsView: View {
         tempSystemPrompt = ""
         tempChatTemperature = ""
         tempChatMaxTokens = ""
-        tempChatContextLength = ""
         tempChatTopP = ""
         tempChatMaxToolAttempts = ""
         tempEnableClipboardMonitoring = chatDefaults.enableClipboardMonitoring
         tempWarmModelsOnLoad = chatDefaults.warmModelsOnLoad
-        tempGreetingPersona = GenerativeGreetingService.defaultPersonaInstruction
+        tempAutoGenerateChatTitles = chatDefaults.autoGenerateChatTitles
+        tempCompactionModelProvider = chatDefaults.compactionModelProvider ?? ""
+        tempCompactionModelName = chatDefaults.compactionModelName ?? ""
 
         showSuccess("Chat settings restored to defaults")
     }
@@ -447,12 +707,13 @@ struct ChatSettingsView: View {
         var systemPrompt: String
         var temperature: String
         var maxTokens: String
-        var contextLength: String
         var topP: String
         var maxToolAttempts: String
         var enableClipboardMonitoring: Bool
         var warmModelsOnLoad: Bool
-        var greetingPersona: String
+        var autoGenerateChatTitles: Bool
+        var compactionModelProvider: String
+        var compactionModelName: String
     }
 
     private var currentFormState: SaveableFormState {
@@ -460,12 +721,13 @@ struct ChatSettingsView: View {
             systemPrompt: tempSystemPrompt,
             temperature: tempChatTemperature,
             maxTokens: tempChatMaxTokens,
-            contextLength: tempChatContextLength,
             topP: tempChatTopP,
             maxToolAttempts: tempChatMaxToolAttempts,
             enableClipboardMonitoring: tempEnableClipboardMonitoring,
             warmModelsOnLoad: tempWarmModelsOnLoad,
-            greetingPersona: tempGreetingPersona
+            autoGenerateChatTitles: tempAutoGenerateChatTitles,
+            compactionModelProvider: tempCompactionModelProvider,
+            compactionModelName: tempCompactionModelName
         )
     }
 
@@ -507,12 +769,6 @@ struct ChatSettingsView: View {
             return max(1, v)
         }()
 
-        let trimmedContext = tempChatContextLength.trimmingCharacters(in: .whitespacesAndNewlines)
-        let parsedContext: Int? = {
-            guard !trimmedContext.isEmpty, let v = Int(trimmedContext) else { return nil }
-            return max(2048, v)
-        }()
-
         let trimmedTopPChat = tempChatTopP.trimmingCharacters(in: .whitespacesAndNewlines)
         let parsedTopP: Float? = {
             guard !trimmedTopPChat.isEmpty, let v = Float(trimmedTopPChat) else { return nil }
@@ -533,19 +789,19 @@ struct ChatSettingsView: View {
         chatCfg.systemPrompt = ""
         chatCfg.temperature = nil
         chatCfg.maxTokens = nil
-        chatCfg.contextLength = parsedContext
+        // Unknown-model context metadata fallback is owned by
+        // Server → Cache → Context & KV Policy. Never rewrite it from the
+        // Chat form, which otherwise recreates a competing "context length"
+        // control that users can mistake for the live KV cap.
         chatCfg.topPOverride = parsedTopP
         chatCfg.maxToolAttempts = parsedMaxToolAttempts
         chatCfg.enableClipboardMonitoring = tempEnableClipboardMonitoring
         chatCfg.warmModelsOnLoad = tempWarmModelsOnLoad
-        chatCfg.greetingPersona = {
-            // Collapse an unedited built-in default back to "" so storage stays
-            // in "inherit the default" mode.
-            let trimmed = tempGreetingPersona.trimmingCharacters(in: .whitespacesAndNewlines)
-            let defaultTrimmed = GenerativeGreetingService.defaultPersonaInstruction
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed == defaultTrimmed ? "" : tempGreetingPersona
-        }()
+        chatCfg.autoGenerateChatTitles = tempAutoGenerateChatTitles
+        chatCfg.compactionModelProvider =
+            tempCompactionModelProvider.isEmpty ? nil : tempCompactionModelProvider
+        chatCfg.compactionModelName =
+            tempCompactionModelName.isEmpty ? nil : tempCompactionModelName
         ChatConfigurationStore.save(chatCfg)
 
         // Persist default-agent specific fields to their own store. Tools

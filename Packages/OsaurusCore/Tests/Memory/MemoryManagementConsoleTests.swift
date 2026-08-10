@@ -238,8 +238,8 @@ struct MemoryManagementConsoleTests {
         #expect(health.processingStats.errorCount == 1)
         #expect(health.processingStats.emptyCount == 1)
         #expect(health.processingStats.deadLetterCount == 1)
-        #expect(health.diagnostics.contains("Distillation recorded 1 error row(s)."))
-        #expect(health.diagnostics.contains("Distillation recorded 1 empty result row(s)."))
+        #expect(health.diagnostics.contains("Distillation recorded 1 error row."))
+        #expect(health.diagnostics.contains("Distillation recorded 1 empty result row."))
         #expect(health.diagnostics.contains("Some memory signals were dead-lettered after repeated distillation failures."))
     }
 
@@ -367,7 +367,7 @@ struct MemoryManagementConsoleTests {
         #expect(health.activeEpisodeCount == 1)
         #expect(health.processingStats.successCount == 1)
         #expect(health.processingStats.errorCount == 1)
-        #expect(health.diagnostics.contains("Distillation recorded 1 error row(s)."))
+        #expect(health.diagnostics.contains("Distillation recorded 1 error row."))
     }
 
     @Test func privacyRedactorMasksSensitiveValuesAndBoundsPreview() {

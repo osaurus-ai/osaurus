@@ -4,8 +4,8 @@
 //  Pins the widened `file_read` routing: text-extractable documents the
 //  shared document infrastructure can parse (PPTX, PDF, Word, …) now flow
 //  through `DocumentParser` instead of being rejected as binary, while
-//  images stay refused (text-only tool) and plain-text / CSV files keep
-//  the raw line-numbered read path. The PPTX package is built in memory
+//  images stay refused (text-only tool) and UTF-8 source files such as
+//  HTML/RTF/SVG/CSV keep the raw line-numbered read path. The PPTX package is built in memory
 //  (stored ZIP, no checked-in binary) mirroring the OpenXML adapter tests.
 //
 
@@ -94,7 +94,114 @@ struct FileReadDocumentFormatsTests {
         )
     }
 
-    // MARK: - Plain text / CSV stays on the raw line-numbered path
+    // MARK: - Source / CSV stays on the raw line-numbered path
+
+    @Test func fileWriteThenReadHTMLPreservesSource() async throws {
+        DocumentAdaptersBootstrap.registerBuiltIns()
+
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = """
+            <!doctype html>
+            <html>
+            <body>
+            <div id="board"></div>
+            <script>
+            document.querySelector("#board").textContent = "ready";
+            </script>
+            </body>
+            </html>
+            """
+        let writeData = try JSONSerialization.data(
+            withJSONObject: ["path": "minesweeper.html", "content": source]
+        )
+        let writeArguments = try #require(String(data: writeData, encoding: .utf8))
+        let writeResult = try await FileWriteTool(rootPath: root).execute(
+            argumentsJSON: writeArguments
+        )
+        #expect(ToolEnvelope.isSuccess(writeResult))
+
+        let readResult = try await FileReadTool(rootPath: root).execute(
+            argumentsJSON: #"{"path":"minesweeper.html"}"#
+        )
+
+        #expect(ToolEnvelope.isSuccess(readResult))
+        let text = EnvelopeAssertions.successText(readResult) ?? ""
+        #expect(text.contains("<!doctype html>"))
+        #expect(text.contains(#"<div id="board"></div>"#))
+        #expect(text.contains("document.querySelector(\"#board\")"))
+        let payload = EnvelopeAssertions.successPayload(readResult)
+        #expect(payload?["total_lines"] as? Int == source.components(separatedBy: .newlines).count)
+    }
+
+    @Test func fileWriteThenReadSVGPreservesSource() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = """
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+              <script>document.documentElement.dataset.ready = "true";</script>
+              <rect id="tile" width="20" height="20"/>
+            </svg>
+            """
+        let writeData = try JSONSerialization.data(
+            withJSONObject: ["path": "board.svg", "content": source]
+        )
+        let writeArguments = try #require(String(data: writeData, encoding: .utf8))
+        let writeResult = try await FileWriteTool(rootPath: root).execute(
+            argumentsJSON: writeArguments
+        )
+        #expect(ToolEnvelope.isSuccess(writeResult))
+
+        let readResult = try await FileReadTool(rootPath: root).execute(
+            argumentsJSON: #"{"path":"board.svg"}"#
+        )
+
+        #expect(ToolEnvelope.isSuccess(readResult))
+        let text = EnvelopeAssertions.successText(readResult) ?? ""
+        #expect(text.contains(#"<script>document.documentElement.dataset.ready = "true";</script>"#))
+        #expect(text.contains(#"<rect id="tile""#))
+    }
+
+    @Test @MainActor func fileReadRTFDDirectoryUsesDocumentExtraction() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let body = "RTFD package text"
+        let attributed = NSAttributedString(string: body)
+        let wrapper = try attributed.fileWrapper(
+            from: NSRange(location: 0, length: attributed.length),
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtfd]
+        )
+        try wrapper.write(
+            to: root.appendingPathComponent("note.rtfd"),
+            options: .atomic,
+            originalContentsURL: nil
+        )
+
+        let result = try await FileReadTool(rootPath: root).execute(
+            argumentsJSON: #"{"path":"note.rtfd"}"#
+        )
+
+        #expect(ToolEnvelope.isSuccess(result))
+        #expect((EnvelopeAssertions.successText(result) ?? "").contains(body))
+    }
+
+    @Test func fileReadUTF8SourceWinsOverImageExtension() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = "not binary image bytes\nconst status = 'source';\n"
+        try source.write(
+            to: root.appendingPathComponent("mislabelled.png"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let result = try await FileReadTool(rootPath: root).execute(
+            argumentsJSON: #"{"path":"mislabelled.png"}"#
+        )
+
+        #expect(ToolEnvelope.isSuccess(result))
+        #expect((EnvelopeAssertions.successText(result) ?? "").contains("const status"))
+    }
 
     @Test func fileReadCSVStaysRawLineNumbered() async throws {
         let root = tmpRoot()

@@ -1,0 +1,47 @@
+{
+  "id": "browseruse.stale-ref-recovery",
+  "domain": "subagent",
+  "label": "BrowserUse • recover from stale refs after page change",
+  "query": "Go to https://fixtures.local/wizard, click Continue, then on the next step type 'blue' into the favorite color field and click Finish.",
+  "notes": "LIVE. Refs regenerate per page in the fixture world (same contract as the live session's snapshot generation) — after Continue navigates to step 2, the step-1 refs are stale and a model that reuses them gets the 'Snapshot is stale' error. The recovery signal: use the FRESH refs from the click's returned snapshot (or re-snapshot) and finish the wizard.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "browser_use",
+      "maxSteps": 14,
+      "pages": [
+        {
+          "url": "https://fixtures.local/wizard",
+          "title": "Setup Wizard — Step 1",
+          "bodyText": "Step 1 of 2. Press Continue to proceed.",
+          "elements": [
+            { "id": "continue", "type": "button", "text": "Continue", "goto": "https://fixtures.local/wizard/step2" }
+          ]
+        },
+        {
+          "url": "https://fixtures.local/wizard/step2",
+          "title": "Setup Wizard — Step 2",
+          "bodyText": "Step 2 of 2. Enter your favorite color and press Finish.",
+          "elements": [
+            { "id": "color", "type": "input", "text": "Favorite color", "placeholder": "e.g. red" },
+            { "id": "finish", "type": "button", "text": "Finish", "goto": "https://fixtures.local/wizard/done" }
+          ]
+        },
+        {
+          "url": "https://fixtures.local/wizard/done",
+          "title": "Setup Complete",
+          "bodyText": "All set! Your preferences were saved.",
+          "elements": []
+        }
+      ],
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "browser_use",
+      "successValues": [
+        { "id": "color", "equals": "blue" }
+      ],
+      "successClicked": ["continue", "finish"],
+      "expectVerbsInOrder": ["navigate", "click", "type", "click"]
+    }
+  }
+}

@@ -135,13 +135,29 @@ struct ModelManagerSuggestedTests {
 
             #expect(mxfp8 != nil)
             #expect(mxfp8?.modelType == "lfm2_moe")
-            // Catalog-only (2026-07-08): the recommendation spine is Ornith
-            // MXFP8 + official Gemma; LFM2.5 stays installable but is not a
-            // Top Pick.
+            // Catalog-only: the recommendation spine is Bonsai + Ornith MXFP8
+            // + official Gemma; LFM2.5 stays installable but is not a Top Pick.
             #expect(mxfp8?.isTopSuggestion == false)
             // Sizes now come from `ModelSizeCache` (empty here), not literals.
             #expect(mxfp8?.downloadSizeBytes == nil)
             #expect(mxfp8?.releasedAt != nil)
+        }
+    }
+
+    @Test @MainActor func bonsaiEntries_areNormalizedTopPickVariants() async {
+        await withIsolatedModelSizeCache {
+            let suggested = ModelManager().suggestedModels
+            let ternary = suggested.first { $0.id == "OsaurusAI/Bonsai-27b-Ternary-JANG" }
+            let oneBit = suggested.first { $0.id == "OsaurusAI/Bonsai-27b-1bit-JANG" }
+
+            #expect(ternary?.isTopSuggestion == true)
+            #expect(oneBit?.isTopSuggestion == true)
+            #expect(ternary?.downloadSizeBytes == 8_040_700_199)
+            #expect(oneBit?.downloadSizeBytes == 4_679_030_015)
+            #expect(
+                ModelMetadataParser.familyKey(from: ternary?.id ?? "")
+                    == ModelMetadataParser.familyKey(from: oneBit?.id ?? "")
+            )
         }
     }
 
@@ -234,24 +250,29 @@ struct ModelManagerSuggestedTests {
 
     // MARK: - Top-pick reorg (precision-first)
 
-    @Test @MainActor func topPicks_recommendOrnithMXFP8AndOfficialGemma() async {
+    @Test @MainActor func topPicks_recommendBonsaiOrnithAndOfficialGemma() async {
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
             let topIds = Set(suggested.filter(\.isTopSuggestion).map { $0.id })
             // Recommendation spine (2026-07-08, GUI-verified in the dev app —
             // each loads, calls tools, reasons with thinking on, no marker
-            // leakage): Ornith 1.0 MXFP8 for the larger tiers, official
-            // OsaurusAI Gemma 4 at the highest non-QAT/non-MXFP4 precision that
-            // exists (12B-it-MXFP8; E4B/E2B-it-8bit — no E-series MXFP8 exists)
-            // for the smaller tiers. These are the ONLY Top Picks.
+            // leakage): Bonsai 27B low-bit builds for mainstream RAM, Ornith
+            // 1.0 MXFP8 for the larger tiers, and official OsaurusAI Gemma 4
+            // at the highest non-QAT/non-MXFP4 precision that exists for the
+            // smaller tiers. These are the ONLY Top Picks.
             let expectedTopPicks: Set<String> = [
                 "OsaurusAI/Ornith-1.0-9B-MXFP8",
                 "OsaurusAI/Ornith-1.0-35B-MXFP8",
+                "OsaurusAI/Bonsai-27b-Ternary-JANG",
+                "OsaurusAI/Bonsai-27b-1bit-JANG",
                 "OsaurusAI/gemma-4-12B-it-MXFP8",
                 "OsaurusAI/gemma-4-E4B-it-8bit",
                 "OsaurusAI/gemma-4-E2B-it-8bit",
             ]
-            #expect(topIds == expectedTopPicks, "Top Picks should be exactly Ornith MXFP8 + official Gemma; got \(topIds.sorted())")
+            #expect(
+                topIds == expectedTopPicks,
+                "Top Picks should be exactly Bonsai + Ornith MXFP8 + official Gemma; got \(topIds.sorted())"
+            )
             // Gemma QAT/MXFP4, plus Qwen 3.6 / Nemotron-3 / LFM2.5, are
             // catalog-only for now — installable and selectable, just not part
             // of the auto-default recommendation spine.
@@ -404,19 +425,46 @@ struct ModelManagerSuggestedTests {
                     !droppedGemma,
                     "auto-default \(pick.id) at \(gb)GB must not be a Gemma QAT/MXFP4 build")
 
-                // The pick is the LARGEST Top Pick that comfortably fits — the
-                // strongest proven model for this RAM tier. (When nothing is
-                // comfortable, the fallback smallest-candidate is allowed.)
+                // The pick is the largest-base-parameter Top Pick that
+                // comfortably fits. Equal-size variants prefer the larger,
+                // higher-quality footprint. (When nothing is comfortable, the
+                // fallback smallest candidate is allowed.)
                 let comfortable = candidates.filter {
                     $0.compatibility(totalMemoryGB: gb) == .compatible
                 }
                 if !comfortable.isEmpty {
-                    let maxMem = comfortable.compactMap(\.estimatedMemoryGB).max() ?? 0
+                    let maxParameters = comfortable.compactMap(\.parameterCountBillions).max() ?? 0
+                    #expect(
+                        (pick.parameterCountBillions ?? -1) == maxParameters,
+                        "auto-default at \(gb)GB should have the largest comfortable base model"
+                    )
+                    let strongestFamily = comfortable.filter {
+                        ($0.parameterCountBillions ?? 0) == maxParameters
+                    }
+                    let maxMem = strongestFamily.compactMap(\.estimatedMemoryGB).max() ?? 0
                     #expect(
                         (pick.estimatedMemoryGB ?? -1) == maxMem,
-                        "auto-default at \(gb)GB should be the largest comfortable Top Pick")
+                        "auto-default at \(gb)GB should prefer the highest-quality fitting variant"
+                    )
                 }
             }
+        }
+    }
+
+    @Test @MainActor func onboardingDefault_selectsBonsaiVariantForMainstreamRAM() async {
+        await withIsolatedModelSizeCache {
+            let candidates = ModelManager().suggestedModels.filter(\.isTopSuggestion)
+            let sixteenGB = ConfigureAIState.recommendedLocalPick(
+                from: candidates,
+                totalMemoryGB: 16
+            )
+            let twentyFourGB = ConfigureAIState.recommendedLocalPick(
+                from: candidates,
+                totalMemoryGB: 24
+            )
+
+            #expect(sixteenGB?.id == "OsaurusAI/Bonsai-27b-1bit-JANG")
+            #expect(twentyFourGB?.id == "OsaurusAI/Bonsai-27b-Ternary-JANG")
         }
     }
 }

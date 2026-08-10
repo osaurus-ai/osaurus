@@ -35,12 +35,12 @@ public enum SearchProviderCatalog {
     static let tavily = SearchProviderDefinition(
         id: "tavily",
         name: "Tavily",
-        summary: "Search built for AI agents — best answer quality for grounding.",
-        pricingNote: "Free: 1,000 searches/month",
+        summary: L("Search built for AI agents — best answer quality for grounding."),
+        pricingNote: L("Free: 1,000 searches/month"),
         instructions: [
-            "Sign up at tavily.com (free, no credit card).",
-            "Copy the API key that starts with tvly- from your dashboard.",
-            "Paste it below.",
+            L("Sign up at tavily.com (free, no credit card)."),
+            L("Copy the API key that starts with tvly- from your dashboard."),
+            L("Paste it below."),
         ],
         signupURL: "https://app.tavily.com",
         homepage: "https://tavily.com",
@@ -48,8 +48,8 @@ public enum SearchProviderCatalog {
         secrets: [
             SearchSecretField(
                 id: "api_key",
-                label: "Tavily API key",
-                help: "Starts with tvly-",
+                label: L("Tavily API key"),
+                help: L("Starts with tvly-"),
                 url: "https://app.tavily.com"
             )
         ],
@@ -63,9 +63,11 @@ public enum SearchProviderCatalog {
         SearchEndpoint(
             url: "https://api.tavily.com/search",
             method: "POST",
-            headers: ["Content-Type": "application/json"],
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer {{secret.api_key}}",
+            ],
             body: [
-                SearchRequestParam(name: "api_key", value: "{{secret.api_key}}"),
                 SearchRequestParam(name: "query", value: "{{query}}"),
                 SearchRequestParam(name: "max_results", value: "{{max_results}}", type: "int"),
                 SearchRequestParam(name: "search_depth", value: "basic"),
@@ -92,12 +94,12 @@ public enum SearchProviderCatalog {
     static let exa = SearchProviderDefinition(
         id: "exa",
         name: "Exa",
-        summary: "Neural search built for AI agents, with key excerpts per result.",
-        pricingNote: "Free: 1,000 searches/month",
+        summary: L("Neural search built for AI agents, with key excerpts per result."),
+        pricingNote: L("Free: 1,000 searches/month"),
         instructions: [
-            "Sign up at dashboard.exa.ai (free).",
-            "Copy an API key from the API Keys page.",
-            "Paste it below.",
+            L("Sign up at dashboard.exa.ai (free)."),
+            L("Copy an API key from the API Keys page."),
+            L("Paste it below."),
         ],
         signupURL: "https://dashboard.exa.ai/api-keys",
         homepage: "https://exa.ai",
@@ -105,7 +107,7 @@ public enum SearchProviderCatalog {
         secrets: [
             SearchSecretField(
                 id: "api_key",
-                label: "Exa API key",
+                label: L("Exa API key"),
                 url: "https://dashboard.exa.ai/api-keys"
             )
         ],
@@ -151,19 +153,19 @@ public enum SearchProviderCatalog {
     static let parallel = SearchProviderDefinition(
         id: "parallel",
         name: "Parallel",
-        summary: "Ranked results with dense LLM-ready excerpts from Parallel Web Systems.",
-        pricingNote: "Paid: $5 per 1,000 searches",
+        summary: L("Ranked results with dense LLM-ready excerpts from Parallel Web Systems."),
+        pricingNote: L("Paid: $5 per 1,000 searches"),
         instructions: [
-            "Sign up at platform.parallel.ai.",
-            "Create an API key from the settings page.",
-            "Paste it below.",
+            L("Sign up at platform.parallel.ai."),
+            L("Create an API key from the settings page."),
+            L("Paste it below."),
         ],
         signupURL: "https://platform.parallel.ai",
         homepage: "https://parallel.ai",
         secrets: [
             SearchSecretField(
                 id: "api_key",
-                label: "Parallel API key",
+                label: L("Parallel API key"),
                 url: "https://platform.parallel.ai"
             )
         ],
@@ -196,20 +198,20 @@ public enum SearchProviderCatalog {
 
     static let braveAPI = SearchProviderDefinition(
         id: "brave_api",
-        name: "Brave Search",
-        summary: "Independent search index via the official Brave API.",
-        pricingNote: "Paid: $5 per 1,000 queries (card required)",
+        name: L("Brave Search"),
+        summary: L("Independent search index via the official Brave API."),
+        pricingNote: L("Paid: $5 per 1,000 queries (card required)"),
         instructions: [
-            "Sign up at api.search.brave.com (a credit card is required; new accounts get a small starting credit).",
-            "Create an API key under API Keys.",
-            "Paste it below.",
+            L("Sign up at api.search.brave.com (a credit card is required; new accounts get a small starting credit)."),
+            L("Create an API key under API Keys."),
+            L("Paste it below."),
         ],
         signupURL: "https://api.search.brave.com",
         homepage: "https://brave.com/search/api/",
         secrets: [
             SearchSecretField(
                 id: "api_key",
-                label: "Brave Search API key",
+                label: L("Brave Search API key"),
                 url: "https://api.search.brave.com"
             )
         ],
@@ -258,12 +260,12 @@ public enum SearchProviderCatalog {
     static let serper = SearchProviderDefinition(
         id: "serper",
         name: "Serper",
-        summary: "Google results via API — fast and cheap.",
-        pricingNote: "Free: 2,500 queries to start",
+        summary: L("Google results via API — fast and cheap."),
+        pricingNote: L("Free: 2,500 queries to start"),
         instructions: [
-            "Sign up at serper.dev.",
-            "Copy your API key from the dashboard.",
-            "Paste it below.",
+            L("Sign up at serper.dev."),
+            L("Copy your API key from the dashboard."),
+            L("Paste it below."),
         ],
         signupURL: "https://serper.dev",
         homepage: "https://serper.dev",
@@ -336,27 +338,27 @@ public enum SearchProviderCatalog {
 
     static let googleCSE = SearchProviderDefinition(
         id: "google_cse",
-        name: "Google (Custom Search)",
-        summary: "Official Google API. Needs two values — about 5 minutes to set up.",
-        pricingNote: "Free: 100 queries/day",
+        name: L("Google (Custom Search)"),
+        summary: L("Official Google API. Needs two values — about 5 minutes to set up."),
+        pricingNote: L("Free: 100 queries/day"),
         instructions: [
-            "Create a Programmable Search Engine at programmablesearchengine.google.com (enable \"Search the entire web\").",
-            "Copy the Search engine ID (cx) from its settings.",
-            "Get an API key from the Custom Search JSON API page in Google Cloud.",
-            "Paste both values below.",
+            L("Create a Programmable Search Engine at programmablesearchengine.google.com (enable \"Search the entire web\")."),
+            L("Copy the Search engine ID (cx) from its settings."),
+            L("Get an API key from the Custom Search JSON API page in Google Cloud."),
+            L("Paste both values below."),
         ],
         signupURL: "https://programmablesearchengine.google.com/",
         homepage: "https://developers.google.com/custom-search/v1/introduction",
         secrets: [
             SearchSecretField(
                 id: "api_key",
-                label: "Google API key",
+                label: L("Google API key"),
                 url: "https://developers.google.com/custom-search/v1/introduction"
             ),
             SearchSecretField(
                 id: "cx",
-                label: "Search engine ID (cx)",
-                help: "From your Programmable Search Engine settings",
+                label: L("Search engine ID (cx)"),
+                help: L("From your Programmable Search Engine settings"),
                 url: "https://programmablesearchengine.google.com/"
             ),
         ],
@@ -398,47 +400,51 @@ public enum SearchProviderCatalog {
     static let kagi = SearchProviderDefinition(
         id: "kagi",
         name: "Kagi",
-        summary: "Premium ad-free search (paid API).",
-        pricingNote: "Paid: $25 credit minimum",
+        summary: L("Premium ad-free search (paid API)."),
+        pricingNote: L("Paid: pay-per-use (billed separately from a Kagi subscription)"),
         instructions: [
-            "Sign in at kagi.com and open Settings → Advanced → API portal.",
-            "Generate an API token.",
-            "Paste it below.",
+            L("Sign in at kagi.com and open the API portal at kagi.com/api."),
+            L("Add a payment method under API Billing, then copy your API key."),
+            L("Paste it below."),
         ],
-        signupURL: "https://kagi.com/settings?p=api",
+        signupURL: "https://kagi.com/api",
         homepage: "https://help.kagi.com/kagi/api/search.html",
         secrets: [
             SearchSecretField(
                 id: "api_key",
-                label: "Kagi API token",
-                url: "https://kagi.com/settings?p=api"
+                label: L("Kagi API key"),
+                url: "https://kagi.com/api"
             )
         ],
         endpoints: [
-            SearchCategory.web: kagiEndpoint(),
-            SearchCategory.news: kagiEndpoint(),
+            SearchCategory.web: kagiEndpoint(workflow: "search", resultsPath: "data.search"),
+            SearchCategory.news: kagiEndpoint(workflow: "news", resultsPath: "data.news"),
         ]
     )
 
-    private static func kagiEndpoint() -> SearchEndpoint {
+    private static func kagiEndpoint(workflow: String, resultsPath: String) -> SearchEndpoint {
         SearchEndpoint(
-            url: "https://kagi.com/api/v0/search",
-            headers: ["Authorization": "Bot {{secret.api_key}}"],
-            query: [
-                SearchRequestParam(name: "q", value: "{{query}}"),
-                SearchRequestParam(name: "limit", value: "{{max_results}}"),
-                SearchRequestParam(name: "offset", value: "{{offset}}"),
+            url: "https://kagi.com/api/v1/search",
+            method: "POST",
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer {{secret.api_key}}",
+            ],
+            body: [
+                SearchRequestParam(name: "query", value: "{{query}}"),
+                SearchRequestParam(name: "workflow", value: workflow),
+                SearchRequestParam(name: "limit", value: "{{max_results}}", type: "int"),
+                SearchRequestParam(name: "page", value: "{{page}}", type: "int"),
             ],
             response: SearchResponseMapping(
-                resultsPath: "data",
+                // v1 buckets results by type, so no t == 0 filter is needed.
+                resultsPath: resultsPath,
                 item: SearchHitFieldPaths(
                     title: "title",
                     url: "url",
                     snippet: "snippet",
-                    publishedDate: "published"
-                ),
-                // Kagi mixes result types; organic hits carry t == 0.
-                filter: SearchItemFilter(path: "t", equals: "0")
+                    publishedDate: "time"
+                )
             )
         )
     }
@@ -446,59 +452,49 @@ public enum SearchProviderCatalog {
     static let you = SearchProviderDefinition(
         id: "you",
         name: "You.com",
-        summary: "Web search API with snippets tuned for LLMs.",
-        pricingNote: "Free trial, then paid",
+        summary: L("Web search API with snippets tuned for LLMs."),
+        pricingNote: L("Free trial, then paid"),
         instructions: [
-            "Sign up at api.you.com.",
-            "Create an API key.",
-            "Paste it below.",
+            L("Sign up at api.you.com."),
+            L("Create an API key."),
+            L("Paste it below."),
         ],
         signupURL: "https://api.you.com",
         homepage: "https://api.you.com",
         secrets: [
-            SearchSecretField(id: "api_key", label: "You.com API key", url: "https://api.you.com")
+            SearchSecretField(id: "api_key", label: L("You.com API key"), url: "https://api.you.com")
         ],
         endpoints: [
-            SearchCategory.web: SearchEndpoint(
-                url: "https://api.ydc-index.io/search",
-                headers: ["X-API-Key": "{{secret.api_key}}", "Accept": "application/json"],
-                query: youQueryParams(),
-                response: SearchResponseMapping(
-                    resultsPath: "hits",
-                    item: youItemPaths()
-                )
-            ),
-            SearchCategory.news: SearchEndpoint(
-                url: "https://api.ydc-index.io/news",
-                headers: ["X-API-Key": "{{secret.api_key}}", "Accept": "application/json"],
-                query: youQueryParams(),
-                response: SearchResponseMapping(
-                    resultsPath: "news.results",
-                    item: youItemPaths()
-                )
-            ),
+            // The v1 API is a single unified endpoint returning both web and
+            // news buckets; only the results path differs per category.
+            SearchCategory.web: youEndpoint(resultsPath: "results.web"),
+            SearchCategory.news: youEndpoint(resultsPath: "results.news"),
         ]
     )
 
-    private static func youQueryParams() -> [SearchRequestParam] {
-        [
-            SearchRequestParam(name: "query", value: "{{query}}"),
-            SearchRequestParam(name: "num_web_results", value: "{{max_results}}"),
-            SearchRequestParam(
-                name: "recency",
-                value: "{{time_range}}",
-                omitIfEmpty: true,
-                map: ["d": "day", "w": "week", "m": "month", "y": "year"]
-            ),
-        ]
-    }
-
-    private static func youItemPaths() -> SearchHitFieldPaths {
-        SearchHitFieldPaths(
-            title: "title",
-            url: "url",
-            snippet: "description|snippet",
-            publishedDate: "date_published|age"
+    private static func youEndpoint(resultsPath: String) -> SearchEndpoint {
+        SearchEndpoint(
+            url: "https://ydc-index.io/v1/search",
+            headers: ["X-API-Key": "{{secret.api_key}}", "Accept": "application/json"],
+            query: [
+                SearchRequestParam(name: "query", value: "{{query}}"),
+                SearchRequestParam(name: "count", value: "{{max_results}}"),
+                SearchRequestParam(
+                    name: "freshness",
+                    value: "{{time_range}}",
+                    omitIfEmpty: true,
+                    map: ["d": "day", "w": "week", "m": "month", "y": "year"]
+                ),
+            ],
+            response: SearchResponseMapping(
+                resultsPath: resultsPath,
+                item: SearchHitFieldPaths(
+                    title: "title",
+                    url: "url",
+                    snippet: "description|snippets",
+                    publishedDate: "page_age"
+                )
+            )
         )
     }
 
@@ -507,19 +503,17 @@ public enum SearchProviderCatalog {
     public static let nativeProviders: [SearchProviderDefinition] = [
         SearchProviderDefinition(
             id: "brave_html",
-            name: "Brave (free)",
+            name: L("Brave (built-in)"),
             runtime: .native,
-            summary: "Free Brave search results. No key needed.",
-            pricingNote: "Free",
+            summary: L("Brave search results. No key needed."),
             homepage: "https://search.brave.com",
             categories: [SearchCategory.web, SearchCategory.news]
         ),
         SearchProviderDefinition(
             id: "bing_html",
-            name: "Bing (free)",
+            name: L("Bing (built-in)"),
             runtime: .native,
-            summary: "Free Bing search results. No key needed.",
-            pricingNote: "Free",
+            summary: L("Bing search results. No key needed."),
             homepage: "https://www.bing.com",
             categories: [SearchCategory.web, SearchCategory.news]
         ),
@@ -527,8 +521,7 @@ public enum SearchProviderCatalog {
             id: "ddg",
             name: "DuckDuckGo",
             runtime: .native,
-            summary: "Free web, news, and image search. Used only when other sources fail.",
-            pricingNote: "Free",
+            summary: L("Web, news, and image search. No key needed; used only when other sources fail."),
             homepage: "https://duckduckgo.com",
             // DDG's anti-bot layer serves plausible-looking decoy results to
             // flagged clients, so its hits are only trusted as a last resort.

@@ -70,6 +70,25 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         return name
     }
 
+    // MARK: - Context Compaction Model Settings
+    /// Provider for the context-compaction model (same split/join contract
+    /// as `coreModelProvider`). Nil for local/Foundation models.
+    public var compactionModelProvider: String?
+    /// Name of the model that runs LLM context compaction (conversation
+    /// summarization when a chat outgrows the context window). Unlike the
+    /// core model there is deliberately NO chat-model fallback: when unset,
+    /// the first compaction run asks the user to pick a model.
+    public var compactionModelName: String?
+
+    /// Full compaction-model identifier for routing, or nil when unset.
+    public var compactionModelIdentifier: String? {
+        guard let name = compactionModelName, !name.isEmpty else { return nil }
+        if let provider = compactionModelProvider, !provider.isEmpty {
+            return "\(provider)/\(name)"
+        }
+        return name
+    }
+
     // MARK: - Tool Settings
     /// When true, no tools are passed to the model. The raw message is sent
     /// directly, keeping the prompt stable across turns for maximum KV-cache reuse. Recommended
@@ -86,14 +105,13 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// user sends, so the first response pays less time-to-first-token cost.
     public var warmModelsOnLoad: Bool
 
-    // MARK: - Generative Greetings
-    /// Free-text "voice" instruction that shapes the AI-generated empty-state
-    /// greetings and quick actions. Empty string means "use the built-in
-    /// playful default" baked into `GenerativeGreetingService`. This is the
-    /// global default voice; the on/off decision is per-agent
-    /// (`AgentSettings.generativeGreetingsEnabled`). Per-agent
-    /// `AgentSettings.greetingPersona` overrides this when non-empty.
-    public var greetingPersona: String
+    // MARK: - Auto-Generated Chat Titles
+    /// When true, the first completed exchange of a new chat triggers a
+    /// background Core Model call that replaces the first-message preview
+    /// title with a short generated summary (see `ChatTitleService`).
+    /// Ships default-off while the feature bakes across releases; flip the
+    /// default here once it has proven regression-free.
+    public var autoGenerateChatTitles: Bool
 
     public init(
         hotkey: Hotkey?,
@@ -106,10 +124,12 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         defaultModel: String? = nil,
         coreModelProvider: String? = nil,
         coreModelName: String? = nil,
+        compactionModelProvider: String? = nil,
+        compactionModelName: String? = nil,
         disableTools: Bool = false,
         enableClipboardMonitoring: Bool = true,
         warmModelsOnLoad: Bool = true,
-        greetingPersona: String = ""
+        autoGenerateChatTitles: Bool = false
     ) {
         self.hotkey = hotkey
         self.systemPrompt = systemPrompt
@@ -121,10 +141,12 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.defaultModel = defaultModel
         self.coreModelProvider = coreModelProvider
         self.coreModelName = coreModelName
+        self.compactionModelProvider = compactionModelProvider
+        self.compactionModelName = compactionModelName
         self.disableTools = disableTools
         self.enableClipboardMonitoring = enableClipboardMonitoring
         self.warmModelsOnLoad = warmModelsOnLoad
-        self.greetingPersona = greetingPersona
+        self.autoGenerateChatTitles = autoGenerateChatTitles
     }
 
     public init(from decoder: Decoder) throws {
@@ -139,14 +161,15 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         defaultModel = try container.decodeIfPresent(String.self, forKey: .defaultModel)
         coreModelProvider = try container.decodeIfPresent(String.self, forKey: .coreModelProvider)
         coreModelName = try container.decodeIfPresent(String.self, forKey: .coreModelName)
+        compactionModelProvider = try container.decodeIfPresent(
+            String.self, forKey: .compactionModelProvider)
+        compactionModelName = try container.decodeIfPresent(
+            String.self, forKey: .compactionModelName)
         disableTools = try container.decodeIfPresent(Bool.self, forKey: .disableTools) ?? false
         enableClipboardMonitoring = try container.decodeIfPresent(Bool.self, forKey: .enableClipboardMonitoring) ?? true
         warmModelsOnLoad = try container.decodeIfPresent(Bool.self, forKey: .warmModelsOnLoad) ?? true
-        // The on/off for AI greetings is now per-agent
-        // (`AgentSettings.generativeGreetingsEnabled`). Any legacy
-        // `generativeGreetingsEnabled` boolean persisted here is ignored
-        // by the auto-synthesized decoder and dropped on the next save.
-        greetingPersona = try container.decodeIfPresent(String.self, forKey: .greetingPersona) ?? ""
+        autoGenerateChatTitles =
+            try container.decodeIfPresent(Bool.self, forKey: .autoGenerateChatTitles) ?? false
     }
 
     public static var `default`: ChatConfiguration {
@@ -173,11 +196,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             coreModelName: defaultCoreModelNameIfAvailable,
             enableClipboardMonitoring: true,
             warmModelsOnLoad: true,
-            // Empty persona = "use built-in playful default". This is the
-            // global default voice; the on/off is per-agent. Users opt
-            // into a custom voice from Settings → Chat (or a per-agent
-            // override in the Customization tab).
-            greetingPersona: ""
+            autoGenerateChatTitles: false
         )
     }
 

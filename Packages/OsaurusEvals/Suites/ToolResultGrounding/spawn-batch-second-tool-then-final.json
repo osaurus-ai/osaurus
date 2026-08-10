@@ -1,0 +1,123 @@
+{
+  "id": "tool_result_grounding.spawn-batch-second-tool-then-final",
+  "domain": "tool_result_grounding",
+  "label": "spawn_batch • result drives a second tool call before one final",
+  "query": "Delegate both jobs, write their returned tokens to batch-summary.txt, then answer once.",
+  "notes": "Model-free committed-transcript contract. Exact tool order and callMustFollowResultOf prove that file_write follows the complete spawn_batch result; single-final and terminal-position assertions reject duplicate continuation.",
+  "fixtures": {},
+  "expect": {
+    "toolResultGrounding": {
+      "events": [
+        {
+          "kind": "toolCall",
+          "callId": "batch-1",
+          "tool": "spawn_batch",
+          "arguments": "{\"jobs\":[{\"id\":\"alpha\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000301\",\"input\":\"Return alpha.\"},{\"id\":\"beta\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000302\",\"input\":\"Return beta.\"}]}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "batch-1",
+          "tool": "spawn_batch",
+          "content": "{\"ok\":true,\"tool\":\"spawn_batch\",\"result\":{\"kind\":\"spawn_batch_result\",\"max_parallel\":2,\"succeeded\":2,\"failed\":0,\"cancelled\":0,\"aggregate_status\":\"succeeded\",\"execution\":{\"configured_max_subagents\":2,\"waves\":[{\"wave\":0,\"jobs\":2,\"remote_jobs\":2,\"local_jobs\":0,\"effective_local_slots\":2,\"local_subwaves\":[2],\"limited_by\":[],\"verdict\":\"admitted\"}],\"cache\":{\"available\":true}},\"results\":[{\"id\":\"alpha\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000301\",\"ok\":true,\"envelope\":{\"ok\":true,\"tool\":\"spawn\",\"result\":{\"kind\":\"spawn_result\",\"model\":\"test/alpha-model\",\"summary\":\"SECOND_STEP_ALPHA_17\"}}},{\"id\":\"beta\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000302\",\"ok\":true,\"envelope\":{\"ok\":true,\"tool\":\"spawn\",\"result\":{\"kind\":\"spawn_result\",\"model\":\"test/beta-model\",\"summary\":\"SECOND_STEP_BETA_29\"}}}]}}"
+        },
+        {
+          "kind": "toolCall",
+          "callId": "write-1",
+          "tool": "file_write",
+          "arguments": "{\"path\":\"batch-summary.txt\",\"content\":\"SECOND_STEP_ALPHA_17\\nSECOND_STEP_BETA_29\\n\"}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "write-1",
+          "tool": "file_write",
+          "content": "WRITE_COMMIT_61"
+        },
+        {
+          "kind": "assistant",
+          "content": "SECOND_STEP_ALPHA_17 and SECOND_STEP_BETA_29 were saved successfully (WRITE_COMMIT_61)."
+        }
+      ],
+      "assertions": [
+        {
+          "callId": "batch-1",
+          "answerMustContain": [
+            "SECOND_STEP_ALPHA_17",
+            "SECOND_STEP_BETA_29"
+          ],
+          "argumentsMustNotContain": [
+            "SECOND_STEP_ALPHA_17",
+            "SECOND_STEP_BETA_29"
+          ]
+        },
+        {
+          "callId": "write-1",
+          "answerMustContain": [
+            "WRITE_COMMIT_61"
+          ],
+          "resultMustContain": [
+            "WRITE_COMMIT_61"
+          ],
+          "argumentsMustNotContain": [
+            "WRITE_COMMIT_61"
+          ],
+          "callMustFollowResultOf": "batch-1"
+        }
+      ],
+      "expectedToolSequence": [
+        "spawn_batch",
+        "file_write"
+      ],
+      "requireSingleFinalAssistant": true,
+      "requireFinalAfterAllToolResults": true,
+      "requireFinalIsLastEvent": true,
+      "spawnBatch": {
+        "exactCallCount": 1,
+        "expectedJobIds": [
+          "alpha",
+          "beta"
+        ],
+        "expectedSucceeded": 2,
+        "expectedFailed": 0,
+        "expectedMaxParallel": 2,
+        "requireEveryRowSettled": true,
+        "requireReportedCountsMatchRows": true,
+        "expectedAggregateStatus": "succeeded",
+        "expectedExecutionWaves": [
+          {
+            "wave": 0,
+            "remoteJobs": 2,
+            "effectiveLocalSlots": 2,
+            "localSubwaves": [
+              2
+            ],
+            "limitingFactors": []
+          }
+        ],
+        "requireEveryExecutionWaveWellFormed": true,
+        "expectedCacheAvailable": true,
+        "expectedRows": [
+          {
+            "id": "alpha",
+            "targetType": "agent",
+            "target": "A11CE001-0000-4000-8000-000000000301",
+            "ok": true,
+            "model": "test/alpha-model",
+            "summaryContains": [
+              "SECOND_STEP_ALPHA_17"
+            ]
+          },
+          {
+            "id": "beta",
+            "targetType": "agent",
+            "target": "A11CE001-0000-4000-8000-000000000302",
+            "ok": true,
+            "model": "test/beta-model",
+            "summaryContains": [
+              "SECOND_STEP_BETA_29"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

@@ -173,14 +173,15 @@ struct DefaultAgentSystemPromptBuilderTests {
         // model-download ("I cannot download models or perform web tasks")
         // because downloading touches the web, even though `osaurus_model
         // action download` is the agent's own configure surface. The compact
-        // prompt must scope the exclusion to doing non-config WORK and say
-        // managing Osaurus itself stays in scope even when the request
-        // mentions web or downloads.
+        // prompt must scope the exclusion to doing non-Osaurus WORK and say
+        // managing/explaining Osaurus itself stays in scope even when the
+        // request mentions web or downloads. (Was "IS config" before the
+        // configure+explain revamp widened the agent's job.)
         let compact = DefaultAgentSystemPromptBuilder._renderForTests(
             domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])],
             compact: true
         )
-        #expect(compact.contains("IS config"))
+        #expect(compact.contains("IS your job"))
         #expect(compact.contains("even when the request mentions web or downloads"))
     }
 
@@ -209,6 +210,24 @@ struct DefaultAgentSystemPromptBuilderTests {
         #expect(rendered.contains("osaurus_status"))
         #expect(rendered.contains("osaurus_list"))
         #expect(rendered.contains("osaurus_describe"))
+    }
+
+    @Test
+    func render_teachesHelpToolForOsaurusQuestionsInBothVariants() {
+        // Configure+explain revamp: both variants must (a) name
+        // `osaurus_help` as the way to answer questions about Osaurus,
+        // (b) tell the model to ground answers in the topic text instead
+        // of guessing from memory, and (c) never deflect Osaurus questions
+        // as out-of-scope.
+        for compact in [false, true] {
+            let rendered = DefaultAgentSystemPromptBuilder._renderForTests(
+                domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])],
+                compact: compact
+            )
+            #expect(rendered.contains("osaurus_help"))
+            #expect(rendered.contains("answer"))
+            #expect(rendered.lowercased().contains("memory") || rendered.contains("from its text"))
+        }
     }
 
     @Test

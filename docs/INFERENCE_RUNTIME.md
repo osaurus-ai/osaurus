@@ -193,10 +193,13 @@ the `LayerKind.deepseekV4` disk serializer instead of generic paged KV blocks.
 ## Residency policy
 
 Settings > Local Inference > Model Management includes **Keep model loaded
-after use**. The default remains `Immediately` for compatibility with older
-window-close GC behavior. Users can choose 5, 15, 30, or 60 minutes, or
-`Never`, to keep weights resident after the last stream releases its
-`ModelLease`.
+after use**. The default is **15 minutes**
+(`ModelIdleResidencyPolicy.defaultWarm = .afterSeconds(900)`) so follow-up
+turns don't pay a full cold load and per-model cache/coordinator state
+survives between nearby requests. Users can choose 5, 15, 30, or 60 minutes,
+`Immediately` (the old window-close GC behavior, still useful on low-memory
+machines), or `Never`, to keep weights resident after the last stream
+releases its `ModelLease`.
 
 This is an Osaurus memory-residency policy around `ModelRuntime.unload(name:)`.
 It unloads model weights and runtime buffers only; it does not delete
@@ -206,18 +209,20 @@ timers. `/health` keeps the existing `loaded`, `current_model`, and `inflight`
 fields and adds `resident_models[]` with per-model `idle_unload_at` and
 `idle_seconds_remaining` diagnostics.
 
-## Tunable
+## Concurrency authority
 
-A single `defaults` knob remains:
+`~/.osaurus/config/server-runtime.json` is the sole live authority for
+BatchEngine capacity. Server Settings shows the resolved value beside
+**Concurrent Sessions**. Resolution order is Memory Safety's explicit sequence
+override, an explicit Concurrent Sessions value, then the selected Memory
+Safety profile (Performance/Balanced resolve to `2`; Safe Auto/Strict to `1`).
+**Continuous Batching** off always pins capacity to `1`, and every result is
+clamped to `[1, 32]`.
 
-```bash
-defaults write ai.osaurus ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize -int 8
-```
-
-Defaults to `1`, clamped to `[1, 32]`. The default preserves vmlx's
-compiled-decode path for single-user chat. Higher values raise possible
-same-model concurrency at the cost of compile eligibility, wired-memory
-footprint, and per-request latency.
+The retired
+`ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize` UserDefaults value is read
+only once when migrating an install that has no `server-runtime.json`. It is
+not a runtime fallback and Reset does not reimport it.
 
 `BatchEngine.maxBatchSize` is mutable at runtime as of vmlx pin `b9da180`
 via `BatchEngine.updateMaxBatchSize(_:)`. The registry hot-resizes the

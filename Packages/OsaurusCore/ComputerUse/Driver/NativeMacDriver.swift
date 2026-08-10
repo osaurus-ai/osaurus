@@ -102,21 +102,17 @@ public struct NativeMacDriver: MacDriver {
         identifier: String,
         background: Bool
     ) async -> Result<CUAppInfo, MacDriverError> {
-        let opened = await openAppOnMain(identifier, background)
+        // No MainActor hop here: `openApplication` isolates its own phases —
+        // AppKit lookup/activation on the main actor, AX preparation and the
+        // readiness poll on the driver's off-main serial queue — so awaiting
+        // it from any executor keeps the UI run loop free.
+        let opened = await openApplication(identifier: identifier, background: background)
         switch opened {
         case .failure(let error):
             return .failure(.appNotFound(error.message))
         case .success(let info):
             return .success(CUAppInfo(pid: info.pid, bundleId: info.bundleId, name: info.name))
         }
-    }
-
-    @MainActor
-    private func openAppOnMain(
-        _ identifier: String,
-        _ background: Bool
-    ) async -> Result<MacAppInfo, MacAppError> {
-        await openApplication(identifier: identifier, background: background)
     }
 
     // MARK: Capture / find

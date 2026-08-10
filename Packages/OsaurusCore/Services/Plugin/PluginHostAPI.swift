@@ -259,6 +259,30 @@ final class PluginHostContext: @unchecked Sendable {
     /// "already open" common path is essentially free.
     private let dbOpenLogLock = OSAllocatedUnfairLock<Bool>(initialState: false)
 
+    /// In-flight gate for plugin SQL (`dbExec` / `dbQuery`). Plugins can
+    /// call `host->db_query` from threads the host never sees — a
+    /// `DispatchQueue.global()` poller, a plugin-owned timer — which
+    /// `ExternalPlugin.shutdown()`'s queue drains cannot cover. Without
+    /// this gate a straggler could race `teardown()` two ways (production
+    /// crash APPLE-MACOS-18J):
+    ///  - `teardown()` closes the database while the call is mid-flight
+    ///    (the per-DB queue serializes the close itself, but not the
+    ///    surrounding lazy-open/exec sequence);
+    ///  - a call that lands *after* `teardown()` silently re-opens the
+    ///    database via `ensureDatabaseOpen()`, resurrecting a connection
+    ///    nobody will ever close — an orphaned fd that storage
+    ///    convergence/rekey then swaps the file under.
+    ///
+    /// Contract (mirrors `ExternalPlugin.inFlightCallbacks`): SQL entry
+    /// points `enter()` BEFORE reading the `isTornDown` latch and `leave()`
+    /// when the call returns; `teardown()` flips the latch, then waits on
+    /// the group before closing the database. Enter-before-check makes
+    /// that sound: a call either entered before the wait began (the wait
+    /// covers it) or observes the latch and returns an error envelope
+    /// without touching the database.
+    private let inFlightDatabaseCalls = DispatchGroup()
+    private let isTornDown = OSAllocatedUnfairLock<Bool>(initialState: false)
+
     /// Lazy-open the per-plugin database on first SQL call.
     /// Idempotent — `PluginDatabase.open()` short-circuits when the
     /// connection is already up. Called from every `dbExec` /
@@ -295,7 +319,11 @@ final class PluginHostContext: @unchecked Sendable {
             Self.warnNoAgentContextOnce(pluginId: pluginId, op: "config_get")
             return nil
         }
-        return ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: agentId)
+        // Shared resolution policy (exact agent, then default-agent
+        // fallback) so `config_get` agrees with tool payload injection —
+        // a `bot_token` saved as a Plugins-tab global default must be
+        // readable here, not only via the injected payload.
+        return ToolSecretsKeychain.resolvedSecret(id: key, for: pluginId, agentId: agentId)
     }
 
     /// Maximum config value byte size accepted by `config_set`. The
@@ -353,11 +381,21 @@ final class PluginHostContext: @unchecked Sendable {
     // MARK: - Database Callbacks
 
     func dbExec(sql: String, paramsJSON: String?) -> String {
+        inFlightDatabaseCalls.enter()
+        defer { inFlightDatabaseCalls.leave() }
+        guard !isTornDown.withLock({ $0 }) else {
+            return #"{"error":"Plugin is shutting down"}"#
+        }
         ensureDatabaseOpen()
         return database.exec(sql: sql, paramsJSON: paramsJSON)
     }
 
     func dbQuery(sql: String, paramsJSON: String?) -> String {
+        inFlightDatabaseCalls.enter()
+        defer { inFlightDatabaseCalls.leave() }
+        guard !isTornDown.withLock({ $0 }) else {
+            return #"{"error":"Plugin is shutting down"}"#
+        }
         ensureDatabaseOpen()
         return database.query(sql: sql, paramsJSON: paramsJSON)
     }
@@ -806,10 +844,17 @@ final class PluginHostContext: @unchecked Sendable {
         activeAgentId: UUID? = nil
     ) async -> PreparedInference {
         let options = InferenceOptions(from: rawJSON)
+        let requestedModel = request.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let contextModelOverride =
+            requestedModel.isEmpty
+                || requestedModel.caseInsensitiveCompare("default") == .orderedSame
+            ? nil
+            : requestedModel
         let agentCtx = await resolveAgentContext(
             agentId: activeAgentId,
             messages: request.messages,
-            sessionId: request.session_id
+            sessionId: request.session_id,
+            modelOverride: contextModelOverride
         )
         let execMode = agentCtx?.executionMode ?? .none
         // Session-stable memory injection (parity with the chat surface's
@@ -849,10 +894,10 @@ final class PluginHostContext: @unchecked Sendable {
             }
         }
         // No silent Default-agent fallback: when the plugin has no chat-bound
-        // agent context, tool + skill injection are skipped (treated as
-        // "tools off"). Otherwise we'd be injecting tools + skills against
-        // the Default agent's grants, which leaks the built-in agent's
-        // configuration to anonymous plugin inferences.
+        // agent context, tool injection is skipped (treated as "tools off").
+        // Otherwise we'd be injecting tools against the Default agent's
+        // grants, which leaks the built-in agent's configuration to anonymous
+        // plugin inferences.
         let resolvedAgentId = agentCtx?.agentId
         let agentToolsOff: Bool
         if let id = resolvedAgentId {
@@ -869,13 +914,10 @@ final class PluginHostContext: @unchecked Sendable {
                 agentId: id
             )
         }
-        // Skills inject in BOTH modes — see the matching block in
-        // `SystemPromptComposer.compose` for the full rationale.
-        if let id = resolvedAgentId, !agentToolsOff,
-            let section = await SkillManager.shared.enabledSkillPromptSection(for: id)
-        {
-            SystemPromptComposer.appendSystemContent(section, into: &enriched.request.messages)
-        }
+        // Skills are NOT eagerly injected: plugin inference uses the same
+        // frozen capability manifest + `capabilities_discover` /
+        // `capabilities_load` path as chat, so the universal skill library
+        // never bloats plugin requests.
 
         let engine = ChatEngine(source: .plugin)
         let budgetMgr = await createBudgetManager(for: enriched, maxIterations: options.maxIterations)
@@ -903,7 +945,8 @@ final class PluginHostContext: @unchecked Sendable {
     static func resolveAgentContext(
         agentId: UUID?,
         messages: [ChatMessage] = [],
-        sessionId: String? = nil
+        sessionId: String? = nil,
+        modelOverride: String? = nil
     ) async -> AgentContext? {
         guard let agentId else { return nil }
 
@@ -920,14 +963,23 @@ final class PluginHostContext: @unchecked Sendable {
 
         // Honour the same execution-mode rules the chat UI uses so a
         // plugin invocation against this agent sees the same tool surface
-        // (sandbox > host folder > none). Previously this path was hard-
-        // coded to `folderContext: nil`, so a host-folder agent driven via
-        // a plugin would silently lose its folder tools.
+        // (sandbox > host folder > none). Folder ownership is per chat
+        // session now; a plugin inference resolves the folder of the
+        // SESSION driving it (the live dispatched session with this id,
+        // when one exists) — never a process-wide folder that could belong
+        // to an unrelated chat window.
+        let sessionFolderContext: FolderContext? = await MainActor.run {
+            guard let sid = sessionId, let sessionUUID = UUID(uuidString: sid) else { return nil }
+            return BackgroundTaskManager.shared.liveTask(forSessionId: sessionUUID)?
+                .chatSession?.folderState.context
+        }
         let (execMode, agentModel, toolMode) = await MainActor.run {
             () -> (ExecutionMode, String?, ToolSelectionMode) in
             let mode = ToolRegistry.shared.resolveExecutionMode(
-                folderContext: FolderContextService.shared.currentContext,
-                autonomousEnabled: resolved.autonomousEnabled
+                folderContext: sessionFolderContext,
+                autonomousEnabled: resolved.autonomousEnabled,
+                allowHostFolderWrites: AgentManager.shared.effectiveAutonomousExec(for: agentId)?
+                    .allowHostFolderWrites == true
             )
             // Snapshot the agent's effective model so it can ride along to
             // `composeChatContext` as the chat-model fallback
@@ -951,21 +1003,24 @@ final class PluginHostContext: @unchecked Sendable {
             )
             cachedSession = await SessionToolStateStore.shared.get(sid)
         }
+        await PluginManager.shared.ensurePromptCatalogReady()
         let composed = await SystemPromptComposer.composeChatContext(
             agentId: agentId,
             executionMode: execMode,
-            model: agentModel,
+            model: modelOverride ?? agentModel,
             query: extractLatestUserQuery(from: messages),
             messages: messages,
             additionalToolNames: cachedSession?.loadedToolNames ?? [],
             frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
+            frozenToolSpecs: cachedSession?.initialToolSpecs,
             frozenManifest: cachedSession?.frozenManifest,
             frozenSoul: cachedSession?.frozenSoul
         )
-        if let sid = sessionId, cachedSession == nil {
+        if let sid = sessionId {
             await SessionToolStateStore.shared.setInitial(
                 sid,
                 alwaysLoadedNames: composed.alwaysLoadedNames,
+                toolSpecs: composed.initialToolSpecs,
                 fingerprint: SessionToolState.fingerprint(executionMode: execMode, toolMode: toolMode),
                 manifest: composed.enabledManifest,
                 soul: composed.soul
@@ -1078,6 +1133,7 @@ final class PluginHostContext: @unchecked Sendable {
         request.enable_thinking = base.enable_thinking
         request.reasoning_effort = base.reasoning_effort
         request.modelOptions = base.modelOptions
+        request.isAgentRequest = base.isAgentRequest || tools?.isEmpty == false
         return request
     }
 
@@ -1173,10 +1229,31 @@ final class PluginHostContext: @unchecked Sendable {
                     }
                     return live
                 }
+                await SessionToolStateStore.shared.setInitial(
+                    sid,
+                    alwaysLoadedNames: Set(builtInTools.map { $0.function.name }),
+                    toolSpecs: builtInTools,
+                    fingerprint: liveFp
+                )
+                let stable = await SessionToolStateStore.shared.get(sid) ?? cached
                 let extraSpecs = await MainActor.run {
-                    ToolRegistry.shared.specs(forTools: Array(cached.loadedToolNames))
+                    ToolRegistry.shared.specs(forTools: Array(stable.loadedToolNames))
                 }
-                return await applyResolvedTools(builtInTools + extraSpecs, to: inference)
+                var byName = Dictionary(
+                    uniqueKeysWithValues: (builtInTools + extraSpecs).map {
+                        ($0.function.name, $0)
+                    }
+                )
+                if let frozen = stable.initialToolSpecs {
+                    let frozenByName = Dictionary(
+                        uniqueKeysWithValues: frozen.map { ($0.function.name, $0) }
+                    )
+                    for name in Array(byName.keys)
+                    where !stable.loadedToolNames.contains(name) {
+                        if let spec = frozenByName[name] { byName[name] = spec }
+                    }
+                }
+                return await applyResolvedTools(Array(byName.values), to: inference)
             }
         }
 
@@ -1196,6 +1273,7 @@ final class PluginHostContext: @unchecked Sendable {
             await SessionToolStateStore.shared.setInitial(
                 sid,
                 alwaysLoadedNames: builtInNames,
+                toolSpecs: builtInTools,
                 fingerprint: fp
             )
         }
@@ -1244,6 +1322,7 @@ final class PluginHostContext: @unchecked Sendable {
         request.enable_thinking = inference.request.enable_thinking
         request.reasoning_effort = inference.request.reasoning_effort
         request.modelOptions = inference.request.modelOptions
+        request.isAgentRequest = inference.request.isAgentRequest || effectiveTools?.isEmpty == false
         return EnrichedInference(request: request, tools: effectiveTools)
     }
 
@@ -1290,7 +1369,7 @@ final class PluginHostContext: @unchecked Sendable {
         case "share_artifact":
             return await processShareArtifact(result: result, prep: prep)
 
-        case "capabilities_load":
+        case "capabilities_load", "capabilities":
             // Deferred-schema policy (KV stability): loaded tools are
             // callable IMMEDIATELY — the registry dispatches by name and
             // schema visibility is not an execution gate — but this run's
@@ -1506,11 +1585,17 @@ final class PluginHostContext: @unchecked Sendable {
                         // The non-streaming path appends the full assistant
                         // message (with all tool_calls) once; the per-call
                         // hooks then append only the tool-result messages.
+                        // Recorded history gets the secret-safe argument view
+                        // so sandbox_secret_set values never re-enter the
+                        // multi-turn context; execution still uses the raw
+                        // invocations built from the model's original args.
                         // The iteration cap is owned by the DRIVER (same
                         // taxonomy as the HTTP surface): the final
                         // iteration's calls still execute, then the loop
                         // exits `.iterationCapReached`.
-                        messages.append(choice.message)
+                        messages.append(
+                            SecretArgumentScrubber.recordedAssistantMessage(choice.message)
+                        )
                         return .toolCalls(
                             calls.map {
                                 ServiceToolInvocation(
@@ -1596,6 +1681,14 @@ final class PluginHostContext: @unchecked Sendable {
                 return Self.jsonString([
                     "error": "empty_tool_task_completion",
                     "message": AgentToolLoop.emptyToolTaskFallback,
+                    "tool_calls_executed": toolCallsExecuted,
+                    "shared_artifacts": sharedArtifacts,
+                ])
+            }
+            if exit == .lengthExhausted {
+                return Self.jsonString([
+                    "error": "output_token_limit",
+                    "message": AgentToolLoop.lengthExhaustedFallback,
                     "tool_calls_executed": toolCallsExecuted,
                     "shared_artifacts": sharedArtifacts,
                 ])
@@ -1939,12 +2032,17 @@ final class PluginHostContext: @unchecked Sendable {
                 },
                 willProcessCall: { inv, callId in
                     // Surface the tool call to the plugin before the dedupe
-                    // check, exactly as the historical batch processor did.
+                    // check. Streamed argument material uses the recorded
+                    // (secret-safe) view; execution still sees raw args.
+                    let recordedArgs = SecretArgumentScrubber.recordedArguments(
+                        toolName: inv.toolName,
+                        argumentsJSON: inv.jsonArguments
+                    )
                     let tcDelta: [String: Any] = [
                         "tool_calls": [
                             [
                                 "id": callId,
-                                "function": ["name": inv.toolName, "arguments": inv.jsonArguments],
+                                "function": ["name": inv.toolName, "arguments": recordedArgs],
                             ]
                         ]
                     ]
@@ -1954,7 +2052,8 @@ final class PluginHostContext: @unchecked Sendable {
                     // Dedupe a still-fresh re-read: replay the exact held
                     // envelope instead of re-running the read. Still pair an
                     // assistant tool_call message with the tool result so
-                    // history stays valid.
+                    // history stays valid. Arguments on the recorded
+                    // assistant message are the secret-safe view.
                     emit(
                         Self.chunkPayload(
                             id: cid,
@@ -1966,13 +2065,9 @@ final class PluginHostContext: @unchecked Sendable {
                             role: "assistant",
                             content: lastContent.isEmpty ? nil : lastContent,
                             tool_calls: [
-                                ToolCall(
+                                SecretArgumentScrubber.recordedToolCall(
                                     id: callId,
-                                    type: "function",
-                                    function: ToolCallFunction(
-                                        name: inv.toolName,
-                                        arguments: inv.jsonArguments
-                                    )
+                                    invocation: inv
                                 )
                             ],
                             tool_call_id: nil
@@ -2085,6 +2180,16 @@ final class PluginHostContext: @unchecked Sendable {
                     "shared_artifacts": sharedArtifacts,
                 ])
             }
+            if exit == .lengthExhausted {
+                emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "length"))
+                persistPartial(lastContent)
+                return Self.jsonString([
+                    "error": "output_token_limit",
+                    "message": AgentToolLoop.lengthExhaustedFallback,
+                    "tool_calls_executed": toolCallsExecuted,
+                    "shared_artifacts": sharedArtifacts,
+                ])
+            }
 
             if exit == .cancelled {
                 // Cancellation detected at an iteration boundary (between
@@ -2135,6 +2240,11 @@ final class PluginHostContext: @unchecked Sendable {
 
     /// Execute one tool call, post-process the result, and produce the
     /// assistant + tool ChatMessages to append to the running history.
+    ///
+    /// Execution receives the original `argumentsJSON`. The assistant
+    /// tool-call message that re-enters multi-turn history uses the
+    /// recorded (secret-safe) argument view so `sandbox_secret_set`
+    /// values never ride the next model step or plugin-visible material.
     /// The tool schema is intentionally NOT mutated here — see the
     /// deferred-schema policy in `postProcessToolResult`.
     private static func processToolCall(
@@ -2144,6 +2254,7 @@ final class PluginHostContext: @unchecked Sendable {
         priorAssistantContent: String,
         prep: PreparedInference
     ) async -> ToolCallProcessing {
+        // Execution seam: original arguments, including any secret value.
         var result = await Self.executeToolCall(
             name: toolName,
             argumentsJSON: argumentsJSON,
@@ -2157,10 +2268,15 @@ final class PluginHostContext: @unchecked Sendable {
         )
         result = postProcessed.result
 
+        // Recording seam: secret-safe args for history / model re-feed.
+        let material = ToolCallArgumentMaterial.split(
+            toolName: toolName,
+            argumentsJSON: argumentsJSON
+        )
         let toolCall = ToolCall(
             id: callId,
             type: "function",
-            function: ToolCallFunction(name: toolName, arguments: argumentsJSON)
+            function: ToolCallFunction(name: toolName, arguments: material.forRecording)
         )
         let assistantMessage = ChatMessage(
             role: "assistant",
@@ -2769,8 +2885,19 @@ final class PluginHostContext: @unchecked Sendable {
     }
 
     /// Removes this context from the global registry and closes the database.
+    ///
+    /// Ordering matters: the registry entry goes first (new trampoline
+    /// lookups resolve to `context_unavailable`), then the SQL latch flips
+    /// and the in-flight group is drained (see `inFlightDatabaseCalls`),
+    /// and only then does the database close — so no straggler can be
+    /// mid-`sqlite3_step` during the close, and none can lazily re-open
+    /// the connection afterwards. The wait is bounded by SQLite's 5s
+    /// `busy_timeout`; callers (PluginManager unload paths, tests) are
+    /// never on the main thread with a live query in flight.
     func teardown() {
         PluginHostContext.removeContext(for: pluginId)
+        isTornDown.withLock { $0 = true }
+        inFlightDatabaseCalls.wait()
         database.close()
     }
 }
@@ -3061,9 +3188,13 @@ extension PluginHostContext {
         }
 
         switch state.status {
-        case .running, .awaitingClarification:
+        case .queued:
+            result["status"] = "queued"
+            if let step = state.currentStep { result["current_step"] = step }
+
+        case .running, .waitingForInput:
             // v3: chat tasks always serialize as "running". The
-            // `.awaitingClarification` enum case is still used internally
+            // `.waitingForInput` enum case is still used internally
             // for UI hints (toast, notch) but never exposed via task_status,
             // because clarification is handled inline through the `clarify`
             // agent intercept rather than as an out-of-band state.
@@ -3081,9 +3212,17 @@ extension PluginHostContext {
             }
             if !activity.isEmpty { result["activity"] = activity }
 
-        case .completed(let success, let summary):
-            result["status"] = success ? "completed" : "failed"
-            result["success"] = success
+        case .completed(let summary):
+            result["status"] = "completed"
+            result["success"] = true
+            result["summary"] = summary
+            if let execCtx = state.executionContext {
+                result["session_id"] = execCtx.id.uuidString
+            }
+
+        case .failed(let summary):
+            result["status"] = "failed"
+            result["success"] = false
             result["summary"] = summary
             if let execCtx = state.executionContext {
                 result["session_id"] = execCtx.id.uuidString

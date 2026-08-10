@@ -2,12 +2,10 @@
 //  ConfigureAIStateResourceTests.swift
 //  osaurusTests
 //
-//  Coverage for the explicit resource-cost surfaces on the Configure AI
-//  onboarding step: the CTA disk-space preflight that keeps low-disk users
-//  off the dead "Preparing download..." screen, the machine-context stat
-//  lines (memory / disk read against this Mac's specs), the "picked for
-//  your Mac's specs" render rule (which must only claim we chose the model
-//  when the selection really is the hardware-recommended pick), and the
+//  Coverage for the resource-cost surfaces on the Configure AI onboarding
+//  step: the local-commit disk-space preflight that refuses inline instead of
+//  starting a doomed background download, the hardware-recommended default
+//  pick, the chooser's stat lines and plain-language subtitles, and the
 //  chooser's same-family variant dedupe that collapses quant builds to one
 //  hardware-chosen row per model.
 //
@@ -85,11 +83,11 @@ struct ConfigureAIStateResourceTests {
         #expect(ConfigureAIState.downloadWontFit(neededBytes: 0, freeBytes: 0) == false)
     }
 
-    /// Pressing the CTA with a selection that can't possibly fit the real
-    /// volume must stay on home with an inline warning — not flip to the
-    /// downloading screen, not commit the brain source, not call onComplete.
-    /// Choosing a different model clears the warning.
-    @Test func ctaPreflightBlocksOversizedDownloadInline() {
+    /// Committing the local option with a selection that can't possibly fit
+    /// the real volume must stay put with an inline warning — not advance,
+    /// not commit the brain source, not start a download. Choosing a
+    /// different model clears the warning.
+    @Test func localCommitPreflightBlocksOversizedDownloadInline() {
         // If the volume can't be statted in this environment the preflight
         // fails open by design and there is nothing to verify.
         guard ConfigureAIState.queryFreeDiskBytes() != nil else { return }
@@ -99,7 +97,7 @@ struct ConfigureAIStateResourceTests {
         state.selectedModel = makeModel(tag: "huge", sizeBytes: Int64.max / 4)
 
         var completed = false
-        state.startLocalDownloadOrContinue(onComplete: { completed = true })
+        state.chooseLocalAndContinue(onComplete: { completed = true })
 
         #expect(completed == false)
         #expect(state.screen == .home)
@@ -110,95 +108,32 @@ struct ConfigureAIStateResourceTests {
         #expect(state.diskSpaceWarning == nil)
     }
 
-    // MARK: - "Picked for your Mac's specs" render rule
+    // MARK: - Recommended pick
 
-    @Test func recommendedSelectionRuleMatchesRecommendedPickOnly() {
-        let small = makeModel(tag: "small", sizeBytes: 4 * gb, isTopSuggestion: true)
-        let large = makeModel(tag: "large", sizeBytes: 8 * gb, isTopSuggestion: true)
+    @Test func recommendedPickIsLargestComfortableCandidate() {
+        let small = makeModel(tag: "small", sizeBytes: 2 * gb, isTopSuggestion: true)
+        let large = makeModel(tag: "large", sizeBytes: 6 * gb, isTopSuggestion: true)
         let candidates = [large, small]
 
-        // Both fit comfortably on 16 GB, so the policy lands on the LARGEST
-        // comfortable pick — the strongest proven model this Mac can run.
+        // Both fit comfortably inside a 16 GB Mac's 10.67 GB GPU budget (2.5 GB
+        // and 7.5 GB resident), so the policy lands on the LARGEST comfortable
+        // pick — the strongest proven model this Mac can run.
         let recommended = ConfigureAIState.recommendedLocalPick(
             from: candidates,
             totalMemoryGB: 16
         )
         #expect(recommended?.id == large.id)
-
-        #expect(
-            ConfigureAIState.isRecommendedSelection(
-                large,
-                candidates: candidates,
-                totalMemoryGB: 16
-            ) == true
-        )
-        // A manual chooser pick that differs from the recommendation must
-        // not claim "picked for your specs".
-        #expect(
-            ConfigureAIState.isRecommendedSelection(
-                small,
-                candidates: candidates,
-                totalMemoryGB: 16
-            ) == false
-        )
-        #expect(
-            ConfigureAIState.isRecommendedSelection(
-                nil,
-                candidates: candidates,
-                totalMemoryGB: 16
-            ) == false
-        )
     }
 
     // MARK: - Stat-line formatting
-
-    @Test func memoryStatIncludesMachineTotalWhenKnown() {
-        let model = makeModel(tag: "sized", sizeBytes: 8 * gb)
-        let text = ConfigureAIState.memoryStatText(for: model, totalMemoryGB: 16)
-        #expect(text != nil)
-        #expect(text?.contains("16") == true)
-    }
-
-    @Test func memoryStatDropsTotalWhenMonitorHasNotReported() {
-        let model = makeModel(tag: "sized", sizeBytes: 8 * gb)
-        let text = ConfigureAIState.memoryStatText(for: model, totalMemoryGB: 0)
-        #expect(text != nil)
-        #expect(text?.contains("16") == false)
-    }
-
-    @Test func memoryStatHiddenWithoutEstimate() {
-        let model = makeModel(tag: "plain")
-        #expect(model.formattedEstimatedMemory == nil)
-        #expect(ConfigureAIState.memoryStatText(for: model, totalMemoryGB: 16) == nil)
-    }
-
-    @Test func diskStatShowsFreeSpaceContextWhenKnown() {
-        let model = makeModel(tag: "sized", sizeBytes: 8 * gb)
-        let text = ConfigureAIState.diskStatText(for: model, freeDiskBytes: 200 * gb)
-        #expect(text?.contains("download") == true)
-        #expect(text?.contains("free") == true)
-    }
-
-    /// An unknown free-space query drops the "you have N free" suffix rather
-    /// than rendering a bogus 0.
-    @Test func diskStatDropsFreeSuffixWhenQueryFailed() {
-        let model = makeModel(tag: "sized", sizeBytes: 8 * gb)
-        let text = ConfigureAIState.diskStatText(for: model, freeDiskBytes: nil)
-        #expect(text?.contains("download") == true)
-        #expect(text?.contains("free") == false)
-    }
-
-    @Test func diskStatHiddenWithoutSize() {
-        let model = makeModel(tag: "plain")
-        #expect(ConfigureAIState.diskStatText(for: model, freeDiskBytes: 200 * gb) == nil)
-    }
 
     @Test func chooserStatsLineListsDownloadAndMemory() {
         let line = ConfigureAIState.chooserStatsLine(
             for: makeModel(tag: "sized", sizeBytes: 8 * gb)
         )
-        #expect(line?.contains("download") == true)
-        #expect(line?.contains("memory") == true)
+        #expect(line?.contains("Download:") == true)
+        #expect(line?.contains("Est. memory while running:") == true)
+        #expect(line?.contains("10.0 GB") == true)
     }
 
     @Test func chooserStatsLineNilWhenNothingKnown() {

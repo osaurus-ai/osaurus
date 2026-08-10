@@ -1,0 +1,23 @@
+{
+  "id": "agent_loop.cancel-during-reads-no-side-effects",
+  "domain": "agent_loop",
+  "label": "agent loop • cancelling during a read-then-write plan blocks the write phase",
+  "query": "First read src.txt, then read src2.txt, then write a combined summary of both into out.txt. One tool call per turn.",
+  "notes": "Cancel between the read phase and the write phase: with cancelAfterToolCalls 1 the loop stops after the first read, so the write (out.txt) must never happen — proving cancellation prevents queued side effects, not just future reads. Clean 'cancelled' exit required. Off-CI (needs a model).",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "src.txt", "contents": "first source\n" },
+      { "path": "src2.txt", "contents": "second source\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "cancelAfterToolCalls": 1,
+      "allowedExits": ["cancelled"],
+      "files": [
+        { "path": "out.txt", "exists": false }
+      ]
+    }
+  }
+}

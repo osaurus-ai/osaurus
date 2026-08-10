@@ -212,6 +212,25 @@ public struct SchemaValidator {
         // `maxLength`. Pattern compilation failures are tolerated — a
         // bad regex in the schema shouldn't break the tool call.
         if let s = value as? String {
+            let length = s.unicodeScalars.count
+            if case .number(let min)? = schemaObject["minLength"],
+                length < Int(min)
+            {
+                let label = key.map { " '\($0)'" } ?? ""
+                return .fail(
+                    "Property\(label) must contain at least \(Int(min)) characters (got \(length)).",
+                    field: key
+                )
+            }
+            if case .number(let max)? = schemaObject["maxLength"],
+                length > Int(max)
+            {
+                let label = key.map { " '\($0)'" } ?? ""
+                return .fail(
+                    "Property\(label) must contain at most \(Int(max)) characters (got \(length)).",
+                    field: key
+                )
+            }
             if case .string(let pat)? = schemaObject["pattern"] {
                 if let regex = try? NSRegularExpression(pattern: pat),
                     regex.firstMatch(
@@ -366,7 +385,7 @@ public struct SchemaValidator {
     private static func isBoolLike(_ value: Any) -> Bool {
         if let n = value as? NSNumber, isObjCBool(n) { return true }
         if let s = value as? String {
-            switch s.lowercased() {
+            switch s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
             case "true", "false", "1", "0", "yes", "no": return true
             default: return false
             }
@@ -524,7 +543,14 @@ public struct SchemaValidator {
         schemaObject: [String: JSONValue]
     ) -> [String: Any] {
         guard case .object(let propsDict)? = schemaObject["properties"] else { return obj }
-        var out = unwrapPropertiesWrapper(in: obj, propsDict: propsDict)
+        var out = unwrapSchemaBodyWrapper(in: obj, key: "properties", propsDict: propsDict)
+        // Some local models copy the conventional function-call envelope
+        // (`{"tool": ..., "arguments": {...}}`) one level too deep and
+        // send that inner `arguments` object as the tool's entire payload.
+        // The live Bonsai chart route emitted the nested object as a JSON
+        // string. Rescue only when `arguments` is not a real declared field
+        // and the decoded object contains at least one declared key.
+        out = unwrapSchemaBodyWrapper(in: out, key: "arguments", propsDict: propsDict)
         out = normalizeKeySpelling(in: out, propsDict: propsDict)
         out = dropEmptyOptionalStrings(in: out, propsDict: propsDict, required: requiredKeys(schemaObject))
         for (key, value) in out {
@@ -606,17 +632,28 @@ public struct SchemaValidator {
     /// a declared property of this schema and (b) the inner object
     /// contains at least one declared key. Outer keys win on collision
     /// so a partial double-emit doesn't get clobbered.
-    private static func unwrapPropertiesWrapper(
+    private static func unwrapSchemaBodyWrapper(
         in obj: [String: Any],
+        key: String,
         propsDict: [String: JSONValue]
     ) -> [String: Any] {
-        guard propsDict["properties"] == nil,
-            let nested = obj["properties"] as? [String: Any]
-        else { return obj }
+        guard propsDict[key] == nil, let wrapped = obj[key] else { return obj }
+        let nested: [String: Any]?
+        if let object = wrapped as? [String: Any] {
+            nested = object
+        } else if let string = wrapped as? String,
+            let data = string.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        {
+            nested = object
+        } else {
+            nested = nil
+        }
+        guard let nested else { return obj }
         let declared = Set(propsDict.keys)
         guard !declared.intersection(Set(nested.keys)).isEmpty else { return obj }
         var out = obj
-        out.removeValue(forKey: "properties")
+        out.removeValue(forKey: key)
         for (key, value) in nested where out[key] == nil {
             out[key] = value
         }

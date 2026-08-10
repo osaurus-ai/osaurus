@@ -1,0 +1,79 @@
+{
+  "id": "agent_loop.spawn-batch-two-configured-workers",
+  "domain": "agent_loop",
+  "label": "agent loop • agent-selected two-worker batch finalizes once",
+  "query": "Fan out exactly two independent jobs in one spawn_batch call. Job id `math` must use target_type `agent`, target the exact allowed UUID `A11CE001-0000-4000-8000-000000000001` (Osaurus Eval Batch Math), and ask it to return exactly BATCH_ALPHA_42. Job id `writing` must use target_type `agent`, target the exact allowed UUID `A11CE001-0000-4000-8000-000000000002` (Osaurus Eval Batch Writing), and ask it to return exactly BATCH_BETA_BLUE. Preserve that job order. After both results return, answer once with both tokens and stop. Do not call spawn_agent or spawn_model.",
+  "notes": "Production agent-loop proof row for configured-target selection, same-local-model batching, ordered child settlement, aggregate counts, and one final answer. The orchestrator and temporary workers all use the selected case model with nil sampler overrides, so generation_config/JANG bundle defaults remain authoritative.",
+  "fixtures": {
+    "agentCapabilities": {
+      "spawnAgents": [
+        {
+          "id": "A11CE001-0000-4000-8000-000000000001",
+          "name": "Osaurus Eval Batch Math",
+          "description": "Returns the exact requested validation token.",
+          "systemPrompt": "Complete the bounded delegated task. Return only the exact token requested, with no preamble or explanation."
+        },
+        {
+          "id": "A11CE001-0000-4000-8000-000000000002",
+          "name": "Osaurus Eval Batch Writing",
+          "description": "Returns the exact requested validation token.",
+          "systemPrompt": "Complete the bounded delegated task. Return only the exact token requested, with no preamble or explanation."
+        }
+      ],
+      "maxParallelSpawns": 2
+    },
+    "runtimeConcurrency": {
+      "continuousBatching": true,
+      "maxConcurrentSequences": 2
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "maxModelSteps": 4,
+      "mustCallTools": ["spawn_batch"],
+      "mustNotCallTools": ["spawn_agent", "spawn_model"],
+      "maxToolCalls": 1,
+      "noDuplicateExecutedCalls": true,
+      "noToolErrors": true,
+      "allowedExits": ["finalResponse"],
+      "finalTextContains": ["BATCH_ALPHA_42", "BATCH_BETA_BLUE"],
+      "toolUsageAudit": [
+        {
+          "tool": "spawn_batch",
+          "minCalls": 1,
+          "maxCalls": 1,
+          "maxErrors": 0,
+          "argsMustContain": "A11CE001-0000-4000-8000-000000000001"
+        },
+        {
+          "tool": "spawn_batch",
+          "minCalls": 1,
+          "maxCalls": 1,
+          "maxErrors": 0,
+          "argsMustContain": "A11CE001-0000-4000-8000-000000000002"
+        }
+      ],
+      "spawnBatch": {
+        "exactCallCount": 1,
+        "expectedJobIds": ["math", "writing"],
+        "expectedSucceeded": 2,
+        "expectedFailed": 0,
+        "expectedMaxParallel": 2,
+        "requireEveryRowSettled": true,
+        "requireReportedCountsMatchRows": true,
+        "expectedAggregateStatus": "succeeded",
+        "expectedExecutionWaves": [
+          {
+            "wave": 1,
+            "remoteJobs": 0,
+            "effectiveLocalSlots": 2,
+            "localSubwaves": [2]
+          }
+        ],
+        "requireEveryExecutionWaveWellFormed": true,
+        "expectedCacheAvailable": true
+      }
+    }
+  }
+}

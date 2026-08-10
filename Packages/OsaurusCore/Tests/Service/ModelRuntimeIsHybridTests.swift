@@ -86,6 +86,20 @@ struct ModelRuntimeIsHybridTests {
         }
     }
 
+    @Test("Bonsai family — qwen3_5 dense-VL model_type without a qwen substring")
+    func bonsaiFamilyIsHybrid() {
+        for id in [
+            "OsaurusAI/Bonsai-27b-1bit-JANG",
+            "OsaurusAI/Bonsai-27b-Ternary-JANG",
+            "bonsai-27b-1bit-jang",  // picker form
+        ] {
+            #expect(
+                ModelRuntime.isKnownHybridModel(name: id),
+                "Bonsai bundles are qwen3_5 dense-VL hybrids (48 linear_attention MambaCache slots) and must flip setHybrid eagerly: \(id)"
+            )
+        }
+    }
+
     @Test("Bailing / Ling Linear-Attn hybrid family")
     func bailingLing_isHybrid() {
         for id in [

@@ -56,8 +56,7 @@ enum ChatHistoryTestStorage {
                     disableTools: true,
                     autonomousExec: nil,
                     toolSelectionMode: .manual,
-                    manualToolNames: [],
-                    manualSkillNames: []
+                    manualToolNames: []
                 )
             )
             StorageKeyManager.shared._setKeyForTesting(

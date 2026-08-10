@@ -1,0 +1,15 @@
+{
+  "id": "micro_perf.lifecycle-cold-load",
+  "domain": "micro_perf",
+  "label": "micro perf • cold-load latency: unload → reload → first token, 3 reps",
+  "query": "Reply with the single word READY.",
+  "notes": "The model-swap cost row. Each rep evicts the resident model (ModelRuntime.clearAll) then times a fresh load through to first token, so the median cold TTFT is exactly the latency a user pays when switching models. A warm rep is measured afterward for the swap-penalty contrast (cold median − warm). Trend telemetry only — cold-load time is model-size- and machine-specific, so there are no hard floors; the diff/history tooling is the gate. SKIPs on hosts whose run model is not a local MLX model (nothing to unload). Off-CI (needs a local model).",
+  "fixtures": {},
+  "expect": {
+    "microPerf": {
+      "reps": 3,
+      "maxTokens": 8,
+      "lifecycle": "cold_load"
+    }
+  }
+}

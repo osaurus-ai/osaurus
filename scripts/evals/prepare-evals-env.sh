@@ -21,6 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 EVALS_PKG="${REPO_ROOT}/Packages/OsaurusEvals"
 EMBED_MODEL="minishlab/potion-base-4M"
+EVALS_BUILD_CONFIGURATION="${EVALS_BUILD_CONFIGURATION:-debug}"
 
 shopt -s nullglob
 
@@ -33,11 +34,12 @@ warn() { printf '[evals-prep] WARNING: %s\n' "$*" >&2; }
 # exists before we drop the metallib in.
 if [[ "${OSAURUS_EVALS_SKIP_BUILD:-0}" != "1" ]]; then
   log "Building osaurus-evals (swift build)…"
-  swift build --package-path "${EVALS_PKG}" >/dev/null
+  swift build --package-path "${EVALS_PKG}" -c "${EVALS_BUILD_CONFIGURATION}" >/dev/null
 fi
 
 bin_dirs=()
-for d in "${EVALS_PKG}"/.build/debug "${EVALS_PKG}"/.build/*/debug; do
+for d in "${EVALS_PKG}"/.build/"${EVALS_BUILD_CONFIGURATION}" \
+         "${EVALS_PKG}"/.build/*/"${EVALS_BUILD_CONFIGURATION}"; do
   [[ -d "${d}" ]] && bin_dirs+=("${d}")
 done
 
@@ -59,14 +61,14 @@ find_metallib_source() {
     "${HOME}"/Library/Developer/Xcode/DerivedData/osaurus-*/Build/Products/*/osaurus.app/Contents/Resources/default.metallib
   )
   local c
-  for c in "${cands[@]}"; do
+  for c in "${cands[@]-}"; do
     [[ -f "${c}" ]] && { printf '%s' "${c}"; return 0; }
   done
   return 1
 }
 
 if [[ ${#bin_dirs[@]} -eq 0 ]]; then
-  warn "no osaurus-evals .build/debug dir found; skipping metallib colocation."
+  warn "no osaurus-evals .build/${EVALS_BUILD_CONFIGURATION} dir found; skipping metallib colocation."
 else
   if metallib_src="$(find_metallib_source)"; then
     for d in "${bin_dirs[@]}"; do
@@ -118,18 +120,9 @@ else
   fi
 fi
 
-# ── 4. (opt-in) install the osaurus.browser plugin ───────────────────────
-# The capability_claims browser cases require the `osaurus.browser` native
-# plugin installed on disk. Installing it mutates ~/.osaurus, so it's
-# opt-in (most suites don't need it): export OSAURUS_EVALS_INSTALL_BROWSER=1
-# (the CapabilityClaims re-run does). Best-effort; never fails the prep.
-if [[ "${OSAURUS_EVALS_INSTALL_BROWSER:-0}" == "1" ]]; then
-  if command -v osaurus >/dev/null 2>&1; then
-    log "Installing osaurus.browser plugin (OSAURUS_EVALS_INSTALL_BROWSER=1)…"
-    osaurus tools install osaurus.browser || warn "osaurus.browser install failed; capability_claims browser cases will skip."
-  else
-    warn "OSAURUS_EVALS_INSTALL_BROWSER=1 but 'osaurus' CLI not found; skipping browser plugin install."
-  fi
-fi
+# Note: the capability_claims browser cases used to require the
+# `osaurus.browser` plugin (OSAURUS_EVALS_INSTALL_BROWSER=1). The browser is
+# now a NATIVE Osaurus capability (`browser_use`), so no plugin install is
+# needed and those cases run everywhere.
 
 log "Done."

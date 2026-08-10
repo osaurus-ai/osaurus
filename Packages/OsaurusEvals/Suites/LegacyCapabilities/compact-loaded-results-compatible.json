@@ -1,0 +1,17 @@
+{
+  "id": "legacy_capabilities.compact-loaded-results-compatible",
+  "domain": "prompt_surface",
+  "label": "legacy capabilities • compact loaded results profile remains compatible",
+  "query": "",
+  "notes": "Compatibility-only coverage for persisted profiles that compact capabilities_load results. The axis has zero first-step surface savings and is no longer scheduled by the optimizer.",
+  "fixtures": {},
+  "expect": {
+    "promptSurface": {
+      "profile": {
+        "name": "legacy-compact-loaded-results",
+        "compactLoadedResults": true
+      },
+      "expectDeterministic": true
+    }
+  }
+}

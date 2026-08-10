@@ -1,0 +1,25 @@
+{
+  "id": "memory.episode-recall",
+  "domain": "memory",
+  "label": "memory • past-conversation episode grounds a 'what did we discuss' ask",
+  "query": "What did we decide about the greenhouse project last time we talked?",
+  "notes": "Episode-layer recall: the heuristic gate picks episode summaries for retrospective phrasing ('last time we talked'), so this row proves the episodic layer — not just pinned facts — flows through injection and lands in the answer. Codeword: the cedar-frame decision. Off-CI (needs a model).",
+  "fixtures": {
+    "seedMemory": {
+      "episodes": [
+        {
+          "summary": "Discussed the greenhouse project: decided on a cedar frame with twin-wall polycarbonate panels, budget capped at $900.",
+          "topics": "greenhouse,woodworking,budget",
+          "entities": "greenhouse,cedar,polycarbonate"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "memory": {
+      "maxTokens": 384,
+      "answerContains": ["cedar"],
+      "requireMemoryInjected": true
+    }
+  }
+}

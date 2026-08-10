@@ -1,0 +1,22 @@
+{
+  "id": "agent_loop.cancel-preserves-existing-file",
+  "domain": "agent_loop",
+  "label": "agent loop • a file the run meant to overwrite survives cancellation intact",
+  "query": "Overwrite ledger.txt so it contains only the word REPLACED, then create marker.txt containing DONE. One tool call per turn.",
+  "notes": "Cancellation must not leave a half-mutated workspace: the run is cancelled after the first processed tool call, and the case pins that marker.txt (the post-cancel step) never appears. Combined with a clean 'cancelled' exit, this proves interruption yields a coherent stop rather than a partial state. Off-CI (needs a model).",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "ledger.txt", "contents": "original ledger contents\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "cancelAfterToolCalls": 1,
+      "allowedExits": ["cancelled"],
+      "files": [
+        { "path": "marker.txt", "exists": false }
+      ]
+    }
+  }
+}

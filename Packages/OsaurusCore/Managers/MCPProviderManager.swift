@@ -5,8 +5,10 @@
 //  Manages remote MCP provider connections and tool execution.
 //
 
+import AppKit
 import Foundation
 import MCP
+import Network
 
 /// Notification posted when provider connection status changes
 extension Foundation.Notification.Name {
@@ -49,6 +51,9 @@ public final class MCPProviderManager: ObservableObject {
         for provider in configuration.providers {
             providerStates[provider.id] = MCPProviderState(providerId: provider.id)
         }
+
+        registerRecoveryObservers()
+        startNetworkRecoveryMonitor()
     }
 
     // MARK: - Provider Management
@@ -56,27 +61,58 @@ public final class MCPProviderManager: ObservableObject {
     /// Add a new provider
     public func addProvider(_ provider: MCPProvider, token: String?) {
         configuration.add(provider)
-        MCPProviderConfigurationStore.save(configuration)
         // KPI: a user-configured MCP tool provider. Only the transport kind
         // is captured — never the command, URL, or args.
         FeatureTelemetry.mcpProviderAdded(transport: provider.transport.rawValue)
 
-        // Save token to Keychain if provided
-        if let token = token, !token.isEmpty {
-            MCPProviderKeychain.saveToken(token, for: provider.id)
-        }
-
         // Initialize state
         providerStates[provider.id] = MCPProviderState(providerId: provider.id)
 
-        // Auto-connect if enabled
-        if provider.enabled {
-            Task {
-                try? await connect(providerId: provider.id)
+        // Save the token off the main thread (SecItemAdd/SecItemUpdate can
+        // block for seconds under securityd contention). The on-disk provider
+        // record is persisted only after the keychain write lands, so an
+        // interrupted add can never leave an enabled provider on disk without
+        // its token, and auto-connect reads the fresh credential.
+        let providerId = provider.id
+        let shouldConnect = provider.enabled
+        Keychain.performInBackground {
+            var credentialsDurable = true
+            if let token = token, !token.isEmpty {
+                credentialsDurable = MCPProviderKeychain.saveToken(token, for: providerId)
+            }
+            Task { @MainActor in
+                MCPProviderManager.shared.finishCredentialStaging(
+                    providerId: providerId,
+                    credentialsDurable: credentialsDurable,
+                    connect: shouldConnect
+                )
             }
         }
 
         notifyStatusChanged()
+    }
+
+    /// Completion hop for `addProvider`/`updateProvider` credential staging:
+    /// persists the provider record after its secrets are durable, surfaces a
+    /// failed keychain write on the provider state (the in-memory session
+    /// still works; relaunch durability is what failed), and kicks the
+    /// requested connect.
+    private func finishCredentialStaging(
+        providerId: UUID,
+        credentialsDurable: Bool,
+        connect shouldConnect: Bool
+    ) {
+        if !credentialsDurable, !KeychainQueryHelpers.disablesKeychainForProcess {
+            providerStates[providerId]?.lastError =
+                "Could not save credentials to the Keychain — they may not survive relaunch."
+            notifyStatusChanged()
+        }
+        MCPProviderConfigurationStore.save(configuration)
+        if shouldConnect {
+            Task {
+                try? await connect(providerId: providerId)
+            }
+        }
     }
 
     /// Update an existing provider
@@ -90,27 +126,37 @@ public final class MCPProviderManager: ObservableObject {
 
         let previous = configuration.provider(id: provider.id)
         configuration.update(provider)
-        MCPProviderConfigurationStore.save(configuration)
 
-        // Update token if provided (empty string means clear token)
-        if let token = token {
-            if token.isEmpty {
-                MCPProviderKeychain.deleteToken(for: provider.id)
-            } else {
-                MCPProviderKeychain.saveToken(token, for: provider.id)
+        // Update credentials off the main thread; persist the updated record
+        // only after the keychain mutations land, and reconnect after both so
+        // connect() reads the fresh token.
+        let providerId = provider.id
+        let shouldReconnect = wasConnected && provider.enabled
+        let dropsOAuth = previous?.authType == .oauth && provider.authType != .oauth
+        Keychain.performInBackground {
+            var credentialsDurable = true
+            // Update token if provided (empty string means clear token)
+            if let token = token {
+                if token.isEmpty {
+                    MCPProviderKeychain.deleteToken(for: providerId)
+                } else {
+                    credentialsDurable = MCPProviderKeychain.saveToken(token, for: providerId)
+                }
             }
-        }
 
-        // If the user switched away from OAuth, drop any cached tokens for this provider.
-        if previous?.authType == .oauth && provider.authType != .oauth {
-            MCPProviderKeychain.deleteOAuthTokens(for: provider.id)
-            MCPProviderKeychain.deleteOAuthClientSecret(for: provider.id)
-        }
+            // If the user switched away from OAuth, drop any cached tokens
+            // for this provider.
+            if dropsOAuth {
+                MCPProviderKeychain.deleteOAuthTokens(for: providerId)
+                MCPProviderKeychain.deleteOAuthClientSecret(for: providerId)
+            }
 
-        // Reconnect if was connected and still enabled
-        if wasConnected && provider.enabled {
-            Task {
-                try? await connect(providerId: provider.id)
+            Task { @MainActor in
+                MCPProviderManager.shared.finishCredentialStaging(
+                    providerId: providerId,
+                    credentialsDurable: credentialsDurable,
+                    connect: shouldReconnect
+                )
             }
         }
 
@@ -241,6 +287,7 @@ public final class MCPProviderManager: ObservableObject {
                 updatedState.lastError = nil
                 updatedState.requiresAuth = false
                 updatedState.resourceMetadataURL = nil
+                updatedState.lastFailureWasTransient = false
                 providerStates[providerId] = updatedState
                 print(
                     "[Osaurus] MCP Provider '\(provider.name)': Connected with \(updatedState.discoveredToolCount) tools"
@@ -250,14 +297,14 @@ public final class MCPProviderManager: ObservableObject {
 
         } catch {
             // Stdio transports talk to a local subprocess, not an HTTP server,
-            // so there's no `WWW-Authenticate` 401 to probe — the error is
-            // either a spawn failure or a protocol mismatch.
-            let challenge: MCPBearerChallenge? =
+            // so there's no 401 to probe — the error is either a spawn
+            // failure or a protocol mismatch.
+            let authFailure: MCPAuthFailureProbeResult? =
                 provider.transport == .http
-                ? await probeAuthChallenge(for: provider)
+                ? await probeAuthFailure(for: provider)
                 : nil
 
-            if let challenge {
+            if let authFailure {
                 // Try one refresh+retry for OAuth providers when we already have tokens.
                 // Off the main actor: the Keychain read blocks on securityd XPC + decrypt.
                 if allowOAuthRetry,
@@ -282,9 +329,11 @@ public final class MCPProviderManager: ObservableObject {
                 }
 
                 state.requiresAuth = true
-                state.resourceMetadataURL = challenge.resourceMetadataURL
-                state.lastError =
-                    challenge.errorDescription ?? challenge.error ?? "Server requires sign in"
+                state.resourceMetadataURL = authFailure.challenge?.resourceMetadataURL
+                state.lastError = MCPAuthFailureProbe.failureDescription(
+                    authType: provider.authType,
+                    probe: authFailure
+                )
             } else {
                 state.lastError = error.localizedDescription
             }
@@ -293,9 +342,16 @@ public final class MCPProviderManager: ObservableObject {
             state.isConnected = false
             state.discoveredToolCount = 0
             state.discoveredToolNames = []
+            // An auth challenge is terminal (requires sign-in); everything
+            // else is classified so the launch/network/wake/activation
+            // recovery paths know whether a retry can help.
+            state.lastFailureWasTransient =
+                authFailure == nil && Self.isTransientConnectError(error)
             providerStates[providerId] = state
 
-            // Unregister any tools that were registered before the failure
+            // Unregister any tools that were registered before the failure.
+            // A failed initial/reconnect attempt leaves no executable client,
+            // so active sessions must also discard any frozen schemas.
             if let tools = registeredTools[providerId] {
                 ToolRegistry.shared.unregister(names: tools.map { $0.name })
             }
@@ -312,6 +368,7 @@ public final class MCPProviderManager: ObservableObject {
             }
             discoveredTools.removeValue(forKey: providerId)
             registeredTools.removeValue(forKey: providerId)
+            await publishToolCatalogChanged()
             // Stdio subprocesses might have been spawned successfully even
             // though the MCP handshake failed — make sure we don't leak them.
             stopStdioRunners(for: providerId)
@@ -360,6 +417,7 @@ public final class MCPProviderManager: ObservableObject {
             print("[Osaurus] MCP Provider '\(provider.name)': Disconnected")
         }
 
+        scheduleToolCatalogChanged()
         notifyStatusChanged()
     }
 
@@ -369,15 +427,232 @@ public final class MCPProviderManager: ObservableObject {
         try await connect(providerId: providerId)
     }
 
-    /// Connect to all enabled providers on app launch
+    /// Connect providers at app launch.
+    ///
+    /// Honors the per-provider "Auto-connect" setting: only providers the
+    /// user left enabled AND auto-connect connect at launch — an enabled
+    /// provider with auto-connect off stays dormant until connected
+    /// explicitly, matching `RemoteProviderManager`.
+    ///
+    /// Connects run concurrently: each provider already has its own
+    /// discovery timeout, and one slow or unreachable MCP server must not
+    /// delay every other provider (or, upstream, the remote model
+    /// providers). Transient failures get bounded retry; the network / wake /
+    /// activation recovery sweeps handle anything that outlives the budget.
     public func connectEnabledProviders() async {
-        for provider in configuration.enabledProviders {
-            do {
-                try await connect(providerId: provider.id)
-            } catch {
-                print("[Osaurus] Failed to auto-connect to '\(provider.name)': \(error)")
+        await withTaskGroup(of: Void.self) { group in
+            for provider in configuration.autoConnectProviders {
+                let providerId = provider.id
+                let providerName = provider.name
+                group.addTask {
+                    await self.connectProviderWithTransientRetry(
+                        providerId: providerId, providerName: providerName)
+                }
             }
         }
+    }
+
+    /// Total attempts (including the first) for a launch-time connect.
+    static let connectMaxAttempts = 3
+    /// Base delay for exponential backoff between connect retries.
+    static let connectRetryBaseDelay: TimeInterval = 1.0
+
+    /// Test seam: replaces the real backoff sleep so retry tests don't wait
+    /// on wall-clock time.
+    var testRetrySleepOverride: (@MainActor (TimeInterval) async -> Void)?
+
+    /// Test seam: when set, used in place of the real `connect(providerId:)`
+    /// by the launch/recovery paths so orchestration tests don't open
+    /// network connections.
+    var testConnectOverride: (@MainActor (UUID) async throws -> Void)?
+
+    /// Connect one provider with bounded retry on *transient* failures
+    /// (offline at launch, DNS not up yet, handshake timeout). Terminal
+    /// failures — auth challenges, bad config, protocol mismatch — stop
+    /// immediately because a retry cannot fix them.
+    private func connectProviderWithTransientRetry(
+        providerId: UUID,
+        providerName: String,
+        maxAttempts: Int = MCPProviderManager.connectMaxAttempts
+    ) async {
+        let attempts = max(1, maxAttempts)
+        for attempt in 1 ... attempts {
+            do {
+                if let testConnectOverride {
+                    try await testConnectOverride(providerId)
+                } else {
+                    try await connect(providerId: providerId)
+                }
+                return
+            } catch {
+                let transient =
+                    Self.isTransientConnectError(error)
+                    && providerStates[providerId]?.requiresAuth != true
+                guard transient, attempt < attempts else {
+                    print("[Osaurus] Failed to auto-connect to '\(providerName)': \(error)")
+                    return
+                }
+                let delay = Self.connectRetryBaseDelay * pow(2.0, Double(attempt - 1))
+                if let testRetrySleepOverride {
+                    await testRetrySleepOverride(delay)
+                } else {
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+                // Another path (manual connect, OAuth sign-in) may have
+                // connected while we waited — don't pile on a duplicate.
+                if providerStates[providerId]?.isConnected == true { return }
+            }
+        }
+    }
+
+    /// Whether a connect error is worth retrying. Transient = network loss /
+    /// timeout / DNS / TLS and the handshake/discovery timeout. Terminal =
+    /// auth challenges, spawn failures, protocol errors, plus anything
+    /// unrecognized (a tight retry loop must not hammer those).
+    static func isTransientConnectError(_ error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .notConnectedToInternet, .timedOut, .networkConnectionLost,
+                .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed,
+                .secureConnectionFailed, .resourceUnavailable, .badServerResponse:
+                return true
+            default:
+                return false
+            }
+        }
+        if let providerError = error as? MCPProviderError, case .timeout = providerError {
+            return true
+        }
+        return false
+    }
+
+    // MARK: - Transient-failure recovery
+    //
+    // Mirrors `RemoteProviderManager`'s recovery machinery: providers whose
+    // last connect failed transiently are reconnected on the network
+    // recovery edge (and first satisfied baseline), on wake from sleep, and
+    // on app re-activation — without the user toggling anything.
+
+    nonisolated(unsafe) private var networkPathMonitor: NWPathMonitor?
+    /// Last observed satisfied-ness; reconnect sweeps fire on the
+    /// unsatisfied → satisfied edge and on the very first satisfied
+    /// observation (providers can fail transiently before the monitor
+    /// produces its baseline at launch).
+    private var lastNetworkPathWasSatisfied: Bool?  // swiftlint:disable:this discouraged_optional_boolean
+    private var networkRecoveryTask: Task<Void, Never>?
+
+    /// Test seam: shrink the recovery settle delay so sweep tests don't wait
+    /// on wall-clock time.
+    var testNetworkRecoverySettleDelayOverride: TimeInterval?
+
+    private func registerRecoveryObservers() {
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.reconnectTransientlyFailedProviders()
+            }
+        }
+        // Wake is a recovery opportunity: connects that failed as the machine
+        // slept (or right before) are transient by nature. NSWorkspace posts
+        // wake through its own notification center, not `.default`.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.scheduleTransientRecoverySweep()
+            }
+        }
+    }
+
+    private func startNetworkRecoveryMonitor() {
+        let monitor = NWPathMonitor()
+        networkPathMonitor = monitor
+        monitor.pathUpdateHandler = { [weak self] path in
+            let satisfied = path.status == .satisfied
+            Task { @MainActor [weak self] in
+                self?.handleNetworkPathUpdate(satisfied: satisfied)
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "ai.osaurus.mcp.pathmonitor"))
+    }
+
+    /// Internal (not private) so tests can drive connectivity edges without
+    /// a real `NWPath`.
+    func handleNetworkPathUpdate(satisfied: Bool) {
+        defer { lastNetworkPathWasSatisfied = satisfied }
+        guard satisfied, lastNetworkPathWasSatisfied != true else { return }
+        scheduleTransientRecoverySweep()
+    }
+
+    /// Schedule a debounced sweep reconnecting transiently-failed providers.
+    func scheduleTransientRecoverySweep() {
+        networkRecoveryTask?.cancel()
+        let settleDelay = testNetworkRecoverySettleDelayOverride ?? 2.0
+        networkRecoveryTask = Task { [weak self] in
+            // Give routing/DNS a moment to settle after the path flips; an
+            // immediate connect after wake often fails on stale DNS.
+            try? await Task.sleep(nanoseconds: UInt64(settleDelay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await self?.reconnectTransientlyFailedProviders()
+        }
+    }
+
+    /// Reconnect every enabled auto-connect provider whose last failure was
+    /// transient and which isn't connected, mid-connect, or waiting on a
+    /// sign-in. Each `connect` re-evaluates state so concurrent triggers
+    /// stay idempotent.
+    func reconnectTransientlyFailedProviders() async {
+        for provider in configuration.autoConnectProviders {
+            guard !Task.isCancelled else { return }
+            let state = providerStates[provider.id]
+            guard state?.isConnected != true, state?.isConnecting != true,
+                state?.lastFailureWasTransient == true, state?.requiresAuth != true
+            else { continue }
+            if let testConnectOverride {
+                try? await testConnectOverride(provider.id)
+            } else {
+                try? await connect(providerId: provider.id)
+            }
+        }
+    }
+
+    /// Await the in-flight recovery sweep, if any. Test-only.
+    func _testAwaitNetworkRecoverySweep() async {
+        await networkRecoveryTask?.value
+    }
+
+    // MARK: - Test Helpers
+
+    /// Add providers to the in-memory configuration without touching disk,
+    /// Keychain, or the network. Test-only.
+    func _testInstallProviders(_ providers: [MCPProvider]) {
+        for provider in providers {
+            configuration.add(provider)
+            if providerStates[provider.id] == nil {
+                providerStates[provider.id] = MCPProviderState(providerId: provider.id)
+            }
+        }
+    }
+
+    /// Mutate a test-installed provider's runtime state. Test-only.
+    func _testSetState(_ state: MCPProviderState, for id: UUID) {
+        providerStates[id] = state
+    }
+
+    /// Tear down test providers and reset seams/recovery state so each test
+    /// starts clean. Test-only.
+    func _testRemoveProviders(ids: [UUID]) {
+        configuration.providers.removeAll { ids.contains($0.id) }
+        for id in ids {
+            providerStates.removeValue(forKey: id)
+        }
+        networkRecoveryTask?.cancel()
+        networkRecoveryTask = nil
+        lastNetworkPathWasSatisfied = nil
+        testConnectOverride = nil
+        testRetrySleepOverride = nil
+        testNetworkRecoverySettleDelayOverride = nil
     }
 
     /// Disconnect from all providers
@@ -520,25 +795,23 @@ public final class MCPProviderManager: ObservableObject {
     }
 
     /// Trampoline that runs the MCP network call outside MainActor isolation.
+    /// Non-rejoining timeout (see `withTimeout`): a tool call the SDK cannot
+    /// cancel is abandoned at the deadline instead of pinning the agent turn.
     private nonisolated static func callMCPTool(
         client: MCP.Client,
         toolName: String,
         arguments: [String: MCP.Value],
         timeout: TimeInterval
     ) async throws -> ([MCP.Tool.Content], Bool?) {
-        try await withThrowingTaskGroup(of: ([MCP.Tool.Content], Bool?).self) { group in
-            group.addTask {
+        do {
+            return try await valueWithDeadline(
+                seconds: timeout,
+                operationName: "MCP tool \(toolName)"
+            ) {
                 try await client.callTool(name: toolName, arguments: arguments)
             }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                throw MCPProviderError.timeout
-            }
-            guard let result = try await group.next() else {
-                throw MCPProviderError.timeout
-            }
-            group.cancelAll()
-            return result
+        } catch is DeadlineExceededError {
+            throw MCPProviderError.timeout
         }
     }
 
@@ -571,8 +844,8 @@ public final class MCPProviderManager: ObservableObject {
             try await withTimeout(seconds: 10) {
                 _ = try await client.connect(transport: transport)
             }
-            let (tools, _) = try await withTimeout(seconds: 10) {
-                try await client.listTools()
+            let tools = try await withTimeout(seconds: 10) {
+                try await client.listAllTools()
             }
             stopStdioRunners(for: provider.id)
             return tools.count
@@ -626,7 +899,7 @@ public final class MCPProviderManager: ObservableObject {
             _ = try await client.connect(transport: transport)
 
             // List tools to verify connection
-            let (tools, _) = try await client.listTools()
+            let tools = try await client.listAllTools()
 
             await client.disconnect()
             return tools.count
@@ -774,7 +1047,22 @@ public final class MCPProviderManager: ObservableObject {
                         )
                     }
                 }
-                let runner = try SandboxStdioRunner(provider: provider)
+                // Scope the MCP subprocess to the calling agent (execution
+                // context when connect happens mid-turn, else the active
+                // agent) — never the shared "default" namespace. Provision
+                // first so the Linux user + bridge token exist; in
+                // allowlist egress mode the token is also the subprocess's
+                // proxy credential.
+                let agentId = ChatExecutionContext.currentAgentId ?? AgentManager.shared.activeAgent.id
+                let agentName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
+                do {
+                    try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
+                } catch {
+                    throw MCPStdioTransportError.processSpawnFailed(
+                        "Could not provision the sandbox agent: " + error.localizedDescription
+                    )
+                }
+                let runner = try SandboxStdioRunner(provider: provider, agentName: agentName)
                 let providerId = provider.id
                 await runner.setProcessExitHandler { [weak self] exitCode in
                     Task { @MainActor in
@@ -907,7 +1195,7 @@ public final class MCPProviderManager: ObservableObject {
             }
             providerStates[providerId] = state
         }
-        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
+        scheduleToolCatalogChanged()
         notifyStatusChanged()
     }
 
@@ -925,9 +1213,6 @@ public final class MCPProviderManager: ObservableObject {
         else { return }
 
         do {
-            if let oldTools = registeredTools[providerId] {
-                ToolRegistry.shared.unregister(names: oldTools.map { $0.name })
-            }
             try await discoverTools(for: providerId, client: client, provider: provider)
         } catch {
             if var state = providerStates[providerId] {
@@ -938,11 +1223,13 @@ public final class MCPProviderManager: ObservableObject {
         }
     }
 
-    /// Issue a low-cost POST against the server's MCP endpoint to capture an auth
-    /// challenge, if any. The Swift MCP SDK doesn't expose response headers on its
-    /// error type, so this is the cheapest correct way to know whether a 401 came
-    /// from an OAuth-protected server.
-    private nonisolated func probeAuthChallenge(for provider: MCPProvider) async -> MCPBearerChallenge? {
+    /// Issue a low-cost POST against the server's MCP endpoint to classify an
+    /// auth failure, if any. The Swift MCP SDK doesn't expose response status
+    /// or headers on its error type, so this is the cheapest correct way to
+    /// know whether the connect failed on a 401/403. Returns a result for any
+    /// 401/403 — including a bare one with no `WWW-Authenticate` header, which
+    /// token-only servers commonly send.
+    private nonisolated func probeAuthFailure(for provider: MCPProvider) async -> MCPAuthFailureProbeResult? {
         guard let endpoint = URL(string: provider.url) else { return nil }
 
         var request = URLRequest(url: endpoint)
@@ -967,44 +1254,76 @@ public final class MCPProviderManager: ObservableObject {
         case .none:
             break
         }
-        // A minimal JSON-RPC initialize payload — most MCP servers will hit auth
-        // before they even attempt to parse it, so the body is mostly cosmetic.
-        request.httpBody = Data("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}".utf8)
+        // A spec-complete initialize payload: some servers validate the
+        // request shape before auth, and a params-less shorthand would turn
+        // an auth failure into a protocol error.
+        request.httpBody = MCPAuthFailureProbe.handshakeBody()
         request.timeoutInterval = 10
 
         do {
-            let (_, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+            let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
             guard let http = response as? HTTPURLResponse else { return nil }
-            guard http.statusCode == 401 || http.statusCode == 403 else { return nil }
-            let header =
-                http.value(forHTTPHeaderField: "WWW-Authenticate")
-                ?? http.value(forHTTPHeaderField: "www-authenticate")
-            return MCPWWWAuthenticate.parseBearer(header)
+            return MCPAuthFailureProbe.evaluate(
+                response: http,
+                body: data,
+                sentAuthorization: request.value(forHTTPHeaderField: "Authorization") != nil
+            )
         } catch {
             return nil
         }
     }
 
     private func discoverTools(for providerId: UUID, client: MCP.Client, provider: MCPProvider) async throws {
-        // List tools with timeout
-        let (mcpTools, _) = try await withTimeout(seconds: provider.discoveryTimeout) {
-            try await client.listTools()
+        try await refreshDiscoveredTools(for: providerId, provider: provider) {
+            // List tools with timeout, following pagination cursors so servers
+            // that split tools/list across pages (e.g. Baserow, #1999) aren't
+            // truncated to their first page.
+            try await self.withTimeout(seconds: provider.discoveryTimeout) {
+                try await client.listAllTools()
+            }
+        }
+    }
+
+    /// Fetch and install a complete provider catalog. Keeping the fetch
+    /// outside the replacement operation makes refresh failure atomic from
+    /// the registry's perspective and provides a deterministic test seam.
+    internal func refreshDiscoveredTools(
+        for providerId: UUID,
+        provider: MCPProvider,
+        fetch: () async throws -> [MCP.Tool]
+    ) async throws {
+        let mcpTools = try await fetch()
+        // Only replace the live catalog after the complete paginated fetch
+        // succeeds. A failed tools/list refresh therefore leaves the last
+        // executable catalog intact instead of erasing it first.
+        replaceDiscoveredTools(mcpTools, for: providerId, provider: provider)
+        await publishToolCatalogChanged()
+    }
+
+    /// Replace one provider's complete registered catalog. Removing all prior
+    /// wrappers first is required even when names are unchanged: schemas are
+    /// immutable on `MCPProviderTool`, and a reconnect may return a new JSON
+    /// contract or omit tools that existed in the previous session.
+    @discardableResult
+    internal func replaceDiscoveredTools(
+        _ mcpTools: [MCP.Tool],
+        for providerId: UUID,
+        provider: MCPProvider
+    ) -> [MCPProviderTool] {
+        if let oldTools = registeredTools[providerId] {
+            ToolRegistry.shared.unregister(names: oldTools.map(\.name))
         }
 
-        // Store discovered tools
         discoveredTools[providerId] = mcpTools
-
         let tools = registerDiscoveredTools(mcpTools, for: providerId, provider: provider)
         registeredTools[providerId] = tools
 
-        // Update state
         if var state = providerStates[providerId] {
             state.discoveredToolCount = tools.count
-            state.discoveredToolNames = tools.map { $0.mcpToolName }
+            state.discoveredToolNames = tools.map(\.mcpToolName)
             providerStates[providerId] = state
         }
-
-        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
+        return tools
     }
 
     /// Wrap each discovered MCP tool and register it with the shared
@@ -1036,29 +1355,38 @@ public final class MCPProviderManager: ObservableObject {
         return tools
     }
 
+    /// Non-rejoining timeout: `valueWithDeadline` abandons an MCP SDK call
+    /// that ignores cancellation instead of blocking the caller until it
+    /// returns (a `withThrowingTaskGroup` race re-joins the stuck child at
+    /// scope exit, so "Connecting…" could still hang forever after the
+    /// timeout had nominally fired).
     private func withTimeout<T: Sendable>(seconds: TimeInterval, operation: @escaping @Sendable () async throws -> T)
         async throws -> T
     {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask {
-                try await operation()
-            }
-
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                throw MCPProviderError.timeout
-            }
-
-            guard let result = try await group.next() else {
-                throw MCPProviderError.timeout
-            }
-            group.cancelAll()
-            return result
+        do {
+            return try await valueWithDeadline(seconds: seconds, operationName: "MCP request", operation: operation)
+        } catch is DeadlineExceededError {
+            throw MCPProviderError.timeout
         }
     }
 
     private func notifyStatusChanged() {
         NotificationCenter.default.post(name: Foundation.Notification.Name.mcpProviderStatusChanged, object: nil)
+    }
+
+    /// Publish catalog changes only after frozen per-session tool snapshots
+    /// have been cleared, so notification consumers cannot immediately
+    /// recompose against the old names or schemas.
+    private func publishToolCatalogChanged() async {
+        await SessionToolStateStore.shared.invalidateToolCatalog()
+        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
+    }
+
+    /// Synchronous lifecycle entry points (disable, disconnect, process exit)
+    /// cannot await the session-state actor. Preserve ordering inside the task:
+    /// invalidate first, then notify observers.
+    private func scheduleToolCatalogChanged() {
+        Task { await publishToolCatalogChanged() }
     }
 }
 

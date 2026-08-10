@@ -1,0 +1,91 @@
+{
+  "id": "tool_result_grounding.spawn-batch-all-cancelled-finalizes-once",
+  "domain": "tool_result_grounding",
+  "label": "spawn_batch • all-cancelled aggregate has one terminal continuation",
+  "query": "Stop the delegated batch and report its aggregate status without restarting it.",
+  "notes": "Model-free committed-transcript contract paired with the scripted Subagent cancellation case. The canonical structured scorer requires two settled user-stop rows and aggregate_status=all_cancelled; exact sequence plus one terminal final rejects duplicate continuation.",
+  "fixtures": {},
+  "expect": {
+    "toolResultGrounding": {
+      "events": [
+        {
+          "kind": "toolCall",
+          "callId": "batch-1",
+          "tool": "spawn_batch",
+          "arguments": "{\"jobs\":[{\"id\":\"cancel-a\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000501\",\"input\":\"Wait for stop.\"},{\"id\":\"cancel-b\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000502\",\"input\":\"Wait for stop.\"}]}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "batch-1",
+          "tool": "spawn_batch",
+          "content": "{\"ok\":true,\"tool\":\"spawn_batch\",\"result\":{\"kind\":\"spawn_batch_result\",\"max_parallel\":2,\"succeeded\":0,\"failed\":2,\"cancelled\":2,\"aggregate_status\":\"all_cancelled\",\"execution\":{\"configured_max_subagents\":2,\"waves\":[{\"wave\":0,\"jobs\":2,\"remote_jobs\":2,\"local_jobs\":0,\"effective_local_slots\":2,\"local_subwaves\":[2],\"limited_by\":[],\"verdict\":\"admitted\"}],\"cache\":{\"available\":false}},\"results\":[{\"id\":\"cancel-a\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000501\",\"ok\":false,\"envelope\":{\"ok\":false,\"kind\":\"user_denied\",\"tool\":\"spawn\",\"message\":\"Subagent stopped by user\",\"retryable\":false}},{\"id\":\"cancel-b\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000502\",\"ok\":false,\"envelope\":{\"ok\":false,\"kind\":\"user_denied\",\"tool\":\"spawn\",\"message\":\"Subagent stopped by user\",\"retryable\":false}}]}}"
+        },
+        {
+          "kind": "assistant",
+          "content": "The batch ended all_cancelled. Both child rows settled as stopped, and no replacement batch was started."
+        }
+      ],
+      "assertions": [
+        {
+          "callId": "batch-1",
+          "answerMustContain": [
+            "all_cancelled"
+          ],
+          "resultMustContain": [
+            "\"cancelled\":2",
+            "\"kind\":\"user_denied\""
+          ],
+          "argumentsMustNotContain": [
+            "all_cancelled"
+          ]
+        }
+      ],
+      "expectedToolSequence": [
+        "spawn_batch"
+      ],
+      "requireSingleFinalAssistant": true,
+      "requireFinalAfterAllToolResults": true,
+      "requireFinalIsLastEvent": true,
+      "spawnBatch": {
+        "exactCallCount": 1,
+        "expectedJobIds": [
+          "cancel-a",
+          "cancel-b"
+        ],
+        "expectedSucceeded": 0,
+        "expectedFailed": 2,
+        "expectedMaxParallel": 2,
+        "requireEveryRowSettled": true,
+        "requireReportedCountsMatchRows": true,
+        "expectedAggregateStatus": "all_cancelled",
+        "expectedExecutionWaves": [
+          {
+            "wave": 0,
+            "remoteJobs": 2,
+            "effectiveLocalSlots": 2,
+            "localSubwaves": [
+              2
+            ],
+            "limitingFactors": []
+          }
+        ],
+        "requireEveryExecutionWaveWellFormed": true,
+        "expectedCacheAvailable": false,
+        "expectedRows": [
+          {
+            "id": "cancel-a",
+            "targetType": "agent",
+            "target": "A11CE001-0000-4000-8000-000000000501",
+            "ok": false
+          },
+          {
+            "id": "cancel-b",
+            "targetType": "agent",
+            "target": "A11CE001-0000-4000-8000-000000000502",
+            "ok": false
+          }
+        ]
+      }
+    }
+  }
+}

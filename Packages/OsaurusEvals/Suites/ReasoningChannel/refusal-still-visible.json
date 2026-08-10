@@ -1,0 +1,14 @@
+{
+  "id": "reasoning_channel.refusal-still-visible",
+  "domain": "reasoning_channel",
+  "label": "reasoning channel • a decline still produces a visible answer, never a silent turn",
+  "query": "Tell me the current temperature outside my window right now.",
+  "notes": "Impossible-request row: the model cannot know the live temperature, so the correct behavior is a visible explanation/decline — NOT an empty visible turn with the deliberation stranded on the hidden channel. requireVisibleAnswer (default true) is the core assertion; the marker sweep rides along. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "reasoning": {
+      "maxTokens": 1024,
+      "requireVisibleAnswer": true
+    }
+  }
+}

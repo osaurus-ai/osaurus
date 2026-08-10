@@ -248,17 +248,23 @@ extension MemoryView {
     }
 
     private static func summarize(backfill final: MemoryBackfillProgress) -> String {
+        let sessions =
+            final.sessionsProcessed == 1
+            ? L("1 session")
+            : L("\(final.sessionsProcessed) sessions")
+        let turns =
+            final.turnsBuffered == 1
+            ? L("1 turn")
+            : L("\(final.turnsBuffered) turns")
         switch final.stage {
         case .cancelled:
-            return
-                L(
-                    "Backfill cancelled after \(final.sessionsProcessed) session(s) — \(final.turnsBuffered) turns buffered. Run 'Distill pending' to drain them."
-                )
+            return L(
+                "Backfill cancelled after \(sessions) — \(turns) buffered. Run 'Distill pending' to drain them."
+            )
         default:
-            return
-                L(
-                    "Backfill complete: \(final.sessionsProcessed) session(s) buffered (\(final.turnsBuffered) turns), \(final.sessionsSkipped) skipped. Distillation finished."
-                )
+            return L(
+                "Backfill complete: \(sessions) buffered (\(turns)), \(final.sessionsSkipped) skipped. Distillation finished."
+            )
         }
     }
 

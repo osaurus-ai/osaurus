@@ -397,8 +397,22 @@ struct DarkTheme: ThemeProtocol {
 struct CustomizableTheme: ThemeProtocol {
     let config: CustomTheme
 
-    init(config: CustomTheme) {
+    /// Global zoom applied on top of the theme's own typography. Captured at
+    /// construction; ThemeManager rebuilds live theme instances when it changes.
+    let fontScale: Double
+
+    init(config: CustomTheme, fontScale: Double = ThemeManager.fontScale) {
+        // Substituting here covers every construction site (startup,
+        // appearance resolution, custom apply, per-agent chat themes,
+        // font-scale rebuilds) without touching them individually.
+        var config = config
+        if config.followsSystemAccent,
+            let accentHex = SystemAccentColor.currentAccentHex(isDark: config.isDark)
+        {
+            config.colors = config.colors.applyingAccent(accentHex, isDark: config.isDark)
+        }
         self.config = config
+        self.fontScale = fontScale
     }
 
     // Primary colors
@@ -502,11 +516,11 @@ struct CustomizableTheme: ThemeProtocol {
     // Typography
     var primaryFontName: String { config.typography.primaryFont }
     var monoFontName: String { config.typography.monoFont }
-    var titleSize: Double { config.typography.titleSize }
-    var headingSize: Double { config.typography.headingSize }
-    var bodySize: Double { config.typography.bodySize }
-    var captionSize: Double { config.typography.captionSize }
-    var codeSize: Double { config.typography.codeSize }
+    var titleSize: Double { config.typography.titleSize * fontScale }
+    var headingSize: Double { config.typography.headingSize * fontScale }
+    var bodySize: Double { config.typography.bodySize * fontScale }
+    var captionSize: Double { config.typography.captionSize * fontScale }
+    var codeSize: Double { config.typography.codeSize * fontScale }
 
     // Code syntax highlighting
     var codeHighlightTheme: String? { config.codeHighlightTheme }
@@ -531,7 +545,7 @@ struct CustomizableTheme: ThemeProtocol {
     var showInlineAvatar: Bool { config.messages.showInlineAvatar }
     var inlineAvatarSize: Double { config.messages.inlineAvatarSize }
     var showAgentName: Bool { config.messages.showAgentName }
-    var agentNameSize: Double { config.messages.agentNameSize }
+    var agentNameSize: Double { config.messages.agentNameSize * fontScale }
 
     // Border customization
     var defaultBorderWidth: Double { config.borders.defaultWidth }
@@ -567,11 +581,58 @@ public class ThemeManager: ObservableObject {
     /// Whether a custom theme is currently active
     public var isCustomThemeActive: Bool { activeCustomTheme != nil }
 
+    /// Global font zoom applied on top of every theme's typography. Static so
+    /// `CustomizableTheme` instances can capture it at construction wherever
+    /// they are built. `nonisolated(unsafe)` so it can serve as a default
+    /// argument in the nonisolated `CustomizableTheme.init`; all writes stay
+    /// on the main actor (this class), and themes are built on it too.
+    nonisolated(unsafe) public private(set) static var fontScale: Double = 1.0
+    private static let fontScaleStep: Double = 0.1
+
+    public var canZoomFontIn: Bool {
+        Self.fontScale < ServerConfiguration.fontSizeMultiplierRange.upperBound
+    }
+    public var canZoomFontOut: Bool {
+        Self.fontScale > ServerConfiguration.fontSizeMultiplierRange.lowerBound
+    }
+    public var isDefaultFontScale: Bool { Self.fontScale == 1.0 }
+
+    public func zoomFontIn() { setFontScale(Self.fontScale + Self.fontScaleStep) }
+    public func zoomFontOut() { setFontScale(Self.fontScale - Self.fontScaleStep) }
+    public func resetFontScale() { setFontScale(1.0) }
+
+    public func setFontScale(_ scale: Double, persist: Bool = true) {
+        // Snap to the step grid so repeated zooms don't accumulate float drift.
+        let snapped = (scale / Self.fontScaleStep).rounded() * Self.fontScaleStep
+        let clamped = ServerConfiguration.clampedFontSizeMultiplier(snapped)
+        guard clamped != Self.fontScale else { return }
+        Self.fontScale = clamped
+
+        if persist {
+            ServerConfigurationStore.updateFontSizeMultiplier(clamped)
+        }
+
+        // Rebuild the live theme instances so every observer re-renders with
+        // the new scale; agent-specific chat themes rebuild via the
+        // globalThemeChanged notification.
+        if let custom = activeCustomTheme {
+            let themeInstance = CustomizableTheme(config: custom)
+            currentTheme = themeInstance
+            chatTheme = themeInstance
+        } else {
+            applyResolvedTheme(for: appearanceMode, animated: false)
+        }
+        NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
+    }
+
     private init() {
         print("[Osaurus] ThemeManager: Initializing...")
 
         // Load saved appearance mode (cheap config read).
         let config = ServerConfigurationStore.load() ?? ServerConfiguration.default
+        // Restore the persisted font zoom before any theme instance is built
+        // so the initial themes capture the correct scale.
+        Self.fontScale = ServerConfiguration.clampedFontSizeMultiplier(config.fontSizeMultiplier)
         let savedActiveTheme = ThemeConfigurationStore.loadActiveTheme()
         let startupSelection = Self.startupSelection(
             savedActiveTheme: savedActiveTheme,
@@ -618,6 +679,23 @@ public class ThemeManager: ObservableObject {
             self,
             selector: #selector(systemAppearanceChanged),
             name: Notification.Name("AppleInterfaceThemeChangedNotification"),
+            object: nil
+        )
+
+        // Observe system accent color changes so themes that opt in via
+        // `followsSystemAccent` re-derive their palette live. AppKit posts
+        // the in-process notification when system colors change; the
+        // distributed one covers accent changes made in System Settings.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(systemAccentColorChanged),
+            name: NSColor.systemColorsDidChangeNotification,
+            object: nil
+        )
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(systemAccentColorChanged),
+            name: Notification.Name("AppleColorPreferencesChangedNotification"),
             object: nil
         )
 
@@ -853,6 +931,28 @@ public class ThemeManager: ObservableObject {
         NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
     }
 
+    @objc private func systemAccentColorChanged() {
+        // Delivered on an arbitrary thread (see `systemAppearanceChanged`);
+        // hop to the main actor before touching @Published theme state.
+        Task { @MainActor [weak self] in
+            self?.applySystemAccentChange()
+        }
+    }
+
+    private func applySystemAccentChange() {
+        if let custom = activeCustomTheme {
+            // Rebuilding `CustomizableTheme` re-runs the accent substitution;
+            // static themes have nothing to re-derive.
+            guard custom.followsSystemAccent else { return }
+            applyCustomTheme(custom, persist: false)
+            return
+        }
+
+        applyResolvedTheme(for: appearanceMode, animated: true)
+        // Notify so per-agent chat windows rebuild their themes too.
+        NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
+    }
+
     private func applyResolvedTheme(for mode: AppearanceMode, animated: Bool) {
         let resolvedTheme =
             Self.resolveBuiltInTheme(for: mode, from: installedThemes)
@@ -997,8 +1097,13 @@ extension Color {
             (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
         case 6:  // RGB (24-bit)
             (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
-        case 8:  // ARGB (32-bit)
-            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
+        case 8:  // RGBA (32-bit) — every 8-digit color in the theme catalog is
+            // authored web-style with trailing alpha ("#3b82f680", accent+"45").
+            // This case previously read ARGB, so the leading red byte became
+            // the alpha: system-accent selection colors like "#007aff26"
+            // resolved to ~0% opacity and the selection highlight painted
+            // invisibly (issue #2129).
+            (r, g, b, a) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
         default:
             (a, r, g, b) = (1, 1, 1, 0)
         }

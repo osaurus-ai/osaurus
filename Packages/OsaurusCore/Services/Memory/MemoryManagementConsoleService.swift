@@ -365,7 +365,11 @@ public struct MemoryManagementConsoleService: Sendable {
             diagnostics.append("FTS mirrors are missing or unavailable; text search may fall back to LIKE scans.")
         }
         if vectorFailures > 0 {
-            diagnostics.append("Vector index recorded \(vectorFailures) write failure(s); rebuild may be needed.")
+            diagnostics.append(
+                vectorFailures == 1
+                    ? "Vector index recorded 1 write failure; rebuild may be needed."
+                    : "Vector index recorded \(vectorFailures) write failures; rebuild may be needed."
+            )
         }
         if let lastOpenError = db.lastOpenErrorDescription, !lastOpenError.isEmpty {
             diagnostics.append("Last open error: \(lastOpenError)")
@@ -377,10 +381,18 @@ public struct MemoryManagementConsoleService: Sendable {
             diagnostics.append("Turns are buffered, but distillation has only skipped so far.")
         }
         if currentErrorNeedsAttention {
-            diagnostics.append("Distillation recorded \(processingStats.errorCount) error row(s).")
+            diagnostics.append(
+                processingStats.errorCount == 1
+                    ? "Distillation recorded 1 error row."
+                    : "Distillation recorded \(processingStats.errorCount) error rows."
+            )
         }
         if emptyOnlyNoEpisode {
-            diagnostics.append("Distillation recorded \(processingStats.emptyCount) empty result row(s).")
+            diagnostics.append(
+                processingStats.emptyCount == 1
+                    ? "Distillation recorded 1 empty result row."
+                    : "Distillation recorded \(processingStats.emptyCount) empty result rows."
+            )
         }
         if deadLetterNeedsAttention {
             diagnostics.append("Some memory signals were dead-lettered after repeated distillation failures.")

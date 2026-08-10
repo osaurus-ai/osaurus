@@ -11,36 +11,64 @@ import Foundation
 
 // MARK: - Background Task Status
 
-/// Status of a background task
+/// Lifecycle status of an agent request. Every request moves through an
+/// explicit state machine that is independent of whether any chat window is
+/// currently displaying it:
+///
+///     queued → running → waitingForInput → running → completed / failed
+///     queued / running → cancelled
+///
+/// Only explicit Stop/cancel, app shutdown, budget exhaustion, or terminal
+/// execution ends a request — never a UI context switch.
 public enum BackgroundTaskStatus: Equatable, Sendable {
+    /// Accepted but not yet started: waiting for an execution slot under the
+    /// configured concurrency limits. Promoted FIFO as capacity frees up.
+    case queued
     /// Task is actively executing
     case running
-    /// Task is paused waiting for user clarification
-    case awaitingClarification
-    /// Task has completed (success or failure)
-    case completed(success: Bool, summary: String)
+    /// Task is paused waiting for user input (e.g. a clarify prompt). Alive,
+    /// but not consuming an execution slot.
+    case waitingForInput
+    /// Task finished successfully
+    case completed(summary: String)
+    /// Task finished with an error
+    case failed(summary: String)
     /// Task was cancelled
     case cancelled
 
-    /// Whether the task is still active (running or awaiting input)
+    /// Whether the task is still alive (queued, running, or awaiting input)
     public var isActive: Bool {
         switch self {
-        case .running, .awaitingClarification:
+        case .queued, .running, .waitingForInput:
             return true
-        case .completed, .cancelled:
+        case .completed, .failed, .cancelled:
             return false
         }
     }
 
+    /// Whether the task currently occupies one of the limited execution
+    /// slots. Queued tasks haven't started; waiting tasks released their
+    /// slot so queued work can be promoted while they idle on the user.
+    public var consumesExecutionSlot: Bool {
+        self == .running
+    }
+
+    /// Whether the task ended in a terminal state (success, failure, or cancel)
+    public var isTerminal: Bool { !isActive }
+
     /// Display name for UI
     public var displayName: String {
         switch self {
+        case .queued:
+            return L("Queued")
         case .running:
             return L("Running")
-        case .awaitingClarification:
+        case .waitingForInput:
             return L("Waiting")
-        case .completed(let success, _):
-            return success ? L("Completed") : L("Failed")
+        case .completed:
+            return L("Completed")
+        case .failed:
+            return L("Failed")
         case .cancelled:
             return L("Cancelled")
         }
@@ -49,12 +77,16 @@ public enum BackgroundTaskStatus: Equatable, Sendable {
     /// Icon name for UI
     public var iconName: String {
         switch self {
+        case .queued:
+            return "clock"
         case .running:
             return "arrow.triangle.2.circlepath"
-        case .awaitingClarification:
+        case .waitingForInput:
             return "questionmark.circle.fill"
-        case .completed(let success, _):
-            return success ? "checkmark.circle.fill" : "xmark.circle.fill"
+        case .completed:
+            return "checkmark.circle.fill"
+        case .failed:
+            return "xmark.circle.fill"
         case .cancelled:
             return "stop.circle.fill"
         }
@@ -101,6 +133,20 @@ public struct BackgroundTaskActivityItem: Identifiable, Equatable, Sendable {
 
 // MARK: - Background Task State
 
+/// Small transcript excerpt retained by a completed notch tab after its live
+/// `ChatSession` has been released. Enough context remains visible to decide
+/// whether and how to follow up; the full persisted session is rehydrated only
+/// when the user replies or opens Chat.
+public struct BackgroundTaskContextMessage: Codable, Equatable, Sendable {
+    public let role: String
+    public let content: String
+
+    public init(role: String, content: String) {
+        self.role = role
+        self.content = content
+    }
+}
+
 /// State of a chat task running in the background.
 /// Observable so BackgroundTaskManager can update properties from publishers.
 @MainActor
@@ -122,7 +168,17 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     private(set) var executionContext: ExecutionContext?
 
     /// Current status of the background task
-    @Published public var status: BackgroundTaskStatus
+    @Published public var status: BackgroundTaskStatus {
+        didSet {
+            guard status != oldValue else { return }
+            // Queued tasks haven't started streaming, so their ChatSession
+            // reports nothing to the sidebar activity monitor; bridge the
+            // registry-level queued state here. Running/waiting states are
+            // reported by the session itself.
+            guard let sessionId = chatSession?.sessionId else { return }
+            SessionActivityMonitor.shared.reportQueued(sessionId, isQueued: status == .queued)
+        }
+    }
 
     /// Description of current step being executed
     @Published public var currentStep: String?
@@ -136,6 +192,12 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
 
     /// When the background task was created
     public let createdAt: Date
+
+    /// Recent conversational context used by the notch follow-up UI. This is
+    /// captured at completion and persisted with retained tabs, allowing the
+    /// live ChatSession and its observers to be released without reducing the
+    /// tab to an unhelpful "Chat completed" summary.
+    @Published public private(set) var contextPreview: [BackgroundTaskContextMessage] = []
 
     /// Plugin that originated this dispatch (for on_task_event callback routing).
     public var sourcePluginId: String?
@@ -229,6 +291,34 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         self.showToast = showToast
     }
 
+    /// Restore a lightweight terminal tab from durable metadata. No live
+    /// session/context is allocated until the user replies or opens Chat.
+    init(
+        retainedId id: UUID,
+        taskTitle: String,
+        agentId: UUID,
+        status: BackgroundTaskStatus,
+        createdAt: Date,
+        source: SessionSource,
+        sourcePluginId: String?,
+        externalSessionKey: String?,
+        contextPreview: [BackgroundTaskContextMessage]
+    ) {
+        self.id = id
+        self.taskTitle = taskTitle
+        self.agentId = agentId
+        self.chatSession = nil
+        self.executionContext = nil
+        self.status = status
+        self.currentStep = nil
+        self.createdAt = createdAt
+        self.source = source
+        self.sourcePluginId = sourcePluginId
+        self.externalSessionKey = externalSessionKey
+        self.showToast = true
+        self.contextPreview = contextPreview
+    }
+
     deinit {
         print("[BackgroundTaskState] deinit – id: \(id)")
     }
@@ -237,6 +327,33 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     func releaseReferences() {
         chatSession = nil
         executionContext = nil
+    }
+
+    /// Install a fully hydrated persisted conversation before resuming or
+    /// opening a retained tab.
+    func restoreReferences(context: ExecutionContext) {
+        chatSession = context.chatSession
+        executionContext = context
+    }
+
+    /// Snapshot the most recent conversational turns, excluding tool/system
+    /// protocol rows and blank messages. The short excerpt is intentionally
+    /// bounded so durable tabs stay lightweight.
+    func captureContextPreview(maxMessages: Int = 4) {
+        guard let session = chatSession else { return }
+        contextPreview =
+            session.turns
+            .filter { turn in
+                (turn.role == .user || turn.role == .assistant)
+                    && !turn.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            .suffix(maxMessages)
+            .map {
+                BackgroundTaskContextMessage(
+                    role: $0.role.rawValue,
+                    content: $0.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+            }
     }
 
     // MARK: - Activity Feed

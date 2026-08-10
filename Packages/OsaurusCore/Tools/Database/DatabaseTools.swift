@@ -271,8 +271,13 @@ final class DBCreateTableTool: OsaurusTool, @unchecked Sendable {
                         "name": .object(["type": .string("string")]),
                         "type": .object([
                             "type": .string("string"),
+                            "enum": .array(
+                                AgentDatabase.supportedColumnTypes.map(JSONValue.string)
+                            ),
                             "description": .string(
-                                "Column type affinity. One of TEXT, INTEGER, REAL, BLOB, NUMERIC."
+                                "Column type only; constraints belong in `nullable`, `default`, "
+                                    + "and `primary_key`. Do not include PRIMARY KEY, "
+                                    + "AUTOINCREMENT, DEFAULT, or NOT NULL here."
                             ),
                         ]),
                         "nullable": .object([
@@ -421,7 +426,12 @@ final class DBAlterTableTool: OsaurusTool, @unchecked Sendable {
                     "type": .string("object"),
                     "properties": .object([
                         "name": .object(["type": .string("string")]),
-                        "type": .object(["type": .string("string")]),
+                        "type": .object([
+                            "type": .string("string"),
+                            "enum": .array(
+                                AgentDatabase.supportedColumnTypes.map(JSONValue.string)
+                            ),
+                        ]),
                         "nullable": .object(["type": .string("boolean")]),
                         "default": .object(["type": .string("string")]),
                     ]),
@@ -945,7 +955,9 @@ final class DBQueryTool: OsaurusTool, @unchecked Sendable {
         + "big tables, prefer aggregating in SQL (COUNT/SUM/GROUP BY) or "
         + "`db_export` over returning raw rows. On user tables, add "
         + "`_deleted_at IS NULL` to your WHERE when you want to hide "
-        + "soft-deleted rows — `db_query` runs your SQL as written."
+        + "soft-deleted rows — `db_query` runs your SQL as written. Saved "
+        + "view names are queryable: reference them in FROM/JOIN when you "
+        + "need to filter, combine, aggregate, or page a saved result."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -1174,8 +1186,11 @@ final class DBImportTool: OsaurusTool, @unchecked Sendable {
             ]),
             "mode": .object([
                 "type": .string("string"),
+                "enum": .array([.string("insert"), .string("upsert")]),
                 "description": .string(
-                    "`insert` (default) or `upsert`. Upsert requires `key_columns`."
+                    "`insert` (default, appends rows) or `upsert` (dedupes on "
+                        + "`key_columns`). There is no `append` mode — `insert` "
+                        + "is the append. Upsert requires `key_columns`."
                 ),
             ]),
             "key_columns": .object([
@@ -1368,6 +1383,9 @@ final class DBExportTool: OsaurusTool, @unchecked Sendable {
         + "JSONL/NDJSON (auto-detected from the path extension). Returns a "
         + "small summary only."
 
+    /// Can write the extract into the sandbox workspace (`/workspace/...`).
+    var mutatesSandboxWorkspace: Bool { true }
+
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -1418,10 +1436,12 @@ final class DBExportTool: OsaurusTool, @unchecked Sendable {
         )
         guard case .value(let path) = pathReq else { return pathReq.failureEnvelope ?? "" }
 
-        guard let format = DatabaseExport.Format.detect(
-            path: path,
-            explicit: args["format"] as? String
-        ) else {
+        guard
+            let format = DatabaseExport.Format.detect(
+                path: path,
+                explicit: args["format"] as? String
+            )
+        else {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message:
@@ -1497,6 +1517,8 @@ final class DBDefineViewTool: OsaurusTool, @unchecked Sendable {
         "Save (or redefine) a named SQL view the user and you can re-run "
         + "later. View bodies must be SELECT or WITH ... SELECT only — "
         + "if you need to write data, use `db_insert` / `db_update`. "
+        + "The saved name is available in read-only `db_query`/`db_export` "
+        + "FROM and JOIN clauses, while `db_run_view` runs it directly. "
         + "`render_hint` controls how the UI plots the result; use one "
         + "of `table`, `bar`, `line`, `pie`, `number`."
 
@@ -1590,9 +1612,11 @@ final class DBDefineViewTool: OsaurusTool, @unchecked Sendable {
 final class DBRunViewTool: OsaurusTool, @unchecked Sendable {
     let name = "db_run_view"
     let description =
-        "Run a previously saved view by name. Returns the same shape as "
-        + "`db_query`: `{columns, rows, truncated}`. Use `db_list_views` "
-        + "to see what's defined."
+        "Run a previously saved view's stored SELECT directly by name. "
+        + "Returns the same shape as `db_query`: `{columns, rows, truncated}`. "
+        + "Use `db_query` or `db_export` with the view name in FROM/JOIN when "
+        + "you need additional filtering, composition, aggregation, or paging. "
+        + "Use `db_list_views` to see what's defined."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
