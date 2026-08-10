@@ -70,7 +70,9 @@ struct ChatWindowStateAgentSyncTests {
     /// no turns and is never sent, so heavyweight chat-engine code is
     /// not exercised — only the agent-snapshot wiring under test.
     private func makeWindow(for agentId: UUID) -> ChatWindowState {
-        ChatWindowState(windowId: UUID(), agentId: agentId)
+        let window = ChatWindowState(windowId: UUID(), agentId: agentId)
+        window.session.warmupController.shutdown()
+        return window
     }
 
     // MARK: - 1. Add propagates to dropdown
@@ -200,7 +202,11 @@ struct ChatWindowStateAgentSyncTests {
             var revisionB = revisionA
             revisionB.systemPrompt = "settings revision B"
             DefaultAgentConfigurationStore.save(revisionB)
-            await flushMainQueue()
+            // Exercise the observer's exact body synchronously. Waiting for
+            // the main queue is timing-dependent: first-time theme setup can
+            // outlast the 80 ms preview debounce, which then consumes the
+            // change before this pre-send assertion runs.
+            window.refreshAgentConfig()
 
             // Reproduce the SwiftUI redraw between Settings Save and the
             // debounced prompt-shape observer. This used to lazily cache B

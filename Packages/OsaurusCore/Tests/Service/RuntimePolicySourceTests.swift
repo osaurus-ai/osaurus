@@ -119,17 +119,17 @@ struct RuntimePolicySourceTests {
         )
     }
 
-    @Test("canonical test lanes isolate local model discovery")
-    func canonicalTestLanesUseDisposableModelRoots() throws {
-        let makefile = try Self.source("../../Makefile")
-        let workflow = try Self.source("../../.github/workflows/ci.yml")
+    @Test("canonical test hosts isolate filesystem roots at the shared resolver")
+    func canonicalTestHostsUseSharedDisposableRoots() throws {
+        let corePaths = try Self.source("Utils/OsaurusPaths.swift")
+        let toolsPaths = try Self.source("../OsaurusRepository/ToolsPaths.swift")
+        let policy = try Self.source("../OsaurusRepository/ProcessDataRootPolicy.swift")
 
-        #expect(makefile.contains("mkdir -p \"$$TEST_ROOT/MLXModels\""))
-        #expect(makefile.contains("OSU_MODELS_DIR=\"$$TEST_ROOT/MLXModels\""))
-        let workflowAssignments = workflow.components(
-            separatedBy: "OSU_MODELS_DIR=\"$TEST_ROOT/MLXModels\""
-        ).count - 1
-        #expect(workflowAssignments == 3)
+        #expect(corePaths.contains("ProcessDataRootPolicy.resolvedRoot"))
+        #expect(toolsPaths.contains("ProcessDataRootPolicy.resolvedRoot"))
+        #expect(policy.contains("isRecognizedTestHostProcess"))
+        #expect(policy.contains("return automaticTestRoot"))
+        #expect(policy.contains("prepareProgrammaticTestOverrideRoot"))
     }
 
     @Test("AppDelegate leaves DSV4 cache topology to vmlx")
@@ -2451,7 +2451,8 @@ struct RuntimePolicySourceTests {
         #expect(toolSecrets.contains("if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"))
         #expect(remoteProvider.contains("KeychainQueryHelpers.disablesKeychainForProcess"))
         #expect(remoteProvider.contains("Keychain.hasInjectedBackendForCurrentContext"))
-        #expect(remoteProvider.contains("await Keychain.perform(operation)"))
+        #expect(remoteProvider.contains("await Keychain.performRead(operation)"))
+        #expect(remoteProvider.contains("await Keychain.perform {"))
         #expect(!remoteProvider.contains("DispatchQueue.global"))
         #expect(mcpProvider.contains("if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"))
     }

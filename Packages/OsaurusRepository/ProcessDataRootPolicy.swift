@@ -290,9 +290,18 @@ public enum ProcessDataRootPolicy {
         }
 
         // An invalid explicit override must not fall through to another
-        // caller-provided path. The automatic root is the only safe fallback.
+        // caller-provided path. A recognized in-process test host may prepare
+        // its own future temporary root atomically; environment and child
+        // process roots remain existing-directory-only below.
         if let overrideRoot {
-            return safeIsolatedTestRootURL(overrideRoot) ?? automaticTestRoot
+            if let safeRoot = safeIsolatedTestRootURL(overrideRoot) {
+                return safeRoot
+            }
+            if recognizedTestHost,
+                let preparedRoot = prepareProgrammaticTestOverrideRoot(overrideRoot) {
+                return preparedRoot
+            }
+            return automaticTestRoot
         }
         if let configuredRoot = environment[testRootEnvironmentKey]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -301,6 +310,56 @@ public enum ProcessDataRootPolicy {
             return safeIsolatedTestRootURL(root) ?? automaticTestRoot
         }
         return automaticTestRoot
+    }
+
+    /// Atomically creates a missing root supplied through the in-process test
+    /// override seam. Existing tests set `OsaurusPaths.overrideRoot` before
+    /// their fixture directory exists; collapsing those independent fixtures
+    /// onto `automaticTestRoot` makes unrelated suites share state.
+    ///
+    /// This helper is deliberately not used for environment or child-process
+    /// roots. Those paths cross a process boundary and must be created and
+    /// validated by the launcher before they are accepted.
+    private static func prepareProgrammaticTestOverrideRoot(_ root: URL) -> URL? {
+        guard root.isFileURL, root.path.hasPrefix("/") else { return nil }
+
+        let standardizedRoot = root.standardizedFileURL
+        let name = standardizedRoot.lastPathComponent
+        guard !name.isEmpty, name != ".", name != ".." else { return nil }
+
+        // Resolve the existing parent first, then create only its final child.
+        // `mkdir` is atomic: a pre-existing file or symlink makes it fail.
+        let parent = standardizedRoot.deletingLastPathComponent().resolvingSymlinksInPath()
+        let candidate = parent.appendingPathComponent(name, isDirectory: true)
+        guard safeTemporaryRoots().contains(where: {
+            isPathStrictlyInside(candidate, boundary: $0)
+        }) else {
+            return nil
+        }
+
+        var parentIsDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(
+            atPath: parent.path,
+            isDirectory: &parentIsDirectory
+        ), parentIsDirectory.boolValue else {
+            return nil
+        }
+
+        var existingInfo = stat()
+        guard lstat(candidate.path, &existingInfo) != 0, errno == ENOENT else {
+            return nil
+        }
+        guard mkdir(candidate.path, mode_t(S_IRWXU)) == 0 else { return nil }
+
+        var accepted = false
+        defer {
+            if !accepted {
+                try? FileManager.default.removeItem(at: candidate)
+            }
+        }
+        guard let safeRoot = safeIsolatedTestRootURL(candidate) else { return nil }
+        accepted = true
+        return safeRoot
     }
 
     private static func safeIsolatedTestRootURL(_ root: URL) -> URL? {

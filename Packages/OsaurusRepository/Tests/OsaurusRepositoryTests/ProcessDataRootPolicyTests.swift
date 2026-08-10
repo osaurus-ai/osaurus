@@ -378,6 +378,48 @@ final class ProcessDataRootPolicyTests: XCTestCase {
         XCTAssertTrue(resolved.path.hasPrefix("/tmp/osa-t-"))
     }
 
+    func testMissingProgrammaticOverrideIsCreatedPrivatelyForRecognizedTestHost() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-programmatic-root-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+
+        let resolved = ProcessDataRootPolicy.resolvedRootForTesting(
+            overrideRoot: root,
+            defaultRoot: URL(fileURLWithPath: "/Users/example/.osaurus", isDirectory: true),
+            environment: [:],
+            recognizedTestHost: true
+        )
+
+        XCTAssertEqual(resolved, root.standardizedFileURL.resolvingSymlinksInPath())
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: resolved.path, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue)
+        let attributes = try FileManager.default.attributesOfItem(atPath: resolved.path)
+        let permissions = try XCTUnwrap(attributes[.posixPermissions] as? NSNumber)
+        XCTAssertEqual(permissions.intValue & 0o077, 0)
+    }
+
+    func testMissingProgrammaticOverrideIsNotCreatedWithoutRecognizedTestHost() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-unrecognized-root-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let resolved = ProcessDataRootPolicy.resolvedRootForTesting(
+            overrideRoot: root,
+            defaultRoot: URL(fileURLWithPath: "/Users/example/.osaurus", isDirectory: true),
+            environment: [ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1"],
+            recognizedTestHost: false
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+        XCTAssertTrue(resolved.path.hasPrefix("/tmp/osa-t-"))
+    }
+
     func testExistingOwnedIsolatedRootIsTightenedToPrivatePermissions() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "osaurus-policy-permissive-\(UUID().uuidString)",

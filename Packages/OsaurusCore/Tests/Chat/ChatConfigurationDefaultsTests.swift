@@ -47,4 +47,41 @@ struct ChatConfigurationDefaultsTests {
         #expect(!encodedChatJSON.contains("generativeGreetings"))
         #expect(!encodedChatJSON.contains("greetingPersona"))
     }
+
+    @Test("task-local test configurations remain isolated across concurrent tasks")
+    @MainActor
+    func taskLocalTestConfigurationsDoNotCrossTalk() async {
+        var first = ChatConfigurationStore.load()
+        first.systemPrompt = "first-task"
+        first.warmModelsOnLoad = false
+
+        var second = ChatConfigurationStore.load()
+        second.systemPrompt = "second-task"
+        second.warmModelsOnLoad = true
+
+        async let firstResult = ChatConfigurationStore.withTestConfiguration(first) {
+            await Task.yield()
+            var updated = ChatConfigurationStore.load()
+            updated.disableTools = true
+            ChatConfigurationStore.save(updated)
+            await Task.yield()
+            return ChatConfigurationStore.load()
+        }
+        async let secondResult = ChatConfigurationStore.withTestConfiguration(second) {
+            await Task.yield()
+            var updated = ChatConfigurationStore.load()
+            updated.disableTools = false
+            ChatConfigurationStore.save(updated)
+            await Task.yield()
+            return ChatConfigurationStore.load()
+        }
+
+        let (resolvedFirst, resolvedSecond) = await (firstResult, secondResult)
+        #expect(resolvedFirst.systemPrompt == "first-task")
+        #expect(!resolvedFirst.warmModelsOnLoad)
+        #expect(resolvedFirst.disableTools)
+        #expect(resolvedSecond.systemPrompt == "second-task")
+        #expect(resolvedSecond.warmModelsOnLoad)
+        #expect(!resolvedSecond.disableTools)
+    }
 }

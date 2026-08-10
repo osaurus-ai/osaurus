@@ -312,12 +312,19 @@ struct ChatSessionStopTests {
             ChatConfigurationStore.save(chatConfig)
 
             let session = ChatSession()
+            session.warmupController.projectedLoadFeasibility = { _ in nil }
+            session.warmupController.hasResidentModelOther = { _ in false }
             let gate = IgnoringCancellationHandshakeGate()
             session.chatEngineFactory = { _ in PreSendHandshakeRecordingEngine() }
             try await beginSuspendedPreSendHandshake(session: session, gate: gate)
 
             session.send("old chat turn")
             session.reset()
+            // `reset()` also starts the session's normal focus-activation
+            // reconciliation. This case supplies its own synthetic incoming
+            // session below, so cancel that unrelated automatic candidate
+            // before proving the new warm-up survives the retiring handshake.
+            session.warmupController.cancelScheduledWarmup()
 
             let incomingEngine = IncomingWarmupRecordingEngine()
             let incomingSession = IncomingWarmupSession(engine: incomingEngine)
