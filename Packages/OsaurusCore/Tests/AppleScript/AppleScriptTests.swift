@@ -570,6 +570,55 @@ struct AppleScriptToolDispatchLiteralsTests {
         )
     }
 
+    // Reported live: the AppleScript subagent never worked for a user who had
+    // it configured correctly (model installed, Automation allowed, ability
+    // Active). The orchestrator called the tool with generated AppleScript in
+    // `content`, and the rejection it got back described the WRONG repair, so
+    // the model retried the same shape indefinitely (`retryable: true`).
+    @Test("single-statement AppleScript in a literal field is named as generated source")
+    func singleStatementSourceRejectedWithTheRepairThatWorks() {
+        // The exact payload from the report.
+        let violation = AppleScriptToolDispatch.literalContractViolation(
+            task: "Say hello world using AppleScript",
+            literals: AppleScriptLiterals([
+                "content": "display dialog \"Hello, World!\" with icon note"
+            ])
+        )
+        #expect(violation != nil)
+        // Must be the generated-source message. The literal-reference message
+        // reads as "make `task` mention the literal", whose obvious fix keeps
+        // the script in a literal field and passes validation — backwards.
+        #expect(violation?.message.contains("looks like generated AppleScript source") == true)
+        #expect(violation?.message.contains("let the") == true)
+    }
+
+    @Test("a bare statement is still allowed when the task asks for source as text")
+    func sourceAsTextStaysAllowed() {
+        #expect(
+            AppleScriptToolDispatch.literalContractViolation(
+                task: "Paste the provided AppleScript source into the note verbatim.",
+                literals: AppleScriptLiterals([
+                    "content": "display dialog \"Hello, World!\" with icon note"
+                ])
+            ) == nil
+        )
+    }
+
+    /// The detector matches a leading verb only. User text that merely talks
+    /// about automation is exactly what literal fields exist to carry, so it
+    /// must not be mistaken for generated source.
+    @Test("prose mentioning AppleScript verbs is not treated as source")
+    func proseIsNotSource() {
+        #expect(
+            AppleScriptToolDispatch.literalContractViolation(
+                task: "Append the provided content to my notes.",
+                literals: AppleScriptLiterals([
+                    "content": "Remember that display dialog is the old way to prompt."
+                ])
+            ) == nil
+        )
+    }
+
     @Test("orphaned literal fields are rejected instead of silently ignored")
     func orphanedLiteralRejected() {
         let violation = AppleScriptToolDispatch.literalContractViolation(

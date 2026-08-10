@@ -616,17 +616,6 @@ enum AppleScriptToolDispatch {
             || names.contains(where: { normalizedTask.contains($0.lowercased()) })
             || referencesLiteralValue
 
-        if !referencesLiteral {
-            let field = names == ["content"] ? "content" : "contents"
-            return LiteralContractViolation(
-                field: field,
-                message:
-                    "`\(field)` was supplied, but `task` does not tell the AppleScript subagent to use "
-                    + "the provided literal value. Keep `task` as the desired outcome and put only exact "
-                    + "user-supplied text in literal fields; do not place generated AppleScript there."
-            )
-        }
-
         let explicitlyInsertingSource =
             normalizedTask.contains("applescript source")
             || normalizedTask.contains("applescript code")
@@ -647,6 +636,26 @@ enum AppleScriptToolDispatch {
                     + "only exact user-supplied data. Describe the desired outcome in `task` and let the "
                     + "AppleScript subagent write the script. If the user really asked to insert source "
                     + "code as text, say that explicitly in `task`."
+            )
+        }
+
+        // Deliberately AFTER the generated-source check. When `content` holds a
+        // script, both checks fire, but only one names the required repair.
+        // This one says `task` does not reference the literal, whose obvious
+        // "fix" is to mention `content` in the task — which keeps the script in
+        // a literal field and passes validation, exactly backwards. Reported
+        // live as an unbreakable retry loop, because the rejection is marked
+        // retryable and the model kept applying that reading.
+        if !referencesLiteral {
+            let field = names == ["content"] ? "content" : "contents"
+            return LiteralContractViolation(
+                field: field,
+                message:
+                    "`\(field)` was supplied, but `task` does not tell the AppleScript subagent to use "
+                    + "the provided literal value. Keep `task` as the desired outcome and put only exact "
+                    + "user-supplied text in literal fields; do not place generated AppleScript there. "
+                    + "If nothing in this request is verbatim user-supplied text, omit `\(field)` "
+                    + "entirely and describe the outcome in `task` alone."
             )
         }
 
@@ -712,7 +721,29 @@ enum AppleScriptToolDispatch {
             source.contains("keystroke ")
             || source.contains("do shell script")
             || source.contains("using command down")
-        return hasBlock || (source.contains("tell application") && hasAutomationCommand)
+        if hasBlock || (source.contains("tell application") && hasAutomationCommand) {
+            return true
+        }
+
+        // Single-statement AppleScript has neither a `tell` block nor an
+        // automation verb, so the checks above miss it entirely. Reported live:
+        // `{"task":"Say hello world using AppleScript","content":"display
+        // dialog \"Hello, World!\" with icon note"}` fell through to the
+        // reference check, whose message asks the caller to make `task`
+        // mention the literal — the opposite of the required repair, which is
+        // to drop `content` and let the subagent write the script. The model
+        // then retries forever (`retryable: true`).
+        //
+        // Match on the leading verb only. Searching anywhere would flag
+        // genuine user text that merely discusses automation ("add a note
+        // saying display dialog is deprecated"), and that text is exactly what
+        // literal fields exist to carry.
+        let statementVerbs = [
+            "display dialog", "display notification", "display alert",
+            "activate", "open location", "do shell script", "say ",
+            "set the clipboard", "beep", "delay ", "choose file", "choose folder",
+        ]
+        return statementVerbs.contains { source.hasPrefix($0) }
     }
 
     /// Build the literal store from the optional `content` string and/or the
