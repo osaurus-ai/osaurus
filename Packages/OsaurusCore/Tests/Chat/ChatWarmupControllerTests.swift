@@ -1856,6 +1856,8 @@ private func makeWarmupController() -> ChatWarmupController {
     let controller = ChatWarmupController()
     controller.warmModelsOnLoad = { true }
     controller.isAnyWindowStreamingLocalModel = { false }
+    controller.projectedLoadFeasibility = { _ in nil }
+    controller.hasResidentModelOther = { _ in false }
     return controller
 }
 
