@@ -731,9 +731,15 @@ final class ProcessDataRootPolicyTests: XCTestCase {
     func testAnyRealKeychainProofMarkerFailsClosedOutsideATestHost() {
         let proofEnvironments = [
             [ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey: "1"],
+            [ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey: "invalid"],
             [
                 ProcessDataRootPolicy.realKeychainTestNamespaceEnvironmentKey:
                     "36CFBE8B-39DB-47DB-BA95-1742165D2657"
+            ],
+            [ProcessDataRootPolicy.realKeychainTestNamespaceEnvironmentKey: "not-a-uuid"],
+            [
+                ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey: "1",
+                ProcessDataRootPolicy.realKeychainTestNamespaceEnvironmentKey: "not-a-uuid",
             ],
         ]
 
@@ -744,6 +750,23 @@ final class ProcessDataRootPolicyTests: XCTestCase {
                     recognizedTestHost: false
                 )
             )
+
+            var evaluatedProductionRoot = false
+            let productionRoot = URL(
+                fileURLWithPath: "/Users/example/.osaurus",
+                isDirectory: true
+            )
+            let root = ProcessDataRootPolicy.resolvedRootForTesting(
+                defaultRoot: recordDefaultRoot(
+                    &evaluatedProductionRoot,
+                    root: productionRoot
+                ),
+                environment: environment,
+                recognizedTestHost: false
+            )
+            XCTAssertFalse(evaluatedProductionRoot, "\(environment)")
+            XCTAssertNotEqual(root.standardizedFileURL, productionRoot.standardizedFileURL)
+            XCTAssertTrue(root.path.hasPrefix("/tmp/osa-t-"), "\(environment)")
         }
     }
 

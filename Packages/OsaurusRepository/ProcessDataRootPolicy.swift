@@ -164,7 +164,7 @@ public enum ProcessDataRootPolicy {
         // production process, keep every Keychain wrapper disabled: namespace
         // validation below will reject the process, and falling back to the
         // production identity slot would turn a setup mistake into data loss.
-        if explicitlyAllowsRealKeychainForTests(environment: environment)
+        if hasValue(environment[allowRealKeychainForTestsEnvironmentKey])
             || hasValue(environment[realKeychainTestNamespaceEnvironmentKey]) {
             return true
         }
@@ -287,9 +287,13 @@ public enum ProcessDataRootPolicy {
         environment: [String: String],
         recognizedTestHost: Bool
     ) -> URL {
-        let isolatedTestProcess = recognizedTestHost
-            || environment[disableKeychainForTestsEnvironmentKey] == "1"
-            || hasValue(environment[testRootEnvironmentKey])
+        // Filesystem and Keychain isolation must use one predicate. Otherwise
+        // a leaked or malformed proof marker can select an in-memory key while
+        // persistent encrypted storage is still rooted under the user's home.
+        let isolatedTestProcess = shouldDisableKeychain(
+            environment: environment,
+            recognizedTestHost: recognizedTestHost
+        )
 
         // Preserve the production resolver exactly when no test isolation is
         // active. This includes callers that intentionally supply an override.
