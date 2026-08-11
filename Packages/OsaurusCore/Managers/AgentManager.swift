@@ -662,9 +662,24 @@ public final class AgentManager: ObservableObject {
         // create permanent orphans in `agent-channels.json`.
         try? AgentChannelConnectionManager.shared.deleteBindings(agentId: id)
 
-        // Release the agent's in-memory vector index so a long-lived process
-        // doesn't accumulate one VecturaKit instance per deleted agent.
-        await MemorySearchService.shared.evictAgent(agentId: id.uuidString)
+        // Delete the agent's chat sessions and accumulated memory. Agent
+        // UUIDs are never reused, so without this the sessions, pinned
+        // facts, episodes, and raw transcripts of a deleted agent sat in
+        // the databases forever with no UI left that could reach them.
+        ChatSessionsManager.shared.deleteAll(for: id)
+        let agentScope = id.uuidString
+        await Task.detached(priority: .userInitiated) {
+            let db = MemoryDatabase.shared
+            if !db.isOpen { try? db.open() }
+            try? db.deletePinnedFacts(forAgent: agentScope)
+            try? db.deleteEpisodes(forAgent: agentScope)
+            try? db.deleteConversationMemory(forAgent: agentScope)
+        }.value
+
+        // Drop the agent's vector index: the in-memory VecturaKit instance
+        // (so a long-lived process doesn't accumulate one per deleted
+        // agent) and the on-disk store, which is now all deleted content.
+        await MemorySearchService.shared.deleteAgentIndex(agentId: agentScope)
 
         // Wipe the agent's native browser profile (cookies / sign-ins /
         // history) and drop its session-catalog record. Without this a
