@@ -1311,6 +1311,16 @@ public final class MemoryDatabase: @unchecked Sendable {
         }
     }
 
+    /// Delete every pinned fact for an agent, regardless of status. Used by
+    /// the agent detail "Delete All Data" flow. Callers are responsible for
+    /// dropping the matching vector-index entries (or the whole per-agent
+    /// index) so search can't keep surfacing deleted facts.
+    public func deletePinnedFacts(forAgent agentId: String) throws {
+        _ = try executeUpdate("DELETE FROM pinned_facts WHERE agent_id = ?1") { stmt in
+            Self.bindText(stmt, index: 1, value: agentId)
+        }
+    }
+
     public func evictPinnedFacts(belowSalience floor: Double, idleDays: Int) throws -> Int {
         var evicted = 0
         try prepareAndExecute(
@@ -2618,6 +2628,33 @@ public final class MemoryDatabase: @unchecked Sendable {
             "DELETE FROM episodes WHERE conversation_id = ?1"
         ) { stmt in
             Self.bindText(stmt, index: 1, value: conversationId)
+        }
+    }
+
+    /// Delete every episode for an agent, regardless of status. Same
+    /// FTS/vector semantics as `deleteEpisode(id:)`: FTS stays
+    /// trigger-synced and stale vector rows resolve to a missing SQL row
+    /// and are filtered on read. Used by the agent detail "Delete All
+    /// Data" flow.
+    public func deleteEpisodes(forAgent agentId: String) throws {
+        _ = try executeUpdate("DELETE FROM episodes WHERE agent_id = ?1") { stmt in
+            Self.bindText(stmt, index: 1, value: agentId)
+        }
+    }
+
+    /// Delete an agent's raw conversation memory: transcript chunks,
+    /// buffered pending signals, and processing-log rows. Paired with a
+    /// chat-history wipe so the memory pipeline can't re-distill
+    /// conversations the user just deleted.
+    public func deleteConversationMemory(forAgent agentId: String) throws {
+        for sql in [
+            "DELETE FROM transcript WHERE agent_id = ?1",
+            "DELETE FROM pending_signals WHERE agent_id = ?1",
+            "DELETE FROM processing_log WHERE agent_id = ?1",
+        ] {
+            _ = try executeUpdate(sql) { stmt in
+                Self.bindText(stmt, index: 1, value: agentId)
+            }
         }
     }
 

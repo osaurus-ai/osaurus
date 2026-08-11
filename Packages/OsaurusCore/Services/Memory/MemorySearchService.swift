@@ -121,6 +121,19 @@ public actor MemorySearchService {
         transcriptKeyMap.removeAll(keepingCapacity: false)
     }
 
+    /// Remove an agent's vector index entirely: the in-memory VecturaKit
+    /// instance (via `evictAgent`) plus the on-disk store. Used when the
+    /// user wipes an agent's memory from the detail view, where leaving
+    /// the encrypted index files behind would silently retain deleted
+    /// content on disk. The index rebuilds lazily if the agent chats again.
+    public func deleteAgentIndex(agentId: String) async {
+        let bucket = Self.bucketKey(for: agentId)
+        // Never touch the shared/global bucket on a per-agent wipe.
+        guard bucket != Self.sharedAgentBucket else { return }
+        await evictAgent(agentId: agentId)
+        try? FileManager.default.removeItem(at: Self.storageDir(for: agentId))
+    }
+
     private static let sharedAgentBucket = ""
 
     private static func bucketKey(for agentId: String?) -> String {

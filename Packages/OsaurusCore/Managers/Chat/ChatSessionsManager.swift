@@ -135,6 +135,23 @@ final class ChatSessionsManager: ObservableObject {
         Task { await SandboxWorkspaceChangeTracker.shared.purgeSession(id.uuidString) }
     }
 
+    /// Delete every session owned by an agent. Strict ownership match, unlike
+    /// `sessions(for:)`: the Default agent's "show everything" view must not
+    /// turn a per-agent wipe into an all-agents wipe, so only sessions whose
+    /// `agentId` matches (or is nil, for the Default agent's own chats) are
+    /// removed. Same precedent as the sidebar's multi-select delete: one
+    /// `delete(id:)` per session, which keeps per-session cleanup (sandbox
+    /// artifacts, blob GC) intact.
+    func deleteAll(for agentId: UUID) {
+        let owned = sessions.filter { session in
+            session.agentId == agentId
+                || (agentId == Agent.defaultId && session.agentId == nil)
+        }
+        for session in owned {
+            delete(id: session.id)
+        }
+    }
+
     /// Rename a session.
     ///
     /// Pulls from the in-memory list first because new sessions are only
