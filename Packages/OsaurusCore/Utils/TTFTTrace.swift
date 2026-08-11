@@ -19,6 +19,39 @@ import Foundation
 
 final class TTFTTrace: @unchecked Sendable {
 
+    /// A trace when tracing is on for this build, `nil` otherwise.
+    ///
+    /// Phase timings existed but were `#if DEBUG` only, so the build users
+    /// actually run recorded nothing — which is why "did prefill get slower"
+    /// could not be answered either way from a user's machine. The load phase
+    /// in particular (`load_container_start` → `load_container_done`) is the
+    /// one a user waits through and the one the reported TTFT excludes.
+    ///
+    /// Release keeps tracing OFF by default; `OSAURUS_TTFT_TRACE=1` turns it
+    /// on so a real report can come back with real phase numbers.
+    static func makeIfEnabled(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> TTFTTrace? {
+        isEnabled(environment: environment) ? TTFTTrace() : nil
+    }
+
+    static func isEnabled(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        if let raw = environment["OSAURUS_TTFT_TRACE"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        {
+            // An explicit setting wins in every configuration, so a debug
+            // build can be quietened and a release build can be opened up.
+            return !["0", "false", "no", "off", ""].contains(raw)
+        }
+        #if DEBUG
+            return true
+        #else
+            return false
+        #endif
+    }
+
     private struct Mark {
         let name: String
         let time: CFAbsoluteTime

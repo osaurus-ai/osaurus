@@ -5302,11 +5302,7 @@ final class ChatSession: ObservableObject {
                     }
                 #endif
 
-                #if DEBUG
-                    let ttftTrace: TTFTTrace? = TTFTTrace()
-                #else
-                    let ttftTrace: TTFTTrace? = nil
-                #endif
+                let ttftTrace: TTFTTrace? = TTFTTrace.makeIfEnabled()
                 do {
                     let engine = chatEngineFactory(source.inferenceSource)
                     let chatCfg = ChatConfigurationStore.load()
