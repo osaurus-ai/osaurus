@@ -73,6 +73,40 @@ struct AppleScriptStringContentsPromotionTests {
         #expect(o["contents"] == nil)
     }
 
+    /// Observed live on Raptor: the whole request arrived under `contents`
+    /// with no `question` at all. Promoting to `content` there only trades
+    /// "must be an object" for "missing required property".
+    @Test("a lone string becomes the required field when that field is absent")
+    func promotesToRequiredFieldWhenAbsent() {
+        let out = AppleScriptToolDispatch.promotingStringContents(
+            #"{"contents":"what is the frontmost application's name"}"#,
+            requiredField: "question")
+        let o = object(out)
+        #expect(o["question"] as? String == "what is the frontmost application's name")
+        #expect(o["contents"] == nil)
+        #expect(o["content"] == nil)
+    }
+
+    @Test("with the required field present the string is a literal, not the request")
+    func promotesToContentWhenRequiredFieldPresent() {
+        let out = AppleScriptToolDispatch.promotingStringContents(
+            #"{"question":"does the body match?","contents":"exact block"}"#,
+            requiredField: "question")
+        let o = object(out)
+        #expect(o["question"] as? String == "does the body match?")
+        #expect(o["content"] as? String == "exact block")
+        #expect(o["contents"] == nil)
+    }
+
+    @Test("mac_query routes a lone string to `question` end to end")
+    func macQueryRoutesLoneStringToQuestion() {
+        let out = MacQueryTool().normalizeArgumentsBeforeValidation(
+            #"{"contents":"what is the frontmost application's name"}"#)
+        let o = object(out)
+        #expect(o["question"] as? String == "what is the frontmost application's name")
+        #expect(o["contents"] == nil)
+    }
+
     /// The WRITE path must keep its safety property: an unrecognized `contents`
     /// string stays untouched so arbitrary text is never reinterpreted as user
     /// data before a mutation. Promotion is read-only and must not weaken it.

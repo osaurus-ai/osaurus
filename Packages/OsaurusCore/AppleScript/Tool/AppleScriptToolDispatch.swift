@@ -97,22 +97,42 @@ enum AppleScriptToolDispatch {
     /// reinterpreted as user data before a WRITE; promotion must not weaken
     /// that. A read compares against the value either way, so there is no
     /// equivalent risk here.
-    static func promotingStringContents(_ argumentsJSON: String) -> String {
+    /// - Parameter requiredField: the tool's own natural-language field
+    ///   (`question` for a read). When that field is absent, a lone string is
+    ///   read as the request itself rather than as a verbatim literal.
+    static func promotingStringContents(
+        _ argumentsJSON: String, requiredField: String? = nil
+    ) -> String {
         guard let data = argumentsJSON.data(using: .utf8),
             var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let encoded = object["contents"] as? String,
-            object["content"] == nil
+            let encoded = object["contents"] as? String
         else { return argumentsJSON }
-        let trimmed = encoded.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return argumentsJSON }
+        guard !encoded.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return argumentsJSON
+        }
+
+        // Observed live on Raptor: `{"contents":"what is the frontmost
+        // application's name"}` — the request itself, under the literals field,
+        // with no `question` at all. Promoting that to `content` only trades
+        // "must be an object" for "missing required property", so when the
+        // required field is absent the string is the request.
+        let destination: String
+        if let requiredField, object[requiredField] == nil {
+            destination = requiredField
+        } else if object["content"] == nil {
+            destination = "content"
+        } else {
+            return argumentsJSON
+        }
+
         object.removeValue(forKey: "contents")
-        object["content"] = encoded
+        object[destination] = encoded
         guard let cleaned = try? JSONSerialization.data(
             withJSONObject: object,
             options: [.sortedKeys]
         ), let text = String(data: cleaned, encoding: .utf8)
         else { return argumentsJSON }
-        debugLog("[AppleScript] promoted string `contents` to `content`")
+        debugLog("[AppleScript] promoted string `contents` to `\(destination)`")
         return text
     }
 
