@@ -176,9 +176,8 @@ struct TestHostIsolationTests {
             )?.path == externalDirectory
         )
 
-        // A non-XCTest live-proof launcher deliberately opts into its model
-        // root with OSU_MODELS_DIR. Automatic bundle mutation remains disabled
-        // by the shared isolation predicate.
+        // A non-XCTest live-proof launcher is still isolated and needs the
+        // dedicated external-model opt-in in addition to OSU_MODELS_DIR.
         let liveProofEnvironment = [
             "OSU_MODELS_DIR": externalDirectory,
             ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
@@ -187,6 +186,16 @@ struct TestHostIsolationTests {
             DirectoryPickerService.modelsDirectoryEnvironmentOverride(
                 environment: liveProofEnvironment,
                 recognizedTestHost: false
+            ) == nil
+        )
+        var allowedLiveProofEnvironment = liveProofEnvironment
+        allowedLiveProofEnvironment[
+            DirectoryPickerService.allowExternalModelsInTestHostsEnvironmentKey
+        ] = "1"
+        #expect(
+            DirectoryPickerService.modelsDirectoryEnvironmentOverride(
+                environment: allowedLiveProofEnvironment,
+                recognizedTestHost: false
             )?.path == externalDirectory
         )
         #expect(
@@ -194,6 +203,25 @@ struct TestHostIsolationTests {
                 environment: liveProofEnvironment,
                 recognizedTestHost: false
             )
+        )
+
+        var explicitTestRootEnvironment = baseEnvironment
+        explicitTestRootEnvironment[ProcessDataRootPolicy.testRootEnvironmentKey] =
+            "/tmp/isolated-model-root"
+        #expect(
+            DirectoryPickerService.modelsDirectoryEnvironmentOverride(
+                environment: explicitTestRootEnvironment,
+                recognizedTestHost: false
+            ) == nil
+        )
+        explicitTestRootEnvironment[
+            DirectoryPickerService.allowExternalModelsInTestHostsEnvironmentKey
+        ] = "1"
+        #expect(
+            DirectoryPickerService.modelsDirectoryEnvironmentOverride(
+                environment: explicitTestRootEnvironment,
+                recognizedTestHost: false
+            )?.path == externalDirectory
         )
     }
 

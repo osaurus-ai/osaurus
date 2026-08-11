@@ -1419,17 +1419,55 @@ final class ModelDownloadService: ObservableObject {
                 continue
             }
             do {
-                try await downloader.download(
-                    from: url,
-                    to: dest,
-                    expectedSize: file.size,
-                    onProgress: { _, _ in }
-                )
+                let committed = try await stageAndCommitTopUpFile(
+                    destination: dest,
+                    shouldContinue: shouldContinue
+                ) { stagedDestination in
+                    try await downloader.download(
+                        from: url,
+                        to: stagedDestination,
+                        expectedSize: file.size,
+                        onProgress: { _, _ in }
+                    )
+                }
+                if !committed { return false }
             } catch {
                 allSucceeded = false
             }
         }
         return allSucceeded
+    }
+
+    /// Download one automatic top-up into a private sibling and publish it
+    /// only after the process policy and task cancellation gates are checked
+    /// again. A mid-transfer isolation change therefore cannot replace an
+    /// existing model file or expose a partial download.
+    nonisolated static func stageAndCommitTopUpFile(
+        destination: URL,
+        shouldContinue: @Sendable () -> Bool,
+        download: @escaping @Sendable (URL) async throws -> Void
+    ) async throws -> Bool {
+        guard !Task.isCancelled, shouldContinue() else { return false }
+
+        let fm = FileManager.default
+        let parent = destination.deletingLastPathComponent()
+        try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+        guard !Task.isCancelled, shouldContinue() else { return false }
+
+        let staged = parent.appendingPathComponent(
+            ".osaurus-topup-stage-\(UUID().uuidString)"
+        )
+        defer { try? fm.removeItem(at: staged) }
+
+        try await download(staged)
+        guard !Task.isCancelled, shouldContinue() else { return false }
+
+        if fm.fileExists(atPath: destination.path) {
+            _ = try fm.replaceItemAt(destination, withItemAt: staged)
+        } else {
+            try fm.moveItem(at: staged, to: destination)
+        }
+        return true
     }
 
     /// Silently downloads missing config/tokenizer files for models that are

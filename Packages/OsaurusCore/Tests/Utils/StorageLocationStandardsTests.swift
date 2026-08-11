@@ -407,6 +407,47 @@ struct StorageLocationStandardsTests {
         #expect(fm.fileExists(atPath: marker.path))
     }
 
+    @Test("Concurrent active-root publication survives a cancelled legacy copy")
+    func concurrentActiveRootSurvivesLegacyCopyCancellation() throws {
+        let fm = FileManager.default
+        let sandbox = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let legacy = sandbox.appendingPathComponent("Library/Application Support/com.dinoki.osaurus")
+        let active = sandbox.appendingPathComponent(".osaurus")
+        let liveFile = active.appendingPathComponent("created-by-live-process.json")
+        defer { try? fm.removeItem(at: sandbox) }
+
+        try fm.createDirectory(at: legacy, withIntermediateDirectories: true)
+        try "legacy".write(
+            to: legacy.appendingPathComponent("settings.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        var mutationCount = 0
+        var allowsMigration = true
+
+        let result = OsaurusPaths.migrateLegacyApplicationSupportRootIfNeeded(
+            fileManager: fm,
+            legacyRoot: legacy,
+            activeRoot: active,
+            shouldContinue: { allowsMigration },
+            beforeMutationForTesting: {
+                mutationCount += 1
+                guard mutationCount == 2 else { return }
+                try? fm.createDirectory(at: active, withIntermediateDirectories: true)
+                try? "live".write(to: liveFile, atomically: true, encoding: .utf8)
+                allowsMigration = false
+            }
+        )
+
+        #expect(result == .deferred)
+        #expect(fm.fileExists(atPath: active.path))
+        #expect(try String(contentsOf: liveFile, encoding: .utf8) == "live")
+        #expect(!fm.fileExists(atPath: OsaurusPaths.legacyApplicationSupportMergeMarker(for: active).path))
+        let privateStages = try fm.contentsOfDirectory(atPath: sandbox.path)
+            .filter { $0.hasPrefix(".osaurus-legacy-root-stage-") }
+        #expect(privateStages.isEmpty)
+    }
+
     @Test("Recognition change before legacy merge defers and remains retryable")
     func legacyMergeDefersWhenPolicyChanges() throws {
         let fm = FileManager.default

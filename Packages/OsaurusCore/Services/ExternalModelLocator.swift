@@ -134,6 +134,12 @@ enum ExternalModelLocator {
 
     private static let lock = NSLock()
     private static let persistenceLock = NSLock()
+    private enum PersistenceOutcome: Equatable {
+        case committed
+        case superseded
+        case blocked
+        case failed
+    }
     nonisolated(unsafe) private static var registry: [String: Discovered]?
     nonisolated(unsafe) private static var lastReport: ScanReport?
     /// Bumped on every `registry` mutation so read-side memo caches (e.g.
@@ -318,6 +324,7 @@ enum ExternalModelLocator {
             return
         }
         let previousRegistry = registry
+        let previousReport = lastReport
         let previousGeneration = registryGen
         var map = loadedLocked()
         let removed = map.removeValue(forKey: id.lowercased()) != nil
@@ -332,13 +339,20 @@ enum ExternalModelLocator {
         }
         lock.unlock()
         if removed {
-            persist(
+            let outcome = persist(
                 map,
                 expectedGeneration: committedGeneration,
                 shouldContinue: { currentProcessAllowsRegistryAccess }
             )
-            if currentProcessAllowsRegistryAccess {
+            if outcome == .committed, currentProcessAllowsRegistryAccess {
                 NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+            } else if outcome == .blocked || outcome == .failed {
+                rollbackRegistryMutationIfCurrent(
+                    attemptedRegistry: map,
+                    attemptedGeneration: committedGeneration,
+                    previousRegistry: previousRegistry,
+                    previousReport: previousReport
+                )
             }
         }
     }
@@ -392,6 +406,7 @@ enum ExternalModelLocator {
             return false
         }
         let previousRegistry = registry
+        let previousReport = lastReport
         let previousGeneration = registryGen
         var map = loadedLocked()
         var removed = false
@@ -413,16 +428,26 @@ enum ExternalModelLocator {
         lock.unlock()
 
         if removed {
-            persist(
+            let outcome = persist(
                 map,
                 expectedGeneration: committedGeneration,
                 shouldContinue: { currentProcessAllowsRegistryAccess }
             )
-            if currentProcessAllowsRegistryAccess {
+            if outcome == .committed, currentProcessAllowsRegistryAccess {
                 NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+                return true
             }
+            if outcome == .blocked || outcome == .failed {
+                rollbackRegistryMutationIfCurrent(
+                    attemptedRegistry: map,
+                    attemptedGeneration: committedGeneration,
+                    previousRegistry: previousRegistry,
+                    previousReport: previousReport
+                )
+            }
+            return false
         }
-        return removed
+        return false
     }
 
     // MARK: - Rescan
@@ -434,7 +459,10 @@ enum ExternalModelLocator {
     static func rescan(
         shouldContinue: @escaping @Sendable () -> Bool = { true },
         afterRegistryMutationForTesting: @Sendable () -> Void = {},
-        beforePersistValidationForTesting: @Sendable () -> Void = {}
+        beforePersistValidationForTesting: @Sendable () -> Void = {},
+        persistWriterForTesting: @escaping @Sendable (Data, URL) throws -> Void = {
+            try $0.write(to: $1, options: [.atomic])
+        }
     ) -> [MLXModel] {
         let canContinue: @Sendable () -> Bool = {
             shouldContinue() && currentProcessAllowsRegistryAccess
@@ -471,15 +499,23 @@ enum ExternalModelLocator {
         }
         lock.unlock()
 
-        if changed, canContinue() {
-            persist(
+        if changed {
+            let outcome = persist(
                 discovered,
                 expectedGeneration: committedGeneration,
                 shouldContinue: canContinue,
-                beforeValidationForTesting: beforePersistValidationForTesting
+                beforeValidationForTesting: beforePersistValidationForTesting,
+                writer: persistWriterForTesting
             )
-            if canContinue() {
+            if outcome == .committed, canContinue() {
                 NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+            } else if outcome == .blocked || outcome == .failed {
+                rollbackRegistryMutationIfCurrent(
+                    attemptedRegistry: discovered,
+                    attemptedGeneration: committedGeneration,
+                    previousRegistry: previousRegistry,
+                    previousReport: previousReport
+                )
             }
         }
         return models()
@@ -1024,38 +1060,67 @@ enum ExternalModelLocator {
         _ map: [String: Discovered],
         expectedGeneration: UInt64? = nil,
         shouldContinue: @Sendable () -> Bool = { currentProcessAllowsRegistryAccess },
-        beforeValidationForTesting: @Sendable () -> Void = {}
-    ) {
+        beforeValidationForTesting: @Sendable () -> Void = {},
+        writer: @Sendable (Data, URL) throws -> Void = {
+            try $0.write(to: $1, options: [.atomic])
+        }
+    ) -> PersistenceOutcome {
         persistenceLock.lock()
         defer { persistenceLock.unlock() }
         beforeValidationForTesting()
-        guard shouldContinue() else { return }
+        guard shouldContinue() else { return .blocked }
         if let expectedGeneration {
             lock.lock()
             let remainsCurrent = registryGen == expectedGeneration && registry == map
             lock.unlock()
-            guard remainsCurrent else { return }
+            guard remainsCurrent else { return .superseded }
         }
         let url = OsaurusPaths.externalModelsManifestFile()
         guard shouldContinue(), url == OsaurusPaths.externalModelsManifestFile() else {
-            return
+            return .blocked
         }
-        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
-        let payload = Persisted(
-            schemaVersion: Persisted.currentSchemaVersion,
-            models: Array(map.values).sorted { $0.id < $1.id }
-        )
-        guard let data = try? JSONEncoder().encode(payload) else { return }
-        guard shouldContinue(), url == OsaurusPaths.externalModelsManifestFile() else {
-            return
+        do {
+            try OsaurusPaths.ensureExists(url.deletingLastPathComponent())
+            let payload = Persisted(
+                schemaVersion: Persisted.currentSchemaVersion,
+                models: Array(map.values).sorted { $0.id < $1.id }
+            )
+            let data = try JSONEncoder().encode(payload)
+            guard shouldContinue(), url == OsaurusPaths.externalModelsManifestFile() else {
+                return .blocked
+            }
+            if let expectedGeneration {
+                lock.lock()
+                let remainsCurrent = registryGen == expectedGeneration && registry == map
+                lock.unlock()
+                guard remainsCurrent else { return .superseded }
+            }
+            try writer(data, url)
+            return .committed
+        } catch {
+            NSLog("ExternalModelLocator: manifest persistence failed: %@", error.localizedDescription)
+            return .failed
         }
-        if let expectedGeneration {
-            lock.lock()
-            let remainsCurrent = registryGen == expectedGeneration && registry == map
-            lock.unlock()
-            guard remainsCurrent else { return }
-        }
-        try? data.write(to: url, options: [.atomic])
+    }
+
+    /// Roll back only the generation whose persistence failed. A concurrent
+    /// newer rescan owns its own state and must never be replaced by an older
+    /// operation's recovery path. The generation remains monotonic because the
+    /// failed state was visible after the mutation lock was released.
+    private static func rollbackRegistryMutationIfCurrent(
+        attemptedRegistry: [String: Discovered],
+        attemptedGeneration: UInt64,
+        previousRegistry: [String: Discovered]?,
+        previousReport: ScanReport?
+    ) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard registryGen == attemptedGeneration, registry == attemptedRegistry else { return }
+        registry = previousRegistry
+        lastReport = previousReport
+        modelsMemo = nil
+        modelsMemoGen = .max
+        registryGen &+= 1
     }
 
     // MARK: - Test support

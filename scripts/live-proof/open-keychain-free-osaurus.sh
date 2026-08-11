@@ -51,6 +51,7 @@ fi
 cleanup_launch_environment() {
   launchctl unsetenv OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS >/dev/null 2>&1 || true
   launchctl unsetenv OSAURUS_TEST_ROOT >/dev/null 2>&1 || true
+  launchctl unsetenv OSAURUS_ALLOW_EXTERNAL_MODELS_FOR_TESTS >/dev/null 2>&1 || true
   launchctl unsetenv OSU_MODELS_DIR >/dev/null 2>&1 || true
 }
 trap cleanup_launch_environment EXIT
@@ -70,6 +71,7 @@ BEFORE_PIDS="$(process_ids_for_binary)"
 # before open(1), so the app inherits it without touching login Keychain.
 launchctl setenv OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS 1
 launchctl setenv OSAURUS_TEST_ROOT "$TEST_ROOT"
+launchctl setenv OSAURUS_ALLOW_EXTERNAL_MODELS_FOR_TESTS 1
 launchctl setenv OSU_MODELS_DIR "$MODELS_DIR"
 
 /usr/bin/open -n "$APP"

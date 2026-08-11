@@ -384,6 +384,42 @@ struct ExternalModelLocatorTests {
         }
     }
 
+    @Test func rescanRollsBackWhenPolicyChangesBeforePersistence() async {
+        await OsaurusTestGlobals.withPathsLock {
+            let previousRoot = OsaurusPaths.overrideRoot
+            let previousOverride = ExternalModelLocator.testRootsOverride
+            let manifestRoot = makeTempDir()
+            let customRoot = makeTempDir()
+            let probe = ExternalRescanTransitionProbe()
+            OsaurusPaths.overrideRoot = manifestRoot
+            ExternalModelLocator.invalidateInMemory()
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                ExternalModelLocator.testRootsOverride = previousOverride
+                ExternalModelLocator.invalidateInMemory()
+                try? FileManager.default.removeItem(at: manifestRoot)
+                try? FileManager.default.removeItem(at: customRoot)
+            }
+
+            writeBundle(at: customRoot.appendingPathComponent("publisher/repo"))
+            ExternalModelLocator.testRootsOverride = [
+                (root: customRoot, source: .customModelFolder)
+            ]
+            let generationBefore = ExternalModelLocator.registryGeneration()
+
+            let models = ExternalModelLocator.rescan(
+                shouldContinue: { probe.shouldContinue() },
+                beforePersistValidationForTesting: { probe.cancel() }
+            )
+
+            #expect(models.isEmpty)
+            #expect(ExternalModelLocator.models().isEmpty)
+            #expect(ExternalModelLocator.registryGeneration() > generationBefore)
+            ExternalModelLocator.invalidateInMemory()
+            #expect(ExternalModelLocator.models().isEmpty)
+        }
+    }
+
     @Test func concurrentRescansPersistNewestCommittedRegistry() async {
         await OsaurusTestGlobals.withPathsLock {
             let previousRoot = OsaurusPaths.overrideRoot
@@ -444,6 +480,47 @@ struct ExternalModelLocatorTests {
             ExternalModelLocator.invalidateInMemory()
             let persisted = ExternalModelLocator.models()
             #expect(persisted.map(\.id) == ["publisher/second"])
+        }
+    }
+
+    @Test func failedRescanPersistenceRollsBackInMemoryAndOnDisk() async {
+        await OsaurusTestGlobals.withPathsLock {
+            let previousRoot = OsaurusPaths.overrideRoot
+            let previousOverride = ExternalModelLocator.testRootsOverride
+            let manifestRoot = makeTempDir()
+            let firstRoot = makeTempDir()
+            let secondRoot = makeTempDir()
+            OsaurusPaths.overrideRoot = manifestRoot
+            ExternalModelLocator.invalidateInMemory()
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                ExternalModelLocator.testRootsOverride = previousOverride
+                ExternalModelLocator.invalidateInMemory()
+                try? FileManager.default.removeItem(at: manifestRoot)
+                try? FileManager.default.removeItem(at: firstRoot)
+                try? FileManager.default.removeItem(at: secondRoot)
+            }
+
+            writeBundle(at: firstRoot.appendingPathComponent("publisher/first"))
+            writeBundle(at: secondRoot.appendingPathComponent("publisher/second"))
+            ExternalModelLocator.testRootsOverride = [
+                (root: firstRoot, source: .customModelFolder)
+            ]
+            #expect(ExternalModelLocator.rescan().map(\.id) == ["publisher/first"])
+
+            ExternalModelLocator.testRootsOverride = [
+                (root: secondRoot, source: .customModelFolder)
+            ]
+            let result = ExternalModelLocator.rescan(
+                persistWriterForTesting: { _, _ in
+                    throw CocoaError(.fileWriteNoPermission)
+                }
+            )
+
+            #expect(result.map(\.id) == ["publisher/first"])
+            #expect(ExternalModelLocator.models().map(\.id) == ["publisher/first"])
+            ExternalModelLocator.invalidateInMemory()
+            #expect(ExternalModelLocator.models().map(\.id) == ["publisher/first"])
         }
     }
 

@@ -157,23 +157,51 @@ enum Keychain {
         attributes: .concurrent
     )
 
-    @TaskLocal private static var testBackendOverride: (any KeychainBackend)?
+    private struct BackendAccess: @unchecked Sendable {
+        let backend: any KeychainBackend
+        let bypassesDisableGate: Bool
+        let isDisabled: @Sendable () -> Bool
+    }
+
+    @TaskLocal private static var testBackendOverride: BackendAccess?
     private static let productionBackend = SecItemKeychainBackend()
 
     /// Scope a fake backend to one test task. Child tasks inherit the scope,
     /// while unrelated tests keep using the production/disabled path.
     static func _withBackendForTesting<T>(
         _ backend: any KeychainBackend,
+        bypassesDisableGate: Bool = true,
+        isDisabled: @escaping @Sendable () -> Bool = {
+            KeychainQueryHelpers.disablesKeychainForProcess
+        },
         operation: () throws -> T
     ) rethrows -> T {
-        try $testBackendOverride.withValue(backend, operation: operation)
+        try $testBackendOverride.withValue(
+            BackendAccess(
+                backend: backend,
+                bypassesDisableGate: bypassesDisableGate,
+                isDisabled: isDisabled
+            ),
+            operation: operation
+        )
     }
 
     static func _withBackendForTesting<T>(
         _ backend: any KeychainBackend,
+        bypassesDisableGate: Bool = true,
+        isDisabled: @escaping @Sendable () -> Bool = {
+            KeychainQueryHelpers.disablesKeychainForProcess
+        },
         operation: () async throws -> T
     ) async rethrows -> T {
-        try await $testBackendOverride.withValue(backend, operation: operation)
+        try await $testBackendOverride.withValue(
+            BackendAccess(
+                backend: backend,
+                bypassesDisableGate: bypassesDisableGate,
+                isDisabled: isDisabled
+            ),
+            operation: operation
+        )
     }
 
     /// True only while this task is inside a scoped injected-backend context.
@@ -184,9 +212,27 @@ enum Keychain {
         testBackendOverride != nil
     }
 
-    private static func currentBackend() -> (backend: KeychainBackend, bypassesDisableGate: Bool) {
-        if let override = testBackendOverride { return (override, true) }
-        return (productionBackend, false)
+    private static func currentBackend() -> BackendAccess {
+        if let override = testBackendOverride { return override }
+        return BackendAccess(
+            backend: productionBackend,
+            bypassesDisableGate: false,
+            isDisabled: { KeychainQueryHelpers.disablesKeychainForProcess }
+        )
+    }
+
+    /// Execute one raw backend call behind the final process-isolation check.
+    /// This must wrap every individual SecItem operation because a queued
+    /// mutation may wait after its entry guard has already passed.
+    private static func performBackendOperation<Result>(
+        access: BackendAccess,
+        operation: () -> Result
+    ) -> Result? {
+        if access.bypassesDisableGate { return operation() }
+        return KeychainQueryHelpers.performIfAccessRemainsAllowed(
+            isDisabled: access.isDisabled,
+            operation: operation
+        )
     }
 
     private static func baseQuery(service: String, account: String) -> [String: Any] {
@@ -302,23 +348,27 @@ enum Keychain {
         data: Data,
         accessible: CFString = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
     ) -> KeychainMutationOutcome {
-        let (backend, bypassesGate) = currentBackend()
-        if !bypassesGate, KeychainQueryHelpers.disablesKeychainForProcess { return .disabled }
+        let access = currentBackend()
+        if !access.bypassesDisableGate, access.isDisabled() { return .disabled }
         return onWriteQueueSync {
             let base = baseQuery(service: service, account: account)
             // Accessibility is a creation-time attribute; the legacy keychain
             // ignores it on update and some paths reject it, so only the add
             // carries it.
-            let updateStatus = backend.update(
-                query: base,
-                attributes: [kSecValueData as String: data]
-            )
+            guard let updateStatus = performBackendOperation(access: access, operation: {
+                access.backend.update(
+                    query: base,
+                    attributes: [kSecValueData as String: data]
+                )
+            }) else { return .disabled }
             if updateStatus == errSecSuccess { return .success }
             if updateStatus == errSecItemNotFound {
                 var add = base
                 add[kSecValueData as String] = data
                 add[kSecAttrAccessible as String] = accessible
-                let addStatus = backend.add(attributes: add)
+                guard let addStatus = performBackendOperation(access: access, operation: {
+                    access.backend.add(attributes: add)
+                }) else { return .disabled }
                 if addStatus == errSecSuccess { return .success }
                 logFailure("add", service: service, status: addStatus)
                 return mutationOutcome(for: addStatus)
@@ -329,12 +379,16 @@ enum Keychain {
                 // read nor updated by us, so there is nothing to preserve:
                 // delete it and re-add once to reclaim the account.
                 logFailure("update", service: service, status: updateStatus)
-                let deleteStatus = backend.delete(query: base)
+                guard let deleteStatus = performBackendOperation(access: access, operation: {
+                    access.backend.delete(query: base)
+                }) else { return .disabled }
                 if deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound {
                     var add = base
                     add[kSecValueData as String] = data
                     add[kSecAttrAccessible as String] = accessible
-                    let addStatus = backend.add(attributes: add)
+                    guard let addStatus = performBackendOperation(access: access, operation: {
+                        access.backend.add(attributes: add)
+                    }) else { return .disabled }
                     if addStatus == errSecSuccess { return .success }
                     logFailure("add-after-denied", service: service, status: addStatus)
                     return mutationOutcome(for: addStatus)
@@ -350,8 +404,8 @@ enum Keychain {
     /// Read (`service`, `account`) with a typed outcome distinguishing
     /// absence from transient unavailability and access denial.
     static func readItem(service: String, account: String) -> KeychainReadOutcome {
-        let (backend, bypassesGate) = currentBackend()
-        if !bypassesGate, KeychainQueryHelpers.disablesKeychainForProcess { return .disabled }
+        let access = currentBackend()
+        if !access.bypassesDisableGate, access.isDisabled() { return .disabled }
         var query = baseQuery(service: service, account: account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -366,11 +420,14 @@ enum Keychain {
         // securityd XPC round-trip that has stalled the main thread for
         // seconds under contention (Sentry APPLE-MACOS-1B5). Naming it here
         // makes any watchdog breach attribute to "keychain.read".
-        let (status, result) = MainThreadOperationLedger.shared.withMainThreadOperation(
+        let response = MainThreadOperationLedger.shared.withMainThreadOperation(
             subsystem: "keychain", operation: "read"
         ) {
-            backend.copyMatching(query)
+            performBackendOperation(access: access) {
+                access.backend.copyMatching(query)
+            }
         }
+        guard let (status, result) = response else { return .disabled }
         let outcome = readOutcome(for: status, result: result)
         if case .found = outcome { return outcome }
         if case .notFound = outcome { return outcome }
@@ -381,10 +438,12 @@ enum Keychain {
     /// Delete (`service`, `account`) with a typed outcome. A missing item
     /// counts as success (the desired end state holds).
     static func deleteItem(service: String, account: String) -> KeychainMutationOutcome {
-        let (backend, bypassesGate) = currentBackend()
-        if !bypassesGate, KeychainQueryHelpers.disablesKeychainForProcess { return .disabled }
+        let access = currentBackend()
+        if !access.bypassesDisableGate, access.isDisabled() { return .disabled }
         return onWriteQueueSync {
-            let status = backend.delete(query: baseQuery(service: service, account: account))
+            guard let status = performBackendOperation(access: access, operation: {
+                access.backend.delete(query: baseQuery(service: service, account: account))
+            }) else { return .disabled }
             if status == errSecSuccess || status == errSecItemNotFound { return .success }
             logFailure("delete", service: service, status: status)
             return mutationOutcome(for: status)
@@ -397,15 +456,17 @@ enum Keychain {
     /// keychain-free proof processes cannot bypass the process disable gate
     /// through a direct `SecItemDelete` call.
     static func deleteAllItems(service: String) -> KeychainMutationOutcome {
-        let (backend, bypassesGate) = currentBackend()
-        if !bypassesGate, KeychainQueryHelpers.disablesKeychainForProcess { return .disabled }
+        let access = currentBackend()
+        if !access.bypassesDisableGate, access.isDisabled() { return .disabled }
         return onWriteQueueSync {
             let query: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: service,
                 kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             ]
-            let status = backend.delete(query: query)
+            guard let status = performBackendOperation(access: access, operation: {
+                access.backend.delete(query: query)
+            }) else { return .disabled }
             if status == errSecSuccess || status == errSecItemNotFound { return .success }
             logFailure("delete-all", service: service, status: status)
             return mutationOutcome(for: status)
@@ -415,8 +476,8 @@ enum Keychain {
     /// Every attribute dictionary stored under `service`, de-duplicated on
     /// account name, with an authoritative flag for cache decisions.
     static func fetchAllItems(service: String, returnData: Bool) -> KeychainEnumerationOutcome {
-        let (backend, bypassesGate) = currentBackend()
-        if !bypassesGate, KeychainQueryHelpers.disablesKeychainForProcess {
+        let access = currentBackend()
+        if !access.bypassesDisableGate, access.isDisabled() {
             return KeychainEnumerationOutcome(items: [], status: errSecSuccess, isDefinitive: true)
         }
         var query: [String: Any] = [
@@ -429,7 +490,13 @@ enum Keychain {
         ]
         if returnData { query[kSecReturnData as String] = true }
 
-        let (status, result) = backend.copyMatching(query)
+        guard let (status, result) = performBackendOperation(access: access, operation: {
+            access.backend.copyMatching(query)
+        }) else {
+            return KeychainEnumerationOutcome(
+                items: [], status: errSecSuccess, isDefinitive: true
+            )
+        }
         if status == errSecItemNotFound {
             return KeychainEnumerationOutcome(items: [], status: status, isDefinitive: true)
         }
@@ -476,10 +543,10 @@ enum Keychain {
         data: Data,
         accessible: CFString = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
     ) {
-        let backend = testBackendOverride
+        let access = testBackendOverride
         let accessibility = accessible as String
         writeQueue.async {
-            $testBackendOverride.withValue(backend) {
+            $testBackendOverride.withValue(access) {
                 _ = writeItem(
                     service: service,
                     account: account,
@@ -495,9 +562,9 @@ enum Keychain {
     /// delete another) to stay ordered relative to `writeInBackground` writes
     /// while keeping the blocking SecItem calls off the main thread.
     static func performInBackground(_ work: @escaping @Sendable () -> Void) {
-        let backend = testBackendOverride
+        let access = testBackendOverride
         writeQueue.async {
-            $testBackendOverride.withValue(backend, operation: work)
+            $testBackendOverride.withValue(access, operation: work)
         }
     }
 
@@ -507,10 +574,10 @@ enum Keychain {
     /// Security-framework I/O. Ordered relative to `writeInBackground` and
     /// `performInBackground` work.
     static func perform<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
-        let backend = testBackendOverride
+        let access = testBackendOverride
         return await withCheckedContinuation { continuation in
             writeQueue.async {
-                let result = $testBackendOverride.withValue(backend, operation: work)
+                let result = $testBackendOverride.withValue(access, operation: work)
                 continuation.resume(returning: result)
             }
         }
@@ -522,10 +589,10 @@ enum Keychain {
     /// restored only for this operation. This preserves test/live-proof
     /// isolation without putting independent reads behind the mutation queue.
     static func performRead<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
-        let backend = testBackendOverride
+        let access = testBackendOverride
         return await withCheckedContinuation { continuation in
             readQueue.async {
-                let result = $testBackendOverride.withValue(backend, operation: work)
+                let result = $testBackendOverride.withValue(access, operation: work)
                 continuation.resume(returning: result)
             }
         }

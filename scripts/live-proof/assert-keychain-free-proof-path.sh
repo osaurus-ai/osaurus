@@ -50,9 +50,11 @@ check_absent_regex "$LAUNCHER" '(^|[^[:alnum:]_])(open|security|codesign|notaryt
 
 check_contains "$UI_LAUNCHER" "launchctl setenv OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS 1" "UI launcher disables keychain via launchd env"
 check_contains "$UI_LAUNCHER" 'launchctl setenv OSAURUS_TEST_ROOT "$TEST_ROOT"' "UI launcher isolates test root via launchd env"
+check_contains "$UI_LAUNCHER" "launchctl setenv OSAURUS_ALLOW_EXTERNAL_MODELS_FOR_TESTS 1" "UI launcher explicitly permits its read-only model root"
 check_contains "$UI_LAUNCHER" 'launchctl setenv OSU_MODELS_DIR "$MODELS_DIR"' "UI launcher sets explicit models directory"
 check_contains "$UI_LAUNCHER" "launchctl unsetenv OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS" "UI launcher clears keychain test env"
 check_contains "$UI_LAUNCHER" "launchctl unsetenv OSAURUS_TEST_ROOT" "UI launcher clears test-root env"
+check_contains "$UI_LAUNCHER" "launchctl unsetenv OSAURUS_ALLOW_EXTERNAL_MODELS_FOR_TESTS" "UI launcher clears external-model opt-in"
 check_contains "$UI_LAUNCHER" "launchctl unsetenv OSU_MODELS_DIR" "UI launcher clears models env"
 check_contains "$UI_LAUNCHER" '/usr/bin/defaults delete "$BUNDLE_ID"' "UI launcher clears isolated UserDefaults domain"
 check_contains "$UI_LAUNCHER" 'APP_BUNDLE_ID="$(' "UI launcher verifies app bundle id"
@@ -76,7 +78,7 @@ check_absent_regex "$BUILDER" '(^|[^[:alnum:]_])(open|security|notarytool)([[:sp
 check_contains "$ROOT/Packages/OsaurusCore/Services/Keychain/KeychainQueryHelpers.swift" "disablesKeychainForProcess" "shared keychain-disabled process flag"
 check_contains "$ROOT/Packages/OsaurusCore/Services/Keychain/AgentSecretsKeychain.swift" "if KeychainQueryHelpers.disablesKeychainForProcess { return nil }" "agent secret read bypass"
 check_contains "$ROOT/Packages/OsaurusCore/Services/Keychain/ToolSecretsKeychain.swift" "if KeychainQueryHelpers.disablesKeychainForProcess { return nil }" "tool secret read bypass"
-check_contains "$ROOT/Packages/OsaurusCore/Services/Provider/RemoteProviderKeychain.swift" "if KeychainQueryHelpers.disablesKeychainForProcess { return nil }" "remote provider read bypass"
+check_contains "$ROOT/Packages/OsaurusCore/Services/Provider/RemoteProviderKeychain.swift" "&& !Keychain.hasInjectedBackendForCurrentContext { return nil }" "remote provider read bypass"
 check_contains "$ROOT/Packages/OsaurusCore/Services/MCP/MCPProviderKeychain.swift" "if KeychainQueryHelpers.disablesKeychainForProcess { return nil }" "mcp provider read bypass"
 check_contains "$ROOT/Packages/OsaurusCore/Identity/StorageKeyManager.swift" "if Self.disablesKeychainForProcess { return nil }" "storage keychain read bypass"
 

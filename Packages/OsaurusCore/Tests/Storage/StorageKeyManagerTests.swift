@@ -109,4 +109,36 @@ struct StorageKeyManagerTests {
             #expect(result == .retry)
         }
     }
+
+    @Test
+    func isolatedCacheDoesNotCrossDataRoots() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let previousRoot = OsaurusPaths.overrideRoot
+            let firstRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-storage-key-scope-first-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            let secondRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-storage-key-scope-second-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            OsaurusPaths.overrideRoot = firstRoot
+            StorageKeyManager.shared.wipeCache()
+            defer {
+                StorageKeyManager.shared.wipeCache()
+                OsaurusPaths.overrideRoot = previousRoot
+                try? FileManager.default.removeItem(at: firstRoot)
+                try? FileManager.default.removeItem(at: secondRoot)
+            }
+
+            let first = try StorageKeyManager.shared.currentKey()
+            OsaurusPaths.overrideRoot = secondRoot
+            let second = try StorageKeyManager.shared.currentKey()
+
+            #expect(
+                first.withUnsafeBytes { Data($0) }
+                    != second.withUnsafeBytes { Data($0) }
+            )
+        }
+    }
 }

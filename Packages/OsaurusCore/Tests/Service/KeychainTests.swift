@@ -132,6 +132,40 @@ private final class AuthenticationContextCollector: @unchecked Sendable {
     }
 }
 
+private final class KeychainIsolationTransitionProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var disabled = false
+    private var checks = 0
+    let firstCheck = DispatchSemaphore(value: 0)
+
+    func isDisabled() -> Bool {
+        lock.lock()
+        checks += 1
+        let shouldSignal = checks == 1
+        let result = disabled
+        lock.unlock()
+        if shouldSignal { firstCheck.signal() }
+        return result
+    }
+
+    func disable() {
+        lock.withLock { disabled = true }
+    }
+}
+
+private final class KeychainMutationOutcomeBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: KeychainMutationOutcome?
+
+    func set(_ outcome: KeychainMutationOutcome) {
+        lock.withLock { storage = outcome }
+    }
+
+    var value: KeychainMutationOutcome? {
+        lock.withLock { storage }
+    }
+}
+
 @Suite("Keychain typed outcomes", .serialized)
 struct KeychainTests {
     private static let service = "ai.osaurus.test.keychain"
@@ -509,6 +543,53 @@ struct KeychainTests {
                 service: Self.service, account: "ordered", data: Data("second".utf8))
         }
         #expect(backend.value(service: Self.service, account: "ordered") == Data("second".utf8))
+    }
+
+    @Test("queued production writes recheck isolation before backend execution")
+    func queuedWriteRechecksIsolationAtExecution() {
+        let blockerEntered = DispatchSemaphore(value: 0)
+        let releaseBlocker = DispatchSemaphore(value: 0)
+        Keychain.performInBackground {
+            blockerEntered.signal()
+            releaseBlocker.wait()
+        }
+        guard blockerEntered.wait(timeout: .now() + 2) == .success else {
+            Issue.record("Keychain write queue blocker was not admitted")
+            releaseBlocker.signal()
+            return
+        }
+
+        let backend = FakeKeychainBackend()
+        let gate = KeychainIsolationTransitionProbe()
+        let outcome = KeychainMutationOutcomeBox()
+        let completed = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Keychain._withBackendForTesting(
+                backend,
+                bypassesDisableGate: false,
+                isDisabled: { gate.isDisabled() }
+            ) {
+                Keychain.writeItem(
+                    service: Self.service,
+                    account: "transition",
+                    data: Data("must-not-write".utf8)
+                )
+            }
+            outcome.set(result)
+            completed.signal()
+        }
+
+        guard gate.firstCheck.wait(timeout: .now() + 2) == .success else {
+            Issue.record("Queued write did not pass its admission check")
+            releaseBlocker.signal()
+            return
+        }
+        gate.disable()
+        releaseBlocker.signal()
+
+        #expect(completed.wait(timeout: .now() + 2) == .success)
+        #expect(outcome.value == .disabled)
+        #expect(backend.operations.isEmpty)
     }
 
     // MARK: - Disabled mode

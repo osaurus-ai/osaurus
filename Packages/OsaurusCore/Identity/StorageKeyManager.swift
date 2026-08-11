@@ -73,13 +73,9 @@ public final class StorageKeyManager: @unchecked Sendable {
         case retry
     }
 
-    private enum IsolationScope {
-        case production
-        case isolated
-
-        init(isolated: Bool) {
-            self = isolated ? .isolated : .production
-        }
+    private struct IsolationScope: Equatable {
+        let isolated: Bool
+        let rootPath: String
     }
 
     static let service = "com.osaurus.storage"
@@ -121,6 +117,17 @@ public final class StorageKeyManager: @unchecked Sendable {
 
     private init() {}
 
+    /// Cache identity is the complete storage namespace, not merely whether
+    /// Keychain access is disabled. Parallel tests routinely move between
+    /// distinct isolated roots inside one process; reusing a DEK or cached read
+    /// failure across those roots would cross-contaminate their encrypted data.
+    private static var currentIsolationScope: IsolationScope {
+        IsolationScope(
+            isolated: disablesKeychainForProcess,
+            rootPath: OsaurusPaths.root().standardizedFileURL.path
+        )
+    }
+
     // MARK: - Public API
 
     /// Live proof/test launches can set this to avoid reading or writing the
@@ -136,9 +143,9 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// one on first call. Throws on Keychain or derivation failure.
     public func currentKey() throws -> SymmetricKey {
         for _ in 0..<3 {
-            let isolated = Self.disablesKeychainForProcess
-            let cachedState = cachedState(forIsolation: isolated)
-            guard isolated == Self.disablesKeychainForProcess else { continue }
+            let scope = Self.currentIsolationScope
+            let cachedState = cachedState(for: scope)
+            guard scope == Self.currentIsolationScope else { continue }
             if let cached = cachedState.key {
                 return cached
             }
@@ -156,17 +163,17 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// Cache a freshly resolved key, posting `storageKeyDidBecomeResident`
     /// on the nil -> non-nil transition (outside the lock).
     @discardableResult
-    private func cacheResidentKey(_ key: SymmetricKey, isolated: Bool) -> Bool {
-        guard isolated == Self.disablesKeychainForProcess else { return false }
+    private func cacheResidentKey(_ key: SymmetricKey, scope: IsolationScope) -> Bool {
+        guard scope == Self.currentIsolationScope else { return false }
         os_unfair_lock_lock(&lock)
         let wasResident = cachedKey != nil
         cachedKey = key
-        cachedKeyScope = IsolationScope(isolated: isolated)
+        cachedKeyScope = scope
         cachedReadFailureStatus = nil
         cachedReadFailureScope = nil
         os_unfair_lock_unlock(&lock)
-        guard isolated == Self.disablesKeychainForProcess else {
-            discardCachedState(forIsolation: isolated)
+        guard scope == Self.currentIsolationScope else {
+            discardCachedState(for: scope)
             return false
         }
         if !wasResident {
@@ -180,9 +187,10 @@ public final class StorageKeyManager: @unchecked Sendable {
 
     private func resolveCurrentKeyOnKeychainQueue() throws -> SymmetricKey {
         for _ in 0..<3 {
-            let isolated = Self.disablesKeychainForProcess
-            let cachedState = cachedState(forIsolation: isolated)
-            guard isolated == Self.disablesKeychainForProcess else { continue }
+            let scope = Self.currentIsolationScope
+            let isolated = scope.isolated
+            let cachedState = cachedState(for: scope)
+            guard scope == Self.currentIsolationScope else { continue }
             if let cached = cachedState.key { return cached }
             if let cachedFailure = cachedState.failure {
                 throw StorageKeyError.keychainReadFailed(cachedFailure)
@@ -211,14 +219,14 @@ public final class StorageKeyManager: @unchecked Sendable {
                 }
             }
 
-            guard isolated == Self.disablesKeychainForProcess else { continue }
+            guard scope == Self.currentIsolationScope else { continue }
             if shouldMarkProvisioned {
                 markProvisioned(expectedIsolation: isolated)
             }
-            guard isolated == Self.disablesKeychainForProcess else { continue }
-            guard cacheResidentKey(key, isolated: isolated) else { continue }
-            guard isolated == Self.disablesKeychainForProcess else {
-                discardCachedState(forIsolation: isolated)
+            guard scope == Self.currentIsolationScope else { continue }
+            guard cacheResidentKey(key, scope: scope) else { continue }
+            guard scope == Self.currentIsolationScope else {
+                discardCachedState(for: scope)
                 continue
             }
             return key
@@ -226,11 +234,10 @@ public final class StorageKeyManager: @unchecked Sendable {
         throw StorageKeyError.keychainReadFailed(errSecInteractionNotAllowed)
     }
 
-    private func cachedState(forIsolation isolated: Bool) -> (
+    private func cachedState(for scope: IsolationScope) -> (
         key: SymmetricKey?,
         failure: OSStatus?
     ) {
-        let scope = IsolationScope(isolated: isolated)
         os_unfair_lock_lock(&lock)
         if cachedKeyScope != nil, cachedKeyScope != scope {
             cachedKey = nil
@@ -246,8 +253,7 @@ public final class StorageKeyManager: @unchecked Sendable {
         return state
     }
 
-    private func discardCachedState(forIsolation isolated: Bool) {
-        let scope = IsolationScope(isolated: isolated)
+    private func discardCachedState(for scope: IsolationScope) {
         os_unfair_lock_lock(&lock)
         if cachedKeyScope == scope {
             cachedKey = nil
@@ -263,9 +269,9 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// True only when the key is already resident in this process. This never
     /// touches Keychain, so startup/UI code can fail closed without prompting.
     public var hasCachedKey: Bool {
-        let isolated = Self.disablesKeychainForProcess
-        let cached = cachedState(forIsolation: isolated).key != nil
-        return isolated == Self.disablesKeychainForProcess && cached
+        let scope = Self.currentIsolationScope
+        let cached = cachedState(for: scope).key != nil
+        return scope == Self.currentIsolationScope && cached
     }
 
     /// True when storage can be opened/written right now without risking a
@@ -328,9 +334,9 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// responsible for re-keying SQLCipher databases and re-wrapping
     /// `.osec` files. The cached key is updated atomically.
     public func rotate() throws -> SymmetricKey {
-        let isolated = Self.disablesKeychainForProcess
+        let scope = Self.currentIsolationScope
         let key = try generateAndPersistKey(forceFresh: true)
-        if cacheResidentKey(key, isolated: isolated) {
+        if cacheResidentKey(key, scope: scope) {
             return key
         }
         return try currentKey()
@@ -342,12 +348,13 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// can't call `rotate()` because that would generate a *third*
     /// unrelated key.
     public func install(key: SymmetricKey) throws {
-        let isolated = Self.disablesKeychainForProcess
+        let scope = Self.currentIsolationScope
+        let isolated = scope.isolated
         let bytes = key.withUnsafeBytes { Data($0) }
         if !isolated {
             try persistKeychain(data: bytes)
         }
-        if !cacheResidentKey(key, isolated: isolated) {
+        if !cacheResidentKey(key, scope: scope) {
             _ = try currentKey()
         }
     }
@@ -359,10 +366,11 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// reproducible on another device with the same iCloud Keychain
     /// (and thus the same master key).
     public func deriveFromMasterKey(context: LAContext) throws -> SymmetricKey {
-        let isolated = Self.disablesKeychainForProcess
+        let scope = Self.currentIsolationScope
+        let isolated = scope.isolated
         if isolated {
             let key = try generateInMemoryKey()
-            if cacheResidentKey(key, isolated: isolated) {
+            if cacheResidentKey(key, scope: scope) {
                 return key
             }
             return try currentKey()
@@ -390,7 +398,7 @@ public final class StorageKeyManager: @unchecked Sendable {
         try persistKeychain(data: derivedBytes)
 
         let key = SymmetricKey(data: derivedBytes)
-        guard cacheResidentKey(key, isolated: isolated) else {
+        guard cacheResidentKey(key, scope: scope) else {
             return try currentKey()
         }
         log.info("Storage key re-derived from master key (HKDF-SHA256)")
@@ -412,7 +420,8 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// **Irreversible.** Caller is responsible for moving any encrypted
     /// data out first if it should be preserved.
     public func resetForWipe() {
-        let isolated = Self.disablesKeychainForProcess
+        let scope = Self.currentIsolationScope
+        let isolated = scope.isolated
         guard let root = stableRoot(expectedIsolation: isolated) else {
             wipeCache()
             return
@@ -460,13 +469,13 @@ public final class StorageKeyManager: @unchecked Sendable {
 
     private func cacheReadFailureIfNonInteractiveBlocked(
         _ status: OSStatus,
-        isolated: Bool
+        scope: IsolationScope
     ) {
         guard Self.requiresUserInteraction(status) else { return }
-        guard isolated == Self.disablesKeychainForProcess else { return }
+        guard scope == Self.currentIsolationScope else { return }
         os_unfair_lock_lock(&lock)
         cachedReadFailureStatus = status
-        cachedReadFailureScope = IsolationScope(isolated: isolated)
+        cachedReadFailureScope = scope
         os_unfair_lock_unlock(&lock)
     }
 
@@ -716,8 +725,8 @@ public final class StorageKeyManager: @unchecked Sendable {
 
     /// Read `account` from the keychain.
     private func readItem(account: String) throws -> Data? {
-        let isolated = Self.disablesKeychainForProcess
-        if isolated { return nil }
+        let scope = Self.currentIsolationScope
+        if scope.isolated { return nil }
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
@@ -736,7 +745,7 @@ public final class StorageKeyManager: @unchecked Sendable {
         ) ?? errSecInteractionNotAllowed
         if status == errSecItemNotFound { return nil }
         if status != errSecSuccess {
-            cacheReadFailureIfNonInteractiveBlocked(status, isolated: isolated)
+            cacheReadFailureIfNonInteractiveBlocked(status, scope: scope)
             throw StorageKeyError.keychainReadFailed(status)
         }
         return result as? Data
@@ -755,7 +764,10 @@ public final class StorageKeyManager: @unchecked Sendable {
         ) {
             os_unfair_lock_lock(&lock)
             cachedKey = key
-            cachedKeyScope = IsolationScope(isolated: isolated)
+            cachedKeyScope = IsolationScope(
+                isolated: isolated,
+                rootPath: OsaurusPaths.root().standardizedFileURL.path
+            )
             cachedReadFailureStatus = nil
             cachedReadFailureScope = nil
             os_unfair_lock_unlock(&lock)

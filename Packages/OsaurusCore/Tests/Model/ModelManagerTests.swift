@@ -46,6 +46,45 @@ private final class CatalogPolicyTransitionProbe: @unchecked Sendable {
     }
 }
 
+private final class TopUpPolicyGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var allowed = true
+
+    func check() -> Bool {
+        lock.withLock { allowed }
+    }
+
+    func revoke() {
+        lock.withLock { allowed = false }
+    }
+}
+
+private actor TopUpDownloadPause {
+    private var reached = false
+    private var released = false
+    private var reachWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func pause() async {
+        reached = true
+        reachWaiters.forEach { $0.resume() }
+        reachWaiters.removeAll()
+        guard !released else { return }
+        await withCheckedContinuation { releaseWaiters.append($0) }
+    }
+
+    func waitUntilReached() async {
+        guard !reached else { return }
+        await withCheckedContinuation { reachWaiters.append($0) }
+    }
+
+    func release() {
+        released = true
+        releaseWaiters.forEach { $0.resume() }
+        releaseWaiters.removeAll()
+    }
+}
+
 @Suite(.serialized)
 struct ModelManagerTests {
 
@@ -205,6 +244,41 @@ struct ModelManagerTests {
         })
 
         #expect(probe.count >= 4)
+    }
+
+    @Test("automatic top-up cannot publish after isolation changes during download")
+    func automaticTopUpStagesBeforePolicyCheckedCommit() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            "osaurus-top-up-commit-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let destination = root.appendingPathComponent("config.json")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("existing".utf8).write(to: destination)
+        defer { try? fm.removeItem(at: root) }
+
+        let gate = TopUpPolicyGate()
+        let pause = TopUpDownloadPause()
+        let task = Task {
+            try await ModelDownloadService.stageAndCommitTopUpFile(
+                destination: destination,
+                shouldContinue: { gate.check() }
+            ) { staged in
+                try Data("downloaded".utf8).write(to: staged)
+                await pause.pause()
+            }
+        }
+
+        await pause.waitUntilReached()
+        gate.revoke()
+        await pause.release()
+
+        #expect(try await task.value == false)
+        #expect(try String(contentsOf: destination, encoding: .utf8) == "existing")
+        let stagedFiles = try fm.contentsOfDirectory(atPath: root.path)
+            .filter { $0.hasPrefix(".osaurus-topup-stage-") }
+        #expect(stagedFiles.isEmpty)
     }
 
     @Test func cancelDownload_resetsStateWithoutTask() async throws {

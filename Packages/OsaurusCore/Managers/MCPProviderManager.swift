@@ -335,6 +335,7 @@ public final class MCPProviderManager: ObservableObject {
         var state = providerStates[providerId] ?? MCPProviderState(providerId: providerId)
         state.isConnecting = true
         state.lastError = nil
+        state.lastFailureWasTransient = false
         // Clear any stale "needs auth" state from a prior attempt — we'll re-set it below
         // if this attempt also surfaces a 401.
         state.requiresAuth = false
@@ -885,6 +886,27 @@ public final class MCPProviderManager: ObservableObject {
         invalidateConnectionOperation(providerId: providerId)
     }
 
+    func _testRegisterStdioRunnerOperation(_ operation: MCPConnectionOperation) -> UUID {
+        let token = UUID()
+        stdioRunnerOperations[operation.providerId] = operation
+        stdioRunnerTokens[operation.providerId] = token
+        return token
+    }
+
+    func _testHandleStdioProcessExit(
+        providerId: UUID,
+        runnerToken: UUID,
+        exitCode: Int32 = 1,
+        stderrTail: String = "fixture exit"
+    ) {
+        handleStdioProcessExit(
+            providerId: providerId,
+            runnerToken: runnerToken,
+            exitCode: exitCode,
+            stderrTail: stderrTail
+        )
+    }
+
     /// Disconnect from all providers
     public func disconnectAll() {
         let providerIds = Set(clients.keys)
@@ -1059,41 +1081,15 @@ public final class MCPProviderManager: ObservableObject {
     /// success label. Stdio test runs are intentionally short-lived;
     /// the provider isn't persisted and no state is left behind.
     public func testStdioConnection(provider: MCPProvider) async throws -> Int {
-        // Build the production transport; spawning a real subprocess is
-        // the whole point — fake-test paths would miss PATH lookup, env
-        // resolution, and protocol mismatches.
-        let transport: any MCP.Transport
-        do {
-            transport = try await createStdioTransport(for: provider)
-        } catch {
-            // `createStdioTransport` retains the runner in
-            // `hostStdioRunners` / `sandboxStdioRunners` on success but
-            // we don't want a test attempt to register one — wipe both
-            // before rethrowing.
-            stopStdioRunners(for: provider.id)
-            throw error
+        let result = await MCPProviderProbeService.probeStdio(provider: provider)
+        guard result.succeeded else {
+            throw MCPProviderError.connectionFailed(result.redactedMessage)
         }
-
-        let client = MCP.Client(name: "Osaurus", version: "1.0.0")
-
-        do {
-            try await withTimeout(seconds: 10) {
-                _ = try await client.connect(transport: transport)
-            }
-            let tools = try await withTimeout(seconds: 10) {
-                try await client.listAllTools()
-            }
-            stopStdioRunners(for: provider.id)
-            return tools.count
-        } catch {
-            stopStdioRunners(for: provider.id)
-            throw error
-        }
+        return result.toolCount
     }
 
-    /// Tear down any stdio runners registered against `providerId`. Used
-    /// by `testStdioConnection` so probe attempts don't leak subprocesses,
-    /// and by `connect`'s catch path for the same reason.
+    /// Tear down any live-connection stdio runners registered against
+    /// `providerId`, including half-started runners in `connect`'s catch path.
     private func stopStdioRunners(
         for providerId: UUID,
         operation: MCPConnectionOperation? = nil
@@ -1491,25 +1487,56 @@ public final class MCPProviderManager: ObservableObject {
         stderrTail: String
     ) {
         guard stdioRunnerTokens[providerId] == runnerToken else { return }
-        if let operation = stdioRunnerOperations[providerId] {
-            operation.cancel()
-            if activeConnectionOperations[providerId] === operation {
+        let runnerOperation = stdioRunnerOperations[providerId]
+        let runnerGeneration = runnerOperation?.generation
+        let isSuperseded = runnerGeneration.map {
+            connectionGenerations[providerId] != $0
+        } ?? false
+
+        if let runnerOperation {
+            runnerOperation.cancel()
+            if activeConnectionOperations[providerId] === runnerOperation {
                 activeConnectionOperations.removeValue(forKey: providerId)
             }
-            connectionGenerations[providerId] = (connectionGenerations[providerId] ?? 0) &+ 1
+            if !isSuperseded {
+                connectionGenerations[providerId] = (connectionGenerations[providerId] ?? 0) &+ 1
+            }
         }
 
-        if let tools = registeredTools[providerId] {
-            ToolRegistry.shared.unregister(names: tools.map { $0.name })
+        var catalogChanged = false
+        let ownsRegisteredTools = runnerGeneration.map {
+            registeredToolGenerations[providerId] == $0
+        } ?? true
+        if ownsRegisteredTools {
+            if let tools = registeredTools[providerId] {
+                ToolRegistry.shared.unregister(names: tools.map { $0.name })
+                catalogChanged = true
+            }
+            discoveredTools.removeValue(forKey: providerId)
+            registeredTools.removeValue(forKey: providerId)
+            registeredToolGenerations.removeValue(forKey: providerId)
         }
-        if let client = clients.removeValue(forKey: providerId) {
-            Task.detached { await client.disconnect() }
+
+        let ownsClient = runnerGeneration.map {
+            clientGenerations[providerId] == $0
+        } ?? true
+        if ownsClient {
+            if let client = clients.removeValue(forKey: providerId) {
+                Task.detached { await client.disconnect() }
+            }
+            clientGenerations.removeValue(forKey: providerId)
         }
-        clientGenerations.removeValue(forKey: providerId)
-        discoveredTools.removeValue(forKey: providerId)
-        registeredTools.removeValue(forKey: providerId)
-        registeredToolGenerations.removeValue(forKey: providerId)
-        stopStdioRunners(for: providerId)
+
+        stopStdioRunners(for: providerId, operation: runnerOperation)
+
+        // An old subprocess can exit while a replacement connection is still
+        // resolving credentials or provisioning its runner. Its token may
+        // still be installed, but it must not overwrite the replacement's
+        // connecting/connected state.
+        guard !isSuperseded else {
+            if catalogChanged { scheduleToolCatalogChanged() }
+            return
+        }
 
         if var state = providerStates[providerId] {
             state.isConnected = false
@@ -1523,9 +1550,10 @@ public final class MCPProviderManager: ObservableObject {
             } else {
                 state.lastError = "Stdio MCP subprocess exited\(codeSuffix): \(stderrTail)"
             }
+            state.lastFailureWasTransient = false
             providerStates[providerId] = state
         }
-        scheduleToolCatalogChanged()
+        if catalogChanged { scheduleToolCatalogChanged() }
         notifyStatusChanged()
     }
 
@@ -1535,10 +1563,9 @@ public final class MCPProviderManager: ObservableObject {
         generation: UInt64
     ) async {
         await client.onNotification(ToolListChangedNotification.self) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 await self?.handleRemoteToolListChanged(
                     providerId: providerId,
-                    client: client,
                     generation: generation
                 )
             }
@@ -1547,11 +1574,10 @@ public final class MCPProviderManager: ObservableObject {
 
     private func handleRemoteToolListChanged(
         providerId: UUID,
-        client: MCP.Client,
         generation: UInt64
     ) async {
         guard let provider = configuration.provider(id: providerId),
-            clients[providerId] === client,
+            let client = clients[providerId],
             clientGenerations[providerId] == generation
         else { return }
 

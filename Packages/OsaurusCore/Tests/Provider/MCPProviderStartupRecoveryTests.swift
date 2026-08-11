@@ -294,6 +294,78 @@ struct MCPProviderStartupRecoveryTests {
         #expect(recorder.attempts(for: provider.id) == 1)
     }
 
+    @Test("an old stdio exit cannot invalidate a replacement connection")
+    func supersededStdioExitPreservesReplacement() {
+        let manager = MCPProviderManager.shared
+        let provider = makeProvider(name: "stdio-replacement", autoConnect: false)
+        manager._testInstallProviders([provider])
+        defer { manager._testRemoveProviders(ids: [provider.id]) }
+
+        let oldOperation = manager.beginConnectionOperation(providerId: provider.id)
+        let token = manager._testRegisterStdioRunnerOperation(oldOperation)
+        let replacement = manager.beginConnectionOperation(providerId: provider.id)
+
+        var state = MCPProviderState(providerId: provider.id)
+        state.isConnecting = true
+        manager._testSetState(state, for: provider.id)
+
+        manager._testHandleStdioProcessExit(providerId: provider.id, runnerToken: token)
+
+        #expect(manager.connectionOperationIsCurrent(replacement))
+        #expect(manager.providerStates[provider.id]?.isConnecting == true)
+        #expect(manager.providerStates[provider.id]?.lastError == nil)
+    }
+
+    @Test("terminal stdio exit clears stale transient recovery state")
+    func terminalStdioExitClearsTransientFailure() async {
+        let manager = MCPProviderManager.shared
+        let provider = makeProvider(name: "stdio-terminal", autoConnect: false)
+        manager._testInstallProviders([provider])
+        defer { manager._testRemoveProviders(ids: [provider.id]) }
+
+        let operation = manager.beginConnectionOperation(providerId: provider.id)
+        let token = manager._testRegisterStdioRunnerOperation(operation)
+        var state = MCPProviderState(providerId: provider.id)
+        state.lastFailureWasTransient = true
+        manager._testSetState(state, for: provider.id)
+
+        manager._testHandleStdioProcessExit(providerId: provider.id, runnerToken: token)
+
+        #expect(manager.providerStates[provider.id]?.lastFailureWasTransient == false)
+        let recorder = ConnectRecorder()
+        manager.testConnectOverride = { id in recorder.record(id) }
+        await manager.reconnectTransientlyFailedProviders()
+        #expect(recorder.attempts(for: provider.id) == 0)
+    }
+
+    @Test("stdio connection probes do not mutate live provider state")
+    func stdioProbeDoesNotMutateLiveState() async {
+        let manager = MCPProviderManager.shared
+        var provider = makeProvider(name: "stdio-probe", autoConnect: false)
+        provider.transport = .stdio
+        provider.executionHost = .host
+        provider.command = ""
+        manager._testInstallProviders([provider])
+        defer { manager._testRemoveProviders(ids: [provider.id]) }
+
+        var state = MCPProviderState(providerId: provider.id)
+        state.isConnected = true
+        state.discoveredToolCount = 3
+        state.discoveredToolNames = ["one", "two", "three"]
+        manager._testSetState(state, for: provider.id)
+
+        do {
+            _ = try await manager.testStdioConnection(provider: provider)
+            Issue.record("A stdio probe without a command unexpectedly succeeded")
+        } catch {
+            // Expected: the isolated probe reports its own configuration failure.
+        }
+
+        #expect(manager.providerStates[provider.id]?.isConnected == true)
+        #expect(manager.providerStates[provider.id]?.discoveredToolCount == 3)
+        #expect(manager.providerStates[provider.id]?.discoveredToolNames == ["one", "two", "three"])
+    }
+
     @Test("first satisfied network observation recovers transiently-failed providers")
     func firstSatisfiedObservationRecovers() async {
         let manager = MCPProviderManager.shared

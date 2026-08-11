@@ -14,8 +14,8 @@ import SwiftUI
 final class DirectoryPickerService: ObservableObject {
     static let shared = DirectoryPickerService()
 
-    /// A recognized XCTest host may use `OSU_MODELS_DIR` only when a live
-    /// model proof explicitly opts out of disposable model-directory isolation.
+    /// An isolated process may use `OSU_MODELS_DIR` only when a live model
+    /// proof explicitly opts out of disposable model-directory isolation.
     nonisolated static let allowExternalModelsInTestHostsEnvironmentKey =
         "OSAURUS_ALLOW_EXTERNAL_MODELS_FOR_TESTS"
 
@@ -348,15 +348,14 @@ final class DirectoryPickerService: ObservableObject {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         recognizedTestHost: Bool = ProcessDataRootPolicy.isRecognizedTestHostProcess
     ) -> URL? {
-        // Before an app-hosted XCTest bundle is visible, launch markers are the
-        // only evidence available. Require the same explicit external-model
-        // opt-in during that pending window so early startup cannot scan a real
-        // model collection. Non-XCTest live-proof launchers intentionally use
-        // OSU_MODELS_DIR itself as their trusted, explicit read opt-in.
-        if (recognizedTestHost
-            || ProcessDataRootPolicy.hasTestLaunchMarker(environment: environment)),
-            environment[allowExternalModelsInTestHostsEnvironmentKey] != "1"
-        {
+        // Use the same fail-closed predicate as data-root and Keychain
+        // isolation. This covers explicit test roots and disable-only proof
+        // launches even before an XCTest bundle becomes visible.
+        if ProcessDataRootPolicy.shouldDisableKeychain(
+            environment: environment,
+            recognizedTestHost: recognizedTestHost
+        ),
+            environment[allowExternalModelsInTestHostsEnvironmentKey] != "1" {
             return nil
         }
         guard

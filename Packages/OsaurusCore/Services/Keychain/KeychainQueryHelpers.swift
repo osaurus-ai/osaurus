@@ -11,6 +11,17 @@ import OsaurusRepository
 import Security
 
 enum KeychainQueryHelpers {
+    /// Revalidate process-level Keychain policy immediately before a backend
+    /// operation. Callers that queue work must invoke this inside the queued
+    /// closure, not only when the work is admitted.
+    static func performIfAccessRemainsAllowed<Result>(
+        isDisabled: () -> Bool,
+        operation: () -> Result
+    ) -> Result? {
+        guard !isDisabled() else { return nil }
+        return operation()
+    }
+
     /// Revalidate the service captured in a query immediately before invoking
     /// Security.framework. Test-host recognition can latch while a query is
     /// being assembled, so an entry guard alone is not sufficient for identity
@@ -21,10 +32,11 @@ enum KeychainQueryHelpers {
         isDisabled: () -> Bool,
         operation: () -> Result
     ) -> Result? {
-        guard !isDisabled(), capturedService == currentService() else {
-            return nil
-        }
-        return operation()
+        guard capturedService == currentService() else { return nil }
+        return performIfAccessRemainsAllowed(
+            isDisabled: isDisabled,
+            operation: operation
+        )
     }
 
     /// Live proof/test launches set this to guarantee wrappers do not touch the
