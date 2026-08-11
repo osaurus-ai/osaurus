@@ -6298,10 +6298,11 @@ struct AgentDetailView: View {
     }
 
     /// Confirmation alert with per-category checkboxes so the user picks
-    /// exactly what to wipe instead of the app guessing. Presented directly
-    /// through `ThemedAlertCenter` (same pattern as the sidebar's batch
-    /// delete) because the accessory and the destructive button must share
-    /// live selection state.
+    /// exactly what to wipe instead of the app guessing. Uses the alert's
+    /// `customContent` slot rather than plain `buttons` because the dialog
+    /// stays up while the deletion runs: both buttons disable and the
+    /// destructive one shows a spinner, which the fire-and-dismiss standard
+    /// button row can't express.
     private func presentDeleteAllData() {
         let selection = AgentDataWipeSelection()
         let requestId = UUID()
@@ -6310,21 +6311,30 @@ struct AgentDetailView: View {
             ThemedAlertRequest(
                 id: requestId,
                 title: L("Delete Agent Data"),
-                message: L(
-                    "Choose what to permanently delete for \"\(currentAgent.name)\". The agent itself stays. This can't be undone."
-                ),
-                accessory: AnyView(
-                    AgentDataWipeOptions(
+                message: nil,
+                // Never rendered (customContent owns the button row). The
+                // destructive entry keeps the warning-triangle header, and
+                // the absence of a cancel-role button means clicking the
+                // dimmed overlay can't dismiss the dialog mid-deletion.
+                buttons: [.destructive(L("Delete Selected")) {}],
+                customContent: AnyView(
+                    AgentDataWipeDialogContent(
                         selection: selection,
+                        message: L(
+                            "Choose what to permanently delete for \"\(currentAgent.name)\". The agent itself stays. This can't be undone."
+                        ),
                         chatCount: chatSessions.count,
                         factCount: pinnedFacts.count,
-                        episodeCount: episodes.count
+                        episodeCount: episodes.count,
+                        onCancel: {
+                            ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                        },
+                        onDelete: {
+                            await performDeleteAllData(selection)
+                            ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                        }
                     )
                 ),
-                buttons: [
-                    .cancel(L("Cancel")),
-                    .destructive(L("Delete Selected")) { performDeleteAllData(selection) },
-                ],
                 onDismiss: {
                     ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
                 }
@@ -6333,7 +6343,7 @@ struct AgentDetailView: View {
         )
     }
 
-    private func performDeleteAllData(_ selection: AgentDataWipeSelection) {
+    private func performDeleteAllData(_ selection: AgentDataWipeSelection) async {
         let wipeChats = selection.chats
         let wipeFacts = selection.pinnedFacts
         let wipeEpisodes = selection.episodes
@@ -6343,33 +6353,31 @@ struct AgentDetailView: View {
         if wipeChats {
             ChatSessionsManager.shared.deleteAll(for: agentId)
         }
-        Task {
-            // Memory DB deletes run off the main actor — same rationale as
-            // `loadMemoryData`: these calls dispatch-sync onto the DB's
-            // serial queue and can otherwise stall the appear path.
-            await Task.detached(priority: .userInitiated) {
-                let db = MemoryDatabase.shared
-                if !db.isOpen { try? db.open() }
-                if wipeFacts { try? db.deletePinnedFacts(forAgent: agentScope) }
-                if wipeEpisodes { try? db.deleteEpisodes(forAgent: agentScope) }
-                if wipeChats { try? db.deleteConversationMemory(forAgent: agentScope) }
-            }.value
-            if wipeFacts && wipeEpisodes && wipeChats {
-                // Full wipe: the on-disk vector index has nothing left to
-                // serve, so remove it rather than leaving deleted content
-                // in the encrypted store.
-                await MemorySearchService.shared.deleteAgentIndex(agentId: agentScope)
-            } else if wipeFacts || wipeEpisodes {
-                // Partial wipe: drop the in-memory instance; stale on-disk
-                // vectors resolve to missing SQL rows and are filtered on
-                // read, same as single-item deletes.
-                await MemorySearchService.shared.evictAgent(agentId: agentScope)
-            }
-            guard agentId == agent.id else { return }
-            refreshDetailCaches()
-            loadMemoryData()
-            showSuccess(L("Selected data deleted"))
+        // Memory DB deletes run off the main actor — same rationale as
+        // `loadMemoryData`: these calls dispatch-sync onto the DB's
+        // serial queue and can otherwise stall the appear path.
+        await Task.detached(priority: .userInitiated) {
+            let db = MemoryDatabase.shared
+            if !db.isOpen { try? db.open() }
+            if wipeFacts { try? db.deletePinnedFacts(forAgent: agentScope) }
+            if wipeEpisodes { try? db.deleteEpisodes(forAgent: agentScope) }
+            if wipeChats { try? db.deleteConversationMemory(forAgent: agentScope) }
+        }.value
+        if wipeFacts && wipeEpisodes && wipeChats {
+            // Full wipe: the on-disk vector index has nothing left to
+            // serve, so remove it rather than leaving deleted content
+            // in the encrypted store.
+            await MemorySearchService.shared.deleteAgentIndex(agentId: agentScope)
+        } else if wipeFacts || wipeEpisodes {
+            // Partial wipe: drop the in-memory instance; stale on-disk
+            // vectors resolve to missing SQL rows and are filtered on
+            // read, same as single-item deletes.
+            await MemorySearchService.shared.evictAgent(agentId: agentScope)
         }
+        guard agentId == agent.id else { return }
+        refreshDetailCaches()
+        loadMemoryData()
+        showSuccess(L("Selected data deleted"))
     }
 
     private func deletePinnedFact(_ factId: String) {
@@ -6714,37 +6722,73 @@ private final class AgentDataWipeSelection: ObservableObject {
     @Published var episodes = true
 }
 
-/// Checkbox list rendered inside the "Delete Agent Data" alert so the user
-/// picks which categories to wipe. Counts give a sense of what's at stake.
-private struct AgentDataWipeOptions: View {
+/// Body of the "Delete Agent Data" alert: message, per-category checkboxes,
+/// and its own Cancel / Delete Selected row (mirroring the standard alert
+/// button styling). Owns the in-progress state — while the deletion runs the
+/// checkboxes and both buttons disable and the destructive button swaps its
+/// label for a spinner, then `onDelete` dismisses the dialog when finished.
+private struct AgentDataWipeDialogContent: View {
     @Environment(\.theme) private var theme
     @ObservedObject var selection: AgentDataWipeSelection
+    let message: String
     let chatCount: Int
     let factCount: Int
     let episodeCount: Int
+    let onCancel: () -> Void
+    let onDelete: () async -> Void
+
+    @State private var isDeleting = false
+    @State private var hoveredButton: String?
+
+    private var nothingSelected: Bool {
+        !selection.chats && !selection.pinnedFacts && !selection.episodes
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            row(L("Chat history"), count: chatCount, isOn: $selection.chats)
-
-            Text(L("Memory").uppercased())
-                .font(.system(size: 10, weight: .bold))
+        VStack(spacing: 0) {
+            Text(message)
+                .font(.system(size: 13))
                 .foregroundColor(theme.secondaryText)
-                .tracking(0.3)
-                .padding(.top, 4)
+                .multilineTextAlignment(.center)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
 
-            row(L("Pinned facts"), count: factCount, isOn: $selection.pinnedFacts)
-            row(L("Episodes"), count: episodeCount, isOn: $selection.episodes)
+            VStack(alignment: .leading, spacing: 8) {
+                row(L("Chat history"), count: chatCount, isOn: $selection.chats)
 
-            Text(
-                "Chat history also removes the raw transcripts memory keeps for this agent.",
-                bundle: .module
-            )
-            .font(.system(size: 10))
-            .foregroundColor(theme.tertiaryText)
-            .padding(.top, 2)
+                Text(L("Memory").uppercased())
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(theme.secondaryText)
+                    .tracking(0.3)
+                    .padding(.top, 4)
+
+                row(L("Pinned facts"), count: factCount, isOn: $selection.pinnedFacts)
+                row(L("Episodes"), count: episodeCount, isOn: $selection.episodes)
+
+                Text(
+                    "Chat history also removes the raw transcripts memory keeps for this agent.",
+                    bundle: .module
+                )
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
+                .padding(.top, 2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 12)
+            .disabled(isDeleting)
+            .opacity(isDeleting ? 0.6 : 1)
+
+            Rectangle()
+                .fill(theme.primaryBorder.opacity(0.3))
+                .frame(height: 1)
+                .padding(.top, 16)
+
+            HStack(spacing: 12) {
+                cancelButton
+                deleteButton
+            }
+            .padding(.top, 16)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func row(_ title: String, count: Int, isOn: Binding<Bool>) -> some View {
@@ -6763,6 +6807,61 @@ private struct AgentDataWipeOptions: View {
                 .foregroundColor(theme.tertiaryText)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private var cancelButton: some View {
+        let isHovered = hoveredButton == "cancel" && !isDeleting
+        return Button {
+            onCancel()
+        } label: {
+            Text(L("Cancel"))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(theme.tertiaryBackground.opacity(isHovered ? 0.8 : 0.5))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(isHovered ? theme.primaryBorder : theme.cardBorder, lineWidth: 1)
+                )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .keyboardShortcut(.cancelAction)
+        .disabled(isDeleting)
+        .opacity(isDeleting ? 0.5 : 1)
+        .onHover { hoveredButton = $0 ? "cancel" : nil }
+    }
+
+    private var deleteButton: some View {
+        let disabled = isDeleting || nothingSelected
+        let isHovered = hoveredButton == "delete" && !disabled
+        let labelColor: Color = theme.isDark ? theme.primaryBackground : .white
+        return Button {
+            guard !isDeleting else { return }
+            isDeleting = true
+            Task { await onDelete() }
+        } label: {
+            HStack(spacing: 6) {
+                if isDeleting {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(labelColor)
+                }
+                Text(L("Delete Selected"))
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            .foregroundColor(labelColor)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(theme.errorColor.opacity(isHovered ? 0.9 : 1.0))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(PlainButtonStyle())
+        .keyboardShortcut(.defaultAction)
+        .disabled(disabled)
+        .opacity(disabled && !isDeleting ? 0.5 : 1)
+        .onHover { hoveredButton = $0 ? "delete" : nil }
     }
 }
 
