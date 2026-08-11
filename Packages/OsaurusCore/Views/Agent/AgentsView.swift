@@ -6708,11 +6708,8 @@ struct AgentDetailView: View {
     }
 }
 
-// MARK: - Agent Detail Voice Section
+// MARK: - Agent Data Wipe Dialog
 
-/// Auto-speak toggle + per-agent voice override. Owns the
-/// `TTSService.shared` observation so high-frequency model-state
-/// updates don't invalidate the whole `AgentDetailView` body.
 /// Selection state for the "Delete All Data" confirmation. A reference type
 /// so the alert accessory (checkboxes) and the destructive button's closure
 /// observe the same instance after `ThemedAlertCenter` captures the request.
@@ -6865,6 +6862,11 @@ private struct AgentDataWipeDialogContent: View {
     }
 }
 
+// MARK: - Agent Detail Voice Section
+
+/// Auto-speak toggle + per-agent voice override. Owns the
+/// `TTSService.shared` observation so high-frequency model-state
+/// updates don't invalidate the whole `AgentDetailView` body.
 private struct AgentDetailVoiceSection: View {
     @ObservedObject private var ttsService = TTSService.shared
     let theme: ThemeProtocol
