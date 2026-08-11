@@ -14617,7 +14617,38 @@
       }
     },
     "Account details": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Kontodetails"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "계정 세부 정보"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Сведения об аккаунте"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "账户详情"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "帳戶詳細資訊"
+          }
+        }
+      }
     },
     "Account linked": {
       "localizations": {
@@ -21429,13 +21460,13 @@
         "de": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Allowed"
+            "value": "Zugelassen"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Allowed"
+            "value": "허용됨"
           }
         },
         "ru": {
@@ -21456,8 +21487,7 @@
             "value": "已允許"
           }
         }
-      },
-      "shouldTranslate": false
+      }
     },
     "Allowed agents": {
       "comment": "Label for a section in the Agent Detail View that lists other agents that can be spawned by the current agent.",
@@ -31401,7 +31431,38 @@
       }
     },
     "Billing": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Abrechnung"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "결제"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Оплата"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "账单"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "帳單"
+          }
+        }
+      }
     },
     "Billing Ledger": {
       "localizations": {
@@ -37115,19 +37176,19 @@
         "de": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Capture policy"
+            "value": "Aufnahmerichtlinie"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Capture policy"
+            "value": "캡처 정책"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Capture policy"
+            "value": "Политика захвата"
           }
         },
         "zh-Hans": {
@@ -37142,8 +37203,7 @@
             "value": "捕獲策略"
           }
         }
-      },
-      "shouldTranslate": false
+      }
     },
     "Capture requests must be initiated from an interactive user action.": {
       "localizations": {
@@ -52867,19 +52927,19 @@
         "de": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Copy Probe Result"
+            "value": "Prüfergebnis kopieren"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Copy Probe Result"
+            "value": "프로브 결과 복사"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Copy Probe Result"
+            "value": "Скопировать результат проверки"
           }
         },
         "zh-Hans": {
@@ -52894,8 +52954,7 @@
             "value": "複製探測結果"
           }
         }
-      },
-      "shouldTranslate": false
+      }
     },
     "Copy redacted export": {
       "localizations": {
@@ -78004,7 +78063,38 @@
       }
     },
     "Export Router Support Bundle": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Router-Supportpaket exportieren"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "라우터 지원 번들 내보내기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Экспортировать пакет поддержки маршрутизатора"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导出路由器支持包"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "匯出路由器支援套件"
+          }
+        }
+      }
     },
     "Export Skill (Agent Skills Format)": {
       "localizations": {
@@ -91839,7 +91929,38 @@
       }
     },
     "Identity required": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Identität erforderlich"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "신원 정보 필요"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Требуется идентификация"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要身份"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要身分"
+          }
+        }
+      }
     },
     "Identity saved": {
       "localizations": {
@@ -96636,10 +96757,72 @@
       }
     },
     "inspection output exceeded the supported limit": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Prüfausgabe hat das unterstützte Limit überschritten"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "검사 출력이 지원 한도를 초과했습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Вывод проверки превысил поддерживаемый предел"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检查输出超出支持的上限"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "檢查輸出超出支援的上限"
+          }
+        }
+      }
     },
     "inspection timed out after 30 seconds": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Prüfung nach 30 Sekunden abgelaufen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "검사가 30초 후 시간 초과되었습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Проверка завершилась по тайм-ауту через 30 секунд"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检查在 30 秒后超时"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "檢查在 30 秒後逾時"
+          }
+        }
+      }
     },
     "Install": {
       "localizations": {
@@ -100914,19 +101097,19 @@
         "de": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Last probe"
+            "value": "Letzte Prüfung"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Last probe"
+            "value": "마지막 프로브"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Last probe"
+            "value": "Последняя проверка"
           }
         },
         "zh-Hans": {
@@ -100941,8 +101124,7 @@
             "value": "上次探測"
           }
         }
-      },
-      "shouldTranslate": false
+      }
     },
     "last resort": {
       "localizations": {
@@ -105877,7 +106059,38 @@
       }
     },
     "Loading activity": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Aktivität wird geladen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "활동을 불러오는 중"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Загрузка активности"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在加载活动"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在載入活動"
+          }
+        }
+      }
     },
     "Loading capabilities": {
       "localizations": {
@@ -113520,7 +113733,38 @@
       }
     },
     "Metadata only - no prompts, replies, tool payloads, private keys, or signatures.": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Nur Metadaten – keine Prompts, Antworten, Werkzeug-Nutzdaten, privaten Schlüssel oder Signaturen."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "메타데이터만 포함되며 프롬프트, 응답, 도구 페이로드, 개인 키, 서명은 포함되지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Только метаданные — без промптов, ответов, полезной нагрузки инструментов, приватных ключей и подписей."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅包含元数据——不含提示词、回复、工具负载、私钥或签名。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "僅包含中繼資料——不含提示詞、回覆、工具負載、私密金鑰或簽章。"
+          }
+        }
+      }
     },
     "Method": {
       "localizations": {
@@ -114226,7 +114470,38 @@
       }
     },
     "Missing": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Fehlt"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "없음"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Отсутствует"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "缺失"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "缺少"
+          }
+        }
+      }
     },
     "Missing agent": {
       "localizations": {
@@ -135435,7 +135710,38 @@
       }
     },
     "Osaurus Router is off.": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Osaurus Router ist aus."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Osaurus 라우터가 꺼져 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Osaurus Router выключен."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus 路由器已关闭。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus 路由器已關閉。"
+          }
+        }
+      }
     },
     "Osaurus Server": {
       "localizations": {
@@ -150385,19 +150691,19 @@
         "de": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Probe Failed"
+            "value": "Prüfung fehlgeschlagen"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Probe Failed"
+            "value": "프로브 실패"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Probe Failed"
+            "value": "Проверка не пройдена"
           }
         },
         "zh-Hans": {
@@ -150412,27 +150718,26 @@
             "value": "探測失敗"
           }
         }
-      },
-      "shouldTranslate": false
+      }
     },
     "Probe Passed": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Probe Passed"
+            "value": "Prüfung bestanden"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Probe Passed"
+            "value": "프로브 통과"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Probe Passed"
+            "value": "Проверка пройдена"
           }
         },
         "zh-Hans": {
@@ -150447,8 +150752,7 @@
             "value": "探測通過"
           }
         }
-      },
-      "shouldTranslate": false
+      }
     },
     "Probing...": {
       "localizations": {
@@ -155422,19 +155726,19 @@
         "de": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Reason"
+            "value": "Grund"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Reason"
+            "value": "이유"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Reason"
+            "value": "Причина"
           }
         },
         "zh-Hans": {
@@ -155449,8 +155753,7 @@
             "value": "原因"
           }
         }
-      },
-      "shouldTranslate": false
+      }
     },
     "Reason (optional)": {
       "localizations": {
@@ -161221,7 +161524,38 @@
       }
     },
     "Rendered": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ausgegeben"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "출력됨"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Выведено"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已输出"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已輸出"
+          }
+        }
+      }
     },
     "Rendered a chart": {
       "localizations": {
@@ -168881,7 +169215,38 @@
       }
     },
     "Router off": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Router aus"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "라우터 꺼짐"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Маршрутизатор выключен"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "路由器已关闭"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "路由器已關閉"
+          }
+        }
+      }
     },
     "Router usage appears here after a hosted model request is billed.": {
       "localizations": {
@@ -175390,19 +175755,19 @@
         "de": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Screen capture"
+            "value": "Bildschirmaufnahme"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Screen capture"
+            "value": "화면 캡처"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Screen capture"
+            "value": "Захват экрана"
           }
         },
         "zh-Hans": {
@@ -175417,8 +175782,7 @@
             "value": "屏幕捕獲"
           }
         }
-      },
-      "shouldTranslate": false
+      }
     },
     "Screen context": {
       "comment": "Title of the screen-context card in Computer Use settings.",
@@ -190592,19 +190956,19 @@
         "de": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Stage"
+            "value": "Phase"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Stage"
+            "value": "단계"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Stage"
+            "value": "Этап"
           }
         },
         "zh-Hans": {
@@ -190619,8 +190983,7 @@
             "value": "階段"
           }
         }
-      },
-      "shouldTranslate": false
+      }
     },
     "Stale": {
       "localizations": {
