@@ -187,9 +187,16 @@ let package = Package(
         // scale — a run of `---` or `| | |` repeats at period 32 too, so a
         // length floor alone would truncate real answers. VMLX_REPETITION_STOP=0
         // disables it.
+        // vmlx-swift#230 consumes Muse Glimmer's tool-recipient channel
+        // headers. The parser knew `to=self` and `to=user`; a tool call names
+        // the TOOL as recipient, so `to=<tool><|message|>` matched no spelling
+        // and streamed verbatim into the reasoning rail — consistently at the
+        // end of the first think block, and stored in `thinking` where history
+        // replayed it back to the model as prose. `to=user` still closes
+        // reasoning and `to=self` still opens it.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "4d09467a5bd614b1b87ff50dbc802d6599fc7816"
+            revision: "7076e4b4830e8068c3e755d85d9ed08f83b24f0f"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
