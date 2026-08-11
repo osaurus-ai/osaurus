@@ -75,7 +75,7 @@ public final class ChatFolderState: ObservableObject {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
-        panel.canCreateDirectories = false
+        panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.title = L("Select Working Directory")
         panel.message = L("Choose a folder for the AI to work with")
