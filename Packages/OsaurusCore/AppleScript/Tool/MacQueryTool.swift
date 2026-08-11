@@ -93,11 +93,15 @@ final class MacQueryTool: OsaurusTool, @unchecked Sendable {
     var bypassRegistryTimeout: Bool { true }
 
     func normalizeArgumentsBeforeValidation(_ argumentsJSON: String) -> String {
-        AppleScriptToolDispatch.removingSiblingField(
+        let withoutSibling = AppleScriptToolDispatch.removingSiblingField(
             argumentsJSON,
             siblingField: "task",
             requiredField: "question"
         )
+        // `content` and `contents` differ by one letter and by type; a single
+        // verbatim block sent under the plural name would otherwise be a hard
+        // `invalid_args` rejection rather than a read.
+        return AppleScriptToolDispatch.promotingStringContents(withoutSibling)
     }
 
     init() {}
