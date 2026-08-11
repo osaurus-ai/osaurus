@@ -159,10 +159,72 @@ struct TestHostIsolationTests {
         )
     }
 
+    @Test("model discovery follows every shared process-isolation reason")
+    func modelDirectoryIsolationUsesSharedPredicate() {
+        let cases: [[String: String]] = [
+            [ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1"],
+            [ProcessDataRootPolicy.testRootEnvironmentKey: "/tmp/isolated-model-root"],
+            [ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey: "1"],
+            [
+                ProcessDataRootPolicy.realKeychainTestNamespaceEnvironmentKey:
+                    "36CFBE8B-39DB-47DB-BA95-1742165D2657"
+            ],
+        ]
+
+        for environment in cases {
+            #expect(
+                DirectoryPickerService.shouldUseIsolatedModelsDirectory(
+                    environment: environment,
+                    recognizedTestHost: false
+                )
+            )
+        }
+        #expect(
+            DirectoryPickerService.shouldUseIsolatedModelsDirectory(
+                environment: [:],
+                recognizedTestHost: true
+            )
+        )
+        #expect(
+            !DirectoryPickerService.shouldUseIsolatedModelsDirectory(
+                environment: [:],
+                recognizedTestHost: false
+            )
+        )
+    }
+
     @Test("test hosts do not launch unowned model catalog work")
     func modelManagerBackgroundCatalogWorkIsDisabled() {
         #expect(ProcessDataRootPolicy.isRecognizedTestHostProcess)
         #expect(!ModelManager.allowsAutomaticCatalogWorkForCurrentProcess)
+    }
+
+    @Test("isolated processes never schedule automatic model mutations")
+    func modelManagerMutationGateUsesSharedIsolationPredicate() {
+        #expect(
+            !ModelManager.allowsAutomaticCatalogMutation(
+                environment: [ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1"],
+                recognizedTestHost: false
+            )
+        )
+        #expect(
+            !ModelManager.allowsAutomaticCatalogMutation(
+                environment: [ProcessDataRootPolicy.testRootEnvironmentKey: "/tmp/model-proof"],
+                recognizedTestHost: false
+            )
+        )
+        #expect(
+            !ModelManager.allowsAutomaticCatalogMutation(
+                environment: [:],
+                recognizedTestHost: true
+            )
+        )
+        #expect(
+            ModelManager.allowsAutomaticCatalogMutation(
+                environment: [:],
+                recognizedTestHost: false
+            )
+        )
     }
 
     @Test("path and keychain helpers use the shared isolation policy")

@@ -362,15 +362,26 @@ final class DirectoryPickerService: ObservableObject {
     }
 
     nonisolated private static func isolatedProcessModelsDirectory() -> URL? {
-        let explicitTestRoot = ProcessInfo.processInfo.environment[
-            ProcessDataRootPolicy.testRootEnvironmentKey
-        ]?.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard explicitTestRoot?.isEmpty == false
-            || ProcessDataRootPolicy.isRecognizedTestHostProcess
-        else {
+        guard shouldUseIsolatedModelsDirectory(
+            environment: ProcessInfo.processInfo.environment,
+            recognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
+        ) else {
             return nil
         }
         return OsaurusPaths.root().appendingPathComponent("MLXModels", isDirectory: true)
+    }
+
+    /// Keep model discovery aligned with the shared data-root/Keychain
+    /// isolation decision. This includes disable-only launches and malformed
+    /// real-Keychain proof markers, not just a configured root or XCTest host.
+    nonisolated static func shouldUseIsolatedModelsDirectory(
+        environment: [String: String],
+        recognizedTestHost: Bool
+    ) -> Bool {
+        ProcessDataRootPolicy.shouldDisableKeychain(
+            environment: environment,
+            recognizedTestHost: recognizedTestHost
+        )
     }
 
     /// Reset directory selection

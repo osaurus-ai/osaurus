@@ -161,6 +161,7 @@
                 // this prevents accidental `~` expansion into persistent user
                 // state during tests, rather than claiming filesystem sandboxing.
                 childEnvironment["HOME"] = isolatedRoot
+                childEnvironment["TMPDIR"] = isolatedRoot
                 childEnvironment["PATH"] = isolatedSearchPath(
                     childEnvironment["PATH"],
                     parentEnvironment: parentEnvironment

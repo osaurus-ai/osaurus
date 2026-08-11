@@ -228,6 +228,7 @@ final class MCPStdioTransportErrorTests: XCTestCase {
                     "PROVIDER_SETTING": "explicit-value",
                     "PROVIDER_SECRET": "explicit-secret",
                     "HOME": "/Users/provider-override",
+                    "TMPDIR": "/Users/provider-temp-override",
                     ProcessDataRootPolicy.testRootEnvironmentKey: "/tmp/provider-root",
                     ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "0",
                     ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey: "1",
@@ -243,6 +244,7 @@ final class MCPStdioTransportErrorTests: XCTestCase {
             XCTAssertNil(environment["GITHUB_TOKEN"])
             XCTAssertNil(environment["AWS_SECRET_ACCESS_KEY"])
             XCTAssertEqual(environment["HOME"], parentRoot.path)
+            XCTAssertEqual(environment["TMPDIR"], parentRoot.path)
             XCTAssertEqual(
                 environment[ProcessDataRootPolicy.testRootEnvironmentKey],
                 parentRoot.path
@@ -284,6 +286,10 @@ final class MCPStdioTransportErrorTests: XCTestCase {
             XCTAssertTrue(rendered.contains("PROVIDER_EXPLICIT_VALUE=\(providerValue)"))
             XCTAssertEqual(
                 environment["HOME"],
+                environment[ProcessDataRootPolicy.testRootEnvironmentKey]
+            )
+            XCTAssertEqual(
+                environment["TMPDIR"],
                 environment[ProcessDataRootPolicy.testRootEnvironmentKey]
             )
         }

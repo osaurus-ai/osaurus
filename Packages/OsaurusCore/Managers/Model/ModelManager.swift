@@ -235,6 +235,27 @@ final class ModelManager: NSObject, ObservableObject {
         !ProcessDataRootPolicy.isRecognizedTestHostProcess
     }
 
+    /// Catalog reads remain available to explicit live-proof launches, but an
+    /// isolated process must never mutate a model bundle automatically. This
+    /// uses the same predicate as data-root and Keychain isolation so partial
+    /// launcher configuration still fails closed.
+    nonisolated static var allowsAutomaticCatalogMutationForCurrentProcess: Bool {
+        allowsAutomaticCatalogMutation(
+            environment: ProcessInfo.processInfo.environment,
+            recognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
+        )
+    }
+
+    nonisolated static func allowsAutomaticCatalogMutation(
+        environment: [String: String],
+        recognizedTestHost: Bool
+    ) -> Bool {
+        !ProcessDataRootPolicy.shouldDisableKeychain(
+            environment: environment,
+            recognizedTestHost: recognizedTestHost
+        )
+    }
+
     #if DEBUG
         /// Records automatic top-up scheduling without allowing tests to
         /// replace the production download implementation.
@@ -324,7 +345,7 @@ final class ModelManager: NSObject, ObservableObject {
         // complete bundle. Test hosts may explicitly point OSU_MODELS_DIR at a
         // real model collection for live proof, so catalog reads are allowed
         // but this automatic mutation must remain disabled there.
-        if Self.allowsAutomaticCatalogWorkForCurrentProcess {
+        if Self.allowsAutomaticCatalogMutationForCurrentProcess {
             let allModels = availableModels + suggestedModels
             #if DEBUG
                 Self.automaticCatalogTopUpScheduleObserverForTests?(allModels)
