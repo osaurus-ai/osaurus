@@ -330,6 +330,65 @@ struct ChatHistoryDatabaseTests {
         #expect(db.loadSession(id: session.id)?.turns.count == 0)
     }
 
+    // MARK: - Async batch delete
+
+    @Test
+    func deleteSessionsAsync_removesBatchAndCascadesLeavingOthersIntact() async throws {
+        let db = try openInMemory()
+        let a = makeSession(turnCount: 3)
+        let b = makeSession(turnCount: 2)
+        let survivor = makeSession(turnCount: 1)
+        try db.saveSession(a)
+        try db.saveSession(b)
+        try db.saveSession(survivor)
+        try db.upsertSandboxChange(makeSandboxChange(sessionId: a.id.uuidString))
+        try db.upsertSandboxChange(makeSandboxChange(sessionId: survivor.id.uuidString))
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            db.deleteSessionsAsync(ids: [a.id, b.id]) { continuation.resume() }
+        }
+
+        #expect(db.loadSession(id: a.id) == nil)
+        #expect(db.loadSession(id: b.id) == nil)
+        #expect(db.loadSandboxChanges(sessionId: a.id.uuidString).isEmpty)
+        #expect(db.loadSession(id: survivor.id)?.turns.count == 1)
+        #expect(db.loadSandboxChanges(sessionId: survivor.id.uuidString).count == 1)
+
+        // Turn cascade: re-saving a deleted id starts with no leftover turns.
+        try db.saveSession(makeSession(id: a.id, turnCount: 0))
+        #expect(db.loadSession(id: a.id)?.turns.count == 0)
+    }
+
+    @Test
+    func deleteSessionsAsync_emptyBatchFiresCompletionImmediately() async throws {
+        let db = try openInMemory()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            db.deleteSessionsAsync(ids: []) { continuation.resume() }
+        }
+    }
+
+    @Test
+    func deleteSessionsAsync_reportsDroppedIdsWhenDatabaseClosed() async throws {
+        // The enqueue-time open check races key rotation; a batch that finds
+        // the database closed at dequeue must hand every id back (the
+        // caller's in-memory list is already cleared, and losing the deletes
+        // silently would resurrect the sessions on next launch).
+        let db = try openInMemory()
+        let a = makeSession(turnCount: 1)
+        let b = makeSession(turnCount: 1)
+        try db.saveSession(a)
+        try db.saveSession(b)
+        db.close()
+
+        let dropped = await withCheckedContinuation { (continuation: CheckedContinuation<[UUID], Never>) in
+            db.deleteSessionsAsync(
+                ids: [a.id, b.id],
+                onDropped: { continuation.resume(returning: $0) }
+            )
+        }
+        #expect(Set(dropped) == Set([a.id, b.id]))
+    }
+
     // MARK: - Sandbox changes (v9)
 
     private func makeSandboxChange(

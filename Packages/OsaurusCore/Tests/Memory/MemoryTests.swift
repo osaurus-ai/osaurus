@@ -224,6 +224,41 @@ struct MemoryDatabaseTests {
         #expect(loaded.isEmpty)
     }
 
+    // MARK: - Agent-scoped wipe (Delete All Data / agent deletion)
+
+    @Test func agentScopedWipeDeletesOnlyThatAgentsRows() throws {
+        let db = try makeTempDB()
+        try db.insertPinnedFact(PinnedFact(agentId: "a", content: "fact-a"))
+        try db.insertPinnedFact(PinnedFact(agentId: "b", content: "fact-b"))
+        _ = try db.insertEpisode(
+            Episode(agentId: "a", conversationId: "c-a", summary: "sa", conversationAt: "2025-01-01T00:00:00Z")
+        )
+        _ = try db.insertEpisode(
+            Episode(agentId: "b", conversationId: "c-b", summary: "sb", conversationAt: "2025-01-01T00:00:00Z")
+        )
+        try db.insertTranscriptTurn(
+            agentId: "a", conversationId: "c-a", chunkIndex: 0, role: "user", content: "hi", tokenCount: 1
+        )
+        try db.insertTranscriptTurn(
+            agentId: "b", conversationId: "c-b", chunkIndex: 0, role: "user", content: "yo", tokenCount: 1
+        )
+        try db.insertPendingSignal(PendingSignal(agentId: "a", conversationId: "c-a", userMessage: "hi"))
+        try db.insertPendingSignal(PendingSignal(agentId: "b", conversationId: "c-b", userMessage: "yo"))
+
+        try db.deletePinnedFacts(forAgent: "a")
+        try db.deleteEpisodes(forAgent: "a")
+        try db.deleteConversationMemory(forAgent: "a")
+
+        #expect(try db.loadPinnedFacts(agentId: "a").isEmpty)
+        #expect(try db.loadPinnedFacts(agentId: "b").count == 1)
+        #expect(try db.loadEpisodes(agentId: "a").isEmpty)
+        #expect(try db.loadEpisodes(agentId: "b").count == 1)
+        #expect(try db.loadTranscript(agentId: "a").isEmpty)
+        #expect(try db.loadTranscript(agentId: "b").count == 1)
+        #expect(try db.loadPendingSignals(conversationId: "c-a").isEmpty)
+        #expect(try db.loadPendingSignals(conversationId: "c-b").count == 1)
+    }
+
     @Test func bumpPinnedFactUsage() throws {
         let db = try makeTempDB()
         let fact = PinnedFact(agentId: "a", content: "x")
