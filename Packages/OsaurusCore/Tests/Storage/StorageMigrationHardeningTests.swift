@@ -171,13 +171,22 @@ struct StorageMigrationHardeningTests {
     @Test
     func concurrentConvergeSerializesWithoutDoubleConvertOrCorruption() async throws {
         try await StoragePathsTestLock.shared.run {
+            // Handles registered by an earlier suite reopen against whichever
+            // root is active when convergence finishes. Quiesce them before
+            // swapping in this fixture root so they cannot create unrelated
+            // stores between the six serialized convergence requests.
+            let previouslyOpenHandles = OsaurusDatabaseHandle.allOpenHandles
+            for handle in previouslyOpenHandles { handle.closer() }
             let root = self.tempDir()
+            let previousRoot = OsaurusPaths.overrideRoot
             OsaurusPaths.overrideRoot = root
             let k = self.key(seed: 0x6B)
             defer {
-                OsaurusPaths.overrideRoot = nil
+                OsaurusPaths.overrideRoot = previousRoot
                 StorageEncryptionPolicy.shared.invalidateCache()
                 StorageKeyManager.shared.wipeCache()
+                try? FileManager.default.removeItem(at: root)
+                for handle in previouslyOpenHandles { handle.reopener() }
             }
             try StorageEncryptionPolicy.shared.setDesiredMode(.plaintext)
             StorageKeyManager.shared._setKeyForTesting(k)
