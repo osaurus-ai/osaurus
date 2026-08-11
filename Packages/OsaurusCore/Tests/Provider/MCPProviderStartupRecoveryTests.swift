@@ -1,6 +1,7 @@
 // Copyright © 2026 osaurus.
 
 import Foundation
+import MCP
 import Testing
 
 @testable import OsaurusCore
@@ -51,6 +52,32 @@ private actor Rendezvous {
     }
 }
 
+private actor MCPConnectionPause {
+    private var reached = false
+    private var released = false
+    private var reachWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func pause() async {
+        reached = true
+        for waiter in reachWaiters { waiter.resume() }
+        reachWaiters.removeAll()
+        guard !released else { return }
+        await withCheckedContinuation { releaseWaiters.append($0) }
+    }
+
+    func waitUntilReached() async {
+        guard !reached else { return }
+        await withCheckedContinuation { reachWaiters.append($0) }
+    }
+
+    func release() {
+        released = true
+        for waiter in releaseWaiters { waiter.resume() }
+        releaseWaiters.removeAll()
+    }
+}
+
 /// Launch/recovery orchestration for MCP providers. Serialized: the manager
 /// is a process-wide singleton.
 @Suite("MCP provider startup and recovery", .serialized)
@@ -65,6 +92,14 @@ struct MCPProviderStartupRecoveryTests {
             url: "https://\(name).example.invalid/mcp",
             enabled: enabled,
             autoConnect: autoConnect
+        )
+    }
+
+    private func makeTool(_ name: String) -> MCP.Tool {
+        MCP.Tool(
+            name: name,
+            description: "Lifecycle fixture",
+            inputSchema: ["type": "object", "properties": [:]]
         )
     }
 
@@ -149,6 +184,95 @@ struct MCPProviderStartupRecoveryTests {
         await manager.connectEnabledProviders()
 
         #expect(recorder.attempts(for: provider.id) == 3)
+    }
+
+    @Test("disconnect during retry backoff prevents another attempt")
+    func disconnectCancelsTransientRetry() async {
+        let manager = MCPProviderManager.shared
+        let provider = makeProvider(name: "disconnect-backoff")
+        manager._testInstallProviders([provider])
+        defer { manager._testRemoveProviders(ids: [provider.id]) }
+
+        let recorder = ConnectRecorder()
+        manager.testConnectOverride = { id in
+            recorder.record(id)
+            throw URLError(.notConnectedToInternet)
+        }
+        manager.testRetrySleepOverride = { _ in
+            manager.disconnect(providerId: provider.id)
+        }
+
+        await manager.connectEnabledProviders()
+
+        #expect(recorder.attempts(for: provider.id) == 1)
+        #expect(manager.providerStates[provider.id]?.isConnected == false)
+    }
+
+    @Test("superseded connection cannot commit connected state")
+    func supersededConnectionCannotCommitState() {
+        let manager = MCPProviderManager.shared
+        let provider = makeProvider(name: "lifecycle-state", autoConnect: false)
+        manager._testInstallProviders([provider])
+        defer { manager._testRemoveProviders(ids: [provider.id]) }
+
+        let first = manager.beginConnectionOperation(providerId: provider.id)
+        let second = manager.beginConnectionOperation(providerId: provider.id)
+
+        #expect(!manager.connectionOperationIsCurrent(first))
+        #expect(manager.connectionOperationIsCurrent(second))
+        #expect(!manager.commitConnectedState(provider: provider, operation: first))
+        #expect(manager.commitConnectedState(provider: provider, operation: second))
+        #expect(manager.providerStates[provider.id]?.isConnected == true)
+
+        manager.disconnect(providerId: provider.id)
+        #expect(!manager.connectionOperationIsCurrent(second))
+        #expect(manager.providerStates[provider.id]?.isConnected == false)
+    }
+
+    @Test("stale discovery cannot overwrite a newer connection catalog")
+    func staleDiscoveryCannotOverwriteNewCatalog() async throws {
+        let manager = MCPProviderManager.shared
+        let provider = makeProvider(name: "lifecycle-catalog", autoConnect: false)
+        let pause = MCPConnectionPause()
+        manager._testInstallProviders([provider])
+        defer {
+            manager.replaceDiscoveredTools([], for: provider.id, provider: provider)
+            manager._testRemoveProviders(ids: [provider.id])
+        }
+
+        let first = manager.beginConnectionOperation(providerId: provider.id)
+        let staleRefresh = Task { @MainActor in
+            try await manager.refreshDiscoveredTools(
+                for: provider.id,
+                provider: provider,
+                operation: first
+            ) {
+                await pause.pause()
+                return [makeTool("stale")]
+            }
+        }
+        await pause.waitUntilReached()
+
+        let second = manager.beginConnectionOperation(providerId: provider.id)
+        try await manager.refreshDiscoveredTools(
+            for: provider.id,
+            provider: provider,
+            operation: second
+        ) {
+            [makeTool("current")]
+        }
+        await pause.release()
+
+        do {
+            try await staleRefresh.value
+            Issue.record("A superseded discovery unexpectedly committed")
+        } catch is CancellationError {
+            // Expected: the generation guard rejects the stale result.
+        } catch {
+            Issue.record("Unexpected stale discovery error: \(error)")
+        }
+
+        #expect(manager.providerStates[provider.id]?.discoveredToolNames == ["current"])
     }
 
     @Test("terminal launch failures are not retried")

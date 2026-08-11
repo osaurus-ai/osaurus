@@ -91,8 +91,16 @@
         /// Set once a global spawn slot is held so `stop()` releases exactly
         /// one slot even if called twice.
         private var spawnSlotHeld = false
+        private var stopRequested = false
 
         public func start() async throws {
+            try await start(connectionOperation: nil)
+        }
+
+        func start(connectionOperation: MCPConnectionOperation?) async throws {
+            try Task.checkCancellation()
+            try connectionOperation?.checkCancellation()
+            guard !stopRequested else { throw CancellationError() }
             // Sandboxed stdio needs the VM's interactive exec bridge, which
             // the Seatbelt backend doesn't have. Fail up front with guidance
             // instead of burning a spawn slot to hit the same wall inside
@@ -112,12 +120,19 @@
             try await MCPChildSpawnLimiter.shared.acquire()
             spawnSlotHeld = true
 
-            // Ensure the owning agent's Linux user exists before we exec
-            // as it (the caller normally provisioned it already; this is
-            // the idempotent belt-and-braces for direct starts).
-            try? await SandboxManager.shared.ensureAgentUser(agentName)
-
             do {
+                try Task.checkCancellation()
+                try connectionOperation?.checkCancellation()
+                guard !stopRequested else { throw CancellationError() }
+
+                // Ensure the owning agent's Linux user exists before we exec
+                // as it (the caller normally provisioned it already; this is
+                // the idempotent belt-and-braces for direct starts).
+                try? await SandboxManager.shared.ensureAgentUser(agentName)
+                try Task.checkCancellation()
+                try connectionOperation?.checkCancellation()
+                guard !stopRequested else { throw CancellationError() }
+
                 let proc = try await SandboxManager.shared.execInteractive(
                     user: agentUser,
                     command: command,
@@ -128,10 +143,15 @@
                     stderr: stderrWriter
                 )
                 self.process = proc
+                try Task.checkCancellation()
+                try connectionOperation?.checkCancellation()
+                guard !stopRequested else { throw CancellationError() }
                 startExitWatch(for: proc)
             } catch {
-                await MCPChildSpawnLimiter.shared.release()
-                spawnSlotHeld = false
+                await stop()
+                if error is CancellationError {
+                    throw error
+                }
                 throw MCPStdioTransportError.processSpawnFailed(
                     error.localizedDescription
                 )
@@ -159,6 +179,7 @@
         }
 
         public func stop(forceKillGraceSeconds: Int64 = 2) async {
+            stopRequested = true
             // Intentional teardown: never route through the "unexpected exit"
             // handler, which would mark the provider as crashed.
             onProcessExitHandler = nil

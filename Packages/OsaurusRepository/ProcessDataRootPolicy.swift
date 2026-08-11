@@ -171,10 +171,10 @@ public enum ProcessDataRootPolicy {
         } ?? false
         let isTestBundleProcess = executableBelongsToTestBundle || mainBundleOwnsExecutable
 
-        // Xcode can run a test bundle inside an application host, while
-        // SwiftPM can use a helper executable. In both cases require an
-        // actual loaded test bundle and the XCTest runtime, rather than
-        // trusting the corresponding environment marker or basename.
+        // App-hosted tests require a real loaded test bundle plus the XCTest
+        // runtime. Dedicated XCTest and SwiftPM runners are also accepted, but
+        // only when both their executable basename and validated toolchain path
+        // match; environment markers and process names alone are never enough.
         let isXCTestRunner = normalizedProcessName == "xctest"
             && executableURL?.lastPathComponent.lowercased() == "xctest"
             && isXCTestToolPath(executableURL)

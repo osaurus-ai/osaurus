@@ -136,6 +136,23 @@ final class MCPStdioTransportErrorTests: XCTestCase {
 
 #if canImport(Darwin)
     final class MCPStdioHostRunnerPathTests: XCTestCase {
+        private final class RecognitionProbe: @unchecked Sendable {
+            private let lock = NSLock()
+            private var recognized = false
+
+            func value() -> Bool {
+                lock.lock()
+                defer { lock.unlock() }
+                return recognized
+            }
+
+            func recognize() {
+                lock.lock()
+                recognized = true
+                lock.unlock()
+            }
+        }
+
         private func makePrivateTestRoot() throws -> URL {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(
                 "osaurus-mcp-parent-\(UUID().uuidString)",
@@ -416,6 +433,143 @@ final class MCPStdioTransportErrorTests: XCTestCase {
                 afterRecognition.environment["PATH"]
             )
             XCTAssertEqual(afterRecognition.arguments, provider.args)
+        }
+
+        func testStartRebuildsLaunchAfterRecognitionTransition() async throws {
+            let ambientCanary = "mcp-ambient-secret-\(UUID().uuidString)"
+            let probe = RecognitionProbe()
+            let provider = MCPProvider(
+                name: "start transition",
+                url: "stdio://start-transition",
+                transport: .stdio,
+                executionHost: .host,
+                command: "/bin/sleep",
+                args: ["5"]
+            )
+            let runner = try MCPStdioHostRunner(provider: provider)
+            let overrides = MCPStdioHostRunner.LaunchTestOverrides(
+                environmentProvider: {
+                    [
+                        "PATH": "/usr/bin:/bin",
+                        "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
+                        "AMBIENT_SECRET_CANARY": ambientCanary,
+                    ]
+                },
+                recognitionProvider: { probe.value() },
+                beforeRunHook: { probe.recognize() }
+            )
+
+            do {
+                try await MCPStdioHostRunner.$launchTestOverrides.withValue(overrides) {
+                    try await runner.start()
+                }
+                let launchedEnvironment = await runner.launchedEnvironmentForTesting()
+                let environment = try XCTUnwrap(launchedEnvironment)
+                XCTAssertNil(environment["AMBIENT_SECRET_CANARY"])
+                XCTAssertEqual(
+                    environment["HOME"],
+                    environment[ProcessDataRootPolicy.testRootEnvironmentKey]
+                )
+                XCTAssertEqual(
+                    environment["TMPDIR"],
+                    environment[ProcessDataRootPolicy.testRootEnvironmentKey]
+                )
+                XCTAssertEqual(
+                    environment[ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey],
+                    "1"
+                )
+            } catch {
+                await runner.stop(forceKillGraceSeconds: 0)
+                throw error
+            }
+            await runner.stop(forceKillGraceSeconds: 0)
+        }
+
+        func testCancelledConnectionCannotLaunchAndReleasesSpawnSlot() async throws {
+            let provider = MCPProvider(
+                name: "cancelled start",
+                url: "stdio://cancelled-start",
+                transport: .stdio,
+                executionHost: .host,
+                command: "/bin/sleep",
+                args: ["5"]
+            )
+            let runner = try MCPStdioHostRunner(provider: provider)
+            let operation = MCPConnectionOperation(providerId: provider.id, generation: 1)
+            let liveBefore = await MCPChildSpawnLimiter.shared.liveCount()
+            let overrides = MCPStdioHostRunner.LaunchTestOverrides(
+                environmentProvider: { ProcessInfo.processInfo.environment },
+                recognitionProvider: { ProcessDataRootPolicy.isRecognizedTestHostProcess },
+                beforeRunHook: { operation.cancel() }
+            )
+
+            do {
+                try await MCPStdioHostRunner.$launchTestOverrides.withValue(overrides) {
+                    try await runner.start(connectionOperation: operation)
+                }
+                XCTFail("A cancelled connection operation launched a child process")
+            } catch is CancellationError {
+                // Expected.
+            }
+
+            let isRunning = await runner.isRunning()
+            let liveAfter = await MCPChildSpawnLimiter.shared.liveCount()
+            XCTAssertFalse(isRunning)
+            XCTAssertEqual(liveAfter, liveBefore)
+            await runner.stop(forceKillGraceSeconds: 0)
+        }
+
+        func testStoppedRunnerCannotLaunchOrConsumeSpawnSlot() async throws {
+            let provider = MCPProvider(
+                name: "stopped start",
+                url: "stdio://stopped-start",
+                transport: .stdio,
+                executionHost: .host,
+                command: "/bin/sleep",
+                args: ["5"]
+            )
+            let runner = try MCPStdioHostRunner(provider: provider)
+            let liveBefore = await MCPChildSpawnLimiter.shared.liveCount()
+            await runner.stop(forceKillGraceSeconds: 0)
+
+            do {
+                try await runner.start()
+                XCTFail("A stopped runner launched a child process")
+            } catch is CancellationError {
+                // Expected.
+            }
+
+            let isRunning = await runner.isRunning()
+            let liveAfter = await MCPChildSpawnLimiter.shared.liveCount()
+            XCTAssertFalse(isRunning)
+            XCTAssertEqual(liveAfter, liveBefore)
+        }
+
+        func testStoppedSandboxRunnerCannotConsumeSpawnSlot() async throws {
+            let provider = MCPProvider(
+                name: "stopped sandbox start",
+                url: "stdio://stopped-sandbox-start",
+                transport: .stdio,
+                executionHost: .sandbox,
+                command: "/bin/sleep",
+                args: ["5"]
+            )
+            let runner = try SandboxStdioRunner(
+                provider: provider,
+                agentName: "stopped-sandbox-test"
+            )
+            let liveBefore = await MCPChildSpawnLimiter.shared.liveCount()
+            await runner.stop(forceKillGraceSeconds: 0)
+
+            do {
+                try await runner.start()
+                XCTFail("A stopped sandbox runner consumed a spawn slot")
+            } catch is CancellationError {
+                // Expected.
+            }
+
+            let liveAfter = await MCPChildSpawnLimiter.shared.liveCount()
+            XCTAssertEqual(liveAfter, liveBefore)
         }
 
         func testIsolatedHomeControlsShellAndPythonExpansion() throws {

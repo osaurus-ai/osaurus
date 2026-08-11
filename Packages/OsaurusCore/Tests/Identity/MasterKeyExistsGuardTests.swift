@@ -63,6 +63,51 @@ struct MasterKeyServiceIsolationTests {
         )
         #expect(MasterMnemonicStore.service == MasterKey.service)
     }
+
+    @Test
+    func securityOperationRequiresStableServiceAndEnabledPolicy() {
+        let production = MasterKey.serviceName(realKeychainTestNamespace: nil)
+        let proof = MasterKey.serviceName(
+            realKeychainTestNamespace: "01234567-89ab-cdef-0123-456789abcdef"
+        )
+        var operationCount = 0
+
+        let allowed = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: production,
+            currentService: { production },
+            isDisabled: { false },
+            operation: {
+                operationCount += 1
+                return errSecSuccess
+            }
+        )
+        #expect(allowed == errSecSuccess)
+        #expect(operationCount == 1)
+
+        let namespaceChanged = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: production,
+            currentService: { proof },
+            isDisabled: { false },
+            operation: {
+                operationCount += 1
+                return errSecSuccess
+            }
+        )
+        #expect(namespaceChanged == nil)
+        #expect(operationCount == 1)
+
+        let policyDisabled = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: production,
+            currentService: { production },
+            isDisabled: { true },
+            operation: {
+                operationCount += 1
+                return errSecSuccess
+            }
+        )
+        #expect(policyDisabled == nil)
+        #expect(operationCount == 1)
+    }
 }
 
 // `.serialized` is required because every test in this suite mutates the same

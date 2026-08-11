@@ -110,9 +110,10 @@ public struct MasterKey: Sendable {
     // that an interrupted CLI run could leave behind. Production behavior is
     // unchanged whenever the proof namespace is absent.
     private static func addToKeychain(keyData: Data, synchronizable: Bool) -> OSStatus {
+        let serviceName = service
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: serviceName,
             kSecAttrAccount as String: account,
             kSecValueData as String: keyData,
             kSecAttrLabel as String: "Osaurus Master Key",
@@ -126,7 +127,12 @@ public struct MasterKey: Sendable {
             }
             query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         }
-        return SecItemAdd(query as CFDictionary, nil)
+        return KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: serviceName,
+            currentService: { service },
+            isDisabled: { KeychainQueryHelpers.disablesIdentityKeyForProcess },
+            operation: { SecItemAdd(query as CFDictionary, nil) }
+        ) ?? errSecInteractionNotAllowed
     }
 
     // MARK: - Existence Check
@@ -157,7 +163,13 @@ public struct MasterKey: Sendable {
         guard !KeychainQueryHelpers.disablesIdentityKeyForProcess,
             serviceName == service
         else { return false }
-        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+        let status = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: serviceName,
+            currentService: { service },
+            isDisabled: { KeychainQueryHelpers.disablesIdentityKeyForProcess },
+            operation: { SecItemCopyMatching(query as CFDictionary, nil) }
+        ) ?? errSecInteractionNotAllowed
+        return status == errSecSuccess
     }
 
     // MARK: - Cached Existence (hot UI paths)
@@ -323,9 +335,10 @@ public struct MasterKey: Sendable {
         if KeychainQueryHelpers.disablesIdentityKeyForProcess {
             throw OsaurusIdentityError.keychainReadFailed
         }
+        let serviceName = service
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: serviceName,
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             kSecReturnData as String: true,
@@ -336,7 +349,12 @@ public struct MasterKey: Sendable {
         }
 
         var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let status = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: serviceName,
+            currentService: { service },
+            isDisabled: { KeychainQueryHelpers.disablesIdentityKeyForProcess },
+            operation: { SecItemCopyMatching(query as CFDictionary, &result) }
+        ) ?? errSecInteractionNotAllowed
         guard status == errSecSuccess, let data = result as? Data else {
             throw OsaurusIdentityError.keychainReadFailed
         }
@@ -363,13 +381,19 @@ public struct MasterKey: Sendable {
             setCachedExists(false)
             return true
         }
+        let serviceName = service
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: serviceName,
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
         ]
-        let status = SecItemDelete(query as CFDictionary)
+        let status = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: serviceName,
+            currentService: { service },
+            isDisabled: { KeychainQueryHelpers.disablesIdentityKeyForProcess },
+            operation: { SecItemDelete(query as CFDictionary) }
+        ) ?? errSecItemNotFound
         let gone = status == errSecSuccess || status == errSecItemNotFound
         if gone {
             setCachedExists(false)

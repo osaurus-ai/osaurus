@@ -25,6 +25,7 @@
 //
 
 import Foundation
+import OsaurusRepository
 
 enum ExternalModelLocator {
     /// One discovered external bundle.
@@ -132,6 +133,7 @@ enum ExternalModelLocator {
     // MARK: - Registry state
 
     private static let lock = NSLock()
+    private static let persistenceLock = NSLock()
     nonisolated(unsafe) private static var registry: [String: Discovered]?
     nonisolated(unsafe) private static var lastReport: ScanReport?
     /// Bumped on every `registry` mutation so read-side memo caches (e.g.
@@ -139,12 +141,25 @@ enum ExternalModelLocator {
     /// notifications.
     nonisolated(unsafe) private static var registryGen: UInt64 = 0
 
+    /// Automatic ambient discovery is never visible from an isolated process.
+    /// Unit fixtures remain explicit through `testRootsOverride` and therefore
+    /// do not need access to a developer's real model caches.
+    private static var currentProcessAllowsRegistryAccess: Bool {
+        if testRootsOverride != nil { return true }
+        return !ProcessDataRootPolicy.shouldDisableKeychain(
+            environment: ProcessInfo.processInfo.environment,
+            recognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
+        )
+    }
+
     /// Monotonic version of the registry contents. Two equal values guarantee
     /// `models()` would return the same set.
     static func registryGeneration() -> UInt64 {
+        guard currentProcessAllowsRegistryAccess else { return .max }
         lock.lock()
-        defer { lock.unlock() }
-        return registryGen
+        let generation = registryGen
+        lock.unlock()
+        return currentProcessAllowsRegistryAccess ? generation : .max
     }
 
     /// Test hook: override the scan roots so unit tests don't depend on a
@@ -165,14 +180,15 @@ enum ExternalModelLocator {
     /// stale manifest entry (source deleted out from under us) doesn't
     /// resolve to a missing path.
     static func path(forId id: String) -> URL? {
+        guard currentProcessAllowsRegistryAccess else { return nil }
         lock.lock()
         let entry = loadedLocked()[id.lowercased()]
         lock.unlock()
-        guard let entry else { return nil }
+        guard currentProcessAllowsRegistryAccess, let entry else { return nil }
         let url = URL(fileURLWithPath: entry.bundlePath, isDirectory: true)
         guard FileManager.default.fileExists(atPath: url.appendingPathComponent("config.json").path)
         else { return nil }
-        return url
+        return currentProcessAllowsRegistryAccess ? url : nil
     }
 
     /// Memoized result of `models()` for the registry generation it was built
@@ -193,12 +209,13 @@ enum ExternalModelLocator {
     /// seconds of I/O right after launch — too slow for the view-body call
     /// path through `ModelManager.localModelsSnapshotNonBlocking`.
     static func modelsSnapshotNonBlocking() -> [MLXModel] {
+        guard currentProcessAllowsRegistryAccess else { return [] }
         lock.lock()
         let entriesLoaded = !loadedLocked().isEmpty
         let gen = registryGen
         if modelsMemoGen == gen, let memo = modelsMemo {
             lock.unlock()
-            return memo
+            return currentProcessAllowsRegistryAccess ? memo : []
         }
         let stale = modelsMemo ?? []
         // An empty registry is authoritative. Returning a memo from an older
@@ -222,14 +239,17 @@ enum ExternalModelLocator {
                 // Same completion signal as the local-models scan: without it
                 // a launch-time consumer keeps its empty/stale snapshot until
                 // an unrelated event triggers a refresh.
-                NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+                if currentProcessAllowsRegistryAccess {
+                    NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+                }
             }
         }
-        return stale
+        return currentProcessAllowsRegistryAccess ? stale : []
     }
 
     /// Catalog entries for every registered external model.
     static func models() -> [MLXModel] {
+        guard currentProcessAllowsRegistryAccess else { return [] }
         lock.lock()
         // Load first: the lazy first-load inside `loadedLocked()` bumps
         // `registryGen`, so the gen must be captured after it.
@@ -237,12 +257,14 @@ enum ExternalModelLocator {
         let gen = registryGen
         if modelsMemoGen == gen, let memo = modelsMemo {
             lock.unlock()
-            return memo
+            return currentProcessAllowsRegistryAccess ? memo : []
         }
         lock.unlock()
-        let built = entries.map { entry in
+        guard currentProcessAllowsRegistryAccess else { return [] }
+        let built = entries.compactMap { entry -> MLXModel? in
+            guard currentProcessAllowsRegistryAccess else { return nil }
             let bundleDirectory = URL(fileURLWithPath: entry.bundlePath, isDirectory: true)
-            return MLXModel(
+            let model = MLXModel(
                 id: entry.id,
                 name: ModelMetadataParser.friendlyName(from: entry.id),
                 description: "Found in \(entry.source).",
@@ -259,6 +281,7 @@ enum ExternalModelLocator {
                 bundleDirectory: bundleDirectory,
                 externalSource: entry.source
             )
+            return currentProcessAllowsRegistryAccess ? model : nil
         }
         lock.lock()
         // Store only if the registry didn't move while we were building
@@ -269,17 +292,18 @@ enum ExternalModelLocator {
             modelsMemoGen = gen
         }
         lock.unlock()
-        return built
+        return currentProcessAllowsRegistryAccess ? built : []
     }
 
     /// Most recent external-model scan report, including skipped candidates.
     /// This is a UI/diagnostic surface only; runtime path resolution continues
     /// to use the validated registry above.
     static func lastScanReport() -> ScanReport? {
+        guard currentProcessAllowsRegistryAccess else { return nil }
         lock.lock()
         let report = lastReport
         lock.unlock()
-        return report
+        return currentProcessAllowsRegistryAccess ? report : nil
     }
 
     /// Forget a single external model so it no longer appears in the
@@ -287,15 +311,35 @@ enum ExternalModelLocator {
     /// registry/manifest entry. A later `rescan()` will rediscover it if
     /// the bundle still exists and its source is still enabled.
     static func forget(id: String) {
+        guard currentProcessAllowsRegistryAccess else { return }
         lock.lock()
+        guard currentProcessAllowsRegistryAccess else {
+            lock.unlock()
+            return
+        }
+        let previousRegistry = registry
+        let previousGeneration = registryGen
         var map = loadedLocked()
         let removed = map.removeValue(forKey: id.lowercased()) != nil
         registry = map
         if removed { registryGen &+= 1 }
+        let committedGeneration = registryGen
+        guard currentProcessAllowsRegistryAccess else {
+            registry = previousRegistry
+            registryGen = previousGeneration
+            lock.unlock()
+            return
+        }
         lock.unlock()
         if removed {
-            persist(map)
-            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+            persist(
+                map,
+                expectedGeneration: committedGeneration,
+                shouldContinue: { currentProcessAllowsRegistryAccess }
+            )
+            if currentProcessAllowsRegistryAccess {
+                NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+            }
         }
     }
 
@@ -312,6 +356,7 @@ enum ExternalModelLocator {
     /// out from under us would otherwise linger in the UI until the next quit.
     @discardableResult
     static func pruneMissing() -> Bool {
+        guard currentProcessAllowsRegistryAccess else { return false }
         // Snapshot under the lock, then do the `fileExists` probes UNLOCKED.
         // Holding the lock across filesystem I/O would block any concurrent
         // (possibly main-thread) `models()` / `path(forId:)` caller for the
@@ -319,12 +364,17 @@ enum ExternalModelLocator {
         // their I/O outside the lock. Callers must still invoke this off the
         // main thread.
         lock.lock()
+        guard currentProcessAllowsRegistryAccess else {
+            lock.unlock()
+            return false
+        }
         let snapshot = loadedLocked()
         lock.unlock()
 
         let fm = FileManager.default
         var missing: [String: String] = [:]  // key -> probed bundlePath
         for (key, entry) in snapshot {
+            guard currentProcessAllowsRegistryAccess else { return false }
             let configPath = URL(fileURLWithPath: entry.bundlePath, isDirectory: true)
                 .appendingPathComponent("config.json").path
             if !fm.fileExists(atPath: configPath) {
@@ -337,6 +387,12 @@ enum ExternalModelLocator {
         // a concurrent `rescan()` may have re-registered the id at a new,
         // still-valid path while we were probing, and that must survive.
         lock.lock()
+        guard currentProcessAllowsRegistryAccess else {
+            lock.unlock()
+            return false
+        }
+        let previousRegistry = registry
+        let previousGeneration = registryGen
         var map = loadedLocked()
         var removed = false
         for (key, probedPath) in missing where map[key]?.bundlePath == probedPath {
@@ -347,11 +403,24 @@ enum ExternalModelLocator {
             registry = map
             registryGen &+= 1
         }
+        let committedGeneration = registryGen
+        guard currentProcessAllowsRegistryAccess else {
+            registry = previousRegistry
+            registryGen = previousGeneration
+            lock.unlock()
+            return false
+        }
         lock.unlock()
 
         if removed {
-            persist(map)
-            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+            persist(
+                map,
+                expectedGeneration: committedGeneration,
+                shouldContinue: { currentProcessAllowsRegistryAccess }
+            )
+            if currentProcessAllowsRegistryAccess {
+                NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+            }
         }
         return removed
     }
@@ -363,31 +432,55 @@ enum ExternalModelLocator {
     /// call from a background task; performs filesystem I/O.
     @discardableResult
     static func rescan(
-        shouldContinue: @Sendable () -> Bool = { true }
+        shouldContinue: @escaping @Sendable () -> Bool = { true },
+        afterRegistryMutationForTesting: @Sendable () -> Void = {},
+        beforePersistValidationForTesting: @Sendable () -> Void = {}
     ) -> [MLXModel] {
-        guard shouldContinue() else { return modelsSnapshotNonBlocking() }
-        let report = scanEnabledSources(shouldContinue: shouldContinue)
-        guard shouldContinue() else { return modelsSnapshotNonBlocking() }
+        let canContinue: @Sendable () -> Bool = {
+            shouldContinue() && currentProcessAllowsRegistryAccess
+        }
+        guard canContinue() else { return modelsSnapshotNonBlocking() }
+        let report = scanEnabledSources(shouldContinue: canContinue)
+        guard canContinue() else { return modelsSnapshotNonBlocking() }
         var discovered: [String: Discovered] = [:]
         for entry in report.discovered {
             discovered[entry.id.lowercased()] = entry
         }
-        guard shouldContinue() else { return modelsSnapshotNonBlocking() }
+        guard canContinue() else { return modelsSnapshotNonBlocking() }
 
         lock.lock()
-        guard shouldContinue() else {
+        guard canContinue() else {
             lock.unlock()
             return modelsSnapshotNonBlocking()
         }
+        let previousRegistry = registry
+        let previousReport = lastReport
+        let previousGeneration = registryGen
         let changed = registry == nil || registry! != discovered
         registry = discovered
         if changed { registryGen &+= 1 }
+        let committedGeneration = registryGen
         lastReport = report
+        afterRegistryMutationForTesting()
+        guard canContinue() else {
+            registry = previousRegistry
+            lastReport = previousReport
+            registryGen = previousGeneration
+            lock.unlock()
+            return modelsSnapshotNonBlocking()
+        }
         lock.unlock()
 
-        if changed, shouldContinue() {
-            persist(discovered)
-            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+        if changed, canContinue() {
+            persist(
+                discovered,
+                expectedGeneration: committedGeneration,
+                shouldContinue: canContinue,
+                beforeValidationForTesting: beforePersistValidationForTesting
+            )
+            if canContinue() {
+                NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+            }
         }
         return models()
     }
@@ -913,25 +1006,55 @@ enum ExternalModelLocator {
     }
 
     private static func loadFromDisk() -> [String: Discovered] {
+        guard currentProcessAllowsRegistryAccess else { return [:] }
         let url = OsaurusPaths.externalModelsManifestFile()
-        guard FileManager.default.fileExists(atPath: url.path),
+        guard currentProcessAllowsRegistryAccess,
+            FileManager.default.fileExists(atPath: url.path),
             let data = try? Data(contentsOf: url),
+            currentProcessAllowsRegistryAccess,
             let payload = try? JSONDecoder().decode(Persisted.self, from: data),
             payload.schemaVersion == Persisted.currentSchemaVersion
         else { return [:] }
         var map: [String: Discovered] = [:]
         for model in payload.models { map[model.id.lowercased()] = model }
-        return map
+        return currentProcessAllowsRegistryAccess ? map : [:]
     }
 
-    private static func persist(_ map: [String: Discovered]) {
+    private static func persist(
+        _ map: [String: Discovered],
+        expectedGeneration: UInt64? = nil,
+        shouldContinue: @Sendable () -> Bool = { currentProcessAllowsRegistryAccess },
+        beforeValidationForTesting: @Sendable () -> Void = {}
+    ) {
+        persistenceLock.lock()
+        defer { persistenceLock.unlock() }
+        beforeValidationForTesting()
+        guard shouldContinue() else { return }
+        if let expectedGeneration {
+            lock.lock()
+            let remainsCurrent = registryGen == expectedGeneration && registry == map
+            lock.unlock()
+            guard remainsCurrent else { return }
+        }
         let url = OsaurusPaths.externalModelsManifestFile()
+        guard shouldContinue(), url == OsaurusPaths.externalModelsManifestFile() else {
+            return
+        }
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         let payload = Persisted(
             schemaVersion: Persisted.currentSchemaVersion,
             models: Array(map.values).sorted { $0.id < $1.id }
         )
         guard let data = try? JSONEncoder().encode(payload) else { return }
+        guard shouldContinue(), url == OsaurusPaths.externalModelsManifestFile() else {
+            return
+        }
+        if let expectedGeneration {
+            lock.lock()
+            let remainsCurrent = registryGen == expectedGeneration && registry == map
+            lock.unlock()
+            guard remainsCurrent else { return }
+        }
         try? data.write(to: url, options: [.atomic])
     }
 

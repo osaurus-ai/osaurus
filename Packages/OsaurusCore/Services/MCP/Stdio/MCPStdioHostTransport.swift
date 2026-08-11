@@ -65,6 +65,19 @@
             let workingDirectory: URL?
         }
 
+        private struct LaunchContext: Equatable {
+            let environment: [String: String]
+            let recognizedTestHost: Bool
+        }
+
+        struct LaunchTestOverrides: Sendable {
+            let environmentProvider: @Sendable () -> [String: String]
+            let recognitionProvider: @Sendable () -> Bool
+            let beforeRunHook: @Sendable () -> Void
+        }
+
+        @TaskLocal static var launchTestOverrides: LaunchTestOverrides?
+
         private let provider: MCPProvider
         private let process: Process
         private let stdinPipe: Pipe
@@ -368,63 +381,99 @@
         /// Set once a global spawn slot is held so `stop()` releases exactly
         /// one slot even if called twice.
         private var spawnSlotHeld = false
+        private var stopRequested = false
 
         /// Start the subprocess. Must be called before connecting `MCP.Client`
         /// to `transport`. Reserves a global MCP child-spawn slot first so a
         /// reconnect/launch storm can't exhaust PIDs/FDs.
         public func start() async throws {
+            try await start(connectionOperation: nil)
+        }
+
+        func start(connectionOperation: MCPConnectionOperation?) async throws {
+            try Task.checkCancellation()
+            try connectionOperation?.checkCancellation()
+            guard !stopRequested else { throw CancellationError() }
             try await MCPChildSpawnLimiter.shared.acquire()
             spawnSlotHeld = true
             do {
+                try Task.checkCancellation()
+                try connectionOperation?.checkCancellation()
+                guard !stopRequested else { throw CancellationError() }
                 process.terminationHandler = { [weak self] proc in
                     let code = proc.terminationStatus
                     Task { await self?.handleProcessExit(exitCode: code) }
                 }
                 startStderrPump()
 
-                // Test-host identity can become visible after runner creation.
-                // Resolve every launch-sensitive field only after this fresh
-                // decision, while keeping host execution explicitly unconfined.
-                var parentEnvironment = ProcessInfo.processInfo.environment
-                var parentRecognizedTestHost = ProcessDataRootPolicy.isRecognizedTestHostProcess
-                var launchConfiguration = try Self.makeLaunchConfiguration(
-                    command: provider.command,
-                    args: provider.args,
-                    workingDirectory: provider.workingDirectory,
-                    providerEnvironment: provider.resolvedEnv(),
-                    parentEnvironment: parentEnvironment,
-                    parentRecognizedTestHost: parentRecognizedTestHost
-                )
+                let overrides = Self.launchTestOverrides
+                func currentLaunchContext() -> LaunchContext {
+                    LaunchContext(
+                        environment: overrides?.environmentProvider()
+                            ?? ProcessInfo.processInfo.environment,
+                        recognizedTestHost: overrides?.recognitionProvider()
+                            ?? ProcessDataRootPolicy.isRecognizedTestHostProcess
+                    )
+                }
 
-                // Executable lookup and secret resolution can take long enough
-                // for XCTest recognition to latch. Rebuild from the newer
-                // context before launch rather than retaining production HOME,
-                // PATH, credentials, or cwd captured by the first pass.
-                let launchEnvironment = ProcessInfo.processInfo.environment
-                let launchRecognizedTestHost = ProcessDataRootPolicy.isRecognizedTestHostProcess
-                if launchEnvironment != parentEnvironment
-                    || launchRecognizedTestHost != parentRecognizedTestHost {
-                    parentEnvironment = launchEnvironment
-                    parentRecognizedTestHost = launchRecognizedTestHost
-                    launchConfiguration = try Self.makeLaunchConfiguration(
+                // Secret resolution and executable lookup can overlap late
+                // XCTest recognition. Rebuild from a changed context and make
+                // one final equality check immediately before Process.run().
+                // A context that never stabilizes fails closed without spawning.
+                var launchContext = currentLaunchContext()
+                for attempt in 0..<3 {
+                    let launchConfiguration = try Self.makeLaunchConfiguration(
                         command: provider.command,
                         args: provider.args,
                         workingDirectory: provider.workingDirectory,
                         providerEnvironment: provider.resolvedEnv(),
-                        parentEnvironment: parentEnvironment,
-                        parentRecognizedTestHost: parentRecognizedTestHost
+                        parentEnvironment: launchContext.environment,
+                        parentRecognizedTestHost: launchContext.recognizedTestHost
                     )
+                    if attempt == 0 {
+                        overrides?.beforeRunHook()
+                    }
+
+                    let resolvedContext = currentLaunchContext()
+                    guard resolvedContext == launchContext else {
+                        launchContext = resolvedContext
+                        continue
+                    }
+
+                    process.executableURL = URL(fileURLWithPath: launchConfiguration.executablePath)
+                    process.arguments = launchConfiguration.arguments
+                    process.environment = launchConfiguration.environment
+                    process.currentDirectoryURL = launchConfiguration.workingDirectory
+
+                    let finalContext = currentLaunchContext()
+                    guard finalContext == launchContext else {
+                        launchContext = finalContext
+                        continue
+                    }
+                    try Task.checkCancellation()
+                    guard !stopRequested else { throw CancellationError() }
+                    if let connectionOperation {
+                        try connectionOperation.withLaunchPermission {
+                            try process.run()
+                        }
+                    } else {
+                        try process.run()
+                    }
+                    return
                 }
-                process.executableURL = URL(fileURLWithPath: launchConfiguration.executablePath)
-                process.arguments = launchConfiguration.arguments
-                process.environment = launchConfiguration.environment
-                process.currentDirectoryURL = launchConfiguration.workingDirectory
-                try process.run()
+                throw MCPStdioTransportError.processSpawnFailed(
+                    "process isolation context changed repeatedly"
+                )
             } catch {
                 // Release the slot we just reserved — the child never launched.
-                await MCPChildSpawnLimiter.shared.release()
-                spawnSlotHeld = false
+                if spawnSlotHeld {
+                    spawnSlotHeld = false
+                    await MCPChildSpawnLimiter.shared.release()
+                }
                 stopStderrPump()
+                if error is CancellationError {
+                    throw error
+                }
                 if let transportError = error as? MCPStdioTransportError {
                     throw transportError
                 }
@@ -463,6 +512,7 @@
         /// Tear down the subprocess. Idempotent — safe to call from
         /// `disconnect()` paths even if `start()` failed.
         public func stop(forceKillGraceSeconds: TimeInterval = 2.0) async {
+            stopRequested = true
             // Intentional teardown: never route through the "unexpected exit"
             // handler, which would mark the provider as crashed.
             onProcessExitHandler = nil
@@ -487,6 +537,10 @@
 
         public func isRunning() -> Bool {
             process.isRunning
+        }
+
+        func launchedEnvironmentForTesting() -> [String: String]? {
+            process.environment
         }
 
         /// Walk the colon-separated `path` looking for an executable named

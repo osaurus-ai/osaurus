@@ -63,7 +63,7 @@ struct MasterMnemonicStoreIsolationTests {
         )
         try Self.requireGateBeforeCall(
             in: store,
-            call: "addToKeychain(",
+            call: "SecItemAdd",
             operation: "store"
         )
 
@@ -131,13 +131,17 @@ struct MasterMnemonicStoreIsolationTests {
         call: String,
         operation: String
     ) throws {
-        let gate = try #require(
-            method.range(of: "KeychainQueryHelpers.disablesKeychainForProcess")
-        )
         let securityCall = try #require(method.range(of: call))
+        let prefix = method[..<securityCall.lowerBound]
+        let gate = try #require(
+            prefix.range(
+                of: "KeychainQueryHelpers.performIfServiceAccessRemainsAllowed",
+                options: .backwards
+            )
+        )
         #expect(
             gate.lowerBound < securityCall.lowerBound,
-            "\(operation) must gate before \(call)"
+            "\(operation) must revalidate its service immediately before \(call)"
         )
     }
 }

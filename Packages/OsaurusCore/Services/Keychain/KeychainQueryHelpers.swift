@@ -11,6 +11,22 @@ import OsaurusRepository
 import Security
 
 enum KeychainQueryHelpers {
+    /// Revalidate the service captured in a query immediately before invoking
+    /// Security.framework. Test-host recognition can latch while a query is
+    /// being assembled, so an entry guard alone is not sufficient for identity
+    /// reads, writes, or deletes.
+    static func performIfServiceAccessRemainsAllowed<Result>(
+        capturedService: String,
+        currentService: () -> String,
+        isDisabled: () -> Bool,
+        operation: () -> Result
+    ) -> Result? {
+        guard !isDisabled(), capturedService == currentService() else {
+            return nil
+        }
+        return operation()
+    }
+
     /// Live proof/test launches set this to guarantee wrappers do not touch the
     /// user's login Keychain at all. This is stronger than noninteractive
     /// queries: reads return nil, writes return false, and deletes become

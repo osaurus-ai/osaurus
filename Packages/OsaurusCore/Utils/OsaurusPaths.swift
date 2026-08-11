@@ -18,11 +18,21 @@ final class SynchronousOnceGate: @unchecked Sendable {
     private var completed = false
 
     func run(_ operation: () -> Void) {
+        _ = runUntilComplete {
+            operation()
+            return true
+        }
+    }
+
+    /// Runs `operation` until one invocation reports that initialization
+    /// completed. Returning `false` leaves the gate retryable for a later call.
+    @discardableResult
+    func runUntilComplete(_ operation: () -> Bool) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard !completed else { return }
-        operation()
-        completed = true
+        guard !completed else { return true }
+        completed = operation()
+        return completed
     }
 }
 
@@ -52,6 +62,7 @@ public enum OsaurusPaths {
         case alreadyMarked(URL)
         case copied(URL)
         case merged(URL)
+        case deferred
     }
 
     /// The root data directory for Osaurus: `~/.osaurus/`
@@ -69,21 +80,28 @@ public enum OsaurusPaths {
             ProcessDataRootPolicy.allowsProductionDataMigrationForCurrentProcess
         else { return }
 
-        legacyMigrationGate.run {
+        legacyMigrationGate.runUntilComplete {
+            guard ProcessDataRootPolicy.allowsProductionDataMigrationForCurrentProcess else {
+                return false
+            }
             let fm = FileManager.default
             guard let supportDir = fm.urls(
                 for: .applicationSupportDirectory,
                 in: .userDomainMask
-            ).first else { return }
+            ).first else { return true }
             let oldRoot = supportDir.appendingPathComponent(
                 "com.dinoki.osaurus",
                 isDirectory: true
             )
-            _ = migrateLegacyApplicationSupportRootIfNeeded(
+            let result = migrateLegacyApplicationSupportRootIfNeeded(
                 fileManager: fm,
                 legacyRoot: oldRoot,
-                activeRoot: defaultRoot
+                activeRoot: defaultRoot,
+                shouldContinue: {
+                    ProcessDataRootPolicy.allowsProductionDataMigrationForCurrentProcess
+                }
             )
+            return result != .deferred
         }
     }
 
@@ -760,7 +778,9 @@ public enum OsaurusPaths {
     static func migrateLegacyApplicationSupportRootIfNeeded(
         fileManager fm: FileManager = .default,
         legacyRoot oldRoot: URL,
-        activeRoot newRoot: URL
+        activeRoot newRoot: URL,
+        shouldContinue: () -> Bool = { true },
+        beforeMutationForTesting: () -> Void = {}
     ) -> LegacyApplicationSupportMigrationResult {
         var isLegacyDirectory = ObjCBool(false)
         guard fm.fileExists(atPath: oldRoot.path, isDirectory: &isLegacyDirectory),
@@ -776,13 +796,20 @@ public enum OsaurusPaths {
         }
 
         if !fm.fileExists(atPath: newRoot.path) {
+            beforeMutationForTesting()
+            guard shouldContinue() else { return .deferred }
             do {
                 try fm.copyItem(at: oldRoot, to: newRoot)
-                writeLegacyApplicationSupportMergeMarker(
+                guard shouldContinue() else {
+                    try? fm.removeItem(at: newRoot)
+                    return .deferred
+                }
+                guard writeLegacyApplicationSupportMergeMarker(
                     marker,
                     legacyRoot: oldRoot,
-                    activeRoot: newRoot
-                )
+                    activeRoot: newRoot,
+                    shouldContinue: shouldContinue
+                ) else { return .deferred }
                 print("[Osaurus] Copied data from \(oldRoot.path) to \(newRoot.path)")
                 return .copied(marker)
             } catch {
@@ -790,12 +817,18 @@ public enum OsaurusPaths {
             }
         }
 
-        mergeDirectory(from: oldRoot, into: newRoot)
-        writeLegacyApplicationSupportMergeMarker(
+        guard mergeDirectory(
+            from: oldRoot,
+            into: newRoot,
+            shouldContinue: shouldContinue,
+            beforeMutationForTesting: beforeMutationForTesting
+        ) else { return .deferred }
+        guard writeLegacyApplicationSupportMergeMarker(
             marker,
             legacyRoot: oldRoot,
-            activeRoot: newRoot
-        )
+            activeRoot: newRoot,
+            shouldContinue: shouldContinue
+        ) else { return .deferred }
         print("[Osaurus] Merged data from \(oldRoot.path) into \(newRoot.path)")
         return .merged(marker)
     }
@@ -803,8 +836,9 @@ public enum OsaurusPaths {
     private static func writeLegacyApplicationSupportMergeMarker(
         _ marker: URL,
         legacyRoot: URL,
-        activeRoot: URL
-    ) {
+        activeRoot: URL,
+        shouldContinue: () -> Bool
+    ) -> Bool {
         let payload = """
             legacy_application_support_migrated=1
             legacy_root=\(legacyRoot.path)
@@ -812,29 +846,59 @@ public enum OsaurusPaths {
 
             """
         do {
+            guard shouldContinue() else { return false }
             try ensureExists(marker.deletingLastPathComponent())
+            guard shouldContinue() else { return false }
             try Data(payload.utf8).write(to: marker, options: .atomic)
+            return true
         } catch {
             print("[Osaurus] Failed to write legacy data migration marker \(marker.path): \(error)")
+            return false
         }
     }
 
     /// Recursively copy the contents of `src` into `dest` (never deletes from `src`).
     /// When both source and destination files exist, the newer one wins.
-    private static func mergeDirectory(from src: URL, into dest: URL) {
+    private static func mergeDirectory(
+        from src: URL,
+        into dest: URL,
+        shouldContinue: () -> Bool,
+        beforeMutationForTesting: () -> Void
+    ) -> Bool {
         let fm = FileManager.default
-        ensureExistsSilent(dest)
+        var createdDestination = false
+        if !fm.fileExists(atPath: dest.path) {
+            beforeMutationForTesting()
+            guard shouldContinue() else { return false }
+            do {
+                try fm.createDirectory(at: dest, withIntermediateDirectories: true)
+                createdDestination = true
+            } catch {
+                return false
+            }
+            guard shouldContinue() else {
+                try? fm.removeItem(at: dest)
+                return false
+            }
+        }
         let keys: Set<URLResourceKey> = [.isDirectoryKey, .contentModificationDateKey]
         guard let contents = try? fm.contentsOfDirectory(at: src, includingPropertiesForKeys: Array(keys)) else {
-            return
+            if createdDestination { try? fm.removeItem(at: dest) }
+            return false
         }
         for item in contents {
+            guard shouldContinue() else { return false }
             let target = dest.appendingPathComponent(item.lastPathComponent)
             let isDir = (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
 
             if fm.fileExists(atPath: target.path) {
                 if isDir {
-                    mergeDirectory(from: item, into: target)
+                    guard mergeDirectory(
+                        from: item,
+                        into: target,
+                        shouldContinue: shouldContinue,
+                        beforeMutationForTesting: beforeMutationForTesting
+                    ) else { return false }
                 } else {
                     let srcDate =
                         (try? item.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
@@ -843,14 +907,44 @@ public enum OsaurusPaths {
                         (try? target.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
                         ?? .distantPast
                     if srcDate > destDate {
-                        try? fm.removeItem(at: target)
-                        try? fm.copyItem(at: item, to: target)
+                        let staged = target.deletingLastPathComponent().appendingPathComponent(
+                            ".osaurus-legacy-stage-\(UUID().uuidString)"
+                        )
+                        beforeMutationForTesting()
+                        guard shouldContinue() else { return false }
+                        do {
+                            try fm.copyItem(at: item, to: staged)
+                            guard shouldContinue() else {
+                                try? fm.removeItem(at: staged)
+                                return false
+                            }
+                            beforeMutationForTesting()
+                            guard shouldContinue() else {
+                                try? fm.removeItem(at: staged)
+                                return false
+                            }
+                            _ = try fm.replaceItemAt(target, withItemAt: staged)
+                        } catch {
+                            try? fm.removeItem(at: staged)
+                            return false
+                        }
                     }
                 }
             } else {
-                try? fm.copyItem(at: item, to: target)
+                beforeMutationForTesting()
+                guard shouldContinue() else { return false }
+                do {
+                    try fm.copyItem(at: item, to: target)
+                } catch {
+                    return false
+                }
+                guard shouldContinue() else {
+                    try? fm.removeItem(at: target)
+                    return false
+                }
             }
         }
+        return true
     }
 
     // MARK: - Legacy Personas -> agents migration
