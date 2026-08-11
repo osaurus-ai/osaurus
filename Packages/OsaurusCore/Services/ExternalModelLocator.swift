@@ -201,10 +201,13 @@ enum ExternalModelLocator {
             return memo
         }
         let stale = modelsMemo ?? []
-        // Nothing registered: the memo miss is vacuous, skip the rebuild hop.
+        // An empty registry is authoritative. Returning a memo from an older
+        // generation would briefly resurrect a forgotten or cancelled model.
         if !entriesLoaded {
+            modelsMemo = []
+            modelsMemoGen = gen
             lock.unlock()
-            return stale
+            return []
         }
         let shouldKick = !modelsRebuildInFlight
         if shouldKick { modelsRebuildInFlight = true }
@@ -369,8 +372,13 @@ enum ExternalModelLocator {
         for entry in report.discovered {
             discovered[entry.id.lowercased()] = entry
         }
+        guard shouldContinue() else { return modelsSnapshotNonBlocking() }
 
         lock.lock()
+        guard shouldContinue() else {
+            lock.unlock()
+            return modelsSnapshotNonBlocking()
+        }
         let changed = registry == nil || registry! != discovered
         registry = discovered
         if changed { registryGen &+= 1 }
@@ -699,8 +707,7 @@ enum ExternalModelLocator {
             else { return }
             for entry in entries {
                 if skipTopLevelHuggingFaceCacheFolders, prefix.isEmpty,
-                    entry.lastPathComponent.hasPrefix("models--")
-                {
+                    entry.lastPathComponent.hasPrefix("models--") {
                     continue
                 }
                 let resolved = entry.resolvingSymlinksInPath()
@@ -934,6 +941,8 @@ enum ExternalModelLocator {
         lock.lock()
         registry = nil
         lastReport = nil
+        modelsMemo = nil
+        modelsMemoGen = .max
         registryGen &+= 1
         lock.unlock()
     }
