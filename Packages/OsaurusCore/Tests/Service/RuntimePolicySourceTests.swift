@@ -591,7 +591,12 @@ struct RuntimePolicySourceTests {
         #expect(storageKey.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
         #expect(!storageKey.contains("KeychainQueryHelpers.nonInteractiveContext()"))
         #expect(storageKey.contains("if Self.disablesKeychainForProcess { return nil }"))
-        #expect(storageKey.contains("if Self.disablesKeychainForProcess { return }"))
+        #expect(storageKey.contains("guard !Self.disablesKeychainForProcess else {"))
+        #expect(
+            storageKey.contains(
+                "throw StorageKeyError.keychainWriteFailed(errSecInteractionNotAllowed)"
+            )
+        )
     }
 
     @Test("secret stores route through the shared legacy Keychain helper")
