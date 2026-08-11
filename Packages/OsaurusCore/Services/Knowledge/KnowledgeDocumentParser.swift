@@ -122,7 +122,21 @@ public enum KnowledgeDocumentParser {
             return array.map { renderValue($0) }.filter { !$0.isEmpty }
                 .joined(separator: ", ")
         }
-        return stringValue(value)
+        // The skill YAML parser keeps flow-style lists (`[a, b]`) as a
+        // plain string; unwrap them the same way `tagList` does, but
+        // preserving case and order.
+        let scalar = stringValue(value)
+        if scalar.hasPrefix("["), scalar.hasSuffix("]") {
+            return scalar.dropFirst().dropLast()
+                .components(separatedBy: ",")
+                .map {
+                    $0.trimmingCharacters(in: .whitespaces)
+                        .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                }
+                .filter { !$0.isEmpty }
+                .joined(separator: ", ")
+        }
+        return scalar
     }
 
     /// Display title resolution: frontmatter `title`, else the first
