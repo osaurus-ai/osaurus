@@ -196,7 +196,7 @@ let package = Package(
         // reasoning and `to=self` still opens it.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "7076e4b4830e8068c3e755d85d9ed08f83b24f0f"
+            revision: "4bed098a5ab228f1ffc9ccbccc696818b390932e"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
