@@ -2111,6 +2111,7 @@ struct AgentDetailView: View {
             scheduleSection
         }
         advancedSettingsDisclosure
+        deleteAllDataSection
     }
 
     /// Routed by `selectedTab` from the body. Capabilities is rendered
@@ -2544,7 +2545,6 @@ struct AgentDetailView: View {
         historySection
         pinnedFactsSection
         episodesSection
-        deleteAllDataSection
     }
 
     // MARK: - Configure Tab Sections
@@ -6267,7 +6267,7 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Danger-zone card at the end of the Memory tab. Lets the user wipe the
+    /// Danger-zone card at the end of the General tab. Lets the user wipe the
     /// agent's accumulated data (chats, facts, episodes) without deleting the
     /// agent itself, which was previously the only way to start over.
     private var deleteAllDataSection: some View {
