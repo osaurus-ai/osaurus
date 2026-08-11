@@ -10,8 +10,20 @@ import Foundation
 
 public enum ToolsPaths {
     /// Optional root directory override for tests
-    /// Note: nonisolated(unsafe) since this is only set during test setup before any concurrent access
-    public nonisolated(unsafe) static var overrideRoot: URL?
+    private static let overrideRootLock = NSLock()
+    nonisolated(unsafe) private static var overrideRootStorage: URL?
+    public static var overrideRoot: URL? {
+        get {
+            overrideRootLock.lock()
+            defer { overrideRootLock.unlock() }
+            return overrideRootStorage
+        }
+        set {
+            overrideRootLock.lock()
+            overrideRootStorage = newValue
+            overrideRootLock.unlock()
+        }
+    }
 
     /// The root data directory for Osaurus: `~/.osaurus/`
     public static func root() -> URL {

@@ -17,6 +17,7 @@
 //
 
 import Foundation
+import OsaurusRepository
 
 public enum KnowledgeSyncOutcome: Sendable, Equatable {
     case upToDate
@@ -43,6 +44,19 @@ public actor KnowledgeGitSyncService {
     private static let cloneTimeout: TimeInterval = 300
     private static let networkTimeout: TimeInterval = 120
     private static let localTimeout: TimeInterval = 30
+    private static let isolatedGitEnvironmentKeys: Set<String> = [
+        "LANG",
+        "LC_ALL",
+        "LC_COLLATE",
+        "LC_CTYPE",
+        "LC_MESSAGES",
+        "LC_MONETARY",
+        "LC_NUMERIC",
+        "LC_TIME",
+        "PATH",
+        "TERM",
+        "TZ",
+    ]
 
     private init() {}
 
@@ -224,6 +238,38 @@ public actor KnowledgeGitSyncService {
         return stdout.isEmpty ? "git exited with status \(result.exitCode)." : stdout
     }
 
+    static func buildGitEnvironment(
+        parentEnvironment: [String: String],
+        parentRecognizedTestHost: Bool
+    ) -> [String: String] {
+        let parentIsolated = ProcessDataRootPolicy.shouldDisableKeychain(
+            environment: parentEnvironment,
+            recognizedTestHost: parentRecognizedTestHost
+        )
+        let baseEnvironment = parentIsolated
+            ? parentEnvironment.filter { isolatedGitEnvironmentKeys.contains($0.key) }
+            : parentEnvironment
+        var environment = ProcessDataRootPolicy.applyingChildTestIsolation(
+            to: baseEnvironment,
+            parentEnvironment: parentEnvironment,
+            parentRecognizedTestHost: parentRecognizedTestHost
+        )
+
+        // Never hang on an invisible credential/host prompt: fail fast and
+        // surface the error in the UI instead.
+        environment["GIT_TERMINAL_PROMPT"] = "0"
+        environment["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+        if parentIsolated,
+            let isolatedRoot = environment[ProcessDataRootPolicy.testRootEnvironmentKey] {
+            environment["HOME"] = isolatedRoot
+            environment["TMPDIR"] = isolatedRoot
+            environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+            environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
+            environment["GIT_CONFIG_SYSTEM"] = "/dev/null"
+        }
+        return environment
+    }
+
     private func runGit(
         _ arguments: [String],
         cwd: URL,
@@ -234,12 +280,10 @@ public actor KnowledgeGitSyncService {
         process.arguments = arguments
         process.currentDirectoryURL = cwd
 
-        var environment = ProcessInfo.processInfo.environment
-        // Never hang on an invisible credential/host prompt: fail fast
-        // and surface the error in the UI instead.
-        environment["GIT_TERMINAL_PROMPT"] = "0"
-        environment["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
-        process.environment = environment
+        process.environment = Self.buildGitEnvironment(
+            parentEnvironment: ProcessInfo.processInfo.environment,
+            parentRecognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
+        )
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()

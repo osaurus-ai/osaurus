@@ -82,7 +82,7 @@ private struct HelperResponse: @unchecked Sendable {
 /// actor-isolated; the stdout reader runs as a child task feeding
 /// responses back through actor methods.
 actor PluginProcessHostClient {
-    private struct LaunchSnapshot: Sendable {
+    private struct LaunchSnapshot: Sendable, Equatable {
         let environment: [String: String]
         let recognizedTestHost: Bool
 
@@ -126,7 +126,7 @@ actor PluginProcessHostClient {
     private let environmentProvider: @Sendable () -> [String: String]
     private let recognitionProvider: @Sendable ([String: String]) -> Bool
     /// Synchronous seam used to make a policy transition deterministic in
-    /// tests between process setup and the final admission check.
+    /// tests immediately before the final admission check.
     private let beforeRunHook: @Sendable () -> Void
 
     private var process: Process?
@@ -253,7 +253,6 @@ actor PluginProcessHostClient {
         proc.standardOutput = outPipe
         proc.standardError = FileHandle.nullDevice
 
-        beforeRunHook()
         let launchSnapshot = captureLaunchSnapshot()
         // Keep this check after all setup and immediately before run: XCTest
         // recognition can become visible during application launch.
@@ -269,6 +268,15 @@ actor PluginProcessHostClient {
             parentEnvironment: launchSnapshot.environment,
             parentRecognizedTestHost: launchSnapshot.recognizedTestHost
         )
+        beforeRunHook()
+        let finalSnapshot = captureLaunchSnapshot()
+        guard finalSnapshot == launchSnapshot else {
+            throw PluginProcessHostError(
+                message: finalSnapshot.isRestricted
+                    ? "Native plugin helper execution is disabled in test hosts."
+                    : "Native plugin helper isolation changed before launch."
+            )
+        }
         try proc.run()
 
         processGeneration += 1

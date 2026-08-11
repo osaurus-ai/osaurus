@@ -175,6 +175,30 @@ final class ProcessDataRootPolicyTests: XCTestCase {
         XCTAssertEqual(probes, 2)
     }
 
+    func testToolsPathsOverrideSupportsConcurrentReadsAndWrites() {
+        let previousOverride = ToolsPaths.overrideRoot
+        let first = URL(fileURLWithPath: "/tmp/osaurus-tools-root-a", isDirectory: true)
+        let second = URL(fileURLWithPath: "/tmp/osaurus-tools-root-b", isDirectory: true)
+        defer { ToolsPaths.overrideRoot = previousOverride }
+
+        let queue = DispatchQueue(
+            label: "ai.osaurus.tests.tools-paths-override",
+            attributes: .concurrent
+        )
+        let group = DispatchGroup()
+        for index in 0..<1_000 {
+            group.enter()
+            queue.async {
+                ToolsPaths.overrideRoot = index.isMultiple(of: 2) ? first : second
+                _ = ToolsPaths.overrideRoot
+                group.leave()
+            }
+        }
+
+        XCTAssertEqual(group.wait(timeout: .now() + 5), .success)
+        XCTAssertTrue([first, second].contains(ToolsPaths.overrideRoot))
+    }
+
     func testRecognizesCurrentTestRuntimeUsingCorroboratedIdentity() throws {
         let executablePath = try XCTUnwrap(Bundle.main.executablePath)
         let testFrameworkLoaded = NSClassFromString("XCTestCase") != nil

@@ -652,7 +652,9 @@ public final class StorageKeyManager: @unchecked Sendable {
     // MARK: - Keychain (key)
 
     private func persistKeychain(data: Data) throws {
-        if Self.disablesKeychainForProcess { return }
+        guard !Self.disablesKeychainForProcess else {
+            throw StorageKeyError.keychainWriteFailed(errSecInteractionNotAllowed)
+        }
         try persistItem(account: Self.keyAccount, data: data, label: "Osaurus Storage Encryption Key")
     }
 
@@ -664,7 +666,9 @@ public final class StorageKeyManager: @unchecked Sendable {
     // MARK: - Keychain (salt)
 
     private func persistKeychainSalt(_ data: Data) throws {
-        if Self.disablesKeychainForProcess { return }
+        guard !Self.disablesKeychainForProcess else {
+            throw StorageKeyError.keychainWriteFailed(errSecInteractionNotAllowed)
+        }
         try persistItem(account: Self.saltAccount, data: data, label: "Osaurus Storage Key Derivation Salt")
     }
 
