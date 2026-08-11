@@ -192,8 +192,8 @@ public enum ProcessDataRootPolicy {
     /// Legacy production-root migration is destructive filesystem work. A
     /// validated test host never runs it, and an early app-hosted XCTest launch
     /// defers it while launch markers are present even if the test bundle has
-    /// not been loaded yet. A forged marker can only postpone migration until
-    /// the next normal launch; it cannot redirect production data.
+    /// not been loaded yet. A marker is not test-host identity, but it does make
+    /// the launch fail closed onto disposable storage until identity settles.
     public static var allowsProductionDataMigrationForCurrentProcess: Bool {
         allowsProductionDataMigration(
             environment: ProcessInfo.processInfo.environment,
@@ -202,15 +202,22 @@ public enum ProcessDataRootPolicy {
     }
 
     /// Pure migration gate used by tests to distinguish an untrusted launch
-    /// marker from confirmed test-host identity. Markers may defer destructive
-    /// migration for one launch, but they never grant disposable-root or
-    /// Keychain-isolation identity by themselves.
+    /// marker from confirmed test-host identity. Markers defer destructive
+    /// migration and select fail-closed process isolation, but never grant
+    /// recognized-host privileges such as the real-Keychain proof lane.
     static func allowsProductionDataMigration(
         environment: [String: String],
         recognizedTestHost: Bool
     ) -> Bool {
         guard !recognizedTestHost else { return false }
-        return !xctestLaunchMarkerKeys.contains { hasValue(environment[$0]) }
+        return !hasTestLaunchMarker(environment: environment)
+    }
+
+    /// True while Xcode/XCTest is preparing an app-hosted test launch, before
+    /// the test bundle and runtime are necessarily visible. The marker is only
+    /// a fail-closed isolation signal; it is never accepted as test identity.
+    public static func hasTestLaunchMarker(environment: [String: String]) -> Bool {
+        xctestLaunchMarkerKeys.contains { hasValue(environment[$0]) }
     }
 
     /// Keychain callers use this same decision as filesystem callers. A
@@ -221,6 +228,14 @@ public enum ProcessDataRootPolicy {
         recognizedTestHost: Bool
     ) -> Bool {
         if environment[disableKeychainForTestsEnvironmentKey] == "1" {
+            return true
+        }
+        // App-hosted XCTest can execute application startup before the test
+        // bundle becomes visible. Treat launch markers as a pending test host
+        // and fail closed so that early startup cannot touch persistent data or
+        // Keychain state. The markers still do not establish recognized host
+        // identity or enable the real-Keychain proof namespace.
+        if hasTestLaunchMarker(environment: environment) {
             return true
         }
         // Proof markers are privileged test-only inputs. If they leak into a

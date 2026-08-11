@@ -348,7 +348,13 @@ final class DirectoryPickerService: ObservableObject {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         recognizedTestHost: Bool = ProcessDataRootPolicy.isRecognizedTestHostProcess
     ) -> URL? {
-        if recognizedTestHost,
+        // Before an app-hosted XCTest bundle is visible, launch markers are the
+        // only evidence available. Require the same explicit external-model
+        // opt-in during that pending window so early startup cannot scan a real
+        // model collection. Non-XCTest live-proof launchers intentionally use
+        // OSU_MODELS_DIR itself as their trusted, explicit read opt-in.
+        if (recognizedTestHost
+            || ProcessDataRootPolicy.hasTestLaunchMarker(environment: environment)),
             environment[allowExternalModelsInTestHostsEnvironmentKey] != "1"
         {
             return nil

@@ -194,7 +194,7 @@ final class ProcessDataRootPolicyTests: XCTestCase {
         )
     }
 
-    func testConfiguredBundleMarkerDefersMigrationWithoutGrantingTestIdentity() throws {
+    func testConfiguredBundleMarkerFailsClosedWithoutGrantingTestIdentity() throws {
         let bundlePath = Bundle(for: ProcessDataRootPolicyTests.self).bundlePath
         XCTAssertTrue(bundlePath.hasSuffix(".xctest"))
         let environment = ["XCTestBundlePath": bundlePath]
@@ -216,6 +216,25 @@ final class ProcessDataRootPolicyTests: XCTestCase {
             ),
             "A launch marker may defer destructive migration without granting test-host identity"
         )
+        XCTAssertTrue(ProcessDataRootPolicy.hasTestLaunchMarker(environment: environment))
+        XCTAssertTrue(
+            ProcessDataRootPolicy.shouldDisableKeychain(
+                environment: environment,
+                recognizedTestHost: false
+            ),
+            "A pending app-hosted test launch must fail closed before its bundle is visible"
+        )
+        var evaluatedProductionRoot = false
+        let resolved = ProcessDataRootPolicy.resolvedRootForTesting(
+            defaultRoot: recordDefaultRoot(
+                &evaluatedProductionRoot,
+                root: URL(fileURLWithPath: "/Users/example/.osaurus", isDirectory: true)
+            ),
+            environment: environment,
+            recognizedTestHost: false
+        )
+        XCTAssertFalse(evaluatedProductionRoot)
+        XCTAssertTrue(resolved.path.hasPrefix("/tmp/osa-t-"))
         XCTAssertTrue(
             ProcessDataRootPolicy.allowsProductionDataMigration(
                 environment: [:],
@@ -286,7 +305,7 @@ final class ProcessDataRootPolicyTests: XCTestCase {
         )
     }
 
-    func testSubprocessRejectsForgedRuntimeMarkersAndSyntheticIdentity() throws {
+    func testSubprocessRejectsForgedIdentityAndFailsClosedOnLaunchMarkers() throws {
         let probe = try PolicyProbe()
         let forgedEnvironment = [
             "XCTestConfigurationFilePath": "/tmp/forged.xctestconfiguration",
@@ -301,8 +320,8 @@ final class ProcessDataRootPolicyTests: XCTestCase {
             arguments: []
         )
         XCTAssertTrue(runtimeOutput.contains("recognized=false"), runtimeOutput)
-        XCTAssertTrue(runtimeOutput.contains("keychainDisabled=false"), runtimeOutput)
-        XCTAssertTrue(runtimeOutput.contains("root=/Users/example/.osaurus"), runtimeOutput)
+        XCTAssertTrue(runtimeOutput.contains("keychainDisabled=true"), runtimeOutput)
+        XCTAssertTrue(runtimeOutput.contains("root=/tmp/osa-t-"), runtimeOutput)
 
         let syntheticOutput = try probe.run(
             mode: "synthetic",

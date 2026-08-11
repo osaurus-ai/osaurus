@@ -10,6 +10,22 @@ import AppKit
 import Foundation
 import OsaurusRepository
 
+/// Runs one synchronous operation at most once. Concurrent callers wait for
+/// the first operation to finish before returning, so none can observe the
+/// protected resource halfway through initialization.
+final class SynchronousOnceGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var completed = false
+
+    func run(_ operation: () -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !completed else { return }
+        operation()
+        completed = true
+    }
+}
+
 /// Centralized path management for all Osaurus app data.
 /// All stores and services should use this module for path resolution.
 public enum OsaurusPaths {
@@ -23,8 +39,7 @@ public enum OsaurusPaths {
         let fm = FileManager.default
         return fm.homeDirectoryForCurrentUser.appendingPathComponent(".osaurus", isDirectory: true)
     }()
-    private static let legacyMigrationLock = NSLock()
-    nonisolated(unsafe) private static var legacyMigrationAttempted = false
+    private static let legacyMigrationGate = SynchronousOnceGate()
 
     /// Marker written after the legacy Application Support root has been
     /// copied/merged into `~/.osaurus`. The legacy root is intentionally never
@@ -54,28 +69,22 @@ public enum OsaurusPaths {
             ProcessDataRootPolicy.allowsProductionDataMigrationForCurrentProcess
         else { return }
 
-        legacyMigrationLock.lock()
-        guard !legacyMigrationAttempted else {
-            legacyMigrationLock.unlock()
-            return
+        legacyMigrationGate.run {
+            let fm = FileManager.default
+            guard let supportDir = fm.urls(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask
+            ).first else { return }
+            let oldRoot = supportDir.appendingPathComponent(
+                "com.dinoki.osaurus",
+                isDirectory: true
+            )
+            _ = migrateLegacyApplicationSupportRootIfNeeded(
+                fileManager: fm,
+                legacyRoot: oldRoot,
+                activeRoot: defaultRoot
+            )
         }
-        legacyMigrationAttempted = true
-        legacyMigrationLock.unlock()
-
-        let fm = FileManager.default
-        guard let supportDir = fm.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first else { return }
-        let oldRoot = supportDir.appendingPathComponent(
-            "com.dinoki.osaurus",
-            isDirectory: true
-        )
-        _ = migrateLegacyApplicationSupportRootIfNeeded(
-            fileManager: fm,
-            legacyRoot: oldRoot,
-            activeRoot: defaultRoot
-        )
     }
 
     /// Returns the marker path for a resolved root without triggering another

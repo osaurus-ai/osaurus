@@ -232,7 +232,22 @@ final class ModelManager: NSObject, ObservableObject {
     /// injected entries with whatever HF currently lists.
     nonisolated(unsafe) static var skipBackgroundOrgFetchForTests: Bool = false
     nonisolated static var allowsAutomaticCatalogWorkForCurrentProcess: Bool {
-        !ProcessDataRootPolicy.isRecognizedTestHostProcess
+        allowsAutomaticCatalogWork(
+            environment: ProcessInfo.processInfo.environment,
+            recognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
+        )
+    }
+
+    /// Suppress catalog networking and home-directory discovery while an
+    /// app-hosted XCTest launch is pending as well as after it is recognized.
+    /// Explicit non-XCTest live-proof launches remain able to read a selected
+    /// model directory; the separate mutation gate keeps automatic top-up off.
+    nonisolated static func allowsAutomaticCatalogWork(
+        environment: [String: String],
+        recognizedTestHost: Bool
+    ) -> Bool {
+        !recognizedTestHost
+            && !ProcessDataRootPolicy.hasTestLaunchMarker(environment: environment)
     }
 
     /// Catalog reads remain available to explicit live-proof launches, but an

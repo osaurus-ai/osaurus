@@ -147,6 +147,16 @@ struct TestHostIsolationTests {
             )?.path == externalDirectory
         )
 
+        var pendingHostEnvironment = baseEnvironment
+        pendingHostEnvironment["XCTestConfigurationFilePath"] =
+            "/tmp/pending.xctestconfiguration"
+        #expect(
+            DirectoryPickerService.modelsDirectoryEnvironmentOverride(
+                environment: pendingHostEnvironment,
+                recognizedTestHost: false
+            ) == nil
+        )
+
         var explicitlyAllowed = baseEnvironment
         explicitlyAllowed[
             DirectoryPickerService.allowExternalModelsInTestHostsEnvironmentKey
@@ -156,6 +166,34 @@ struct TestHostIsolationTests {
                 environment: explicitlyAllowed,
                 recognizedTestHost: true
             )?.path == externalDirectory
+        )
+        explicitlyAllowed["XCTestConfigurationFilePath"] =
+            "/tmp/pending.xctestconfiguration"
+        #expect(
+            DirectoryPickerService.modelsDirectoryEnvironmentOverride(
+                environment: explicitlyAllowed,
+                recognizedTestHost: false
+            )?.path == externalDirectory
+        )
+
+        // A non-XCTest live-proof launcher deliberately opts into its model
+        // root with OSU_MODELS_DIR. Automatic bundle mutation remains disabled
+        // by the shared isolation predicate.
+        let liveProofEnvironment = [
+            "OSU_MODELS_DIR": externalDirectory,
+            ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+        ]
+        #expect(
+            DirectoryPickerService.modelsDirectoryEnvironmentOverride(
+                environment: liveProofEnvironment,
+                recognizedTestHost: false
+            )?.path == externalDirectory
+        )
+        #expect(
+            !ModelManager.allowsAutomaticCatalogMutation(
+                environment: liveProofEnvironment,
+                recognizedTestHost: false
+            )
         )
     }
 
@@ -197,6 +235,23 @@ struct TestHostIsolationTests {
     func modelManagerBackgroundCatalogWorkIsDisabled() {
         #expect(ProcessDataRootPolicy.isRecognizedTestHostProcess)
         #expect(!ModelManager.allowsAutomaticCatalogWorkForCurrentProcess)
+        #expect(
+            !ModelManager.allowsAutomaticCatalogWork(
+                environment: [
+                    "XCTestConfigurationFilePath": "/tmp/pending.xctestconfiguration"
+                ],
+                recognizedTestHost: false
+            )
+        )
+        #expect(
+            ModelManager.allowsAutomaticCatalogWork(
+                environment: [
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1"
+                ],
+                recognizedTestHost: false
+            ),
+            "Explicit non-XCTest live proof keeps read-only catalog work available"
+        )
     }
 
     @Test("isolated processes never schedule automatic model mutations")

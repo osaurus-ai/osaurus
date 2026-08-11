@@ -309,6 +309,45 @@ struct StorageLocationStandardsTests {
 
     // MARK: - Legacy Application Support merge marker
 
+    @Test("Concurrent migration callers wait for the one migration to finish")
+    func legacyMigrationGateBlocksUntilCompletion() {
+        let gate = SynchronousOnceGate()
+        let firstStarted = DispatchSemaphore(value: 0)
+        let releaseFirst = DispatchSemaphore(value: 0)
+        let firstReturned = DispatchSemaphore(value: 0)
+        let secondStarted = DispatchSemaphore(value: 0)
+        let secondReturned = DispatchSemaphore(value: 0)
+        let secondOperationRan = DispatchSemaphore(value: 0)
+
+        DispatchQueue.global().async {
+            gate.run {
+                firstStarted.signal()
+                releaseFirst.wait()
+            }
+            firstReturned.signal()
+        }
+        #expect(firstStarted.wait(timeout: .now() + 2) == .success)
+
+        DispatchQueue.global().async {
+            secondStarted.signal()
+            gate.run { secondOperationRan.signal() }
+            secondReturned.signal()
+        }
+        #expect(secondStarted.wait(timeout: .now() + 2) == .success)
+        #expect(
+            secondReturned.wait(timeout: .now() + 0.1) == .timedOut,
+            "A concurrent root caller must not return while migration is incomplete"
+        )
+
+        releaseFirst.signal()
+        #expect(firstReturned.wait(timeout: .now() + 2) == .success)
+        #expect(secondReturned.wait(timeout: .now() + 2) == .success)
+        #expect(
+            secondOperationRan.wait(timeout: .now() + 0.1) == .timedOut,
+            "The migration operation must execute at most once"
+        )
+    }
+
     @Test("Legacy Application Support migration writes marker and skips later merges")
     func legacyApplicationSupportMigrationIsOneShot() throws {
         let fm = FileManager.default
