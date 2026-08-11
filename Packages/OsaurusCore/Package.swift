@@ -168,9 +168,20 @@ let package = Package(
         // generations died mid-stream at the 499000 allocator wall.
         // Conventional KV topologies report zero retention and are never
         // capped (VMLX_METAL_BUFFER_COUNT_GUARD=0 disables).
+        // vmlx-swift#228 parses GLM/DeepSeek tool calls that take no
+        // arguments. `GLM4ToolCallParser` read the function name as
+        // everything before the first <arg_key> and returned nil when there
+        // was none, so `<tool_call>list_mailboxes</tool_call>` — the only way
+        // to invoke a tool that declares no parameters — was discarded.
+        // Nothing downstream can tell that from a silent model: the envelope
+        // is consumed as non-content, the turn carries no text and no tool
+        // work, the empty-turn nudges re-elicit the same correct call, and
+        // the run ends on `emptyToolTaskFallback`. Reproduced on Raptor 1.0
+        // 16B with the Mail capability loaded. The route covers GLM-4.x/5,
+        // DeepSeek V3 aliases, Laguna/Raptor, Poolside and Ling/Bailing.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "9ef82f29292fd5e5a52f9b4a543b8e8bd81fb363"
+            revision: "cbd14446e5f41c0ad92fdeb386ca0d7a1e125723"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
