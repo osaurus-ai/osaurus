@@ -872,12 +872,59 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     }
 
     public func deleteSession(id: UUID) throws {
+        try MainThreadOperationLedger.shared.withMainThreadOperation(
+            subsystem: "chat-history-db", operation: "delete-session"
+        ) {
+            try queue.sync { try deleteSessionOnQueue(id: id) }
+        }
+    }
+
+    /// Delete a batch of sessions off the caller's thread. Same semantics as
+    /// `deleteSession(id:)` per id (blob GC, sandbox-change cascade), but
+    /// the whole batch runs behind one `queue.async` hop so a bulk wipe
+    /// never parks the main thread behind N synchronous transactions.
+    /// Per-id errors are logged and the batch continues (there is no caller
+    /// left to handle them, matching `saveSessionAsync`). `onDropped` fires
+    /// (on the database queue) with every remaining id when the write found
+    /// the database closed at dequeue time — the enqueue-time `ensureOpen`
+    /// check races key rotation, and silently losing the deletes would
+    /// resurrect the sessions on next launch. `completion` always fires
+    /// (also on the database queue) once the batch is finished.
+    public func deleteSessionsAsync(
+        ids: [UUID],
+        onDropped: (@Sendable ([UUID]) -> Void)? = nil,
+        completion: (@Sendable () -> Void)? = nil
+    ) {
+        guard !ids.isEmpty else {
+            completion?()
+            return
+        }
+        queue.async { [weak self] in
+            defer { completion?() }
+            guard let self, self.db != nil else {
+                onDropped?(ids)
+                return
+            }
+            for id in ids {
+                do {
+                    try self.deleteSessionOnQueue(id: id)
+                } catch {
+                    print("[ChatHistoryDatabase] async deleteSession failed for \(id): \(error)")
+                }
+            }
+        }
+    }
+
+    /// Body of a single-session delete. Must run on `queue`.
+    private func deleteSessionOnQueue(id: UUID) throws {
+        guard db != nil else { throw ChatHistoryDatabaseError.notOpen }
+
         // GC: collect blob refs from this session's turns *before*
         // deleting the rows, then drop any blob no other session
         // references. Conservative: only deletes when zero remaining
         // turns reference the hash.
         var ownedRefs: Set<String> = []
-        try prepareAndExecute(
+        try transactionalQuery(
             "SELECT attachments FROM turns WHERE session_id = ?1",
             bind: { stmt in Self.bindText(stmt, index: 1, value: id.uuidString) },
             process: { stmt in
@@ -896,20 +943,20 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             }
         )
 
-        _ = try executeUpdate("DELETE FROM sessions WHERE id = ?1") { stmt in
+        try transactionalStep("DELETE FROM sessions WHERE id = ?1") { stmt in
             Self.bindText(stmt, index: 1, value: id.uuidString)
         }
 
         // Manual cascade: sandbox change rows are keyed by session id but
         // carry no FK (they can be written before the session row exists).
-        _ = try? executeUpdate("DELETE FROM sandbox_changes WHERE session_id = ?1") { stmt in
+        try? transactionalStep("DELETE FROM sandbox_changes WHERE session_id = ?1") { stmt in
             Self.bindText(stmt, index: 1, value: id.uuidString)
         }
 
         // Best-effort GC. We re-check each hash against the surviving
         // rows; anything still referenced stays.
         for hash in ownedRefs {
-            if !isBlobReferenced(hash) {
+            if !isBlobReferencedOnQueue(hash) {
                 AttachmentBlobStore.delete(hash)
             }
         }
@@ -1040,6 +1087,27 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         var found = false
         do {
             try prepareAndExecute(
+                "SELECT 1 FROM turns WHERE attachments LIKE ?1 LIMIT 1",
+                bind: { stmt in
+                    let pattern = "%\"hash\":\"\(hash)\"%"
+                    Self.bindText(stmt, index: 1, value: pattern)
+                },
+                process: { stmt in
+                    if sqlite3_step(stmt) == SQLITE_ROW { found = true }
+                }
+            )
+        } catch {
+            return true  // be conservative: never delete on error
+        }
+        return found
+    }
+
+    /// `isBlobReferenced` variant for callers already on `queue` (a nested
+    /// `queue.sync` would deadlock the serial queue).
+    private func isBlobReferencedOnQueue(_ hash: String) -> Bool {
+        var found = false
+        do {
+            try transactionalQuery(
                 "SELECT 1 FROM turns WHERE attachments LIKE ?1 LIMIT 1",
                 bind: { stmt in
                     let pattern = "%\"hash\":\"\(hash)\"%"

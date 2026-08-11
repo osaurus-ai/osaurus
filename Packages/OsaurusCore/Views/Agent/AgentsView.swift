@@ -6351,7 +6351,7 @@ struct AgentDetailView: View {
         let agentId = agent.id
         let agentScope = agentId.uuidString
         if wipeChats {
-            ChatSessionsManager.shared.deleteAll(for: agentId)
+            await ChatSessionsManager.shared.deleteAll(for: agentId)
         }
         // Memory DB deletes run off the main actor — same rationale as
         // `loadMemoryData`: these calls dispatch-sync onto the DB's

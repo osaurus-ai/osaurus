@@ -666,7 +666,7 @@ public final class AgentManager: ObservableObject {
         // UUIDs are never reused, so without this the sessions, pinned
         // facts, episodes, and raw transcripts of a deleted agent sat in
         // the databases forever with no UI left that could reach them.
-        ChatSessionsManager.shared.deleteAll(for: id)
+        await ChatSessionsManager.shared.deleteAll(for: id)
         let agentScope = id.uuidString
         await Task.detached(priority: .userInitiated) {
             let db = MemoryDatabase.shared

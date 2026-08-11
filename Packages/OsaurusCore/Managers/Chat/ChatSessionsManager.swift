@@ -139,16 +139,33 @@ final class ChatSessionsManager: ObservableObject {
     /// `sessions(for:)`: the Default agent's "show everything" view must not
     /// turn a per-agent wipe into an all-agents wipe, so only sessions whose
     /// `agentId` matches (or is nil, for the Default agent's own chats) are
-    /// removed. Same precedent as the sidebar's multi-select delete: one
-    /// `delete(id:)` per session, which keeps per-session cleanup (sandbox
-    /// artifacts, blob GC) intact.
-    func deleteAll(for agentId: UUID) {
+    /// removed.
+    ///
+    /// The in-memory list and selection update synchronously (the UI must
+    /// reflect the wipe immediately); the database rows, artifact
+    /// directories, and sandbox change records are removed on background
+    /// queues — a large history deleted through per-session `delete(id:)`
+    /// calls would park the main thread behind N synchronous transactions.
+    /// Returns once the database batch has finished.
+    func deleteAll(for agentId: UUID) async {
         let owned = sessions.filter { session in
             session.agentId == agentId
                 || (agentId == Agent.defaultId && session.agentId == nil)
         }
-        for session in owned {
-            delete(id: session.id)
+        guard !owned.isEmpty else { return }
+        let ids = owned.map(\.id)
+        let idSet = Set(ids)
+        if let current = currentSessionId, idSet.contains(current) {
+            currentSessionId = nil
+        }
+        sessions.removeAll { idSet.contains($0.id) }
+        for id in ids {
+            Task { await SandboxWorkspaceChangeTracker.shared.purgeSession(id.uuidString) }
+        }
+        await withCheckedContinuation { continuation in
+            ChatSessionStore.deleteBatch(ids: ids) {
+                continuation.resume()
+            }
         }
     }
 
