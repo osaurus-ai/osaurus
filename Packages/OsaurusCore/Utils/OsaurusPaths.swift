@@ -40,8 +40,20 @@ final class SynchronousOnceGate: @unchecked Sendable {
 /// All stores and services should use this module for path resolution.
 public enum OsaurusPaths {
     /// Optional root directory override for tests
-    /// Note: nonisolated(unsafe) since this is only set during test setup before any concurrent access
-    nonisolated(unsafe) public static var overrideRoot: URL?
+    private static let overrideRootLock = NSLock()
+    nonisolated(unsafe) private static var overrideRootStorage: URL?
+    public static var overrideRoot: URL? {
+        get {
+            overrideRootLock.lock()
+            defer { overrideRootLock.unlock() }
+            return overrideRootStorage
+        }
+        set {
+            overrideRootLock.lock()
+            overrideRootStorage = newValue
+            overrideRootLock.unlock()
+        }
+    }
 
     // MARK: - Root Directory
 

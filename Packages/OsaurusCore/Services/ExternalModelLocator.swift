@@ -134,6 +134,7 @@ enum ExternalModelLocator {
 
     private static let lock = NSLock()
     private static let persistenceLock = NSLock()
+    private static let testRootsLock = NSLock()
     private enum PersistenceOutcome: Equatable {
         case committed
         case superseded
@@ -171,7 +172,19 @@ enum ExternalModelLocator {
     /// Test hook: override the scan roots so unit tests don't depend on a
     /// developer's real `~/.cache/huggingface`. When set, only these roots
     /// (paired with their source label) are scanned.
-    nonisolated(unsafe) static var testRootsOverride: [(root: URL, source: Source)]?
+    nonisolated(unsafe) private static var testRootsOverrideStorage: [(root: URL, source: Source)]?
+    static var testRootsOverride: [(root: URL, source: Source)]? {
+        get {
+            testRootsLock.lock()
+            defer { testRootsLock.unlock() }
+            return testRootsOverrideStorage
+        }
+        set {
+            testRootsLock.lock()
+            testRootsOverrideStorage = newValue
+            testRootsLock.unlock()
+        }
+    }
 
     enum Source: String {
         case huggingFaceCache = "Hugging Face cache"

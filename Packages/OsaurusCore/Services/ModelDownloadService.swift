@@ -248,7 +248,8 @@ final class ModelDownloadService: ObservableObject {
         }
     }
 
-    init() {
+    init(startBackgroundWork: Bool = true) {
+        guard startBackgroundWork else { return }
         HuggingFaceAuth.preloadInBackground()
         refreshTotalDownloadedSize()
         // Recompute whenever a download completes, a model is deleted, or the

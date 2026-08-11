@@ -1994,8 +1994,34 @@ extension ModelManager {
     private static nonisolated(unsafe) var localModelsScanInFlight = false
     private static nonisolated let localModelsScanWaitLimit: TimeInterval = 10
     private static nonisolated(unsafe) var lastLocalModelsScanDiagnostic: [String: Any]?
-    nonisolated(unsafe) static var scanLocalModelsOverrideForTests: ((URL) -> [MLXModel])?
-    nonisolated(unsafe) static var localModelsScanWaitLimitOverrideForTests: TimeInterval?
+    nonisolated(unsafe) private static var scanLocalModelsOverrideForTestsStorage: ((URL) -> [MLXModel])?
+    nonisolated(unsafe) private static var localModelsScanWaitLimitOverrideForTestsStorage: TimeInterval?
+
+    nonisolated static var scanLocalModelsOverrideForTests: ((URL) -> [MLXModel])? {
+        get {
+            localModelsCacheCondition.lock()
+            defer { localModelsCacheCondition.unlock() }
+            return scanLocalModelsOverrideForTestsStorage
+        }
+        set {
+            localModelsCacheCondition.lock()
+            scanLocalModelsOverrideForTestsStorage = newValue
+            localModelsCacheCondition.unlock()
+        }
+    }
+
+    nonisolated static var localModelsScanWaitLimitOverrideForTests: TimeInterval? {
+        get {
+            localModelsCacheCondition.lock()
+            defer { localModelsCacheCondition.unlock() }
+            return localModelsScanWaitLimitOverrideForTestsStorage
+        }
+        set {
+            localModelsCacheCondition.lock()
+            localModelsScanWaitLimitOverrideForTestsStorage = newValue
+            localModelsCacheCondition.unlock()
+        }
+    }
 
     nonisolated static func invalidateLocalModelsCache() {
         localModelsCacheCondition.lock()
@@ -2055,18 +2081,18 @@ extension ModelManager {
         // rather than letting it silently beachball; behavior is unchanged.
         if Thread.isMainThread {
             Self.discoveryLog.error(
-                "discoverLocalModels() called on the MAIN THREAD with a cold cache — it may block up to \(localModelsScanWaitLimitOverrideForTests ?? localModelsScanWaitLimit, privacy: .public)s. Use discoverLocalModelsOffMain() from UI/handoff paths."
+                "discoverLocalModels() called on the MAIN THREAD with a cold cache — it may block up to \(localModelsScanWaitLimitOverrideForTestsStorage ?? localModelsScanWaitLimit, privacy: .public)s. Use discoverLocalModelsOffMain() from UI/handoff paths."
             )
         }
 
         if localModelsScanInFlight {
-            let waitLimit = localModelsScanWaitLimitOverrideForTests ?? localModelsScanWaitLimit
+            let waitLimit = localModelsScanWaitLimitOverrideForTestsStorage ?? localModelsScanWaitLimit
             let cached = waitForLocalModelsScan(until: Date().addingTimeInterval(waitLimit)) ?? []
             localModelsCacheCondition.unlock()
             return mergeExternalModels(into: cached)
         }
 
-        let waitLimit = localModelsScanWaitLimitOverrideForTests ?? localModelsScanWaitLimit
+        let waitLimit = localModelsScanWaitLimitOverrideForTestsStorage ?? localModelsScanWaitLimit
         let deadline = Date().addingTimeInterval(waitLimit)
         startLocalModelsScanLocked()
 

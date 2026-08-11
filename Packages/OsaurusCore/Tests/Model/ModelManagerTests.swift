@@ -212,7 +212,7 @@ struct ModelManagerTests {
     @MainActor
     func automaticTopUpStopsWhenIsolationChangesAfterAdmission() async throws {
         let probe = CatalogPolicyTransitionProbe()
-        let service = ModelDownloadService()
+        let service = ModelDownloadService(startBackgroundWork: false)
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "osaurus-top-up-transition-\(UUID().uuidString)",
             isDirectory: true
