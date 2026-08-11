@@ -189,11 +189,11 @@ struct MasterKeyExistsGuardTests {
         }
     }
 
-    /// The proof lane uses a local-only item so its namespace-scoped shell
-    /// cleanup can remove interrupted runs without creating another
-    /// synchronizable item. The preflight above still queries
-    /// `kSecAttrSynchronizableAny` so even a stale item from an older proof
-    /// implementation fails closed.
+    /// The proof lane uses a local-only item so normal deferred cleanup cannot
+    /// create another synchronizable item. A hard-killed run can leave a
+    /// UUID-scoped local item; the preflight above queries
+    /// `kSecAttrSynchronizableAny` so that residue, including an item from an
+    /// older proof implementation, fails closed instead of being overwritten.
     private func verifyProofItemIsLocalOnly() throws {
         let context = LAContext()
         context.interactionNotAllowed = true

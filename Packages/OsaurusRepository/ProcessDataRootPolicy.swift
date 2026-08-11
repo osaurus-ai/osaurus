@@ -77,6 +77,16 @@ public enum ProcessDataRootPolicy {
 
     private static let testHostRecognitionLatch = TestHostRecognitionLatch()
 
+    private static let xctestEnvironmentKeys = [
+        "XCTestBundlePath",
+        "__XCTestBundleInjectPath",
+    ]
+
+    private static let xctestLaunchMarkerKeys = xctestEnvironmentKeys + [
+        "XCTestConfigurationFilePath",
+        "XCTestSessionIdentifier",
+    ]
+
     // Sandbox bridge sockets are nested below the data root and macOS limits
     // Unix-domain socket paths to roughly 104 bytes. Keep the automatic root
     // deliberately short instead of inheriting the much longer per-user
@@ -140,9 +150,7 @@ public enum ProcessDataRootPolicy {
         loadedBundlePaths: [String] = [],
         testFrameworkLoaded: Bool = false
     ) -> Bool {
-        // Environment values and argv are caller-controlled metadata. They
-        // may corroborate a real test launch, but neither can establish one.
-        _ = environment
+        // argv is caller-controlled metadata and cannot establish a test host.
         _ = arguments
 
         let normalizedProcessName = processName.lowercased()
@@ -151,6 +159,10 @@ public enum ProcessDataRootPolicy {
         let executableTestBundle = existingXCTestBundleURL(for: executablePath)
         let loadedTestBundles = loadedBundlePaths.compactMap(existingXCTestBundleURL(for:))
         let hasLoadedTestBundle = !loadedTestBundles.isEmpty
+        let configuredTestBundles = xctestEnvironmentKeys.compactMap {
+            environment[$0].flatMap(existingXCTestBundleURL(for:))
+        }
+        let hasConfiguredTestBundle = !configuredTestBundles.isEmpty
 
         // A test bundle is strong evidence only when the process executable
         // is the executable declared by that real bundle. This rejects an
@@ -174,11 +186,24 @@ public enum ProcessDataRootPolicy {
         let isSwiftPMHelper = ["swiftpm-testing-helper", "swift-testing-helper"]
             .contains(normalizedProcessName)
             && executableURL?.lastPathComponent.lowercased() == normalizedProcessName
+            && isSwiftPMTestHelperPath(executableURL)
 
         return isTestBundleProcess
+            || hasConfiguredTestBundle
             || (testFrameworkLoaded && hasLoadedTestBundle)
-            || (isXCTestRunner && hasLoadedTestBundle)
-            || (isSwiftPMHelper && testFrameworkLoaded)
+            || isXCTestRunner
+            || isSwiftPMHelper
+    }
+
+    /// Legacy production-root migration is destructive filesystem work. A
+    /// validated test host never runs it, and an early app-hosted XCTest launch
+    /// defers it while launch markers are present even if the test bundle has
+    /// not been loaded yet. A forged marker can only postpone migration until
+    /// the next normal launch; it cannot redirect production data.
+    public static var allowsProductionDataMigrationForCurrentProcess: Bool {
+        if isRecognizedTestHostProcess { return false }
+        let environment = ProcessInfo.processInfo.environment
+        return !xctestLaunchMarkerKeys.contains { hasValue(environment[$0]) }
     }
 
     /// Keychain callers use this same decision as filesystem callers. A
@@ -270,6 +295,9 @@ public enum ProcessDataRootPolicy {
                 childEnvironment[testRootEnvironmentKey] = automaticTestRoot.path
             }
             childEnvironment[disableKeychainForTestsEnvironmentKey] = "1"
+            if let root = childEnvironment[testRootEnvironmentKey] {
+                childEnvironment["HOME"] = root
+            }
         }
         return childEnvironment
     }
@@ -521,6 +549,12 @@ public enum ProcessDataRootPolicy {
         let normalized = path.lowercased()
         return normalized.contains("/contents/developer/")
             || normalized == "/usr/bin/xctest"
+    }
+
+    private static func isSwiftPMTestHelperPath(_ executableURL: URL?) -> Bool {
+        guard let path = executableURL?.path.lowercased() else { return false }
+        return path.contains(".xctoolchain/usr/libexec/swift/pm/")
+            || path.contains("/usr/libexec/swift/pm/")
     }
 
     private static func isXCTestRuntimeLoaded() -> Bool {

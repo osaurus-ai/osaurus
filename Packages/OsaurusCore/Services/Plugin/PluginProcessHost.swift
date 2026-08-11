@@ -23,6 +23,7 @@
 //
 
 import Foundation
+import OsaurusRepository
 import os
 
 // MARK: - Mode / discovery
@@ -84,6 +85,7 @@ actor PluginProcessHostClient {
     private let pluginId: String
     private let dylibPath: String
     private let helperURL: URL
+    private let allowsExecutionInRecognizedTestHost: Bool
 
     private var process: Process?
     private var stdinPipe: Pipe?
@@ -104,10 +106,16 @@ actor PluginProcessHostClient {
     /// Budget for load (dlopen + init + manifest) — generous but bounded.
     static let loadDeadlineSeconds: Double = 30
 
-    init(pluginId: String, dylibPath: String, helperURL: URL) {
+    init(
+        pluginId: String,
+        dylibPath: String,
+        helperURL: URL,
+        allowsExecutionInRecognizedTestHost: Bool = false
+    ) {
         self.pluginId = pluginId
         self.dylibPath = dylibPath
         self.helperURL = helperURL
+        self.allowsExecutionInRecognizedTestHost = allowsExecutionInRecognizedTestHost
     }
 
     // MARK: Public surface
@@ -178,8 +186,19 @@ actor PluginProcessHostClient {
     private func spawnAndLoad() async throws {
         await killProcess()
 
+        guard allowsExecutionInRecognizedTestHost
+            || !ProcessDataRootPolicy.isRecognizedTestHostProcess
+        else {
+            throw PluginProcessHostError(
+                message: "Native plugin helper execution is disabled in test hosts."
+            )
+        }
+
         let proc = Process()
         proc.executableURL = helperURL
+        proc.environment = ProcessDataRootPolicy.applyingChildTestIsolation(
+            to: ProcessInfo.processInfo.environment
+        )
         let inPipe = Pipe()
         let outPipe = Pipe()
         proc.standardInput = inPipe

@@ -18,6 +18,7 @@
 //
 
 import Foundation
+import OsaurusRepository
 import Testing
 
 @testable import OsaurusCore
@@ -144,11 +145,33 @@ struct PluginProcessHostTests {
         PluginProcessHostClient(
             pluginId: "test.toy",
             dylibPath: Self.toyPluginURL.path,
-            helperURL: Self.helperURL
+            helperURL: Self.helperURL,
+            allowsExecutionInRecognizedTestHost: true
         )
     }
 
     // MARK: - Tests
+
+    @Test
+    func ordinaryNativePluginExecutionFailsClosedInTestHost() async {
+        #expect(ProcessDataRootPolicy.isRecognizedTestHostProcess)
+        let client = PluginProcessHostClient(
+            pluginId: "test.untrusted",
+            dylibPath: "/tmp/untrusted.dylib",
+            helperURL: URL(fileURLWithPath: "/usr/bin/true")
+        )
+
+        do {
+            _ = try await client.invoke(
+                type: "tool", id: "echo", payload: "{}", agentId: nil
+            )
+            Issue.record("expected native plugin execution to fail closed in a test host")
+        } catch let error as PluginProcessHostError {
+            #expect(error.message == "Native plugin helper execution is disabled in test hosts.")
+        } catch {
+            Issue.record("unexpected error: \(error)")
+        }
+    }
 
     @Test
     func invokeRoundTripsThroughHelperProcess() async throws {

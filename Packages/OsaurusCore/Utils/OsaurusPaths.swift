@@ -21,18 +21,10 @@ public enum OsaurusPaths {
 
     private static let defaultRoot: URL = {
         let fm = FileManager.default
-        let newRoot = fm.homeDirectoryForCurrentUser.appendingPathComponent(".osaurus", isDirectory: true)
-        let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let oldRoot = supportDir.appendingPathComponent("com.dinoki.osaurus", isDirectory: true)
-
-        _ = migrateLegacyApplicationSupportRootIfNeeded(
-            fileManager: fm,
-            legacyRoot: oldRoot,
-            activeRoot: newRoot
-        )
-
-        return newRoot
+        return fm.homeDirectoryForCurrentUser.appendingPathComponent(".osaurus", isDirectory: true)
     }()
+    private static let legacyMigrationLock = NSLock()
+    nonisolated(unsafe) private static var legacyMigrationAttempted = false
 
     /// Marker written after the legacy Application Support root has been
     /// copied/merged into `~/.osaurus`. The legacy root is intentionally never
@@ -49,9 +41,40 @@ public enum OsaurusPaths {
 
     /// The root data directory for Osaurus: `~/.osaurus/`
     public static func root() -> URL {
-        ProcessDataRootPolicy.resolvedRoot(
+        let resolved = ProcessDataRootPolicy.resolvedRoot(
             overrideRoot: overrideRoot,
             defaultRoot: defaultRoot
+        )
+        migrateLegacyRootIfNeeded(for: resolved)
+        return resolved
+    }
+
+    private static func migrateLegacyRootIfNeeded(for resolvedRoot: URL) {
+        guard resolvedRoot.standardizedFileURL == defaultRoot.standardizedFileURL,
+            ProcessDataRootPolicy.allowsProductionDataMigrationForCurrentProcess
+        else { return }
+
+        legacyMigrationLock.lock()
+        guard !legacyMigrationAttempted else {
+            legacyMigrationLock.unlock()
+            return
+        }
+        legacyMigrationAttempted = true
+        legacyMigrationLock.unlock()
+
+        let fm = FileManager.default
+        guard let supportDir = fm.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else { return }
+        let oldRoot = supportDir.appendingPathComponent(
+            "com.dinoki.osaurus",
+            isDirectory: true
+        )
+        _ = migrateLegacyApplicationSupportRootIfNeeded(
+            fileManager: fm,
+            legacyRoot: oldRoot,
+            activeRoot: defaultRoot
         )
     }
 

@@ -194,6 +194,21 @@ final class ProcessDataRootPolicyTests: XCTestCase {
         )
     }
 
+    func testRecognizesValidatedConfiguredBundleBeforeRuntimeLoads() throws {
+        let bundlePath = Bundle(for: ProcessDataRootPolicyTests.self).bundlePath
+        XCTAssertTrue(bundlePath.hasSuffix(".xctest"))
+        XCTAssertTrue(
+            ProcessDataRootPolicy.isRecognizedTestHost(
+                environment: ["XCTestBundlePath": bundlePath],
+                processName: "osaurus",
+                bundlePath: "/Applications/Osaurus.app",
+                executablePath: "/Applications/Osaurus.app/Contents/MacOS/osaurus",
+                loadedBundlePaths: [],
+                testFrameworkLoaded: false
+            )
+        )
+    }
+
     func testForgedMarkersNamesAndPathsDoNotRecognizeAProductionIdentity() throws {
         let fakeBundle = FileManager.default.temporaryDirectory
             .appendingPathComponent("LooksLikeTests-\(UUID().uuidString).xctest", isDirectory: true)
@@ -617,6 +632,10 @@ final class ProcessDataRootPolicyTests: XCTestCase {
             "1"
         )
         XCTAssertEqual(childEnvironment["TOOL_SETTING"], "retained")
+        XCTAssertEqual(
+            childEnvironment["HOME"],
+            parentRoot.standardizedFileURL.resolvingSymlinksInPath().path
+        )
         XCTAssertNil(childEnvironment["PARENT_SECRET"])
         XCTAssertNil(childEnvironment[ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey])
         XCTAssertNil(
@@ -700,6 +719,10 @@ final class ProcessDataRootPolicyTests: XCTestCase {
         XCTAssertTrue(
             childEnvironment[ProcessDataRootPolicy.testRootEnvironmentKey]?
                 .hasPrefix("/tmp/osa-t-") == true
+        )
+        XCTAssertEqual(
+            childEnvironment["HOME"],
+            childEnvironment[ProcessDataRootPolicy.testRootEnvironmentKey]
         )
         XCTAssertNil(childEnvironment["PARENT_SECRET"])
     }
