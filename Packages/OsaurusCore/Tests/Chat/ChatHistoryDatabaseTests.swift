@@ -345,7 +345,7 @@ struct ChatHistoryDatabaseTests {
         try db.upsertSandboxChange(makeSandboxChange(sessionId: survivor.id.uuidString))
 
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            db.deleteSessionsAsync(ids: [a.id, b.id]) { continuation.resume() }
+            db.deleteSessionsAsync(ids: [a.id, b.id], completion: { continuation.resume() })
         }
 
         #expect(db.loadSession(id: a.id) == nil)
@@ -363,7 +363,7 @@ struct ChatHistoryDatabaseTests {
     func deleteSessionsAsync_emptyBatchFiresCompletionImmediately() async throws {
         let db = try openInMemory()
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            db.deleteSessionsAsync(ids: []) { continuation.resume() }
+            db.deleteSessionsAsync(ids: [], completion: { continuation.resume() })
         }
     }
 
