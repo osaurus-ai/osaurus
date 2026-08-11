@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import OsaurusRepository
 import SwiftUI
 
 /// Service for managing user-selected directory access with security-scoped bookmarks
@@ -262,6 +263,13 @@ final class DirectoryPickerService: ObservableObject {
     /// access (model-list rendering can ask hundreds of times per frame). The
     /// answer only changes when the directory is reset, which clears the cache.
     nonisolated static func defaultModelsDirectory() -> URL {
+        if let override = modelsDirectoryEnvironmentOverride() {
+            return override
+        }
+        if let isolated = isolatedProcessModelsDirectory() {
+            return isolated
+        }
+
         cacheLock.lock()
         if let cached = cachedDefaultDirectory {
             cacheLock.unlock()
@@ -284,6 +292,9 @@ final class DirectoryPickerService: ObservableObject {
         let fileManager = FileManager.default
         if let override = modelsDirectoryEnvironmentOverride() {
             return override
+        }
+        if let isolated = isolatedProcessModelsDirectory() {
+            return isolated
         }
         let homeURL = fileManager.homeDirectoryForCurrentUser
         let newDefault = homeURL.appendingPathComponent("MLXModels")
@@ -315,6 +326,9 @@ final class DirectoryPickerService: ObservableObject {
         if let override = modelsDirectoryEnvironmentOverride() {
             return override
         }
+        if let isolated = isolatedProcessModelsDirectory() {
+            return isolated
+        }
 
         // Use cached bookmark URL to avoid expensive IPC
         if let cachedURL = getCachedBookmarkURL() {
@@ -332,6 +346,18 @@ final class DirectoryPickerService: ObservableObject {
             !raw.isEmpty
         else { return nil }
         return URL(fileURLWithPath: (raw as NSString).expandingTildeInPath, isDirectory: true)
+    }
+
+    nonisolated private static func isolatedProcessModelsDirectory() -> URL? {
+        let explicitTestRoot = ProcessInfo.processInfo.environment[
+            ProcessDataRootPolicy.testRootEnvironmentKey
+        ]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard explicitTestRoot?.isEmpty == false
+            || ProcessDataRootPolicy.isRecognizedTestHostProcess
+        else {
+            return nil
+        }
+        return OsaurusPaths.root().appendingPathComponent("MLXModels", isDirectory: true)
     }
 
     /// Reset directory selection

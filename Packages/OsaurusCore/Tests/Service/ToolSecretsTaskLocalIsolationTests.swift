@@ -151,4 +151,30 @@ struct ToolSecretsTaskLocalIsolationTests {
             #expect(values.1 == "scoped")
         }
     }
+
+    @Test("production detached helper preserves only the caller's scoped store")
+    func detachedHelperRebindsTheExactStore() async {
+        let pluginId = "com.test.detached-helper.\(UUID().uuidString)"
+        let agentId = UUID()
+
+        await ToolSecretsKeychain._withInMemoryStoreForTesting {
+            #expect(
+                ToolSecretsKeychain.saveSecret(
+                    "scoped", id: "key", for: pluginId, agentId: agentId
+                )
+            )
+
+            let value = await ToolSecretsKeychain
+                ._detachedTaskPreservingInMemoryStoreForTesting(priority: .userInitiated) {
+                    ToolSecretsKeychain.getSecret(
+                        id: "key", for: pluginId, agentId: agentId
+                    )
+                }
+                .value
+
+            #expect(value == "scoped")
+        }
+
+        #expect(ToolSecretsKeychain.getSecret(id: "key", for: pluginId, agentId: agentId) == nil)
+    }
 }

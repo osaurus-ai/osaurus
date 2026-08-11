@@ -9,6 +9,7 @@ import Combine
 import Darwin
 import Foundation
 import MLXLLM
+import OsaurusRepository
 import SwiftUI
 import os
 
@@ -230,6 +231,15 @@ final class ModelManager: NSObject, ObservableObject {
     /// async HF response can't race with their assertions and replace
     /// injected entries with whatever HF currently lists.
     nonisolated(unsafe) static var skipBackgroundOrgFetchForTests: Bool = false
+    nonisolated static var allowsAutomaticCatalogWorkForCurrentProcess: Bool {
+        !ProcessDataRootPolicy.isRecognizedTestHostProcess
+    }
+
+    #if DEBUG
+        /// Records automatic top-up scheduling without allowing tests to
+        /// replace the production download implementation.
+        static var automaticCatalogTopUpScheduleObserverForTests: (([MLXModel]) -> Void)?
+    #endif
 
     // MARK: - Initialization
     override init() {
@@ -237,12 +247,14 @@ final class ModelManager: NSObject, ObservableObject {
 
         loadAvailableModels()
 
-        NotificationCenter.default.publisher(for: .localModelsChanged)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.refreshDownloadStates()
-            }
-            .store(in: &cancellables)
+        if Self.allowsAutomaticCatalogWorkForCurrentProcess {
+            NotificationCenter.default.publisher(for: .localModelsChanged)
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    self?.refreshDownloadStates()
+                }
+                .store(in: &cancellables)
+        }
 
         downloadService.objectWillChange
             .receive(on: DispatchQueue.main)
@@ -253,7 +265,8 @@ final class ModelManager: NSObject, ObservableObject {
 
         // Pull the OsaurusAI HF org listing once on launch so newly published
         // models surface in the Recommended tab without requiring a code push.
-        if !Self.skipBackgroundOrgFetchForTests {
+        if !Self.skipBackgroundOrgFetchForTests
+            && Self.allowsAutomaticCatalogWorkForCurrentProcess {
             Task { [weak self] in await self?.loadOsaurusAIOrgModels() }
 
             // Discover external bundles (HF cache, LM Studio, custom folders) off the main
@@ -293,21 +306,32 @@ final class ModelManager: NSObject, ObservableObject {
         // Merge the results back on the main actor when they land. The wait
         // is pushed off-main by `discoverLocalModelsOffMain()`; this `Task`
         // stays main-actor isolated so `self` never crosses actor boundaries.
-        Task { [weak self] in
-            let localModels = await Self.discoverLocalModelsOffMain()
-            self?.mergeAvailable(
-                with: localModels,
-                refreshLocalInstallationMetadata: true
-            )
+        if Self.allowsAutomaticCatalogWorkForCurrentProcess {
+            Task { [weak self] in
+                let localModels = await Self.discoverLocalModelsOffMain()
+                self?.mergeAvailable(
+                    with: localModels,
+                    refreshLocalInstallationMetadata: true
+                )
+            }
         }
 
         isLoadingModels = false
 
         checkForDeprecatedModels()
 
-        let allModels = availableModels + suggestedModels
-        Task { [downloadService] in
-            await downloadService.topUpCompletedModels(allModels)
+        // A top-up can write missing tokenizer/config files into an otherwise
+        // complete bundle. Test hosts may explicitly point OSU_MODELS_DIR at a
+        // real model collection for live proof, so catalog reads are allowed
+        // but this automatic mutation must remain disabled there.
+        if Self.allowsAutomaticCatalogWorkForCurrentProcess {
+            let allModels = availableModels + suggestedModels
+            #if DEBUG
+                Self.automaticCatalogTopUpScheduleObserverForTests?(allModels)
+            #endif
+            Task { [downloadService] in
+                await downloadService.topUpCompletedModels(allModels)
+            }
         }
     }
 

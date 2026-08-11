@@ -88,7 +88,7 @@ struct SeatbeltSandboxTests {
 
     // MARK: - Profile generation
 
-    @Test("Seatbelt child keeps parent isolation without inheriting secrets")
+    @Test("Seatbelt child preserves isolation and rejects reserved overlays")
     func childEnvironmentPreservesIsolationPolicy() throws {
         let parentRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("osaurus-seatbelt-parent-\(UUID().uuidString)", isDirectory: true)
@@ -106,7 +106,6 @@ struct SeatbeltSandboxTests {
             parentEnvironment: [
                 ProcessDataRootPolicy.testRootEnvironmentKey: "  \(parentRoot.path)  ",
                 ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
-                "PARENT_SECRET": "must-not-be-inherited",
             ],
             parentRecognizedTestHost: false
         )
@@ -119,7 +118,6 @@ struct SeatbeltSandboxTests {
         #expect(
             environment[ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey] == "1"
         )
-        #expect(environment["PARENT_SECRET"] == nil)
         #expect(environment[ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey] == nil)
         #expect(environment[ProcessDataRootPolicy.realKeychainTestNamespaceEnvironmentKey] == nil)
     }

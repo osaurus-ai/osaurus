@@ -111,6 +111,32 @@ public enum ToolSecretsKeychain {
         }
     }
 
+    static func _withInMemoryStoreContextForTesting<T>(
+        _ context: InMemoryStoreContext?,
+        _ body: @Sendable () async throws -> T
+    ) async rethrows -> T {
+        guard let context else { return try await body() }
+        return try await $taskLocalStore.withValue(context.store) {
+            try await body()
+        }
+    }
+
+    /// Production work remains an ordinary detached task. During tests this
+    /// helper carries only the caller's opaque task-local store capability, so
+    /// the real asynchronous path is exercised without introducing a shared
+    /// process-wide secret backend or permitting login-Keychain access.
+    static func _detachedTaskPreservingInMemoryStoreForTesting<T: Sendable>(
+        priority: TaskPriority? = nil,
+        operation: @escaping @Sendable () async -> T
+    ) -> Task<T, Never> {
+        let context = _captureInMemoryStoreContextForTesting()
+        return Task.detached(priority: priority) {
+            await _withInMemoryStoreContextForTesting(context) {
+                await operation()
+            }
+        }
+    }
+
     // MARK: - Presence memoization
 
     // `hasSecret` runs on view-body call paths (e.g. the chat context

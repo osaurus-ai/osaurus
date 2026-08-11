@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import OsaurusRepository
 import Testing
 
 @testable import OsaurusCore
@@ -129,6 +130,25 @@ struct ModelManagerTests {
             let missingList = missing.joined(separator: ", ")
             #expect(missing.isEmpty, "missing download state for models: \(missingList)")
         }
+    }
+
+    @Test("recognized test hosts never schedule automatic model-bundle top-ups")
+    @MainActor
+    func testHostDoesNotScheduleAutomaticModelTopUp() {
+        #expect(ProcessDataRootPolicy.isRecognizedTestHostProcess)
+        let previousObserver = ModelManager.automaticCatalogTopUpScheduleObserverForTests
+        var scheduledTopUps = 0
+        ModelManager.automaticCatalogTopUpScheduleObserverForTests = { _ in
+            scheduledTopUps += 1
+        }
+        defer {
+            ModelManager.automaticCatalogTopUpScheduleObserverForTests = previousObserver
+        }
+
+        let manager = ModelManager()
+        manager.loadAvailableModels()
+
+        #expect(scheduledTopUps == 0)
     }
 
     @Test func cancelDownload_resetsStateWithoutTask() async throws {

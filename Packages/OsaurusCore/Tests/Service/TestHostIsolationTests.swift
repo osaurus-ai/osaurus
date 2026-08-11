@@ -89,15 +89,50 @@ struct TestHostIsolationTests {
             if let configuredRoot = ProcessInfo.processInfo.environment["OSAURUS_TEST_ROOT"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
                 !configuredRoot.isEmpty {
+                let configuredURL = URL(
+                    fileURLWithPath: configuredRoot,
+                    isDirectory: true
+                ).standardizedFileURL
+
+                // Environment roots cross a process boundary and are accepted
+                // only when the launcher already prepared a private directory.
+                // Missing or unsafe paths must fall back to the process-owned
+                // automatic root instead of touching production storage.
                 #expect(
-                    resolved
-                        == URL(fileURLWithPath: configuredRoot, isDirectory: true)
-                        .standardizedFileURL
+                    resolved == configuredURL || resolved.path.hasPrefix("/tmp/osa-t-")
                 )
             } else {
                 #expect(resolved.path.hasPrefix("/tmp/osa-t-"))
             }
         }
+    }
+
+    @Test("test-host model discovery ignores production bookmarks and home directories")
+    func modelDirectoryUsesDisposableRootBehaviorally() async {
+        await StoragePathsTestLock.shared.run {
+            let previousOverride = OsaurusPaths.overrideRoot
+            let testRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osu-model-root-isolation-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            OsaurusPaths.overrideRoot = testRoot
+            defer {
+                OsaurusPaths.overrideRoot = previousOverride
+                try? FileManager.default.removeItem(at: testRoot)
+            }
+
+            #expect(ProcessDataRootPolicy.isRecognizedTestHostProcess)
+            #expect(
+                DirectoryPickerService.effectiveModelsDirectory().standardizedFileURL
+                    == testRoot.appendingPathComponent("MLXModels", isDirectory: true).standardizedFileURL
+            )
+        }
+    }
+
+    @Test("test hosts do not launch unowned model catalog work")
+    func modelManagerBackgroundCatalogWorkIsDisabled() {
+        #expect(ProcessDataRootPolicy.isRecognizedTestHostProcess)
+        #expect(!ModelManager.allowsAutomaticCatalogWorkForCurrentProcess)
     }
 
     @Test("path and keychain helpers use the shared isolation policy")
