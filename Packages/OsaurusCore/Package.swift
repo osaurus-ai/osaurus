@@ -194,9 +194,20 @@ let package = Package(
         // end of the first think block, and stored in `thinking` where history
         // replayed it back to the model as prose. `to=user` still closes
         // reasoning and `to=self` still opens it.
+        // vmlx-swift#234 implements the Nemotron-H native MTP head (270
+        // `mtp.*` tensors that `sanitize` previously dropped) and declines
+        // speculation whenever the KV window is bounded, since a
+        // `RotatingKVCache` cannot un-write a rejected draft.
+        //
+        // The head is DEFAULT OFF behind `VMLX_NEMOTRON_MTP`. Measured on
+        // Lightning 30B-A3B: D2 is 0.84x — 16 % SLOWER than plain
+        // autoregressive at 72.4 % accept — and D3 is 0.48x, both
+        // token-identical. A 3 B-active model is not purely bandwidth-bound,
+        // so the two-token verify batch costs +46 % instead of ~0 %. D1 is the
+        // shipped path; turning MTP on is an explicit per-machine decision.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "6daa2ca04df88dc5f591f65bcf678acf54879d62"
+            revision: "56bcef0f7d5ddbfaa39216bd64188fe8d1864e97"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
