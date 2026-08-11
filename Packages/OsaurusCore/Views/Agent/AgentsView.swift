@@ -6271,11 +6271,11 @@ struct AgentDetailView: View {
     /// agent's accumulated data (chats, facts, episodes) without deleting the
     /// agent itself, which was previously the only way to start over.
     private var deleteAllDataSection: some View {
-        AgentDetailSection(
-            title: L("Delete All Data"),
-            icon: "trash",
-            subtitle: L("Remove this agent's chats and memory. The agent itself stays.")
-        ) {
+        AgentDetailSection(title: L("Delete All Data"), icon: "trash") {
+            Text("Remove this agent's chats and memory. The agent itself stays.", bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+
             Button {
                 presentDeleteAllData()
             } label: {
