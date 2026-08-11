@@ -185,11 +185,48 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     typealias InboundIn = HTTPServerRequestPart
     typealias OutboundOut = HTTPServerResponsePart
 
+    struct CacheStatsRuntimeSnapshot: Sendable {
+        let cachedModels: [ModelRuntime.ModelCacheSummary]
+        let lastMemorySafetyLoadDecision: ModelRuntime.MemorySafetyLoadDecision?
+        let batchDiagnostics: BatchDiagnosticsSnapshot?
+        let turboQuantTransitions: [String: TurboQuantCacheTransitionSnapshot]
+        let lastEffectiveGenerationSettings: [String: MLXBatchAdapter.EffectiveGenerationSettings]
+        let memoryStatus: MemoryStatus?
+
+        static let empty = CacheStatsRuntimeSnapshot(
+            cachedModels: [],
+            lastMemorySafetyLoadDecision: nil,
+            batchDiagnostics: nil,
+            turboQuantTransitions: [:],
+            lastEffectiveGenerationSettings: [:],
+            memoryStatus: nil
+        )
+
+        static func live() async -> CacheStatsRuntimeSnapshot {
+            CacheStatsRuntimeSnapshot(
+                cachedModels: await ModelRuntime.shared.cachedModelSummaries(
+                    refreshTopology: true
+                ),
+                lastMemorySafetyLoadDecision:
+                    await ModelRuntime.shared.lastMemorySafetyLoadDecisionSnapshot(),
+                batchDiagnostics: await MLXBatchAdapter.snapshotDiagnostics(),
+                turboQuantTransitions:
+                    await MLXBatchAdapter.turboQuantCacheTransitionsSnapshot(),
+                lastEffectiveGenerationSettings:
+                    await MLXBatchAdapter.lastEffectiveGenerationSettingsSnapshot(),
+                memoryStatus: MemoryStatus.snapshot()
+            )
+        }
+    }
+
     private let configuration: ServerConfiguration
     private let apiKeyValidatorProvider: @Sendable () -> APIKeyValidator
     private var apiKeyValidator: APIKeyValidator { apiKeyValidatorProvider() }
     private let chatEngine: ChatEngineProtocol
     private let trustLoopback: Bool
+    private let clearLoadedModels: @Sendable () async -> Void
+    private let invalidateRuntimeConfig: @Sendable () async -> Void
+    private let cacheStatsRuntimeSnapshot: @Sendable () async -> CacheStatsRuntimeSnapshot
     private let _isChannelActive = SendableBool(false)
     private let requestTasks = HTTPRequestTaskRegistry()
     private let channelCloseFuture = ChannelCloseFutureBox()
@@ -266,13 +303,25 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         eventLoop: EventLoop,
         chatEngine: ChatEngineProtocol = ChatEngine(),
         trustLoopback: Bool = true,
-        responseEncryptor: SecureChannelResponseEncryptor? = nil
+        responseEncryptor: SecureChannelResponseEncryptor? = nil,
+        clearLoadedModels: (@Sendable () async -> Void)? = nil,
+        invalidateRuntimeConfig: (@Sendable () async -> Void)? = nil,
+        cacheStatsRuntimeSnapshot: (@Sendable () async -> CacheStatsRuntimeSnapshot)? = nil
     ) {
         self.configuration = configuration
         self.apiKeyValidatorProvider = apiKeyValidatorProvider ?? { apiKeyValidator }
         self.chatEngine = chatEngine
         self.trustLoopback = trustLoopback
         self.responseEncryptor = responseEncryptor
+        self.clearLoadedModels = clearLoadedModels ?? {
+            await ModelRuntime.shared.clearAll()
+        }
+        self.invalidateRuntimeConfig = invalidateRuntimeConfig ?? {
+            await ModelRuntime.shared.invalidateConfig()
+        }
+        self.cacheStatsRuntimeSnapshot = cacheStatsRuntimeSnapshot ?? {
+            await CacheStatsRuntimeSnapshot.live()
+        }
         self.stateRef = NIOLoopBound(RequestState(), eventLoop: eventLoop)
     }
 
@@ -882,14 +931,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logPath = path
 
         runRequestTask(priority: .userInitiated) {
-            let cached = await ModelRuntime.shared.cachedModelSummaries(refreshTopology: true)
-            let lastMemorySafetyLoadDecision =
-                await ModelRuntime.shared.lastMemorySafetyLoadDecisionSnapshot()
-            let batchDiagnostics = await MLXBatchAdapter.snapshotDiagnostics()
-            let turboQuantTransitions =
-                await MLXBatchAdapter.turboQuantCacheTransitionsSnapshot()
-            let lastEffectiveGenerationSettings =
-                await MLXBatchAdapter.lastEffectiveGenerationSettingsSnapshot()
+            let runtimeSnapshot = await logSelf.cacheStatsRuntimeSnapshot()
+            let cached = runtimeSnapshot.cachedModels
+            let lastMemorySafetyLoadDecision = runtimeSnapshot.lastMemorySafetyLoadDecision
+            let batchDiagnostics = runtimeSnapshot.batchDiagnostics
+            let turboQuantTransitions = runtimeSnapshot.turboQuantTransitions
+            let lastEffectiveGenerationSettings = runtimeSnapshot.lastEffectiveGenerationSettings
             var aggregate: [String: Int] = [
                 "prefix_hits": 0,
                 "prefix_misses": 0,
@@ -1066,7 +1113,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
 
             let runtimeSettings = ServerRuntimeSettingsStore.snapshot()
-            let memoryStatus = MemoryStatus.snapshot()
+            let memoryStatus = runtimeSnapshot.memoryStatus
             let memorySafetyPlan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
                 for: runtimeSettings,
                 baseLoadConfiguration: .osaurusProduction,
@@ -1442,10 +1489,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             ServerRuntimeSettingsStore.save(next)
             if loadedModelRefreshNeeded {
-                await ModelRuntime.shared.clearAll()
+                await logSelf.clearLoadedModels()
             }
             if runtimeConfigInvalidated {
-                await ModelRuntime.shared.invalidateConfig()
+                await logSelf.invalidateRuntimeConfig()
             }
 
             let effects: [String: Any] = [
@@ -1526,7 +1573,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private static func memorySafetyJSONObject(
         settings: VMLXServerRuntimeSettings,
         plan: VMLXResolvedMemorySafetyPlan,
-        memoryStatus: MemoryStatus,
+        memoryStatus: MemoryStatus?,
         lastLoadDecision: ModelRuntime.MemorySafetyLoadDecision?
     ) -> [String: Any] {
         let memorySafety = settings.memorySafety
@@ -1544,7 +1591,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "load_configuration": loadConfigurationJSONObject(plan.loadConfiguration),
             "cache": cacheSettingsJSONObject(plan.cache),
             "concurrency": concurrencySettingsJSONObject(plan.concurrency),
-            "memory_status": memoryStatusJSONObject(memoryStatus),
+            "memory_status":
+                memoryStatus.map(memoryStatusJSONObject) as Any? ?? NSNull(),
             "warnings": plan.warnings,
             "blocking_issues": plan.blockingIssues.map(settingsIssueJSONObject),
             "validation_issues": validationIssues.map(settingsIssueJSONObject),
