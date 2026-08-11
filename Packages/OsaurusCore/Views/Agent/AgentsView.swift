@@ -6753,7 +6753,7 @@ private struct AgentDataWipeDialogContent: View {
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 12) {
                 row(L("Chat history"), count: chatCount, isOn: $selection.chats)
 
                 Text(L("Memory").uppercased())
