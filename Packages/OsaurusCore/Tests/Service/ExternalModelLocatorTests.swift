@@ -13,6 +13,24 @@ import Testing
 
 @testable import OsaurusCore
 
+private final class ExternalRescanTransitionProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var checks = 0
+
+    func allowScanButDenyCommit() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        checks += 1
+        return checks <= 2
+    }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return checks
+    }
+}
+
 struct ExternalModelLocatorTests {
 
     // MARK: - Helpers
@@ -306,6 +324,38 @@ struct ExternalModelLocatorTests {
 
         #expect(report?.discovered.contains { $0.id == "publisher/repo" } == true)
         #expect(report?.skipped.isEmpty == true)
+    }
+
+    @Test func rescan_doesNotCommitAfterIsolationTransition() async {
+        await OsaurusTestGlobals.withPathsLock {
+            let previousRoot = OsaurusPaths.overrideRoot
+            let previousOverride = ExternalModelLocator.testRootsOverride
+            let manifestRoot = makeTempDir()
+            let customRoot = makeTempDir()
+            let probe = ExternalRescanTransitionProbe()
+            OsaurusPaths.overrideRoot = manifestRoot
+            ExternalModelLocator.invalidateInMemory()
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                ExternalModelLocator.testRootsOverride = previousOverride
+                ExternalModelLocator.invalidateInMemory()
+                try? FileManager.default.removeItem(at: manifestRoot)
+                try? FileManager.default.removeItem(at: customRoot)
+            }
+
+            writeBundle(at: customRoot.appendingPathComponent("publisher/repo"))
+            ExternalModelLocator.testRootsOverride = [
+                (root: customRoot, source: .customModelFolder)
+            ]
+
+            let models = ExternalModelLocator.rescan(shouldContinue: {
+                probe.allowScanButDenyCommit()
+            })
+
+            #expect(probe.count >= 3)
+            #expect(models.isEmpty)
+            #expect(ExternalModelLocator.models().isEmpty)
+        }
     }
 
     // MARK: - HF cache scan + resolution (via test override)

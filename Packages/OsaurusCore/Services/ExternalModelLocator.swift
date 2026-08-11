@@ -359,8 +359,12 @@ enum ExternalModelLocator {
     /// manifest, and post `.localModelsChanged` if the set changed. Safe to
     /// call from a background task; performs filesystem I/O.
     @discardableResult
-    static func rescan() -> [MLXModel] {
-        let report = scanEnabledSources()
+    static func rescan(
+        shouldContinue: @Sendable () -> Bool = { true }
+    ) -> [MLXModel] {
+        guard shouldContinue() else { return modelsSnapshotNonBlocking() }
+        let report = scanEnabledSources(shouldContinue: shouldContinue)
+        guard shouldContinue() else { return modelsSnapshotNonBlocking() }
         var discovered: [String: Discovered] = [:]
         for entry in report.discovered {
             discovered[entry.id.lowercased()] = entry
@@ -373,17 +377,19 @@ enum ExternalModelLocator {
         lastReport = report
         lock.unlock()
 
-        if changed {
+        if changed, shouldContinue() {
             persist(discovered)
             NotificationCenter.default.post(name: .localModelsChanged, object: nil)
         }
         return models()
     }
 
-    static func scanEnabledSources() -> ScanReport {
+    static func scanEnabledSources(
+        shouldContinue: @Sendable () -> Bool = { true }
+    ) -> ScanReport {
         var reports: [SourceScanReport] = []
         if let overrides = testRootsOverride {
-            for (root, source) in overrides {
+            for (root, source) in overrides where shouldContinue() {
                 switch source {
                 case .huggingFaceCache:
                     reports.append(scanHuggingFaceCacheReport(root: root))
@@ -396,17 +402,17 @@ enum ExternalModelLocator {
             return ScanReport(sources: reports)
         }
 
-        if isHFCacheImportEnabled {
+        if isHFCacheImportEnabled, shouldContinue() {
             reports.append(
                 contentsOf: huggingFaceCacheRoots().map(scanHuggingFaceCacheReport(root:))
             )
-            if let customRoot = customModelFolderRoot(),
-                FileManager.default.fileExists(atPath: customRoot.path)
-            {
+            if shouldContinue(),
+                let customRoot = customModelFolderRoot(),
+                FileManager.default.fileExists(atPath: customRoot.path) {
                 reports.append(scanCustomModelFolderReport(root: customRoot))
             }
         }
-        if isLMStudioImportEnabled {
+        if isLMStudioImportEnabled, shouldContinue() {
             reports.append(contentsOf: lmStudioRoots().map { scanReport(root: $0, source: .lmStudio) })
         }
         return ScanReport(sources: reports)

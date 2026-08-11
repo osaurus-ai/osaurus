@@ -19,7 +19,7 @@ import LocalAuthentication
 import Security
 
 public struct MasterMnemonicStore: Sendable {
-    static let service = MasterKey.service
+    static var service: String { MasterKey.service }
     static let account = "master-mnemonic"
 
     // MARK: - Store

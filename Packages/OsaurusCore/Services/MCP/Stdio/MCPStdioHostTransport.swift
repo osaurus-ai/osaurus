@@ -47,6 +47,25 @@
             "LC_TIME",
         ]
 
+        /// These controls can alter the code loaded by a child or redirect
+        /// work into Osaurus's own runtime. Ordinary provider settings remain
+        /// available in an isolated host child.
+        private static func isIsolatedProviderControl(_ key: String) -> Bool {
+            key.hasPrefix("DYLD_")
+                || key == "LD_PRELOAD"
+                || key == "LD_LIBRARY_PATH"
+                || key.hasPrefix("OSU_")
+                || key.hasPrefix("OSAURUS_")
+        }
+
+        private struct LaunchConfiguration {
+            let executablePath: String
+            let arguments: [String]
+            let environment: [String: String]
+            let workingDirectory: URL?
+        }
+
+        private let provider: MCPProvider
         private let process: Process
         private let stdinPipe: Pipe
         private let stdoutPipe: Pipe
@@ -72,29 +91,15 @@
             self.providerId = provider.id
             self.command = provider.command
             self.args = provider.args
-
-            let mergedEnv = Self.buildEnv(provider: provider)
-            let executablePath = try Self.resolveExecutablePath(
-                command: Self.expandUserPath(provider.command, env: mergedEnv),
-                env: mergedEnv
-            )
+            self.provider = provider
 
             let stdinPipe = Pipe()
             let stdoutPipe = Pipe()
             let stderrPipe = Pipe()
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: executablePath)
-            process.arguments = provider.args
-            process.environment = mergedEnv
             process.standardInput = stdinPipe
             process.standardOutput = stdoutPipe
             process.standardError = stderrPipe
-            if let cwd = provider.workingDirectory, !cwd.isEmpty {
-                process.currentDirectoryURL = URL(
-                    fileURLWithPath: Self.expandUserPath(cwd, env: mergedEnv),
-                    isDirectory: true
-                )
-            }
 
             self.process = process
             self.stdinPipe = stdinPipe
@@ -109,15 +114,40 @@
             self.transport = StdioTransport(input: readFD, output: writeFD)
         }
 
-        /// Production children retain the existing full ambient environment
-        /// merge. Test hosts and explicitly isolated proof processes use the
-        /// narrow allowlist below so ambient credentials cannot cross the
-        /// isolation boundary.
-        private static func buildEnv(provider: MCPProvider) -> [String: String] {
-            buildEnvironmentForTesting(
-                parentEnvironment: ProcessInfo.processInfo.environment,
-                providerEnvironment: provider.resolvedEnv(),
-                parentRecognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
+        private static func makeLaunchConfiguration(
+            command: String,
+            args: [String],
+            workingDirectory: String?,
+            providerEnvironment: [String: String],
+            parentEnvironment: [String: String],
+            parentRecognizedTestHost: Bool
+        ) throws -> LaunchConfiguration {
+            guard !command.isEmpty else {
+                throw MCPStdioTransportError.missingCommand
+            }
+            let environment = buildEnvironmentForTesting(
+                parentEnvironment: parentEnvironment,
+                providerEnvironment: providerEnvironment,
+                parentRecognizedTestHost: parentRecognizedTestHost
+            )
+            let executablePath = try resolveExecutablePath(
+                command: expandUserPath(command, env: environment),
+                env: environment
+            )
+            let resolvedWorkingDirectory: URL?
+            if let workingDirectory, !workingDirectory.isEmpty {
+                resolvedWorkingDirectory = URL(
+                    fileURLWithPath: expandUserPath(workingDirectory, env: environment),
+                    isDirectory: true
+                )
+            } else {
+                resolvedWorkingDirectory = nil
+            }
+            return LaunchConfiguration(
+                executablePath: executablePath,
+                arguments: args,
+                environment: environment,
+                workingDirectory: resolvedWorkingDirectory
             )
         }
 
@@ -142,6 +172,9 @@
                 // environment and overlay explicit provider configuration.
                 environment = parentEnvironment
             }
+            let providerEnvironment = parentIsolated
+                ? providerEnvironment.filter { !isIsolatedProviderControl($0.key) }
+                : providerEnvironment
             for (key, value) in providerEnvironment {
                 environment[key] = value
             }
@@ -303,6 +336,35 @@
             try resolveExecutablePath(command: expandUserPath(command, env: env), env: env)
         }
 
+        static func launchConfigurationForTesting(
+            command: String,
+            args: [String] = [],
+            workingDirectory: String? = nil,
+            providerEnvironment: [String: String],
+            parentEnvironment: [String: String],
+            parentRecognizedTestHost: Bool
+        ) throws -> (
+            executablePath: String,
+            arguments: [String],
+            environment: [String: String],
+            workingDirectory: URL?
+        ) {
+            let configuration = try makeLaunchConfiguration(
+                command: command,
+                args: args,
+                workingDirectory: workingDirectory,
+                providerEnvironment: providerEnvironment,
+                parentEnvironment: parentEnvironment,
+                parentRecognizedTestHost: parentRecognizedTestHost
+            )
+            return (
+                configuration.executablePath,
+                configuration.arguments,
+                configuration.environment,
+                configuration.workingDirectory
+            )
+        }
+
         /// Set once a global spawn slot is held so `stop()` releases exactly
         /// one slot even if called twice.
         private var spawnSlotHeld = false
@@ -319,12 +381,53 @@
                     Task { await self?.handleProcessExit(exitCode: code) }
                 }
                 startStderrPump()
+
+                // Test-host identity can become visible after runner creation.
+                // Resolve every launch-sensitive field only after this fresh
+                // decision, while keeping host execution explicitly unconfined.
+                var parentEnvironment = ProcessInfo.processInfo.environment
+                var parentRecognizedTestHost = ProcessDataRootPolicy.isRecognizedTestHostProcess
+                var launchConfiguration = try Self.makeLaunchConfiguration(
+                    command: provider.command,
+                    args: provider.args,
+                    workingDirectory: provider.workingDirectory,
+                    providerEnvironment: provider.resolvedEnv(),
+                    parentEnvironment: parentEnvironment,
+                    parentRecognizedTestHost: parentRecognizedTestHost
+                )
+
+                // Executable lookup and secret resolution can take long enough
+                // for XCTest recognition to latch. Rebuild from the newer
+                // context before launch rather than retaining production HOME,
+                // PATH, credentials, or cwd captured by the first pass.
+                let launchEnvironment = ProcessInfo.processInfo.environment
+                let launchRecognizedTestHost = ProcessDataRootPolicy.isRecognizedTestHostProcess
+                if launchEnvironment != parentEnvironment
+                    || launchRecognizedTestHost != parentRecognizedTestHost {
+                    parentEnvironment = launchEnvironment
+                    parentRecognizedTestHost = launchRecognizedTestHost
+                    launchConfiguration = try Self.makeLaunchConfiguration(
+                        command: provider.command,
+                        args: provider.args,
+                        workingDirectory: provider.workingDirectory,
+                        providerEnvironment: provider.resolvedEnv(),
+                        parentEnvironment: parentEnvironment,
+                        parentRecognizedTestHost: parentRecognizedTestHost
+                    )
+                }
+                process.executableURL = URL(fileURLWithPath: launchConfiguration.executablePath)
+                process.arguments = launchConfiguration.arguments
+                process.environment = launchConfiguration.environment
+                process.currentDirectoryURL = launchConfiguration.workingDirectory
                 try process.run()
             } catch {
                 // Release the slot we just reserved — the child never launched.
                 await MCPChildSpawnLimiter.shared.release()
                 spawnSlotHeld = false
                 stopStderrPump()
+                if let transportError = error as? MCPStdioTransportError {
+                    throw transportError
+                }
                 throw MCPStdioTransportError.processSpawnFailed(error.localizedDescription)
             }
         }

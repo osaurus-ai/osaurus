@@ -133,20 +133,30 @@ public struct MasterKey: Sendable {
 
     /// Check if a Master Key exists in Keychain (no biometric prompt).
     public static func exists() -> Bool {
+        keychainContainsMasterKey(service: service)
+    }
+
+    private static func keychainContainsMasterKey(service serviceName: String) -> Bool {
         // Keychain-disabled processes report "no identity" so identity-gated
         // paths (e.g. `AgentManager.assignAddress`) short-circuit before any
         // legacy login-Keychain read can raise a "wants to use your
         // confidential information" ACL prompt in a headless/differently-signed
         // process (the eval CLI).
         if KeychainQueryHelpers.disablesIdentityKeyForProcess { return false }
+        guard serviceName == service else { return false }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: serviceName,
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             kSecReturnData as String: false,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
+        // Recognition may become visible while the query is assembled. Never
+        // use a service captured under the previous isolation namespace.
+        guard !KeychainQueryHelpers.disablesIdentityKeyForProcess,
+            serviceName == service
+        else { return false }
         return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
 
@@ -160,8 +170,12 @@ public struct MasterKey: Sendable {
     // install/delete, seeded once lazily, and refreshed off the main thread to
     // pick up out-of-process iCloud Keychain syncs.
     private static let existsCacheLock = NSLock()
-    private nonisolated(unsafe) static var cachedExists: Bool?
-    private nonisolated(unsafe) static var lastExistsRefresh: Date?
+    private struct ExistsCacheEntry {
+        let service: String
+        let value: Bool
+        let refreshedAt: Date
+    }
+    private nonisolated(unsafe) static var existsCacheEntry: ExistsCacheEntry?
     private static let existsRefreshInterval: TimeInterval = 10.0
 
     /// Non-blocking, eventually-consistent variant of `exists()` for hot UI
@@ -170,12 +184,23 @@ public struct MasterKey: Sendable {
     /// Correctness-critical callers — identity creation/recovery guards and
     /// anything about to read or sign with the key — must keep using `exists()`.
     public static func existsCached() -> Bool {
+        let currentService = service
+        if KeychainQueryHelpers.disablesIdentityKeyForProcess {
+            setCachedExists(false, service: currentService)
+            return false
+        }
         existsCacheLock.lock()
-        let known = cachedExists
+        let known = existsCacheEntry.flatMap { entry in
+            cachedExistsValue(
+                cachedService: entry.service,
+                cachedValue: entry.value,
+                currentService: currentService
+            )
+        }
         existsCacheLock.unlock()
 
         if let known {
-            refreshExistsInBackground()
+            refreshExistsInBackground(service: currentService)
             return known
         }
         // Cold: never probe on the calling thread. Launch paths seed the memo
@@ -185,14 +210,27 @@ public struct MasterKey: Sendable {
         // has hung the main thread when securityd stalls. Report "no identity"
         // until the seed lands; identity-gated chrome appears one refresh
         // tick later, and correctness-critical callers use `exists()`.
-        refreshExistsInBackground()
+        refreshExistsInBackground(service: currentService)
         return false
     }
 
-    private static func setCachedExists(_ value: Bool) {
+    static func cachedExistsValue(
+        cachedService: String,
+        cachedValue: Bool,
+        currentService: String
+    ) -> Bool? {
+        cachedService == currentService ? cachedValue : nil
+    }
+
+    private static func setCachedExists(_ value: Bool, service serviceName: String = service) {
+        guard serviceName == Self.service else { return }
+        guard !value || !KeychainQueryHelpers.disablesIdentityKeyForProcess else { return }
         existsCacheLock.lock()
-        cachedExists = value
-        lastExistsRefresh = Date()
+        existsCacheEntry = ExistsCacheEntry(
+            service: serviceName,
+            value: value,
+            refreshedAt: Date()
+        )
         existsCacheLock.unlock()
     }
 
@@ -202,8 +240,12 @@ public struct MasterKey: Sendable {
     /// badge recompute — never triggers a `SecItemCopyMatching` on a
     /// latency-sensitive thread. Call once at launch; idempotent.
     public static func warmExistsCacheInBackground() {
+        let currentService = service
         DispatchQueue.global(qos: .utility).async {
-            setCachedExists(exists())
+            setCachedExists(
+                keychainContainsMasterKey(service: currentService),
+                service: currentService
+            )
         }
     }
 
@@ -214,28 +256,51 @@ public struct MasterKey: Sendable {
     /// fire-and-forget warm and paying the synchronous keychain probe on the
     /// main thread.
     public static func seedExistsCacheOffMainActor() async {
+        let currentService = service
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             DispatchQueue.global(qos: .utility).async {
-                setCachedExists(exists())
+                setCachedExists(
+                    keychainContainsMasterKey(service: currentService),
+                    service: currentService
+                )
                 continuation.resume()
             }
         }
     }
 
-    private static func refreshExistsInBackground() {
+    private static func refreshExistsInBackground(service currentService: String) {
         let now = Date()
         existsCacheLock.lock()
-        let recent = lastExistsRefresh.map { now.timeIntervalSince($0) < existsRefreshInterval } ?? false
+        let recent = existsCacheEntry.map {
+            $0.service == currentService
+                && now.timeIntervalSince($0.refreshedAt) < existsRefreshInterval
+        } ?? false
         if recent {
             existsCacheLock.unlock()
             return
         }
-        // Stamp now (under the lock) so concurrent callers don't each spawn a probe.
-        lastExistsRefresh = now
+        // Stamp now (under the lock) so concurrent callers don't each spawn a
+        // probe for the same effective Keychain namespace.
+        if let entry = existsCacheEntry, entry.service == currentService {
+            existsCacheEntry = ExistsCacheEntry(
+                service: currentService,
+                value: entry.value,
+                refreshedAt: now
+            )
+        } else {
+            existsCacheEntry = ExistsCacheEntry(
+                service: currentService,
+                value: false,
+                refreshedAt: now
+            )
+        }
         existsCacheLock.unlock()
 
         Task.detached(priority: .utility) {
-            setCachedExists(exists())
+            setCachedExists(
+                keychainContainsMasterKey(service: currentService),
+                service: currentService
+            )
         }
     }
 

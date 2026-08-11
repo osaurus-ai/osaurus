@@ -28,6 +28,24 @@ private final class LocalModelsScanNotificationProbe: @unchecked Sendable {
     }
 }
 
+private final class CatalogPolicyTransitionProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var checks = 0
+
+    func allowThroughCandidateScan() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        checks += 1
+        return checks <= 3
+    }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return checks
+    }
+}
+
 @Suite(.serialized)
 struct ModelManagerTests {
 
@@ -149,6 +167,44 @@ struct ModelManagerTests {
         manager.loadAvailableModels()
 
         #expect(scheduledTopUps == 0)
+    }
+
+    @Test("automatic top-up rechecks isolation after task admission")
+    @MainActor
+    func automaticTopUpStopsWhenIsolationChangesAfterAdmission() async throws {
+        let probe = CatalogPolicyTransitionProbe()
+        let service = ModelDownloadService()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-top-up-transition-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let model = MLXModel(
+            id: "test/transition-model",
+            name: "Transition model",
+            description: "",
+            downloadURL: "https://example.invalid/test/transition-model",
+            rootDirectory: root
+        )
+        try FileManager.default.createDirectory(
+            at: model.localDirectory,
+            withIntermediateDirectories: true
+        )
+        try Data("{}".utf8).write(
+            to: model.localDirectory.appendingPathComponent("config.json")
+        )
+        try Data("{}".utf8).write(
+            to: model.localDirectory.appendingPathComponent("tokenizer.json")
+        )
+        try Data("weights".utf8).write(
+            to: model.localDirectory.appendingPathComponent("model.safetensors")
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        await service.topUpCompletedModels([model], shouldContinue: {
+            probe.allowThroughCandidateScan()
+        })
+
+        #expect(probe.count >= 4)
     }
 
     @Test func cancelDownload_resetsStateWithoutTask() async throws {

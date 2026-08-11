@@ -275,6 +275,18 @@ struct TestHostIsolationTests {
             )
         )
         #expect(
+            !ModelManager.allowsAutomaticCatalogMutation(
+                environment: ["OSU_MODELS_DIR": "/tmp/read-only-model-proof"],
+                recognizedTestHost: false
+            )
+        )
+        #expect(
+            !ModelManager.allowsAutomaticAmbientCatalogDiscovery(
+                environment: ["OSU_MODELS_DIR": "/tmp/read-only-model-proof"],
+                recognizedTestHost: false
+            )
+        )
+        #expect(
             ModelManager.allowsAutomaticCatalogMutation(
                 environment: [:],
                 recognizedTestHost: false

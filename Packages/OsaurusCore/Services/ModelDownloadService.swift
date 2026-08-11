@@ -1371,7 +1371,12 @@ final class ModelDownloadService: ObservableObject {
     /// Returns `true` if the remote file list was successfully fetched
     /// (regardless of whether anything was missing), `false` on network failure.
     @discardableResult
-    static func downloadMissingFiles(for model: MLXModel, to directory: URL) async -> Bool {
+    static func downloadMissingFiles(
+        for model: MLXModel,
+        to directory: URL,
+        shouldContinue: @Sendable () -> Bool = { true }
+    ) async -> Bool {
+        guard shouldContinue() else { return false }
         let remoteFiles = await HuggingFaceService.shared.fetchMatchingFiles(
             repoId: model.id,
             patterns: downloadFilePatterns,
@@ -1402,7 +1407,7 @@ final class ModelDownloadService: ObservableObject {
         for file in missing {
             // Honor cancellation between shard fetches so a cancelled load /
             // app shutdown doesn't keep pulling a long tail of missing files.
-            if Task.isCancelled { return false }
+            if Task.isCancelled || !shouldContinue() { return false }
             guard
                 let url = resolveURL(repoId: model.id, path: file.path),
                 let dest = HuggingFaceService.destinationURL(
@@ -1431,17 +1436,24 @@ final class ModelDownloadService: ObservableObject {
     /// already considered "downloaded". Runs sequentially to avoid hammering
     /// the HF API. Does not mutate `downloadStates` so the UI stays stable.
     /// Only runs once per app lifecycle.
-    func topUpCompletedModels(_ models: [MLXModel]) async {
-        guard !hasRunTopUp else { return }
+    func topUpCompletedModels(
+        _ models: [MLXModel],
+        shouldContinue: @escaping @Sendable () -> Bool = {
+            ModelManager.allowsAutomaticCatalogMutationForCurrentProcess
+        }
+    ) async {
+        guard shouldContinue(), !hasRunTopUp else { return }
         hasRunTopUp = true
         // `isDownloaded` walks each model's directory on a cache miss — a
         // synchronous scan that, run inline on this @MainActor type, tripped
         // the main-thread hang watchdog at launch with many models. Resolve
         // the disk check off the main actor, then apply the main-actor
         // `isActiveDownload` filter back here.
+        guard shouldContinue() else { return }
         let downloaded = await Task.detached(priority: .utility) {
             models.filter { $0.isDownloaded }
         }.value
+        guard shouldContinue() else { return }
         let candidates = downloaded.filter { !isActiveDownload($0.id) }
         guard !candidates.isEmpty else { return }
 
@@ -1449,8 +1461,12 @@ final class ModelDownloadService: ObservableObject {
             // Stop the (best-effort, lifecycle-once) top-up sweep promptly if
             // the surrounding task is cancelled (e.g. app teardown) instead of
             // walking the full candidate list.
-            if Task.isCancelled { return }
-            await Self.downloadMissingFiles(for: model, to: model.localDirectory)
+            if Task.isCancelled || !shouldContinue() { return }
+            await Self.downloadMissingFiles(
+                for: model,
+                to: model.localDirectory,
+                shouldContinue: shouldContinue
+            )
         }
     }
 

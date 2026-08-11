@@ -39,6 +39,30 @@ struct MasterKeyServiceIsolationTests {
             ) == "com.osaurus.tests.master-key.01234567-89ab-cdef-0123-456789abcdef"
         )
     }
+
+    @Test
+    func mnemonicAndExistenceCacheFollowEffectiveServiceNamespace() {
+        let production = MasterKey.serviceName(realKeychainTestNamespace: nil)
+        let proof = MasterKey.serviceName(
+            realKeychainTestNamespace: "01234567-89ab-cdef-0123-456789abcdef"
+        )
+
+        #expect(
+            MasterKey.cachedExistsValue(
+                cachedService: production,
+                cachedValue: true,
+                currentService: production
+            ) == true
+        )
+        #expect(
+            MasterKey.cachedExistsValue(
+                cachedService: production,
+                cachedValue: true,
+                currentService: proof
+            ) == nil
+        )
+        #expect(MasterMnemonicStore.service == MasterKey.service)
+    }
 }
 
 // `.serialized` is required because every test in this suite mutates the same

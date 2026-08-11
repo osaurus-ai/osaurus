@@ -33,6 +33,25 @@ struct PluginProcessHostTests {
     /// the .xctest bundle.
     private final class BundleMarker {}
 
+    /// Lock-backed state makes the pre-run recognition transition synchronous
+    /// and deterministic without depending on task scheduling or wall time.
+    private final class RecognitionTransitionProbe: @unchecked Sendable {
+        private let lock = NSLock()
+        private var recognized = false
+
+        func value() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return recognized
+        }
+
+        func recognize() {
+            lock.lock()
+            recognized = true
+            lock.unlock()
+        }
+    }
+
     /// Directory containing the built test products (xctest bundle and the
     /// `osaurus-plugin-host` executable — SwiftPM puts all products of one
     /// build in the same directory).
@@ -181,6 +200,56 @@ struct PluginProcessHostTests {
         } catch {
             Issue.record("unexpected error: \(error)")
         }
+    }
+
+    @Test
+    func pendingXCTestLaunchMarkerFailsClosedBeforeHostRecognition() async {
+        let pendingEnvironment = [
+            "XCTestConfigurationFilePath": "/tmp/pending-xctest-configuration"
+        ]
+        let client = PluginProcessHostClient(
+            pluginId: "test.marker-only",
+            dylibPath: "/tmp/not-loaded.dylib",
+            helperURL: URL(fileURLWithPath: "/usr/bin/true"),
+            environmentProvider: { pendingEnvironment },
+            recognitionProvider: { _ in false }
+        )
+
+        do {
+            _ = try await client.invoke(
+                type: "tool", id: "echo", payload: "{}", agentId: nil
+            )
+            Issue.record("expected a pending XCTest launch marker to deny helper admission")
+        } catch let error as PluginProcessHostError {
+            #expect(error.message == "Native plugin helper execution is disabled in test hosts.")
+        } catch {
+            Issue.record("unexpected error: \(error)")
+        }
+    }
+
+    @Test
+    func recognitionTransitionImmediatelyBeforeLaunchFailsClosed() async {
+        let probe = RecognitionTransitionProbe()
+        let client = PluginProcessHostClient(
+            pluginId: "test.late-recognition",
+            dylibPath: "/tmp/not-loaded.dylib",
+            helperURL: URL(fileURLWithPath: "/usr/bin/true"),
+            environmentProvider: { [:] },
+            recognitionProvider: { _ in probe.value() },
+            beforeRunHook: { probe.recognize() }
+        )
+
+        do {
+            _ = try await client.invoke(
+                type: "tool", id: "echo", payload: "{}", agentId: nil
+            )
+            Issue.record("expected a late test-host recognition transition to deny launch")
+        } catch let error as PluginProcessHostError {
+            #expect(error.message == "Native plugin helper execution is disabled in test hosts.")
+        } catch {
+            Issue.record("unexpected error: \(error)")
+        }
+        #expect(probe.value())
     }
 
     @Test

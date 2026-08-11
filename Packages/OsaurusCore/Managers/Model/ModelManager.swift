@@ -265,10 +265,39 @@ final class ModelManager: NSObject, ObservableObject {
         environment: [String: String],
         recognizedTestHost: Bool
     ) -> Bool {
-        !ProcessDataRootPolicy.shouldDisableKeychain(
+        !hasModelsDirectoryOverride(environment: environment)
+            && !ProcessDataRootPolicy.shouldDisableKeychain(
+                environment: environment,
+                recognizedTestHost: recognizedTestHost
+            )
+    }
+
+    /// Org networking and ambient cache discovery are broader than reading an
+    /// explicitly selected model directory. Keep those side effects disabled
+    /// for every isolated launch and whenever `OSU_MODELS_DIR` selects a
+    /// read-only live-proof collection.
+    nonisolated static var allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess: Bool {
+        allowsAutomaticAmbientCatalogDiscovery(
+            environment: ProcessInfo.processInfo.environment,
+            recognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
+        )
+    }
+
+    nonisolated static func allowsAutomaticAmbientCatalogDiscovery(
+        environment: [String: String],
+        recognizedTestHost: Bool
+    ) -> Bool {
+        allowsAutomaticCatalogMutation(
             environment: environment,
             recognizedTestHost: recognizedTestHost
         )
+    }
+
+    nonisolated private static func hasModelsDirectoryOverride(
+        environment: [String: String]
+    ) -> Bool {
+        guard let raw = environment["OSU_MODELS_DIR"] else { return false }
+        return !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     #if DEBUG
@@ -302,14 +331,20 @@ final class ModelManager: NSObject, ObservableObject {
         // Pull the OsaurusAI HF org listing once on launch so newly published
         // models surface in the Recommended tab without requiring a code push.
         if !Self.skipBackgroundOrgFetchForTests
-            && Self.allowsAutomaticCatalogWorkForCurrentProcess {
-            Task { [weak self] in await self?.loadOsaurusAIOrgModels() }
+            && Self.allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess {
+            Task { [weak self] in
+                guard Self.allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess else { return }
+                await self?.loadOsaurusAIOrgModels()
+            }
 
             // Discover external bundles (HF cache, LM Studio, custom folders) off the main
             // thread. `rescan()` posts `.localModelsChanged` when the set
             // changes, which re-runs `refreshDownloadStates()` to merge them.
             Task.detached(priority: .utility) {
-                ExternalModelLocator.rescan()
+                guard Self.allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess else { return }
+                ExternalModelLocator.rescan(shouldContinue: {
+                    Self.allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess
+                })
             }
         }
     }
@@ -344,7 +379,9 @@ final class ModelManager: NSObject, ObservableObject {
         // stays main-actor isolated so `self` never crosses actor boundaries.
         if Self.allowsAutomaticCatalogWorkForCurrentProcess {
             Task { [weak self] in
+                guard Self.allowsAutomaticCatalogWorkForCurrentProcess else { return }
                 let localModels = await Self.discoverLocalModelsOffMain()
+                guard Self.allowsAutomaticCatalogWorkForCurrentProcess else { return }
                 self?.mergeAvailable(
                     with: localModels,
                     refreshLocalInstallationMetadata: true
@@ -366,7 +403,13 @@ final class ModelManager: NSObject, ObservableObject {
                 Self.automaticCatalogTopUpScheduleObserverForTests?(allModels)
             #endif
             Task { [downloadService] in
-                await downloadService.topUpCompletedModels(allModels)
+                guard Self.allowsAutomaticCatalogMutationForCurrentProcess else { return }
+                await downloadService.topUpCompletedModels(
+                    allModels,
+                    shouldContinue: {
+                        Self.allowsAutomaticCatalogMutationForCurrentProcess
+                    }
+                )
             }
         }
     }
@@ -1584,17 +1627,20 @@ extension ModelManager {
     /// (callers without a cheap revision signal) the cache's TTL applies.
     fileprivate static func resolveDownloadSize(
         repoId: String,
-        revision: String?
+        revision: String?,
+        shouldContinue: @Sendable () -> Bool = { true }
     ) async -> Int64? {
+        guard shouldContinue() else { return nil }
         if let cached = ModelSizeCache.bytes(forId: repoId, matchingRevision: revision) {
             return cached
         }
+        guard shouldContinue() else { return nil }
         let fetched = await HuggingFaceService.shared.estimateTotalSize(
             repoId: repoId,
             patterns: ModelDownloadService.downloadFilePatterns,
             excludedFiles: ModelDownloadService.downloadExcludedFiles
         )
-        if let fetched {
+        if let fetched, shouldContinue() {
             ModelSizeCache.record(id: repoId, bytes: fetched, revision: revision)
         }
         return fetched
@@ -1771,6 +1817,7 @@ extension ModelManager {
     /// them into `suggestedModels`. Curated entries always win on duplicate
     /// IDs so editorial descriptions and Top-Pick flags survive.
     func loadOsaurusAIOrgModels() async {
+        guard Self.allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess else { return }
         guard
             let url = Self.makeHFModelsURL(
                 author: Self.osaurusOrgAuthor,
@@ -1780,6 +1827,7 @@ extension ModelManager {
         else { return }
 
         let fetched = (try? await Self.requestHFModels(at: url)) ?? []
+        guard Self.allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess else { return }
         guard !fetched.isEmpty else { return }
 
         // Drop repos that other Settings panels own (rampart PII guard,
@@ -1830,9 +1878,18 @@ extension ModelManager {
             for repoId in repoIdsToSize {
                 let revision = revisionById[repoId.lowercased()]
                 group.addTask {
-                    (
+                    guard Self.allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess else {
+                        return (repoId.lowercased(), nil)
+                    }
+                    return (
                         repoId.lowercased(),
-                        await Self.resolveDownloadSize(repoId: repoId, revision: revision)
+                        await Self.resolveDownloadSize(
+                            repoId: repoId,
+                            revision: revision,
+                            shouldContinue: {
+                                Self.allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess
+                            }
+                        )
                     )
                 }
             }
@@ -1843,6 +1900,7 @@ extension ModelManager {
             return collected
         }
 
+        guard Self.allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess else { return }
         applyOsaurusOrgFetch(autoFetched: autoFetched, statsById: statsById, sizesById: sizesById)
     }
 
