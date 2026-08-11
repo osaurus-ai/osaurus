@@ -330,7 +330,9 @@ struct RuntimePolicySourceTests {
 
         // The fail-closed guard and its error must exist.
         #expect(source.contains("case keyUnavailableForExistingData"))
-        #expect(source.contains("encryptedStorageExists()"))
+        #expect(
+            source.contains("switch encryptedStorageExists(expectedIsolation: isolated)")
+        )
 
         // The guard must sit *between* a missed key read and the
         // generate-and-persist fallback so a populated install can never re-key
