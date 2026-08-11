@@ -14,6 +14,11 @@ import SwiftUI
 final class DirectoryPickerService: ObservableObject {
     static let shared = DirectoryPickerService()
 
+    /// A recognized XCTest host may use `OSU_MODELS_DIR` only when a live
+    /// model proof explicitly opts out of disposable model-directory isolation.
+    nonisolated static let allowExternalModelsInTestHostsEnvironmentKey =
+        "OSAURUS_ALLOW_EXTERNAL_MODELS_FOR_TESTS"
+
     @Published var selectedDirectory: URL?
     @Published var hasValidDirectory: Bool = false
 
@@ -339,9 +344,17 @@ final class DirectoryPickerService: ObservableObject {
         return defaultModelsDirectory()
     }
 
-    nonisolated private static func modelsDirectoryEnvironmentOverride() -> URL? {
+    nonisolated static func modelsDirectoryEnvironmentOverride(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        recognizedTestHost: Bool = ProcessDataRootPolicy.isRecognizedTestHostProcess
+    ) -> URL? {
+        if recognizedTestHost,
+            environment[allowExternalModelsInTestHostsEnvironmentKey] != "1"
+        {
+            return nil
+        }
         guard
-            let raw = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"]?
+            let raw = environment["OSU_MODELS_DIR"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             !raw.isEmpty
         else { return nil }

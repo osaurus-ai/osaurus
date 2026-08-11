@@ -52,7 +52,8 @@ struct PluginProcessHostTests {
     /// `osaurus_plugin.h` (prefix only — the layouts are append-frozen).
     /// Tools: `echo` (round-trip), `sleep` (wedge forever, ignore
     /// everything — the exact shape of a hung AX call), `config_probe`
-    /// (calls host->config_get, exercising reverse RPC end-to-end).
+    /// (calls host->config_get, exercising reverse RPC end-to-end), and
+    /// `env_probe` (proves an ambient credential canary is absent).
     private static let toyPluginSource = #"""
         #include <stdlib.h>
         #include <string.h>
@@ -110,6 +111,10 @@ struct PluginProcessHostTests {
                 free((void*)v);  /* helper strings are strdup'd */
                 return out;
             }
+            if (strcmp(id, "env_probe") == 0) {
+                const char* v = getenv("AMBIENT_SECRET_CANARY");
+                return strdup(v == NULL ? "{\"present\":false}" : "{\"present\":true}");
+            }
             return strdup("{\"error\":\"unknown tool\"}");
         }
 
@@ -141,12 +146,17 @@ struct PluginProcessHostTests {
         return dylib
     }()
 
-    private func makeClient() -> PluginProcessHostClient {
+    private func makeClient(
+        environment: [String: String]? = nil
+    ) -> PluginProcessHostClient {
         PluginProcessHostClient(
             pluginId: "test.toy",
             dylibPath: Self.toyPluginURL.path,
             helperURL: Self.helperURL,
-            allowsExecutionInRecognizedTestHost: true
+            allowsExecutionInRecognizedTestHost: true,
+            environmentProvider: {
+                environment ?? ProcessInfo.processInfo.environment
+            }
         )
     }
 
@@ -181,6 +191,59 @@ struct PluginProcessHostTests {
             type: "tool", id: "echo", payload: #"{"hello":"world"}"#, agentId: nil
         )
         #expect(result == #"{"echo":{"hello":"world"}}"#)
+    }
+
+    @Test
+    func optedInHelperDoesNotInheritAmbientCredentials() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-plugin-env-isolation-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: root.path
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let parentEnvironment = [
+            ProcessDataRootPolicy.testRootEnvironmentKey: root.path,
+            ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+            ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey: "1",
+            ProcessDataRootPolicy.realKeychainTestNamespaceEnvironmentKey: UUID().uuidString,
+            "AMBIENT_SECRET_CANARY": "must-not-cross-process-boundary",
+            "LANG": "C",
+            "PATH": "/Users/example/.local/bin:/usr/bin:/bin",
+        ]
+        let childEnvironment = PluginProcessHostClient.buildChildEnvironmentForTesting(
+            parentEnvironment: parentEnvironment,
+            parentRecognizedTestHost: true
+        )
+        #expect(childEnvironment["AMBIENT_SECRET_CANARY"] == nil)
+        #expect(childEnvironment["HOME"] == root.path)
+        #expect(childEnvironment["TMPDIR"] == root.path)
+        #expect(childEnvironment["PATH"] == "/usr/bin:/bin:/usr/sbin:/sbin")
+        #expect(
+            childEnvironment[
+                ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey
+            ] == nil
+        )
+        #expect(
+            childEnvironment[
+                ProcessDataRootPolicy.realKeychainTestNamespaceEnvironmentKey
+            ] == nil
+        )
+
+        let client = makeClient(environment: parentEnvironment)
+        defer { Task { await client.shutdown() } }
+        let result = try await client.invoke(
+            type: "tool", id: "env_probe", payload: "{}", agentId: nil
+        )
+        #expect(result == #"{"present":false}"#)
     }
 
     @Test

@@ -129,6 +129,36 @@ struct TestHostIsolationTests {
         }
     }
 
+    @Test("XCTest model-directory overrides require an explicit second opt-in")
+    func modelDirectoryOverrideCannotBypassTestIsolationAccidentally() {
+        let externalDirectory = "/Users/example/production-models"
+        let baseEnvironment = ["OSU_MODELS_DIR": externalDirectory]
+
+        #expect(
+            DirectoryPickerService.modelsDirectoryEnvironmentOverride(
+                environment: baseEnvironment,
+                recognizedTestHost: true
+            ) == nil
+        )
+        #expect(
+            DirectoryPickerService.modelsDirectoryEnvironmentOverride(
+                environment: baseEnvironment,
+                recognizedTestHost: false
+            )?.path == externalDirectory
+        )
+
+        var explicitlyAllowed = baseEnvironment
+        explicitlyAllowed[
+            DirectoryPickerService.allowExternalModelsInTestHostsEnvironmentKey
+        ] = "1"
+        #expect(
+            DirectoryPickerService.modelsDirectoryEnvironmentOverride(
+                environment: explicitlyAllowed,
+                recognizedTestHost: true
+            )?.path == externalDirectory
+        )
+    }
+
     @Test("test hosts do not launch unowned model catalog work")
     func modelManagerBackgroundCatalogWorkIsDisabled() {
         #expect(ProcessDataRootPolicy.isRecognizedTestHostProcess)

@@ -159,11 +159,6 @@ public enum ProcessDataRootPolicy {
         let executableTestBundle = existingXCTestBundleURL(for: executablePath)
         let loadedTestBundles = loadedBundlePaths.compactMap(existingXCTestBundleURL(for:))
         let hasLoadedTestBundle = !loadedTestBundles.isEmpty
-        let configuredTestBundles = xctestEnvironmentKeys.compactMap {
-            environment[$0].flatMap(existingXCTestBundleURL(for:))
-        }
-        let hasConfiguredTestBundle = !configuredTestBundles.isEmpty
-
         // A test bundle is strong evidence only when the process executable
         // is the executable declared by that real bundle. This rejects an
         // Osaurus process whose argv or environment merely mentions `.xctest`.
@@ -189,7 +184,6 @@ public enum ProcessDataRootPolicy {
             && isSwiftPMTestHelperPath(executableURL)
 
         return isTestBundleProcess
-            || hasConfiguredTestBundle
             || (testFrameworkLoaded && hasLoadedTestBundle)
             || isXCTestRunner
             || isSwiftPMHelper
@@ -201,8 +195,21 @@ public enum ProcessDataRootPolicy {
     /// not been loaded yet. A forged marker can only postpone migration until
     /// the next normal launch; it cannot redirect production data.
     public static var allowsProductionDataMigrationForCurrentProcess: Bool {
-        if isRecognizedTestHostProcess { return false }
-        let environment = ProcessInfo.processInfo.environment
+        allowsProductionDataMigration(
+            environment: ProcessInfo.processInfo.environment,
+            recognizedTestHost: isRecognizedTestHostProcess
+        )
+    }
+
+    /// Pure migration gate used by tests to distinguish an untrusted launch
+    /// marker from confirmed test-host identity. Markers may defer destructive
+    /// migration for one launch, but they never grant disposable-root or
+    /// Keychain-isolation identity by themselves.
+    static func allowsProductionDataMigration(
+        environment: [String: String],
+        recognizedTestHost: Bool
+    ) -> Bool {
+        guard !recognizedTestHost else { return false }
         return !xctestLaunchMarkerKeys.contains { hasValue(environment[$0]) }
     }
 

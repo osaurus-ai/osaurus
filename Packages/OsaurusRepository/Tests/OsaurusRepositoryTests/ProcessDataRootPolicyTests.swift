@@ -194,17 +194,32 @@ final class ProcessDataRootPolicyTests: XCTestCase {
         )
     }
 
-    func testRecognizesValidatedConfiguredBundleBeforeRuntimeLoads() throws {
+    func testConfiguredBundleMarkerDefersMigrationWithoutGrantingTestIdentity() throws {
         let bundlePath = Bundle(for: ProcessDataRootPolicyTests.self).bundlePath
         XCTAssertTrue(bundlePath.hasSuffix(".xctest"))
-        XCTAssertTrue(
+        let environment = ["XCTestBundlePath": bundlePath]
+
+        XCTAssertFalse(
             ProcessDataRootPolicy.isRecognizedTestHost(
-                environment: ["XCTestBundlePath": bundlePath],
+                environment: environment,
                 processName: "osaurus",
                 bundlePath: "/Applications/Osaurus.app",
                 executablePath: "/Applications/Osaurus.app/Contents/MacOS/osaurus",
                 loadedBundlePaths: [],
                 testFrameworkLoaded: false
+            )
+        )
+        XCTAssertFalse(
+            ProcessDataRootPolicy.allowsProductionDataMigration(
+                environment: environment,
+                recognizedTestHost: false
+            ),
+            "A launch marker may defer destructive migration without granting test-host identity"
+        )
+        XCTAssertTrue(
+            ProcessDataRootPolicy.allowsProductionDataMigration(
+                environment: [:],
+                recognizedTestHost: false
             )
         )
     }

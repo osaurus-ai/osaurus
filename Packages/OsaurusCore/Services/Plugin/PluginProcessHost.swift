@@ -82,10 +82,28 @@ private struct HelperResponse: @unchecked Sendable {
 /// actor-isolated; the stdout reader runs as a child task feeding
 /// responses back through actor methods.
 actor PluginProcessHostClient {
+    /// Recognized test hosts must not pass ambient credentials to a native
+    /// plugin helper. Keep only process-launch and locale context; the helper
+    /// receives Osaurus isolation markers from `ProcessDataRootPolicy` below.
+    private static let testHostAmbientEnvironmentKeys: Set<String> = [
+        "PATH",
+        "LANG",
+        "LC_ALL",
+        "LC_COLLATE",
+        "LC_CTYPE",
+        "LC_MESSAGES",
+        "LC_MONETARY",
+        "LC_NUMERIC",
+        "LC_TIME",
+        "TERM",
+        "TZ",
+    ]
+
     private let pluginId: String
     private let dylibPath: String
     private let helperURL: URL
     private let allowsExecutionInRecognizedTestHost: Bool
+    private let environmentProvider: @Sendable () -> [String: String]
 
     private var process: Process?
     private var stdinPipe: Pipe?
@@ -110,12 +128,16 @@ actor PluginProcessHostClient {
         pluginId: String,
         dylibPath: String,
         helperURL: URL,
-        allowsExecutionInRecognizedTestHost: Bool = false
+        allowsExecutionInRecognizedTestHost: Bool = false,
+        environmentProvider: @escaping @Sendable () -> [String: String] = {
+            ProcessInfo.processInfo.environment
+        }
     ) {
         self.pluginId = pluginId
         self.dylibPath = dylibPath
         self.helperURL = helperURL
         self.allowsExecutionInRecognizedTestHost = allowsExecutionInRecognizedTestHost
+        self.environmentProvider = environmentProvider
     }
 
     // MARK: Public surface
@@ -196,8 +218,9 @@ actor PluginProcessHostClient {
 
         let proc = Process()
         proc.executableURL = helperURL
-        proc.environment = ProcessDataRootPolicy.applyingChildTestIsolation(
-            to: ProcessInfo.processInfo.environment
+        proc.environment = Self.buildChildEnvironmentForTesting(
+            parentEnvironment: environmentProvider(),
+            parentRecognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
         )
         let inPipe = Pipe()
         let outPipe = Pipe()
@@ -231,6 +254,44 @@ actor PluginProcessHostClient {
             "[PluginProcessHost] plugin=%@ loaded in helper pid=%d",
             pluginId, proc.processIdentifier
         )
+    }
+
+    /// Production helpers retain the existing full ambient environment.
+    /// Isolated proof processes receive only locale/launch context plus the
+    /// shared disposable-root policy, so opting into native helper tests does
+    /// not opt ambient credentials into the child process.
+    static func buildChildEnvironmentForTesting(
+        parentEnvironment: [String: String],
+        parentRecognizedTestHost: Bool
+    ) -> [String: String] {
+        let parentIsolated = ProcessDataRootPolicy.shouldDisableKeychain(
+            environment: parentEnvironment,
+            recognizedTestHost: parentRecognizedTestHost
+        )
+        let baseEnvironment: [String: String]
+        if parentIsolated {
+            baseEnvironment = parentEnvironment.filter { key, _ in
+                testHostAmbientEnvironmentKeys.contains(key)
+            }
+        } else {
+            baseEnvironment = parentEnvironment
+        }
+
+        var childEnvironment = ProcessDataRootPolicy.applyingChildTestIsolation(
+            to: baseEnvironment,
+            parentEnvironment: parentEnvironment,
+            parentRecognizedTestHost: parentRecognizedTestHost
+        )
+        if parentIsolated,
+            let isolatedRoot = childEnvironment[
+                ProcessDataRootPolicy.testRootEnvironmentKey
+            ]
+        {
+            childEnvironment["HOME"] = isolatedRoot
+            childEnvironment["TMPDIR"] = isolatedRoot
+            childEnvironment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+        }
+        return childEnvironment
     }
 
     private func killProcess() async {

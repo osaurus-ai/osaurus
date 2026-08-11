@@ -12,13 +12,16 @@ import Testing
 
 private let isResidentOmniPreencodeEnabled =
     ProcessInfo.processInfo.environment["OSAURUS_RUN_REAL_OMNI_PREENCODE"] == "1"
+    && ProcessInfo.processInfo.environment[
+        DirectoryPickerService.allowExternalModelsInTestHostsEnvironmentKey
+    ] == "1"
 
 @Suite(
     "Resident Nemotron Omni live voice preencode integration",
     .serialized,
     .disabled(
         if: !isResidentOmniPreencodeEnabled,
-        "Set OSAURUS_RUN_REAL_OMNI_PREENCODE=1, OSU_MODELS_DIR, OSAURUS_OMNI_MODEL, and OSAURUS_OMNI_AUDIO to run."
+        "Set OSAURUS_RUN_REAL_OMNI_PREENCODE=1, OSAURUS_ALLOW_EXTERNAL_MODELS_FOR_TESTS=1, OSU_MODELS_DIR, OSAURUS_OMNI_MODEL, and OSAURUS_OMNI_AUDIO to run."
     )
 )
 struct LiveVoiceResidentPreencodeIntegrationTests {
