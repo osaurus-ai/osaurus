@@ -812,9 +812,9 @@ struct SandboxWorkspaceChangeTrackerTests {
         // bug — no multi-GB baseline clone was attempted.
         let changes = await env.tracker.changes(for: Self.session)
         #expect(changes.isEmpty)
-        #expect(!FileManager.default.fileExists(atPath: env.baselines.path)
-            || (try FileManager.default.subpathsOfDirectory(atPath: env.baselines.path))
-                .allSatisfy { !$0.contains("huge.bin") })
+        let baselineFiles =
+            (try? FileManager.default.subpathsOfDirectory(atPath: env.baselines.path)) ?? []
+        #expect(baselineFiles.allSatisfy { !$0.contains("huge.bin") })
     }
 
     @Test
