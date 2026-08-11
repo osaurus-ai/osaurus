@@ -6760,7 +6760,7 @@ private struct AgentDataWipeDialogContent: View {
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(theme.secondaryText)
                     .tracking(0.3)
-                    .padding(.top, 4)
+                    .padding(.top, 10)
 
                 row(L("Pinned facts"), count: factCount, isOn: $selection.pinnedFacts)
                 row(L("Episodes"), count: episodeCount, isOn: $selection.episodes)
