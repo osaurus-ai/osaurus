@@ -17967,7 +17967,38 @@
       }
     },
     "Agent availability": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Agentenverfügbarkeit"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "에이전트 가용성"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Доступность агента"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "智能体可用性"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "智能體可用性"
+          }
+        }
+      }
     },
     "Agent Avatar": {
       "localizations": {
@@ -21739,10 +21770,72 @@
       }
     },
     "Allowlist": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Zulassungsliste"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "허용 목록"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Список разрешений"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许列表"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許清單"
+          }
+        }
+      }
     },
     "allowlist blocks before disposition": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Zulassungsliste blockiert vor der Entscheidung"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "허용 목록이 처리 전에 차단함"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "список разрешений блокирует до принятия решения"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许列表在处置之前已阻止"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許清單在處置之前已阻擋"
+          }
+        }
+      }
     },
     "Allowlists limit which spaces and rooms this connection can inspect.": {
       "comment": "Help text for the \"Where agents may look\" section, describing the purpose of the space and room allowlists.",
@@ -28886,7 +28979,38 @@
       }
     },
     "Autonomy Gate Inspector": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Autonomie-Gate-Inspektor"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "자율성 게이트 검사기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Инспектор шлюза автономности"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自主门控检查器"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自主門控檢查器"
+          }
+        }
+      }
     },
     "Available": {
       "comment": "A label displayed above the list of available plugins.",
@@ -37602,10 +37726,72 @@
       }
     },
     "ceiling %@ -> %@": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Obergrenze %1$@ -> %2$@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "상한 %1$@ -> %2$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "предел %1$@ -> %2$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上限 %1$@ → %2$@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上限 %1$@ → %2$@"
+          }
+        }
+      }
     },
     "Ceiling contribution": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Beitrag der Obergrenze"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "상한의 기여"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Вклад верхнего предела"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上限的影响"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上限的影響"
+          }
+        }
+      }
     },
     "CFG": {
       "comment": "The label for the CFG chip.",
@@ -43636,7 +43822,38 @@
       }
     },
     "Click": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Klicken"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "클릭"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Щелчок"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "点按"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "點按"
+          }
+        }
+      }
     },
     "Click 'Send Request' to test": {
       "localizations": {
@@ -59192,10 +59409,72 @@
       }
     },
     "Dangerous-app confirm": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Bestätigung bei riskanter App"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "위험 앱 확인"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Подтверждение для опасного приложения"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "危险应用需确认"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "危險應用程式需確認"
+          }
+        }
+      }
     },
     "dangerous-app floor -> Ask first": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Untergrenze für riskante Apps -> Zuerst fragen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "위험 앱 하한 -> 먼저 확인"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "нижняя граница для опасных приложений -> сначала спросить"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "危险应用下限 → 先询问"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "危險應用程式下限 → 先詢問"
+          }
+        }
+      }
     },
     "Dark": {
       "localizations": {
@@ -66026,7 +66305,38 @@
       }
     },
     "Disposition": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ergebnis"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "처리 결과"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Итоговое решение"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "处置结果"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "處置結果"
+          }
+        }
+      }
     },
     "Distill pending": {
       "localizations": {
@@ -66788,7 +67098,38 @@
       }
     },
     "Double-click": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Doppelklicken"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "더블 클릭"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Двойной щелчок"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连按两下"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "連按兩下"
+          }
+        }
+      }
     },
     "Double-click a row (or press ↗) to open it · check rows to delete several at once · deleted rows are dimmed.": {
       "comment": "A tip that explains the grid's affordances:",
@@ -68250,7 +68591,38 @@
       }
     },
     "Drag": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ziehen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "드래그"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Перетаскивание"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拖移"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拖移"
+          }
+        }
+      }
     },
     "Drag to set the order shown across the app.": {
       "localizations": {
@@ -71262,7 +71634,38 @@
       }
     },
     "Effect class": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Wirkungsklasse"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "영향 분류"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Класс воздействия"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "影响类别"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "影響類別"
+          }
+        }
+      }
     },
     "Efficient": {
       "extractionState": "stale",
@@ -81594,7 +81997,38 @@
       }
     },
     "Find": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Suchen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "찾기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Поиск"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查找"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尋找"
+          }
+        }
+      }
     },
     "Find in conversation": {
       "localizations": {
@@ -82486,10 +82920,72 @@
       }
     },
     "For press_key": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Für press_key"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "press_key용"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Для press_key"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用于按键"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用於按鍵"
+          }
+        }
+      }
     },
     "For type/set": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Für type/set"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "type/set용"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Для type/set"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用于输入/设置值"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用於輸入/設定值"
+          }
+        }
+      }
     },
     "Forget": {
       "comment": "Title for an action that forgets a memory.",
@@ -83822,7 +84318,38 @@
       }
     },
     "Gate decision": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Gate-Entscheidung"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "게이트 판정"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Решение шлюза"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "门控判定"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "門控判定"
+          }
+        }
+      }
     },
     "Gave up: %@": {
       "localizations": {
@@ -86093,7 +86620,38 @@
       }
     },
     "Give up": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Aufgeben"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "포기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Отказаться"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "放弃"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "放棄"
+          }
+        }
+      }
     },
     "Give your dino a brain": {
       "localizations": {
@@ -86198,7 +86756,38 @@
       }
     },
     "Global %@ -> %@": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Global %1$@ -> %2$@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "전역 %1$@ -> %2$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Глобально: %1$@ -> %2$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全局 %1$@ → %2$@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全域 %1$@ → %2$@"
+          }
+        }
+      }
     },
     "Global Agent Channel writes are disabled by the write kill switch (generation %lld).": {
       "localizations": {
@@ -115916,7 +116505,38 @@
       }
     },
     "Modifiers": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Modifikatortasten"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "수식 키"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Клавиши-модификаторы"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "修饰键"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "修飾鍵"
+          }
+        }
+      }
     },
     "Modify your API connection": {
       "localizations": {
@@ -119755,7 +120375,38 @@
       }
     },
     "No app allowlist is active.": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Es ist keine App-Zulassungsliste aktiv."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "활성화된 앱 허용 목록이 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Список разрешённых приложений не активен."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前未启用应用允许列表。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前未啟用應用程式允許清單。"
+          }
+        }
+      }
     },
     "No AppleScript models installed yet. Download one in Settings → Computer Use → Models.": {
       "extractionState": "manual",
@@ -121349,7 +122000,38 @@
       }
     },
     "No forced-confirm app match for this preview.": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Für diese Vorschau greift keine App mit erzwungener Bestätigung."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "이 미리 보기에 강제 확인 대상 앱이 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Для этого предпросмотра нет приложения с принудительным подтверждением."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次预览未匹配到需强制确认的应用。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次預覽未比對到需強制確認的應用程式。"
+          }
+        }
+      }
     },
     "No identity set up": {
       "localizations": {
@@ -122833,7 +123515,38 @@
       }
     },
     "No matching per-app override for the preview app.": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Für die Vorschau-App gibt es keine passende App-spezifische Übersteuerung."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "미리 보기 앱에 해당하는 앱별 재정의가 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Для приложения предпросмотра нет подходящего переопределения."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "预览应用没有匹配的按应用覆盖规则。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "預覽的應用程式沒有相符的個別應用程式覆寫規則。"
+          }
+        }
+      }
     },
     "No matching rooms": {
       "comment": "Text shown when there are no matching rooms in the room selector.",
@@ -124024,7 +124737,38 @@
       }
     },
     "No preview ceiling is applied.": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Es wird keine Vorschau-Obergrenze angewendet."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "적용된 미리 보기 상한이 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Верхний предел предпросмотра не применяется."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未应用预览上限。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未套用預覽上限。"
+          }
+        }
+      }
     },
     "No processing log entries yet. If you've been chatting, the distill pipeline never reached the model.": {
       "localizations": {
@@ -127651,7 +128395,38 @@
       }
     },
     "Not reached": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Nicht erreicht"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "도달하지 않음"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Не достигнуто"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未触及"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未觸及"
+          }
+        }
+      }
     },
     "Not ready": {
       "localizations": {
@@ -128139,7 +128914,38 @@
       }
     },
     "Note": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Hinweis"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "참고"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Примечание"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "说明"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "說明"
+          }
+        }
+      }
     },
     "Note (optional)": {
       "localizations": {
@@ -129015,7 +129821,38 @@
       }
     },
     "Observe": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Beobachten"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "관찰"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Наблюдение"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "观察"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "觀察"
+          }
+        }
+      }
     },
     "of the model's ~%@ token window (%@)": {
       "comment": "A description of the proportion of the model's token window that is currently available, based on a preview of the agent's ability context. The first argument is the fractional proportion of the window that is available. The second argument is the string “<1%” or the string “%arg%%”.",
@@ -131307,7 +132144,38 @@
       }
     },
     "Open app": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "App öffnen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "앱 열기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Открыть приложение"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开应用"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開啟應用程式"
+          }
+        }
+      }
     },
     "Open Browser settings": {
       "comment": "What's New (0.22.9) CTA — opens Settings → Browser.",
@@ -133867,7 +134735,38 @@
       }
     },
     "Optional rationale or surrounding context": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Optionale Begründung oder umgebender Kontext"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "선택 사항: 근거 또는 주변 맥락"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Необязательное обоснование или окружающий контекст"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可选的理由或上下文"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選填的理由或脈絡"
+          }
+        }
+      }
     },
     "Optional, e.g. /Users/me/projects/my-mcp": {
       "extractionState": "manual",
@@ -139855,10 +140754,72 @@
       }
     },
     "per-app %@ -> %@": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "pro App %1$@ -> %2$@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "앱별 %1$@ -> %2$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "по приложению %1$@ -> %2$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按应用 %1$@ → %2$@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "依應用程式 %1$@ → %2$@"
+          }
+        }
+      }
     },
     "Per-app contribution": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Beitrag pro App"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "앱별 기여"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Вклад по приложению"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按应用的影响"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "依應用程式的影響"
+          }
+        }
+      }
     },
     "Per-app rules": {
       "comment": "Title of a section in the Computer Use settings view that lists per-app safety rules.",
@@ -145060,7 +146021,38 @@
       }
     },
     "Preparing inspection...": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Prüfung wird vorbereitet …"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "검사를 준비하는 중…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Подготовка проверки…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在准备检查…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在準備檢查…"
+          }
+        }
+      }
     },
     "Preparing local download…": {
       "comment": "Polished pending-local-setup status copy.",
@@ -145249,7 +146241,38 @@
       }
     },
     "Press key": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Taste drücken"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "키 누르기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Нажатие клавиши"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按键"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按鍵"
+          }
+        }
+      }
     },
     "Press this shortcut to start/stop transcription": {
       "localizations": {
@@ -145390,7 +146413,38 @@
       }
     },
     "Preview a proposed app action against the current policy without running it.": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Eine geplante App-Aktion gegen die aktuelle Richtlinie prüfen, ohne sie auszuführen."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "제안된 앱 동작을 실행하지 않고 현재 정책에 비추어 미리 확인합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Проверить предполагаемое действие приложения по текущей политике, не выполняя его."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在不实际执行的前提下，用当前策略预览一次拟进行的应用操作。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在不實際執行的前提下，以目前原則預覽一次擬進行的應用程式操作。"
+          }
+        }
+      }
     },
     "Preview Agent": {
       "comment": "A label for selecting the agent used for previewing bounded memory contexts.",
@@ -145429,7 +146483,38 @@
       }
     },
     "Preview app: %@. Allowed apps: %@.": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Vorschau-App: %1$@. Zugelassene Apps: %2$@."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "미리 보기 앱: %1$@. 허용된 앱: %2$@."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Приложение предпросмотра: %1$@. Разрешённые приложения: %2$@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "预览应用：%1$@。允许的应用：%2$@。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "預覽的應用程式：%1$@。允許的應用程式：%2$@。"
+          }
+        }
+      }
     },
     "Preview bounded memory context": {
       "comment": "A help text describing the functionality of the preview bounded memory context button.",
@@ -145574,7 +146659,38 @@
       }
     },
     "Preview ceiling": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Vorschau-Obergrenze"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "미리 보기 상한"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Верхний предел предпросмотра"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "预览上限"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "預覽上限"
+          }
+        }
+      }
     },
     "Preview context": {
       "comment": "A label describing the context that is currently being previewed.",
@@ -154636,7 +155752,38 @@
       }
     },
     "Read-only snapshot of the cached permission and consent state Computer Use already uses.": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Schreibgeschützter Auszug des zwischengespeicherten Berechtigungs- und Zustimmungsstatus, den Computer Use bereits verwendet."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "컴퓨터 제어가 이미 사용 중인 캐시된 권한 및 동의 상태의 읽기 전용 스냅샷입니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Снимок только для чтения кэшированного состояния разрешений и согласий, который уже использует «Управление компьютером»."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "电脑操控当前所用的权限与授权状态的只读快照。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "電腦操控目前所用的權限與授權狀態的唯讀快照。"
+          }
+        }
+      }
     },
     "Read, search, and draft Apple Mail.": {
       "comment": "Onboarding plugin picker blurb for Mail.",
@@ -167848,7 +168995,38 @@
       }
     },
     "Right-click": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Rechtsklicken"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "우클릭"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Щелчок правой кнопкой"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "右键点按"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "右鍵點按"
+          }
+        }
+      }
     },
     "Risk-Aware Actions": {
       "localizations": {
@@ -167920,7 +169098,38 @@
       }
     },
     "Role description": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Rollenbeschreibung"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "역할 설명"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Описание роли"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "角色描述"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "角色描述"
+          }
+        }
+      }
     },
     "Rollback": {
       "comment": "Button label for rolling back to the default theme.",
@@ -175938,7 +177147,38 @@
       }
     },
     "Scroll": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Scrollen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "스크롤"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Прокрутка"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "滚动"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "捲動"
+          }
+        }
+      }
     },
     "Scrub PII before sending to cloud providers": {
       "comment": "Title of the master Privacy Filter toggle. Emphasises that the filter only acts on cloud-bound (remote provider) requests; local MLX / Foundation model paths bypass it.",
@@ -182418,7 +183658,38 @@
       }
     },
     "Set value": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Wert setzen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "값 설정"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Задать значение"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置值"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定值"
+          }
+        }
+      }
     },
     "Sets up Osaurus and answers questions about the app": {},
     "Setting up sandbox": {
@@ -196104,13 +197375,106 @@
       }
     },
     "Target label": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ziel-Beschriftung"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "대상 레이블"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Метка цели"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目标标签"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目標標籤"
+          }
+        }
+      }
     },
     "Target role": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Zielrolle"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "대상 역할"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Роль цели"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目标角色"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目標角色"
+          }
+        }
+      }
     },
     "Target value": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Zielwert"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "대상 값"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Значение цели"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目标值"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目標值"
+          }
+        }
+      }
     },
     "Task": {
       "localizations": {
@@ -201202,7 +202566,38 @@
       }
     },
     "The preview app matches the forced-confirm guardrail.": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Die Vorschau-App fällt unter die Leitplanke mit erzwungener Bestätigung."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "미리 보기 앱이 강제 확인 가드레일에 해당합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Приложение предпросмотра попадает под правило принудительного подтверждения."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "预览应用命中了强制确认护栏。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "預覽的應用程式命中了強制確認護欄。"
+          }
+        }
+      }
     },
     "The Privacy Filter scrubs this before it reaches a cloud model.": {
       "comment": "Privacy note shown under the screen-context preview when the Privacy Filter is on.",
@@ -205611,10 +207006,72 @@
       }
     },
     "This preview verb is handled before app allowlist gating.": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Diese Vorschau-Aktion wird vor der Zulassungslisten-Prüfung behandelt."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "이 미리 보기 동작은 앱 허용 목록 게이팅보다 먼저 처리됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Это действие обрабатывается до проверки списка разрешённых приложений."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "该预览动作在应用允许列表门控之前处理。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "該預覽動作在應用程式允許清單門控之前處理。"
+          }
+        }
+      }
     },
     "This preview verb is handled before autonomy gating.": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Diese Vorschau-Aktion wird vor der Autonomie-Prüfung behandelt."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "이 미리 보기 동작은 자율성 게이팅보다 먼저 처리됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Это действие обрабатывается до проверки автономности."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "该预览动作在自主门控之前处理。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "該預覽動作在自主門控之前處理。"
+          }
+        }
+      }
     },
     "This remote agent is no longer available.": {
       "localizations": {
@@ -211926,7 +213383,38 @@
       }
     },
     "Typed text": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Eingegebener Text"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "입력한 텍스트"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Введённый текст"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "输入的文字"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "輸入的文字"
+          }
+        }
+      }
     },
     "Typing and changing values": {
       "extractionState": "manual",
@@ -212751,7 +214239,38 @@
       }
     },
     "unknown app": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "unbekannte App"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "알 수 없는 앱"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "неизвестное приложение"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未知应用"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未知應用程式"
+          }
+        }
+      }
     },
     "Unknown error": {
       "localizations": {
@@ -217321,10 +218840,72 @@
       }
     },
     "Verb": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Aktion"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "동작"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Действие"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "动作"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "動作"
+          }
+        }
+      }
     },
     "Verb baseline: %@": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Aktionsbasis: %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "동작 기준: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Базовый уровень действия: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "动作基线：%@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "動作基線：%@"
+          }
+        }
+      }
     },
     "Verbosity of the server-side request log.": {
       "extractionState": "manual",
@@ -219414,7 +220995,38 @@
       }
     },
     "Wait": {
-      "shouldTranslate": false
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Warten"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "대기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ожидание"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待"
+          }
+        }
+      }
     },
     "Wait until the first request before loading any model.": {
       "localizations": {
