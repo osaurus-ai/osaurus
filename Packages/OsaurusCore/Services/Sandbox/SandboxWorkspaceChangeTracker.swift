@@ -141,6 +141,13 @@ public actor SandboxWorkspaceChangeTracker {
     private static let maxTrackedEntries = 25_000
     /// Files above this hash by size+mtime instead of content.
     private static let maxHashBytes: Int64 = 64 * 1024 * 1024
+    /// Trees whose tracked bytes exceed this are skipped rather than cloned.
+    /// `FileManager.copyItem` only APFS-clones on the same volume; a
+    /// user-selected folder on an external/network volume degrades to a full
+    /// physical copy, which for a multi-GB tree blocks every mutation-capable
+    /// tool call for minutes (issue #2348). Tracking degrades to "skipped for
+    /// this call", same as the entry-count gate.
+    static let maxBaselineBytes: Int64 = 2 * 1024 * 1024 * 1024
 
     // MARK: Init
 
@@ -178,9 +185,14 @@ public actor SandboxWorkspaceChangeTracker {
         ensureRecovered()
         var pre: [SandboxWorkspaceRootKind: Manifest] = [:]
         for root in SandboxWorkspaceRootKind.sandboxRoots {
+            // Scan BEFORE cloning: the manifest is the cheap size gate, and
+            // a root that fails it must not pay for a baseline clone.
+            guard let manifest = withinBudget(
+                scanManifest(root: hostRoot(agentName: agentName, root: root)),
+                agentName: agentName,
+                root: root
+            ) else { continue }
             guard ensureBaseline(sessionId: sessionId, agentName: agentName, root: root) != nil
-            else { continue }
-            guard let manifest = scanManifest(root: hostRoot(agentName: agentName, root: root))
             else { continue }
             pre[root] = manifest
         }
@@ -199,8 +211,9 @@ public actor SandboxWorkspaceChangeTracker {
     ///
     /// Order matters here: the manifest is scanned BEFORE the baseline is
     /// cloned. A user-selected folder can be arbitrarily large, and the scan
-    /// is the cheap size gate — if it bails (> `maxTrackedEntries`), no
-    /// baseline clone is attempted and tracking is skipped for the call.
+    /// is the cheap size gate — if it bails (> `maxTrackedEntries` entries or
+    /// > `maxBaselineBytes` tracked bytes), no baseline clone is attempted
+    /// and tracking is skipped for the call.
     public func beginHostCheckpoint(
         sessionId: String,
         folderPath: String,
@@ -209,7 +222,11 @@ public actor SandboxWorkspaceChangeTracker {
         ensureRecovered()
         var pre: [SandboxWorkspaceRootKind: Manifest] = [:]
         let root = SandboxWorkspaceRootKind.hostFolder
-        if let manifest = scanManifest(root: hostRoot(agentName: folderPath, root: root)),
+        if let manifest = withinBudget(
+            scanManifest(root: hostRoot(agentName: folderPath, root: root)),
+            agentName: folderPath,
+            root: root
+        ),
             ensureBaseline(sessionId: sessionId, agentName: folderPath, root: root) != nil
         {
             pre[root] = manifest
@@ -258,9 +275,12 @@ public actor SandboxWorkspaceChangeTracker {
         ensureRecovered()
         var manifests: [String: Manifest] = [:]
         for root in SandboxWorkspaceRootKind.sandboxRoots {
+            guard let manifest = withinBudget(
+                scanManifest(root: hostRoot(agentName: agentName, root: root)),
+                agentName: agentName,
+                root: root
+            ) else { continue }
             guard ensureBaseline(sessionId: sessionId, agentName: agentName, root: root) != nil
-            else { continue }
-            guard let manifest = scanManifest(root: hostRoot(agentName: agentName, root: root))
             else { continue }
             manifests[root.rawValue] = manifest
         }
@@ -709,9 +729,13 @@ public actor SandboxWorkspaceChangeTracker {
             try fm.createDirectory(
                 at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
             if fm.fileExists(atPath: src.path, isDirectory: &isDir), isDir.boolValue {
-                // FileManager.copyItem uses APFS clonefile when the volume
-                // supports it, falling back to a real copy otherwise.
-                try fm.copyItem(at: src, to: dest)
+                // Selective clone: excluded directories (`.git`,
+                // `node_modules`, …) are never tracked, so no undo can ever
+                // restore from them — copying them only inflates the
+                // baseline (a repo's `.git` can dwarf its checkout). The
+                // per-item copyItem still APFS-clones where the volume
+                // supports it.
+                try Self.cloneTree(from: src, to: dest)
             } else {
                 // Root not provisioned yet — the baseline is legitimately empty.
                 try fm.createDirectory(at: dest, withIntermediateDirectories: true)
@@ -726,6 +750,54 @@ public actor SandboxWorkspaceChangeTracker {
             )
             return nil
         }
+    }
+
+    /// Copy `src` into `dest` skipping excluded directories. Mirrors the
+    /// manifest scan's exclusion rules so the baseline holds exactly the
+    /// tracked set (and the byte gate measured against the manifest is an
+    /// honest bound on the clone's cost). Symlinks are copied as links.
+    static func cloneTree(from src: URL, to dest: URL) throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: dest, withIntermediateDirectories: true)
+        guard let enumerator = fm.enumerator(atPath: src.path) else { return }
+        while let rel = enumerator.nextObject() as? String {
+            let type = enumerator.fileAttributes?[.type] as? FileAttributeType
+            if isExcluded(relativePath: rel) {
+                if type == .typeDirectory { enumerator.skipDescendants() }
+                continue
+            }
+            let target = dest.appendingPathComponent(rel)
+            if type == .typeDirectory {
+                try fm.createDirectory(at: target, withIntermediateDirectories: true)
+            } else {
+                try fm.copyItem(at: src.appendingPathComponent(rel), to: target)
+            }
+        }
+    }
+
+    /// Entry-count gate already lives in `scanManifest` (nil manifest); this
+    /// adds the byte gate on top. Returns the manifest when it is within the
+    /// baseline byte budget, nil (tracking skipped, with a log) otherwise.
+    private func withinBudget(
+        _ manifest: Manifest?,
+        agentName: String,
+        root: SandboxWorkspaceRootKind
+    ) -> Manifest? {
+        guard let manifest else { return nil }
+        let bytes = Self.manifestTotalBytes(manifest)
+        guard bytes <= Self.maxBaselineBytes else {
+            Self.log.warning(
+                "skipping change tracking for \(agentName, privacy: .private)/\(root.rawValue, privacy: .public): \(bytes) tracked bytes exceed the baseline budget"
+            )
+            return nil
+        }
+        return manifest
+    }
+
+    /// Total bytes of tracked file content in a manifest (directories and
+    /// symlinks count as zero, matching how they're recorded).
+    static func manifestTotalBytes(_ manifest: Manifest) -> Int64 {
+        manifest.values.reduce(0) { $0 + $1.size }
     }
 
     /// Remove the session's baseline clone once nothing is left to undo.

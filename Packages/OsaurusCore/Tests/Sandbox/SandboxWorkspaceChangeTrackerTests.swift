@@ -789,4 +789,72 @@ struct SandboxWorkspaceChangeTrackerTests {
             #expect(changes.first?.relativePath == "dual-tracked.txt")
         }
     }
+
+    // MARK: - Baseline byte budget / selective clone (issue #2348)
+
+    @Test
+    func overBudgetHostFolder_skipsBaselineAndTracking() async throws {
+        let env = try makeEnv()
+        defer { env.cleanup() }
+
+        // A sparse file whose logical size exceeds the budget without
+        // touching that much disk — `.size` attributes report logical size.
+        let huge = env.hostFolder.appendingPathComponent("huge.bin")
+        FileManager.default.createFile(atPath: huge.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: huge)
+        try handle.truncate(atOffset: UInt64(SandboxWorkspaceChangeTracker.maxBaselineBytes) + 1)
+        try handle.close()
+
+        let mutated = env.hostFolder.appendingPathComponent("new.txt")
+        try await hostCheckpointed(env) { try self.write(mutated, "content") }
+
+        // Tracking degraded to "skipped": no change rows, and — the actual
+        // bug — no multi-GB baseline clone was attempted.
+        let changes = await env.tracker.changes(for: Self.session)
+        #expect(changes.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: env.baselines.path)
+            || (try FileManager.default.subpathsOfDirectory(atPath: env.baselines.path))
+                .allSatisfy { !$0.contains("huge.bin") })
+    }
+
+    @Test
+    func baselineClone_skipsExcludedDirectories() async throws {
+        let env = try makeEnv()
+        defer { env.cleanup() }
+
+        try write(env.hostFolder.appendingPathComponent("kept.txt"), "keep me")
+        try write(
+            env.hostFolder.appendingPathComponent(".git/objects/pack/big.pack"),
+            "vcs internals"
+        )
+        try write(
+            env.hostFolder.appendingPathComponent("node_modules/dep/index.js"),
+            "dependency"
+        )
+
+        let mutated = env.hostFolder.appendingPathComponent("new.txt")
+        try await hostCheckpointed(env) { try self.write(mutated, "content") }
+
+        // Tracking worked (baseline was cloned) …
+        let changes = await env.tracker.changes(for: Self.session)
+        #expect(changes.count == 1)
+        #expect(changes.first?.relativePath == "new.txt")
+
+        // … but the clone holds only the tracked set.
+        let clonedPaths = try FileManager.default.subpathsOfDirectory(atPath: env.baselines.path)
+        #expect(clonedPaths.contains { $0.hasSuffix("kept.txt") })
+        #expect(!clonedPaths.contains { $0.contains(".git") })
+        #expect(!clonedPaths.contains { $0.contains("node_modules") })
+    }
+
+    @Test
+    func manifestTotalBytes_sumsFileSizesOnly() throws {
+        let manifest: SandboxWorkspaceChangeTracker.Manifest = [
+            "a.txt": .init(type: .file, size: 100, mtimeNs: 0, linkTarget: nil),
+            "dir": .init(type: .directory, size: 0, mtimeNs: 0, linkTarget: nil),
+            "b.bin": .init(type: .file, size: 250, mtimeNs: 0, linkTarget: nil),
+            "ln": .init(type: .symlink, size: 0, mtimeNs: 0, linkTarget: "a.txt"),
+        ]
+        #expect(SandboxWorkspaceChangeTracker.manifestTotalBytes(manifest) == 350)
+    }
 }
