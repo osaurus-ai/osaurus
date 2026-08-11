@@ -6726,6 +6726,13 @@ private struct AgentDataWipeOptions: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             row(L("Chat history"), count: chatCount, isOn: $selection.chats)
+
+            Text(L("Memory").uppercased())
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(theme.secondaryText)
+                .tracking(0.3)
+                .padding(.top, 4)
+
             row(L("Pinned facts"), count: factCount, isOn: $selection.pinnedFacts)
             row(L("Episodes"), count: episodeCount, isOn: $selection.episodes)
 
@@ -6741,17 +6748,21 @@ private struct AgentDataWipeOptions: View {
     }
 
     private func row(_ title: String, count: Int, isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) {
-            HStack(spacing: 6) {
+        HStack(spacing: 6) {
+            Toggle(isOn: isOn) {
                 Text(title)
                     .font(.system(size: 12))
                     .foregroundColor(theme.primaryText)
-                Text(verbatim: "\(count)")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
             }
+            .toggleStyle(.checkbox)
+
+            Spacer()
+
+            Text(verbatim: "\(count)")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
         }
-        .toggleStyle(.checkbox)
+        .frame(maxWidth: .infinity)
     }
 }
 
