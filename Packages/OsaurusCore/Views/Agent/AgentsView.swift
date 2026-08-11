@@ -1388,6 +1388,9 @@ struct AgentDetailView: View {
     /// plugins finished loading.
     @State private var loadedPluginsRefreshNonce: UInt = 0
 
+    /// Routes the "Delete All Data" confirmation to the window's alert host.
+    @Environment(\.themedAlertScope) private var alertScope
+
     /// Per-agent slices of the cross-manager data this detail screen
     /// renders. Refreshed by `refreshDetailCaches()` so the body
     /// doesn't have to re-filter the source arrays on every publish.
@@ -2541,6 +2544,7 @@ struct AgentDetailView: View {
         historySection
         pinnedFactsSection
         episodesSection
+        deleteAllDataSection
     }
 
     // MARK: - Configure Tab Sections
@@ -6263,6 +6267,111 @@ struct AgentDetailView: View {
         }
     }
 
+    /// Danger-zone card at the end of the Memory tab. Lets the user wipe the
+    /// agent's accumulated data (chats, facts, episodes) without deleting the
+    /// agent itself, which was previously the only way to start over.
+    private var deleteAllDataSection: some View {
+        AgentDetailSection(
+            title: L("Delete All Data"),
+            icon: "trash",
+            subtitle: L("Remove this agent's chats and memory. The agent itself stays.")
+        ) {
+            Button {
+                presentDeleteAllData()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11, weight: .medium))
+                    Text("Delete Data…", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(theme.errorColor)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.errorColor.opacity(0.1))
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+    }
+
+    /// Confirmation alert with per-category checkboxes so the user picks
+    /// exactly what to wipe instead of the app guessing. Presented directly
+    /// through `ThemedAlertCenter` (same pattern as the sidebar's batch
+    /// delete) because the accessory and the destructive button must share
+    /// live selection state.
+    private func presentDeleteAllData() {
+        let selection = AgentDataWipeSelection()
+        let requestId = UUID()
+        let scope = alertScope
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: L("Delete Agent Data"),
+                message: L(
+                    "Choose what to permanently delete for \"\(currentAgent.name)\". The agent itself stays. This can't be undone."
+                ),
+                accessory: AnyView(
+                    AgentDataWipeOptions(
+                        selection: selection,
+                        chatCount: chatSessions.count,
+                        factCount: pinnedFacts.count,
+                        episodeCount: episodes.count
+                    )
+                ),
+                buttons: [
+                    .cancel(L("Cancel")),
+                    .destructive(L("Delete Selected")) { performDeleteAllData(selection) },
+                ],
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
+    }
+
+    private func performDeleteAllData(_ selection: AgentDataWipeSelection) {
+        let wipeChats = selection.chats
+        let wipeFacts = selection.pinnedFacts
+        let wipeEpisodes = selection.episodes
+        guard wipeChats || wipeFacts || wipeEpisodes else { return }
+        let agentId = agent.id
+        let agentScope = agentId.uuidString
+        if wipeChats {
+            ChatSessionsManager.shared.deleteAll(for: agentId)
+        }
+        Task {
+            // Memory DB deletes run off the main actor — same rationale as
+            // `loadMemoryData`: these calls dispatch-sync onto the DB's
+            // serial queue and can otherwise stall the appear path.
+            await Task.detached(priority: .userInitiated) {
+                let db = MemoryDatabase.shared
+                if !db.isOpen { try? db.open() }
+                if wipeFacts { try? db.deletePinnedFacts(forAgent: agentScope) }
+                if wipeEpisodes { try? db.deleteEpisodes(forAgent: agentScope) }
+                if wipeChats { try? db.deleteConversationMemory(forAgent: agentScope) }
+            }.value
+            if wipeFacts && wipeEpisodes && wipeChats {
+                // Full wipe: the on-disk vector index has nothing left to
+                // serve, so remove it rather than leaving deleted content
+                // in the encrypted store.
+                await MemorySearchService.shared.deleteAgentIndex(agentId: agentScope)
+            } else if wipeFacts || wipeEpisodes {
+                // Partial wipe: drop the in-memory instance; stale on-disk
+                // vectors resolve to missing SQL rows and are filtered on
+                // read, same as single-item deletes.
+                await MemorySearchService.shared.evictAgent(agentId: agentScope)
+            }
+            guard agentId == agent.id else { return }
+            refreshDetailCaches()
+            loadMemoryData()
+            showSuccess(L("Selected data deleted"))
+        }
+    }
+
     private func deletePinnedFact(_ factId: String) {
         try? MemoryDatabase.shared.deletePinnedFact(id: factId)
         // Drop the matching vector so search can't keep surfacing a fact that
@@ -6596,6 +6705,56 @@ struct AgentDetailView: View {
 /// Auto-speak toggle + per-agent voice override. Owns the
 /// `TTSService.shared` observation so high-frequency model-state
 /// updates don't invalidate the whole `AgentDetailView` body.
+/// Selection state for the "Delete All Data" confirmation. A reference type
+/// so the alert accessory (checkboxes) and the destructive button's closure
+/// observe the same instance after `ThemedAlertCenter` captures the request.
+private final class AgentDataWipeSelection: ObservableObject {
+    @Published var chats = true
+    @Published var pinnedFacts = true
+    @Published var episodes = true
+}
+
+/// Checkbox list rendered inside the "Delete Agent Data" alert so the user
+/// picks which categories to wipe. Counts give a sense of what's at stake.
+private struct AgentDataWipeOptions: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject var selection: AgentDataWipeSelection
+    let chatCount: Int
+    let factCount: Int
+    let episodeCount: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            row(L("Chat history"), count: chatCount, isOn: $selection.chats)
+            row(L("Pinned facts"), count: factCount, isOn: $selection.pinnedFacts)
+            row(L("Episodes"), count: episodeCount, isOn: $selection.episodes)
+
+            Text(
+                "Chat history also removes the raw transcripts memory keeps for this agent.",
+                bundle: .module
+            )
+            .font(.system(size: 10))
+            .foregroundColor(theme.tertiaryText)
+            .padding(.top, 2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func row(_ title: String, count: Int, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.primaryText)
+                Text(verbatim: "\(count)")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        }
+        .toggleStyle(.checkbox)
+    }
+}
+
 private struct AgentDetailVoiceSection: View {
     @ObservedObject private var ttsService = TTSService.shared
     let theme: ThemeProtocol
