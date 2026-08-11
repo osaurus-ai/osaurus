@@ -179,9 +179,17 @@ let package = Package(
         // the run ends on `emptyToolTaskFallback`. Reproduced on Raptor 1.0
         // 16B with the Mail capability loaded. The route covers GLM-4.x/5,
         // DeepSeek V3 aliases, Laguna/Raptor, Poolside and Ling/Bailing.
+        // vmlx-swift#229 halts generation when the visible output collapses
+        // into a verbatim cycle. Observed on Raptor after two consecutive
+        // `invalid_args` rejections: the turn repeated one sentence pair to
+        // the token cap and recorded no terminal stop reason at all. Firing
+        // needs a unit repeated 4x, 32+ characters, AND primitive at that
+        // scale — a run of `---` or `| | |` repeats at period 32 too, so a
+        // length floor alone would truncate real answers. VMLX_REPETITION_STOP=0
+        // disables it.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "cbd14446e5f41c0ad92fdeb386ca0d7a1e125723"
+            revision: "4d09467a5bd614b1b87ff50dbc802d6599fc7816"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
