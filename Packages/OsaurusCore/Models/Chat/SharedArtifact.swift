@@ -614,8 +614,47 @@ extension SharedArtifact {
             return .rejected
 
         case .hostFolder(let ctx):
-            if let resolved = resolveContainedPath(path, within: ctx.rootPath) {
-                return .candidate(resolved, attempted: [resolved.path])
+            let root = ctx.rootPath
+            var attempted: [String] = []
+            var firstCandidate: URL?
+
+            if let primary = resolveContainedPath(path, within: root) {
+                attempted.append(primary.path)
+                firstCandidate = primary
+                if FileManager.default.fileExists(atPath: primary.path) {
+                    return .candidate(primary, attempted: attempted)
+                }
+            }
+
+            // Basename fallback, matching the sandbox branch above. This method
+            // has always documented "falling back to a basename search", but
+            // host-folder mode only ever tried the literal path — so a model
+            // that wrote `report.md` into the selected folder and then shared
+            // `MyFolder/report.md` (repeating the folder's own name) or dropped
+            // it in `output/` was told the file did not exist while it sat in
+            // the folder the whole time.
+            //
+            // Deliberately limited to relative paths with no `..`: an escape
+            // attempt must stay `.rejected` so the model learns the PATH was
+            // refused, not that the file was missing. Recovering the basename of
+            // `../secret.txt` would quietly turn one failure into the other.
+            let escapes = path.hasPrefix("/") || path.split(separator: "/").contains("..")
+            if !escapes, let basename = extractPathComponent(path) {
+                for sub in ["", "output", "out", "build", "dist"] {
+                    let relative = sub.isEmpty ? basename : "\(sub)/\(basename)"
+                    guard let attempt = resolveContainedPath(relative, within: root),
+                        !attempted.contains(attempt.path)
+                    else { continue }
+                    attempted.append(attempt.path)
+                    if firstCandidate == nil { firstCandidate = attempt }
+                    if FileManager.default.fileExists(atPath: attempt.path) {
+                        return .candidate(attempt, attempted: attempted)
+                    }
+                }
+            }
+
+            if let candidate = firstCandidate {
+                return .candidate(candidate, attempted: attempted)
             }
             return .rejected
 
