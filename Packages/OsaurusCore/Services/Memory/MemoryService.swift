@@ -133,10 +133,26 @@ public actor MemoryService {
     /// when the user navigates away. Fire-and-forget: the caller doesn't
     /// wait for (or learn) the outcome. For the request/response path
     /// (`POST /memory/ingest`) use `flushSessionAndWait` instead.
+    ///
+    /// `requireResident: false` on purpose: navigating away is a real
+    /// distill boundary, so a large local core model must be allowed to
+    /// cold-load here rather than silently skipping (which stranded every
+    /// buffered turn until the manual "Distill pending" button — the
+    /// background debounce won't cold-load >2B models, and the model is
+    /// already being evicted by the time this fires). The load still
+    /// routes through the coordinator (serial, chat-idle aware) and the
+    /// core-model service's `.background` load intent, which REFUSES to
+    /// evict the user's foreground model — so a mismatched foreground
+    /// model just leaves the turn pending for a later pass instead of
+    /// disturbing the active chat. Matches `flushSessionAndWait`.
     public func flushSession(agentId: String, conversationId: String) {
         debounceTasks[conversationId]?.cancel()
         debounceTasks[conversationId] = Task { [weak self] in
-            await self?.distillSession(agentId: agentId, conversationId: conversationId)
+            await self?.distillSession(
+                agentId: agentId,
+                conversationId: conversationId,
+                requireResident: false
+            )
         }
     }
 
