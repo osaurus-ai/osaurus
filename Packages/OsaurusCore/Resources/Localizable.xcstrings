@@ -228598,6 +228598,40 @@
           }
         }
       }
+    },
+    "Deleting from the middle of the conversation may make the next reply take a little longer to start, since everything after this point has to be reprocessed.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wenn Sie mitten in der Unterhaltung löschen, kann die nächste Antwort etwas länger dauern, da alles nach diesem Punkt neu verarbeitet werden muss."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대화 중간에서 삭제하면 이 지점 이후의 모든 내용을 다시 처리해야 하므로 다음 응답 시작이 조금 더 오래 걸릴 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Если удалить сообщение из середины беседы, следующий ответ может начаться чуть позже, так как всё после этого места придётся обработать заново."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从对话中间删除可能会使下一条回复的开始稍慢，因为此处之后的所有内容都需要重新处理。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "從對話中間刪除可能會使下一則回覆的開始稍慢，因為此處之後的所有內容都需要重新處理。"
+          }
+        }
+      }
     }
   },
   "version": "1.1"
