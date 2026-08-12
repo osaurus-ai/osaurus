@@ -1642,11 +1642,13 @@ final class ChatSession: ObservableObject {
         // Display-time only, like coalescing/rollup: the LLM compaction
         // divider never enters the memoizer cache, so per-turn incremental
         // regeneration keeps its stable ids.
-        let newBlocks = insertCompactionMarkerIfNeeded(
-            into: blockMemoizer.blocks(
-                from: effectiveTurns,
-                streamingTurnId: streamingTurnId,
-                agentName: displayName
+        let newBlocks = insertFollowUpSuggestionsIfNeeded(
+            into: insertCompactionMarkerIfNeeded(
+                into: blockMemoizer.blocks(
+                    from: effectiveTurns,
+                    streamingTurnId: streamingTurnId,
+                    agentName: displayName
+                )
             )
         )
         let newHeaderMap = blockMemoizer.groupHeaderMap
@@ -1679,6 +1681,22 @@ final class ChatSession: ObservableObject {
         var result = blocks
         result.insert(
             .compactionMarker(summary: summary, afterTurnId: lastCoveredId),
+            at: lastIndex + 1
+        )
+        return result
+    }
+
+    /// Inject the follow-up suggestions row right after the last block of the
+    /// turn the suggestions belong to (its `assistantActions` footer), so they
+    /// read as the tail of that assistant message and scroll with it. Display-
+    /// time only, like the compaction marker — never enters the block cache.
+    private func insertFollowUpSuggestionsIfNeeded(into blocks: [ContentBlock]) -> [ContentBlock] {
+        guard !followUpSuggestions.isEmpty, let turnId = followUpTurnId,
+            let lastIndex = blocks.lastIndex(where: { $0.turnId == turnId })
+        else { return blocks }
+        var result = blocks
+        result.insert(
+            .followUpSuggestions(turnId: turnId, suggestions: followUpSuggestions),
             at: lastIndex + 1
         )
         return result
@@ -3723,7 +3741,11 @@ final class ChatSession: ObservableObject {
     private func clearFollowUpSuggestions() {
         followUpGenerationStarted = false
         followUpTurnId = nil
-        if !followUpSuggestions.isEmpty { followUpSuggestions = [] }
+        let hadSuggestions = !followUpSuggestions.isEmpty
+        if hadSuggestions { followUpSuggestions = [] }
+        // Drop the injected row from the thread. Guarded by
+        // `rebuildVisibleBlocks`'s own suppression during session switches.
+        if hadSuggestions { rebuildVisibleBlocks() }
     }
 
     /// Kick off a background follow-up suggestion generation after a clean run
@@ -3792,6 +3814,9 @@ final class ChatSession: ObservableObject {
             guard stillCurrent else { return }
             self.followUpTurnId = liveAssistantId
             self.followUpSuggestions = suggestions
+            // Inject the row into the thread (display-time), so it scrolls with
+            // the assistant message rather than floating above the composer.
+            self.rebuildVisibleBlocks()
         }
     }
 
@@ -7966,23 +7991,9 @@ struct ChatView: View {
                                     value: observedSession.runProgressState
                                 )
 
-                            // AI-suggested follow-up questions for the last
-                            // completed turn, directly above the composer.
-                            // Hidden while a run is active (a new turn
-                            // supersedes them) and while a prompt overlay owns
-                            // the foreground.
-                            if !observedSession.isStreaming, !isPromptOverlayActive {
-                                FollowUpSuggestionsBar(
-                                    suggestions: observedSession.followUpSuggestions,
-                                    onSelect: { observedSession.sendFollowUp($0) }
-                                )
-                                .frame(maxWidth: 1100)
-                                .frame(maxWidth: .infinity)
-                                .animation(
-                                    theme.springAnimation(),
-                                    value: observedSession.followUpSuggestions
-                                )
-                            }
+                            // Follow-up suggestions render as a thread row
+                            // beneath the assistant message (see
+                            // `insertFollowUpSuggestionsIfNeeded`), not here.
 
                             // Floating input card. Dimmed and
                             // hit-test-disabled while a prompt overlay
@@ -8717,6 +8728,7 @@ struct ChatView: View {
                 onEdit: beginEditingTurn,
                 onDelete: deleteTurn,
                 onSpeak: speakTurnContent,
+                onFollowUpTap: { session.sendFollowUp($0) },
                 editingTurnId: editingTurnId,
                 editText: $editText,
                 onConfirmEdit: confirmEditAndRegenerate,
@@ -8941,6 +8953,7 @@ private struct IsolatedThreadView: View {
     let onEdit: ((UUID) -> Void)?
     let onDelete: ((UUID) -> Void)?
     let onSpeak: ((UUID) -> Void)?
+    let onFollowUpTap: ((String) -> Void)?
     let editingTurnId: UUID?
     let editText: Binding<String>?
     let onConfirmEdit: (() -> Void)?
@@ -8986,6 +8999,7 @@ private struct IsolatedThreadView: View {
             onEdit: onEdit,
             onDelete: onDelete,
             onSpeak: onSpeak,
+            onFollowUpTap: onFollowUpTap,
             editingTurnId: editingTurnId,
             editText: editText,
             onConfirmEdit: onConfirmEdit,

@@ -38,6 +38,8 @@ struct CellRenderingContext {
     var onEdit: ((UUID) -> Void)? = nil
     var onDelete: ((UUID) -> Void)? = nil
     var onSpeak: ((UUID) -> Void)? = nil
+    /// A tapped follow-up suggestion string → sent as the next user turn.
+    var onFollowUpTap: ((String) -> Void)? = nil
     /// attachment or shared-artifact id string → full screen preview from ChatView
     var onUserImagePreview: ((String) -> Void)? = nil
     /// Document attachment (pasted content or an attached file like a PDF/DOCX)
@@ -1639,6 +1641,11 @@ final class NativeMessageCellView: NSTableCellView {
     private var nativeStatsView: NativeStatsView?
     private var nativeAssistantActionsView: NativeAssistantActionsView?
     private var nativeEmptyNoticeView: NativeEmptyResponseNoticeView?
+    /// Follow-up suggestions are low-frequency (one per completed turn), so
+    /// unlike the streaming-hot cells above this one hosts the SwiftUI
+    /// `FollowUpSuggestionsBar` directly — its intrinsic size drives the row
+    /// height via `fittingSize`.
+    private var nativeFollowUpsView: NSHostingView<AnyView>?
 
     private var userBubbleCornerRadius: CGFloat = 0
     private var userBubbleWidthConstraint: NSLayoutConstraint?
@@ -1866,6 +1873,14 @@ final class NativeMessageCellView: NSTableCellView {
                 turnId: turnId,
                 outputTokens: outputTokens,
                 costMicro: costMicro,
+                context: context,
+                sameKind: sameKind
+            )
+
+        case let .followUpSuggestions(_, suggestions):
+            configureAsFollowUpSuggestions(
+                block: block,
+                suggestions: suggestions,
                 context: context,
                 sameKind: sameKind
             )
@@ -2730,6 +2745,48 @@ final class NativeMessageCellView: NSTableCellView {
         )
     }
 
+    // MARK: - FollowUpSuggestions
+
+    private func configureAsFollowUpSuggestions(
+        block: ContentBlock,
+        suggestions: [String],
+        context: CellRenderingContext,
+        sameKind: Bool
+    ) {
+        let onTap = context.onFollowUpTap
+        let rootView = AnyView(
+            FollowUpSuggestionsBar(
+                suggestions: suggestions,
+                onSelect: { onTap?($0) }
+            )
+            .environment(\.theme, context.theme)
+        )
+        if !sameKind || nativeFollowUpsView == nil {
+            removeAllContentViews()
+            let hv = NSHostingView(rootView: rootView)
+            hv.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(hv)
+            NSLayoutConstraint.activate([
+                hv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+                hv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+                hv.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+                // Pin the bottom so the cell's `fittingSize` reflects the
+                // hosted content and the row sizes to it.
+                hv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            ])
+            nativeFollowUpsView = hv
+        } else {
+            nativeFollowUpsView?.rootView = rootView
+        }
+        // Correct the row height once SwiftUI has laid out, mirroring the
+        // artifact/user cells' measured-height report.
+        let id = block.id
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            context.onHeightMeasured?(self.measureFittedRowHeight(), id)
+        }
+    }
+
     // MARK: - SharedArtifact
 
     private func configureAsArtifact(
@@ -2949,6 +3006,7 @@ final class NativeMessageCellView: NSTableCellView {
         nativeStatsView?.removeFromSuperview(); nativeStatsView = nil
         nativeAssistantActionsView?.removeFromSuperview(); nativeAssistantActionsView = nil
         nativeEmptyNoticeView?.removeFromSuperview(); nativeEmptyNoticeView = nil
+        nativeFollowUpsView?.removeFromSuperview(); nativeFollowUpsView = nil
         // User messages carry outbound redactions (PII the user typed), so
         // the user text view has the same hover controller to tear down.
         userTextView?.tearDownForReuse()
@@ -3191,7 +3249,7 @@ private func cgColorsEqual(_ lhs: CGColor?, _ rhs: CGColor?) -> Bool {
 enum ContentBlockKindTag: Equatable {
     case header, paragraph, toolCallGroup, thinking, activityGroup, userMessage, pendingToolCall
     case generationStats, typingIndicator, groupSpacer, sharedArtifact, chart
-    case assistantActions, emptyResponseNotice, fileDiff, compactionMarker, other
+    case assistantActions, emptyResponseNotice, fileDiff, compactionMarker, followUpSuggestions, other
 }
 
 extension ContentBlockKind {
@@ -3213,6 +3271,7 @@ extension ContentBlockKind {
         case .assistantActions: return .assistantActions
         case .emptyResponseNotice: return .emptyResponseNotice
         case .compactionMarker: return .compactionMarker
+        case .followUpSuggestions: return .followUpSuggestions
         }
     }
 }
@@ -3413,6 +3472,22 @@ enum NativeCellHeightEstimator {
             }
             let fontLineHeight: CGFloat = max(10, CGFloat(theme.codeSize) - 1) * 1.35
             return header + 6 + CGFloat(lineRows) * fontLineHeight + 6 + 12
+
+        case let .followUpSuggestions(_, suggestions):
+            // Mirrors `FollowUpSuggestionsBar`: outer vertical padding (8+8),
+            // a "Follow up" header (~23), and per-suggestion rows of
+            // 10+10 padding around wrapped 13pt text (~18pt/line), with 1pt
+            // dividers between. Plus the cell's own 4pt top / 8pt bottom
+            // insets. Corrected by the measured-height report either way.
+            let innerW = max(width - 64, 100)
+            let chars = max(Int(innerW / 7), 20)
+            var rows: CGFloat = 0
+            for s in suggestions {
+                let lines = max(1, (s.count + chars - 1) / chars)
+                rows += CGFloat(lines) * 18 + 20
+            }
+            let dividers = CGFloat(max(0, suggestions.count - 1))
+            return 23 + rows + dividers + 16 + 12
         }
     }
 }

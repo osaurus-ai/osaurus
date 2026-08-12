@@ -84,6 +84,11 @@ enum ContentBlockKind: Equatable {
     /// summary text the model sees. Injected at display time in
     /// `ChatSession.rebuildVisibleBlocks` — never stored in the block cache.
     case compactionMarker(savedTokens: Int, modelName: String, summaryText: String)
+    /// AI-suggested follow-up questions rendered as a tappable list beneath the
+    /// last assistant turn. Injected at display time in
+    /// `ChatSession.rebuildVisibleBlocks` (like `compactionMarker`) — never
+    /// stored in the block cache, so it stays keyed to the live turn.
+    case followUpSuggestions(turnId: UUID, suggestions: [String])
 
     /// Custom Equatable optimized for performance during streaming.
     /// Uses text length comparison as a cheap proxy for content change detection.
@@ -165,6 +170,9 @@ enum ContentBlockKind: Equatable {
             guard lText.count == rText.count else { return false }
             return lText == rText
 
+        case let (.followUpSuggestions(lId, lSugg), .followUpSuggestions(rId, rSugg)):
+            return lId == rId && lSugg == rSugg
+
         default:
             return false
         }
@@ -186,7 +194,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         case let .paragraph(_, _, _, role): return role
         case .toolCallGroup, .thinking, .activityGroup, .sharedArtifact, .pendingToolCall,
             .generationStats, .typingIndicator, .groupSpacer, .chart, .assistantActions,
-            .emptyResponseNotice, .fileDiff, .compactionMarker:
+            .emptyResponseNotice, .fileDiff, .compactionMarker, .followUpSuggestions:
             return .assistant
         case .userMessage: return .user
         }
@@ -460,6 +468,18 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
                 modelName: summary.modelIdentifier,
                 summaryText: summary.summaryText
             ),
+            position: .only
+        )
+    }
+
+    static func followUpSuggestions(
+        turnId: UUID,
+        suggestions: [String]
+    ) -> ContentBlock {
+        ContentBlock(
+            id: "followups-\(turnId.uuidString)",
+            turnId: turnId,
+            kind: .followUpSuggestions(turnId: turnId, suggestions: suggestions),
             position: .only
         )
     }

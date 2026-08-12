@@ -99,6 +99,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
     let onEdit: ((UUID) -> Void)?
     let onDelete: ((UUID) -> Void)?
     let onSpeak: ((UUID) -> Void)?
+    var onFollowUpTap: ((String) -> Void)? = nil
 
     // Inline editing state
     let editingTurnId: UUID?
@@ -277,6 +278,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onEdit: onEdit,
             onDelete: onDelete,
             onSpeak: onSpeak,
+            onFollowUpTap: onFollowUpTap,
             onUserImagePreview: onUserImagePreview,
             onDocumentPreview: onDocumentPreview,
             sessionRedactions: sessionRedactions,
@@ -328,6 +330,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onEdit: onEdit,
             onDelete: onDelete,
             onSpeak: onSpeak,
+            onFollowUpTap: onFollowUpTap,
             onUserImagePreview: onUserImagePreview,
             onDocumentPreview: onDocumentPreview,
             sessionRedactions: sessionRedactions,
