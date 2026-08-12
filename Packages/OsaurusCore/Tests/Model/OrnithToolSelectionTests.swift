@@ -24,8 +24,26 @@ struct OrnithToolSelectionTests {
             .appendingPathComponent("models/JANGQ-AI/\(name)")
     }
 
+    /// Opt-in, because running this loads ~9 GB of weights twice.
+    ///
+    /// ```
+    /// swift test --filter OrnithToolSelection                      # ORNITH_TOOLS=1
+    /// xcodebuild test -only-testing:OsaurusCoreTests/OrnithToolSelectionTests
+    ///                                                              # TEST_RUNNER_ORNITH_TOOLS=1
+    /// ```
+    ///
+    /// The two spellings are not interchangeable. `xcodebuild` runs tests in a
+    /// separate `xctest` process that does **not** inherit the invoking shell's
+    /// environment; only variables prefixed `TEST_RUNNER_` are forwarded (with
+    /// the prefix stripped). Passing the bare `ORNITH_TOOLS=1` there leaves this
+    /// false, the case is **skipped**, and the run still reports
+    /// `** TEST SUCCEEDED **` — a green result that measured nothing. Checking
+    /// both is cheap and turns that silent skip into a visible one.
     static var enabled: Bool {
-        ProcessInfo.processInfo.environment["ORNITH_TOOLS"] == "1"
+        let env = ProcessInfo.processInfo.environment
+        let requested =
+            env["ORNITH_TOOLS"] == "1" || env["TEST_RUNNER_ORNITH_TOOLS"] == "1"
+        return requested
             && FileManager.default.fileExists(
                 atPath: bundle("Ornith-1.0-9B-JANG_4M").appendingPathComponent("config.json").path)
     }
