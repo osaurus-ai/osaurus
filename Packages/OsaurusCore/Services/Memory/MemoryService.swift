@@ -37,6 +37,13 @@ public actor MemoryService {
     private var debounceTasks: [String: Task<Void, Never>] = [:]
     private var activeConversation: [String: String] = [:]
     private var conversationSessionDates: [String: String] = [:]
+    /// Project membership captured at `bufferTurn` time, keyed by
+    /// conversation id. Recorded when the turn happens — while the live
+    /// session unambiguously knows its project — so the mirror doesn't
+    /// have to re-derive membership at distill time (a later session reset,
+    /// agent switch, or not-yet-persisted new chat could make that lookup
+    /// return nil and silently skip the project mirror).
+    private var conversationProjectIds: [String: UUID] = [:]
 
     /// Reset on every process launch — see `BufferTurnTelemetry`.
     private var telemetry = BufferTurnTelemetry()
@@ -59,7 +66,8 @@ public actor MemoryService {
         assistantMessage: String?,
         agentId: String,
         conversationId: String,
-        sessionDate: String? = nil
+        sessionDate: String? = nil,
+        projectId: UUID? = nil
     ) async {
         // Telemetry intentionally precedes the early-return guards so
         // "attempts" reflects every caller invocation. The diagnostics
@@ -100,6 +108,19 @@ public actor MemoryService {
 
         if let sessionDate, !sessionDate.isEmpty {
             conversationSessionDates[conversationId] = sessionDate
+        }
+        // Capture membership at turn time (see `conversationProjectIds`).
+        // Reflect the live value exactly — set when in a project, clear
+        // when not — so a chat MOVED OUT of a project stops mirroring to
+        // it. The live `session.projectId` is authoritative here: it's the
+        // same value compose uses each turn, kept in sync by
+        // `chatSessionProjectDidChange`, so it is never transiently nil for
+        // a real project chat at turn time (unlike the distill-time manager
+        // lookup this replaces).
+        if let projectId {
+            conversationProjectIds[conversationId] = projectId
+        } else {
+            conversationProjectIds[conversationId] = nil
         }
 
         // Session change → flush the previous conversation.
@@ -1064,18 +1085,32 @@ public actor MemoryService {
     /// against existing pinned facts (cheap, deterministic) — the
     /// consolidator handles deeper merging later.
     /// Mirror a just-distilled episode into its chat's project namespace
-    /// (`project:<uuid>`), when the chat belongs to one. Membership is read
-    /// at distill time, so a chat moved out of a project before its distill
-    /// runs correctly writes nothing. Failures are logged and swallowed —
-    /// this must never affect the agent-namespace outcome.
+    /// (`project:<uuid>`), when the chat belongs to one.
+    ///
+    /// Membership resolves to the value captured at `bufferTurn` time
+    /// (`conversationProjectIds`) — recorded while the live session
+    /// unambiguously knew its project — falling back to the sessions
+    /// manager for conversations this process never buffered (e.g. launch
+    /// orphan recovery). The captured value is authoritative because a
+    /// session reset / agent switch / not-yet-persisted new chat can make
+    /// the manager lookup momentarily return nil even for a real project
+    /// chat, which would silently skip the mirror. A chat genuinely moved
+    /// OUT of a project still writes nothing on the manager-fallback path.
+    /// Failures are logged and swallowed — this must never affect the
+    /// agent-namespace outcome.
     private func mirrorDistillateToProject(
         episode: Episode,
         pinnedCandidates: [DistillResult.PinnedCandidate],
         conversationId: String
     ) async {
         guard let sessionId = UUID(uuidString: conversationId) else { return }
-        let projectId = await MainActor.run {
-            ChatSessionsManager.shared.session(for: sessionId)?.projectId
+        let projectId: UUID?
+        if let captured = conversationProjectIds[conversationId] {
+            projectId = captured
+        } else {
+            projectId = await MainActor.run {
+                ChatSessionsManager.shared.session(for: sessionId)?.projectId
+            }
         }
         guard let projectId else { return }
         let namespaceKey = MemoryNamespace.project(projectId).key

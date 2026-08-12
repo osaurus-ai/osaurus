@@ -3348,6 +3348,10 @@ final class ChatSession: ObservableObject {
         let userContent: String
         let memoryAgentId: String
         let memoryConversationId: String
+        /// Project membership captured at send time, so memory records the
+        /// project the turn actually happened in — a later session reset or
+        /// agent switch can't retroactively change it.
+        let memoryProjectId: UUID?
     }
 
     private func isRunActive(_ runId: UUID) -> Bool {
@@ -3930,7 +3934,8 @@ final class ChatSession: ObservableObject {
                     assistantMessage: assistantContent,
                     agentId: context.memoryAgentId,
                     conversationId: context.memoryConversationId,
-                    sessionDate: today
+                    sessionDate: today,
+                    projectId: context.memoryProjectId
                 )
             }
         }
@@ -5197,7 +5202,8 @@ final class ChatSession: ObservableObject {
                 hasContent: hasContent,
                 userContent: trimmed,
                 memoryAgentId: memoryAgentId,
-                memoryConversationId: memoryConversationId
+                memoryConversationId: memoryConversationId,
+                memoryProjectId: projectId
             )
         )
 
