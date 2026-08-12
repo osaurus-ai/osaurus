@@ -7246,6 +7246,49 @@ struct ChatView: View {
     private var theme: ThemeProtocol { windowState.theme }
 
     /// Balance-aware copy for the out-of-credits modal.
+    /// The run blocking this send, when it is a detached background task rather
+    /// than another open window. `nil` means a visible window owns the slot and
+    /// the original "wait for that reply" wording is accurate.
+    private var blockingDetachedTaskId: UUID? {
+        BackgroundTaskManager.shared.detachedTaskStreamingLocalModel(
+            excludingSession: session)
+    }
+
+    /// Telling someone to "wait for that reply to finish" is only true while a
+    /// window still shows the reply. When the owning window was closed the run
+    /// detaches and keeps the single local-model slot, so that sentence sends
+    /// the user to look for something that does not exist — reported in #2343,
+    /// where the only way out was restarting the app.
+    private var localModelBusyMessage: String {
+        blockingDetachedTaskId == nil
+            ? L(
+                "Only one local model can run at a time, and another chat window is using it right now. Wait for that reply to finish, or switch this chat to a remote model."
+            )
+            : L(
+                "Only one local model can run at a time. A reply is still running in the background from a chat window you closed. Reopen it to watch it finish, stop it to free the model, or switch this chat to a remote model."
+            )
+    }
+
+    /// The cancel capability already existed (`BackgroundTaskManager.cancelTask`)
+    /// and so did the reattach path (`openTaskWindow`); neither was reachable
+    /// from the point where the user is actually blocked. Offer both here, and
+    /// only here — this deliberately does not change whether a backgrounded run
+    /// keeps the lock, which is a product decision left open in #2343.
+    private var localModelBusyButtons: [AlertButtonConfig] {
+        guard let taskId = blockingDetachedTaskId else {
+            return [.cancel(L("OK"))]
+        }
+        return [
+            .destructive(L("Stop it")) {
+                BackgroundTaskManager.shared.cancelTask(taskId)
+            },
+            .primary(L("Reopen it")) {
+                BackgroundTaskManager.shared.openTaskWindow(taskId)
+            },
+            .cancel(L("Not now")),
+        ]
+    }
+
     private var insufficientFundsMessage: String {
         String(
             localized:
@@ -7539,13 +7582,8 @@ struct ChatView: View {
             .themedAlert(
                 L("A local model is already running"),
                 isPresented: $windowState.showLocalModelBusyAlert,
-                message:
-                    L(
-                        "Only one local model can run at a time, and another chat window is using it right now. Wait for that reply to finish, or switch this chat to a remote model."
-                    ),
-                buttons: [
-                    .cancel(L("OK"))
-                ]
+                message: localModelBusyMessage,
+                buttons: localModelBusyButtons
             )
             .themedAlert(
                 L("You're out of credits"),
