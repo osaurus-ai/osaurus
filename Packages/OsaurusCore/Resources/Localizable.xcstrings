@@ -228497,40 +228497,6 @@
         }
       }
     },
-    "This removes this response from the conversation. It won't be sent to the model on later turns.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Dadurch wird diese Antwort aus der Unterhaltung entfernt. Sie wird bei späteren Nachrichten nicht an das Modell gesendet."
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이 응답을 대화에서 삭제합니다. 이후 대화에서 모델에 전송되지 않습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Этот ответ будет удалён из беседы. В последующих запросах он не будет отправляться модели."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "这会将此回复从对话中删除。在后续对话中不会发送给模型。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "這會將此回覆從對話中刪除。在後續對話中不會傳送給模型。"
-          }
-        }
-      }
-    },
     "Any tool calls in this response and their results will be removed together.": {
       "localizations": {
         "de": {

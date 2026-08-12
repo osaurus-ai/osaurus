@@ -7696,7 +7696,7 @@ struct ChatView: View {
             .themedAlert(
                 L("Delete this response?"),
                 isPresented: $showDeleteAssistantMessagePrompt,
-                message: deleteAssistantMessageWarning,
+                message: deleteAssistantMessageWarning.isEmpty ? nil : deleteAssistantMessageWarning,
                 accessory: AnyView(DeleteAlsoUserMessageToggle(options: deleteMessageOptions)),
                 buttons: [
                     .cancel(L("Cancel")),
@@ -9136,11 +9136,9 @@ extension ChatView {
         let hasToolCalls = !(turn.toolCalls?.isEmpty ?? true)
         let isSummarized = session.conversationSummary?.coveredTurnIds.contains(turnId) ?? false
 
-        var lines = [
-            L(
-                "This removes this response from the conversation. It won't be sent to the model on later turns."
-            )
-        ]
+        // The title already states the action; only surface extra lines when a
+        // specific caveat applies (tool calls, summary coverage, local reprocess).
+        var lines: [String] = []
         if hasToolCalls {
             lines.append(
                 L("Any tool calls in this response and their results will be removed together.")
