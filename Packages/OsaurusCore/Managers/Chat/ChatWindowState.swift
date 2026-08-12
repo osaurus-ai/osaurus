@@ -280,12 +280,20 @@ final class ChatWindowState: ObservableObject {
     func switchAgent(to newAgentId: UUID) {
         TTSService.shared.stop()
         if !session.turns.isEmpty { session.save() }
+        // Switching agents starts a fresh chat, and `reset`/`installFreshSession`
+        // both clear `projectId`. Preserve project membership across the switch:
+        // cross-agent work *inside* a project is the point, so switching agents
+        // from a project chat must keep the new chat in that project rather than
+        // silently dropping it (the project pill would vanish and the chat would
+        // stop sharing the project's instructions, knowledge, and memory).
+        let inheritedProjectId = session.projectId
         adoptAgent(newAgentId)
         if detachRunningSessionIfNeeded() {
             installFreshSession(agentId: newAgentId)
         } else {
             session.reset(for: newAgentId)
         }
+        session.projectId = inheritedProjectId
         refreshSessions()
         refreshSandboxChanges()
     }
