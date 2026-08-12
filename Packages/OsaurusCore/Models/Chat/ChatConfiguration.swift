@@ -113,6 +113,16 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// default here once it has proven regression-free.
     public var autoGenerateChatTitles: Bool
 
+    // MARK: - Follow-Up Suggestions
+    /// Master switch for AI-generated follow-up questions after a completed
+    /// turn (rendered as clickable rows above the composer; see
+    /// `FollowUpSuggestionService`). When on, follow-ups generate for every
+    /// chat; per-agent tweaks to the prompt / rules / model live in
+    /// `AgentSettings.followUp` but only take effect while this is on. Like
+    /// `autoGenerateChatTitles`, ships default-off so the feature bakes across
+    /// releases before we consider flipping the default here.
+    public var generateFollowUpSuggestions: Bool
+
     public init(
         hotkey: Hotkey?,
         systemPrompt: String,
@@ -129,7 +139,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         disableTools: Bool = false,
         enableClipboardMonitoring: Bool = true,
         warmModelsOnLoad: Bool = true,
-        autoGenerateChatTitles: Bool = false
+        autoGenerateChatTitles: Bool = false,
+        generateFollowUpSuggestions: Bool = false
     ) {
         self.hotkey = hotkey
         self.systemPrompt = systemPrompt
@@ -147,6 +158,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.enableClipboardMonitoring = enableClipboardMonitoring
         self.warmModelsOnLoad = warmModelsOnLoad
         self.autoGenerateChatTitles = autoGenerateChatTitles
+        self.generateFollowUpSuggestions = generateFollowUpSuggestions
     }
 
     public init(from decoder: Decoder) throws {
@@ -170,6 +182,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         warmModelsOnLoad = try container.decodeIfPresent(Bool.self, forKey: .warmModelsOnLoad) ?? true
         autoGenerateChatTitles =
             try container.decodeIfPresent(Bool.self, forKey: .autoGenerateChatTitles) ?? false
+        generateFollowUpSuggestions =
+            try container.decodeIfPresent(Bool.self, forKey: .generateFollowUpSuggestions) ?? false
     }
 
     public static var `default`: ChatConfiguration {
