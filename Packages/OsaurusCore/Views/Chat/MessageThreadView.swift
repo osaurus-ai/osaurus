@@ -33,6 +33,7 @@ struct MessageThreadView: View {
     var onEdit: ((UUID) -> Void)? = nil
     var onDelete: ((UUID) -> Void)? = nil
     var onSpeak: ((UUID) -> Void)? = nil
+    var onDeleteMessage: ((UUID) -> Void)? = nil
 
     // Inline editing state (optional)
     var editingTurnId: UUID? = nil
@@ -111,6 +112,7 @@ struct MessageThreadView: View {
             onEdit: onEdit,
             onDelete: onDelete,
             onSpeak: onSpeak,
+            onDeleteMessage: onDeleteMessage,
             editingTurnId: editingTurnId,
             editText: editText,
             onConfirmEdit: onConfirmEdit,

@@ -3132,6 +3132,85 @@ final class ChatSession: ObservableObject {
         save()
     }
 
+    /// Remove a single assistant turn (and the tool turns that belong to it)
+    /// while keeping every other turn in the conversation intact.
+    ///
+    /// Unlike `deleteTurn(id:)`, which truncates from the given turn onward,
+    /// this excises just one response. When the assistant turn issued tool
+    /// calls, the following `.tool` turns carrying their results are orphaned
+    /// the moment the assistant message goes away — a `tool` message with no
+    /// preceding `tool_calls` is an invalid request shape that providers
+    /// reject — so we drop those paired result turns together. Dropping the
+    /// turn from `turns` is enough for both model requests and the context
+    /// token estimate to stop counting it, since both derive from `turns`.
+    func removeTurn(id: UUID) {
+        guard let index = turns.firstIndex(where: { $0.id == id }) else { return }
+        let turn = turns[index]
+
+        var indicesToRemove = IndexSet(integer: index)
+
+        // Assistant turns that made tool calls own the `.tool` result turns that
+        // immediately follow them; those results reference the call ids and must
+        // leave with the assistant message so the remaining sequence stays valid.
+        if turn.role == .assistant, let calls = turn.toolCalls, !calls.isEmpty {
+            let callIds = Set(calls.map { $0.id })
+            var cursor = index + 1
+            while cursor < turns.count, turns[cursor].role == .tool {
+                if let toolCallId = turns[cursor].toolCallId, callIds.contains(toolCallId) {
+                    indicesToRemove.insert(cursor)
+                }
+                cursor += 1
+            }
+        }
+
+        turns.remove(atOffsets: indicesToRemove)
+        isDirty = true
+        rebuildVisibleBlocks()
+        save()
+    }
+
+    /// Remove the whole exchange an assistant turn belongs to: the user turn
+    /// that prompted it plus every assistant/tool turn that answered that
+    /// prompt. Deleting an assistant reply on its own strands the user message
+    /// (the next request would show an unanswered question the model just
+    /// re-answers), so this is the coherent "drop this Q&A and keep the rest"
+    /// operation. The exchange is the contiguous run from the nearest preceding
+    /// `user` turn up to (but not including) the next `user` turn, which keeps
+    /// tool-call/result pairings inside the block intact.
+    func removeExchange(anchoredAt id: UUID) {
+        guard let index = turns.firstIndex(where: { $0.id == id }) else { return }
+
+        // Walk back to the user turn that opened this exchange. If there's no
+        // preceding user turn (e.g. an unprompted opening assistant message),
+        // anchor the block at the turn itself.
+        var start = index
+        var back = index
+        while back >= 0 {
+            if turns[back].role == .user {
+                start = back
+                break
+            }
+            back -= 1
+        }
+
+        // Walk forward to just before the next user turn; everything in between
+        // is part of answering the same prompt.
+        var end = turns.count - 1
+        var forward = index + 1
+        while forward < turns.count {
+            if turns[forward].role == .user {
+                end = forward - 1
+                break
+            }
+            forward += 1
+        }
+
+        turns.removeSubrange(start...end)
+        isDirty = true
+        rebuildVisibleBlocks()
+        save()
+    }
+
     /// Regenerate an assistant response (removes it and regenerates)
     func regenerate(turnId: UUID) {
         guard let index = turns.firstIndex(where: { $0.id == turnId }) else { return }
@@ -7168,6 +7247,31 @@ final class ChatSession: ObservableObject {
     }
 }
 
+/// Backs the "also delete your message" checkbox in the delete-response
+/// confirmation. Held as a `@StateObject` by `ChatView` and reset before each
+/// prompt; observing it (rather than a plain `@State` binding) guarantees the
+/// checkbox re-renders live inside the global themed-alert host.
+@MainActor
+final class DeleteMessageOptions: ObservableObject {
+    @Published var alsoDeleteUserMessage: Bool = false
+}
+
+/// Checkbox rendered as the delete-response confirmation accessory. Ticking it
+/// escalates the delete from "just this response" to the whole exchange.
+private struct DeleteAlsoUserMessageToggle: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject var options: DeleteMessageOptions
+
+    var body: some View {
+        Toggle(isOn: $options.alsoDeleteUserMessage) {
+            Text("Also delete my message", bundle: .module)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+        }
+        .toggleStyle(.checkbox)
+    }
+}
+
 // MARK: - ChatView
 
 struct ChatView: View {
@@ -7222,6 +7326,16 @@ struct ChatView: View {
     // What's New modal
     @State private var pendingWhatsNew: WhatsNewRelease? = nil
     @State private var showAutoSpeakPrompt: Bool = false
+    /// Drives the confirmation before deleting an assistant response. The
+    /// pending turn id is captured so the confirm button knows what to excise;
+    /// `deleteMessageOptions.alsoDeleteUserMessage` is the dialog checkbox that
+    /// decides whether the prompting user turn goes too. The warning gains an
+    /// extra line when the response made tool calls or is folded into a
+    /// compaction summary.
+    @State private var showDeleteAssistantMessagePrompt: Bool = false
+    @State private var pendingDeleteAssistantTurnId: UUID?
+    @State private var deleteAssistantMessageWarning: String = ""
+    @StateObject private var deleteMessageOptions = DeleteMessageOptions()
     /// Presents the credits top-up sheet, opened from the out-of-credits modal
     /// or the composer's credits chip.
     @State private var showTopUpSheet: Bool = false
@@ -7578,6 +7692,16 @@ struct ChatView: View {
                 message: L("This only applies to this chat."),
                 primaryButton: .primary(L("Yes")) { session.autoSpeakAssistant = true },
                 secondaryButton: .cancel(L("No"))
+            )
+            .themedAlert(
+                L("Delete this response?"),
+                isPresented: $showDeleteAssistantMessagePrompt,
+                message: deleteAssistantMessageWarning,
+                accessory: AnyView(DeleteAlsoUserMessageToggle(options: deleteMessageOptions)),
+                buttons: [
+                    .cancel(L("Cancel")),
+                    .destructive(L("Delete")) { performDeleteAssistantMessage() },
+                ]
             )
             .themedAlert(
                 L("A local model is already running"),
@@ -8564,6 +8688,7 @@ struct ChatView: View {
                 onEdit: beginEditingTurn,
                 onDelete: deleteTurn,
                 onSpeak: speakTurnContent,
+                onDeleteMessage: confirmDeleteAssistantMessage,
                 editingTurnId: editingTurnId,
                 editText: $editText,
                 onConfirmEdit: confirmEditAndRegenerate,
@@ -8788,6 +8913,7 @@ private struct IsolatedThreadView: View {
     let onEdit: ((UUID) -> Void)?
     let onDelete: ((UUID) -> Void)?
     let onSpeak: ((UUID) -> Void)?
+    let onDeleteMessage: ((UUID) -> Void)?
     let editingTurnId: UUID?
     let editText: Binding<String>?
     let onConfirmEdit: (() -> Void)?
@@ -8833,6 +8959,7 @@ private struct IsolatedThreadView: View {
             onEdit: onEdit,
             onDelete: onDelete,
             onSpeak: onSpeak,
+            onDeleteMessage: onDeleteMessage,
             editingTurnId: editingTurnId,
             editText: editText,
             onConfirmEdit: onConfirmEdit,
@@ -8992,6 +9119,69 @@ extension ChatView {
     private func deleteTurn(turnId: UUID) {
         if session.isStreaming { session.stop() }
         session.deleteTurn(id: turnId)
+        discardSessionIfEmptied()
+    }
+
+    /// Ask before deleting an assistant response. Deleting mid-thread can change
+    /// what later turns were answering, so we always confirm. The dialog offers
+    /// an "also delete my message" checkbox that escalates the delete to the
+    /// whole exchange. The wording gains a line when the turn carries tool calls
+    /// (its tool results leave with it) or is covered by a compaction summary
+    /// (the summary still references it until the next compaction).
+    private func confirmDeleteAssistantMessage(turnId: UUID) {
+        guard let turn = session.turns.first(where: { $0.id == turnId }),
+            turn.role == .assistant
+        else { return }
+
+        let hasToolCalls = !(turn.toolCalls?.isEmpty ?? true)
+        let isSummarized = session.conversationSummary?.coveredTurnIds.contains(turnId) ?? false
+
+        var lines = [
+            L(
+                "This removes this response from the conversation. It won't be sent to the model on later turns."
+            )
+        ]
+        if hasToolCalls {
+            lines.append(
+                L("Any tool calls in this response and their results will be removed together.")
+            )
+        }
+        if isSummarized {
+            lines.append(
+                L("This response is part of a conversation summary, so deleting it may affect the meaning of later turns.")
+            )
+        }
+        deleteAssistantMessageWarning = lines.joined(separator: "\n\n")
+        deleteMessageOptions.alsoDeleteUserMessage = false
+        pendingDeleteAssistantTurnId = turnId
+        showDeleteAssistantMessagePrompt = true
+    }
+
+    private func performDeleteAssistantMessage() {
+        guard let turnId = pendingDeleteAssistantTurnId else { return }
+        pendingDeleteAssistantTurnId = nil
+        if session.isStreaming { session.stop() }
+        if deleteMessageOptions.alsoDeleteUserMessage {
+            session.removeExchange(anchoredAt: turnId)
+        } else {
+            session.removeTurn(id: turnId)
+        }
+        discardSessionIfEmptied()
+    }
+
+    /// A delete can empty the conversation (e.g. removing the only exchange).
+    /// `save()` skips empty conversations, so the stale rows would otherwise
+    /// survive and reappear on reopen. Mirror the sidebar's delete of the
+    /// current session: cancel any live run, reset the window to a fresh chat,
+    /// drop the persisted row, and refresh the history list.
+    private func discardSessionIfEmptied() {
+        guard session.turns.isEmpty, let id = session.sessionId else { return }
+        if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: id) {
+            BackgroundTaskManager.shared.cancelTask(liveTask.id)
+        }
+        session.reset()
+        ChatSessionsManager.shared.delete(id: id)
+        windowState.refreshSessions()
     }
 
     // MARK: - Inline Editing
