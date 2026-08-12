@@ -29,10 +29,17 @@ final class TTFTTrace: @unchecked Sendable {
     ///
     /// Release keeps tracing OFF by default; `OSAURUS_TTFT_TRACE=1` turns it
     /// on so a real report can come back with real phase numbers.
+    /// `start` backdates the trace's origin. The phase a user actually waits
+    /// through can begin before there is anything to attach a trace to — a send
+    /// can block on an in-flight warm-up that loads the whole container first,
+    /// and that happens before generation, so a trace created at generation time
+    /// starts the clock after the wait is over and reports a TTFT that excludes
+    /// it. Passing the moment the user hit send puts that phase back inside.
     static func makeIfEnabled(
+        start: CFAbsoluteTime? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> TTFTTrace? {
-        isEnabled(environment: environment) ? TTFTTrace() : nil
+        isEnabled(environment: environment) ? TTFTTrace(start: start) : nil
     }
 
     static func isEnabled(
@@ -57,12 +64,16 @@ final class TTFTTrace: @unchecked Sendable {
         let time: CFAbsoluteTime
     }
 
-    private let created: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+    private let created: CFAbsoluteTime
     private var marks: [Mark] = []
     private var metadata: [(String, String)] = []
     private let lock = NSLock()
 
     private static let path = "/tmp/osaurus_ttft_trace.log"
+
+    init(start: CFAbsoluteTime? = nil) {
+        created = start ?? CFAbsoluteTimeGetCurrent()
+    }
 
     /// Record a named checkpoint. Call this at the boundary between phases.
     func mark(_ name: String) {
@@ -79,17 +90,19 @@ final class TTFTTrace: @unchecked Sendable {
         lock.unlock()
     }
 
-    /// Write the full trace block to disk. Call once per generation.
-    func emit() {
+    /// Render the trace block. Separate from `emit()` so the phase arithmetic —
+    /// in particular that a backdated start lands in the first phase rather than
+    /// being dropped — can be asserted without writing to a shared file.
+    func render(now: Date = Date()) -> String? {
         lock.lock()
         let snapshot = marks
         let meta = metadata
         lock.unlock()
 
-        guard !snapshot.isEmpty else { return }
+        guard !snapshot.isEmpty else { return nil }
 
         var lines: [String] = []
-        let dateStr = ISO8601DateFormatter().string(from: Date())
+        let dateStr = ISO8601DateFormatter().string(from: now)
         lines.append("═══ TTFT Trace \(dateStr) ═══")
 
         // Phase durations: time between consecutive marks
@@ -114,8 +127,12 @@ final class TTFTTrace: @unchecked Sendable {
             }
         }
         lines.append("")
+        return lines.joined(separator: "\n") + "\n"
+    }
 
-        let block = lines.joined(separator: "\n") + "\n"
+    /// Write the full trace block to disk. Call once per generation.
+    func emit() {
+        guard let block = render() else { return }
         guard let data = block.data(using: .utf8) else { return }
 
         if FileManager.default.fileExists(atPath: Self.path) {

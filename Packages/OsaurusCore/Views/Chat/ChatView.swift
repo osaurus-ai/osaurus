@@ -4954,6 +4954,11 @@ final class ChatSession: ObservableObject {
     }
 
     func send(_ text: String, attachments: [Attachment] = []) {
+        // The user's clock starts here, not when generation does. Everything
+        // below — the warm-up handshake especially, which can wait out a whole
+        // container load — happens before there is a trace to record it, so the
+        // reported TTFT excluded it and the wait was unattributable. See #2347.
+        let sendRequestedAt = Date()
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
         let isRegeneration = !hasContent && !turns.isEmpty
@@ -5012,7 +5017,12 @@ final class ChatSession: ObservableObject {
         // Only a model switch still settling or an in-flight warm-up
         // generation requires the async handshake first.
         guard warmupController.needsPreSendHandshake else {
-            dispatchSend(trimmed: trimmed, attachments: attachments, hasContent: hasContent)
+            dispatchSend(
+                trimmed: trimmed,
+                attachments: attachments,
+                hasContent: hasContent,
+                sendRequestedAt: sendRequestedAt
+            )
             return
         }
 
@@ -5056,7 +5066,9 @@ final class ChatSession: ObservableObject {
                 hasContent: hasContent,
                 preAppendedUserTurn: preAppendedUserTurn,
                 preAppendIntroducedFirstTurn: preAppendIntroducedFirstTurn,
-                expectedPreSendHandshakeEpoch: handshakeEpoch
+                expectedPreSendHandshakeEpoch: handshakeEpoch,
+                sendRequestedAt: sendRequestedAt,
+                awaitedPreSendHandshake: true
             )
         }
     }
@@ -5070,7 +5082,9 @@ final class ChatSession: ObservableObject {
         hasContent: Bool,
         preAppendedUserTurn: ChatTurn? = nil,
         preAppendIntroducedFirstTurn: Bool = false,
-        expectedPreSendHandshakeEpoch: UInt64? = nil
+        expectedPreSendHandshakeEpoch: UInt64? = nil,
+        sendRequestedAt: Date = Date(),
+        awaitedPreSendHandshake: Bool = false
     ) {
         // The pre-send task already checks this after its await. Keep the same
         // guard at the dispatch boundary so future refactors cannot restore
@@ -5302,7 +5316,14 @@ final class ChatSession: ObservableObject {
                     }
                 #endif
 
-                let ttftTrace: TTFTTrace? = TTFTTrace.makeIfEnabled()
+                // Backdate to the send so the first phase covers the wait the
+                // user sat through, then close that phase immediately — every
+                // later mark stays relative and comparable to previous traces.
+                let ttftTrace: TTFTTrace? = TTFTTrace.makeIfEnabled(
+                    start: sendRequestedAt.timeIntervalSinceReferenceDate
+                )
+                ttftTrace?.mark("pre_send_wait")
+                ttftTrace?.set("awaited_pre_send_handshake", awaitedPreSendHandshake)
                 do {
                     let engine = chatEngineFactory(source.inferenceSource)
                     let chatCfg = ChatConfigurationStore.load()
