@@ -24,7 +24,6 @@ public enum ChatHistoryDatabaseError: Error, LocalizedError {
     case failedToExecute(String)
     case failedToPrepare(String)
     case migrationFailed(String)
-    case databaseFromNewerVersion(found: Int, expected: Int)
     case notOpen
 
     public var errorDescription: String? {
@@ -33,9 +32,6 @@ public enum ChatHistoryDatabaseError: Error, LocalizedError {
         case .failedToExecute(let m): return "Failed to execute chat-history query: \(m)"
         case .failedToPrepare(let m): return "Failed to prepare chat-history statement: \(m)"
         case .migrationFailed(let m): return "Chat-history migration failed: \(m)"
-        case .databaseFromNewerVersion(let found, let expected):
-            return
-                "Chat-history database is schema v\(found) but this build supports up to v\(expected). Refusing to open to avoid forward-version corruption."
         case .notOpen: return "Chat-history database is not open"
         }
     }
@@ -173,22 +169,42 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         }
     }
 
-    /// Highest schema version this build knows how to produce. Opening a DB
-    /// stamped newer than this is refused (forward-version fail-fast).
+    /// Highest schema version this build knows how to produce.
     /// Internal (not private) so migration-repair tests assert "reconciled
     /// to the latest" against the real constant instead of a stale literal.
     static let latestSchemaVersion = 14
 
+    /// Forward-compatibility invariant. Every chat-history migration is
+    /// **additive** — it only `ADD COLUMN`s, `CREATE INDEX`es, or `CREATE
+    /// TABLE`s; it never drops, renames, or re-types an existing column, and
+    /// never changes the meaning of one this build already reads. That means a
+    /// DB stamped by a *newer* build is still safe for this build to open: the
+    /// extra columns are simply ignored on read, and left NULL/default on the
+    /// writes this build issues (which always name their columns explicitly).
+    ///
+    /// Because of that invariant we **open version-ahead databases instead of
+    /// refusing them**. Hard-refusing (the old behavior) is what turned a
+    /// harmless schema-ahead DB — a user who ran a projects/beta build and then
+    /// a stable build, or bounced between release channels — into the "all my
+    /// chat history is gone after updating" report: the file was untouched but
+    /// the sidebar rendered empty and looked like total data loss.
+    ///
+    /// IMPORTANT: if a future migration ever becomes destructive (drops /
+    /// renames / re-types an existing column, or changes its semantics), this
+    /// forward-open is no longer safe. Such a change MUST introduce an explicit
+    /// minimum-compatible-version gate rather than rely on this constant.
+    static let migrationsAreAdditiveOnly = true
+
     private func runMigrations() throws {
         let current = try getSchemaVersion()
-        // A database stamped by a newer build carries columns/semantics this
-        // build doesn't understand; reading/writing it as the older schema
-        // would silently corrupt forward-version rows. Refuse instead.
+        // Forward-compatible open: a DB stamped by a newer build carries only
+        // additive columns this build doesn't read (see `migrationsAreAdditiveOnly`).
+        // Open it without running the migration ladder, and leave `user_version`
+        // untouched so a future newer build still recognizes its own schema and
+        // re-applies its (idempotent) migrations. Never refuse — refusing is
+        // indistinguishable from data loss to the user.
         if current > Self.latestSchemaVersion {
-            throw ChatHistoryDatabaseError.databaseFromNewerVersion(
-                found: current,
-                expected: Self.latestSchemaVersion
-            )
+            return
         }
         // Each step runs in its own transaction: a crash/error mid-migration
         // rolls back to the prior version instead of leaving a half-applied
