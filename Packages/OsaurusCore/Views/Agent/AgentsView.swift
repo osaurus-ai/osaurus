@@ -1148,6 +1148,10 @@ struct AgentDetailView: View {
     @State private var searchMemoryEnabled: Bool = false
     /// Native `web_search` gate — default ON (free providers need no setup).
     @State private var webSearchEnabled: Bool = true
+    /// Per-agent follow-up model override (only active while the global switch
+    /// is on). Empty inherits the shared core model. Model-only by design — a
+    /// per-agent suggester prompt would bust the chat model's KV cache.
+    @State private var followUpModel: String = ""
     @State private var selfSchedulingEnabled: Bool = false
     /// Local mirrors of the knowledge feature (`AgentSettings.knowledgeEnabled`
     /// + collection grants). The Features section binds these; `saveAgent`
@@ -1364,6 +1368,7 @@ struct AgentDetailView: View {
     @State private var copiedRouteURL: String?
     @State private var pickerItems: [ModelPickerItem] = []
     @State private var showModelPicker = false
+    @State private var showFollowUpModelPicker = false
     @State private var selectedModel: String?
     @State private var showCreateSchedule = false
     @State private var showCreateWatcher = false
@@ -2102,6 +2107,11 @@ struct AgentDetailView: View {
         voiceSection
         systemPromptSection
         defaultModelSection
+        // Follow-up model override is a custom-agent lever; the Default agent
+        // always uses the shared core model.
+        if agent.id != Agent.defaultId {
+            followUpSection
+        }
         // The schedule-mode picker is configuration for the self-scheduling
         // feature, so it only appears once that capability is switched on
         // (the master toggle lives in Abilities → Overview). With it off
@@ -2659,6 +2669,85 @@ struct AgentDetailView: View {
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
+            }
+        }
+    }
+
+    /// Per-agent model override for follow-up suggestion generation. Applies
+    /// only while the global "Suggest Follow-Up Questions" switch is on. Model
+    /// is the only knob by design — routing follow-ups to a separate model
+    /// keeps them off the resident chat model so its KV cache survives.
+    private var followUpSection: some View {
+        AgentDetailSection(title: L("Follow-Up Model"), icon: "lightbulb") {
+            VStack(alignment: .leading, spacing: 10) {
+                Button {
+                    showFollowUpModelPicker.toggle()
+                } label: {
+                    HStack(spacing: 8) {
+                        if !followUpModel.isEmpty {
+                            Text(formatModelName(followUpModel))
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(theme.primaryText)
+                                .lineLimit(1)
+                        } else {
+                            Text("Default (shared core model)", bundle: .module)
+                                .font(.system(size: 13))
+                                .foregroundColor(theme.placeholderText)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(theme.inputBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(theme.inputBorder, lineWidth: 1)
+                            )
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .popover(isPresented: $showFollowUpModelPicker, arrowEdge: .bottom) {
+                    ModelPickerView(
+                        options: pickerItems,
+                        selectedModel: Binding(
+                            get: { followUpModel.isEmpty ? nil : followUpModel },
+                            set: { newModel in
+                                followUpModel = newModel ?? ""
+                                debouncedSave()
+                            }
+                        ),
+                        agentId: agent.id,
+                        onDismiss: { showFollowUpModelPicker = false }
+                    )
+                }
+
+                if !followUpModel.isEmpty {
+                    Button {
+                        followUpModel = ""
+                        debouncedSave()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.system(size: 10))
+                            Text("Reset to default", bundle: .module)
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+
+                Text(
+                    "Generates this agent's follow-up questions on a separate, usually cheaper or faster model, so the chat model is never interrupted. Applies only while Suggest Follow-Up Questions is on in Chat settings.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
             }
         }
     }
@@ -6410,6 +6499,7 @@ struct AgentDetailView: View {
         speakEnabled = agent.settings.speakEnabled
         searchMemoryEnabled = agent.settings.searchMemoryEnabled
         webSearchEnabled = agent.settings.webSearchEnabled
+        followUpModel = agent.settings.followUp.model
         selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
         knowledgeEnabled = agent.settings.knowledgeEnabled
         knowledgeCollectionIds = agent.settings.knowledgeCollectionIds
@@ -6632,6 +6722,7 @@ struct AgentDetailView: View {
                 speakEnabled: speakEnabled,
                 searchMemoryEnabled: searchMemoryEnabled,
                 webSearchEnabled: webSearchEnabled,
+                followUp: AgentFollowUpConfig(model: followUpModel),
                 selfSchedulingEnabled: selfSchedulingEnabled,
                 computerUseEnabled: computerUseEnabled,
                 computerUseCeiling: computerUseEnabled ? computerUseCeiling : nil,

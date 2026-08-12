@@ -759,6 +759,38 @@ public struct AgentLimitsSettings: Codable, Sendable, Equatable {
     public static var defaults: AgentLimitsSettings { AgentLimitsSettings() }
 }
 
+/// Per-agent customization of the follow-up suggestions feature. This shapes
+/// the follow-ups an agent produces; it never enables them — the global
+/// `ChatConfiguration.generateFollowUpSuggestions` switch does that.
+///
+/// Deliberately model-only: a per-agent *system prompt* for follow-ups is not
+/// offered because a distinct prompt prefill on the resident chat model would
+/// evict that model's cached prefix and bust KV cache for the next real turn.
+/// The model override sidesteps this entirely by routing generation to a
+/// SEPARATE model (e.g. a small-model cluster), leaving the chat model's cache
+/// untouched. `.empty` means "use the shared core model".
+public struct AgentFollowUpConfig: Codable, Sendable, Equatable {
+    /// Optional model-override identifier (same string form as an agent's
+    /// default model, e.g. `"llama-3.2-3b"` or `"anthropic/claude-haiku-4-5"`).
+    /// When non-empty, this agent's follow-ups generate on this model instead
+    /// of the shared core model — the request's "offload to a cluster of small
+    /// models" case. Empty falls back to the global core model, then the chat
+    /// model.
+    public var model: String
+
+    /// Routing identifier, or nil when unset (empty).
+    public var modelIdentifier: String? {
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    public init(model: String = "") {
+        self.model = model
+    }
+
+    public static var empty: AgentFollowUpConfig { AgentFollowUpConfig() }
+}
+
 /// Top-level opt-in feature settings for an agent. Currently bundles the DB
 /// toggle (spec §5.5), self-scheduling bounds (spec §4.1, §9, §13), and the
 /// Phase 4 storage / cost limits (spec §11.3). New agent-wide opt-in
@@ -794,6 +826,13 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// sibling `search_and_extract`). Default ON: search works out of the box
     /// via the free providers, so agents get it unless explicitly switched off.
     public var webSearchEnabled: Bool
+    /// Per-agent customization of the follow-up suggestions feature (a custom
+    /// suggester system prompt, extra rules, and a model override for cheaper /
+    /// faster generation). Only takes effect while the GLOBAL
+    /// `ChatConfiguration.generateFollowUpSuggestions` switch is on — this
+    /// struct shapes the follow-ups, it does not enable them. `.empty` means
+    /// "use the built-in prompt and the shared core model".
+    public var followUp: AgentFollowUpConfig
     /// Per-agent opt-in for the self-scheduling tools (`schedule_next_run`,
     /// `cancel_next_run`, `notify`). Decoupled from the schedule-mode picker
     /// (`schedule.mode`): the mode only sets the host-enforced bounds, while
@@ -930,6 +969,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         speakEnabled: Bool = false,
         searchMemoryEnabled: Bool = false,
         webSearchEnabled: Bool = true,
+        followUp: AgentFollowUpConfig = .empty,
         selfSchedulingEnabled: Bool = false,
         computerUseEnabled: Bool = false,
         computerUseCeiling: AutonomyCeiling? = nil,
@@ -965,6 +1005,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.speakEnabled = speakEnabled
         self.searchMemoryEnabled = searchMemoryEnabled
         self.webSearchEnabled = webSearchEnabled
+        self.followUp = followUp
         self.selfSchedulingEnabled = selfSchedulingEnabled
         self.computerUseEnabled = computerUseEnabled
         self.computerUseCeiling = computerUseCeiling
@@ -1010,6 +1051,10 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         // Default ON (unlike the other gates): native search replaces the
         // osaurus.search plugin and free providers work with zero config.
         webSearchEnabled = try c.decodeIfPresent(Bool.self, forKey: .webSearchEnabled) ?? true
+        // Agents written before this shipped decode to `.empty` (built-in
+        // prompt + shared core model); the global switch still gates whether
+        // any of it runs.
+        followUp = try c.decodeIfPresent(AgentFollowUpConfig.self, forKey: .followUp) ?? .empty
         // Default off (consistent with the other built-in tool gates). Existing
         // agents that relied on self-scheduling must re-enable it explicitly.
         selfSchedulingEnabled = try c.decodeIfPresent(Bool.self, forKey: .selfSchedulingEnabled) ?? false
@@ -1128,6 +1173,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case speakEnabled
         case searchMemoryEnabled
         case webSearchEnabled
+        case followUp
         case selfSchedulingEnabled
         case computerUseEnabled
         case computerUseCeiling
@@ -1168,6 +1214,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(speakEnabled, forKey: .speakEnabled)
         try c.encode(searchMemoryEnabled, forKey: .searchMemoryEnabled)
         try c.encode(webSearchEnabled, forKey: .webSearchEnabled)
+        try c.encode(followUp, forKey: .followUp)
         try c.encode(selfSchedulingEnabled, forKey: .selfSchedulingEnabled)
         try c.encode(computerUseEnabled, forKey: .computerUseEnabled)
         try c.encodeIfPresent(computerUseCeiling, forKey: .computerUseCeiling)
@@ -1209,6 +1256,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
             speakEnabled: false,
             searchMemoryEnabled: false,
             webSearchEnabled: true,
+            followUp: .empty,
             selfSchedulingEnabled: false,
             computerUseEnabled: false,
             screenContextEnabled: true
