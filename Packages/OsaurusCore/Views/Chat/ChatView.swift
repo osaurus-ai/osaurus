@@ -9136,9 +9136,21 @@ extension ChatView {
         let hasToolCalls = !(turn.toolCalls?.isEmpty ?? true)
         let isSummarized = session.conversationSummary?.coveredTurnIds.contains(turnId) ?? false
 
-        // The title already states the action; only surface extra lines when a
-        // specific caveat applies (tool calls, summary coverage, local reprocess).
+        // Primary line: local models reuse the KV cache on the longest common
+        // token prefix, so deleting from the middle of the conversation forces
+        // the turns after the deletion point to be re-processed on the next send
+        // — surface that heads-up. Remote models manage their own caching, so
+        // they get the plain description instead of a bare dialog.
         var lines: [String] = []
+        if session.selectedModelIsLocal {
+            lines.append(
+                L("Deleting from the middle of the conversation may make the next reply take a little longer to start, since everything after this point has to be reprocessed.")
+            )
+        } else {
+            lines.append(
+                L("This removes this response from the conversation. It won't be sent to the model on later turns.")
+            )
+        }
         if hasToolCalls {
             lines.append(
                 L("Any tool calls in this response and their results will be removed together.")
@@ -9147,15 +9159,6 @@ extension ChatView {
         if isSummarized {
             lines.append(
                 L("This response is part of a conversation summary, so deleting it may affect the meaning of later turns.")
-            )
-        }
-        // Local models reuse the KV cache on the longest common token prefix, so
-        // deleting from the middle of the conversation forces the turns after
-        // the deletion point to be re-processed on the next send. Remote models
-        // manage their own caching, so the heads-up only applies locally.
-        if session.selectedModelIsLocal {
-            lines.append(
-                L("Deleting from the middle of the conversation may make the next reply take a little longer to start, since everything after this point has to be reprocessed.")
             )
         }
         deleteAssistantMessageWarning = lines.joined(separator: "\n\n")
