@@ -207,7 +207,7 @@ let package = Package(
         // shipped path; turning MTP on is an explicit per-machine decision.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "3c354fb0c5599b6d1aced0c736002a35c0168ed7"
+            revision: "11a43493fd9bb552ed45faac0be6d4b9f2ab46f0"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
