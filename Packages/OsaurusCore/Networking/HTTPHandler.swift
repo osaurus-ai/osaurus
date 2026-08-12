@@ -7934,11 +7934,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let created = Int(Date().timeIntervalSince1970)
         let responseId = Self.shortId(prefix: "chatcmpl-", length: 12)
         let model = req.model
-        #if DEBUG
-            let ttftTrace: TTFTTrace? = TTFTTrace()
-        #else
-            let ttftTrace: TTFTTrace? = nil
-        #endif
+        let ttftTrace: TTFTTrace? = TTFTTrace.makeIfEnabled()
         let httpTrace = HTTPTraceRecorder(ttftTrace)
         req.ttftTrace = ttftTrace
         // Billing dedupe for Router-bound requests: header-supplied or

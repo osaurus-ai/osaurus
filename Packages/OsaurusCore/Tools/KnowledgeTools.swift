@@ -373,6 +373,7 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
             )
         }
         let body: String
+        var extraFields: [KnowledgeFrontmatterField] = []
         if KnowledgeIndexService.isMarkdown(fileURL) {
             guard let raw = try? String(contentsOf: fileURL, encoding: .utf8) else {
                 return ToolEnvelope.failure(
@@ -382,7 +383,9 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
                     retryable: true
                 )
             }
-            body = KnowledgeDocumentParser.parse(markdown: raw).body
+            let parsed = KnowledgeDocumentParser.parse(markdown: raw)
+            body = parsed.body
+            extraFields = parsed.frontmatter.extras
         } else {
             DocumentAdaptersBootstrap.registerBuiltIns()
             guard let adapter = DocumentFormatRegistry.shared.adapter(for: fileURL),
@@ -435,6 +438,11 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
             out += "type: \(document.effectiveType)\(document.isTypeInferred ? " (inferred)" : "")\n"
         }
         if !document.tagsCSV.isEmpty { out += "tags: \(document.tagsCSV)\n" }
+        // Non-reserved frontmatter (e.g. `status`, `sensitivity`) is not
+        // indexed, but is passed through so agents can read and honor it.
+        for field in extraFields {
+            out += "\(field.key): \(field.value.replacingOccurrences(of: "\n", with: "\n  "))\n"
+        }
         out += "\n" + content
         if truncated {
             out += "\n\n[Truncated at \(Self.maxContentChars) characters — use `section` to read a specific part.]"

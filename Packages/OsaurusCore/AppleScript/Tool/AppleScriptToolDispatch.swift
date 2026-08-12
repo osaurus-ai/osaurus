@@ -76,6 +76,66 @@ enum AppleScriptToolDispatch {
         return text
     }
 
+    /// Promote a `contents` that arrived as a plain string into the single-entry
+    /// map the schema declares.
+    ///
+    /// `content` (one verbatim string) and `contents` (a `{name: text}` map of
+    /// several) sit side by side with near-identical names, and a model that
+    /// reaches for the plural with one block gets a hard
+    /// `invalid_args: Property 'contents' must be an object`. Observed live on
+    /// Raptor: two consecutive rejections of that shape and the turn collapsed
+    /// into a verbatim repetition loop that spent the whole token budget.
+    ///
+    /// Promotion is lossless rather than a reinterpretation — the value is
+    /// passed through verbatim to a `{{content}}` placeholder either way, so
+    /// this accepts exactly what the model meant by the singular field. It
+    /// yields to an explicit `content` rather than clobbering it, and a
+    /// `contents` that is already an object is untouched.
+    ///
+    /// Read path only. `normalizeAutomationArguments` deliberately returns an
+    /// unrecognized `contents` string untouched so arbitrary text is never
+    /// reinterpreted as user data before a WRITE; promotion must not weaken
+    /// that. A read compares against the value either way, so there is no
+    /// equivalent risk here.
+    /// - Parameter requiredField: the tool's own natural-language field
+    ///   (`question` for a read). When that field is absent, a lone string is
+    ///   read as the request itself rather than as a verbatim literal.
+    static func promotingStringContents(
+        _ argumentsJSON: String, requiredField: String? = nil
+    ) -> String {
+        guard let data = argumentsJSON.data(using: .utf8),
+            var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let encoded = object["contents"] as? String
+        else { return argumentsJSON }
+        guard !encoded.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return argumentsJSON
+        }
+
+        // Observed live on Raptor: `{"contents":"what is the frontmost
+        // application's name"}` — the request itself, under the literals field,
+        // with no `question` at all. Promoting that to `content` only trades
+        // "must be an object" for "missing required property", so when the
+        // required field is absent the string is the request.
+        let destination: String
+        if let requiredField, object[requiredField] == nil {
+            destination = requiredField
+        } else if object["content"] == nil {
+            destination = "content"
+        } else {
+            return argumentsJSON
+        }
+
+        object.removeValue(forKey: "contents")
+        object[destination] = encoded
+        guard let cleaned = try? JSONSerialization.data(
+            withJSONObject: object,
+            options: [.sortedKeys]
+        ), let text = String(data: cleaned, encoding: .utf8)
+        else { return argumentsJSON }
+        debugLog("[AppleScript] promoted string `contents` to `\(destination)`")
+        return text
+    }
+
     /// Parse the single natural-language argument (`field`) + optional
     /// `max_steps` + optional verbatim literals (`content` and/or `contents`),
     /// then run a configured `AppleScriptKind` on the subagent host. Returns the

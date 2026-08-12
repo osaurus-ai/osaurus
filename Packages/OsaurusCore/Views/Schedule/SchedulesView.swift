@@ -2541,7 +2541,7 @@ struct ScheduleEditorSheet: View {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
-        panel.canCreateDirectories = false
+        panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.title = L("Select Working Directory")
         panel.prompt = L("Select")
