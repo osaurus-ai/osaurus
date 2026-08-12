@@ -123,7 +123,8 @@ public actor CoreModelService {
         maxTokens: Int = 2048,
         timeout: TimeInterval = 60,
         fallbackModel: String? = nil,
-        intent: CoreModelIntent = .interactive
+        intent: CoreModelIntent = .interactive,
+        modelOverride: String? = nil
     ) async throws -> String {
         try await generate(
             prompt: prompt,
@@ -133,10 +134,16 @@ public actor CoreModelService {
             timeout: timeout,
             fallbackModel: fallbackModel,
             intent: intent,
+            modelOverride: modelOverride,
             modelOptions: [:]
         )
     }
 
+    /// - Parameter modelOverride: When set, this identifier is used as the
+    ///   primary model in place of the globally-configured core model (the
+    ///   chat-model fallback still applies). Lets a caller route a specific
+    ///   auxiliary call — e.g. a per-agent follow-up model — without changing
+    ///   the shared Core Model setting.
     func generate(
         prompt: String,
         systemPrompt: String? = nil,
@@ -145,12 +152,22 @@ public actor CoreModelService {
         timeout: TimeInterval = 60,
         fallbackModel: String? = nil,
         intent: CoreModelIntent = .interactive,
+        modelOverride: String? = nil,
         modelOptions: [String: ModelOptionValue]
     ) async throws -> String {
         try checkBreakerOrEnterHalfOpen()
 
-        let configured = await MainActor.run {
-            ChatConfigurationStore.load().coreModelIdentifier
+        // A per-call override wins over the shared Core Model setting; empty
+        // strings are treated as "no override" so callers can pass raw config.
+        // The `await` can't live in a `??` autoclosure, so resolve it up front
+        // and only read settings when there's no override.
+        let configured: String?
+        if let override = Self.normaliseFallback(modelOverride) {
+            configured = override
+        } else {
+            configured = await MainActor.run {
+                ChatConfigurationStore.load().coreModelIdentifier
+            }
         }
         let fallback = Self.normaliseFallback(fallbackModel)
         let messages = buildMessages(prompt: prompt, systemPrompt: systemPrompt)
