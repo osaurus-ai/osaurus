@@ -16,6 +16,7 @@
 //  height cache.
 //
 
+import AppKit
 import SwiftUI
 
 struct FollowUpSuggestionsBar: View {
@@ -124,6 +125,13 @@ struct FollowUpSuggestionsBar: View {
         )
         .onHover { hovering in
             hoveredIndex = hovering ? index : (hoveredIndex == index ? nil : hoveredIndex)
+            // Pointing-hand cursor over a tappable suggestion. push/pop stays
+            // balanced because `onHover` fires exactly once per enter/exit.
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
         }
         .animation(.easeOut(duration: 0.15), value: hoveredIndex)
         .help(suggestion)
