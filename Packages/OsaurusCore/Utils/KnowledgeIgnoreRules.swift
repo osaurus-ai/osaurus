@@ -20,8 +20,8 @@
 
 import Foundation
 
-public struct KnowledgeIgnoreRules {
-    private struct Rule {
+public struct KnowledgeIgnoreRules: Sendable {
+    private struct Rule: Sendable {
         /// Concrete `KnowledgeGlob` patterns that, if any matches the
         /// relative path, count as this rule matching.
         let patterns: [String]
