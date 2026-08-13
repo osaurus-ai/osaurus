@@ -93,7 +93,7 @@ public actor KnowledgeIndexService {
         }
 
         DocumentAdaptersBootstrap.registerBuiltIns()
-        let files = scanIndexableFiles(in: folderURL)
+        let files = scanIndexableFiles(in: folderURL, collection: collection)
         let existingHashes = (try? KnowledgeDatabase.shared.documentHashes(collectionId: collectionId)) ?? [:]
         // Existing rows' categories, for backfilling inference on the skip
         // path: rows indexed before inference existed have an unchanged
@@ -340,7 +340,7 @@ public actor KnowledgeIndexService {
     /// code, pdf, docx, xlsx, …). Hidden entries are skipped by the
     /// enumerator; symlinks are skipped explicitly so a link out of the
     /// folder can't smuggle external content into the index.
-    private func scanIndexableFiles(in folderURL: URL) -> [URL] {
+    private func scanIndexableFiles(in folderURL: URL, collection: KnowledgeCollection) -> [URL] {
         let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .isDirectoryKey, .fileSizeKey]
         guard
             let enumerator = FileManager.default.enumerator(
@@ -350,6 +350,7 @@ public actor KnowledgeIndexService {
             )
         else { return [] }
 
+        let hasGlobs = !collection.includeGlobs.isEmpty || !collection.excludeGlobs.isEmpty
         var files: [URL] = []
         var overflow = 0
         for case let url as URL in enumerator {
@@ -365,6 +366,11 @@ public actor KnowledgeIndexService {
             let isMarkdown = Self.markdownExtensions.contains(ext)
             guard isMarkdown || DocumentFormatRegistry.shared.adapter(for: url) != nil else {
                 continue
+            }
+            // Per-collection include/exclude filter (membership, not ranking).
+            if hasGlobs {
+                let relPath = relativePath(of: url, under: folderURL)
+                if !relPath.isEmpty, !collection.indexPathAllowed(relPath) { continue }
             }
             guard let values = try? url.resourceValues(forKeys: Set(keys)) else { continue }
             if values.isSymbolicLink == true { continue }
