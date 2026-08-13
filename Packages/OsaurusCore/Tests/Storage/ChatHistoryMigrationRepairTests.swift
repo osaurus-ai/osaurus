@@ -249,6 +249,75 @@ struct ChatHistoryMigrationRepairTests {
         }
     }
 
+    // MARK: - Forward-compatible open (schema ahead of this build)
+
+    /// A DB stamped by a *newer* build (`user_version = 15`, carrying an extra
+    /// additive `sessions.project_id` column this build doesn't know) must open
+    /// rather than be refused — refusing rendered the sidebar empty and read as
+    /// "all my history is gone after updating". Opening must preserve the
+    /// existing turns, leave the on-disk version stamp untouched (so a future
+    /// newer build still recognizes its own schema), and still accept new saves.
+    @Test
+    func schemaAheadOpensForwardCompatibleAndPreservesHistory() async throws {
+        try await runWithPlaintextRoot {
+            let sid = UUID()
+
+            // A realistic v15 DB carries every column through v14 (all the
+            // session + turn migrations) plus the newer additive `project_id`.
+            // Forward-compatible open skips the migration ladder, so the fixture
+            // must already have every column the read/write SQL references.
+            var statements = [Self.createSessionsV1]
+            statements += Self.alterV3 + Self.alterV4
+            statements += [
+                "ALTER TABLE sessions ADD COLUMN folder_bookmark BLOB",
+                "ALTER TABLE sessions ADD COLUMN folder_path TEXT",
+                "ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+            ]
+            statements.append(Self.createTurnsV1)
+            statements +=
+                Self.alterV2 + Self.alterV5 + Self.alterV6 + Self.alterV7
+                + Self.alterV8 + Self.alterV12 + Self.alterV13 + Self.alterV14
+            // A hypothetical newer (v15) additive column this build never reads.
+            statements += ["ALTER TABLE sessions ADD COLUMN project_id TEXT"]
+            statements += [
+                """
+                INSERT INTO sessions (id, title, created_at, updated_at, source, turn_count, archived, capabilities)
+                VALUES ('\(sid.uuidString)', 'From a newer build', 1000, 2000, 'chat', 1, 0, '')
+                """,
+                """
+                INSERT INTO turns (id, session_id, seq, role, content)
+                VALUES ('\(UUID().uuidString)', '\(sid.uuidString)', 0, 'user', 'written before the downgrade')
+                """,
+                "PRAGMA user_version = 15",
+            ]
+            try self.seedChatHistoryDB(statements)
+
+            let db = ChatHistoryDatabase()
+            try db.open()  // must NOT throw on a version-ahead DB
+            defer { db.close() }
+
+            // Version stamp is left intact so a future newer build still owns it.
+            #expect(self.diskUserVersion() == 15)
+
+            // Existing history is readable, not lost.
+            let loaded = db.loadSession(id: sid)
+            #expect(loaded?.turns.count == 1)
+            #expect(loaded?.turns.first?.content == "written before the downgrade")
+            #expect(db.loadAllMetadata().contains { $0.id == sid })
+
+            // New saves still work against the version-ahead file.
+            let newId = UUID()
+            try db.saveSession(
+                ChatSessionData(
+                    id: newId,
+                    title: "saved by older build",
+                    turns: [ChatTurnData(role: .assistant, content: "ok")]
+                )
+            )
+            #expect(db.loadSession(id: newId)?.turns.count == 1)
+        }
+    }
+
     // MARK: - Fresh database
 
     /// Guard against migration regressions: a brand-new (empty) database

@@ -192,15 +192,28 @@ final class SearchKnowledgeTool: OsaurusTool, @unchecked Sendable {
             )
         }
 
+        KnowledgeDebugLog.log("search_knowledge", "ENTER query=\(query.prefix(80))")
+        let t0 = KnowledgeDebugLog.now()
+
+        KnowledgeDebugLog.log("search_knowledge", "resolving agent grant scope")
         let scope = await KnowledgeToolScope.resolve(
             tool: name,
             collectionName: args["collection"] as? String
         )
         guard case .granted(let collections) = scope else {
+            KnowledgeDebugLog.log("search_knowledge", "scope resolution failed/rejected; returning")
             if case .failure(let envelope) = scope { return envelope }
             return ""
         }
-        if let envelope = KnowledgeToolScope.ensureDatabaseOpen(tool: name) { return envelope }
+        KnowledgeDebugLog.log(
+            "search_knowledge",
+            "scope granted: \(collections.count) collection(s) in \(KnowledgeDebugLog.ms(since: t0))ms"
+        )
+        KnowledgeDebugLog.log("search_knowledge", "ensureDatabaseOpen")
+        if let envelope = KnowledgeToolScope.ensureDatabaseOpen(tool: name) {
+            KnowledgeDebugLog.log("search_knowledge", "database unavailable; returning")
+            return envelope
+        }
 
         let tagFilter = ((args["tags"] as? [Any]) ?? []).compactMap { $0 as? String }
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -214,10 +227,20 @@ final class SearchKnowledgeTool: OsaurusTool, @unchecked Sendable {
         let collectionIds = collections.map { $0.id.uuidString }
         let nameById = KnowledgeToolScope.namesById(collections)
 
+        KnowledgeDebugLog.log(
+            "search_knowledge",
+            "calling KnowledgeSearchService.search topK=\(fetchCount) collections=\(collectionIds.count)"
+        )
+        let tSearch = KnowledgeDebugLog.now()
         var hits = await KnowledgeSearchService.shared.search(
             query: query,
             collectionIds: collectionIds,
             topK: fetchCount
+        )
+        KnowledgeDebugLog.log(
+            "search_knowledge",
+            "search returned \(hits.count) hit(s) in \(KnowledgeDebugLog.ms(since: tSearch))ms "
+                + "(total \(KnowledgeDebugLog.ms(since: t0))ms)"
         )
         if !tagFilter.isEmpty {
             hits = hits.filter { KnowledgeToolScope.matchesTags($0.tagsCSV, filter: tagFilter) }
@@ -226,6 +249,19 @@ final class SearchKnowledgeTool: OsaurusTool, @unchecked Sendable {
 
         if hits.isEmpty {
             let scopeNote = collections.count == 1 ? " in collection '\(collections[0].name)'" : ""
+            // A collection mid-index has an incomplete corpus, so an empty
+            // result may be transient. Tell the model to retry rather than
+            // conclude the material doesn't exist.
+            let indexing = await MainActor.run {
+                collections.contains { KnowledgeManager.shared.indexingCollectionIds.contains($0.id) }
+            }
+            if indexing {
+                return ToolEnvelope.success(
+                    tool: name,
+                    text: "No matches for '\(query)' yet\(scopeNote) — this collection is still "
+                        + "indexing, so its content is not fully searchable. Retry in a moment."
+                )
+            }
             return ToolEnvelope.success(
                 tool: name,
                 text: "No knowledge documents match '\(query)'\(scopeNote)."
@@ -388,6 +424,7 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
             )
         }
         let body: String
+        var extraFields: [KnowledgeFrontmatterField] = []
         if KnowledgeIndexService.isMarkdown(fileURL) {
             guard let raw = try? String(contentsOf: fileURL, encoding: .utf8) else {
                 return ToolEnvelope.failure(
@@ -397,7 +434,9 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
                     retryable: true
                 )
             }
-            body = KnowledgeDocumentParser.parse(markdown: raw).body
+            let parsed = KnowledgeDocumentParser.parse(markdown: raw)
+            body = parsed.body
+            extraFields = parsed.frontmatter.extras
         } else {
             DocumentAdaptersBootstrap.registerBuiltIns()
             guard let adapter = DocumentFormatRegistry.shared.adapter(for: fileURL),
@@ -425,11 +464,26 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
                 $0.headingPath.range(of: section, options: .caseInsensitive) != nil
             }
             guard !matching.isEmpty else {
-                let sections = Set(chunks.map(\.headingPath).filter { !$0.isEmpty })
+                let sectionList = Set(chunks.map(\.headingPath).filter { !$0.isEmpty })
                     .sorted().prefix(30).joined(separator: "; ")
+                // A document with no headings at all (e.g. source code or a
+                // flat text file) can never match a section. Say so and tell
+                // the model to drop `section` — otherwise it loops re-issuing
+                // the same doomed call against an empty section list.
+                guard !sectionList.isEmpty else {
+                    return ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "`\(relPath)` has no headings, so it can't be filtered by "
+                            + "`section`. Re-read it without the `section` argument to get "
+                            + "the full document.",
+                        field: "section",
+                        expected: "omit `section` for documents without headings",
+                        tool: name
+                    )
+                }
                 return ToolEnvelope.failure(
                     kind: .notFound,
-                    message: "No section matching `\(section)` in `\(relPath)`. Sections: \(sections)",
+                    message: "No section matching `\(section)` in `\(relPath)`. Sections: \(sectionList)",
                     tool: name
                 )
             }
@@ -450,6 +504,11 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
             out += "type: \(document.effectiveType)\(document.isTypeInferred ? " (inferred)" : "")\n"
         }
         if !document.tagsCSV.isEmpty { out += "tags: \(document.tagsCSV)\n" }
+        // Non-reserved frontmatter (e.g. `status`, `sensitivity`) is not
+        // indexed, but is passed through so agents can read and honor it.
+        for field in extraFields {
+            out += "\(field.key): \(field.value.replacingOccurrences(of: "\n", with: "\n  "))\n"
+        }
         out += "\n" + content
         if truncated {
             out += "\n\n[Truncated at \(Self.maxContentChars) characters — use `section` to read a specific part.]"

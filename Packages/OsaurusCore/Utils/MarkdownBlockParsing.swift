@@ -453,7 +453,10 @@ private func tryParseBlockMath(_ trimmed: Substring, lines: [Substring], from i:
         // Single-line: open content close
         if afterOpener.hasSuffix(delim.close) && afterOpener.count > delim.close.count {
             let latex = String(afterOpener.dropLast(delim.close.count)).trimmingCharacters(in: .whitespaces)
-            guard !latex.isEmpty, looksLikeLatex(latex) else { return nil }
+            // Both delimiters on one line is unambiguous, so `$$O(n)$$` is math even
+            // though it carries no LaTeX syntax. The multi-line scan below still
+            // requires a signal, because there a stray `$$` can swallow prose.
+            guard !latex.isEmpty else { return nil }
             return BlockMathResult(latex: latex, nextIndex: i + 1)
         }
 
@@ -479,8 +482,9 @@ private func tryParseBlockMath(_ trimmed: Substring, lines: [Substring], from i:
     return nil
 }
 
-/// A block-math segment only counts as math when its content contains a LaTeX-ish
-/// character (`\`, `^`, `_`, `{`). Prevents currency or stray `$$` runs from being typeset.
+/// A multi-line block-math segment only counts as math when its content contains a
+/// LaTeX-ish character (`\`, `^`, `_`, `{`), so a pair of stray `$$` runs several lines
+/// apart cannot swallow the prose between them.
 @inline(__always)
 private func looksLikeLatex(_ s: String) -> Bool {
     for scalar in s.unicodeScalars {

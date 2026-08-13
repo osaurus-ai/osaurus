@@ -664,11 +664,6 @@ struct SelectableTextView: NSViewRepresentable {
         text.contains("*") || text.contains("_") || text.contains("`") || text.contains("[") || text.contains("~")
     }
 
-    @inline(__always)
-    private func containsInlineMath(_ text: String) -> Bool {
-        text.contains("$") || text.contains("\\(")
-    }
-
     private func renderInlineMarkdown(
         _ text: String,
         fontSize: CGFloat,
@@ -683,8 +678,8 @@ struct SelectableTextView: NSViewRepresentable {
         ]
 
         // Check for inline math — if present, split and render segments
-        if containsInlineMath(text) {
-            let segments = splitInlineMath(text)
+        if InlineMathScanner.mayContainMath(text) {
+            let segments = InlineMathScanner.split(text)
             if segments.contains(where: { $0.isMath }) {
                 return renderSegmentsWithMath(
                     segments,
@@ -718,135 +713,11 @@ struct SelectableTextView: NSViewRepresentable {
 
     // MARK: - Inline Math Helpers
 
-    private struct InlineSegment {
-        let text: String
-        let isMath: Bool
-    }
-
-    /// A delimited segment only counts as math when its content contains a LaTeX-ish
-    /// character. This prevents currency runs (e.g. `$100 ... $200`) from being typeset.
-    @inline(__always)
-    private func looksLikeLatex(_ s: String) -> Bool {
-        for scalar in s.unicodeScalars {
-            switch scalar {
-            case "\\", "^", "_", "{": return true
-            default: continue
-            }
-        }
-        return false
-    }
-
-    /// Split text into alternating plain-text and math segments.
-    /// Handles `$...$` (no whitespace padding) and `\(...\)` delimiters.
-    /// Spans whose content does not look like LaTeX are emitted as literal text so the
-    /// outer scanner can still match a real math span later on the same line.
-    private func splitInlineMath(_ text: String) -> [InlineSegment] {
-        var segments: [InlineSegment] = []
-        var current = ""
-        let scalars = Array(text.unicodeScalars)
-        var i = 0
-
-        @inline(__always)
-        func flushText() {
-            if !current.isEmpty {
-                segments.append(InlineSegment(text: current, isMath: false))
-                current = ""
-            }
-        }
-
-        @inline(__always)
-        func peek(_ offset: Int) -> Unicode.Scalar? {
-            let idx = i + offset
-            return idx < scalars.count ? scalars[idx] : nil
-        }
-
-        @inline(__always)
-        func slice(_ from: Int, _ to: Int) -> String {
-            String(String.UnicodeScalarView(scalars[from ..< to]))
-        }
-
-        @inline(__always)
-        func emitMath(_ content: String, advanceTo nextIndex: Int) {
-            flushText()
-            segments.append(InlineSegment(text: content, isMath: true))
-            i = nextIndex
-        }
-
-        while i < scalars.count {
-            let c = scalars[i]
-
-            // \(...\) delimiter
-            if c == "\\", peek(1) == "(" {
-                if let closeIdx = findClosingParen(scalars, from: i + 2) {
-                    let content = slice(i + 2, closeIdx)
-                    if !content.isEmpty, looksLikeLatex(content) {
-                        emitMath(content, advanceTo: closeIdx + 2)
-                        continue
-                    }
-                }
-                // Not real math (or unclosed): treat `\(` as literal text and resume scanning.
-                current.append("\\(")
-                i += 2
-                continue
-            }
-
-            // Escaped \$ — not a math delimiter
-            if c == "\\", peek(1) == "$" {
-                current.append("$")
-                i += 2
-                continue
-            }
-
-            // $...$ delimiter — require non-whitespace after opening and before closing $
-            if c == "$",
-                let after = peek(1),
-                !after.properties.isWhitespace,
-                after != "$",
-                let closeIdx = findClosingDollar(scalars, from: i + 1)
-            {
-                let content = slice(i + 1, closeIdx)
-                if looksLikeLatex(content) {
-                    emitMath(content, advanceTo: closeIdx + 1)
-                    continue
-                }
-                // Currency/plain text: fall through, keeping the `$` literal.
-            }
-
-            current.append(String(c))
-            i += 1
-        }
-
-        flushText()
-        return segments
-    }
-
-    /// Find the index of a closing `\)` for an opening `\(`.
-    private func findClosingParen(_ scalars: [Unicode.Scalar], from start: Int) -> Int? {
-        var j = start
-        while j + 1 < scalars.count {
-            if scalars[j] == "\\" && scalars[j + 1] == ")" {
-                return j
-            }
-            j += 1
-        }
-        return nil
-    }
-
-    /// Find the index of a closing `$` whose preceding character is not whitespace.
-    private func findClosingDollar(_ scalars: [Unicode.Scalar], from start: Int) -> Int? {
-        var j = start
-        while j < scalars.count {
-            if scalars[j] == "$", j > 0, !scalars[j - 1].properties.isWhitespace {
-                return j
-            }
-            j += 1
-        }
-        return nil
-    }
+    // The delimiter rules live in `InlineMathScanner` so they can be tested without a view.
 
     /// Build an attributed string from mixed text/math segments.
     private func renderSegmentsWithMath(
-        _ segments: [InlineSegment],
+        _ segments: [InlineMathScanner.Segment],
         fontSize: CGFloat,
         weight: NSFont.Weight,
         isItalic: Bool,
@@ -874,8 +745,8 @@ struct SelectableTextView: NSViewRepresentable {
                     )
                     result.append(NSAttributedString(attachment: attachment))
                 } else {
-                    // Fallback: render the raw LaTeX as code-styled text
-                    let fallback = NSMutableAttributedString(string: "$\(segment.text)$", attributes: baseAttributes)
+                    // Typesetter rejected it — show the source exactly as written.
+                    let fallback = NSMutableAttributedString(string: segment.fallback, attributes: baseAttributes)
                     result.append(fallback)
                 }
             } else {

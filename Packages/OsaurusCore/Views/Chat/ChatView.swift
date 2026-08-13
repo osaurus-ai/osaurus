@@ -561,6 +561,20 @@ final class ChatSession: ObservableObject {
     /// `ChatView` observes this to drive auto-speak. Not set on stop/error.
     @Published var lastCompletedAssistantTurnId: UUID?
 
+    /// AI-suggested follow-up questions for the most recent completed turn,
+    /// rendered as clickable rows beneath the assistant response when the
+    /// `generateFollowUpSuggestions` setting is on. Transient (not persisted):
+    /// they're a live nicety for the current turn, cleared as soon as the user
+    /// sends again or the run is cancelled/errors. `followUpTurnId` pins them
+    /// to the turn they belong to so a stale set never renders under a newer
+    /// message.
+    @Published var followUpSuggestions: [String] = []
+    @Published var followUpTurnId: UUID?
+    /// Latches per completed turn so a re-entrant cleanup can't fire a second
+    /// generation for the same turn. A failed attempt clears it (see
+    /// `maybeGenerateFollowUps`) so the next clean completion may retry.
+    private var followUpGenerationStarted = false
+
     /// Weak back-reference to the owning window state (set by ChatWindowState).
     weak var windowState: ChatWindowState?
 
@@ -1632,11 +1646,13 @@ final class ChatSession: ObservableObject {
         // Display-time only, like coalescing/rollup: the LLM compaction
         // divider never enters the memoizer cache, so per-turn incremental
         // regeneration keeps its stable ids.
-        let newBlocks = insertCompactionMarkerIfNeeded(
-            into: blockMemoizer.blocks(
-                from: effectiveTurns,
-                streamingTurnId: streamingTurnId,
-                agentName: displayName
+        let newBlocks = insertFollowUpSuggestionsIfNeeded(
+            into: insertCompactionMarkerIfNeeded(
+                into: blockMemoizer.blocks(
+                    from: effectiveTurns,
+                    streamingTurnId: streamingTurnId,
+                    agentName: displayName
+                )
             )
         )
         let newHeaderMap = blockMemoizer.groupHeaderMap
@@ -1669,6 +1685,22 @@ final class ChatSession: ObservableObject {
         var result = blocks
         result.insert(
             .compactionMarker(summary: summary, afterTurnId: lastCoveredId),
+            at: lastIndex + 1
+        )
+        return result
+    }
+
+    /// Inject the follow-up suggestions row right after the last block of the
+    /// turn the suggestions belong to (its `assistantActions` footer), so they
+    /// read as the tail of that assistant message and scroll with it. Display-
+    /// time only, like the compaction marker — never enters the block cache.
+    private func insertFollowUpSuggestionsIfNeeded(into blocks: [ContentBlock]) -> [ContentBlock] {
+        guard !followUpSuggestions.isEmpty, let turnId = followUpTurnId,
+            let lastIndex = blocks.lastIndex(where: { $0.turnId == turnId })
+        else { return blocks }
+        var result = blocks
+        result.insert(
+            .followUpSuggestions(turnId: turnId, suggestions: followUpSuggestions),
             at: lastIndex + 1
         )
         return result
@@ -2471,6 +2503,7 @@ final class ChatSession: ObservableObject {
         sessionId = nil
         title = "New Chat"
         autoTitleGenerationStarted = false
+        clearFollowUpSuggestions()
         createdAt = Date()
         updatedAt = Date()
         source = .chat
@@ -2874,6 +2907,9 @@ final class ChatSession: ObservableObject {
         // A session that already completed an exchange has a settled title
         // (generated or preview); only a still-empty session stays eligible.
         autoTitleGenerationStarted = data.turns.contains { $0.role == .assistant }
+        // Follow-ups are transient and per-turn; a loaded session starts with
+        // none (they'd re-generate only on the next clean completion).
+        clearFollowUpSuggestions()
         createdAt = data.createdAt
         updatedAt = data.updatedAt
         agentId = data.agentId
@@ -3136,6 +3172,85 @@ final class ChatSession: ObservableObject {
     func deleteTurn(id: UUID) {
         guard let index = turns.firstIndex(where: { $0.id == id }) else { return }
         turns = Array(turns.prefix(index))
+        isDirty = true
+        rebuildVisibleBlocks()
+        save()
+    }
+
+    /// Remove a single assistant turn (and the tool turns that belong to it)
+    /// while keeping every other turn in the conversation intact.
+    ///
+    /// Unlike `deleteTurn(id:)`, which truncates from the given turn onward,
+    /// this excises just one response. When the assistant turn issued tool
+    /// calls, the following `.tool` turns carrying their results are orphaned
+    /// the moment the assistant message goes away — a `tool` message with no
+    /// preceding `tool_calls` is an invalid request shape that providers
+    /// reject — so we drop those paired result turns together. Dropping the
+    /// turn from `turns` is enough for both model requests and the context
+    /// token estimate to stop counting it, since both derive from `turns`.
+    func removeTurn(id: UUID) {
+        guard let index = turns.firstIndex(where: { $0.id == id }) else { return }
+        let turn = turns[index]
+
+        var indicesToRemove = IndexSet(integer: index)
+
+        // Assistant turns that made tool calls own the `.tool` result turns that
+        // immediately follow them; those results reference the call ids and must
+        // leave with the assistant message so the remaining sequence stays valid.
+        if turn.role == .assistant, let calls = turn.toolCalls, !calls.isEmpty {
+            let callIds = Set(calls.map { $0.id })
+            var cursor = index + 1
+            while cursor < turns.count, turns[cursor].role == .tool {
+                if let toolCallId = turns[cursor].toolCallId, callIds.contains(toolCallId) {
+                    indicesToRemove.insert(cursor)
+                }
+                cursor += 1
+            }
+        }
+
+        turns.remove(atOffsets: indicesToRemove)
+        isDirty = true
+        rebuildVisibleBlocks()
+        save()
+    }
+
+    /// Remove the whole exchange an assistant turn belongs to: the user turn
+    /// that prompted it plus every assistant/tool turn that answered that
+    /// prompt. Deleting an assistant reply on its own strands the user message
+    /// (the next request would show an unanswered question the model just
+    /// re-answers), so this is the coherent "drop this Q&A and keep the rest"
+    /// operation. The exchange is the contiguous run from the nearest preceding
+    /// `user` turn up to (but not including) the next `user` turn, which keeps
+    /// tool-call/result pairings inside the block intact.
+    func removeExchange(anchoredAt id: UUID) {
+        guard let index = turns.firstIndex(where: { $0.id == id }) else { return }
+
+        // Walk back to the user turn that opened this exchange. If there's no
+        // preceding user turn (e.g. an unprompted opening assistant message),
+        // anchor the block at the turn itself.
+        var start = index
+        var back = index
+        while back >= 0 {
+            if turns[back].role == .user {
+                start = back
+                break
+            }
+            back -= 1
+        }
+
+        // Walk forward to just before the next user turn; everything in between
+        // is part of answering the same prompt.
+        var end = turns.count - 1
+        var forward = index + 1
+        while forward < turns.count {
+            if turns[forward].role == .user {
+                end = forward - 1
+                break
+            }
+            forward += 1
+        }
+
+        turns.removeSubrange(start...end)
         isDirty = true
         rebuildVisibleBlocks()
         save()
@@ -3588,6 +3703,7 @@ final class ChatSession: ObservableObject {
         rebuildVisibleBlocks()
         save()
         maybeGenerateAutoTitle()
+        maybeGenerateFollowUps()
         if !suppressQueuedSendFlushForCurrentRun {
             flushQueuedSendIfEligible()
         }
@@ -3707,6 +3823,102 @@ final class ChatSession: ObservableObject {
         ChatSessionsManager.shared.renameQuietly(id: sid, title: newTitle)
         // Update the open chat's header only if it still shows this session.
         if sessionId == sid { title = newTitle }
+    }
+
+    // MARK: - Follow-Up Suggestions
+
+    /// Clear any rendered follow-up suggestions and reset the per-turn latch.
+    /// Called when a new send supersedes the previous turn and whenever the
+    /// current turn is cancelled/errors before we'd want to suggest anything.
+    private func clearFollowUpSuggestions() {
+        followUpGenerationStarted = false
+        followUpTurnId = nil
+        let hadSuggestions = !followUpSuggestions.isEmpty
+        if hadSuggestions { followUpSuggestions = [] }
+        // Drop the injected row from the thread. Guarded by
+        // `rebuildVisibleBlocks`'s own suppression during session switches.
+        if hadSuggestions { rebuildVisibleBlocks() }
+    }
+
+    /// Kick off a background follow-up suggestion generation after a clean run
+    /// completion, when the setting is on. Fire-and-forget: the awaits suspend
+    /// rather than block the main actor, and any failure leaves no suggestions
+    /// rendered. Latches per turn; a failed attempt re-arms so a later clean
+    /// completion of the *same* turn (e.g. after a regeneration) may retry.
+    /// Mirrors `maybeGenerateAutoTitle`'s eligibility and re-arm contract.
+    private func maybeGenerateFollowUps() {
+        // Follow-ups are enabled by the GLOBAL switch; each agent then shapes
+        // them via its own `AgentFollowUpConfig` (prompt / rules / model).
+        guard
+            !followUpGenerationStarted,
+            AppConfiguration.shared.chatConfig.generateFollowUpSuggestions,
+            source == .chat,
+            // A cancelled or errored run isn't a representative exchange.
+            !stopRequested,
+            lastStreamError == nil,
+            let sid = sessionId
+        else { return }
+
+        // Suggest from the last user message and the assistant reply it
+        // produced — the same "last exchange" the reference design keys on.
+        let turnData = turns.map { ChatTurnData(from: $0) }
+        guard
+            let assistantTurn = turnData.last(where: {
+                $0.role == .assistant
+                    && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }),
+            let userTurn = turnData.last(where: { $0.role == .user }),
+            let liveAssistantId = turns.last(where: {
+                $0.role == .assistant
+                    && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            })?.id
+        else { return }
+
+        followUpGenerationStarted = true
+        let userText = userTurn.content
+        let assistantText = assistantTurn.content
+        let fallbackModel = selectedModel
+        // Per-agent model override (the only follow-up config). The Default
+        // agent carries none, so it falls back to `.empty` → shared core model.
+        let followUpModelOverride =
+            agentId.flatMap { AgentManager.shared.agent(for: $0)?.settings.followUp.modelIdentifier }
+        Task { [weak self] in
+            let suggestions = await FollowUpSuggestionService.shared.generateSuggestions(
+                userMessage: userText,
+                assistantResponse: assistantText,
+                fallbackModel: fallbackModel,
+                modelOverride: followUpModelOverride
+            )
+            guard let self, self.sessionId == sid else { return }
+            guard !suggestions.isEmpty else {
+                // Transient miss (no resident model, timeout, open breaker):
+                // re-arm for the next clean completion of this session.
+                self.followUpGenerationStarted = false
+                return
+            }
+            // Drop the result if the conversation moved on while the model
+            // was thinking — the user sent again, or the turn we keyed on is
+            // no longer the last assistant message.
+            let stillCurrent = self.turns.last(where: {
+                $0.role == .assistant
+                    && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            })?.id == liveAssistantId
+            guard stillCurrent else { return }
+            self.followUpTurnId = liveAssistantId
+            self.followUpSuggestions = suggestions
+            // Inject the row into the thread (display-time), so it scrolls with
+            // the assistant message rather than floating above the composer.
+            self.rebuildVisibleBlocks()
+        }
+    }
+
+    /// Submit a tapped follow-up suggestion as the next user turn. Clears the
+    /// suggestion rows first (via `send`) so they don't linger under the older
+    /// message while the new response streams.
+    func sendFollowUp(_ suggestion: String) {
+        let trimmed = suggestion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isStreaming, activeRunId == nil else { return }
+        send(trimmed)
     }
 
     /// Generate an AI title on demand from the `/title` slash command. Unlike
@@ -4968,6 +5180,11 @@ final class ChatSession: ObservableObject {
     }
 
     func send(_ text: String, attachments: [Attachment] = []) {
+        // The user's clock starts here, not when generation does. Everything
+        // below — the warm-up handshake especially, which can wait out a whole
+        // container load — happens before there is a trace to record it, so the
+        // reported TTFT excluded it and the wait was unattributable. See #2347.
+        let sendRequestedAt = Date()
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
         let isRegeneration = !hasContent && !turns.isEmpty
@@ -4993,6 +5210,11 @@ final class ChatSession: ObservableObject {
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
         }
+
+        // A new send supersedes the previous turn's follow-up suggestions:
+        // clear them so stale rows never linger beneath an older message while
+        // the next response streams in.
+        clearFollowUpSuggestions()
 
         // The LLM compaction summary must line up with the transcript this
         // send will build from; regenerations/edits that rewrote covered
@@ -5026,7 +5248,12 @@ final class ChatSession: ObservableObject {
         // Only a model switch still settling or an in-flight warm-up
         // generation requires the async handshake first.
         guard warmupController.needsPreSendHandshake else {
-            dispatchSend(trimmed: trimmed, attachments: attachments, hasContent: hasContent)
+            dispatchSend(
+                trimmed: trimmed,
+                attachments: attachments,
+                hasContent: hasContent,
+                sendRequestedAt: sendRequestedAt
+            )
             return
         }
 
@@ -5070,7 +5297,9 @@ final class ChatSession: ObservableObject {
                 hasContent: hasContent,
                 preAppendedUserTurn: preAppendedUserTurn,
                 preAppendIntroducedFirstTurn: preAppendIntroducedFirstTurn,
-                expectedPreSendHandshakeEpoch: handshakeEpoch
+                expectedPreSendHandshakeEpoch: handshakeEpoch,
+                sendRequestedAt: sendRequestedAt,
+                awaitedPreSendHandshake: true
             )
         }
     }
@@ -5084,7 +5313,9 @@ final class ChatSession: ObservableObject {
         hasContent: Bool,
         preAppendedUserTurn: ChatTurn? = nil,
         preAppendIntroducedFirstTurn: Bool = false,
-        expectedPreSendHandshakeEpoch: UInt64? = nil
+        expectedPreSendHandshakeEpoch: UInt64? = nil,
+        sendRequestedAt: Date = Date(),
+        awaitedPreSendHandshake: Bool = false
     ) {
         // The pre-send task already checks this after its await. Keep the same
         // guard at the dispatch boundary so future refactors cannot restore
@@ -5318,11 +5549,14 @@ final class ChatSession: ObservableObject {
                     }
                 #endif
 
-                #if DEBUG
-                    let ttftTrace: TTFTTrace? = TTFTTrace()
-                #else
-                    let ttftTrace: TTFTTrace? = nil
-                #endif
+                // Backdate to the send so the first phase covers the wait the
+                // user sat through, then close that phase immediately — every
+                // later mark stays relative and comparable to previous traces.
+                let ttftTrace: TTFTTrace? = TTFTTrace.makeIfEnabled(
+                    start: sendRequestedAt.timeIntervalSinceReferenceDate
+                )
+                ttftTrace?.mark("pre_send_wait")
+                ttftTrace?.set("awaited_pre_send_handshake", awaitedPreSendHandshake)
                 do {
                     let engine = chatEngineFactory(source.inferenceSource)
                     let chatCfg = ChatConfigurationStore.load()
@@ -6622,7 +6856,12 @@ final class ChatSession: ObservableObject {
                                                     hasStructuredToolWorkThisRun,
                                                 isRemoteAgentTarget:
                                                     self.isRemoteAgentTarget
-                                            )
+                                            ),
+                                        // On the first turn no tool has run yet,
+                                        // so `requiresVisibleFinalResponse` is
+                                        // false and a reasoning-only stop would
+                                        // otherwise count as a finished answer.
+                                        toolsWereOffered: !iterationToolSpecs.isEmpty
                                     )
                                 }
                                 hasStructuredToolWorkThisRun = true
@@ -7183,6 +7422,7 @@ final class ChatSession: ObservableObject {
             sessionId = nil
             title = "New Chat"
             autoTitleGenerationStarted = false
+            clearFollowUpSuggestions()
             createdAt = Date()
             updatedAt = createdAt
             isDirty = false
@@ -7196,6 +7436,31 @@ final class ChatSession: ObservableObject {
 
         guard !turns.isEmpty else { return }
         save()
+    }
+}
+
+/// Backs the "also delete your message" checkbox in the delete-response
+/// confirmation. Held as a `@StateObject` by `ChatView` and reset before each
+/// prompt; observing it (rather than a plain `@State` binding) guarantees the
+/// checkbox re-renders live inside the global themed-alert host.
+@MainActor
+final class DeleteMessageOptions: ObservableObject {
+    @Published var alsoDeleteUserMessage: Bool = false
+}
+
+/// Checkbox rendered as the delete-response confirmation accessory. Ticking it
+/// escalates the delete from "just this response" to the whole exchange.
+private struct DeleteAlsoUserMessageToggle: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject var options: DeleteMessageOptions
+
+    var body: some View {
+        Toggle(isOn: $options.alsoDeleteUserMessage) {
+            Text("Also delete my message", bundle: .module)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+        }
+        .toggleStyle(.checkbox)
     }
 }
 
@@ -7258,6 +7523,16 @@ struct ChatView: View {
     // What's New modal
     @State private var pendingWhatsNew: WhatsNewRelease? = nil
     @State private var showAutoSpeakPrompt: Bool = false
+    /// Drives the confirmation before deleting an assistant response. The
+    /// pending turn id is captured so the confirm button knows what to excise;
+    /// `deleteMessageOptions.alsoDeleteUserMessage` is the dialog checkbox that
+    /// decides whether the prompting user turn goes too. The warning gains an
+    /// extra line when the response made tool calls or is folded into a
+    /// compaction summary.
+    @State private var showDeleteAssistantMessagePrompt: Bool = false
+    @State private var pendingDeleteAssistantTurnId: UUID?
+    @State private var deleteAssistantMessageWarning: String = ""
+    @StateObject private var deleteMessageOptions = DeleteMessageOptions()
     /// Presents the credits top-up sheet, opened from the out-of-credits modal
     /// or the composer's credits chip.
     @State private var showTopUpSheet: Bool = false
@@ -7282,6 +7557,49 @@ struct ChatView: View {
     private var theme: ThemeProtocol { windowState.theme }
 
     /// Balance-aware copy for the out-of-credits modal.
+    /// The run blocking this send, when it is a detached background task rather
+    /// than another open window. `nil` means a visible window owns the slot and
+    /// the original "wait for that reply" wording is accurate.
+    private var blockingDetachedTaskId: UUID? {
+        BackgroundTaskManager.shared.detachedTaskStreamingLocalModel(
+            excludingSession: session)
+    }
+
+    /// Telling someone to "wait for that reply to finish" is only true while a
+    /// window still shows the reply. When the owning window was closed the run
+    /// detaches and keeps the single local-model slot, so that sentence sends
+    /// the user to look for something that does not exist — reported in #2343,
+    /// where the only way out was restarting the app.
+    private var localModelBusyMessage: String {
+        blockingDetachedTaskId == nil
+            ? L(
+                "Only one local model can run at a time, and another chat window is using it right now. Wait for that reply to finish, or switch this chat to a remote model."
+            )
+            : L(
+                "Only one local model can run at a time. A reply is still running in the background from a chat window you closed. Reopen it to watch it finish, stop it to free the model, or switch this chat to a remote model."
+            )
+    }
+
+    /// The cancel capability already existed (`BackgroundTaskManager.cancelTask`)
+    /// and so did the reattach path (`openTaskWindow`); neither was reachable
+    /// from the point where the user is actually blocked. Offer both here, and
+    /// only here — this deliberately does not change whether a backgrounded run
+    /// keeps the lock, which is a product decision left open in #2343.
+    private var localModelBusyButtons: [AlertButtonConfig] {
+        guard let taskId = blockingDetachedTaskId else {
+            return [.cancel(L("OK"))]
+        }
+        return [
+            .destructive(L("Stop it")) {
+                BackgroundTaskManager.shared.cancelTask(taskId)
+            },
+            .primary(L("Reopen it")) {
+                BackgroundTaskManager.shared.openTaskWindow(taskId)
+            },
+            .cancel(L("Not now")),
+        ]
+    }
+
     private var insufficientFundsMessage: String {
         String(
             localized:
@@ -7573,15 +7891,20 @@ struct ChatView: View {
                 secondaryButton: .cancel(L("No"))
             )
             .themedAlert(
+                L("Delete this response?"),
+                isPresented: $showDeleteAssistantMessagePrompt,
+                message: deleteAssistantMessageWarning.isEmpty ? nil : deleteAssistantMessageWarning,
+                accessory: AnyView(DeleteAlsoUserMessageToggle(options: deleteMessageOptions)),
+                buttons: [
+                    .cancel(L("Cancel")),
+                    .destructive(L("Delete")) { performDeleteAssistantMessage() },
+                ]
+            )
+            .themedAlert(
                 L("A local model is already running"),
                 isPresented: $windowState.showLocalModelBusyAlert,
-                message:
-                    L(
-                        "Only one local model can run at a time, and another chat window is using it right now. Wait for that reply to finish, or switch this chat to a remote model."
-                    ),
-                buttons: [
-                    .cancel(L("OK"))
-                ]
+                message: localModelBusyMessage,
+                buttons: localModelBusyButtons
             )
             .themedAlert(
                 L("You're out of credits"),
@@ -7864,6 +8187,10 @@ struct ChatView: View {
                                     theme.springAnimation(),
                                     value: observedSession.runProgressState
                                 )
+
+                            // Follow-up suggestions render as a thread row
+                            // beneath the assistant message (see
+                            // `insertFollowUpSuggestionsIfNeeded`), not here.
 
                             // Floating input card. Dimmed and
                             // hit-test-disabled while a prompt overlay
@@ -8656,11 +8983,14 @@ struct ChatView: View {
                 onEdit: beginEditingTurn,
                 onDelete: deleteTurn,
                 onSpeak: speakTurnContent,
+                onFollowUpTap: { session.sendFollowUp($0) },
+                onDeleteMessage: confirmDeleteAssistantMessage,
                 editingTurnId: editingTurnId,
                 editText: $editText,
                 onConfirmEdit: confirmEditAndRegenerate,
                 onCancelEdit: cancelEditing,
                 onUserImagePreview: openUserAttachmentPreview(attachmentId:),
+                onImagePreviewImage: { userImagePreview = $0 },
                 onDocumentPreview: { pastedContentPreview = $0 },
                 onVisibleTopUserTurnChanged: { turnId in
                     activeMinimapTurnId = turnId
@@ -8880,11 +9210,14 @@ private struct IsolatedThreadView: View {
     let onEdit: ((UUID) -> Void)?
     let onDelete: ((UUID) -> Void)?
     let onSpeak: ((UUID) -> Void)?
+    let onFollowUpTap: ((String) -> Void)?
+    let onDeleteMessage: ((UUID) -> Void)?
     let editingTurnId: UUID?
     let editText: Binding<String>?
     let onConfirmEdit: (() -> Void)?
     let onCancelEdit: (() -> Void)?
     let onUserImagePreview: ((String) -> Void)?
+    var onImagePreviewImage: ((NSImage) -> Void)? = nil
     var onDocumentPreview: ((Attachment) -> Void)? = nil
     var onVisibleTopUserTurnChanged: ((UUID?) -> Void)? = nil
     var scrollToTurnId: UUID? = nil
@@ -8925,11 +9258,14 @@ private struct IsolatedThreadView: View {
             onEdit: onEdit,
             onDelete: onDelete,
             onSpeak: onSpeak,
+            onFollowUpTap: onFollowUpTap,
+            onDeleteMessage: onDeleteMessage,
             editingTurnId: editingTurnId,
             editText: editText,
             onConfirmEdit: onConfirmEdit,
             onCancelEdit: onCancelEdit,
             onUserImagePreview: onUserImagePreview,
+            onImagePreviewImage: onImagePreviewImage,
             onDocumentPreview: onDocumentPreview,
             onVisibleTopUserTurnChanged: onVisibleTopUserTurnChanged,
             scrollToTurnId: scrollToTurnId,
@@ -9084,6 +9420,79 @@ extension ChatView {
     private func deleteTurn(turnId: UUID) {
         if session.isStreaming { session.stop() }
         session.deleteTurn(id: turnId)
+        discardSessionIfEmptied()
+    }
+
+    /// Ask before deleting an assistant response. Deleting mid-thread can change
+    /// what later turns were answering, so we always confirm. The dialog offers
+    /// an "also delete my message" checkbox that escalates the delete to the
+    /// whole exchange. The wording gains a line when the turn carries tool calls
+    /// (its tool results leave with it) or is covered by a compaction summary
+    /// (the summary still references it until the next compaction).
+    private func confirmDeleteAssistantMessage(turnId: UUID) {
+        guard let turn = session.turns.first(where: { $0.id == turnId }),
+            turn.role == .assistant
+        else { return }
+
+        let hasToolCalls = !(turn.toolCalls?.isEmpty ?? true)
+        let isSummarized = session.conversationSummary?.coveredTurnIds.contains(turnId) ?? false
+
+        // Primary line: local models reuse the KV cache on the longest common
+        // token prefix, so deleting from the middle of the conversation forces
+        // the turns after the deletion point to be re-processed on the next send
+        // — surface that heads-up. Remote models manage their own caching, so
+        // they get the plain description instead of a bare dialog.
+        var lines: [String] = []
+        if session.selectedModelIsLocal {
+            lines.append(
+                L("Deleting from the middle of the conversation may make the next reply take a little longer to start, since everything after this point has to be reprocessed.")
+            )
+        } else {
+            lines.append(
+                L("This removes this response from the conversation. It won't be sent to the model on later turns.")
+            )
+        }
+        if hasToolCalls {
+            lines.append(
+                L("Any tool calls in this response and their results will be removed together.")
+            )
+        }
+        if isSummarized {
+            lines.append(
+                L("This response is part of a conversation summary, so deleting it may affect the meaning of later turns.")
+            )
+        }
+        deleteAssistantMessageWarning = lines.joined(separator: "\n\n")
+        deleteMessageOptions.alsoDeleteUserMessage = false
+        pendingDeleteAssistantTurnId = turnId
+        showDeleteAssistantMessagePrompt = true
+    }
+
+    private func performDeleteAssistantMessage() {
+        guard let turnId = pendingDeleteAssistantTurnId else { return }
+        pendingDeleteAssistantTurnId = nil
+        if session.isStreaming { session.stop() }
+        if deleteMessageOptions.alsoDeleteUserMessage {
+            session.removeExchange(anchoredAt: turnId)
+        } else {
+            session.removeTurn(id: turnId)
+        }
+        discardSessionIfEmptied()
+    }
+
+    /// A delete can empty the conversation (e.g. removing the only exchange).
+    /// `save()` skips empty conversations, so the stale rows would otherwise
+    /// survive and reappear on reopen. Mirror the sidebar's delete of the
+    /// current session: cancel any live run, reset the window to a fresh chat,
+    /// drop the persisted row, and refresh the history list.
+    private func discardSessionIfEmptied() {
+        guard session.turns.isEmpty, let id = session.sessionId else { return }
+        if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: id) {
+            BackgroundTaskManager.shared.cancelTask(liveTask.id)
+        }
+        session.reset()
+        ChatSessionsManager.shared.delete(id: id)
+        windowState.refreshSessions()
     }
 
     // MARK: - Inline Editing

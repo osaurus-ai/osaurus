@@ -19,17 +19,61 @@ import Foundation
 
 final class TTFTTrace: @unchecked Sendable {
 
+    /// A trace when tracing is on for this build, `nil` otherwise.
+    ///
+    /// Phase timings existed but were `#if DEBUG` only, so the build users
+    /// actually run recorded nothing — which is why "did prefill get slower"
+    /// could not be answered either way from a user's machine. The load phase
+    /// in particular (`load_container_start` → `load_container_done`) is the
+    /// one a user waits through and the one the reported TTFT excludes.
+    ///
+    /// Release keeps tracing OFF by default; `OSAURUS_TTFT_TRACE=1` turns it
+    /// on so a real report can come back with real phase numbers.
+    /// `start` backdates the trace's origin. The phase a user actually waits
+    /// through can begin before there is anything to attach a trace to — a send
+    /// can block on an in-flight warm-up that loads the whole container first,
+    /// and that happens before generation, so a trace created at generation time
+    /// starts the clock after the wait is over and reports a TTFT that excludes
+    /// it. Passing the moment the user hit send puts that phase back inside.
+    static func makeIfEnabled(
+        start: CFAbsoluteTime? = nil,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> TTFTTrace? {
+        isEnabled(environment: environment) ? TTFTTrace(start: start) : nil
+    }
+
+    static func isEnabled(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        if let raw = environment["OSAURUS_TTFT_TRACE"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        {
+            // An explicit setting wins in every configuration, so a debug
+            // build can be quietened and a release build can be opened up.
+            return !["0", "false", "no", "off", ""].contains(raw)
+        }
+        #if DEBUG
+            return true
+        #else
+            return false
+        #endif
+    }
+
     private struct Mark {
         let name: String
         let time: CFAbsoluteTime
     }
 
-    private let created: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+    private let created: CFAbsoluteTime
     private var marks: [Mark] = []
     private var metadata: [(String, String)] = []
     private let lock = NSLock()
 
     private static let path = "/tmp/osaurus_ttft_trace.log"
+
+    init(start: CFAbsoluteTime? = nil) {
+        created = start ?? CFAbsoluteTimeGetCurrent()
+    }
 
     /// Record a named checkpoint. Call this at the boundary between phases.
     func mark(_ name: String) {
@@ -46,17 +90,19 @@ final class TTFTTrace: @unchecked Sendable {
         lock.unlock()
     }
 
-    /// Write the full trace block to disk. Call once per generation.
-    func emit() {
+    /// Render the trace block. Separate from `emit()` so the phase arithmetic —
+    /// in particular that a backdated start lands in the first phase rather than
+    /// being dropped — can be asserted without writing to a shared file.
+    func render(now: Date = Date()) -> String? {
         lock.lock()
         let snapshot = marks
         let meta = metadata
         lock.unlock()
 
-        guard !snapshot.isEmpty else { return }
+        guard !snapshot.isEmpty else { return nil }
 
         var lines: [String] = []
-        let dateStr = ISO8601DateFormatter().string(from: Date())
+        let dateStr = ISO8601DateFormatter().string(from: now)
         lines.append("═══ TTFT Trace \(dateStr) ═══")
 
         // Phase durations: time between consecutive marks
@@ -81,8 +127,12 @@ final class TTFTTrace: @unchecked Sendable {
             }
         }
         lines.append("")
+        return lines.joined(separator: "\n") + "\n"
+    }
 
-        let block = lines.joined(separator: "\n") + "\n"
+    /// Write the full trace block to disk. Call once per generation.
+    func emit() {
+        guard let block = render() else { return }
         guard let data = block.data(using: .utf8) else { return }
 
         if FileManager.default.fileExists(atPath: Self.path) {

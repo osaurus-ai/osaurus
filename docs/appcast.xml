@@ -3,6 +3,54 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.20</title>
+            <pubDate>Tue, 11 Aug 2026 01:42:01 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.20</sparkle:version>
+            <sparkle:shortVersionString>0.22.20</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.20/Osaurus-0.22.20.dmg" length="70752490" type="application/octet-stream" sparkle:edSignature="plWpbvbcVu+H4jU75y3661+PkJv6BxVq9crjJatf5urUti+8+CD1oHZhmv8fGv1kgBIoVlDqiD8dz+MZTyd2Dw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Repin vmlx to the Muse Glimmer vision fix (#2341) by @jjang-ai
+- Fix the Muse Glimmer vision path: placeholders never rendered or matched (#2340) by @jjang-ai
+- Prove all four Muse Glimmer reasoning strengths reach the template (#2339) by @jjang-ai
+- Bound capability group-load schemas + repin vmlx (Muse Glimmer runtime) (#2336) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.19...0.22.20
+]]></description>
+        </item>
+        <item>
+            <title>0.22.19</title>
+            <pubDate>Mon, 10 Aug 2026 13:24:29 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.19</sparkle:version>
+            <sparkle:shortVersionString>0.22.19</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.19/Osaurus-0.22.19.dmg" length="70705679" type="application/octet-stream" sparkle:edSignature="YV8X7wBhvDjPPpcD+sEMG7PJUo5LBxWIdjfe1Y5fNx283KmJ99kfyaipS8VKlC0oh3ljNQkzJx3wTozZ2dDfBw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Repin vmlx: capture cache boundaries during prefill (fixes a family that could never populate its cache) (#2335) by @jjang-ai
+- Download large model shards as parallel HTTP Range requests (#1960) by @jjang-ai
+- AppleScript subagent: tell the caller the repair that actually works (#2334) by @jjang-ai
+- Repin vmlx: refuse truncated model shards, and stop the post-answer stall on every warm turn (#2333) by @jjang-ai
+- Fix first-turn double prefill (warmup cache-salt mismatch), warmup tool-scope kill, cache-size settings hazards; repin vmlx (#2331) by @jjang-ai
+- DSV4 Flash integration: vmlx repin (fastpaths + weight-leak fix), warmup triple-prefill fix, reload memory verdict (#2328) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- fix context impact ability count chip wrapping to two lines (#2323) by @RaajeevChandran
+- Refresh MCP catalogs and streamline Tools management (#2322) by @tpae
+- fix tts drift on long text with per sentence synthesis (#2321) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.18...0.22.19
+]]></description>
+        </item>
+        <item>
             <title>0.22.18</title>
             <pubDate>Fri, 07 Aug 2026 20:40:37 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

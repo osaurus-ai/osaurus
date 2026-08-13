@@ -483,8 +483,13 @@ final class ChatWindowState: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
     }
 
-    func refreshTheme() {
-        let newTheme = Self.loadTheme(for: agentId)
+    /// `freshAgent` lets callers that already hold the up-to-date agent (e.g.
+    /// the `applyAgentsUpdate` sink, which runs during `@Published`'s `willSet`
+    /// while `AgentManager.shared.agents` still holds the OLD array) resolve the
+    /// theme from that fresh value instead of re-reading the stale singleton —
+    /// otherwise the window's theme trails a per-agent theme change by one.
+    func refreshTheme(freshAgent: Agent? = nil) {
+        let newTheme = Self.loadTheme(for: agentId, freshAgent: freshAgent)
         let oldConfig = theme.customThemeConfig
         let newConfig = newTheme.customThemeConfig
         // Skip only if the full config is identical (not just the ID) and the
@@ -661,7 +666,10 @@ final class ChatWindowState: ObservableObject {
         session.invalidateTokenCache(preservingPromptShapeBaseline: true)
 
         if newActive.themeId != oldActive.themeId {
-            refreshTheme()
+            // Resolve from `newActive`: the singleton's `agents` is still the old
+            // array during this `willSet` sink, so re-reading it would apply the
+            // previous theme (a one-change lag).
+            refreshTheme(freshAgent: newActive)
         }
     }
 
@@ -693,8 +701,13 @@ final class ChatWindowState: ObservableObject {
         RemoteProviderManager.shared.removeProvider(id: providerId)
     }
 
-    private static func loadTheme(for agentId: UUID) -> ThemeProtocol {
-        if let themeId = AgentManager.shared.themeId(for: agentId),
+    private static func loadTheme(for agentId: UUID, freshAgent: Agent? = nil) -> ThemeProtocol {
+        // Prefer an explicitly-supplied fresh agent over the singleton, which can
+        // still be mid-update (see `refreshTheme(freshAgent:)`). The Default agent
+        // always uses the global theme, matching `AgentManager.themeId(for:)`.
+        let agent = freshAgent ?? AgentManager.shared.agent(for: agentId)
+        if let agent, agent.id != Agent.defaultId,
+            let themeId = agent.themeId,
             let custom = ThemeManager.shared.installedThemes.first(where: { $0.metadata.id == themeId })
         {
             return CustomizableTheme(config: custom)

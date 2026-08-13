@@ -1533,20 +1533,98 @@ final class PluginManager {
         toolsRootDirectory().appendingPathComponent(".quarantine", isDirectory: false)
     }
 
+    /// One `.quarantine` row.
+    ///
+    /// The file started life as a bare `[String]` of plugin ids, which made a
+    /// quarantine permanent: a plugin that aborted once stayed skipped after the
+    /// user upgraded the plugin *or* the app, with nothing to signal that the
+    /// cause was gone. Observed on a real install — `osaurus.calendar` sat
+    /// quarantined across app rebuilds and loaded cleanly the moment the row was
+    /// dropped. Rows now record which plugin version crashed and under which
+    /// host build, so upgrading either releases the row for one fresh attempt.
+    /// Legacy bare-string rows decode with nil stamps and stay permanent,
+    /// matching how they were written.
+    struct QuarantineEntry: Codable, Sendable, Equatable {
+        let id: String
+        var version: String?
+        var build: String?
+    }
+
+    /// The running host build, compared against `QuarantineEntry.build`.
+    nonisolated static func hostBuildIdentifier() -> String? {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String
+    }
+
+    nonisolated static func quarantineEntries() -> [QuarantineEntry] {
+        guard let data = try? Data(contentsOf: quarantineURL()) else { return [] }
+        if let entries = try? JSONDecoder().decode([QuarantineEntry].self, from: data) {
+            return entries
+        }
+        // Pre-stamp file: a JSON array of bare ids.
+        if let ids = try? JSONDecoder().decode([String].self, from: data) {
+            return ids.map { QuarantineEntry(id: $0, version: nil, build: nil) }
+        }
+        return []
+    }
+
     nonisolated static func quarantinedPluginIds() -> Set<String> {
-        guard let data = try? Data(contentsOf: quarantineURL()),
-            let ids = try? JSONDecoder().decode([String].self, from: data)
-        else { return [] }
-        return Set(ids)
+        Set(quarantineEntries().map(\.id))
+    }
+
+    /// Writes `entries`, deleting the file outright when empty —
+    /// ``quarantineEntries()`` treats a missing file and `[]` alike, but the
+    /// Retry path's contract is that emptying removes the file.
+    private nonisolated static func writeQuarantineEntries(_ entries: [QuarantineEntry]) {
+        let url = quarantineURL()
+        guard !entries.isEmpty else {
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
+        if let data = try? JSONEncoder().encode(entries) {
+            try? data.write(to: url)
+        }
     }
 
     private nonisolated static func addToQuarantine(_ pluginId: String) {
-        var ids = quarantinedPluginIds()
-        ids.insert(pluginId)
-        if let data = try? JSONEncoder().encode(Array(ids)) {
-            try? data.write(to: quarantineURL())
-        }
+        var entries = quarantineEntries().filter { $0.id != pluginId }
+        entries.append(
+            QuarantineEntry(
+                id: pluginId,
+                version: installedVersionDirectory(forPluginId: pluginId)?.lastPathComponent,
+                build: hostBuildIdentifier()
+            )
+        )
+        writeQuarantineEntries(entries)
         NSLog("[Osaurus] Quarantined plugin '%@' after crash during load", pluginId)
+    }
+
+    /// Consumes the quarantine row for `pluginId` when what crashed is no longer
+    /// what is installed, returning `true` when the caller should attempt the
+    /// load.
+    ///
+    /// The row is **removed** rather than merely ignored: if this attempt
+    /// crashes too, `.currently_loading` re-quarantines with the new stamp, so
+    /// the crash-loop guard still holds and the same (plugin version, host
+    /// build) pair is never retried twice.
+    nonisolated static func releaseQuarantineIfUpgraded(
+        pluginId: String,
+        installedVersion: String?,
+        hostBuild: String? = hostBuildIdentifier()
+    ) -> Bool {
+        let entries = quarantineEntries()
+        guard let entry = entries.first(where: { $0.id == pluginId }) else { return true }
+        // A legacy row records nothing about what crashed, so there is nothing
+        // to compare against — leave it for the explicit Retry button.
+        guard entry.version != nil || entry.build != nil else { return false }
+        let versionChanged = entry.version != nil && entry.version != installedVersion
+        let buildChanged = entry.build != nil && entry.build != hostBuild
+        guard versionChanged || buildChanged else { return false }
+        writeQuarantineEntries(entries.filter { $0.id != pluginId })
+        NSLog(
+            "[Osaurus] Releasing quarantined plugin '%@' for one retry (crashed at version %@ under build %@)",
+            pluginId, entry.version ?? "unknown", entry.build ?? "unknown"
+        )
+        return true
     }
 
     nonisolated static func clearQuarantine() {
@@ -1560,14 +1638,9 @@ final class PluginManager {
     /// every other quarantined plugin too, which surprises users who
     /// only intended to retry one.
     nonisolated static func removeFromQuarantine(_ pluginId: String) {
-        var ids = quarantinedPluginIds()
-        guard ids.remove(pluginId) != nil else { return }
-        let url = quarantineURL()
-        if ids.isEmpty {
-            try? FileManager.default.removeItem(at: url)
-        } else if let data = try? JSONEncoder().encode(Array(ids)) {
-            try? data.write(to: url)
-        }
+        let entries = quarantineEntries()
+        guard entries.contains(where: { $0.id == pluginId }) else { return }
+        writeQuarantineEntries(entries.filter { $0.id != pluginId })
         // Wipe the loading marker too — it's the matched cause for
         // most quarantine entries (a SIGABRT inside init or
         // `on_config_changed`), and leaving it would re-quarantine
@@ -1648,6 +1721,35 @@ final class PluginManager {
         close(fd)
     }
 
+    /// The version directory a plugin id currently resolves to: the `current`
+    /// symlink when present, else the highest SemVer directory. Shared by the
+    /// load scan and the quarantine stamp so both agree on "what is installed".
+    nonisolated static func resolveVersionDirectory(_ pluginDir: URL) -> URL? {
+        let fm = FileManager.default
+        let currentLink = pluginDir.appendingPathComponent("current", isDirectory: false)
+        if let dest = try? fm.destinationOfSymbolicLink(atPath: currentLink.path) {
+            return pluginDir.appendingPathComponent(dest, isDirectory: true)
+        }
+        guard
+            let entries = try? fm.contentsOfDirectory(
+                at: pluginDir,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+        else { return nil }
+        let versions: [(SemanticVersion, URL)] = entries.compactMap { url in
+            guard url.hasDirectoryPath else { return nil }
+            guard let v = SemanticVersion.parse(url.lastPathComponent) else { return nil }
+            return (v, url)
+        }
+        return versions.sorted(by: { $0.0 > $1.0 }).first?.1
+    }
+
+    private nonisolated static func installedVersionDirectory(forPluginId pluginId: String) -> URL? {
+        resolveVersionDirectory(
+            toolsRootDirectory().appendingPathComponent(pluginId, isDirectory: true))
+    }
+
     /// Returns dylib URLs to load and a dictionary of verification failures (pluginId -> error message)
     nonisolated static func toolsDirectoryURLsWithFailures() -> (urls: [URL], failures: [String: String]) {
         promoteStaleLoadingMarker()
@@ -1670,8 +1772,16 @@ final class PluginManager {
 
         for pluginDir in pluginDirs where pluginDir.hasDirectoryPath {
             let pluginId = pluginDir.lastPathComponent
+            // Resolved before the quarantine check so the row's recorded
+            // version can be compared against what is installed right now.
+            let versionDir = resolveVersionDirectory(pluginDir)
 
-            if quarantined.contains(pluginId) {
+            if quarantined.contains(pluginId),
+                !releaseQuarantineIfUpgraded(
+                    pluginId: pluginId,
+                    installedVersion: versionDir?.lastPathComponent
+                )
+            {
                 // Surfaced verbatim in PluginsView and the AgentsView
                 // "Failed" tab — point users at the in-app Retry /
                 // Uninstall buttons rather than the legacy
@@ -1680,26 +1790,6 @@ final class PluginManager {
                 failures[pluginId] =
                     "Plugin quarantined after a crash during load — use the Retry or Uninstall button below to recover."
                 continue
-            }
-
-            let currentLink = pluginDir.appendingPathComponent("current", isDirectory: false)
-            var versionDir: URL?
-            if let dest = try? fm.destinationOfSymbolicLink(atPath: currentLink.path) {
-                versionDir = pluginDir.appendingPathComponent(dest, isDirectory: true)
-            } else {
-                // Fallback: pick highest SemVer
-                if let entries = try? fm.contentsOfDirectory(
-                    at: pluginDir,
-                    includingPropertiesForKeys: nil,
-                    options: [.skipsHiddenFiles]
-                ) {
-                    let versions: [(SemanticVersion, URL)] = entries.compactMap { url in
-                        guard url.hasDirectoryPath else { return nil }
-                        guard let v = SemanticVersion.parse(url.lastPathComponent) else { return nil }
-                        return (v, url)
-                    }
-                    versionDir = versions.sorted(by: { $0.0 > $1.0 }).first?.1
-                }
             }
 
             guard let vdir = versionDir else {

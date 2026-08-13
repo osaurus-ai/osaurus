@@ -135,6 +135,40 @@ final class ChatSessionsManager: ObservableObject {
         Task { await SandboxWorkspaceChangeTracker.shared.purgeSession(id.uuidString) }
     }
 
+    /// Delete every session owned by an agent. Strict ownership match, unlike
+    /// `sessions(for:)`: the Default agent's "show everything" view must not
+    /// turn a per-agent wipe into an all-agents wipe, so only sessions whose
+    /// `agentId` matches (or is nil, for the Default agent's own chats) are
+    /// removed.
+    ///
+    /// The in-memory list and selection update synchronously (the UI must
+    /// reflect the wipe immediately); the database rows, artifact
+    /// directories, and sandbox change records are removed on background
+    /// queues — a large history deleted through per-session `delete(id:)`
+    /// calls would park the main thread behind N synchronous transactions.
+    /// Returns once the database batch has finished.
+    func deleteAll(for agentId: UUID) async {
+        let owned = sessions.filter { session in
+            session.agentId == agentId
+                || (agentId == Agent.defaultId && session.agentId == nil)
+        }
+        guard !owned.isEmpty else { return }
+        let ids = owned.map(\.id)
+        let idSet = Set(ids)
+        if let current = currentSessionId, idSet.contains(current) {
+            currentSessionId = nil
+        }
+        sessions.removeAll { idSet.contains($0.id) }
+        for id in ids {
+            Task { await SandboxWorkspaceChangeTracker.shared.purgeSession(id.uuidString) }
+        }
+        await withCheckedContinuation { continuation in
+            ChatSessionStore.deleteBatch(ids: ids) {
+                continuation.resume()
+            }
+        }
+    }
+
     /// Rename a session.
     ///
     /// Pulls from the in-memory list first because new sessions are only

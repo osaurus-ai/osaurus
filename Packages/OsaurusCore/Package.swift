@@ -168,9 +168,55 @@ let package = Package(
         // generations died mid-stream at the 499000 allocator wall.
         // Conventional KV topologies report zero retention and are never
         // capped (VMLX_METAL_BUFFER_COUNT_GUARD=0 disables).
+        // vmlx-swift#228 parses GLM/DeepSeek tool calls that take no
+        // arguments. `GLM4ToolCallParser` read the function name as
+        // everything before the first <arg_key> and returned nil when there
+        // was none, so `<tool_call>list_mailboxes</tool_call>` — the only way
+        // to invoke a tool that declares no parameters — was discarded.
+        // Nothing downstream can tell that from a silent model: the envelope
+        // is consumed as non-content, the turn carries no text and no tool
+        // work, the empty-turn nudges re-elicit the same correct call, and
+        // the run ends on `emptyToolTaskFallback`. Reproduced on Raptor 1.0
+        // 16B with the Mail capability loaded. The route covers GLM-4.x/5,
+        // DeepSeek V3 aliases, Laguna/Raptor, Poolside and Ling/Bailing.
+        // vmlx-swift#229 halts generation when the visible output collapses
+        // into a verbatim cycle. Observed on Raptor after two consecutive
+        // `invalid_args` rejections: the turn repeated one sentence pair to
+        // the token cap and recorded no terminal stop reason at all. Firing
+        // needs a unit repeated 4x, 32+ characters, AND primitive at that
+        // scale — a run of `---` or `| | |` repeats at period 32 too, so a
+        // length floor alone would truncate real answers. VMLX_REPETITION_STOP=0
+        // disables it.
+        // vmlx-swift#230 consumes Muse Glimmer's tool-recipient channel
+        // headers. The parser knew `to=self` and `to=user`; a tool call names
+        // the TOOL as recipient, so `to=<tool><|message|>` matched no spelling
+        // and streamed verbatim into the reasoning rail — consistently at the
+        // end of the first think block, and stored in `thinking` where history
+        // replayed it back to the model as prose. `to=user` still closes
+        // reasoning and `to=self` still opens it.
+        // vmlx-swift#234 implements the Nemotron-H native MTP head (270
+        // `mtp.*` tensors that `sanitize` previously dropped) and declines
+        // speculation whenever the KV window is bounded, since a
+        // `RotatingKVCache` cannot un-write a rejected draft.
+        //
+        // The head is DEFAULT OFF behind `VMLX_NEMOTRON_MTP`. Measured on
+        // Lightning 30B-A3B: D2 is 0.84x — 16 % SLOWER than plain
+        // autoregressive at 72.4 % accept — and D3 is 0.48x, both
+        // token-identical. A 3 B-active model is not purely bandwidth-bound,
+        // so the two-token verify batch costs +46 % instead of ~0 %. D1 is the
+        // shipped path; turning MTP on is an explicit per-machine decision.
+        // vmlx-swift#250 makes LFM2.5-VL usable: the `<image>` id was resolved
+        // with `convertTokenToId`, which returns the UNK id rather than nil for
+        // a bundle that spells the token differently, so every image expanded
+        // against the wrong placeholder; the expansion also ran once per turn
+        // instead of once per placeholder, which trapped in
+        // `mergeInputIdsWithImageFeatures` as soon as a turn carried two
+        // images. Tool schemas now reach `LMInput` on both the text and image
+        // paths, and the pythonic parser accepts the `function`/`parameters`
+        // spelling this bundle emits, so an offered tool is no longer dropped.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "fd7ce91cde0be283c817142d96c9b3f87efcc5e5"
+            revision: "a983c6fcda0cb1616807f47fa2de94ffaec7e8bf"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

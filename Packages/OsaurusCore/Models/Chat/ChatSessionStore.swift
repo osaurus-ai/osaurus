@@ -235,6 +235,45 @@ enum ChatSessionStore {
         removeArtifacts(for: id)
     }
 
+    /// Bulk delete for the per-agent wipe. Unlike `delete(id:)`, the DB rows
+    /// are removed behind one background hop on the database queue and the
+    /// artifact directories are removed off the main thread, so wiping a
+    /// large history can't trip the app-hang watchdog. `completion` is
+    /// invoked on the main actor once the database batch has finished.
+    static func deleteBatch(ids: [UUID], completion: (@MainActor @Sendable () -> Void)? = nil) {
+        guard !ids.isEmpty else {
+            completion?()
+            return
+        }
+        for id in ids {
+            pendingSaves.removeValue(forKey: id)
+        }
+        Task.detached(priority: .utility) {
+            for id in ids {
+                let artifactsDir = OsaurusPaths.contextArtifactsDir(contextId: id.uuidString)
+                try? FileManager.default.removeItem(at: artifactsDir)
+            }
+        }
+        ensureOpen()
+        guard didOpen else {
+            pendingDeletes.formUnion(ids)
+            completion?()
+            return
+        }
+        ChatHistoryDatabase.shared.deleteSessionsAsync(
+            ids: ids,
+            onDropped: { dropped in
+                // Same launch-race recovery as `delete(id:)`: the database
+                // closed between enqueue and dequeue (key rotation), so
+                // requeue the ids for the next readiness signal.
+                Task { @MainActor in pendingDeletes.formUnion(dropped) }
+            },
+            completion: {
+                Task { @MainActor in completion?() }
+            }
+        )
+    }
+
     private static func flushPendingDeletes() {
         guard !pendingDeletes.isEmpty else { return }
         let drained = pendingDeletes

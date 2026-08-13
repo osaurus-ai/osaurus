@@ -164,12 +164,23 @@ enum AgentLoopModelStep {
     /// 29K-character Gemma thought block had no answer, but its saved artifact
     /// lacked terminal provenance, so this classifier relies on live stop and
     /// envelope state rather than inferring completion from reasoning alone.
+    /// - Parameter toolsWereOffered: whether the model could have called
+    ///   something on this step. A reasoning-only stop is a legitimate finish
+    ///   for a bundle that returns on its reasoning rail with nothing to call,
+    ///   but when tools were on the table and the model produced neither an
+    ///   answer nor a call, the user is left with a thought bubble and no way
+    ///   forward — see osaurus#2327, where Ornith reasons "I have a tool called
+    ///   get_current_time… Let me call it." and then emits `<|im_end|>`.
+    ///   `requiresVisibleFinalResponse` cannot cover that case: it is
+    ///   `hasStructuredToolWork || isRemoteAgentTarget`, both false on the very
+    ///   first turn, which is exactly when this happens.
     static func classifyTerminal(
         contentIsBlank: Bool,
         thinkingIsBlank: Bool,
         stopReason: String?,
         unclosedReasoning: Bool = false,
-        requiresVisibleFinalResponse: Bool
+        requiresVisibleFinalResponse: Bool,
+        toolsWereOffered: Bool = false
     ) -> Self {
         if stopReason == "length" {
             return .lengthExhausted
@@ -186,6 +197,12 @@ enum AgentLoopModelStep {
         }
         if contentIsBlank, thinkingIsBlank {
             return .emptyResponse
+        }
+        // Reasoning, no answer, no call — with tools available. Recoverable
+        // rather than complete: ending here presents the reasoning card as the
+        // response, which the classifier's own contract says it is not.
+        if contentIsBlank, toolsWereOffered {
+            return .incompleteReasoning
         }
         return .finalResponse
     }

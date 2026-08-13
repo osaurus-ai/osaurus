@@ -158,7 +158,9 @@ struct KnowledgeView: View {
             KnowledgeCollectionEditorSheet(
                 collection: nil,
                 initialName: creationPrefillName,
-                onSave: { [grantProjectId = creationGrantProjectId] name, summary, folderPath, remoteURL in
+                onSave: {
+                    [grantProjectId = creationGrantProjectId]
+                    name, summary, folderPath, remoteURL, includeGlobs, excludeGlobs in
                     isCreating = false
                     if let remoteURL, !remoteURL.isEmpty {
                         showSuccess("Cloning \"\(name)\"…")
@@ -181,7 +183,9 @@ struct KnowledgeView: View {
                             let created = await knowledgeManager.create(
                                 name: name,
                                 summary: summary,
-                                folderPath: folderPath
+                                folderPath: folderPath,
+                                includeGlobs: includeGlobs,
+                                excludeGlobs: excludeGlobs
                             )
                             grantToRequestingProject(created, projectId: grantProjectId)
                             showSuccess("Added \"\(created.name)\", indexing in the background")
@@ -195,11 +199,13 @@ struct KnowledgeView: View {
         .sheet(item: $editingCollection) { collection in
             KnowledgeCollectionEditorSheet(
                 collection: collection,
-                onSave: { name, summary, folderPath, _ in
+                onSave: { name, summary, folderPath, _, includeGlobs, excludeGlobs in
                     var updated = collection
                     updated.name = name
                     updated.summary = summary
                     updated.folderPath = folderPath
+                    updated.includeGlobs = includeGlobs
+                    updated.excludeGlobs = excludeGlobs
                     knowledgeManager.update(updated)
                     editingCollection = nil
                     showSuccess("Updated \"\(name)\"")
@@ -885,18 +891,27 @@ private struct KnowledgeCollectionEditorSheet: View {
     let collection: KnowledgeCollection?
     /// `remoteURL` is non-nil only in create mode when the user chose to
     /// clone from a git URL instead of picking a local folder.
-    let onSave: (_ name: String, _ summary: String, _ folderPath: String, _ remoteURL: String?) -> Void
+    let onSave:
+        (
+            _ name: String, _ summary: String, _ folderPath: String, _ remoteURL: String?,
+            _ includeGlobs: [String], _ excludeGlobs: [String]
+        ) -> Void
     let onCancel: () -> Void
 
     @State private var name: String
     @State private var summary: String
     @State private var folderPath: String
     @State private var remoteURL: String = ""
+    @State private var includeGlobs: String
+    @State private var excludeGlobs: String
 
     init(
         collection: KnowledgeCollection?,
         initialName: String = "",
-        onSave: @escaping (_ name: String, _ summary: String, _ folderPath: String, _ remoteURL: String?) -> Void,
+        onSave: @escaping (
+            _ name: String, _ summary: String, _ folderPath: String, _ remoteURL: String?,
+            _ includeGlobs: [String], _ excludeGlobs: [String]
+        ) -> Void,
         onCancel: @escaping () -> Void
     ) {
         self.collection = collection
@@ -905,6 +920,16 @@ private struct KnowledgeCollectionEditorSheet: View {
         _name = State(initialValue: collection?.name ?? initialName)
         _summary = State(initialValue: collection?.summary ?? "")
         _folderPath = State(initialValue: collection?.folderPath ?? "")
+        _includeGlobs = State(initialValue: (collection?.includeGlobs ?? []).joined(separator: ", "))
+        _excludeGlobs = State(initialValue: (collection?.excludeGlobs ?? []).joined(separator: ", "))
+    }
+
+    /// Split a comma-or-newline separated pattern field into trimmed,
+    /// non-empty patterns.
+    private static func parseGlobs(_ raw: String) -> [String] {
+        raw.split(whereSeparator: { $0 == "," || $0.isNewline })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
     }
 
     private var trimmedRemote: String {
@@ -982,6 +1007,37 @@ private struct KnowledgeCollectionEditorSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
 
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Index filters (optional)", bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                StyledSettingsTextField(
+                    label: "Include",
+                    text: $includeGlobs,
+                    placeholder: "docs/**, *.md",
+                    help: ""
+                )
+                StyledSettingsTextField(
+                    label: "Exclude",
+                    text: $excludeGlobs,
+                    placeholder: "src/**, test/**",
+                    help: ""
+                )
+                Text(
+                    "Junk and .gitignore files are skipped automatically. Most folders need nothing here.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 3) {
+                    globHintRow("Include: index only matching files, e.g. docs/**")
+                    globHintRow("Exclude: skip matching files. Wins over Include.")
+                    globHintRow("* matches inside a folder, ** across folders.")
+                    globHintRow("Editing re-indexes the collection.")
+                }
+            }
+
             // Git sync is temporarily disabled for the initial Knowledge
             // Collections ship — the clone-from-URL entry point is hidden so no
             // remote-backed collection can be created. `onSave` already passes a
@@ -1021,7 +1077,9 @@ private struct KnowledgeCollectionEditorSheet: View {
                         name.trimmingCharacters(in: .whitespacesAndNewlines),
                         summary.trimmingCharacters(in: .whitespacesAndNewlines),
                         folderPath.trimmingCharacters(in: .whitespacesAndNewlines),
-                        (collection == nil && !trimmedRemote.isEmpty) ? trimmedRemote : nil
+                        (collection == nil && !trimmedRemote.isEmpty) ? trimmedRemote : nil,
+                        Self.parseGlobs(includeGlobs),
+                        Self.parseGlobs(excludeGlobs)
                     )
                 } label: {
                     Text(collection == nil ? "Add" : "Save", bundle: .module)
@@ -1035,6 +1093,17 @@ private struct KnowledgeCollectionEditorSheet: View {
         .frame(width: 460)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
+    }
+
+    /// One bulleted hint line under the index-filter fields.
+    private func globHintRow(_ text: LocalizedStringKey) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("•")
+            Text(text, bundle: .module)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.system(size: 11))
+        .foregroundColor(theme.tertiaryText)
     }
 
     private func chooseFolder() {

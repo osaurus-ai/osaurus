@@ -437,15 +437,27 @@ final class MarkdownSegmentImageView: NSImageView {
     private var trackingAreaRef: NSTrackingArea?
     private var rightEdgeConstraint: NSLayoutConstraint?
 
+    /// Clicking the image opens it in the full-screen lightbox. The owner
+    /// forwards the already-decoded `NSImage` up to `ChatView`, which presents
+    /// `ImageFullScreenView` — no reload, so no main-thread file/network read.
+    var onPreview: ((NSImage) -> Void)?
+
     private static let buttonSize: CGFloat = 26
     private static let inset: CGFloat = 8
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         configureDownloadButton()
+        let click = NSClickGestureRecognizer(target: self, action: #selector(imageClicked))
+        addGestureRecognizer(click)
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func imageClicked() {
+        guard let image else { return }
+        onPreview?(image)
+    }
 
     private func configureDownloadButton() {
         downloadButton.translatesAutoresizingMaskIntoConstraints = false
@@ -470,10 +482,15 @@ final class MarkdownSegmentImageView: NSImageView {
             equalTo: leadingAnchor,
             constant: Self.buttonSize
         )
+        // Non-required so the required "stay inside the right edge" cap below
+        // can override it when `displayedWidth` overshoots the view bounds.
+        trailing.priority = .defaultHigh
         rightEdgeConstraint = trailing
         NSLayoutConstraint.activate([
             downloadButton.topAnchor.constraint(equalTo: topAnchor, constant: Self.inset),
             trailing,
+            downloadButton.trailingAnchor.constraint(
+                lessThanOrEqualTo: trailingAnchor, constant: -Self.inset),
             downloadButton.widthAnchor.constraint(equalToConstant: Self.buttonSize),
             downloadButton.heightAnchor.constraint(equalToConstant: Self.buttonSize),
         ])
@@ -481,6 +498,10 @@ final class MarkdownSegmentImageView: NSImageView {
 
     /// Pin the button `inset` points inside the displayed image's right edge,
     /// `displayedWidth` measured from the view's left (where the image aligns).
+    /// This constraint is non-required; a required `trailing <= self.trailing`
+    /// cap (see `configureDownloadButton`) keeps the button inside the view's
+    /// bounds if `displayedWidth` overshoots, so the rounded-corner mask can't
+    /// shear its right corners.
     func setImageRightEdge(_ displayedWidth: CGFloat) {
         let target = max(Self.buttonSize + Self.inset, displayedWidth) - Self.inset
         if let c = rightEdgeConstraint, abs(c.constant - target) > 0.5 {

@@ -86,6 +86,24 @@ struct SkillEditorSheet: View {
             .filter { !$0.isEmpty }
     }
 
+    /// Upper bounds for the sheet so it never grows past the visible screen
+    /// (menu bar / Dock excluded). Keeps the pinned footer — and its "Save
+    /// Changes" button — reachable, and keeps the instructions pane on screen,
+    /// when accessibility text scaling shrinks the available space (issue #2374).
+    private var maxSheetHeight: CGFloat {
+        if let visibleHeight = NSScreen.main?.visibleFrame.height {
+            return max(400, visibleHeight - 40)
+        }
+        return 700
+    }
+
+    private var maxSheetWidth: CGFloat {
+        if let visibleWidth = NSScreen.main?.visibleFrame.width {
+            return max(560, visibleWidth - 40)
+        }
+        return 900
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -105,7 +123,14 @@ struct SkillEditorSheet: View {
             // Footer
             footerView
         }
-        .frame(minWidth: 900, minHeight: 700)
+        .frame(
+            minWidth: 780,
+            idealWidth: 900,
+            maxWidth: maxSheetWidth,
+            minHeight: 400,
+            idealHeight: 700,
+            maxHeight: maxSheetHeight
+        )
         .background(themeManager.currentTheme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
