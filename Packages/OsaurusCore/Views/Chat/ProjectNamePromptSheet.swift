@@ -39,6 +39,10 @@ struct ProjectNamePromptSheet: View {
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(theme.primaryBackground.opacity(0.5))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(theme.inputBorder, lineWidth: 1)
+                    )
             )
 
             HStack {
