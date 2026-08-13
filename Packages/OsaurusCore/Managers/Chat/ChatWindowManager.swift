@@ -1215,7 +1215,13 @@ private struct ChatToolbarBackContent: View {
                         .font(.system(size: 12, weight: .medium))
                         .lineLimit(1)
                         .truncationMode(.tail)
-                        .frame(maxWidth: 180, alignment: .leading)
+                        // Hug the name. A `.frame(maxWidth:180, alignment:.leading)`
+                        // expanded to the full 180 whenever there was room,
+                        // leaving a dead gap between a short name and the
+                        // capsule's trailing edge. `fixedSize` sizes the pill to
+                        // the text; `lineLimit(1)` keeps a very long name on one
+                        // line.
+                        .fixedSize(horizontal: true, vertical: false)
                     // Folder mode has no back chevron, so a trailing
                     // chevron.right signals the pill navigates somewhere.
                     if !windowState.enteredChatFromProjectPage {

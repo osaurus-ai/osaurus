@@ -27,9 +27,12 @@ struct ProjectDetailView: View {
     @ObservedObject private var sessionsManager = ChatSessionsManager.shared
     @ObservedObject private var knowledgeManager = KnowledgeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
-    /// Draft of the instructions editor. Saved explicitly; `hasEdits`
-    /// drives the Save button's visibility.
+    /// Draft of the instructions editor. Auto-saved (debounced) as the
+    /// user types; `autoSaveTask` holds the pending write and the
+    /// `justSaved` flash gives quiet confirmation.
     @State private var instructionsDraft: String = ""
+    @State private var instructionsAutoSaveTask: Task<Void, Never>?
+    @State private var instructionsJustSaved: Bool = false
     @State private var loadedProjectId: UUID?
     @State private var searchQuery: String = ""
     @FocusState private var isSearchFocused: Bool
@@ -175,13 +178,14 @@ struct ProjectDetailView: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                 Spacer()
-                if hasEdits {
-                    Button(action: saveInstructions) {
-                        Text("Save", bundle: .module)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.accentColor)
+                if instructionsJustSaved {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+                        Text("Saved", bundle: .module)
+                            .font(.system(size: 11, weight: .medium))
                     }
-                    .buttonStyle(.plain)
+                    .foregroundColor(theme.secondaryText)
                     .transition(.opacity)
                 }
             }
@@ -215,14 +219,42 @@ struct ProjectDetailView: View {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.35 : 0.5))
                 )
+                // Debounced auto-save: writes ~0.6s after the user stops
+                // typing, so instructions can never be lost by navigating
+                // away without hitting a Save button.
+                .onChange(of: instructionsDraft) { _, _ in scheduleInstructionsAutoSave() }
         }
-        .animation(theme.animationQuick(), value: hasEdits)
+        .animation(theme.animationQuick(), value: instructionsJustSaved)
+        // Persist immediately if the user leaves before the debounce fires.
+        .onDisappear { flushInstructionsSave() }
+    }
+
+    private func scheduleInstructionsAutoSave() {
+        guard hasEdits else { return }
+        instructionsJustSaved = false
+        instructionsAutoSaveTask?.cancel()
+        instructionsAutoSaveTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            guard !Task.isCancelled, hasEdits else { return }
+            saveInstructions()
+        }
+    }
+
+    private func flushInstructionsSave() {
+        instructionsAutoSaveTask?.cancel()
+        instructionsAutoSaveTask = nil
+        if hasEdits { saveInstructions() }
     }
 
     private func saveInstructions() {
         var updated = project
         updated.instructions = instructionsDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         ProjectManager.shared.update(updated)
+        withAnimation(theme.animationQuick()) { instructionsJustSaved = true }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            withAnimation(theme.animationQuick()) { instructionsJustSaved = false }
+        }
     }
 
     // MARK: - Default Agent
