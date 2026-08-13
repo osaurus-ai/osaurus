@@ -33,6 +33,14 @@ struct FollowUpSuggestionsBar: View {
     /// Delay added per row so the reveal cascades down the list.
     private let perRowStagger: Double = 0.06
 
+    /// Fixed width reserved for the header icon, and the spacing after it.
+    /// Row text is indented by their sum so it lines up with the "Follow up"
+    /// label, which leaves that much left padding inside each row's hover
+    /// highlight (the highlight still spans the full row width).
+    private let iconColumnWidth: CGFloat = 15
+    private let iconLabelSpacing: CGFloat = 6
+    private var labelIndent: CGFloat { iconColumnWidth + iconLabelSpacing }
+
     var body: some View {
         if suggestions.isEmpty {
             EmptyView()
@@ -70,10 +78,11 @@ struct FollowUpSuggestionsBar: View {
     }
 
     private var header: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: iconLabelSpacing) {
             Image(systemName: "text.append")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(theme.secondaryText)
+                .frame(width: iconColumnWidth, alignment: .leading)
             Text("Follow up", bundle: .module)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(theme.secondaryText)
@@ -82,28 +91,41 @@ struct FollowUpSuggestionsBar: View {
     }
 
     private func suggestionRow(index: Int, suggestion: String) -> some View {
-        Button {
+        let isHovered = hoveredIndex == index
+        return Button {
             onSelect(suggestion)
         } label: {
-            HStack {
+            HStack(spacing: 8) {
                 Text(suggestion)
                     .font(.system(size: 13))
                     .foregroundStyle(theme.primaryText)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
+                    // Align the text with the "Follow up" label; the hover
+                    // highlight keeps this much left padding.
+                    .padding(.leading, labelIndent)
                 Spacer(minLength: 8)
+                // Trailing affordance, revealed on hover, that slides in
+                // slightly from the right.
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(theme.secondaryText)
+                    .opacity(isHovered ? 1 : 0)
+                    .offset(x: isHovered ? 0 : -4)
+                    .padding(.trailing, 2)
             }
             .contentShape(Rectangle())
             .padding(.vertical, 10)
         }
         .buttonStyle(.plain)
         .background(
-            (hoveredIndex == index ? theme.inputBackground : Color.clear)
+            (isHovered ? theme.inputBackground : Color.clear)
                 .cornerRadius(6)
         )
         .onHover { hovering in
             hoveredIndex = hovering ? index : (hoveredIndex == index ? nil : hoveredIndex)
         }
+        .animation(.easeOut(duration: 0.15), value: hoveredIndex)
         .help(suggestion)
     }
 
