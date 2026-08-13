@@ -71,7 +71,7 @@ struct FollowUpSuggestionsBar: View {
 
     private var header: some View {
         HStack(spacing: 6) {
-            Image(systemName: "sparkles")
+            Image(systemName: "text.append")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(theme.secondaryText)
             Text("Follow up", bundle: .module)
