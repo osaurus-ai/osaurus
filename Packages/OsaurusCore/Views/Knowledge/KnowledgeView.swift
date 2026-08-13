@@ -929,12 +929,18 @@ private struct KnowledgeCollectionEditorSheet: View {
                     help: ""
                 )
                 Text(
-                    "Common junk (lockfiles, build output, minified assets, images) and the folder's .gitignore are skipped automatically, so most folders need nothing here. Use these to go further: comma-separated path patterns, relative to the folder. If Include is set, only matching files are indexed. Exclude always wins. `*` matches within a folder, `**` crosses folders (e.g. `docs/**`). Changing these re-indexes the collection.",
+                    "Junk and .gitignore files are skipped automatically. Most folders need nothing here.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
                 .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 3) {
+                    globHintRow("Include: index only matching files, e.g. docs/**")
+                    globHintRow("Exclude: skip matching files. Wins over Include.")
+                    globHintRow("* matches inside a folder, ** across folders.")
+                    globHintRow("Editing re-indexes the collection.")
+                }
             }
 
             // Git sync is temporarily disabled for the initial Knowledge
@@ -992,6 +998,17 @@ private struct KnowledgeCollectionEditorSheet: View {
         .frame(width: 460)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
+    }
+
+    /// One bulleted hint line under the index-filter fields.
+    private func globHintRow(_ text: LocalizedStringKey) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("•")
+            Text(text, bundle: .module)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.system(size: 11))
+        .foregroundColor(theme.tertiaryText)
     }
 
     private func chooseFolder() {
