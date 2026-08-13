@@ -228428,6 +228428,210 @@
           }
         }
       }
+    },
+    "Delete this response?": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diese Antwort löschen?"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 응답을 삭제할까요?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить этот ответ?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "删除此回复？"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "刪除此回覆？"
+          }
+        }
+      }
+    },
+    "Also delete my message": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auch meine Nachricht löschen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "내 메시지도 삭제"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Также удалить моё сообщение"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同时删除我的消息"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同時刪除我的訊息"
+          }
+        }
+      }
+    },
+    "Any tool calls in this response and their results will be removed together.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alle Tool-Aufrufe in dieser Antwort und ihre Ergebnisse werden zusammen entfernt."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 응답의 모든 도구 호출과 그 결과가 함께 삭제됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Все вызовы инструментов в этом ответе и их результаты будут удалены вместе."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此回复中的所有工具调用及其结果将一并删除。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此回覆中的所有工具呼叫及其結果將一併刪除。"
+          }
+        }
+      }
+    },
+    "This response is part of a conversation summary, so deleting it may affect the meaning of later turns.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diese Antwort ist Teil einer Gesprächszusammenfassung. Das Löschen kann die Bedeutung späterer Nachrichten beeinflussen."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 응답은 대화 요약의 일부이므로 삭제하면 이후 대화의 의미에 영향을 줄 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Этот ответ входит в сводку беседы, поэтому его удаление может повлиять на смысл последующих сообщений."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此回复是对话摘要的一部分，删除它可能会影响后续对话的含义。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此回覆是對話摘要的一部分，刪除它可能會影響後續對話的含義。"
+          }
+        }
+      }
+    },
+    "Deleting from the middle of the conversation may make the next reply take a little longer to start, since everything after this point has to be reprocessed.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wenn Sie mitten in der Unterhaltung löschen, kann die nächste Antwort etwas länger dauern, da alles nach diesem Punkt neu verarbeitet werden muss."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대화 중간에서 삭제하면 이 지점 이후의 모든 내용을 다시 처리해야 하므로 다음 응답 시작이 조금 더 오래 걸릴 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Если удалить сообщение из середины беседы, следующий ответ может начаться чуть позже, так как всё после этого места придётся обработать заново."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从对话中间删除可能会使下一条回复的开始稍慢，因为此处之后的所有内容都需要重新处理。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "從對話中間刪除可能會使下一則回覆的開始稍慢，因為此處之後的所有內容都需要重新處理。"
+          }
+        }
+      }
+    },
+    "This removes this response from the conversation. It won't be sent to the model on later turns.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dadurch wird diese Antwort aus der Unterhaltung entfernt. Sie wird bei späteren Nachrichten nicht an das Modell gesendet."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 응답을 대화에서 삭제합니다. 이후 대화에서 모델에 전송되지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Этот ответ будет удалён из беседы. В последующих запросах он не будет отправляться модели."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这会将此回复从对话中删除。在后续对话中不会发送给模型。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這會將此回覆從對話中刪除。在後續對話中不會傳送給模型。"
+          }
+        }
+      }
     }
   },
   "version": "1.1"

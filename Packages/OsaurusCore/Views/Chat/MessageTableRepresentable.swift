@@ -100,6 +100,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
     let onDelete: ((UUID) -> Void)?
     let onSpeak: ((UUID) -> Void)?
     var onFollowUpTap: ((String) -> Void)? = nil
+    let onDeleteMessage: ((UUID) -> Void)?
 
     // Inline editing state
     let editingTurnId: UUID?
@@ -107,6 +108,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
     let onConfirmEdit: (() -> Void)?
     let onCancelEdit: (() -> Void)?
     var onUserImagePreview: ((String) -> Void)? = nil
+    var onImagePreviewImage: ((NSImage) -> Void)? = nil
     var onDocumentPreview: ((Attachment) -> Void)? = nil
 
     // Minimap support
@@ -279,7 +281,9 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onDelete: onDelete,
             onSpeak: onSpeak,
             onFollowUpTap: onFollowUpTap,
+            onDeleteMessage: onDeleteMessage,
             onUserImagePreview: onUserImagePreview,
+            onImagePreviewImage: onImagePreviewImage,
             onDocumentPreview: onDocumentPreview,
             sessionRedactions: sessionRedactions,
             searchHighlightQuery: searchHighlightQuery,
@@ -337,7 +341,9 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onDelete: onDelete,
             onSpeak: onSpeak,
             onFollowUpTap: onFollowUpTap,
+            onDeleteMessage: onDeleteMessage,
             onUserImagePreview: onUserImagePreview,
+            onImagePreviewImage: onImagePreviewImage,
             onDocumentPreview: onDocumentPreview,
             sessionRedactions: sessionRedactions,
             searchHighlightQuery: searchHighlightQuery
@@ -450,6 +456,7 @@ extension MessageTableRepresentable {
             onEdit: nil,
             onDelete: nil,
             onSpeak: nil,
+            onDeleteMessage: nil,
             onUserImagePreview: nil
         )
 
