@@ -3476,10 +3476,11 @@ enum NativeCellHeightEstimator {
         case let .followUpSuggestions(_, suggestions):
             // Mirrors `FollowUpSuggestionsBar`: outer vertical padding (8+8),
             // a "Follow up" header (~23), and per-suggestion rows of
-            // 10+10 padding around wrapped 13pt text (~18pt/line), with 1pt
+            // 10+10 padding around wrapped 13pt text (~18pt/line), with hairline
             // dividers between. Plus the cell's own 4pt top / 8pt bottom
-            // insets. Corrected by the measured-height report either way.
-            let innerW = max(width - 64, 100)
+            // insets. Text width matches the assistant markdown (16pt each
+            // side). Corrected by the measured-height report either way.
+            let innerW = max(width - 32, 100)
             let chars = max(Int(innerW / 7), 20)
             var rows: CGFloat = 0
             for s in suggestions {

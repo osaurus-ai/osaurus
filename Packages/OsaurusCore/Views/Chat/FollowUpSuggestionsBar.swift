@@ -51,7 +51,9 @@ struct FollowUpSuggestionsBar: View {
                         .modifier(RevealModifier(appeared: appeared, animation: reveal(index: index + 1)))
                 }
             }
-            .padding(.horizontal, 16)
+            // No horizontal padding: the hosting cell already insets this view
+            // by 16pt (matching the assistant markdown's leading/trailing), so
+            // the header and rows line up flush with the message text above.
             .padding(.vertical, 8)
             // Reveal cascade starts as soon as the section mounts. `reveal`
             // collapses the motion to an instant for reduced-motion users.
