@@ -929,7 +929,7 @@ private struct KnowledgeCollectionEditorSheet: View {
                     help: ""
                 )
                 Text(
-                    "Comma-separated path patterns, relative to the folder. Leave both empty to index everything. If Include is set, only matching files are indexed. Exclude always wins. `*` matches within a folder, `**` crosses folders (e.g. `docs/**`). Changing these re-indexes the collection.",
+                    "Common junk (lockfiles, build output, minified assets, images) and the folder's .gitignore are skipped automatically, so most folders need nothing here. Use these to go further: comma-separated path patterns, relative to the folder. If Include is set, only matching files are indexed. Exclude always wins. `*` matches within a folder, `**` crosses folders (e.g. `docs/**`). Changing these re-indexes the collection.",
                     bundle: .module
                 )
                 .font(.system(size: 11))

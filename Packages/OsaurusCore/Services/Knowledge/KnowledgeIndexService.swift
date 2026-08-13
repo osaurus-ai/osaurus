@@ -350,7 +350,11 @@ public actor KnowledgeIndexService {
             )
         else { return [] }
 
-        let hasGlobs = !collection.includeGlobs.isEmpty || !collection.excludeGlobs.isEmpty
+        // Built-in junk defaults + the folder's own .gitignore. Loaded once
+        // per pass; applied only when the collection has no explicit include
+        // list (an include list is a deliberate allow-list that overrides the
+        // defaults). Explicit excludes always win.
+        let ignoreRules = KnowledgeIgnoreRules.forFolder(folderURL)
         var files: [URL] = []
         var overflow = 0
         for case let url as URL in enumerator {
@@ -367,10 +371,22 @@ public actor KnowledgeIndexService {
             guard isMarkdown || DocumentFormatRegistry.shared.adapter(for: url) != nil else {
                 continue
             }
-            // Per-collection include/exclude filter (membership, not ranking).
-            if hasGlobs {
-                let relPath = relativePath(of: url, under: folderURL)
-                if !relPath.isEmpty, !collection.indexPathAllowed(relPath) { continue }
+            // Membership filter (not ranking). Precedence, most explicit first:
+            //   1. user exclude glob  → always dropped
+            //   2. user include globs → keep only matches; matches bypass defaults
+            //   3. no include list    → drop built-in-junk / .gitignore matches
+            let relPath = relativePath(of: url, under: folderURL)
+            if !relPath.isEmpty {
+                if collection.excludeGlobs.contains(where: {
+                    KnowledgeGlob.matchesPattern(relPath, pattern: $0)
+                }) { continue }
+                if collection.includeGlobs.isEmpty {
+                    if ignoreRules.isIgnored(relPath) { continue }
+                } else if !collection.includeGlobs.contains(where: {
+                    KnowledgeGlob.matchesPattern(relPath, pattern: $0)
+                }) {
+                    continue
+                }
             }
             guard let values = try? url.resourceValues(forKeys: Set(keys)) else { continue }
             if values.isSymbolicLink == true { continue }
