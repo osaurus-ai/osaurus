@@ -449,11 +449,26 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
                 $0.headingPath.range(of: section, options: .caseInsensitive) != nil
             }
             guard !matching.isEmpty else {
-                let sections = Set(chunks.map(\.headingPath).filter { !$0.isEmpty })
+                let sectionList = Set(chunks.map(\.headingPath).filter { !$0.isEmpty })
                     .sorted().prefix(30).joined(separator: "; ")
+                // A document with no headings at all (e.g. source code or a
+                // flat text file) can never match a section. Say so and tell
+                // the model to drop `section` — otherwise it loops re-issuing
+                // the same doomed call against an empty section list.
+                guard !sectionList.isEmpty else {
+                    return ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "`\(relPath)` has no headings, so it can't be filtered by "
+                            + "`section`. Re-read it without the `section` argument to get "
+                            + "the full document.",
+                        field: "section",
+                        expected: "omit `section` for documents without headings",
+                        tool: name
+                    )
+                }
                 return ToolEnvelope.failure(
                     kind: .notFound,
-                    message: "No section matching `\(section)` in `\(relPath)`. Sections: \(sections)",
+                    message: "No section matching `\(section)` in `\(relPath)`. Sections: \(sectionList)",
                     tool: name
                 )
             }
