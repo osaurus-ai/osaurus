@@ -744,6 +744,40 @@
         }
       }
     },
+    "Facts that carry across every chat." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fakten, die über jeden Chat hinweg erhalten bleiben."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모든 채팅에 걸쳐 유지되는 정보입니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Факты, сохраняющиеся во всех чатах."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在每个聊天中延续的事实。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在每個聊天中延續的事實。"
+          }
+        }
+      }
+    },
     "Forget this project's shared memory" : {
       "localizations" : {
         "de" : {
@@ -774,6 +808,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "忘記此專案的共享記憶"
+          }
+        }
+      }
+    },
+    "Group related chats so they share the same instructions, knowledge, and memory across every agent." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fasse verwandte Chats zusammen, damit sie dieselben Anweisungen, dasselbe Wissen und denselben Speicher über jeden Agenten hinweg teilen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "관련된 채팅을 그룹으로 묶어 모든 에이전트에서 동일한 지침, 지식, 메모리를 공유하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сгруппируйте связанные чаты, чтобы они использовали одни и те же инструкции, знания и память во всех агентах."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将相关聊天分组，让它们在每个智能体之间共享相同的指令、知识和记忆。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將相關聊天分組，讓它們在每個代理之間共享相同的指令、知識和記憶。"
+          }
+        }
+      }
+    },
+    "Guidance added to every chat." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vorgaben, die jedem Chat hinzugefügt werden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모든 채팅에 추가되는 지침입니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Указания, добавляемые в каждый чат."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加到每个聊天的指导。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加入每個聊天的指引。"
           }
         }
       }
@@ -1358,6 +1460,40 @@
         }
       }
     },
+    "Shared collections every chat can search." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gemeinsame Sammlungen, die jeder Chat durchsuchen kann."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모든 채팅이 검색할 수 있는 공유 컬렉션입니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Общие коллекции, доступные для поиска в каждом чате."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每个聊天都可搜索的共享集合。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每個聊天都可搜尋的共享集合。"
+          }
+        }
+      }
+    },
     "Shared context added to every chat in this project." : {
       "localizations" : {
         "de" : {
@@ -1388,6 +1524,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "新增到此專案中每個聊天的共享上下文。"
+          }
+        }
+      }
+    },
+    "Shared memory" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gemeinsamer Speicher"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "공유 메모리"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Общая память"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共享记忆"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共享記憶"
           }
         }
       }

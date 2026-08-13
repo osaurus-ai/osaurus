@@ -404,7 +404,8 @@ struct ChatSessionSidebar: View {
         presentProjectNamePrompt(
             title: "New Project",
             initialName: "",
-            submitLabel: "Create"
+            submitLabel: "Create",
+            showsIntro: true
         ) { name in
             let project = ProjectManager.shared.create(name: name)
             // Land the user straight on the fresh project's page.
@@ -428,13 +429,15 @@ struct ChatSessionSidebar: View {
         title: String,
         initialName: String,
         submitLabel: LocalizedStringKey,
+        showsIntro: Bool = false,
         onSubmit: @escaping (String) -> Void
     ) {
         let requestId = UUID()
         let scope = alertScope
         let sheet = ProjectNamePromptSheet(
             initialName: initialName,
-            submitLabel: submitLabel
+            submitLabel: submitLabel,
+            showsIntro: showsIntro
         ) { name in
             ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
             onSubmit(name)
@@ -447,7 +450,7 @@ struct ChatSessionSidebar: View {
                 buttons: [.cancel(L("Cancel"))],
                 showsCloseButton: true,
                 customContent: AnyView(sheet),
-                width: 360,
+                width: showsIntro ? 400 : 360,
                 onDismiss: {
                     ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
                 }
