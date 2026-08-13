@@ -76,6 +76,12 @@ struct CellRenderingContext {
     /// Coordinator-scoped callback: record that the chart with this block
     /// id has been drawn so subsequent re-mounts skip the entry animation.
     var markChartDrawn: ((String) -> Void)? = nil
+    /// Coordinator-scoped predicate/marker pair, same role as the chart pair
+    /// above: has this follow-up row already played its entrance animation in
+    /// the current chat? Lets `configureAsFollowUpSuggestions` suppress the
+    /// reveal when a recycled cell re-mounts it after scrolling.
+    var hasFollowUpsShown: ((String) -> Bool)? = nil
+    var markFollowUpsShown: ((String) -> Void)? = nil
     /// Coordinator-scoped chart view cache lookup. Returning a non-nil
     /// view lets `configureAsChart` reparent an existing (already-rendered)
     /// `NativeChartView` instead of allocating a fresh `AAChartView`/
@@ -2754,9 +2760,14 @@ final class NativeMessageCellView: NSTableCellView {
         sameKind: Bool
     ) {
         let onTap = context.onFollowUpTap
+        // Animate only the first time this row is shown; recycled re-mounts
+        // after scrolling render in their final state (mirrors the chart cell).
+        let animate = !(context.hasFollowUpsShown?(block.id) ?? false)
+        context.markFollowUpsShown?(block.id)
         let rootView = AnyView(
             FollowUpSuggestionsBar(
                 suggestions: suggestions,
+                animate: animate,
                 onSelect: { onTap?($0) }
             )
             .environment(\.theme, context.theme)

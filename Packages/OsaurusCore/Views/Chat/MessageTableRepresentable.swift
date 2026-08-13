@@ -294,6 +294,12 @@ struct MessageTableRepresentable: NSViewRepresentable {
             markChartDrawn: { [weak coordinator] id in
                 coordinator?.drawnChartBlockIds.insert(id)
             },
+            hasFollowUpsShown: { [weak coordinator] id in
+                coordinator?.shownFollowUpBlockIds.contains(id) ?? false
+            },
+            markFollowUpsShown: { [weak coordinator] id in
+                coordinator?.shownFollowUpBlockIds.insert(id)
+            },
             cachedChartView: { [weak coordinator] id in
                 coordinator?.chartViewCache[id]
             },
@@ -501,6 +507,12 @@ extension MessageTableRepresentable {
         /// current `newIds` on each `applyBlocks` so loading a different
         /// chat clears the set.
         var drawnChartBlockIds: Set<String> = []
+
+        /// Block ids of follow-up rows that have already played their entrance
+        /// animation, so a recycled cell scrolling back into view renders in
+        /// its final state instead of re-animating. Pruned to `newIds` on each
+        /// `applyBlocks` alongside `drawnChartBlockIds`.
+        var shownFollowUpBlockIds: Set<String> = []
 
         /// Cache of `NativeChartView` instances keyed by chart block id.
         /// Holds a strong reference across cell recycles so the embedded
@@ -798,6 +810,9 @@ extension MessageTableRepresentable {
             if newIds != blockIds {
                 if !drawnChartBlockIds.isEmpty {
                     drawnChartBlockIds.formIntersection(newIds)
+                }
+                if !shownFollowUpBlockIds.isEmpty {
+                    shownFollowUpBlockIds.formIntersection(newIds)
                 }
                 if !chartViewCache.isEmpty || !toolGroupViewCache.isEmpty {
                     let newIdSet = Set(newIds)

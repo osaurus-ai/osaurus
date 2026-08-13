@@ -22,12 +22,25 @@ import SwiftUI
 struct FollowUpSuggestionsBar: View {
     let suggestions: [String]
     let onSelect: (String) -> Void
+    /// Play the entrance animation. False when a recycled table cell re-mounts
+    /// a suggestion set the user has already seen (scrolled away and back), so
+    /// the section doesn't re-animate on every scroll — mirrors the chart
+    /// cell's `hasChartBeenDrawn` suppression.
+    let animate: Bool
 
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var hoveredIndex: Int?
-    /// Drives the entrance animation. Flips true on first `onAppear`.
-    @State private var appeared = false
+    @State private var hoveredIndex: Int? = nil
+    /// Drives the entrance animation. Starts already-revealed when `animate`
+    /// is false so a replayed cell renders in its final state immediately.
+    @State private var appeared: Bool
+
+    init(suggestions: [String], animate: Bool = true, onSelect: @escaping (String) -> Void) {
+        self.suggestions = suggestions
+        self.onSelect = onSelect
+        self.animate = animate
+        _appeared = State(initialValue: !animate)
+    }
 
     /// Base fade/rise duration for each element.
     private let revealDuration: Double = 0.32
@@ -66,7 +79,8 @@ struct FollowUpSuggestionsBar: View {
             .padding(.vertical, 8)
             // Reveal cascade starts as soon as the section mounts. `reveal`
             // collapses the motion to an instant for reduced-motion users.
-            .onAppear { appeared = true }
+            // Skipped entirely when `animate` is false (already revealed).
+            .onAppear { if animate { appeared = true } }
         }
     }
 
