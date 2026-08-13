@@ -482,10 +482,15 @@ final class MarkdownSegmentImageView: NSImageView {
             equalTo: leadingAnchor,
             constant: Self.buttonSize
         )
+        // Non-required so the required "stay inside the right edge" cap below
+        // can override it when `displayedWidth` overshoots the view bounds.
+        trailing.priority = .defaultHigh
         rightEdgeConstraint = trailing
         NSLayoutConstraint.activate([
             downloadButton.topAnchor.constraint(equalTo: topAnchor, constant: Self.inset),
             trailing,
+            downloadButton.trailingAnchor.constraint(
+                lessThanOrEqualTo: trailingAnchor, constant: -Self.inset),
             downloadButton.widthAnchor.constraint(equalToConstant: Self.buttonSize),
             downloadButton.heightAnchor.constraint(equalToConstant: Self.buttonSize),
         ])
@@ -493,6 +498,10 @@ final class MarkdownSegmentImageView: NSImageView {
 
     /// Pin the button `inset` points inside the displayed image's right edge,
     /// `displayedWidth` measured from the view's left (where the image aligns).
+    /// This constraint is non-required; a required `trailing <= self.trailing`
+    /// cap (see `configureDownloadButton`) keeps the button inside the view's
+    /// bounds if `displayedWidth` overshoots, so the rounded-corner mask can't
+    /// shear its right corners.
     func setImageRightEdge(_ displayedWidth: CGFloat) {
         let target = max(Self.buttonSize + Self.inset, displayedWidth) - Self.inset
         if let c = rightEdgeConstraint, abs(c.constant - target) > 0.5 {
