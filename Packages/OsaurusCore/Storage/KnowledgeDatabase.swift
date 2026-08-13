@@ -58,6 +58,20 @@ public final class KnowledgeDatabase: @unchecked Sendable {
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "ai.osaurus.knowledge.database")
 
+    /// Dedicated read-only connection + its own serial queue. WAL lets a
+    /// reader run concurrently with the writer, so read-only tool queries
+    /// (search/list/read) no longer wait behind the folder indexer's write
+    /// backlog on `queue` — the cause of `search_knowledge` blowing its
+    /// 120s budget during a large collection's initial index. Opened lazily
+    /// on first read; falls back to the write connection if it can't open.
+    private var readDB: OpaquePointer?
+    private let readQueue = DispatchQueue(label: "ai.osaurus.knowledge.database.read")
+
+    /// A `:memory:` DB is private to its connection, so a second connection
+    /// would see an empty database. In-memory (test) mode therefore keeps
+    /// all reads on the single writer connection.
+    private var isInMemory = false
+
     public var isOpen: Bool {
         queue.sync { db != nil }
     }
@@ -111,6 +125,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
     public func openInMemory() throws {
         try queue.sync {
             guard db == nil else { return }
+            isInMemory = true
             db = try EncryptedSQLiteOpener.open(
                 path: ":memory:",
                 key: nil,
@@ -122,11 +137,18 @@ public final class KnowledgeDatabase: @unchecked Sendable {
 
     public func close() {
         OsaurusDatabaseHandle.deregister(name: "knowledge")
+        readQueue.sync {
+            if let readConnection = readDB {
+                sqlite3_close(readConnection)
+                readDB = nil
+            }
+        }
         queue.sync {
             guard let connection = db else { return }
             try? executeRaw("PRAGMA optimize")
             sqlite3_close(connection)
             db = nil
+            isInMemory = false
         }
     }
 
@@ -555,6 +577,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
             SELECT \(Self.documentColumns) FROM documents
             WHERE collection_id = ?1 AND rel_path = ?2 LIMIT 1
             """,
+            readOnly: true,
             bind: { stmt in
                 Self.bindText(stmt, index: 1, value: collectionId)
                 Self.bindText(stmt, index: 2, value: relPath)
@@ -600,6 +623,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         sql += " ORDER BY collection_id, rel_path LIMIT ?\(nextIndex)"
         try prepareAndExecute(
             sql,
+            readOnly: true,
             bind: { stmt in
                 for (offset, id) in collectionIds.enumerated() {
                     Self.bindText(stmt, index: Int32(offset + 1), value: id)
@@ -648,6 +672,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
                 WHERE chunks_fts MATCH ?1 AND d.collection_id IN (\(placeholders))
                 ORDER BY bm25(chunks_fts) LIMIT ?\(limitIndex)
                 """,
+                readOnly: true,
                 bind: { stmt in
                     Self.bindText(stmt, index: 1, value: ftsQuery)
                     for (offset, id) in collectionIds.enumerated() {
@@ -672,6 +697,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
             WHERE c.content LIKE '%' || ?1 || '%' AND d.collection_id IN (\(placeholders))
             ORDER BY d.collection_id, d.rel_path, c.chunk_index LIMIT ?\(limitIndex)
             """,
+            readOnly: true,
             bind: { stmt in
                 Self.bindText(stmt, index: 1, value: trimmed)
                 for (offset, id) in collectionIds.enumerated() {
@@ -704,6 +730,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
                 WHERE d.collection_id = ?1 AND d.rel_path = ?2 AND c.chunk_index = ?3
                 LIMIT 1
                 """,
+                readOnly: true,
                 bind: { stmt in
                     Self.bindText(stmt, index: 1, value: key.collectionId)
                     Self.bindText(stmt, index: 2, value: key.relPath)
@@ -732,6 +759,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         sql += " ORDER BY d.collection_id, d.rel_path, c.chunk_index LIMIT ?\(collectionId != nil ? 2 : 1)"
         try prepareAndExecute(
             sql,
+            readOnly: true,
             bind: { stmt in
                 if let collectionId { Self.bindText(stmt, index: 1, value: collectionId) }
                 sqlite3_bind_int(stmt, Int32(collectionId != nil ? 2 : 1), Int32(limit))
@@ -1097,15 +1125,57 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         try handler(statement)
     }
 
+    /// Run a statement. `readOnly` queries go to the dedicated read
+    /// connection (concurrent with the writer under WAL) so they are not
+    /// serialized behind the indexer's writes; if that connection can't be
+    /// opened, they transparently fall back to the write connection.
     private func prepareAndExecute(
         _ sql: String,
+        readOnly: Bool = false,
         bind: (OpaquePointer) -> Void,
         process: (OpaquePointer) throws -> Void
     ) throws {
+        if readOnly {
+            dispatchPrecondition(condition: .notOnQueue(readQueue))
+            let ran = try readQueue.sync { () -> Bool in
+                guard let connection = ensureReadConnectionLocked() else { return false }
+                try Self.prepareAndExecute(on: connection, sql, bind: bind, process: process)
+                return true
+            }
+            if ran { return }
+            // Fall through to the write connection when no read connection.
+        }
         dispatchPrecondition(condition: .notOnQueue(queue))
         try queue.sync {
             guard let connection = db else { throw KnowledgeDatabaseError.notOpen }
             try Self.prepareAndExecute(on: connection, sql, bind: bind, process: process)
+        }
+    }
+
+    /// Lazily open the read-only connection. Must be called on `readQueue`.
+    /// Returns nil (caller falls back to the write connection) when the DB
+    /// file isn't open yet or the read connection can't be opened.
+    private func ensureReadConnectionLocked() -> OpaquePointer? {
+        if let readConnection = readDB { return readConnection }
+        // In-memory DBs are per-connection; a reader would see nothing.
+        guard !isInMemory else { return nil }
+        // Only open a reader once the primary (writer) connection exists, so
+        // the file is present and migrated.
+        guard queue.sync(execute: { db != nil }) else { return nil }
+        // Don't open a reader against a half-rekeyed file.
+        StorageMutationGate.blockingAwaitNotMutating()
+        do {
+            let connection = try OsaurusStorageOpener.open(
+                path: OsaurusPaths.knowledgeDatabaseFile().path
+            )
+            readDB = connection
+            KnowledgeLogger.database.info("Knowledge read connection opened")
+            return connection
+        } catch {
+            KnowledgeLogger.database.warning(
+                "Knowledge read connection unavailable (using writer): \(error.localizedDescription)"
+            )
+            return nil
         }
     }
 
