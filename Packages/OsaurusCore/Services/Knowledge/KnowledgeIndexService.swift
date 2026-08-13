@@ -37,6 +37,19 @@ public actor KnowledgeIndexService {
     /// Claimed by the plaintext adapter but never indexed: a searchable
     /// index is the wrong place for secrets.
     private static let excludedExtensions: Set<String> = ["env"]
+    /// Directory names whose entire subtree is skipped. These hold
+    /// dependency code, build output, and VCS internals — never curated
+    /// knowledge — yet a single `git clone` drops thousands of adapter-
+    /// claimed files (`.ts`, `.json`) into the index, burying real docs
+    /// under source noise and eating the per-collection file cap. Matched
+    /// by exact directory name at any depth. (`.git` and other dotfiles are
+    /// already skipped via `.skipsHiddenFiles`.)
+    private static let excludedDirectories: Set<String> = [
+        "node_modules", "dist", "build", ".build", "out", "target",
+        "vendor", "Pods", "Carthage", ".next", ".nuxt", ".svelte-kit",
+        "coverage", "__pycache__", ".venv", "venv", ".tox", ".gradle",
+        "DerivedData", ".terraform",
+    ]
     /// Hard cap on files per collection so a mispointed folder (e.g. a
     /// home directory) can't stall indexing for minutes. Overflow is
     /// logged, never silent.
@@ -328,7 +341,7 @@ public actor KnowledgeIndexService {
     /// enumerator; symlinks are skipped explicitly so a link out of the
     /// folder can't smuggle external content into the index.
     private func scanIndexableFiles(in folderURL: URL) -> [URL] {
-        let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
+        let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .isDirectoryKey, .fileSizeKey]
         guard
             let enumerator = FileManager.default.enumerator(
                 at: folderURL,
@@ -340,6 +353,13 @@ public actor KnowledgeIndexService {
         var files: [URL] = []
         var overflow = 0
         for case let url as URL in enumerator {
+            // Prune dependency/build/VCS subtrees before descending into them.
+            if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                if Self.excludedDirectories.contains(url.lastPathComponent) {
+                    enumerator.skipDescendants()
+                }
+                continue
+            }
             let ext = url.pathExtension.lowercased()
             if Self.excludedExtensions.contains(ext) { continue }
             let isMarkdown = Self.markdownExtensions.contains(ext)
