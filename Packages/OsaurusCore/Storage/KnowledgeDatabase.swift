@@ -663,6 +663,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         let limitIndex = collectionIds.count + 2
 
         if let ftsQuery = Self.ftsMatchQuery(trimmed) {
+            KnowledgeDebugLog.log("db.searchChunksText", "FTS branch match=\(ftsQuery)")
             try prepareAndExecute(
                 """
                 SELECT \(Self.chunkHitColumns)
@@ -686,9 +687,11 @@ public final class KnowledgeDatabase: @unchecked Sendable {
                     }
                 }
             )
+            KnowledgeDebugLog.log("db.searchChunksText", "FTS branch returned \(hits.count) row(s)")
             return hits
         }
 
+        KnowledgeDebugLog.log("db.searchChunksText", "LIKE branch (no FTS tokens) for query=\(trimmed.prefix(60))")
         try prepareAndExecute(
             """
             SELECT \(Self.chunkHitColumns)
@@ -1220,7 +1223,18 @@ public final class KnowledgeDatabase: @unchecked Sendable {
             .map { String($0) }
             .filter { !$0.isEmpty }
         guard !words.isEmpty else { return nil }
-        return words.map { "\"\($0)\"*" }.joined(separator: " OR ")
+        // Drop low-signal tokens before OR-prefixing. A short or purely
+        // numeric term like "2" becomes `"2"*`, which prefix-matches every
+        // token starting with 2 (2, 20, 2024, …) — in a large or code-heavy
+        // corpus that pulls in a huge fraction of chunks, so bm25 must rank
+        // them all. That both starves the query (multi-minute searches that
+        // blow the tool's 120s budget) and floods the results with noise.
+        // Keep only terms >= 3 chars that aren't all digits; if that leaves
+        // nothing (e.g. the query is just "AI" or "v2"), fall back to the
+        // full token list so short deliberate queries still match.
+        let meaningful = words.filter { $0.count >= 3 && !$0.allSatisfy(\.isNumber) }
+        let effective = meaningful.isEmpty ? words : meaningful
+        return effective.map { "\"\($0)\"*" }.joined(separator: " OR ")
     }
 }
 
