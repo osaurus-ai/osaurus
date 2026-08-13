@@ -234,6 +234,19 @@ final class SearchKnowledgeTool: OsaurusTool, @unchecked Sendable {
 
         if hits.isEmpty {
             let scopeNote = collections.count == 1 ? " in collection '\(collections[0].name)'" : ""
+            // A collection mid-index has an incomplete corpus, so an empty
+            // result may be transient. Tell the model to retry rather than
+            // conclude the material doesn't exist.
+            let indexing = await MainActor.run {
+                collections.contains { KnowledgeManager.shared.indexingCollectionIds.contains($0.id) }
+            }
+            if indexing {
+                return ToolEnvelope.success(
+                    tool: name,
+                    text: "No matches for '\(query)' yet\(scopeNote) — this collection is still "
+                        + "indexing, so its content is not fully searchable. Retry in a moment."
+                )
+            }
             return ToolEnvelope.success(
                 tool: name,
                 text: "No knowledge documents match '\(query)'\(scopeNote)."
