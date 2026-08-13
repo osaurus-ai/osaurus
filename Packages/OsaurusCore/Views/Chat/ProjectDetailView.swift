@@ -476,9 +476,13 @@ struct ProjectDetailView: View {
                     ManagementStateManager.shared.pendingKnowledgeDetailId = collection.id
                     AppDelegate.shared?.showManagementWindow(initialTab: .knowledge)
                 } label: {
-                    Image(systemName: "chevron.right.circle.fill")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                    // A plain chevron, not the filled circle variant: the
+                    // circular glyph read as a second selection control next
+                    // to the leading checkmark. Tertiary gray keeps it a quiet
+                    // "opens detail" affordance.
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
                         .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
                 }
