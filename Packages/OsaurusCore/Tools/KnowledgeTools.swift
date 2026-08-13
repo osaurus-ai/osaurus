@@ -177,15 +177,28 @@ final class SearchKnowledgeTool: OsaurusTool, @unchecked Sendable {
             )
         }
 
+        KnowledgeDebugLog.log("search_knowledge", "ENTER query=\(query.prefix(80))")
+        let t0 = KnowledgeDebugLog.now()
+
+        KnowledgeDebugLog.log("search_knowledge", "resolving agent grant scope")
         let scope = await KnowledgeToolScope.resolve(
             tool: name,
             collectionName: args["collection"] as? String
         )
         guard case .granted(let collections) = scope else {
+            KnowledgeDebugLog.log("search_knowledge", "scope resolution failed/rejected; returning")
             if case .failure(let envelope) = scope { return envelope }
             return ""
         }
-        if let envelope = KnowledgeToolScope.ensureDatabaseOpen(tool: name) { return envelope }
+        KnowledgeDebugLog.log(
+            "search_knowledge",
+            "scope granted: \(collections.count) collection(s) in \(KnowledgeDebugLog.ms(since: t0))ms"
+        )
+        KnowledgeDebugLog.log("search_knowledge", "ensureDatabaseOpen")
+        if let envelope = KnowledgeToolScope.ensureDatabaseOpen(tool: name) {
+            KnowledgeDebugLog.log("search_knowledge", "database unavailable; returning")
+            return envelope
+        }
 
         let tagFilter = ((args["tags"] as? [Any]) ?? []).compactMap { $0 as? String }
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -199,10 +212,20 @@ final class SearchKnowledgeTool: OsaurusTool, @unchecked Sendable {
         let collectionIds = collections.map { $0.id.uuidString }
         let nameById = KnowledgeToolScope.namesById(collections)
 
+        KnowledgeDebugLog.log(
+            "search_knowledge",
+            "calling KnowledgeSearchService.search topK=\(fetchCount) collections=\(collectionIds.count)"
+        )
+        let tSearch = KnowledgeDebugLog.now()
         var hits = await KnowledgeSearchService.shared.search(
             query: query,
             collectionIds: collectionIds,
             topK: fetchCount
+        )
+        KnowledgeDebugLog.log(
+            "search_knowledge",
+            "search returned \(hits.count) hit(s) in \(KnowledgeDebugLog.ms(since: tSearch))ms "
+                + "(total \(KnowledgeDebugLog.ms(since: t0))ms)"
         )
         if !tagFilter.isEmpty {
             hits = hits.filter { KnowledgeToolScope.matchesTags($0.tagsCSV, filter: tagFilter) }

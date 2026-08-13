@@ -188,18 +188,37 @@ public actor KnowledgeSearchService {
     ) async -> [KnowledgeChunkHit] {
         guard topK > 0, !collectionIds.isEmpty else { return [] }
 
-        if await vectorWorkAllowed("search") {
+        KnowledgeDebugLog.log("service.search", "checking vectorWorkAllowed (queries ModelRuntime residency)")
+        let tGuard = KnowledgeDebugLog.now()
+        let allowed = await vectorWorkAllowed("search")
+        KnowledgeDebugLog.log(
+            "service.search",
+            "vectorWorkAllowed=\(allowed) in \(KnowledgeDebugLog.ms(since: tGuard))ms"
+        )
+        if allowed {
             var scored: [(hit: KnowledgeChunkHit, score: Double)] = []
             var sawVectorResults = false
             let fetchCount = Int(Double(topK) * Self.defaultFetchMultiplier)
 
             for collectionId in collectionIds {
-                guard let db = await ensureVectorDB(for: collectionId) else { continue }
+                KnowledgeDebugLog.log("service.search", "ensureVectorDB collection=\(collectionId) (VecturaKit init)")
+                let tDB = KnowledgeDebugLog.now()
+                guard let db = await ensureVectorDB(for: collectionId) else {
+                    KnowledgeDebugLog.log("service.search", "ensureVectorDB returned nil (fallback) for \(collectionId)")
+                    continue
+                }
+                KnowledgeDebugLog.log("service.search", "vectorDB ready in \(KnowledgeDebugLog.ms(since: tDB))ms")
                 do {
+                    KnowledgeDebugLog.log("service.search", "db.search START (embeds query + ANN) collection=\(collectionId)")
+                    let tVec = KnowledgeDebugLog.now()
                     let results = try await db.search(
                         query: .text(query),
                         numResults: fetchCount,
                         threshold: Self.defaultSearchThreshold
+                    )
+                    KnowledgeDebugLog.log(
+                        "service.search",
+                        "db.search DONE \(results.count) result(s) in \(KnowledgeDebugLog.ms(since: tVec))ms"
                     )
                     sawVectorResults = sawVectorResults || !results.isEmpty
 
@@ -226,7 +245,9 @@ public actor KnowledgeSearchService {
                         }
                     }
 
+                    KnowledgeDebugLog.log("service.search", "loadChunksByCompositeKeys keys=\(keys.count)")
                     let hits = (try? KnowledgeDatabase.shared.loadChunksByCompositeKeys(keys)) ?? []
+                    KnowledgeDebugLog.log("service.search", "loaded \(hits.count) chunk row(s) from SQLite")
                     for hit in hits {
                         if let score = scores[hit.compositeKey] {
                             scored.append((hit, score))
@@ -251,14 +272,22 @@ public actor KnowledgeSearchService {
             }
         }
 
+        KnowledgeDebugLog.log("service.search", "entering SQLite FTS fallback (searchChunksText)")
+        let tFTS = KnowledgeDebugLog.now()
         do {
-            return try KnowledgeDatabase.shared.searchChunksText(
+            let hits = try KnowledgeDatabase.shared.searchChunksText(
                 query: query,
                 collectionIds: collectionIds,
                 limit: topK
             )
+            KnowledgeDebugLog.log(
+                "service.search",
+                "FTS fallback returned \(hits.count) hit(s) in \(KnowledgeDebugLog.ms(since: tFTS))ms"
+            )
+            return hits
         } catch {
             KnowledgeLogger.search.error("FTS fallback failed: \(error)")
+            KnowledgeDebugLog.log("service.search", "FTS fallback FAILED: \(error)")
             return []
         }
     }
