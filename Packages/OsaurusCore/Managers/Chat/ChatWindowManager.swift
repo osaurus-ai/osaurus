@@ -914,8 +914,7 @@ private struct ChatFullScreenHeaderView: View {
                 ChatToolbarBackView(windowState: windowState, sidebarOpenInset: 164)
                 Spacer()
                 ChatToolbarActionView(windowState: windowState)
-                ChatToolbarPinView(windowState: windowState)
-                ChatToolbarSettingsView(windowState: windowState)
+                ChatToolbarTrailingView(windowState: windowState)
             }
             ChatToolbarAgentView(windowState: windowState)
         }
@@ -946,8 +945,9 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     fileprivate static let backItem = NSToolbarItem.Identifier("ChatToolbar.back")
     fileprivate static let agentItem = NSToolbarItem.Identifier("ChatToolbar.agent")
     fileprivate static let actionItem = NSToolbarItem.Identifier("ChatToolbar.action")
+    // The trailing item; hosts the pin (chat) or the settings gear
+    // (project page). Named `pin` for backward identity continuity.
     fileprivate static let pinItem = NSToolbarItem.Identifier("ChatToolbar.pin")
-    fileprivate static let settingsItem = NSToolbarItem.Identifier("ChatToolbar.settings")
 
     /// Layout: sidebar on the leading edge, agent pill centered (via the
     /// toolbar's `centeredItemIdentifier`), action + pin on the trailing edge.
@@ -955,9 +955,13 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     /// Any stale identifiers AppKit may have persisted in user defaults
     /// fall through to `default: nil` in `itemForItemIdentifier`, which
     /// renders them as no-ops rather than crashing.
+    // The trailing slot is a SINGLE item that shows the pin (chat) or the
+    // settings gear (project page) — they're mutually exclusive. Keeping
+    // them as two items left whichever one was hidden as an empty toolbar
+    // item that AppKit still reserved spacing for, so every chat had a dead
+    // gap at the toolbar's right edge.
     private static let itemIdentifiers: [NSToolbarItem.Identifier] = [
         sidebarItem, backItem, .flexibleSpace, agentItem, .flexibleSpace, actionItem, pinItem,
-        settingsItem,
     ]
 
     private weak var windowState: ChatWindowState?
@@ -1015,14 +1019,7 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
             return makeHostingItem(
                 identifier: itemIdentifier,
                 rootView:
-                    ChatToolbarPinView(windowState: windowState)
-            )
-
-        case Self.settingsItem:
-            return makeHostingItem(
-                identifier: itemIdentifier,
-                rootView:
-                    ChatToolbarSettingsView(windowState: windowState)
+                    ChatToolbarTrailingView(windowState: windowState)
             )
 
         default:
@@ -1359,10 +1356,15 @@ private struct ChatToolbarChangesButton: View {
     }
 }
 
-/// Settings gear, shown ONLY on the project detail page — the chat surface
-/// reaches settings through the agent pill's gear, which hides with the
-/// rest of the chat chrome while a project is open.
-private struct ChatToolbarSettingsView: View {
+/// The single trailing toolbar item. Window pinning is chat chrome; the
+/// settings gear only makes sense on the project detail page (the chat
+/// surface reaches settings through the agent pill's gear, which hides with
+/// the rest of the chat chrome while a project is open). The two are
+/// mutually exclusive, so they share one toolbar item — otherwise the
+/// hidden one leaves an empty item that reserves a dead gap at the toolbar's
+/// right edge. Both are `HeaderActionButton`-sized, so the item's footprint
+/// is stable as it swaps.
+private struct ChatToolbarTrailingView: View {
     @ObservedObject var windowState: ChatWindowState
 
     var body: some View {
@@ -1373,18 +1375,7 @@ private struct ChatToolbarSettingsView: View {
                 action: { AppDelegate.shared?.showManagementWindow(initialTab: nil) }
             )
             .environment(\.theme, windowState.theme)
-        }
-    }
-}
-
-/// Pin button. Observes windowState for reactive theme updates.
-private struct ChatToolbarPinView: View {
-    @ObservedObject var windowState: ChatWindowState
-
-    var body: some View {
-        // Window pinning is chat chrome; it has no meaning on the project
-        // detail page.
-        if !windowState.isProjectPageVisible {
+        } else {
             PinButton(windowId: windowState.windowId)
                 .environment(\.theme, windowState.theme)
         }
