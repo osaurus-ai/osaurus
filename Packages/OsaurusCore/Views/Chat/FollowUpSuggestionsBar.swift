@@ -112,7 +112,7 @@ struct FollowUpSuggestionsBar: View {
                     .foregroundStyle(theme.secondaryText)
                     .opacity(isHovered ? 1 : 0)
                     .offset(x: isHovered ? 0 : -4)
-                    .padding(.trailing, 2)
+                    .padding(.trailing, 12)
             }
             .contentShape(Rectangle())
             .padding(.vertical, 10)
