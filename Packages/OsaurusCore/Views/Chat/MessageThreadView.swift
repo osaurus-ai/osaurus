@@ -7,6 +7,7 @@
 //  management, and stable scroll anchoring during streaming.
 //
 
+import AppKit
 import SwiftUI
 
 struct MessageThreadView: View {
@@ -41,6 +42,7 @@ struct MessageThreadView: View {
     var onConfirmEdit: (() -> Void)? = nil
     var onCancelEdit: (() -> Void)? = nil
     var onUserImagePreview: ((String) -> Void)? = nil
+    var onImagePreviewImage: ((NSImage) -> Void)? = nil
     var onDocumentPreview: ((Attachment) -> Void)? = nil
 
     // Minimap
@@ -118,6 +120,7 @@ struct MessageThreadView: View {
             onConfirmEdit: onConfirmEdit,
             onCancelEdit: onCancelEdit,
             onUserImagePreview: onUserImagePreview,
+            onImagePreviewImage: onImagePreviewImage,
             onDocumentPreview: onDocumentPreview,
             onVisibleTopUserTurnChanged: onVisibleTopUserTurnChanged,
             scrollToTurnId: scrollToTurnId,

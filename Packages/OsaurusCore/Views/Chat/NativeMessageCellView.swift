@@ -44,6 +44,9 @@ struct CellRenderingContext {
     var onDeleteMessage: ((UUID) -> Void)? = nil
     /// attachment or shared-artifact id string → full screen preview from ChatView
     var onUserImagePreview: ((String) -> Void)? = nil
+    /// Inline markdown image (e.g. a generated image) clicked → full screen
+    /// preview from ChatView, carrying the already-decoded bitmap.
+    var onImagePreviewImage: ((NSImage) -> Void)? = nil
     /// Document attachment (pasted content or an attached file like a PDF/DOCX)
     /// → read-only preview sheet from ChatView. Lets users re-read the extracted
     /// text after the message is sent, mirroring the composer's chip preview.
@@ -2012,6 +2015,7 @@ final class NativeMessageCellView: NSTableCellView {
             let h = mv.measuredHeight(for: context.width - 32)
             context.onHeightMeasured?(h + 8, id)
         }
+        mv.onImagePreview = { img in context.onImagePreviewImage?(img) }
         mv.configure(
             text: text,
             width: context.width - 32,
@@ -2509,6 +2513,7 @@ final class NativeMessageCellView: NSTableCellView {
                 let totalH = self.measureFittedRowHeight()
                 context.onHeightMeasured?(totalH, id)
             }
+            mv.onImagePreview = { img in context.onImagePreviewImage?(img) }
             mv.configure(
                 text: text,
                 width: bubbleWidth - 24,

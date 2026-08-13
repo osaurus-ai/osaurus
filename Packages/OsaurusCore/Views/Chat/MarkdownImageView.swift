@@ -437,15 +437,27 @@ final class MarkdownSegmentImageView: NSImageView {
     private var trackingAreaRef: NSTrackingArea?
     private var rightEdgeConstraint: NSLayoutConstraint?
 
+    /// Clicking the image opens it in the full-screen lightbox. The owner
+    /// forwards the already-decoded `NSImage` up to `ChatView`, which presents
+    /// `ImageFullScreenView` — no reload, so no main-thread file/network read.
+    var onPreview: ((NSImage) -> Void)?
+
     private static let buttonSize: CGFloat = 26
     private static let inset: CGFloat = 8
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         configureDownloadButton()
+        let click = NSClickGestureRecognizer(target: self, action: #selector(imageClicked))
+        addGestureRecognizer(click)
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func imageClicked() {
+        guard let image else { return }
+        onPreview?(image)
+    }
 
     private func configureDownloadButton() {
         downloadButton.translatesAutoresizingMaskIntoConstraints = false

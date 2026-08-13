@@ -107,6 +107,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
     let onConfirmEdit: (() -> Void)?
     let onCancelEdit: (() -> Void)?
     var onUserImagePreview: ((String) -> Void)? = nil
+    var onImagePreviewImage: ((NSImage) -> Void)? = nil
     var onDocumentPreview: ((Attachment) -> Void)? = nil
 
     // Minimap support
@@ -280,6 +281,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onSpeak: onSpeak,
             onDeleteMessage: onDeleteMessage,
             onUserImagePreview: onUserImagePreview,
+            onImagePreviewImage: onImagePreviewImage,
             onDocumentPreview: onDocumentPreview,
             sessionRedactions: sessionRedactions,
             searchHighlightQuery: searchHighlightQuery,
@@ -332,6 +334,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onSpeak: onSpeak,
             onDeleteMessage: onDeleteMessage,
             onUserImagePreview: onUserImagePreview,
+            onImagePreviewImage: onImagePreviewImage,
             onDocumentPreview: onDocumentPreview,
             sessionRedactions: sessionRedactions,
             searchHighlightQuery: searchHighlightQuery
