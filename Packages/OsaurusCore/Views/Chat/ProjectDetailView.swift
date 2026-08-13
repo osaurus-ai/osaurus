@@ -492,10 +492,8 @@ struct ProjectDetailView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isGranted ? theme.accentColor.opacity(theme.isDark ? 0.10 : 0.07) : .clear)
-            )
+            // The leading checkmark already signals selection; a fill tint
+            // on top of it was redundant.
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
