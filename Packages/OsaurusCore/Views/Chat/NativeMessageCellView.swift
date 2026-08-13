@@ -1653,6 +1653,9 @@ final class NativeMessageCellView: NSTableCellView {
 
     // Native views (no NSHostingView)
     private var nativeMarkdownView: NativeMarkdownView?
+    /// Shimmering single-line status shown while an image is being generated
+    /// ("Generating image… 1/4"), matching the running tool/thinking titles.
+    private var statusShimmerLabel: ShimmerLabel?
     private var nativeThinkingView: NativeThinkingView?
     private var nativeCompactionMarkerView: NativeCompactionMarkerView?
     private var nativeToolCallGroupView: NativeToolCallGroupView?
@@ -1989,6 +1992,53 @@ final class NativeMessageCellView: NSTableCellView {
 
     // MARK: - Paragraph (native NSTextView)
 
+    /// True when an assistant paragraph is really a live image-generation status
+    /// ("Loading image model…" / "Generating image… 1/4"). Matched against the
+    /// same localized strings `ChatView` writes into `turn.content`.
+    private static func isImageGenerationStatus(_ text: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.contains("\n") else { return false }
+        return t == L("Loading image model…") || t.hasPrefix(L("Generating image…"))
+    }
+
+    /// Render the image-generation status as a shimmering single-line label,
+    /// reusing the same `ShimmerLabel` the running tool/thinking titles use.
+    private func configureAsImageStatusShimmer(text: String, context: CellRenderingContext) {
+        let label: ShimmerLabel
+        if let existing = statusShimmerLabel {
+            label = existing
+        } else {
+            removeAllContentViews()
+            let l = ShimmerLabel()
+            l.translatesAutoresizingMaskIntoConstraints = false
+            l.wantsLayer = true
+            addSubview(l)
+            NSLayoutConstraint.activate([
+                l.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+                l.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
+                l.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            ])
+            statusShimmerLabel = l
+            label = l
+        }
+        let font =
+            NSFont(name: context.theme.primaryFontName, size: CGFloat(context.theme.bodySize))
+            ?? .systemFont(ofSize: CGFloat(context.theme.bodySize))
+        label.configure(
+            text: text,
+            font: font,
+            baseColor: NSColor(context.theme.primaryText).withAlphaComponent(0.4),
+            highlightColor: NSColor(context.theme.primaryText)
+        )
+        label.start()
+        if let id = currentBlockId {
+            // Mirror the paragraph path's inset budget (top 4 + bottom 4) on top
+            // of a single line so the row height matches the static text it swaps.
+            let lineHeight = ceil(font.ascender - font.descender + font.leading)
+            context.onHeightMeasured?(lineHeight + 8, id)
+        }
+    }
+
     private func configureAsParagraph(
         block: ContentBlock,
         text: String,
@@ -1997,6 +2047,19 @@ final class NativeMessageCellView: NSTableCellView {
         context: CellRenderingContext,
         sameKind: Bool
     ) {
+        // While an image is generating, the assistant "body" is a transient
+        // status string. Render it as a shimmer to match the running tool /
+        // thinking titles instead of flat, static text.
+        if role == .assistant, Self.isImageGenerationStatus(text) {
+            configureAsImageStatusShimmer(text: text, context: context)
+            return
+        }
+        // Leaving the status state (e.g. the final image markdown replaces it):
+        // drop the shimmer and fall through to the normal markdown path.
+        if statusShimmerLabel != nil {
+            removeAllContentViews()
+        }
+
         if !sameKind || nativeMarkdownView == nil {
             removeAllContentViews()
             let mv = NativeMarkdownView()
@@ -2958,6 +3021,8 @@ final class NativeMessageCellView: NSTableCellView {
         // `NativeMarkdownView`'s own teardown (issue #1632 launch SIGABRT).
         nativeMarkdownView?.tearDownForReuse()
         nativeMarkdownView?.removeFromSuperview(); nativeMarkdownView = nil
+        statusShimmerLabel?.stop()
+        statusShimmerLabel?.removeFromSuperview(); statusShimmerLabel = nil
         nativeThinkingView?.removeFromSuperview(); nativeThinkingView = nil
         nativeCompactionMarkerView?.removeFromSuperview(); nativeCompactionMarkerView = nil
         // Coordinator-cached views: only call `removeFromSuperview` if
