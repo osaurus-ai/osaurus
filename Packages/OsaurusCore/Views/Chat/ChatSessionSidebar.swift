@@ -219,9 +219,12 @@ struct ChatSessionSidebar: View {
     var body: some View {
         SidebarContainer(attachedEdge: .leading, topPadding: 40) {
             // Chats | Projects lens switcher, above the section header so
-            // the lens is the first thing the eye lands on.
+            // the lens is the first thing the eye lands on. As the first
+            // child it owns the window-control clearance the header used to
+            // provide (the container's 40pt only clears the traffic lights).
             sidebarTabBar
                 .padding(.horizontal, 12)
+                .padding(.top, 16)
                 .padding(.bottom, 6)
 
             // Header with New Chat button
@@ -798,7 +801,10 @@ struct ChatSessionSidebar: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.top, 20)
+        // No top padding: the tab bar directly above already supplies the
+        // spacing. A 20pt top here was leftover from when the header was the
+        // first element and produced a dead gap under the tab bar.
+        .padding(.top, 2)
         .padding(.bottom, 8)
     }
 
