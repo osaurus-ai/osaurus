@@ -4250,6 +4250,12 @@ final class ChatSession: ObservableObject {
         selectedModel: String?
     ) async throws -> (invocations: [ServiceToolInvocation], finalTurn: ChatTurn) {
         var currentTurn = assistantTurn
+        // A stream that arrives for an already-finalized run (Stop landed
+        // while engine setup ignored cooperative cancellation) must not
+        // write anything: the run's cleanup already finished, so every
+        // mutation here would ghost into the transcript — starting with the
+        // reset below erasing the `cancelled` stamp finalizeRun recorded.
+        guard activeRunId == runId else { throw CancellationError() }
         // A continuation or transient retry may reuse this stream processor
         // after the prior assistant step set terminal metadata. Each model
         // generation owns fresh terminal state; carrying `stop` or an
