@@ -146,7 +146,11 @@ struct CapabilitiesToolTests {
         let result = try await CapabilitiesTool().execute(argumentsJSON: "{}")
         #expect(!ToolEnvelope.isError(result))
         #expect(result.contains("\"tool\":\"capabilities\""))
-        #expect(result.contains("No capabilities are enabled"))
+        // Environment-independent: CI ships bundled skills (populated list),
+        // a bare checkout has none (empty-list text). Either is the contract.
+        #expect(
+            result.contains("Enabled capabilities")
+                || result.contains("No capabilities are enabled"))
     }
 
     @Test func searchResultUsesSingleGatewayVocabulary() async throws {
@@ -599,14 +603,18 @@ struct CapabilitiesLoadToolTests {
         let tool = CapabilitiesLoadTool()
         let result = try await tool.execute(argumentsJSON: "{\"ids\": []}")
         #expect(!ToolEnvelope.isError(result))
-        #expect(result.contains("No capabilities are enabled"))
+        #expect(
+            result.contains("Enabled capabilities")
+                || result.contains("No capabilities are enabled"))
     }
 
     @Test func missingIdsFallsBackToTheEnabledList() async throws {
         let tool = CapabilitiesLoadTool()
         let result = try await tool.execute(argumentsJSON: "{}")
         #expect(!ToolEnvelope.isError(result))
-        #expect(result.contains("No capabilities are enabled"))
+        #expect(
+            result.contains("Enabled capabilities")
+                || result.contains("No capabilities are enabled"))
     }
 
     /// Synthetic spec with a uniquely-marked parameter description so the
