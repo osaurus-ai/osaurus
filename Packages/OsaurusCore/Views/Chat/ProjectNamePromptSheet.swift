@@ -14,6 +14,9 @@ import SwiftUI
 struct ProjectNamePromptSheet: View {
     let initialName: String
     let submitLabel: LocalizedStringKey
+    /// When true, prefix the field with a short explainer of what a project
+    /// is (shown for the "New Project" flow; the rename flow stays bare).
+    var showsIntro: Bool = false
     let onSubmit: (String) -> Void
 
     @Environment(\.theme) private var theme
@@ -26,6 +29,11 @@ struct ProjectNamePromptSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if showsIntro {
+                intro
+                Divider().opacity(0.5)
+            }
+
             TextField(text: $name, prompt: Text("Project name", bundle: .module)) {
                 Text("Project name", bundle: .module)
             }
@@ -65,6 +73,67 @@ struct ProjectNamePromptSheet: View {
     private func submit() {
         guard !trimmed.isEmpty else { return }
         onSubmit(trimmed)
+    }
+
+    // MARK: - Intro
+
+    /// Short explainer + the three things a project bundles, so the create
+    /// dialog teaches what a project is instead of just asking for a name.
+    private var intro: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(
+                "Group related chats so they share the same instructions, knowledge, and memory across every agent.",
+                bundle: .module
+            )
+            .font(.system(size: 12))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 8) {
+                featureRow(
+                    icon: "list.bullet.rectangle",
+                    title: "Instructions",
+                    subtitle: "Guidance added to every chat."
+                )
+                featureRow(
+                    icon: "books.vertical",
+                    title: "Knowledge",
+                    subtitle: "Shared collections every chat can search."
+                )
+                featureRow(
+                    icon: "brain",
+                    title: "Shared memory",
+                    subtitle: "Facts that carry across every chat."
+                )
+            }
+        }
+    }
+
+    private func featureRow(
+        icon: String,
+        title: LocalizedStringKey,
+        subtitle: LocalizedStringKey
+    ) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.accentColor)
+                .frame(width: 26, height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(theme.accentColor.opacity(0.12))
+                )
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title, bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text(subtitle, bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
     }
 }
 

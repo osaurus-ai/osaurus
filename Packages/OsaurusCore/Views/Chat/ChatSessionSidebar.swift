@@ -381,105 +381,21 @@ struct ChatSessionSidebar: View {
         }
     }
 
-    /// Teaching empty state for the Projects tab — mirrors the "New
-    /// Project" dialog's explainer so a user who never opens that dialog
-    /// still learns what a project bundles. Sized for the narrow sidebar.
+    /// Empty state for the Projects tab. Mirrors the Chats tab's
+    /// `emptyState` (centered icon + label) for visual consistency; the
+    /// explainer of what a project is lives in the New Project dialog.
     private var projectsEmptyState: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                ZStack {
-                    Circle()
-                        .fill(theme.accentColor.opacity(0.12))
-                        .frame(width: 56, height: 56)
-                    Image(systemName: "folder.badge.plus")
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                }
-                .padding(.top, 8)
-
-                VStack(spacing: 6) {
-                    Text("No projects yet", bundle: .module)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(
-                        "Group related chats so they share the same instructions, knowledge, and memory across every agent.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-
-                VStack(spacing: 8) {
-                    projectFeatureRow(
-                        icon: "list.bullet.rectangle",
-                        title: "Instructions",
-                        subtitle: "Guidance added to every chat."
-                    )
-                    projectFeatureRow(
-                        icon: "books.vertical",
-                        title: "Knowledge",
-                        subtitle: "Shared collections every chat can search."
-                    )
-                    projectFeatureRow(
-                        icon: "brain",
-                        title: "Shared memory",
-                        subtitle: "Facts that carry across every chat."
-                    )
-                }
-
-                Button {
-                    requestNewProject()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("New Project", bundle: .module)
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(
-                        Capsule().fill(theme.accentColor)
-                    )
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 2)
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 24)
-            .frame(maxWidth: .infinity)
+        VStack(spacing: 8) {
+            Spacer()
+            Image(systemName: "folder")
+                .font(.system(size: 28))
+                .foregroundColor(theme.secondaryText.opacity(0.5))
+            Text("No projects yet", bundle: .module)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText.opacity(0.7))
+            Spacer()
         }
-        .scrollIndicators(.hidden)
-    }
-
-    private func projectFeatureRow(
-        icon: String,
-        title: LocalizedStringKey,
-        subtitle: LocalizedStringKey
-    ) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.accentColor)
-                .frame(width: 26, height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(theme.accentColor.opacity(0.12))
-                )
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title, bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text(subtitle, bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-        }
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Project CRUD
@@ -488,7 +404,8 @@ struct ChatSessionSidebar: View {
         presentProjectNamePrompt(
             title: "New Project",
             initialName: "",
-            submitLabel: "Create"
+            submitLabel: "Create",
+            showsIntro: true
         ) { name in
             let project = ProjectManager.shared.create(name: name)
             // Land the user straight on the fresh project's page.
@@ -512,13 +429,15 @@ struct ChatSessionSidebar: View {
         title: String,
         initialName: String,
         submitLabel: LocalizedStringKey,
+        showsIntro: Bool = false,
         onSubmit: @escaping (String) -> Void
     ) {
         let requestId = UUID()
         let scope = alertScope
         let sheet = ProjectNamePromptSheet(
             initialName: initialName,
-            submitLabel: submitLabel
+            submitLabel: submitLabel,
+            showsIntro: showsIntro
         ) { name in
             ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
             onSubmit(name)
@@ -531,7 +450,7 @@ struct ChatSessionSidebar: View {
                 buttons: [.cancel(L("Cancel"))],
                 showsCloseButton: true,
                 customContent: AnyView(sheet),
-                width: 360,
+                width: showsIntro ? 400 : 360,
                 onDismiss: {
                     ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
                 }
