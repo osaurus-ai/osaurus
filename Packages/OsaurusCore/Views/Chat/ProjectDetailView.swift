@@ -85,24 +85,24 @@ struct ProjectDetailView: View {
             != project.instructions.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Below this content width the two columns would each be too cramped,
+    /// so the page falls back to a single stacked column.
+    private let twoColumnBreakpoint: CGFloat = 760
+    /// Fixed width of the right-hand settings column in two-column mode.
+    private let settingsColumnWidth: CGFloat = 360
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 36) {
-                header
-                instructionsSection
-                defaultAgentSection
-                knowledgeSection
-                conversationsSection
+        GeometryReader { geo in
+            Group {
+                if geo.size.width >= twoColumnBreakpoint {
+                    twoColumnLayout
+                } else {
+                    singleColumnLayout
+                }
             }
-            .frame(maxWidth: 640)
-            .padding(.horizontal, 32)
-            .padding(.top, 64)
-            .padding(.bottom, 24)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(theme.primaryBackground)
         }
-        .scrollIndicators(.hidden)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
         .onAppear { syncDraft() }
         // The knowledge registry loads lazily off-main (launch-hang fix);
         // in a chat window this page may be its first consumer, so settle
@@ -112,6 +112,65 @@ struct ProjectDetailView: View {
         // Same view instance can be repointed at another project (sidebar
         // click while the page is open) — reload the draft for the new one.
         .onChange(of: project.id) { _, _ in syncDraft() }
+    }
+
+    // MARK: - Layouts
+
+    /// Wide layout, mirroring Claude's projects page: the chats live on the
+    /// left as the primary content; the project's configuration
+    /// (instructions, knowledge, default agent) sits in a fixed-width panel
+    /// on the right. Each column scrolls independently.
+    private var twoColumnLayout: some View {
+        HStack(alignment: .top, spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 28) {
+                    header
+                    conversationsSection
+                }
+                .padding(.horizontal, 32)
+                .padding(.top, 64)
+                .padding(.bottom, 24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollIndicators(.hidden)
+            .frame(maxWidth: .infinity)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 28) {
+                    instructionsSection
+                    knowledgeSection
+                    defaultAgentSection
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 64)
+                .padding(.bottom, 24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollIndicators(.hidden)
+            .frame(width: settingsColumnWidth)
+            .background(theme.secondaryBackground.opacity(theme.isDark ? 0.18 : 0.3))
+        }
+    }
+
+    /// Narrow fallback: everything stacked in one scrolling column.
+    private var singleColumnLayout: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 36) {
+                header
+                instructionsSection
+                knowledgeSection
+                defaultAgentSection
+                conversationsSection
+            }
+            .frame(maxWidth: 640)
+            .padding(.horizontal, 32)
+            .padding(.top, 64)
+            .padding(.bottom, 24)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollIndicators(.hidden)
     }
 
     private func syncDraft() {
