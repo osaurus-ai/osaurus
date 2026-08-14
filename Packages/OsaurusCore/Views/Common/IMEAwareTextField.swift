@@ -49,10 +49,11 @@ struct IMEAwareTextField: NSViewRepresentable {
         // Single-line behavior: never wrap, grow horizontally.
         textView.isHorizontallyResizable = true
         textView.isVerticallyResizable = false
-        textView.maxSize = NSSize(width: .greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.textContainer?.widthTracksTextView = false
         textView.textContainer?.size = NSSize(
-            width: .greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+            width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
 
         let coordinator = context.coordinator
         textView.onMarkedTextChanged = { [weak coordinator] composing in
