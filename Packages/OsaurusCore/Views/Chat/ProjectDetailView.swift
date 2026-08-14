@@ -142,7 +142,7 @@ struct ProjectDetailView: View {
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                     .lineLimit(1)
-                Text("\(memberSessions.count) conversations", bundle: .module)
+                Text("\(memberSessions.count) chats", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.secondaryText)
             }
@@ -514,7 +514,7 @@ struct ProjectDetailView: View {
     private var conversationsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Conversations", bundle: .module)
+                Text("Chats", bundle: .module)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                 Spacer()
@@ -534,7 +534,7 @@ struct ProjectDetailView: View {
             if !memberSessions.isEmpty {
                 SidebarSearchField(
                     text: $searchQuery,
-                    placeholder: "Search conversations...",
+                    placeholder: "Search chats...",
                     isFocused: $isSearchFocused,
                     isSearching: isContentSearchInFlight,
                     showsRestingBorder: true
@@ -550,7 +550,7 @@ struct ProjectDetailView: View {
                     Image(systemName: "bubble.left.and.bubble.right")
                         .font(.system(size: 22))
                         .foregroundColor(theme.secondaryText.opacity(0.5))
-                    Text("No conversations yet", bundle: .module)
+                    Text("No chats yet", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText.opacity(0.7))
                 }
@@ -561,7 +561,7 @@ struct ProjectDetailView: View {
                 // is still running.
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("Searching conversations…", bundle: .module)
+                    Text("Searching chats…", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText.opacity(0.8))
                 }
