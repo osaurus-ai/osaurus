@@ -218,13 +218,14 @@ struct ChatSessionSidebar: View {
 
     var body: some View {
         SidebarContainer(attachedEdge: .leading, topPadding: 40) {
-            // Header with New Chat button
-            sidebarHeader
-
-            // Chats | Projects lens switcher.
+            // Chats | Projects lens switcher, above the section header so
+            // the lens is the first thing the eye lands on.
             sidebarTabBar
                 .padding(.horizontal, 12)
                 .padding(.bottom, 6)
+
+            // Header with New Chat button
+            sidebarHeader
 
             if selectedTab == .projects {
                 // Project browser: one row per project; opening one shows
