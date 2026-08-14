@@ -38,6 +38,7 @@ struct IMEAwareTextField: NSViewRepresentable {
         textView.allowsUndo = true
         textView.font = font
         textView.textColor = textColor
+        textView.string = text
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
