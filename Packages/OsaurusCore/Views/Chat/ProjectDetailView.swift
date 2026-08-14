@@ -127,6 +127,9 @@ struct ProjectDetailView: View {
                     header
                     conversationsSection
                 }
+                // Keep the chats content at its original readable width
+                // instead of stretching across the whole left column.
+                .frame(maxWidth: 640, alignment: .leading)
                 .padding(.horizontal, 32)
                 .padding(.top, 64)
                 .padding(.bottom, 24)
