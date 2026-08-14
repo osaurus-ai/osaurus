@@ -58,9 +58,14 @@ struct CancelStampSurvivesTrimTests {
     func handshakeStopAppendsCancelledMarker() throws {
         let chatView = try Self.source("Views/Chat/ChatView.swift")
 
-        let stopStart = try #require(chatView.range(of: "func stop() {"))
+        // `stop(preservesCancelledMarker:)`: the default (true) is the user's
+        // Stop button; lifecycle stops pass false and get the historical
+        // clean trim instead of a ghost marker (model unload was the case
+        // that caught this — see explicitModelUnloadPreparationUsesStopLifecycle).
+        let stopStart = try #require(
+            chatView.range(of: "func stop(preservesCancelledMarker: Bool = true) {"))
         let stopWindow = String(
-            chatView[stopStart.lowerBound...].prefix(2400))
+            chatView[stopStart.lowerBound...].prefix(2900))
         // Inside the `wasAwaitingPreSendHandshake` branch: the send was
         // cancelled before the run task appended its assistant turn, so
         // stop() itself must leave the record.

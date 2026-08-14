@@ -2200,7 +2200,13 @@ final class ChatSession: ObservableObject {
         return !Task.isCancelled
     }
 
-    func stop() {
+    /// `preservesCancelledMarker` distinguishes the user's Stop button (the
+    /// transcript must record that a run was cancelled — see the trim guard)
+    /// from internal lifecycle stops (explicit model unload) where the run
+    /// dying is a side effect the user never chose; those keep the historical
+    /// clean trim so no ghost "cancelled" row appears in the transcript.
+    func stop(preservesCancelledMarker: Bool = true) {
+        stopPreservesCancelledMarker = preservesCancelledMarker
         let wasAwaitingPreSendHandshake = awaitingPreSendHandshake
         invalidatePreSendHandshake()
         if wasAwaitingPreSendHandshake {
@@ -2211,7 +2217,7 @@ final class ChatSession: ObservableObject {
             // with no reply and no record that a send was stopped at all.
             // Append the cancelled marker here; `trimTrailingEmptyAssistantTurn`
             // keeps turns that carry a terminal stop reason.
-            if let last = turns.last, last.role == .user {
+            if preservesCancelledMarker, let last = turns.last, last.role == .user {
                 let cancelledTurn = ChatTurn(role: .assistant, content: "")
                 cancelledTurn.terminalStopReason = "cancelled"
                 turns.append(cancelledTurn)
@@ -2244,7 +2250,10 @@ final class ChatSession: ObservableObject {
     func prepareForExplicitModelUnload() {
         warmupController.cancelPendingWorkForExplicitModelUnload()
         if isSendActiveForComposer {
-            stop()
+            // Lifecycle stop: the user chose to unload a model, not to cancel
+            // a chat turn — suppress the cancelled marker so the transcript
+            // keeps the historical clean trim.
+            stop(preservesCancelledMarker: false)
         }
     }
 
@@ -3636,12 +3645,21 @@ final class ChatSession: ObservableObject {
             // run happened at all, so the persisted session ended on the
             // user row with no assistant row (fast models hit this
             // consistently; slower ones persisted a truncated row instead,
-            // purely by timing).
-            lastTurn.terminalStopReason == nil
+            // purely by timing). Lifecycle stops (`stop(preservesCancelledMarker:
+            // false)`) opt back into the clean trim: the user did not cancel
+            // anything, so no marker row belongs in the transcript.
+            lastTurn.terminalStopReason == nil || !stopPreservesCancelledMarker
         {
             turns.removeLast()
         }
+        stopPreservesCancelledMarker = true
     }
+
+    /// Whether the in-flight stop should leave a persisted `cancelled` marker
+    /// when the assistant turn is otherwise empty. Set by `stop(...)`, reset
+    /// after the trailing trim so a later non-stop cleanup path never
+    /// inherits a lifecycle stop's suppression.
+    private var stopPreservesCancelledMarker = true
 
     private func consolidateAssistantTurns() {
         for turn in turns where turn.role == .assistant {
