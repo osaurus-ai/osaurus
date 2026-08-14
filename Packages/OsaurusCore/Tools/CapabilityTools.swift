@@ -41,6 +41,14 @@ struct CapabilitySchemaDiagnostic: Sendable {
 actor CapabilityLoadBuffer {
     static let shared = CapabilityLoadBuffer()
 
+    /// Task-scoped override so tests that assert on drained specs stop
+    /// racing each other through the process-global buffer: parallel suites
+    /// each drain `shared`, so one suite's drain can steal the entry another
+    /// suite just pushed (intermittent `loaded == []`). Production code
+    /// always resolves `current` (== `shared` outside an override).
+    @TaskLocal static var overrideForTests: CapabilityLoadBuffer?
+    static var current: CapabilityLoadBuffer { overrideForTests ?? shared }
+
     /// Tool calls that may publish schemas for the next model iteration.
     /// Shared by chat and eval loops so first-use provisioning, plugin
     /// registration, and capability loading have identical activation rules.
@@ -1258,7 +1266,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 )
             )
         }
-        if let diagnostic = await CapabilityLoadBuffer.shared.add(spec) {
+        if let diagnostic = await CapabilityLoadBuffer.current.add(spec) {
             return .failure(
                 LoadFailure(
                     kind: diagnostic.kind,
@@ -1387,7 +1395,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         var loadedSpecs: [Tool] = []
         var skippedLines: [String] = []
         for spec in specs {
-            if let diagnostic = await CapabilityLoadBuffer.shared.add(spec) {
+            if let diagnostic = await CapabilityLoadBuffer.current.add(spec) {
                 skippedLines.append("Skipped tool '\(diagnostic.toolName)': \(diagnostic.message)")
             } else {
                 loadedNames.append(spec.function.name)

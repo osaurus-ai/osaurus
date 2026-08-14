@@ -137,10 +137,16 @@ struct CapabilitiesToolTests {
         #expect(tool.description.contains("use `query` only when no exact available ID fits"))
     }
 
-    @Test func rejectsCallsWithoutQueryOrIds() async throws {
+    @Test func bareCallReturnsTheEnabledListInsteadOfRejecting() async throws {
+        // A bare `{}` used to come back invalid_args, which sent weaker
+        // models (Raptor was the live repro) into a rejection retry loop.
+        // The gateway now answers the call it almost certainly meant: list
+        // what is enabled. In the empty test environment that list is empty,
+        // which must still be an ok envelope, not an error.
         let result = try await CapabilitiesTool().execute(argumentsJSON: "{}")
-        #expect(ToolEnvelope.isError(result))
+        #expect(!ToolEnvelope.isError(result))
         #expect(result.contains("\"tool\":\"capabilities\""))
+        #expect(result.contains("No capabilities are enabled"))
     }
 
     @Test func searchResultUsesSingleGatewayVocabulary() async throws {
@@ -163,14 +169,19 @@ struct CapabilitiesToolTests {
         ToolRegistry.shared.registerPluginTool(dynamic)
         ToolRegistry.shared.setEnabled(true, for: dynamic.name)
         defer { ToolRegistry.shared.unregister(names: [dynamic.name]) }
-        _ = await CapabilityLoadBuffer.shared.drain()
-
-        let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
-            try await CapabilitiesTool().execute(
-                argumentsJSON: #"{"ids":["tool/\#(dynamic.name)"]}"#
-            )
+        // Task-scoped buffer: several suites drain the process-global
+        // `shared` in parallel, and one of their drains can steal this
+        // test's entry between execute and drain (intermittent `[]`).
+        let buffer = CapabilityLoadBuffer()
+        let (result, loaded) = try await CapabilityLoadBuffer.$overrideForTests.withValue(buffer) {
+            let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+                try await CapabilitiesTool().execute(
+                    argumentsJSON: #"{"ids":["tool/\#(dynamic.name)"]}"#
+                )
+            }
+            let loaded = await buffer.drain()
+            return (result, loaded)
         }
-        let loaded = await CapabilityLoadBuffer.shared.drain()
 
         #expect(!ToolEnvelope.isError(result))
         #expect(result.contains(#""tool":"capabilities""#))
@@ -580,18 +591,22 @@ struct CapabilitiesLoadToolTests {
         #expect(!serialized.contains("skill/plot-data"))
     }
 
-    @Test func rejectsEmptyIds() async throws {
+    @Test func emptyIdsFallsBackToTheEnabledList() async throws {
+        // `ids: []` and a missing `ids` both used to be invalid_args — the
+        // shape a model in a rejection loop keeps producing. Loading nothing
+        // now answers with the enabled list so the loop has something to act
+        // on instead of another rejection.
         let tool = CapabilitiesLoadTool()
         let result = try await tool.execute(argumentsJSON: "{\"ids\": []}")
-        #expect(ToolEnvelope.isError(result))
-        #expect(result.contains("ids"))
+        #expect(!ToolEnvelope.isError(result))
+        #expect(result.contains("No capabilities are enabled"))
     }
 
-    @Test func rejectsMissingIds() async throws {
+    @Test func missingIdsFallsBackToTheEnabledList() async throws {
         let tool = CapabilitiesLoadTool()
         let result = try await tool.execute(argumentsJSON: "{}")
-        #expect(ToolEnvelope.isError(result))
-        #expect(result.contains("ids"))
+        #expect(!ToolEnvelope.isError(result))
+        #expect(result.contains("No capabilities are enabled"))
     }
 
     /// Synthetic spec with a uniquely-marked parameter description so the
