@@ -2205,6 +2205,19 @@ final class ChatSession: ObservableObject {
         invalidatePreSendHandshake()
         if wasAwaitingPreSendHandshake {
             warmupController.cancelPendingWorkForUserStop()
+            // A Stop during the pre-send handshake (the "Loading Model..."
+            // window) cancels the send before the run task ever appends its
+            // assistant turn — the session then persisted a user message
+            // with no reply and no record that a send was stopped at all.
+            // Append the cancelled marker here; `trimTrailingEmptyAssistantTurn`
+            // keeps turns that carry a terminal stop reason.
+            if let last = turns.last, last.role == .user {
+                let cancelledTurn = ChatTurn(role: .assistant, content: "")
+                cancelledTurn.terminalStopReason = "cancelled"
+                turns.append(cancelledTurn)
+                isDirty = true
+                rebuildVisibleBlocks()
+            }
         }
         // Resolve every mounted/queued prompt (secret, clarify) BEFORE
         // cancelling the run: a tool call parked on a prompt continuation
@@ -3615,7 +3628,16 @@ final class ChatSession: ObservableObject {
             // Never drop a turn the router billed — even a zero-output charge
             // must stay so the user sees the "you were charged" notice instead
             // of a silent gap.
-            lastTurn.routerBilling == nil
+            lastTurn.routerBilling == nil,
+            // Never drop a turn that carries a terminal stop reason. A Stop
+            // that lands before the first delta leaves the turn blank AND
+            // stat-less, but `finalizeRun` has already stamped it
+            // `cancelled` — trimming it here erased the only record that a
+            // run happened at all, so the persisted session ended on the
+            // user row with no assistant row (fast models hit this
+            // consistently; slower ones persisted a truncated row instead,
+            // purely by timing).
+            lastTurn.terminalStopReason == nil
         {
             turns.removeLast()
         }
