@@ -4028,6 +4028,23 @@ final class ChatSession: ObservableObject {
 
         let context = activeRunContext
         let runCompletedCleanly = !stopRequested && lastStreamError == nil
+
+        // A user Stop leaves the engine reporting its own natural `stop`, so the
+        // persisted turn was indistinguishable from one that finished on its own
+        // — same `terminal_stop_reason`, just fewer tokens. Anything that reads
+        // that field to decide "the model finished" (cache warm-ups, completed
+        // transcript indexing, agent-task announcements, eval scoring) then
+        // treats a cancelled turn as a complete answer. Stamp the truth on the
+        // turn we already know was stopped; `runCompletedCleanly` above already
+        // keeps it out of memory/indexing, this makes the record agree.
+        if stopRequested, let lastAssistant = turns.lastIndex(where: { $0.role == .assistant }) {
+            if turns[lastAssistant].terminalStopReason == nil
+                || turns[lastAssistant].terminalStopReason == "stop"
+            {
+                turns[lastAssistant].terminalStopReason = "cancelled"
+            }
+        }
+
         activeRunId = nil
         activeRunContext = nil
         completeRunCleanup()
