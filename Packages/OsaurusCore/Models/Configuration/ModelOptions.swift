@@ -225,9 +225,18 @@ enum ModelProfileRegistry {
     }
 
     /// Catalog-driven reasoning capabilities for a (full, provider-prefixed)
-    /// model id, when a connected provider published them.
+    /// model id, when a connected provider published them. Local bundles get
+    /// the same treatment from their stamped effort contract
+    /// (`jang_config.reasoning.supported_reasoning_efforts`, with a
+    /// template-derived fallback for raw HF bundles): Qwen3.8 accepts ONLY
+    /// low/medium/xhigh and its template raises on anything else, so the
+    /// picker must offer exactly the declared set rather than the generic
+    /// ladder.
     static func reasoningCapabilities(for modelId: String) -> ModelReasoningCapabilities? {
-        RemoteReasoningCapabilityCatalog.capabilities(for: modelId)
+        if let remote = RemoteReasoningCapabilityCatalog.capabilities(for: modelId) {
+            return remote
+        }
+        return DeclaredReasoningEffort.capabilities(forModelId: modelId)
     }
 
     /// The effort id the UI should display as active: the explicit persisted

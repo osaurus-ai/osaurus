@@ -986,6 +986,46 @@ struct MLXBatchAdapter {
         let hasPositiveReasoningEffort =
             normalizedReasoningEffort != nil && !directRailReasoningEffort
 
+        // The effort value the template-kwarg branches below are allowed to
+        // send. Bundles stamp their accepted set
+        // (`jang_config.reasoning.supported_reasoning_efforts`; Qwen3.8 =
+        // low/medium/xhigh and its template raise_exceptions on anything
+        // else, so forwarding the app ladder verbatim hard-fails the render):
+        //   • declared levels → the request snapped onto them (high→xhigh,
+        //     max→xhigh, minimal→low; ties round up)
+        //   • declared block without a level set → nil, the kwarg is omitted
+        //     (the model has no effort control; enable_thinking still applies)
+        //   • no declaration → the request unchanged (legacy behavior)
+        // Unknown strings pass through un-snapped so the template's own
+        // typed raise (which names the valid set) surfaces instead of a
+        // silent coerce. DSV4/Hy3 keep their dedicated normalizers above
+        // this mechanism and never consult it.
+        let dispatchReasoningEffort: String? = {
+            guard hasPositiveReasoningEffort, let requested = normalizedReasoningEffort else {
+                return nil
+            }
+            switch DeclaredReasoningEffort.control(forModelId: modelName) {
+            case .levels(let levels, let defaultLevel):
+                return DeclaredReasoningEffort.snapped(
+                    requested, ontoLevels: levels, defaultLevel: defaultLevel) ?? requested
+            case .noEffortControl:
+                return nil
+            case nil:
+                return requested
+            }
+        }()
+
+        // `preserve_thinking` (Qwen3.8+): whether historical `<think>` blocks
+        // stay in the rendered prompt. Sent only on an explicit option AND a
+        // bundle that declares the kwarg — the template default (true) stays
+        // authoritative otherwise. Note for cache work: flipping this changes
+        // every historical assistant message, so it re-keys the entire prefix.
+        if let preserveThinking = generation.modelOptions["preserveThinking"]?.boolValue,
+            DeclaredReasoningEffort.preserveThinking(forModelId: modelName) != nil
+        {
+            context["preserve_thinking"] = preserveThinking
+        }
+
         if DSV4ReasoningProfile.matches(modelId: modelName) {
             guard normalizedReasoningEffort != nil || disableThinking != nil else {
                 return context
@@ -1071,8 +1111,8 @@ struct MLXBatchAdapter {
 
         if let disableThinking {
             context["enable_thinking"] = !disableThinking
-            if !disableThinking, let normalizedReasoningEffort {
-                context["reasoning_effort"] = normalizedReasoningEffort
+            if !disableThinking, let dispatchReasoningEffort {
+                context["reasoning_effort"] = dispatchReasoningEffort
             }
             return context
         }
@@ -1081,9 +1121,11 @@ struct MLXBatchAdapter {
                 context["enable_thinking"] = false
                 return context
             }
-            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            if hasPositiveReasoningEffort {
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = normalizedReasoningEffort
+                if let dispatchReasoningEffort {
+                    context["reasoning_effort"] = dispatchReasoningEffort
+                }
             } else {
                 context["enable_thinking"] = false
             }
@@ -1094,9 +1136,11 @@ struct MLXBatchAdapter {
                 context["enable_thinking"] = false
                 return context
             }
-            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            if hasPositiveReasoningEffort {
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = normalizedReasoningEffort
+                if let dispatchReasoningEffort {
+                    context["reasoning_effort"] = dispatchReasoningEffort
+                }
             } else {
                 context["enable_thinking"] = false
             }
@@ -1107,9 +1151,11 @@ struct MLXBatchAdapter {
                 context["enable_thinking"] = false
                 return context
             }
-            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            if hasPositiveReasoningEffort {
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = normalizedReasoningEffort
+                if let dispatchReasoningEffort {
+                    context["reasoning_effort"] = dispatchReasoningEffort
+                }
             } else {
                 context["enable_thinking"] = false
             }
@@ -1120,9 +1166,11 @@ struct MLXBatchAdapter {
                 context["enable_thinking"] = false
                 return context
             }
-            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            if hasPositiveReasoningEffort {
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = normalizedReasoningEffort
+                if let dispatchReasoningEffort {
+                    context["reasoning_effort"] = dispatchReasoningEffort
+                }
             } else {
                 context["enable_thinking"] = false
             }
@@ -1160,9 +1208,11 @@ struct MLXBatchAdapter {
             }
             if let disableThinking {
                 context["enable_thinking"] = !disableThinking
-            } else if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            } else if hasPositiveReasoningEffort {
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = normalizedReasoningEffort
+                if let dispatchReasoningEffort {
+                    context["reasoning_effort"] = dispatchReasoningEffort
+                }
             } else if normalizedReasoningEffort != nil {
                 context["enable_thinking"] = false
             }
@@ -1173,17 +1223,21 @@ struct MLXBatchAdapter {
                 context["enable_thinking"] = false
                 return context
             }
-            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            if hasPositiveReasoningEffort {
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = normalizedReasoningEffort
+                if let dispatchReasoningEffort {
+                    context["reasoning_effort"] = dispatchReasoningEffort
+                }
             } else {
                 context["enable_thinking"] = false
             }
             return context
         }
 
-        if let normalizedReasoningEffort, !directRailReasoningEffort {
-            context["reasoning_effort"] = normalizedReasoningEffort
+        if hasPositiveReasoningEffort {
+            if let dispatchReasoningEffort {
+                context["reasoning_effort"] = dispatchReasoningEffort
+            }
             context["enable_thinking"] = true
         }
         if directRailReasoningEffort {
@@ -2143,7 +2197,7 @@ struct MLXBatchAdapter {
         context.keys.sorted().compactMap { key in
             guard
                 key == "enable_thinking" || key == "reasoning_effort" || key == "tool_choice"
-                    || key == "tool_choice_name"
+                    || key == "tool_choice_name" || key == "preserve_thinking"
             else {
                 return nil
             }
