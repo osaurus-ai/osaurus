@@ -133,7 +133,7 @@ struct ProjectDetailView: View {
                 .padding(.horizontal, 32)
                 .padding(.top, 64)
                 .padding(.bottom, 24)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
             .scrollIndicators(.hidden)
             .frame(maxWidth: .infinity)
