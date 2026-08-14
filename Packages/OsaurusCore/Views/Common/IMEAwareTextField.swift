@@ -21,14 +21,7 @@ struct IMEAwareTextField: NSViewRepresentable {
     var textColor: NSColor
     var onSubmit: (() -> Void)? = nil
 
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
-        scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = false
-        scrollView.hasHorizontalScroller = false
-        scrollView.verticalScrollElasticity = .none
-        scrollView.horizontalScrollElasticity = .none
-
+    func makeNSView(context: Context) -> IMETrackingTextView {
         let textView = IMETrackingTextView()
         textView.delegate = context.coordinator
         textView.drawsBackground = false
@@ -36,8 +29,10 @@ struct IMEAwareTextField: NSViewRepresentable {
         textView.isEditable = true
         textView.isSelectable = true
         textView.allowsUndo = true
+        textView.focusRingType = .none
         textView.font = font
         textView.textColor = textColor
+        textView.insertionPointColor = textColor
         textView.string = text
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
@@ -46,14 +41,12 @@ struct IMEAwareTextField: NSViewRepresentable {
         textView.textContainerInset = .zero
         textView.textContainer?.lineFragmentPadding = 0
 
-        // Single-line behavior: never wrap, grow horizontally.
-        textView.isHorizontallyResizable = true
+        // Fill whatever frame SwiftUI hands us; let the container track the view
+        // width so the single line stays visible and the caret draws correctly.
+        textView.autoresizingMask = [.width, .height]
+        textView.isHorizontallyResizable = false
         textView.isVerticallyResizable = false
-        textView.maxSize = NSSize(
-            width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.textContainer?.widthTracksTextView = false
-        textView.textContainer?.size = NSSize(
-            width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = true
 
         let coordinator = context.coordinator
         textView.onMarkedTextChanged = { [weak coordinator] composing in
@@ -63,12 +56,10 @@ struct IMEAwareTextField: NSViewRepresentable {
             coordinator?.parent.onSubmit?()
         }
 
-        scrollView.documentView = textView
-        return scrollView
+        return textView
     }
 
-    func updateNSView(_ nsView: NSScrollView, context: Context) {
-        guard let textView = nsView.documentView as? IMETrackingTextView else { return }
+    func updateNSView(_ textView: IMETrackingTextView, context: Context) {
         context.coordinator.parent = self
         // Don't stomp the field editor mid-composition.
         if !textView.hasMarkedText(), textView.string != text {
