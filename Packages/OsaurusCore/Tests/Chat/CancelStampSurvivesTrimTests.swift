@@ -65,9 +65,10 @@ struct CancelStampSurvivesTrimTests {
         let stopStart = try #require(
             chatView.range(of: "func stop(preservesCancelledMarker: Bool = true) {"))
         let stopWindow = String(
-            chatView[stopStart.lowerBound...].prefix(2900))
-        // Inside the `wasAwaitingPreSendHandshake` branch: the send was
-        // cancelled before the run task appended its assistant turn, so
+            chatView[stopStart.lowerBound...].prefix(3600))
+        // After cleanup at the end of stop(): whenever a user Stop cancels a
+        // send before the run task appended its assistant turn (handshake
+        // window, or a Stop that simply wins the race to the first append),
         // stop() itself must leave the record.
         #expect(stopWindow.contains("wasAwaitingPreSendHandshake"))
         #expect(stopWindow.contains("cancelledTurn.terminalStopReason = \"cancelled\""))

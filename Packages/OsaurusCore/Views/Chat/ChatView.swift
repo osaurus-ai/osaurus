@@ -2207,23 +2207,16 @@ final class ChatSession: ObservableObject {
     /// clean trim so no ghost "cancelled" row appears in the transcript.
     func stop(preservesCancelledMarker: Bool = true) {
         stopPreservesCancelledMarker = preservesCancelledMarker
+        // Capture BEFORE any cancellation: whether a send was in flight when
+        // the user hit Stop. The marker decision below must not depend on
+        // state the cleanup path is about to reset.
+        let hadActiveSend =
+            isSendActiveForComposer || isStreaming || activeRunId != nil
+            || awaitingPreSendHandshake
         let wasAwaitingPreSendHandshake = awaitingPreSendHandshake
         invalidatePreSendHandshake()
         if wasAwaitingPreSendHandshake {
             warmupController.cancelPendingWorkForUserStop()
-            // A Stop during the pre-send handshake (the "Loading Model..."
-            // window) cancels the send before the run task ever appends its
-            // assistant turn — the session then persisted a user message
-            // with no reply and no record that a send was stopped at all.
-            // Append the cancelled marker here; `trimTrailingEmptyAssistantTurn`
-            // keeps turns that carry a terminal stop reason.
-            if preservesCancelledMarker, let last = turns.last, last.role == .user {
-                let cancelledTurn = ChatTurn(role: .assistant, content: "")
-                cancelledTurn.terminalStopReason = "cancelled"
-                turns.append(cancelledTurn)
-                isDirty = true
-                rebuildVisibleBlocks()
-            }
         }
         // Resolve every mounted/queued prompt (secret, clarify) BEFORE
         // cancelling the run: a tool call parked on a prompt continuation
@@ -2238,6 +2231,23 @@ final class ChatSession: ObservableObject {
             finalizeRun(runId: runId, persistConversationArtifacts: false)
         } else {
             completeRunCleanup()
+        }
+        // A user Stop that cancels the send before the run task appended its
+        // assistant turn (the pre-send handshake window, or simply a Stop
+        // that wins the race to the first append — CI machines hit the
+        // latter on a plain send) leaves the transcript ending on the user
+        // row with no record that a run happened. Append the cancelled
+        // marker AFTER cleanup so it cannot be trimmed and so the
+        // stamped-placeholder path (finalizeRun stamped an existing turn,
+        // which the trim keeps) never produces a second marker.
+        if preservesCancelledMarker, hadActiveSend,
+            let last = turns.last, last.role == .user
+        {
+            let cancelledTurn = ChatTurn(role: .assistant, content: "")
+            cancelledTurn.terminalStopReason = "cancelled"
+            turns.append(cancelledTurn)
+            isDirty = true
+            rebuildVisibleBlocks()
         }
     }
 
