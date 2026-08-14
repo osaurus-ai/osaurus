@@ -683,7 +683,9 @@ public final class BackgroundTaskManager: ObservableObject {
             // it as part of the conversation history.
             state.chatSession?.appendInterruptMessage(trimmed)
         }
-        state.chatSession?.stop()
+        // Programmatic redirect, not the user's Stop button: the interrupt
+        // turn itself is the transcript record, so no cancelled marker.
+        state.chatSession?.stop(preservesCancelledMarker: false)
     }
 
     /// Emit a draft event to the originating plugin.

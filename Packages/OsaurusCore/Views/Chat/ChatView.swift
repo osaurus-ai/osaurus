@@ -2212,7 +2212,7 @@ final class ChatSession: ObservableObject {
         // state the cleanup path is about to reset.
         let hadActiveSend =
             isSendActiveForComposer || isStreaming || activeRunId != nil
-            || awaitingPreSendHandshake
+            || currentTask != nil || awaitingPreSendHandshake
         let wasAwaitingPreSendHandshake = awaitingPreSendHandshake
         invalidatePreSendHandshake()
         if wasAwaitingPreSendHandshake {
@@ -5548,6 +5548,16 @@ final class ChatSession: ObservableObject {
                 turnGenerationControls.enableThinking
             ) { [self] in
                 debugLog("send: task started runId=\(runId) model=\(self.selectedModel ?? "nil")")
+                // A Stop can land between beginRun (synchronous in send) and
+                // this task's first line: stop() has then already finalized
+                // this runId, and the deferred finalizeRun below would no-op
+                // as a duplicate — so everything appended here would survive
+                // as a ghost (an empty assistant bubble and a resurrected
+                // isStreaming) with no cleanup left to remove it.
+                guard self.activeRunId == runId else {
+                    debugLog("send: run \(runId) finalized before its task started — skipping")
+                    return
+                }
                 lastStreamError = nil
                 isStreaming = true
                 ServerController.signalGenerationStart()
