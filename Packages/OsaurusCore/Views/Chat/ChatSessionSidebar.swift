@@ -235,7 +235,7 @@ struct ChatSessionSidebar: View {
                 // Search field
                 SidebarSearchField(
                     text: $searchQuery,
-                    placeholder: "Search conversations...",
+                    placeholder: "Search chats...",
                     isFocused: $isSearchFocused,
                     isSearching: isContentSearchInFlight
                 )
