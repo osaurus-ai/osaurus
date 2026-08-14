@@ -752,9 +752,13 @@ struct ChatSessionSidebar: View {
 
     private var sidebarHeader: some View {
         HStack {
-            Text("History", bundle: .module)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+            // "History" only reads right for the Chats lens; the Projects
+            // lens has its own list and the label made no sense there.
+            if selectedTab == .chats {
+                Text("History", bundle: .module)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+            }
 
             Spacer()
 
