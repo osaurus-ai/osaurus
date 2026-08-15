@@ -25,7 +25,8 @@ struct FireworksModel: Decodable, Sendable {
     let kind: String?
     let supportsServerless: Bool?
     let conversationConfig: FireworksConversationConfig?
-
+    let contextLength: Int?
+    
     /// Serverless-hosted, chat-capable, live model — what the model picker
     /// should show. `conversationConfig` presence is Fireworks' signal that
     /// the Chat Completions API is enabled for the model, but embedding and
