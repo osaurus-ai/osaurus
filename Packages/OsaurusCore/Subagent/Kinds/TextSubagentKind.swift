@@ -695,7 +695,6 @@ final class TextSubagentKind:
         let budgets = self.budgets.normalized
         let deadline = Date().addingTimeInterval(TimeInterval(budgets.maxElapsedSeconds))
         let started = Date()
-        let seed = seedMessages(systemPrompt: systemPrompt, input: input)
         let sessionId = "spawn-\((resolvedAgentId ?? UUID()).uuidString)-\(UUID().uuidString)"
         let toolset = await Self.makeToolset(
             access: toolAccess,
@@ -706,6 +705,13 @@ final class TextSubagentKind:
                 targetAgentId: resolvedAgentId,
                 launcherAgentId: scope.agentId
             )
+        )
+        // Seed AFTER the toolset so the grounding can name only the tools the
+        // child actually received.
+        let seed = seedMessages(
+            systemPrompt: systemPrompt,
+            input: input,
+            toolNames: toolset.map { $0.specs.map(\.function.name) } ?? []
         )
 
         // Knowledge tools inside the child resolve grants + curator role against
@@ -1099,12 +1105,63 @@ final class TextSubagentKind:
         return base + " Use exactly one configured id: \(exact)."
     }
 
-    private func seedMessages(systemPrompt: String, input: String) -> [ChatMessage] {
+    private func seedMessages(
+        systemPrompt: String,
+        input: String,
+        toolNames: [String]
+    ) -> [ChatMessage] {
         var msgs: [ChatMessage] = []
+        var sections: [String] = []
+
         let sys = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !sys.isEmpty { msgs.append(ChatMessage(role: "system", content: sys)) }
+        if !sys.isEmpty { sections.append(sys) }
+        if let surfaces = Self.fileSurfaceGrounding(toolNames: toolNames) {
+            sections.append(surfaces)
+        }
+
+        if !sections.isEmpty {
+            msgs.append(ChatMessage(role: "system", content: sections.joined(separator: "\n\n")))
+        }
         msgs.append(ChatMessage(role: "user", content: input))
         return msgs
+    }
+
+    /// Tell the child which filesystem each of its read tools actually reads.
+    ///
+    /// The curated child toolset can carry BOTH surfaces at once — `file_read` /
+    /// `file_search` read the user's open folder on the host, `sandbox_read_file`
+    /// / `sandbox_search_files` read inside the Linux sandbox — and `spawn_model`
+    /// runs the child with an EMPTY system prompt, so nothing said which was
+    /// which. With two similarly-named tools and no grounding the choice is a
+    /// coin flip: live, a child told "use the file_read tool to read AGENTS.md
+    /// from the current working folder" called `sandbox_read_file` instead, got a
+    /// failure, and only succeeded on an identical retry.
+    ///
+    /// This states a fact about the tools (the same thing their descriptions do);
+    /// it does not tell the model what to conclude or how to answer.
+    static func fileSurfaceGrounding(toolNames: [String]) -> String? {
+        let names = Set(toolNames)
+        let hasHost = names.contains("file_read") || names.contains("file_search")
+        let hasSandbox =
+            names.contains("sandbox_read_file") || names.contains("sandbox_search_files")
+
+        switch (hasHost, hasSandbox) {
+        case (true, true):
+            return """
+                Your read tools cover two different filesystems:
+                - `file_read` / `file_search` read the user's open folder on the host Mac.
+                - `sandbox_read_file` / `sandbox_search_files` read inside the Linux sandbox.
+                They are separate: a file in the open folder is NOT reachable with the sandbox \
+                tools, and vice versa. Pick the pair that matches where the task's files live.
+                """
+        case (true, false):
+            return "`file_read` / `file_search` read the user's open folder on the host Mac."
+        case (false, true):
+            return
+                "`sandbox_read_file` / `sandbox_search_files` read inside the Linux sandbox."
+        case (false, false):
+            return nil
+        }
     }
 }
 

@@ -887,10 +887,18 @@ public enum SystemPromptTemplates {
     /// edit model is installed. Counters the persona-led refusal ("I'm
     /// text-only / I can't make images") and keeps the edit-continuation
     /// CONDITIONAL (never a forced "now edit it").
+    ///
+    /// The anti-refusal rule is deliberately blunt, which gave it a blast
+    /// radius: an image the USER attached, plus a question about it, reads to
+    /// the model as "an existing image + a prompt" — the exact edit shape — and
+    /// nothing here said otherwise. Live: a VL question ("how many circles?")
+    /// was answered by calling `image` instead of by looking. Vision is not an
+    /// image job, so the boundary is stated explicitly.
     public static let imageGenerationGuidance = """
         ## Image generation
 
         - You CAN create and edit images with the `image` tool. To create, call `image` with a `prompt`. To edit an existing image, call `image` with a `prompt` PLUS `source_paths` set to the image path(s) — `source_paths` is what switches it into edit mode.
+        - Only call `image` when the user wants a picture CREATED or CHANGED. If the user attached an image and is asking ABOUT it — what it shows, what it says, counting or describing something in it — look at the image and answer directly. That is vision, not an image job.
         - NEVER claim you can't make images or are "text-only", and don't redirect the user to another app or settings — you have this tool, so use it.
         - The result renders inline in the chat automatically; do not call `share_artifact` for it. If the user asked for a follow-up edit of that image, call `image` again with `source_paths` set to the saved result path; otherwise confirm briefly in one sentence.
         - The job runs locally and may briefly swap models; that is expected.
@@ -898,10 +906,12 @@ public enum SystemPromptTemplates {
 
     /// Compact generate + edit directive for small local models: same behavior
     /// at a fraction of the tokens (anti-refusal, edit-mode switch, inline
-    /// render / no `share_artifact`, conditional edit-continuation).
+    /// render / no `share_artifact`, conditional edit-continuation, and the
+    /// same vision-vs-image-job boundary).
     public static let imageGenerationGuidanceCompact = """
         ## Image generation
         - You CAN create/edit images with the `image` tool: call it with a `prompt`; add `source_paths` (existing image path[s]) to edit instead of create.
+        - Only call `image` to CREATE or CHANGE a picture. If the user attached an image and is asking about what it shows or says, look at it and answer directly — that is vision, not an image job.
         - NEVER say you can't make images or are "text-only", and don't redirect to another app or settings — use the tool.
         - The result renders inline automatically; don't call `share_artifact`. For a requested follow-up edit, call `image` again with `source_paths` set to the saved path; otherwise confirm briefly.
         """
@@ -914,6 +924,7 @@ public enum SystemPromptTemplates {
         ## Image generation
 
         - You CAN create images with the `image` tool: call `image` with a `prompt`. Editing existing images is not available, so do not offer or attempt it.
+        - Only call `image` when the user wants a picture CREATED. If the user attached an image and is asking ABOUT it — what it shows, what it says, counting or describing something in it — look at the image and answer directly. That is vision, not an image job.
         - NEVER claim you can't make images or are "text-only", and don't redirect the user to another app or settings — you have this tool, so use it.
         - The result renders inline in the chat automatically; do not call `share_artifact` for it. Confirm briefly in one sentence.
         - The job runs locally and may briefly swap models; that is expected.
@@ -923,6 +934,7 @@ public enum SystemPromptTemplates {
     public static let imageGenerationOnlyGuidanceCompact = """
         ## Image generation
         - You CAN create images with the `image` tool: call it with a `prompt`. Editing existing images is not available — don't offer or attempt it.
+        - Only call `image` to CREATE a picture. If the user attached an image and is asking about what it shows or says, look at it and answer directly — that is vision, not an image job.
         - NEVER say you can't make images or are "text-only", and don't redirect to another app or settings — use the tool.
         - The result renders inline automatically; don't call `share_artifact`. Confirm briefly.
         """
