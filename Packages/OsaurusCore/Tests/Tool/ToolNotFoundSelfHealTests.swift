@@ -47,5 +47,15 @@ struct ToolNotFoundSelfHealTests {
         // to the schema without listing tool names (lists trigger invention).
         #expect(message.contains("tool schema"))
         #expect(message.contains("Do not guess"))
+
+        // Regression (#2366): a model with strong priors on common tool names
+        // (e.g. `run` for a shell) read the rejection, correctly explained it
+        // could not run a shell, and then *fabricated* the output as if the
+        // command had run. The envelope must explicitly say the tool was not
+        // executed and the user cannot tell simulated output from real output,
+        // so the model does not produce a plausible-looking result the user
+        // will mistake for a real one.
+        #expect(message.contains("Do not show what the tool's output would be"))
+        #expect(message.contains("not actually executed"))
     }
 }

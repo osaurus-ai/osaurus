@@ -947,13 +947,23 @@ public final class ToolRegistry: ObservableObject {
             // and giving up ("the tool to delete X is not available") when the
             // REAL tool is sitting in their schema under a name they didn't
             // guess. Point back at the ground truth they already have.
+            //
+            // The trailing sentence closes the fabrication gap (issue #2366):
+            // models with strong priors on common tool names (e.g. `run` for a
+            // shell) read the rejection, correctly explain they cannot run a
+            // shell, and then *fabricate* the output as if the command had
+            // run — the user cannot tell simulated output from real output, so
+            // the model must not produce it.
             return ToolErrorEnvelope(
                 kind: .toolNotFound,
                 reason:
                     "Tool '\(name)' is not available in this session. Do not guess "
                     + "tool names: use exactly the names in your tool schema and "
                     + "instructions (check them for the tool covering this task "
-                    + "before answering that it can't be done).",
+                    + "before answering that it can't be done). Do not show what "
+                    + "the tool's output would be — the user cannot tell "
+                    + "simulated output from real output, and the tool was not "
+                    + "actually executed.",
                 toolName: name
             ).toJSONString()
         }
