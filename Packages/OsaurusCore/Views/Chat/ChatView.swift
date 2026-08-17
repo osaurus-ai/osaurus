@@ -5911,6 +5911,15 @@ final class ChatSession: ObservableObject {
                     // attempt ids makes the bounded retry an exact replay of
                     // the pre-attempt model-visible history.
                     var incompleteReasoningRetryOrdinal = 0
+                    // One-shot flag: when the loop's `.incompleteReasoning` handler
+                    // routes to `prepareBudgetForcedAnswer` (the surface-level opt-in
+                    // for the budget-forced final-answer pass on #1790), the next
+                    // `modelStep` invocation must (a) prepend a "give your final
+                    // answer now" directive anchored to the tail of the truncated
+                    // reasoning, and (b) disable thinking for that one request. The
+                    // flag is cleared at the end of the consuming model step so the
+                    // subsequent iteration returns to the normal request shape.
+                    var pendingBudgetForcedAnswer = false
                     // Set only after this logical run emits a parsed tool call.
                     // Tool schemas being available is not itself agent work and
                     // must not force an intentional reasoning-only direct answer
@@ -6734,11 +6743,56 @@ final class ChatSession: ObservableObject {
                             ttftTrace?.set("messageCount", msgs.count)
                             ttftTrace?.set("conversationTurns", self.turns.count)
 
+                            // One-shot budget-forced final-answer pass on
+                            // osaurus#1790. The previous model step ran out of
+                            // tokens inside `<think>` and never produced a
+                            // visible answer; we issue a bounded follow-up
+                            // generation with thinking disabled and a directive
+                            // anchored to the tail of the truncated reasoning,
+                            // asking the model to commit to its best-effort
+                            // final answer now. The flag is consumed here and
+                            // cleared so any later iteration returns to the
+                            // normal request shape. Tool schemas are kept
+                            // available so a model that has a clear next tool
+                            // call can still commit one (the "agent variant"
+                            // from the ER). Only the last turn's reasoning is
+                            // fed back so the prompt stays small; a 6K-char
+                            // tail matches the ER's reference.
+                            let activeMsgs: [ChatMessage]
+                            let activeThinking: Bool?
+                            if pendingBudgetForcedAnswer {
+                                let reasoningTail = String(
+                                    assistantTurn.thinking.suffix(6_000)
+                                )
+                                let directive = """
+                                You began reasoning but ran out of time. Your \
+                                reasoning so far:
+
+                                \(reasoningTail)
+
+                                Stop reasoning now. Give your single best-effort \
+                                final answer based on the work above. If a tool \
+                                call is the right next step, make exactly one.
+                                """
+                                activeMsgs = msgs + [ChatMessage(
+                                    role: "user",
+                                    content: directive
+                                )]
+                                activeThinking = false
+                            } else {
+                                activeMsgs = msgs
+                                activeThinking = turnGenerationControls.enableThinking
+                            }
+                            // Consume the one-shot flag exactly once.
+                            if pendingBudgetForcedAnswer {
+                                pendingBudgetForcedAnswer = false
+                            }
+
                             #if DEBUG
                                 // Dump full prompt to debug log for TTFT analysis
                                 if attempt == 1 {
                                     var promptDump = "═══ FULL PROMPT DUMP ═══\n"
-                                    for (i, m) in msgs.enumerated() {
+                                    for (i, m) in activeMsgs.enumerated() {
                                                             promptDump +=
                                                                 "── [\(i)] role=\(m.role) chars=\(m.content?.count ?? 0) ──\n"
                                         promptDump += (m.content ?? "(nil)") + "\n"
@@ -6768,7 +6822,7 @@ final class ChatSession: ObservableObject {
                                 // and would only leak a stale prefix internally.
                                 model: self.isRemoteAgentTarget
                                     ? "default" : (self.selectedModel ?? "default"),
-                                messages: msgs,
+                                messages: activeMsgs,
                                 temperature: effectiveTemp,
                                 max_tokens: effectiveMaxTokensForAgent,
                                 stream: true,
@@ -6816,6 +6870,15 @@ final class ChatSession: ObservableObject {
                             req.isAgentRequest =
                                 !iterationToolSpecs.isEmpty || self.isRemoteAgentTarget
                             turnGenerationControls.apply(to: &req)
+                            // The budget-forced pass disables thinking for this
+                            // one request even when the agent's normal setting
+                            // is on. `activeThinking` is nil when the agent
+                            // hasn't toggled the chip at all (the bundle's
+                            // chat-template default still owns the answer), so
+                            // only override when the surface has spoken.
+                            if let activeThinking, activeThinking != req.enable_thinking {
+                                req.enable_thinking = activeThinking
+                            }
                             req.backgroundModelLoad = (self.loadIntent == .background)
                             req.ttftTrace = ttftTrace
                             // Correlate the Insights log this send produces back to the
@@ -6977,6 +7040,30 @@ final class ChatSession: ObservableObject {
                             let retryTurn = ChatTurn(role: .assistant, content: "")
                             self.turns.append(retryTurn)
                             assistantTurn = retryTurn
+                            incompleteReasoningRetryOrdinal += 1
+                            self.rebuildVisibleBlocks()
+                        },
+                        prepareBudgetForcedAnswer: {
+                            // One-shot budget-forced final-answer pass on
+                            // osaurus#1790. Mark the truncated-reasoning turn as
+                            // excluded from model history (same protocol as the
+                            // natural-replay path) and signal the next `modelStep`
+                            // to disable thinking + prepend a "give your final
+                            // answer now" directive anchored to the tail of the
+                            // truncated reasoning. The flag is consumed and
+                            // cleared by that next `modelStep` invocation; any
+                            // later iteration reverts to the normal request
+                            // shape. Only chat opts in; headless surfaces keep
+                            // the natural-replay behaviour.
+                            debugLog(
+                                "send: reasoning-only agent step ended without visible answer; "
+                                    + "issuing budget-forced final-answer pass "
+                                    + "stop=\(assistantTurn.terminalStopReason ?? "nil") "
+                                    + "unclosed=\(assistantTurn.unclosedReasoning) "
+                                    + "reasoningChars=\(assistantTurn.thinkingLength)"
+                            )
+                            assistantTurn.modelContextExcluded = true
+                            pendingBudgetForcedAnswer = true
                             incompleteReasoningRetryOrdinal += 1
                             self.rebuildVisibleBlocks()
                         },
