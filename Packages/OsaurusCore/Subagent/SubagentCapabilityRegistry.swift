@@ -489,6 +489,58 @@ public enum SubagentToolVisibility {
         return perAgentTargets.contains(id)
     }
 
+    /// Resolution of a `spawn_agent` / `spawn_batch` target supplied as a
+    /// display NAME instead of a UUID. Small local models reliably echo an
+    /// agent's name but not its opaque UUID (issue #2408), so the tools accept
+    /// either. Authorization stays UUID-exact downstream — this only maps a
+    /// name onto an already allow-listed target.
+    public struct SpawnableAgentNameResolution: Sendable {
+        /// The uniquely-matching allow-listed agent id, or `nil` when zero or
+        /// more than one allow-listed agent carries the name.
+        public let id: UUID?
+        /// Display names of the launching agent's allow-listed spawnable
+        /// agents, for a corrective error message.
+        public let allowedNames: [String]
+    }
+
+    /// Map a display name to the launching agent's uniquely-matching spawnable
+    /// agent id, scoped to that agent's own allow-list. Case-insensitive and
+    /// whitespace-trimmed; an ambiguous or absent name resolves to `nil` so the
+    /// caller can surface the valid names. Never widens authorization: only the
+    /// launching agent's already-spawnable agents are considered.
+    static func resolveSpawnableAgentName(
+        _ rawName: String,
+        scope: SubagentScope
+    ) async -> SpawnableAgentNameResolution {
+        let needle = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isDefault = scope.agentId == Agent.defaultId
+        let config = SubagentConfigurationStore.snapshot()
+        // One MainActor hop reads the launching agent's settings, resolves its
+        // allow-listed spawnable ids, and maps each to its current display name.
+        let named: [(id: UUID, name: String)] = await MainActor.run {
+            let settings = AgentManager.shared.agent(for: scope.agentId)?.settings
+            let allowed = effectiveSpawnableAgents(
+                isDefault: isDefault,
+                config: config,
+                perAgentEnabled: settings?.spawnDelegationEnabled ?? false,
+                perAgentTargets: settings?.spawnableAgentIDs ?? []
+            )
+            return allowed.compactMap { id in
+                AgentManager.shared.agent(for: id).map { (id, $0.name) }
+            }
+        }
+        guard !needle.isEmpty else {
+            return SpawnableAgentNameResolution(id: nil, allowedNames: named.map(\.name))
+        }
+        let matches = named.filter {
+            $0.name.caseInsensitiveCompare(needle) == .orderedSame
+        }
+        return SpawnableAgentNameResolution(
+            id: matches.count == 1 ? matches[0].id : nil,
+            allowedNames: named.map(\.name)
+        )
+    }
+
     /// Whether a specific `spawn_model` TARGET model id is reachable from a
     /// launching agent — the execution-time check the spawn kind enforces before
     /// any residency handoff (reject-before-evict). Default / main chat uses its
