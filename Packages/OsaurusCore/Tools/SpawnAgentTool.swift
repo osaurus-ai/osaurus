@@ -79,7 +79,8 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
         if let failure = SpawnInputContract.validationFailure(input: input, tool: name) {
             return failure
         }
-        let agentReq = requireString(args, "agent", expected: "a spawnable agent UUID", tool: name)
+        let agentReq = requireString(
+            args, "agent", expected: "a spawnable agent name or UUID", tool: name)
         guard case .value(let rawAgentID) = agentReq else {
             return agentReq.failureEnvelope ?? ""
         }
