@@ -34,7 +34,8 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
             "agent": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "UUID of a spawnable agent. Copy the exact UUID from the configured target list."
+                    "The target spawnable agent: its exact display name OR its UUID, "
+                        + "as shown in the configured target list."
                 ),
             ]),
         ]),

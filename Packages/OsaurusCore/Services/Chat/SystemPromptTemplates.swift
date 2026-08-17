@@ -1058,8 +1058,8 @@ public enum SystemPromptTemplates {
             if agentToolAvailable {
                 lines.append(
                     "- `spawn_agent(input, agent)` runs the task on a configured agent (its own system "
-                        + "prompt + model). Pass the exact UUID shown first, not the display name. "
-                        + "Available agents:"
+                        + "prompt + model). Pass the agent's exact display name (or its UUID) as `agent` — "
+                        + "each is shown below. Available agents:"
                 )
             } else if batchToolAvailable {
                 lines.append("- Available agent targets for `spawn_batch`:")
