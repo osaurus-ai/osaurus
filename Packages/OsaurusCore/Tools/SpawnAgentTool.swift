@@ -82,15 +82,35 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
         guard case .value(let rawAgentID) = agentReq else {
             return agentReq.failureEnvelope ?? ""
         }
-        guard let agentID = UUID(uuidString: rawAgentID) else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "`agent` must be an exact UUID from the configured spawnable-agent list.",
-                field: "agent",
-                expected: "UUID",
-                tool: name,
-                retryable: true
+        let agentID: UUID
+        if let parsed = UUID(uuidString: rawAgentID) {
+            agentID = parsed
+        } else {
+            // Small local models reliably echo a spawnable agent's display name
+            // but not its opaque UUID (issue #2408), so `agent` accepts either.
+            // Resolve the name against the launching agent's own allow-list;
+            // authorization stays UUID-exact in the spawn kind downstream.
+            let resolution = await SubagentToolVisibility.resolveSpawnableAgentName(
+                rawAgentID,
+                scope: SubagentScope.current()
             )
+            guard let resolved = resolution.id else {
+                let names = resolution.allowedNames
+                let hint =
+                    names.isEmpty
+                    ? "This agent has no spawnable agents configured."
+                    : "Pass one of these exact agent names (or its UUID): "
+                        + names.map { "\"\($0)\"" }.joined(separator: ", ") + "."
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`agent` did not match a spawnable agent. " + hint,
+                    field: "agent",
+                    expected: "a spawnable agent name or UUID",
+                    tool: name,
+                    retryable: true
+                )
+            }
+            agentID = resolved
         }
 
         // The shared host owns the recursion guard, live feed, permission
