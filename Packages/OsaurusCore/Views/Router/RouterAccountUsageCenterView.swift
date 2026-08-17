@@ -3,6 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct RouterAccountUsageCenterView: View {
+    @Environment(\.dismiss) private var dismiss
     @ObservedObject private var themeManager = ThemeManager.shared
     @StateObject private var model = RouterAccountUsageCenterViewModel()
     @State private var hasAppeared = false
@@ -36,6 +37,14 @@ struct RouterAccountUsageCenterView: View {
                 }
                 .disabled(model.isExportingSupport)
                 .opacity(model.isExportingSupport ? 0.6 : 1)
+
+                HeaderIconButton(
+                    "xmark",
+                    help: "Close"
+                ) {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
             }
 
             ScrollView {
