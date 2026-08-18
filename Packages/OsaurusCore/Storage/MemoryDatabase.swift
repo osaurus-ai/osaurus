@@ -1995,6 +1995,11 @@ public final class MemoryDatabase: @unchecked Sendable {
             try Self.executeUpdate(on: connection, "DELETE FROM pinned_facts WHERE agent_id = ?1") { stmt in
                 Self.bindText(stmt, index: 1, value: agentId)
             }
+            // Project namespaces also hold mirrored raw transcript rows
+            // (immediate project memory), keyed by the same namespace id.
+            try Self.executeUpdate(on: connection, "DELETE FROM transcript WHERE agent_id = ?1") { stmt in
+                Self.bindText(stmt, index: 1, value: agentId)
+            }
         }
     }
 
