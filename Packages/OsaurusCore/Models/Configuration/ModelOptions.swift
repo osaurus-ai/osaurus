@@ -653,9 +653,11 @@ struct MistralReasoningProfile: ModelProfile {
 /// than any GLM-native thinking switch. `reasoning_effort` on these models
 /// accepts `none`, `high`, and `max`. Mistral's reasoning docs only document
 /// `none`/`high` (with `high` recommended for agentic/code use); `max` is not
-/// in the docs but is accepted in practice (verified empirically, 2026-08).
-/// `low`/`medium` are not offered — the docs list neither and sending an
-/// unaccepted value returns HTTP 400. The match is on the bare `zai-glm` prefix
+/// in the docs but is accepted in practice (verified empirically, 2026-08:
+/// the model's effort ladder collapses low/medium into `high` and keeps `max`
+/// as a distinct top tier). `low`/`medium` are therefore not offered as their
+/// own levels, and sending an unaccepted value returns HTTP 400. The match is
+/// on the bare `zai-glm` prefix
 /// so future GLM revisions hosted the same way are covered without a registry
 /// edit.
 struct ZaiGlmReasoningProfile: ModelProfile {
