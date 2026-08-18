@@ -470,8 +470,8 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         ) {
         case .success(let resolved):
             jobs = resolved
-        case .failure(let envelope):
-            return envelope
+        case .failure(let error):
+            return error.envelope
         }
         for job in jobs {
             if let failure = SpawnInputContract.validationFailure(
@@ -1070,7 +1070,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         _ jobs: [Job],
         scope: SubagentScope,
         tool: String
-    ) async -> Result<[Job], String> {
+    ) async -> Result<[Job], SpawnBatchParseError> {
         var resolved: [Job] = []
         resolved.reserveCapacity(jobs.count)
         for job in jobs {
@@ -1091,15 +1091,17 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                     : "Use one of these exact agent names (or its UUID): "
                         + names.map { "\"\($0)\"" }.joined(separator: ", ") + "."
                 return .failure(
-                    ToolEnvelope.failure(
-                        kind: .invalidArgs,
-                        message:
-                            "Agent job '\(job.id)' target '\(job.target)' did not match a "
-                            + "spawnable agent. " + hint,
-                        field: "jobs[\(job.index)].target",
-                        expected: "a spawnable agent name or UUID",
-                        tool: tool,
-                        retryable: true
+                    SpawnBatchParseError(
+                        envelope: ToolEnvelope.failure(
+                            kind: .invalidArgs,
+                            message:
+                                "Agent job '\(job.id)' target '\(job.target)' did not match a "
+                                + "spawnable agent. " + hint,
+                            field: "jobs[\(job.index)].target",
+                            expected: "a spawnable agent name or UUID",
+                            tool: tool,
+                            retryable: true
+                        )
                     )
                 )
             }
