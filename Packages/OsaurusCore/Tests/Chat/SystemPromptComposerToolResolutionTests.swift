@@ -1881,7 +1881,17 @@ struct SystemPromptComposerToolResolutionTests {
                 executionMode: .none
             )
             #expect(spawnModelEnum(frozen) == ["local/old-model"])
-            #expect(spawnBatchTargetEnum(frozen) == [oldAgent.id.uuidString, "local/old-model"])
+            // The batch target enum unions agent UUIDs, agent display names
+            // (issue #2408), and model ids, then sorts. Uppercase UUID/name
+            // sort ahead of the lowercase model id.
+            #expect(
+                spawnBatchTargetEnum(frozen)
+                    == [
+                        oldAgent.id.uuidString,
+                        "Stale delegation target",
+                        "local/old-model",
+                    ]
+            )
             #expect(spawnBatchMaxItems(frozen) == 2)
 
             let updated = SubagentConfiguration(
@@ -1910,6 +1920,7 @@ struct SystemPromptComposerToolResolutionTests {
                 spawnBatchTargetEnum(refreshed)
                     == [
                         newAgent.id.uuidString,
+                        "Fresh delegation target",
                         "anthropic/claude-opus-4-8",
                         "local/new-model",
                     ]
@@ -1917,6 +1928,7 @@ struct SystemPromptComposerToolResolutionTests {
             #expect(spawnBatchMaxItems(refreshed) == 6)
             #expect(!spawnBatchTargetEnum(refreshed).contains(oldAgent.id.uuidString))
             #expect(!spawnBatchTargetEnum(refreshed).contains("local/old-model"))
+            #expect(!spawnBatchTargetEnum(refreshed).contains("Stale delegation target"))
             #expect(
                 PromptPrefixHasher.hash(systemContent: "prefix", tools: refreshed)
                     != PromptPrefixHasher.hash(systemContent: "prefix", tools: frozen)
