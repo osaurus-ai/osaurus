@@ -332,10 +332,19 @@ public struct SystemPromptComposer: Sendable {
         trace: TTFTTrace?
     ) async -> String? {
         let window = ContextSizeResolver.resolve(modelId: snapshot.model)
-        let memoryOff = snapshot.memoryDisabled || window.sizeClass.disablesMemory
-        guard !memoryOff else { return nil }
+        // Tiny-context models can't spare room for memory at all — hard skip
+        // for both lanes, regardless of project sharing.
+        guard !window.sizeClass.disablesMemory else { return nil }
         trace?.mark("memory_start")
-        let section = await assembleMemorySection(agentId: agentId.uuidString, query: query)
+        // The agent's own memory lane still honors the agent's toggle. The
+        // project lane (below) is assembled even when the agent has memory
+        // off: a project that opted into shared memory injects it into
+        // every one of its chats. `appendProjectMemory` enforces the
+        // project's `sharedMemoryEnabled` and the global memory switch.
+        let section =
+            snapshot.memoryDisabled
+            ? nil
+            : await assembleMemorySection(agentId: agentId.uuidString, query: query)
         let merged = await appendProjectMemory(
             to: section, projectId: snapshot.projectId, query: query)
         trace?.mark("memory_done")
@@ -359,6 +368,13 @@ public struct SystemPromptComposer: Sendable {
         guard let projectId else { return agentSection }
         let config = MemoryConfigurationStore.load()
         guard config.enabled else { return agentSection }
+        // The project's explicit opt-in. Off → no project lane (and a
+        // deleted/unknown project can't inject). Defaults on for legacy
+        // projects (see `Project.sharedMemoryEnabled`).
+        let sharesMemory = await MainActor.run {
+            ProjectManager.shared.project(for: projectId)?.sharedMemoryEnabled ?? false
+        }
+        guard sharesMemory else { return agentSection }
 
         let budget = config.memoryBudgetTokens
         let agentTokens = (agentSection?.count ?? 0) / MemoryConfiguration.charsPerToken
