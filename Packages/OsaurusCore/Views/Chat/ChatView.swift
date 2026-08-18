@@ -8682,8 +8682,12 @@ struct ChatView: View {
                     case .openChannelsSettings:
                         AppDelegate.shared?.showManagementWindow(initialTab: .agentChannels)
                     case .openProjects:
-                        // Projects live in this window's sidebar; flip its lens
-                        // rather than opening the management window.
+                        // Projects live in this window's sidebar; open the
+                        // sidebar (it may be collapsed) and flip its lens to
+                        // Projects rather than opening the management window.
+                        withAnimation(windowState.theme.animationQuick()) {
+                            windowState.showSidebar = true
+                        }
                         ProjectManager.shared.pendingRevealProjectsTab = true
                     case .openSubagentSettings:
                         // Land on the first custom (non-built-in) agent's
