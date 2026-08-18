@@ -829,3 +829,124 @@ struct StripPreambleTests {
         #expect(result == "Hello world")
     }
 }
+
+// MARK: - Project shared memory (immediate transcript lane)
+
+/// DB-layer coverage for the project-namespace transcript mirror that gives
+/// projects immediate, distillation-independent recall: prune-after-compact,
+/// namespace purge, and the counts that surface a project before any episode
+/// exists.
+struct ProjectMemoryTranscriptTests {
+
+    private func makeTempDB() throws -> MemoryDatabase {
+        let db = MemoryDatabase()
+        try db.openInMemory()
+        return db
+    }
+
+    private func projectKey(_ id: UUID) -> String {
+        MemoryNamespace.project(id).key
+    }
+
+    @Test func pruneKeepsMostRecentAndReturnsDeletedChunks() throws {
+        let db = try makeTempDB()
+        let ns = projectKey(UUID())
+        let conv = "conv-1"
+        for i in 0..<10 {
+            try db.insertTranscriptTurn(
+                agentId: ns, conversationId: conv, chunkIndex: i,
+                role: i % 2 == 0 ? "user" : "assistant", content: "turn \(i)", tokenCount: 2
+            )
+        }
+
+        let deleted = try db.pruneTranscript(agentId: ns, conversationId: conv, keepLast: 4)
+
+        // The six oldest chunk indexes (0...5) are deleted; 6...9 survive.
+        #expect(Set(deleted) == Set(0...5))
+        let remaining = try db.loadTranscript(agentId: ns, days: 3650, limit: 100)
+        #expect(Set(remaining.map(\.chunkIndex)) == Set(6...9))
+    }
+
+    @Test func pruneIsNoOpWhenWithinKeepLast() throws {
+        let db = try makeTempDB()
+        let ns = projectKey(UUID())
+        for i in 0..<3 {
+            try db.insertTranscriptTurn(
+                agentId: ns, conversationId: "c", chunkIndex: i, role: "user",
+                content: "t\(i)", tokenCount: 1
+            )
+        }
+        let deleted = try db.pruneTranscript(agentId: ns, conversationId: "c", keepLast: 4)
+        #expect(deleted.isEmpty)
+        #expect(try db.loadTranscript(agentId: ns, days: 3650, limit: 100).count == 3)
+    }
+
+    @Test func pruneScopesToOneConversation() throws {
+        let db = try makeTempDB()
+        let ns = projectKey(UUID())
+        for i in 0..<6 {
+            try db.insertTranscriptTurn(
+                agentId: ns, conversationId: "keep", chunkIndex: i, role: "user",
+                content: "k\(i)", tokenCount: 1
+            )
+        }
+        for i in 0..<6 {
+            try db.insertTranscriptTurn(
+                agentId: ns, conversationId: "prune", chunkIndex: i, role: "user",
+                content: "p\(i)", tokenCount: 1
+            )
+        }
+        _ = try db.pruneTranscript(agentId: ns, conversationId: "prune", keepLast: 2)
+        // The untouched conversation keeps all its rows.
+        let keep = try db.loadTranscript(agentId: ns, days: 3650, limit: 100)
+            .filter { $0.conversationId == "keep" }
+        #expect(keep.count == 6)
+    }
+
+    @Test func deleteNamespaceDataRemovesTranscripts() throws {
+        let db = try makeTempDB()
+        let ns = projectKey(UUID())
+        try db.insertTranscriptTurn(
+            agentId: ns, conversationId: "c", chunkIndex: 0, role: "user",
+            content: "shared fact", tokenCount: 2
+        )
+        _ = try db.insertEpisode(
+            Episode(agentId: ns, conversationId: "c", summary: "s", conversationAt: "2025-01-01T00:00:00Z")
+        )
+        try db.insertPinnedFact(PinnedFact(agentId: ns, content: "pinned"))
+
+        try db.deleteNamespaceData(agentId: ns)
+
+        #expect(try db.loadTranscript(agentId: ns, days: 3650, limit: 100).isEmpty)
+        #expect(try db.loadEpisodes(agentId: ns).isEmpty)
+        #expect(try db.loadPinnedFacts(agentId: ns).isEmpty)
+    }
+
+    @Test func namespaceCountsIncludeTranscriptsBeforeAnyEpisode() throws {
+        let db = try makeTempDB()
+        let id = UUID()
+        let ns = projectKey(id)
+        // Only transcripts exist (pre-distillation) — the project must still
+        // surface so the immediate lane is visible in Memory settings.
+        for i in 0..<3 {
+            try db.insertTranscriptTurn(
+                agentId: ns, conversationId: "c", chunkIndex: i, role: "user",
+                content: "t\(i)", tokenCount: 1
+            )
+        }
+        let counts = try db.projectNamespaceCounts()
+        #expect(counts.first(where: { $0.namespaceKey == ns })?.count == 3)
+    }
+
+    @Test func namespaceCountsExcludeNonProjectTranscripts() throws {
+        let db = try makeTempDB()
+        // An ordinary agent transcript must never appear as a project row.
+        try db.insertTranscriptTurn(
+            agentId: "agent-uuid", conversationId: "c", chunkIndex: 0, role: "user",
+            content: "x", tokenCount: 1
+        )
+        let counts = try db.projectNamespaceCounts()
+        #expect(counts.allSatisfy { $0.namespaceKey.hasPrefix("project-") })
+        #expect(counts.isEmpty)
+    }
+}
