@@ -4211,6 +4211,46 @@ final class ChatSession: ObservableObject {
             }
         }
 
+        // Immediate project memory (write half): index this turn's raw
+        // transcript into the project namespace right away so a fact stated
+        // here is recallable across the project without waiting on the
+        // background distillation. Runs for any project chat, even when the
+        // agent's own memory is off — projects always share. The MemoryService
+        // method stays under the global memory switch.
+        if let projectId = context.memoryProjectId, context.hasContent, let sid = sessionId {
+            let convId = sid.uuidString
+            let chunkIdx = turns.count
+            let userChunkIndex = chunkIdx - 1
+            let conversationTitle = title
+            let userContent = context.userContent
+            let userTokenCount = TokenEstimator.estimate(userContent)
+            Task.detached {
+                await MemoryService.shared.mirrorTranscriptToProject(
+                    projectId: projectId,
+                    conversationId: convId,
+                    chunkIndex: userChunkIndex,
+                    role: "user",
+                    content: userContent,
+                    tokenCount: userTokenCount,
+                    title: conversationTitle
+                )
+            }
+            if let assistantContent, !assistantContent.isEmpty {
+                let assistantTokenCount = TokenEstimator.estimate(assistantContent)
+                Task.detached {
+                    await MemoryService.shared.mirrorTranscriptToProject(
+                        projectId: projectId,
+                        conversationId: convId,
+                        chunkIndex: chunkIdx,
+                        role: "assistant",
+                        content: assistantContent,
+                        tokenCount: assistantTokenCount,
+                        title: conversationTitle
+                    )
+                }
+            }
+        }
+
         if bufferForMemory, context.hasContent {
             let formatter = Self.sessionDateFormatter
             formatter.timeZone = .current

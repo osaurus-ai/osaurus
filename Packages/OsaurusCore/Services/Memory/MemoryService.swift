@@ -1160,6 +1160,52 @@ public actor MemoryService {
         }
     }
 
+    /// Immediately mirror a raw transcript turn into a project's shared
+    /// memory namespace (a SQL row keyed by the project namespace + a vector
+    /// doc in the project's index), so a fact stated in a project chat is
+    /// recallable across the project the moment it's sent — without waiting
+    /// on the heavy background distillation. No LLM call; this is the write
+    /// half of "immediate" project memory. Runs for every project chat
+    /// regardless of the agent's own memory toggle (projects always share),
+    /// but stays under the GLOBAL memory switch. Best-effort.
+    public func mirrorTranscriptToProject(
+        projectId: UUID,
+        conversationId: String,
+        chunkIndex: Int,
+        role: String,
+        content: String,
+        tokenCount: Int,
+        title: String?
+    ) async {
+        guard MemoryConfigurationStore.load().enabled else { return }
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let namespaceKey = MemoryNamespace.project(projectId).key
+        do {
+            try db.insertTranscriptTurn(
+                agentId: namespaceKey,
+                conversationId: conversationId,
+                chunkIndex: chunkIndex,
+                role: role,
+                content: content,
+                tokenCount: tokenCount,
+                title: title
+            )
+        } catch {
+            MemoryLogger.database.warning("project transcript mirror insert failed: \(error)")
+        }
+        let turn = TranscriptTurn(
+            conversationId: conversationId,
+            chunkIndex: chunkIndex,
+            role: role,
+            content: content,
+            tokenCount: tokenCount,
+            agentId: namespaceKey
+        )
+        await MemorySearchService.shared.indexTranscriptTurn(turn)
+        await MemoryContextAssembler.shared.invalidateCache(agentId: namespaceKey)
+    }
+
     private func persistPinnedCandidates(
         _ candidates: [DistillResult.PinnedCandidate],
         agentId: String,
