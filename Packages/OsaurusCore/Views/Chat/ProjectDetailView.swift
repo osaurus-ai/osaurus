@@ -687,6 +687,16 @@ struct ProjectDetailView: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                 Spacer()
+                Button(action: requestAddExistingChats) {
+                    Image(systemName: "tray.and.arrow.down")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.accentColor)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointingHandCursor()
+                .localizedHelp("Add existing chats")
                 Button(action: onNewChat) {
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
                         Image(systemName: "square.and.pencil")
@@ -757,6 +767,40 @@ struct ProjectDetailView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Add Existing Chats
+
+    /// Pop a multi-select picker of ungrouped chats so the user can pull
+    /// several into the project at once, instead of moving them one by one
+    /// from the sidebar.
+    private func requestAddExistingChats() {
+        let requestId = UUID()
+        let scope = alertScope
+        let candidates = sessionsManager.sessions
+            .filter { $0.projectId == nil && !$0.archived }
+            .sorted { $0.updatedAt > $1.updatedAt }
+        let sheet = AddChatsToProjectSheet(candidates: candidates) { ids in
+            ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+            for id in ids {
+                ChatSessionsManager.shared.setProject(id: id, projectId: project.id)
+            }
+        }
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: "Add Chats to Project",
+                message: nil,
+                buttons: [.cancel(L("Cancel"))],
+                showsCloseButton: true,
+                customContent: AnyView(sheet),
+                width: 420,
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
     }
 
     // MARK: - Rename / Delete
