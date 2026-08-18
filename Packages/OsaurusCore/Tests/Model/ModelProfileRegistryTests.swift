@@ -466,6 +466,42 @@ struct ModelProfileRegistryTests {
         }
     }
 
+    @Test("Z.ai GLM hosted by Mistral exposes only none/high reasoning effort")
+    func zaiGlm_matchesReasoningEffortProfile() {
+        for id in [
+            "zai-glm-5-2",
+            "mistral/zai-glm-5-2",
+            "zai-glm-5-2-turbo",  // forward-compat: any zai-glm revision
+        ] {
+            let profile = ModelProfileRegistry.profile(for: id)
+            #expect(profile?.displayName == ZaiGlmReasoningProfile.displayName)
+
+            guard case .segmented(let segments)? = ModelProfileRegistry.options(for: id).first?.kind
+            else {
+                Issue.record("expected segmented reasoningEffort option for \(id)")
+                continue
+            }
+            #expect(segments.map(\.id) == ["none", "high"])
+            #expect(profile?.thinkingOption?.id == nil)
+
+            // Mistral rejects low/medium with HTTP 400, so narrowed-out values
+            // must be dropped rather than reach the wire.
+            for stale in ["low", "medium", "max"] {
+                let normalized = ModelProfileRegistry.normalizedOptions(
+                    for: id,
+                    persisted: ["reasoningEffort": .string(stale)]
+                )
+                #expect(normalized["reasoningEffort"] == nil)
+            }
+
+            let explicit = ModelProfileRegistry.normalizedOptions(
+                for: id,
+                persisted: ["reasoningEffort": .string("high")]
+            )
+            #expect(explicit["reasoningEffort"]?.stringValue == "high")
+        }
+    }
+
     @Test("DSV4 bundles expose off plus exact 0731 low/high/max modes")
     func dsv4_matchesReasoningModeProfile() {
         for id in [
