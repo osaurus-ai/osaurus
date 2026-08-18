@@ -22,6 +22,11 @@ public final class ProjectManager: ObservableObject {
 
     @Published public private(set) var projects: [Project] = []
 
+    /// One-shot request to reveal the sidebar's Projects tab — set by the
+    /// "What's New" projects CTA. `ChatSessionSidebar` observes this, switches
+    /// its lens to Projects, and resets it to false.
+    @Published public var pendingRevealProjectsTab: Bool = false
+
     private init() {
         projects = ProjectStore.loadAll()
     }

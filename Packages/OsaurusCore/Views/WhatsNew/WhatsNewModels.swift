@@ -40,6 +40,8 @@ public enum WhatsNewAction: Hashable, Sendable {
     case openBrowserSettings
     /// Open Management → Channels.
     case openChannelsSettings
+    /// Reveal the chat sidebar's Projects tab.
+    case openProjects
 }
 
 public struct WhatsNewPage: Identifiable, Hashable, Sendable {
@@ -106,6 +108,7 @@ public enum WhatsNewContent {
         knowledge_0_22_7,
         browserUse_0_22_9,
         channels_0_22_13,
+        projects_0_22_23,
     ]
 
     /// First-launch announcement for knowledge collections in 0.22.7.
@@ -215,6 +218,42 @@ public enum WhatsNewContent {
                 systemImage: "checkmark.shield.fill",
                 actionLabel: "Open Channels",
                 action: .openChannelsSettings
+            ),
+        ]
+    )
+
+    /// First-launch announcement for Projects in 0.22.23. Three pages:
+    /// what a project bundles, the shared memory that carries across every
+    /// chat and agent, and how to start one. The final CTA reveals the
+    /// sidebar's Projects tab via `openProjects`.
+    private static let projects_0_22_23 = WhatsNewRelease(
+        version: "0.22.23",
+        pages: [
+            WhatsNewPage(
+                id: "projects-0.22.23:summary",
+                title: "Projects",
+                titlePrefix: "Introducing",
+                description:
+                    "Group related chats into a project so they share one set of instructions, knowledge collections, and memory. Everything you work on in a project stays together, and every new chat starts with the same context instead of a blank slate.",
+                systemImage: "folder.fill"
+            ),
+            WhatsNewPage(
+                id: "projects-0.22.23:memory",
+                title: "Memory shared across every chat",
+                eyebrow: "Introducing Projects",
+                description:
+                    "Chats in a project pool their memory, so a fact learned in one chat is recalled in another right away, even across different agents. It works even for agents whose own memory is off. They read and add to the project's shared memory without building any personal memory of their own.",
+                systemImage: "brain"
+            ),
+            WhatsNewPage(
+                id: "projects-0.22.23:start",
+                title: "Start in the sidebar",
+                eyebrow: "Introducing Projects",
+                description:
+                    "Open the Projects tab in the sidebar to create one, set its instructions, knowledge, and default agent, then pull in existing chats or start new ones. Your existing chats and memory are untouched until you add them.",
+                systemImage: "folder.badge.plus",
+                actionLabel: "Open Projects",
+                action: .openProjects
             ),
         ]
     )

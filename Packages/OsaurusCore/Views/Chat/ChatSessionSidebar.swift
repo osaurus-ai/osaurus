@@ -309,6 +309,19 @@ struct ChatSessionSidebar: View {
             hoveredFilter = nil
             clearSelection()
         }
+        // Deep link from the "What's New" projects announcement: flip the
+        // lens to Projects so the user lands on the new feature.
+        .onChange(of: projectManager.pendingRevealProjectsTab) { _, reveal in
+            guard reveal else { return }
+            selectedTab = .projects
+            projectManager.pendingRevealProjectsTab = false
+        }
+        .onAppear {
+            if projectManager.pendingRevealProjectsTab {
+                selectedTab = .projects
+                projectManager.pendingRevealProjectsTab = false
+            }
+        }
     }
 
     // MARK: - Tab Bar
