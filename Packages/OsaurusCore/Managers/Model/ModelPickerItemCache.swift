@@ -60,6 +60,12 @@ final class ModelPickerItemCache: ObservableObject {
 
     private var observersRegistered = false
 
+    #if DEBUG
+        /// Keeps cache-concurrency tests independent from the asynchronous
+        /// Foundation Models availability probe performed during app startup.
+        static var foundationModelAvailabilityOverrideForTests: (() -> Bool)?
+    #endif
+
     /// The currently running rebuild Task, if any. All callers join this task
     /// rather than each spawning their own concurrent build that could race to
     /// assign `items` last.
@@ -194,7 +200,14 @@ final class ModelPickerItemCache: ObservableObject {
     private static func computeItems() async -> [ModelPickerItem] {
         var options: [ModelPickerItem] = []
 
-        if AppConfiguration.shared.foundationModelAvailable {
+        #if DEBUG
+            let foundationModelAvailable =
+                foundationModelAvailabilityOverrideForTests?()
+                ?? AppConfiguration.shared.foundationModelAvailable
+        #else
+            let foundationModelAvailable = AppConfiguration.shared.foundationModelAvailable
+        #endif
+        if foundationModelAvailable {
             options.append(.foundation())
         }
 

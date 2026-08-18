@@ -11,7 +11,20 @@ import LocalAuthentication
 import Security
 
 public struct MasterKey: Sendable {
-    static let service = "com.osaurus.account"
+    /// Test-host recognition can become observable after early process
+    /// initialization, so this must not cache a production service name before
+    /// the proof lane's namespace is available. Production still resolves the
+    /// same constant service whenever no validated proof namespace exists.
+    static var service: String {
+        serviceName(realKeychainTestNamespace: KeychainQueryHelpers.realKeychainTestNamespace)
+    }
+
+    static func serviceName(realKeychainTestNamespace namespace: String?) -> String {
+        guard let namespace else {
+            return "com.osaurus.account"
+        }
+        return "com.osaurus.tests.master-key.\(namespace)"
+    }
     static let account = "master-key"
 
     // MARK: - Generate
@@ -50,9 +63,10 @@ public struct MasterKey: Sendable {
     public static func install(seed keyData: Data, allowReplace: Bool = false) throws -> OsaurusID {
         // Hermetic test/proof launches (OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1)
         // must not persist identity material into the user's login Keychain.
-        // This is the same no-op-write contract every other Keychain wrapper
-        // honors via `KeychainQueryHelpers.disablesKeychainForProcess`.
-        if KeychainQueryHelpers.disablesKeychainForProcess {
+        // Ordinary test hosts use the same no-op contract as every other
+        // Keychain wrapper. The explicit proof lane is the only exception and
+        // writes solely to its per-run namespaced identity service.
+        if KeychainQueryHelpers.disablesIdentityKeyForProcess {
             throw OsaurusIdentityError.keychainWriteFailed
         }
         if !allowReplace, exists() {
@@ -71,7 +85,14 @@ public struct MasterKey: Sendable {
             delete()
         }
 
-        let status = addToKeychain(keyData: keyData, synchronizable: true)
+        // A proof item must remain local to this Mac so an interrupted run
+        // cannot create a durable iCloud artifact. Production keeps its
+        // synchronizable-first contract.
+        let proofUsesLocalOnlyItem = KeychainQueryHelpers.realKeychainTestsAreExplicitlyEnabled
+        let status = addToKeychain(
+            keyData: keyData,
+            synchronizable: !proofUsesLocalOnlyItem
+        )
         if status != errSecSuccess {
             let fallback = addToKeychain(keyData: keyData, synchronizable: false)
             guard fallback == errSecSuccess else {
@@ -83,11 +104,16 @@ public struct MasterKey: Sendable {
         return osaurusId
     }
 
-    // The Master Key is a synchronizable iCloud Keychain item.
+    // The Master Key is a synchronizable iCloud Keychain item. The explicit
+    // proof lane deliberately uses a local-only item in its unique namespace:
+    // it exercises the overwrite guard without creating an iCloud artifact
+    // that an interrupted CLI run could leave behind. Production behavior is
+    // unchanged whenever the proof namespace is absent.
     private static func addToKeychain(keyData: Data, synchronizable: Bool) -> OSStatus {
+        let serviceName = service
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: serviceName,
             kSecAttrAccount as String: account,
             kSecValueData as String: keyData,
             kSecAttrLabel as String: "Osaurus Master Key",
@@ -96,30 +122,54 @@ public struct MasterKey: Sendable {
             query[kSecAttrSynchronizable as String] = true
             query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
         } else {
+            if KeychainQueryHelpers.realKeychainTestsAreExplicitlyEnabled {
+                query[kSecAttrSynchronizable as String] = false
+            }
             query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         }
-        return SecItemAdd(query as CFDictionary, nil)
+        return KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: serviceName,
+            currentService: { service },
+            isDisabled: { KeychainQueryHelpers.disablesIdentityKeyForProcess },
+            operation: { SecItemAdd(query as CFDictionary, nil) }
+        ) ?? errSecInteractionNotAllowed
     }
 
     // MARK: - Existence Check
 
     /// Check if a Master Key exists in Keychain (no biometric prompt).
     public static func exists() -> Bool {
+        keychainContainsMasterKey(service: service)
+    }
+
+    private static func keychainContainsMasterKey(service serviceName: String) -> Bool {
         // Keychain-disabled processes report "no identity" so identity-gated
         // paths (e.g. `AgentManager.assignAddress`) short-circuit before any
         // legacy login-Keychain read can raise a "wants to use your
         // confidential information" ACL prompt in a headless/differently-signed
         // process (the eval CLI).
-        if KeychainQueryHelpers.disablesKeychainForProcess { return false }
+        if KeychainQueryHelpers.disablesIdentityKeyForProcess { return false }
+        guard serviceName == service else { return false }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: serviceName,
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             kSecReturnData as String: false,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
-        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+        // Recognition may become visible while the query is assembled. Never
+        // use a service captured under the previous isolation namespace.
+        guard !KeychainQueryHelpers.disablesIdentityKeyForProcess,
+            serviceName == service
+        else { return false }
+        let status = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: serviceName,
+            currentService: { service },
+            isDisabled: { KeychainQueryHelpers.disablesIdentityKeyForProcess },
+            operation: { SecItemCopyMatching(query as CFDictionary, nil) }
+        ) ?? errSecInteractionNotAllowed
+        return status == errSecSuccess
     }
 
     // MARK: - Cached Existence (hot UI paths)
@@ -132,8 +182,12 @@ public struct MasterKey: Sendable {
     // install/delete, seeded once lazily, and refreshed off the main thread to
     // pick up out-of-process iCloud Keychain syncs.
     private static let existsCacheLock = NSLock()
-    private nonisolated(unsafe) static var cachedExists: Bool?
-    private nonisolated(unsafe) static var lastExistsRefresh: Date?
+    private struct ExistsCacheEntry {
+        let service: String
+        let value: Bool
+        let refreshedAt: Date
+    }
+    private nonisolated(unsafe) static var existsCacheEntry: ExistsCacheEntry?
     private static let existsRefreshInterval: TimeInterval = 10.0
 
     /// Non-blocking, eventually-consistent variant of `exists()` for hot UI
@@ -142,12 +196,23 @@ public struct MasterKey: Sendable {
     /// Correctness-critical callers — identity creation/recovery guards and
     /// anything about to read or sign with the key — must keep using `exists()`.
     public static func existsCached() -> Bool {
+        let currentService = service
+        if KeychainQueryHelpers.disablesIdentityKeyForProcess {
+            setCachedExists(false, service: currentService)
+            return false
+        }
         existsCacheLock.lock()
-        let known = cachedExists
+        let known = existsCacheEntry.flatMap { entry in
+            cachedExistsValue(
+                cachedService: entry.service,
+                cachedValue: entry.value,
+                currentService: currentService
+            )
+        }
         existsCacheLock.unlock()
 
         if let known {
-            refreshExistsInBackground()
+            refreshExistsInBackground(service: currentService)
             return known
         }
         // Cold: never probe on the calling thread. Launch paths seed the memo
@@ -157,14 +222,27 @@ public struct MasterKey: Sendable {
         // has hung the main thread when securityd stalls. Report "no identity"
         // until the seed lands; identity-gated chrome appears one refresh
         // tick later, and correctness-critical callers use `exists()`.
-        refreshExistsInBackground()
+        refreshExistsInBackground(service: currentService)
         return false
     }
 
-    private static func setCachedExists(_ value: Bool) {
+    static func cachedExistsValue(
+        cachedService: String,
+        cachedValue: Bool,
+        currentService: String
+    ) -> Bool? {
+        cachedService == currentService ? cachedValue : nil
+    }
+
+    private static func setCachedExists(_ value: Bool, service serviceName: String = service) {
+        guard serviceName == Self.service else { return }
+        guard !value || !KeychainQueryHelpers.disablesIdentityKeyForProcess else { return }
         existsCacheLock.lock()
-        cachedExists = value
-        lastExistsRefresh = Date()
+        existsCacheEntry = ExistsCacheEntry(
+            service: serviceName,
+            value: value,
+            refreshedAt: Date()
+        )
         existsCacheLock.unlock()
     }
 
@@ -174,8 +252,12 @@ public struct MasterKey: Sendable {
     /// badge recompute — never triggers a `SecItemCopyMatching` on a
     /// latency-sensitive thread. Call once at launch; idempotent.
     public static func warmExistsCacheInBackground() {
+        let currentService = service
         DispatchQueue.global(qos: .utility).async {
-            setCachedExists(exists())
+            setCachedExists(
+                keychainContainsMasterKey(service: currentService),
+                service: currentService
+            )
         }
     }
 
@@ -186,28 +268,51 @@ public struct MasterKey: Sendable {
     /// fire-and-forget warm and paying the synchronous keychain probe on the
     /// main thread.
     public static func seedExistsCacheOffMainActor() async {
+        let currentService = service
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             DispatchQueue.global(qos: .utility).async {
-                setCachedExists(exists())
+                setCachedExists(
+                    keychainContainsMasterKey(service: currentService),
+                    service: currentService
+                )
                 continuation.resume()
             }
         }
     }
 
-    private static func refreshExistsInBackground() {
+    private static func refreshExistsInBackground(service currentService: String) {
         let now = Date()
         existsCacheLock.lock()
-        let recent = lastExistsRefresh.map { now.timeIntervalSince($0) < existsRefreshInterval } ?? false
+        let recent = existsCacheEntry.map {
+            $0.service == currentService
+                && now.timeIntervalSince($0.refreshedAt) < existsRefreshInterval
+        } ?? false
         if recent {
             existsCacheLock.unlock()
             return
         }
-        // Stamp now (under the lock) so concurrent callers don't each spawn a probe.
-        lastExistsRefresh = now
+        // Stamp now (under the lock) so concurrent callers don't each spawn a
+        // probe for the same effective Keychain namespace.
+        if let entry = existsCacheEntry, entry.service == currentService {
+            existsCacheEntry = ExistsCacheEntry(
+                service: currentService,
+                value: entry.value,
+                refreshedAt: now
+            )
+        } else {
+            existsCacheEntry = ExistsCacheEntry(
+                service: currentService,
+                value: false,
+                refreshedAt: now
+            )
+        }
         existsCacheLock.unlock()
 
         Task.detached(priority: .utility) {
-            setCachedExists(exists())
+            setCachedExists(
+                keychainContainsMasterKey(service: currentService),
+                service: currentService
+            )
         }
     }
 
@@ -227,12 +332,13 @@ public struct MasterKey: Sendable {
         // where `kSecUseAuthenticationUISkip` / `LAContext.interactionNotAllowed`
         // do NOT suppress the trusted-app ACL prompt — so the only safe headless
         // behavior is to not read at all.
-        if KeychainQueryHelpers.disablesKeychainForProcess {
+        if KeychainQueryHelpers.disablesIdentityKeyForProcess {
             throw OsaurusIdentityError.keychainReadFailed
         }
+        let serviceName = service
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: serviceName,
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             kSecReturnData as String: true,
@@ -243,7 +349,12 @@ public struct MasterKey: Sendable {
         }
 
         var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let status = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: serviceName,
+            currentService: { service },
+            isDisabled: { KeychainQueryHelpers.disablesIdentityKeyForProcess },
+            operation: { SecItemCopyMatching(query as CFDictionary, &result) }
+        ) ?? errSecInteractionNotAllowed
         guard status == errSecSuccess, let data = result as? Data else {
             throw OsaurusIdentityError.keychainReadFailed
         }
@@ -266,17 +377,23 @@ public struct MasterKey: Sendable {
     public static func delete() -> Bool {
         // No-op delete under the keychain-disable gate, mirroring the read/write
         // no-ops above and the documented wrapper contract.
-        if KeychainQueryHelpers.disablesKeychainForProcess {
+        if KeychainQueryHelpers.disablesIdentityKeyForProcess {
             setCachedExists(false)
             return true
         }
+        let serviceName = service
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: serviceName,
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
         ]
-        let status = SecItemDelete(query as CFDictionary)
+        let status = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: serviceName,
+            currentService: { service },
+            isDisabled: { KeychainQueryHelpers.disablesIdentityKeyForProcess },
+            operation: { SecItemDelete(query as CFDictionary) }
+        ) ?? errSecItemNotFound
         let gone = status == errSecSuccess || status == errSecItemNotFound
         if gone {
             setCachedExists(false)

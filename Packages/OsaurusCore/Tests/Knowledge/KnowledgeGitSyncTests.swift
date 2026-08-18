@@ -10,6 +10,7 @@
 //
 
 import Foundation
+import OsaurusRepository
 import Testing
 
 @testable import OsaurusCore
@@ -106,6 +107,68 @@ struct KnowledgeGitSyncTests {
 
     private func collection(at folder: URL) -> KnowledgeCollection {
         KnowledgeCollection(name: "T", folderPath: folder.path)
+    }
+
+    @Test
+    func isolatedGitEnvironmentDoesNotInheritAmbientCredentials() throws {
+        let root = try tempDir()
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: root.path
+        )
+        let parentEnvironment = [
+            ProcessDataRootPolicy.testRootEnvironmentKey: root.path,
+            ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+            ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey: "1",
+            ProcessDataRootPolicy.realKeychainTestNamespaceEnvironmentKey: UUID().uuidString,
+            "AMBIENT_SECRET_CANARY": "must-not-cross-process-boundary",
+            "HOME": "/Users/production",
+            "LANG": "C",
+            "PATH": "/Users/example/.local/bin:/usr/bin:/bin",
+            "SSH_AUTH_SOCK": "/tmp/production-agent.sock",
+            "TMPDIR": "/Users/production/tmp",
+        ]
+
+        let environment = KnowledgeGitSyncService.buildGitEnvironment(
+            parentEnvironment: parentEnvironment,
+            parentRecognizedTestHost: true
+        )
+
+        #expect(environment["AMBIENT_SECRET_CANARY"] == nil)
+        #expect(environment["SSH_AUTH_SOCK"] == nil)
+        #expect(environment["HOME"] == root.path)
+        #expect(environment["TMPDIR"] == root.path)
+        #expect(environment["PATH"] == "/usr/bin:/bin:/usr/sbin:/sbin")
+        #expect(environment["GIT_CONFIG_GLOBAL"] == "/dev/null")
+        #expect(environment["GIT_CONFIG_SYSTEM"] == "/dev/null")
+        #expect(environment["GIT_TERMINAL_PROMPT"] == "0")
+        #expect(environment["GIT_SSH_COMMAND"] == "ssh -o BatchMode=yes")
+        #expect(environment[ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey] == nil)
+        #expect(environment[ProcessDataRootPolicy.realKeychainTestNamespaceEnvironmentKey] == nil)
+    }
+
+    @Test
+    func productionGitEnvironmentRetainsUserCredentialContext() {
+        let parentEnvironment = [
+            "GIT_ASKPASS": "/Applications/Credential Helper.app/Contents/MacOS/helper",
+            "HOME": "/Users/example",
+            "PATH": "/Users/example/.local/bin:/usr/bin:/bin",
+            "SSH_AUTH_SOCK": "/tmp/user-agent.sock",
+        ]
+
+        let environment = KnowledgeGitSyncService.buildGitEnvironment(
+            parentEnvironment: parentEnvironment,
+            parentRecognizedTestHost: false
+        )
+
+        #expect(environment["GIT_ASKPASS"] == parentEnvironment["GIT_ASKPASS"])
+        #expect(environment["HOME"] == parentEnvironment["HOME"])
+        #expect(environment["PATH"] == parentEnvironment["PATH"])
+        #expect(environment["SSH_AUTH_SOCK"] == parentEnvironment["SSH_AUTH_SOCK"])
+        #expect(environment["GIT_CONFIG_GLOBAL"] == nil)
+        #expect(environment["GIT_CONFIG_SYSTEM"] == nil)
+        #expect(environment["GIT_TERMINAL_PROMPT"] == "0")
+        #expect(environment["GIT_SSH_COMMAND"] == "ssh -o BatchMode=yes")
     }
 
     // MARK: - Remote detection (the wired-in remoteURL(of:))

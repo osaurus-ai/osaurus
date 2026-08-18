@@ -32,11 +32,7 @@ public enum RemoteProviderKeychain {
     public static func runOffCooperativeExecutor<T: Sendable>(
         _ operation: @escaping @Sendable () -> T
     ) async -> T {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                continuation.resume(returning: operation())
-            }
-        }
+        await Keychain.performRead(operation)
     }
 
     // MARK: - API Key Management
@@ -45,20 +41,23 @@ public enum RemoteProviderKeychain {
     @discardableResult
     public static func saveAPIKey(_ apiKey: String, for providerId: UUID) -> Bool {
         guard let keyData = apiKey.data(using: .utf8) else { return false }
-        if KeychainQueryHelpers.disablesKeychainForProcess { return false }
+        if KeychainQueryHelpers.disablesKeychainForProcess
+            && !Keychain.hasInjectedBackendForCurrentContext { return false }
         return setData(keyData, account: apiKeyAccount(for: providerId))
     }
 
     /// Retrieve an API key for a provider ID
     public static func getAPIKey(for providerId: UUID) -> String? {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
+        if KeychainQueryHelpers.disablesKeychainForProcess
+            && !Keychain.hasInjectedBackendForCurrentContext { return nil }
         return getData(account: apiKeyAccount(for: providerId)).flatMap { String(data: $0, encoding: .utf8) }
     }
 
     /// Delete an API key for a provider ID
     @discardableResult
     public static func deleteAPIKey(for providerId: UUID) -> Bool {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return true }
+        if KeychainQueryHelpers.disablesKeychainForProcess
+            && !Keychain.hasInjectedBackendForCurrentContext { return true }
         return deleteItem(account: apiKeyAccount(for: providerId))
     }
 
@@ -70,7 +69,8 @@ public enum RemoteProviderKeychain {
     /// Typed availability of the API key, distinguishing a definitively
     /// missing key from a keychain that can't answer right now.
     public static func apiKeyAvailability(for providerId: UUID) -> SecretAvailability {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return .absent }
+        if KeychainQueryHelpers.disablesKeychainForProcess
+            && !Keychain.hasInjectedBackendForCurrentContext { return .absent }
         return availability(account: apiKeyAccount(for: providerId)) {
             String(data: $0, encoding: .utf8) != nil
         }
@@ -81,7 +81,8 @@ public enum RemoteProviderKeychain {
     @discardableResult
     public static func saveOAuthTokens(_ tokens: RemoteProviderOAuthTokens, for providerId: UUID) -> Bool {
         guard let tokenData = try? JSONEncoder().encode(tokens) else { return false }
-        if KeychainQueryHelpers.disablesKeychainForProcess { return false }
+        if KeychainQueryHelpers.disablesKeychainForProcess
+            && !Keychain.hasInjectedBackendForCurrentContext { return false }
         return setData(tokenData, account: oauthAccount(for: providerId))
     }
 
@@ -89,13 +90,14 @@ public enum RemoteProviderKeychain {
     public static func saveOAuthTokensOffMainActor(_ tokens: RemoteProviderOAuthTokens, for providerId: UUID) async
         -> Bool
     {
-        await runOffCooperativeExecutor {
+        await Keychain.perform {
             saveOAuthTokens(tokens, for: providerId)
         }
     }
 
     public static func getOAuthTokens(for providerId: UUID) -> RemoteProviderOAuthTokens? {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
+        if KeychainQueryHelpers.disablesKeychainForProcess
+            && !Keychain.hasInjectedBackendForCurrentContext { return nil }
         guard let data = getData(account: oauthAccount(for: providerId)) else { return nil }
         do {
             return try JSONDecoder().decode(RemoteProviderOAuthTokens.self, from: data)
@@ -111,7 +113,8 @@ public enum RemoteProviderKeychain {
     /// Typed availability of the OAuth token blob, distinguishing corrupt
     /// stored data and a transiently unavailable keychain from absence.
     public static func oauthTokensAvailability(for providerId: UUID) -> SecretAvailability {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return .absent }
+        if KeychainQueryHelpers.disablesKeychainForProcess
+            && !Keychain.hasInjectedBackendForCurrentContext { return .absent }
         return availability(account: oauthAccount(for: providerId)) {
             (try? JSONDecoder().decode(RemoteProviderOAuthTokens.self, from: $0)) != nil
         }
@@ -119,7 +122,8 @@ public enum RemoteProviderKeychain {
 
     @discardableResult
     public static func deleteOAuthTokens(for providerId: UUID) -> Bool {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return true }
+        if KeychainQueryHelpers.disablesKeychainForProcess
+            && !Keychain.hasInjectedBackendForCurrentContext { return true }
         return deleteItem(account: oauthAccount(for: providerId))
     }
 
@@ -133,26 +137,30 @@ public enum RemoteProviderKeychain {
     @discardableResult
     public static func saveHeaderSecret(_ value: String, key: String, for providerId: UUID) -> Bool {
         guard let valueData = value.data(using: .utf8) else { return false }
-        if KeychainQueryHelpers.disablesKeychainForProcess { return false }
+        if KeychainQueryHelpers.disablesKeychainForProcess
+            && !Keychain.hasInjectedBackendForCurrentContext { return false }
         return setData(valueData, account: headerAccount(key: key, for: providerId))
     }
 
     /// Retrieve a secret header value for a provider
     public static func getHeaderSecret(key: String, for providerId: UUID) -> String? {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
+        if KeychainQueryHelpers.disablesKeychainForProcess
+            && !Keychain.hasInjectedBackendForCurrentContext { return nil }
         return getData(account: headerAccount(key: key, for: providerId)).flatMap { String(data: $0, encoding: .utf8) }
     }
 
     /// Delete a secret header value for a provider
     @discardableResult
     public static func deleteHeaderSecret(key: String, for providerId: UUID) -> Bool {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return true }
+        if KeychainQueryHelpers.disablesKeychainForProcess
+            && !Keychain.hasInjectedBackendForCurrentContext { return true }
         return deleteItem(account: headerAccount(key: key, for: providerId))
     }
 
     /// Delete all secrets for a provider (API key + all header secrets)
     public static func deleteAllSecrets(for providerId: UUID) {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return }
+        if KeychainQueryHelpers.disablesKeychainForProcess
+            && !Keychain.hasInjectedBackendForCurrentContext { return }
         deleteAPIKey(for: providerId)
         deleteOAuthTokens(for: providerId)
 

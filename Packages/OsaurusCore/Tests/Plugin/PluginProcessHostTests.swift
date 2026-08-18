@@ -18,6 +18,7 @@
 //
 
 import Foundation
+import OsaurusRepository
 import Testing
 
 @testable import OsaurusCore
@@ -31,6 +32,25 @@ struct PluginProcessHostTests {
     /// the swift-testing harness, where `Bundle.allBundles` may not list
     /// the .xctest bundle.
     private final class BundleMarker {}
+
+    /// Lock-backed state makes the pre-run recognition transition synchronous
+    /// and deterministic without depending on task scheduling or wall time.
+    private final class RecognitionTransitionProbe: @unchecked Sendable {
+        private let lock = NSLock()
+        private var recognized = false
+
+        func value() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return recognized
+        }
+
+        func recognize() {
+            lock.lock()
+            recognized = true
+            lock.unlock()
+        }
+    }
 
     /// Directory containing the built test products (xctest bundle and the
     /// `osaurus-plugin-host` executable — SwiftPM puts all products of one
@@ -51,7 +71,8 @@ struct PluginProcessHostTests {
     /// `osaurus_plugin.h` (prefix only — the layouts are append-frozen).
     /// Tools: `echo` (round-trip), `sleep` (wedge forever, ignore
     /// everything — the exact shape of a hung AX call), `config_probe`
-    /// (calls host->config_get, exercising reverse RPC end-to-end).
+    /// (calls host->config_get, exercising reverse RPC end-to-end), and
+    /// `env_probe` (proves an ambient credential canary is absent).
     private static let toyPluginSource = #"""
         #include <stdlib.h>
         #include <string.h>
@@ -109,6 +130,10 @@ struct PluginProcessHostTests {
                 free((void*)v);  /* helper strings are strdup'd */
                 return out;
             }
+            if (strcmp(id, "env_probe") == 0) {
+                const char* v = getenv("AMBIENT_SECRET_CANARY");
+                return strdup(v == NULL ? "{\"present\":false}" : "{\"present\":true}");
+            }
             return strdup("{\"error\":\"unknown tool\"}");
         }
 
@@ -140,15 +165,92 @@ struct PluginProcessHostTests {
         return dylib
     }()
 
-    private func makeClient() -> PluginProcessHostClient {
+    private func makeClient(
+        environment: [String: String]? = nil
+    ) -> PluginProcessHostClient {
         PluginProcessHostClient(
             pluginId: "test.toy",
             dylibPath: Self.toyPluginURL.path,
-            helperURL: Self.helperURL
+            helperURL: Self.helperURL,
+            allowsExecutionInRecognizedTestHost: true,
+            environmentProvider: {
+                environment ?? ProcessInfo.processInfo.environment
+            }
         )
     }
 
     // MARK: - Tests
+
+    @Test
+    func ordinaryNativePluginExecutionFailsClosedInTestHost() async {
+        #expect(ProcessDataRootPolicy.isRecognizedTestHostProcess)
+        let client = PluginProcessHostClient(
+            pluginId: "test.untrusted",
+            dylibPath: "/tmp/untrusted.dylib",
+            helperURL: URL(fileURLWithPath: "/usr/bin/true")
+        )
+
+        do {
+            _ = try await client.invoke(
+                type: "tool", id: "echo", payload: "{}", agentId: nil
+            )
+            Issue.record("expected native plugin execution to fail closed in a test host")
+        } catch let error as PluginProcessHostError {
+            #expect(error.message == "Native plugin helper execution is disabled in test hosts.")
+        } catch {
+            Issue.record("unexpected error: \(error)")
+        }
+    }
+
+    @Test
+    func pendingXCTestLaunchMarkerFailsClosedBeforeHostRecognition() async {
+        let pendingEnvironment = [
+            "XCTestConfigurationFilePath": "/tmp/pending-xctest-configuration"
+        ]
+        let client = PluginProcessHostClient(
+            pluginId: "test.marker-only",
+            dylibPath: "/tmp/not-loaded.dylib",
+            helperURL: URL(fileURLWithPath: "/usr/bin/true"),
+            environmentProvider: { pendingEnvironment },
+            recognitionProvider: { _ in false }
+        )
+
+        do {
+            _ = try await client.invoke(
+                type: "tool", id: "echo", payload: "{}", agentId: nil
+            )
+            Issue.record("expected a pending XCTest launch marker to deny helper admission")
+        } catch let error as PluginProcessHostError {
+            #expect(error.message == "Native plugin helper execution is disabled in test hosts.")
+        } catch {
+            Issue.record("unexpected error: \(error)")
+        }
+    }
+
+    @Test
+    func recognitionTransitionImmediatelyBeforeLaunchFailsClosed() async {
+        let probe = RecognitionTransitionProbe()
+        let client = PluginProcessHostClient(
+            pluginId: "test.late-recognition",
+            dylibPath: "/tmp/not-loaded.dylib",
+            helperURL: URL(fileURLWithPath: "/usr/bin/true"),
+            environmentProvider: { [:] },
+            recognitionProvider: { _ in probe.value() },
+            beforeRunHook: { probe.recognize() }
+        )
+
+        do {
+            _ = try await client.invoke(
+                type: "tool", id: "echo", payload: "{}", agentId: nil
+            )
+            Issue.record("expected a late test-host recognition transition to deny launch")
+        } catch let error as PluginProcessHostError {
+            #expect(error.message == "Native plugin helper execution is disabled in test hosts.")
+        } catch {
+            Issue.record("unexpected error: \(error)")
+        }
+        #expect(probe.value())
+    }
 
     @Test
     func invokeRoundTripsThroughHelperProcess() async throws {
@@ -158,6 +260,59 @@ struct PluginProcessHostTests {
             type: "tool", id: "echo", payload: #"{"hello":"world"}"#, agentId: nil
         )
         #expect(result == #"{"echo":{"hello":"world"}}"#)
+    }
+
+    @Test
+    func optedInHelperDoesNotInheritAmbientCredentials() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-plugin-env-isolation-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: root.path
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let parentEnvironment = [
+            ProcessDataRootPolicy.testRootEnvironmentKey: root.path,
+            ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+            ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey: "1",
+            ProcessDataRootPolicy.realKeychainTestNamespaceEnvironmentKey: UUID().uuidString,
+            "AMBIENT_SECRET_CANARY": "must-not-cross-process-boundary",
+            "LANG": "C",
+            "PATH": "/Users/example/.local/bin:/usr/bin:/bin",
+        ]
+        let childEnvironment = PluginProcessHostClient.buildChildEnvironmentForTesting(
+            parentEnvironment: parentEnvironment,
+            parentRecognizedTestHost: true
+        )
+        #expect(childEnvironment["AMBIENT_SECRET_CANARY"] == nil)
+        #expect(childEnvironment["HOME"] == root.path)
+        #expect(childEnvironment["TMPDIR"] == root.path)
+        #expect(childEnvironment["PATH"] == "/usr/bin:/bin:/usr/sbin:/sbin")
+        #expect(
+            childEnvironment[
+                ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey
+            ] == nil
+        )
+        #expect(
+            childEnvironment[
+                ProcessDataRootPolicy.realKeychainTestNamespaceEnvironmentKey
+            ] == nil
+        )
+
+        let client = makeClient(environment: parentEnvironment)
+        defer { Task { await client.shutdown() } }
+        let result = try await client.invoke(
+            type: "tool", id: "env_probe", payload: "{}", agentId: nil
+        )
+        #expect(result == #"{"present":false}"#)
     }
 
     @Test

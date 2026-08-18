@@ -10,6 +10,7 @@
 //
 
 import Foundation
+import OsaurusRepository
 import XCTest
 
 @testable import OsaurusCore
@@ -135,6 +136,473 @@ final class MCPStdioTransportErrorTests: XCTestCase {
 
 #if canImport(Darwin)
     final class MCPStdioHostRunnerPathTests: XCTestCase {
+        private final class RecognitionProbe: @unchecked Sendable {
+            private let lock = NSLock()
+            private var recognized = false
+
+            func value() -> Bool {
+                lock.lock()
+                defer { lock.unlock() }
+                return recognized
+            }
+
+            func recognize() {
+                lock.lock()
+                recognized = true
+                lock.unlock()
+            }
+        }
+
+        private func makePrivateTestRoot() throws -> URL {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-mcp-parent-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(
+                at: root,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700]
+            )
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: root.path
+            )
+            return root.standardizedFileURL.resolvingSymlinksInPath()
+        }
+
+        func testExplicitlyIsolatedParentDropsAmbientValuesAndPreservesProviderConfiguration() throws {
+            let parentRoot = try makePrivateTestRoot()
+            defer { try? FileManager.default.removeItem(at: parentRoot) }
+            let environment = MCPStdioHostRunner.buildEnvironmentForTesting(
+                parentEnvironment: [
+                    ProcessDataRootPolicy.testRootEnvironmentKey: parentRoot.path,
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+                    "PARENT_SETTING": "inherited",
+                    "GITHUB_TOKEN": "ambient-secret",
+                ],
+                providerEnvironment: [
+                    "TOOL_SETTING": "retained",
+                    ProcessDataRootPolicy.testRootEnvironmentKey: "/tmp/provider-root",
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "0",
+                    ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey: "1",
+                    ProcessDataRootPolicy.realKeychainTestNamespaceEnvironmentKey:
+                        "36CFBE8B-39DB-47DB-BA95-1742165D2657",
+                ],
+                parentRecognizedTestHost: false
+            )
+
+            XCTAssertEqual(
+                environment[ProcessDataRootPolicy.testRootEnvironmentKey],
+                parentRoot.path
+            )
+            XCTAssertEqual(
+                environment[ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey],
+                "1"
+            )
+            XCTAssertEqual(environment["TOOL_SETTING"], "retained")
+            XCTAssertNil(environment["PARENT_SETTING"])
+            XCTAssertNil(environment["GITHUB_TOKEN"])
+            XCTAssertNil(environment[ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey])
+            XCTAssertNil(
+                environment[ProcessDataRootPolicy.realKeychainTestNamespaceEnvironmentKey]
+            )
+        }
+
+        func testProviderCannotEnableIsolationMarkersForProductionHost() throws {
+            let environment = MCPStdioHostRunner.buildEnvironmentForTesting(
+                parentEnvironment: ["PATH": "/usr/bin"],
+                providerEnvironment: [
+                    "TOOL_SETTING": "retained",
+                    ProcessDataRootPolicy.testRootEnvironmentKey: "/tmp/provider-root",
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+                ],
+                parentRecognizedTestHost: false
+            )
+
+            XCTAssertEqual(environment["PATH"], "/usr/bin")
+            XCTAssertEqual(environment["TOOL_SETTING"], "retained")
+            XCTAssertNil(environment[ProcessDataRootPolicy.testRootEnvironmentKey])
+            XCTAssertNil(
+                environment[ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey]
+            )
+        }
+
+        func testProviderLaunchControlsAreStrippedOnlyUnderIsolation() throws {
+            let providerEnvironment = [
+                "MCP_PROVIDER_SETTING": "retained",
+                "DYLD_INSERT_LIBRARIES": "/tmp/provider.dylib",
+                "DYLD_LIBRARY_PATH": "/tmp/provider-dyld",
+                "LD_PRELOAD": "/tmp/provider-preload.so",
+                "LD_LIBRARY_PATH": "/tmp/provider-ld",
+                "OSU_MODELS_DIR": "/Users/provider-models",
+                "OSAURUS_RUNTIME_MODE": "provider-mode",
+            ]
+            let nonIsolated = MCPStdioHostRunner.buildEnvironmentForTesting(
+                parentEnvironment: ["PATH": "/usr/bin"],
+                providerEnvironment: providerEnvironment,
+                parentRecognizedTestHost: false
+            )
+
+            for (key, value) in providerEnvironment {
+                XCTAssertEqual(nonIsolated[key], value, "production host changed \\(key)")
+            }
+
+            let isolatedRoot = try makePrivateTestRoot()
+            defer { try? FileManager.default.removeItem(at: isolatedRoot) }
+            let isolated = MCPStdioHostRunner.buildEnvironmentForTesting(
+                parentEnvironment: [
+                    "PATH": "/usr/bin",
+                    ProcessDataRootPolicy.testRootEnvironmentKey: isolatedRoot.path,
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+                ],
+                providerEnvironment: providerEnvironment,
+                parentRecognizedTestHost: false
+            )
+
+            XCTAssertEqual(isolated["MCP_PROVIDER_SETTING"], "retained")
+            for key in [
+                "DYLD_INSERT_LIBRARIES",
+                "DYLD_LIBRARY_PATH",
+                "LD_PRELOAD",
+                "LD_LIBRARY_PATH",
+                "OSU_MODELS_DIR",
+                "OSAURUS_RUNTIME_MODE",
+            ] {
+                XCTAssertNil(isolated[key], "isolated host forwarded \\(key)")
+            }
+        }
+
+        func testRecognizedTestHostDoesNotInheritAmbientCredentials() throws {
+            let parentRoot = try makePrivateTestRoot()
+            defer { try? FileManager.default.removeItem(at: parentRoot) }
+            let environment = MCPStdioHostRunner.buildEnvironmentForTesting(
+                parentEnvironment: [
+                    "PATH": "/usr/bin",
+                    "LANG": "en_US.UTF-8",
+                    "LC_ALL": "C",
+                    "GITHUB_TOKEN": "ambient-github-secret",
+                    "AWS_SECRET_ACCESS_KEY": "ambient-aws-secret",
+                    "HOME": "/Users/production",
+                    ProcessDataRootPolicy.testRootEnvironmentKey: parentRoot.path,
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+                ],
+                providerEnvironment: [
+                    "PROVIDER_SETTING": "explicit-value",
+                    "PROVIDER_SECRET": "explicit-secret",
+                    "HOME": "/Users/provider-override",
+                    "TMPDIR": "/Users/provider-temp-override",
+                    ProcessDataRootPolicy.testRootEnvironmentKey: "/tmp/provider-root",
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "0",
+                    ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey: "1",
+                ],
+                parentRecognizedTestHost: true
+            )
+
+            XCTAssertEqual(environment["PATH"], "/usr/bin")
+            XCTAssertEqual(environment["LANG"], "en_US.UTF-8")
+            XCTAssertEqual(environment["LC_ALL"], "C")
+            XCTAssertEqual(environment["PROVIDER_SETTING"], "explicit-value")
+            XCTAssertEqual(environment["PROVIDER_SECRET"], "explicit-secret")
+            XCTAssertNil(environment["GITHUB_TOKEN"])
+            XCTAssertNil(environment["AWS_SECRET_ACCESS_KEY"])
+            XCTAssertEqual(environment["HOME"], parentRoot.path)
+            XCTAssertEqual(environment["TMPDIR"], parentRoot.path)
+            XCTAssertEqual(
+                environment[ProcessDataRootPolicy.testRootEnvironmentKey],
+                parentRoot.path
+            )
+            XCTAssertEqual(
+                environment[ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey],
+                "1"
+            )
+            XCTAssertNil(environment[ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey])
+        }
+
+        func testMarkerOnlyIsolationKeepsAmbientSecretOutOfLaunchedChild() throws {
+            let ambientCanary = "ambient-canary-\(UUID().uuidString)"
+            let providerValue = "provider-value-\(UUID().uuidString)"
+            let environment = MCPStdioHostRunner.buildEnvironmentForTesting(
+                parentEnvironment: [
+                    "PATH": "/usr/bin:/bin",
+                    "AMBIENT_SECRET_CANARY": ambientCanary,
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+                ],
+                providerEnvironment: ["PROVIDER_EXPLICIT_VALUE": providerValue],
+                parentRecognizedTestHost: false
+            )
+            let process = Process()
+            let output = Pipe()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.environment = environment
+            process.standardOutput = output
+            process.standardError = Pipe()
+
+            try process.run()
+            process.waitUntilExit()
+            let bytes = output.fileHandleForReading.readDataToEndOfFile()
+            let rendered = try XCTUnwrap(String(data: bytes, encoding: .utf8))
+
+            XCTAssertEqual(process.terminationStatus, 0)
+            XCTAssertFalse(rendered.contains(ambientCanary))
+            XCTAssertFalse(rendered.contains("AMBIENT_SECRET_CANARY="))
+            XCTAssertTrue(rendered.contains("PROVIDER_EXPLICIT_VALUE=\(providerValue)"))
+            XCTAssertEqual(
+                environment["HOME"],
+                environment[ProcessDataRootPolicy.testRootEnvironmentKey]
+            )
+            XCTAssertEqual(
+                environment["TMPDIR"],
+                environment[ProcessDataRootPolicy.testRootEnvironmentKey]
+            )
+        }
+
+        func testLaunchConfigurationUsesRecognitionObservedAfterRunnerInit() throws {
+            let parentHome = try makePrivateTestRoot()
+            let isolatedRoot = try makePrivateTestRoot()
+            defer {
+                try? FileManager.default.removeItem(at: isolatedRoot)
+                try? FileManager.default.removeItem(at: parentHome)
+            }
+
+            let parentBin = parentHome.appendingPathComponent("bin", isDirectory: true)
+            let childBin = isolatedRoot.appendingPathComponent("bin", isDirectory: true)
+            try FileManager.default.createDirectory(at: parentBin, withIntermediateDirectories: false)
+            try FileManager.default.createDirectory(at: childBin, withIntermediateDirectories: false)
+            let parentExecutable = parentBin.appendingPathComponent("fake-mcp")
+            let childExecutable = childBin.appendingPathComponent("fake-mcp")
+            for executable in [parentExecutable, childExecutable] {
+                try "#!/bin/sh\nexit 0\n".write(
+                    to: executable,
+                    atomically: true,
+                    encoding: .utf8
+                )
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o755],
+                    ofItemAtPath: executable.path
+                )
+            }
+
+            let provider = MCPProvider(
+                name: "post-init recognition",
+                url: "stdio://post-init-recognition",
+                transport: .stdio,
+                executionHost: .host,
+                command: "fake-mcp",
+                args: ["--provider-arg"],
+                workingDirectory: "~"
+            )
+            // Initialization must not resolve this command or consult the
+            // process environment. The launch decision is made below with
+            // explicit fixtures, so no Keychain or ambient secret is used.
+            _ = try MCPStdioHostRunner(provider: provider)
+
+            let parentEnvironment = [
+                "PATH": "/usr/bin:/bin",
+                "HOME": parentHome.path,
+            ]
+            let providerEnvironment = [
+                "PATH": [parentBin.path, childBin.path, "/usr/bin", "/bin"]
+                    .joined(separator: ":"),
+            ]
+            let beforeRecognition = try MCPStdioHostRunner.launchConfigurationForTesting(
+                command: provider.command,
+                args: provider.args,
+                workingDirectory: provider.workingDirectory,
+                providerEnvironment: providerEnvironment,
+                parentEnvironment: parentEnvironment,
+                parentRecognizedTestHost: false
+            )
+            let afterRecognition = try MCPStdioHostRunner.launchConfigurationForTesting(
+                command: provider.command,
+                args: provider.args,
+                workingDirectory: provider.workingDirectory,
+                providerEnvironment: providerEnvironment,
+                parentEnvironment: parentEnvironment,
+                parentRecognizedTestHost: true
+            )
+
+            XCTAssertEqual(beforeRecognition.executablePath, parentExecutable.path)
+            XCTAssertEqual(afterRecognition.executablePath, childExecutable.path)
+            XCTAssertEqual(beforeRecognition.workingDirectory?.path, parentHome.path)
+            let childRoot = try XCTUnwrap(
+                afterRecognition.environment[ProcessDataRootPolicy.testRootEnvironmentKey]
+            )
+            XCTAssertEqual(afterRecognition.workingDirectory?.path, childRoot)
+            XCTAssertNotEqual(
+                beforeRecognition.environment["PATH"],
+                afterRecognition.environment["PATH"]
+            )
+            XCTAssertEqual(afterRecognition.arguments, provider.args)
+        }
+
+        func testStartRebuildsLaunchAfterRecognitionTransition() async throws {
+            let ambientCanary = "mcp-ambient-secret-\(UUID().uuidString)"
+            let probe = RecognitionProbe()
+            let provider = MCPProvider(
+                name: "start transition",
+                url: "stdio://start-transition",
+                transport: .stdio,
+                executionHost: .host,
+                command: "/bin/sleep",
+                args: ["5"]
+            )
+            let runner = try MCPStdioHostRunner(provider: provider)
+            let overrides = MCPStdioHostRunner.LaunchTestOverrides(
+                environmentProvider: {
+                    [
+                        "PATH": "/usr/bin:/bin",
+                        "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
+                        "AMBIENT_SECRET_CANARY": ambientCanary,
+                    ]
+                },
+                recognitionProvider: { probe.value() },
+                beforeRunHook: { probe.recognize() }
+            )
+
+            do {
+                try await MCPStdioHostRunner.$launchTestOverrides.withValue(overrides) {
+                    try await runner.start()
+                }
+                let launchedEnvironment = await runner.launchedEnvironmentForTesting()
+                let environment = try XCTUnwrap(launchedEnvironment)
+                XCTAssertNil(environment["AMBIENT_SECRET_CANARY"])
+                XCTAssertEqual(
+                    environment["HOME"],
+                    environment[ProcessDataRootPolicy.testRootEnvironmentKey]
+                )
+                XCTAssertEqual(
+                    environment["TMPDIR"],
+                    environment[ProcessDataRootPolicy.testRootEnvironmentKey]
+                )
+                XCTAssertEqual(
+                    environment[ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey],
+                    "1"
+                )
+            } catch {
+                await runner.stop(forceKillGraceSeconds: 0)
+                throw error
+            }
+            await runner.stop(forceKillGraceSeconds: 0)
+        }
+
+        func testCancelledConnectionCannotLaunchAndReleasesSpawnSlot() async throws {
+            let provider = MCPProvider(
+                name: "cancelled start",
+                url: "stdio://cancelled-start",
+                transport: .stdio,
+                executionHost: .host,
+                command: "/bin/sleep",
+                args: ["5"]
+            )
+            let runner = try MCPStdioHostRunner(provider: provider)
+            let operation = MCPConnectionOperation(providerId: provider.id, generation: 1)
+            let liveBefore = await MCPChildSpawnLimiter.shared.liveCount()
+            let overrides = MCPStdioHostRunner.LaunchTestOverrides(
+                environmentProvider: { ProcessInfo.processInfo.environment },
+                recognitionProvider: { ProcessDataRootPolicy.isRecognizedTestHostProcess },
+                beforeRunHook: { operation.cancel() }
+            )
+
+            do {
+                try await MCPStdioHostRunner.$launchTestOverrides.withValue(overrides) {
+                    try await runner.start(connectionOperation: operation)
+                }
+                XCTFail("A cancelled connection operation launched a child process")
+            } catch is CancellationError {
+                // Expected.
+            }
+
+            let isRunning = await runner.isRunning()
+            let liveAfter = await MCPChildSpawnLimiter.shared.liveCount()
+            XCTAssertFalse(isRunning)
+            XCTAssertEqual(liveAfter, liveBefore)
+            await runner.stop(forceKillGraceSeconds: 0)
+        }
+
+        func testStoppedRunnerCannotLaunchOrConsumeSpawnSlot() async throws {
+            let provider = MCPProvider(
+                name: "stopped start",
+                url: "stdio://stopped-start",
+                transport: .stdio,
+                executionHost: .host,
+                command: "/bin/sleep",
+                args: ["5"]
+            )
+            let runner = try MCPStdioHostRunner(provider: provider)
+            let liveBefore = await MCPChildSpawnLimiter.shared.liveCount()
+            await runner.stop(forceKillGraceSeconds: 0)
+
+            do {
+                try await runner.start()
+                XCTFail("A stopped runner launched a child process")
+            } catch is CancellationError {
+                // Expected.
+            }
+
+            let isRunning = await runner.isRunning()
+            let liveAfter = await MCPChildSpawnLimiter.shared.liveCount()
+            XCTAssertFalse(isRunning)
+            XCTAssertEqual(liveAfter, liveBefore)
+        }
+
+        func testStoppedSandboxRunnerCannotConsumeSpawnSlot() async throws {
+            let provider = MCPProvider(
+                name: "stopped sandbox start",
+                url: "stdio://stopped-sandbox-start",
+                transport: .stdio,
+                executionHost: .sandbox,
+                command: "/bin/sleep",
+                args: ["5"]
+            )
+            let runner = try SandboxStdioRunner(
+                provider: provider,
+                agentName: "stopped-sandbox-test"
+            )
+            let liveBefore = await MCPChildSpawnLimiter.shared.liveCount()
+            await runner.stop(forceKillGraceSeconds: 0)
+
+            do {
+                try await runner.start()
+                XCTFail("A stopped sandbox runner consumed a spawn slot")
+            } catch is CancellationError {
+                // Expected.
+            }
+
+            let liveAfter = await MCPChildSpawnLimiter.shared.liveCount()
+            XCTAssertEqual(liveAfter, liveBefore)
+        }
+
+        func testIsolatedHomeControlsShellAndPythonExpansion() throws {
+            let parentRoot = try makePrivateTestRoot()
+            defer { try? FileManager.default.removeItem(at: parentRoot) }
+            let environment = MCPStdioHostRunner.buildEnvironmentForTesting(
+                parentEnvironment: [
+                    "PATH": "/usr/bin:/bin",
+                    "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
+                    ProcessDataRootPolicy.testRootEnvironmentKey: parentRoot.path,
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+                ],
+                providerEnvironment: ["HOME": "/Users/provider-override"],
+                parentRecognizedTestHost: false
+            )
+
+            let shell = try runProcess(
+                executable: "/bin/sh",
+                arguments: ["-c", "printf '%s' ~"],
+                environment: environment
+            )
+            XCTAssertEqual(shell.status, 0, shell.stderr)
+            XCTAssertEqual(shell.stdout, parentRoot.path)
+
+            let python = try runProcess(
+                executable: "/usr/bin/python3",
+                arguments: ["-c", "import pathlib; print(pathlib.Path.home(), end='')"],
+                environment: environment
+            )
+            XCTAssertEqual(python.status, 0, python.stderr)
+            XCTAssertEqual(python.stdout, parentRoot.path)
+        }
+
         func testHostSearchPathAppendsCommonLocalBinFallbacks() throws {
             let searchPath = MCPStdioHostRunner.executableSearchPathForTesting(
                 env: ["PATH": "/custom/bin:/usr/bin"]
@@ -146,6 +614,36 @@ final class MCPStdioTransportErrorTests: XCTestCase {
             XCTAssertTrue(entries.contains("/usr/local/bin"))
             XCTAssertTrue(entries.contains("/usr/bin"))
             XCTAssertEqual(entries.filter { $0 == "/usr/bin" }.count, 1)
+        }
+
+        private func runProcess(
+            executable: String,
+            arguments: [String],
+            environment: [String: String],
+            workingDirectory: URL? = nil
+        ) throws -> (status: Int32, stdout: String, stderr: String) {
+            let process = Process()
+            let stdout = Pipe()
+            let stderr = Pipe()
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = arguments
+            process.environment = environment
+            process.currentDirectoryURL = workingDirectory
+            process.standardOutput = stdout
+            process.standardError = stderr
+            try process.run()
+            process.waitUntilExit()
+            return (
+                process.terminationStatus,
+                String(
+                    data: stdout.fileHandleForReading.readDataToEndOfFile(),
+                    encoding: .utf8
+                ) ?? "",
+                String(
+                    data: stderr.fileHandleForReading.readDataToEndOfFile(),
+                    encoding: .utf8
+                ) ?? ""
+            )
         }
 
         func testHostResolverFindsExecutableOnPath() throws {
@@ -172,16 +670,150 @@ final class MCPStdioTransportErrorTests: XCTestCase {
 
         func testHostResolverExpandsUserPaths() throws {
             let home = FileManager.default.homeDirectoryForCurrentUser.path
+            let environment = ["HOME": home]
 
             XCTAssertEqual(
-                MCPStdioHostRunner.expandUserPathForTesting("~/bin/mcp-server"),
+                MCPStdioHostRunner.expandUserPathForTesting(
+                    "~/bin/mcp-server",
+                    env: environment
+                ),
                 "\(home)/bin/mcp-server"
             )
-            XCTAssertEqual(MCPStdioHostRunner.expandUserPathForTesting("~"), home)
             XCTAssertEqual(
-                MCPStdioHostRunner.expandUserPathForTesting("/usr/local/bin/mcp-server"),
+                MCPStdioHostRunner.expandUserPathForTesting("~", env: environment),
+                home
+            )
+            XCTAssertEqual(
+                MCPStdioHostRunner.expandUserPathForTesting(
+                    "/usr/local/bin/mcp-server",
+                    env: environment
+                ),
                 "/usr/local/bin/mcp-server"
             )
+        }
+
+        func testIsolatedLaunchUsesChildHomeForTildeCommandAndWorkingDirectory() throws {
+            let isolatedRoot = try makePrivateTestRoot()
+            defer { try? FileManager.default.removeItem(at: isolatedRoot) }
+            let bin = isolatedRoot.appendingPathComponent("bin", isDirectory: true)
+            try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: false)
+            let executable = bin.appendingPathComponent("tilde-mcp")
+            try "#!/bin/sh\nprintf '%s\\n%s\\n%s' \"$0\" \"$PWD\" \"$HOME\"\n".write(
+                to: executable,
+                atomically: true,
+                encoding: .utf8
+            )
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755],
+                ofItemAtPath: executable.path
+            )
+            let environment = MCPStdioHostRunner.buildEnvironmentForTesting(
+                parentEnvironment: [
+                    "PATH": "/usr/bin:/bin",
+                    "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
+                    ProcessDataRootPolicy.testRootEnvironmentKey: isolatedRoot.path,
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+                ],
+                providerEnvironment: [:],
+                parentRecognizedTestHost: false
+            )
+
+            let resolvedExecutable = try MCPStdioHostRunner.resolveExecutablePathForTesting(
+                command: "~/bin/tilde-mcp",
+                env: environment
+            )
+            let resolvedWorkingDirectory = MCPStdioHostRunner.expandUserPathForTesting(
+                "~",
+                env: environment
+            )
+            let result = try runProcess(
+                executable: resolvedExecutable,
+                arguments: [],
+                environment: environment,
+                workingDirectory: URL(fileURLWithPath: resolvedWorkingDirectory)
+            )
+
+            XCTAssertEqual(result.status, 0, result.stderr)
+            let outputLines = result.stdout.split(separator: "\n").map(String.init)
+            XCTAssertEqual(outputLines.count, 3)
+            XCTAssertEqual(outputLines[0], executable.path)
+            XCTAssertEqual(
+                URL(fileURLWithPath: outputLines[1]).resolvingSymlinksInPath().path,
+                isolatedRoot.resolvingSymlinksInPath().path
+            )
+            XCTAssertEqual(outputLines[2], isolatedRoot.path)
+        }
+
+        func testIsolatedSearchPathRejectsParentHomeAndSymlinkedHomeExecutables() throws {
+            let parentHome = try makePrivateTestRoot()
+            let isolatedRoot = try makePrivateTestRoot()
+            let linkedParentBin = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-mcp-linked-home-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            defer {
+                try? FileManager.default.removeItem(at: linkedParentBin)
+                try? FileManager.default.removeItem(at: isolatedRoot)
+                try? FileManager.default.removeItem(at: parentHome)
+            }
+            let parentBin = parentHome.appendingPathComponent("bin", isDirectory: true)
+            let isolatedBin = isolatedRoot.appendingPathComponent("bin", isDirectory: true)
+            try FileManager.default.createDirectory(at: parentBin, withIntermediateDirectories: false)
+            try FileManager.default.createDirectory(at: isolatedBin, withIntermediateDirectories: false)
+            try FileManager.default.createSymbolicLink(
+                at: linkedParentBin,
+                withDestinationURL: parentBin
+            )
+            for (url, marker) in [
+                (parentBin.appendingPathComponent("fake-mcp"), "parent"),
+                (isolatedBin.appendingPathComponent("fake-mcp"), "isolated"),
+            ] {
+                try "#!/bin/sh\nprintf '%s' '\(marker)'\n".write(
+                    to: url,
+                    atomically: true,
+                    encoding: .utf8
+                )
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o755],
+                    ofItemAtPath: url.path
+                )
+            }
+
+            let environment = MCPStdioHostRunner.buildEnvironmentForTesting(
+                parentEnvironment: [
+                    "PATH": "/usr/bin:/bin",
+                    "HOME": parentHome.path,
+                    ProcessDataRootPolicy.testRootEnvironmentKey: isolatedRoot.path,
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+                ],
+                providerEnvironment: [
+                    "PATH": [
+                        parentBin.path,
+                        linkedParentBin.path,
+                        ".",
+                        isolatedBin.path,
+                        "/usr/bin",
+                        "/bin",
+                    ].joined(separator: ":"),
+                ],
+                parentRecognizedTestHost: false
+            )
+            let resolved = try MCPStdioHostRunner.resolveExecutablePathForTesting(
+                command: "fake-mcp",
+                env: environment
+            )
+            let result = try runProcess(
+                executable: resolved,
+                arguments: [],
+                environment: environment
+            )
+
+            XCTAssertFalse(environment["PATH", default: ""].contains(parentHome.path))
+            XCTAssertFalse(environment["PATH", default: ""].contains(linkedParentBin.path))
+            XCTAssertFalse(environment["PATH", default: ""].split(separator: ":").contains("."))
+            XCTAssertEqual(resolved, isolatedBin.appendingPathComponent("fake-mcp").path)
+            XCTAssertEqual(result.status, 0, result.stderr)
+            XCTAssertEqual(result.stdout, "isolated")
         }
     }
 #endif

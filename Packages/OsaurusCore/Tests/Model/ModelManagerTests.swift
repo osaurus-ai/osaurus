@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import OsaurusRepository
 import Testing
 
 @testable import OsaurusCore
@@ -24,6 +25,63 @@ private final class LocalModelsScanNotificationProbe: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return storage
+    }
+}
+
+private final class CatalogPolicyTransitionProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var checks = 0
+
+    func allowThroughCandidateScan() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        checks += 1
+        return checks <= 3
+    }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return checks
+    }
+}
+
+private final class TopUpPolicyGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var allowed = true
+
+    func check() -> Bool {
+        lock.withLock { allowed }
+    }
+
+    func revoke() {
+        lock.withLock { allowed = false }
+    }
+}
+
+private actor TopUpDownloadPause {
+    private var reached = false
+    private var released = false
+    private var reachWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func pause() async {
+        reached = true
+        reachWaiters.forEach { $0.resume() }
+        reachWaiters.removeAll()
+        guard !released else { return }
+        await withCheckedContinuation { releaseWaiters.append($0) }
+    }
+
+    func waitUntilReached() async {
+        guard !reached else { return }
+        await withCheckedContinuation { reachWaiters.append($0) }
+    }
+
+    func release() {
+        released = true
+        releaseWaiters.forEach { $0.resume() }
+        releaseWaiters.removeAll()
     }
 }
 
@@ -129,6 +187,98 @@ struct ModelManagerTests {
             let missingList = missing.joined(separator: ", ")
             #expect(missing.isEmpty, "missing download state for models: \(missingList)")
         }
+    }
+
+    @Test("recognized test hosts never schedule automatic model-bundle top-ups")
+    @MainActor
+    func testHostDoesNotScheduleAutomaticModelTopUp() {
+        #expect(ProcessDataRootPolicy.isRecognizedTestHostProcess)
+        let previousObserver = ModelManager.automaticCatalogTopUpScheduleObserverForTests
+        var scheduledTopUps = 0
+        ModelManager.automaticCatalogTopUpScheduleObserverForTests = { _ in
+            scheduledTopUps += 1
+        }
+        defer {
+            ModelManager.automaticCatalogTopUpScheduleObserverForTests = previousObserver
+        }
+
+        let manager = ModelManager()
+        manager.loadAvailableModels()
+
+        #expect(scheduledTopUps == 0)
+    }
+
+    @Test("automatic top-up rechecks isolation after task admission")
+    @MainActor
+    func automaticTopUpStopsWhenIsolationChangesAfterAdmission() async throws {
+        let probe = CatalogPolicyTransitionProbe()
+        let service = ModelDownloadService(startBackgroundWork: false)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-top-up-transition-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let model = MLXModel(
+            id: "test/transition-model",
+            name: "Transition model",
+            description: "",
+            downloadURL: "https://example.invalid/test/transition-model",
+            rootDirectory: root
+        )
+        try FileManager.default.createDirectory(
+            at: model.localDirectory,
+            withIntermediateDirectories: true
+        )
+        try Data("{}".utf8).write(
+            to: model.localDirectory.appendingPathComponent("config.json")
+        )
+        try Data("{}".utf8).write(
+            to: model.localDirectory.appendingPathComponent("tokenizer.json")
+        )
+        try Data("weights".utf8).write(
+            to: model.localDirectory.appendingPathComponent("model.safetensors")
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        await service.topUpCompletedModels([model], shouldContinue: {
+            probe.allowThroughCandidateScan()
+        })
+
+        #expect(probe.count >= 4)
+    }
+
+    @Test("automatic top-up cannot publish after isolation changes during download")
+    func automaticTopUpStagesBeforePolicyCheckedCommit() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            "osaurus-top-up-commit-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let destination = root.appendingPathComponent("config.json")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("existing".utf8).write(to: destination)
+        defer { try? fm.removeItem(at: root) }
+
+        let gate = TopUpPolicyGate()
+        let pause = TopUpDownloadPause()
+        let task = Task {
+            try await ModelDownloadService.stageAndCommitTopUpFile(
+                destination: destination,
+                shouldContinue: { gate.check() }
+            ) { staged in
+                try Data("downloaded".utf8).write(to: staged)
+                await pause.pause()
+            }
+        }
+
+        await pause.waitUntilReached()
+        gate.revoke()
+        await pause.release()
+
+        #expect(try await task.value == false)
+        #expect(try String(contentsOf: destination, encoding: .utf8) == "existing")
+        let stagedFiles = try fm.contentsOfDirectory(atPath: root.path)
+            .filter { $0.hasPrefix(".osaurus-topup-stage-") }
+        #expect(stagedFiles.isEmpty)
     }
 
     @Test func cancelDownload_resetsStateWithoutTask() async throws {

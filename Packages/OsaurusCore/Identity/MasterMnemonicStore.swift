@@ -19,7 +19,7 @@ import LocalAuthentication
 import Security
 
 public struct MasterMnemonicStore: Sendable {
-    static let service = MasterKey.service
+    static var service: String { MasterKey.service }
     static let account = "master-mnemonic"
 
     // MARK: - Store
@@ -55,9 +55,10 @@ public struct MasterMnemonicStore: Sendable {
 
     // Mirrors `MasterKey`: a synchronizable iCloud Keychain item.
     private static func addToKeychain(data: Data, synchronizable: Bool) -> OSStatus {
+        let serviceName = service
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: serviceName,
             kSecAttrAccount as String: account,
             kSecValueData as String: data,
             kSecAttrLabel as String: "Osaurus Recovery Phrase",
@@ -68,7 +69,12 @@ public struct MasterMnemonicStore: Sendable {
         } else {
             query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         }
-        return SecItemAdd(query as CFDictionary, nil)
+        return KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: serviceName,
+            currentService: { service },
+            isDisabled: { KeychainQueryHelpers.disablesKeychainForProcess },
+            operation: { SecItemAdd(query as CFDictionary, nil) }
+        ) ?? errSecInteractionNotAllowed
     }
 
     // MARK: - Existence
@@ -79,15 +85,22 @@ public struct MasterMnemonicStore: Sendable {
     /// store.
     public static func exists() -> Bool {
         if KeychainQueryHelpers.disablesKeychainForProcess { return false }
+        let serviceName = service
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: serviceName,
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             kSecReturnData as String: false,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
-        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+        let status = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: serviceName,
+            currentService: { service },
+            isDisabled: { KeychainQueryHelpers.disablesKeychainForProcess },
+            operation: { SecItemCopyMatching(query as CFDictionary, nil) }
+        ) ?? errSecInteractionNotAllowed
+        return status == errSecSuccess
     }
 
     // MARK: - Read
@@ -99,9 +112,10 @@ public struct MasterMnemonicStore: Sendable {
         if KeychainQueryHelpers.disablesKeychainForProcess {
             throw OsaurusIdentityError.keychainReadFailed
         }
+        let serviceName = service
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: serviceName,
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             kSecReturnData as String: true,
@@ -112,7 +126,12 @@ public struct MasterMnemonicStore: Sendable {
         }
 
         var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let status = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: serviceName,
+            currentService: { service },
+            isDisabled: { KeychainQueryHelpers.disablesKeychainForProcess },
+            operation: { SecItemCopyMatching(query as CFDictionary, &result) }
+        ) ?? errSecInteractionNotAllowed
         guard status == errSecSuccess,
             let data = result as? Data,
             let phrase = String(data: data, encoding: .utf8)
@@ -137,13 +156,19 @@ public struct MasterMnemonicStore: Sendable {
     @discardableResult
     public static func delete() -> Bool {
         if KeychainQueryHelpers.disablesKeychainForProcess { return true }
+        let serviceName = service
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: serviceName,
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
         ]
-        let status = SecItemDelete(query as CFDictionary)
+        let status = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: serviceName,
+            currentService: { service },
+            isDisabled: { KeychainQueryHelpers.disablesKeychainForProcess },
+            operation: { SecItemDelete(query as CFDictionary) }
+        ) ?? errSecItemNotFound
         return status == errSecSuccess || status == errSecItemNotFound
     }
 }

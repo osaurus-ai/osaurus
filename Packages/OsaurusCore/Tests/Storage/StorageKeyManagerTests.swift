@@ -52,4 +52,93 @@ struct StorageKeyManagerTests {
             StorageKeyManager.shared.wipeCache()
         }
     }
+
+    @Test
+    func isolatedHostRevokesProductionScopedCachedKey() async throws {
+        try await StoragePathsTestLock.shared.run {
+            #expect(StorageKeyManager.disablesKeychainForProcess)
+            let productionKey = SymmetricKey(data: Data(repeating: 0x42, count: 32))
+            StorageKeyManager.shared._setKeyForTesting(
+                productionKey,
+                isolated: false
+            )
+            defer { StorageKeyManager.shared.wipeCache() }
+
+            #expect(!StorageKeyManager.shared.hasCachedKey)
+            let isolatedKey = try StorageKeyManager.shared.currentKey()
+            #expect(
+                isolatedKey.withUnsafeBytes { Data($0) }
+                    != productionKey.withUnsafeBytes { Data($0) }
+            )
+            #expect(StorageKeyManager.shared.hasCachedKey)
+        }
+    }
+
+    @Test
+    func encryptedStorageProbeDefersWhenItsRootChanges() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let previousRoot = OsaurusPaths.overrideRoot
+            let firstRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-storage-evidence-first-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            let secondRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-storage-evidence-second-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(
+                at: firstRoot,
+                withIntermediateDirectories: true
+            )
+            try FileManager.default.createDirectory(
+                at: secondRoot,
+                withIntermediateDirectories: true
+            )
+            OsaurusPaths.overrideRoot = firstRoot
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                try? FileManager.default.removeItem(at: firstRoot)
+                try? FileManager.default.removeItem(at: secondRoot)
+            }
+
+            #expect(StorageKeyManager.disablesKeychainForProcess)
+            let result = StorageKeyManager.shared._encryptedStorageExistsForTesting(
+                expectedIsolation: true,
+                beforeFirstProbe: { OsaurusPaths.overrideRoot = secondRoot }
+            )
+            #expect(result == .retry)
+        }
+    }
+
+    @Test
+    func isolatedCacheDoesNotCrossDataRoots() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let previousRoot = OsaurusPaths.overrideRoot
+            let firstRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-storage-key-scope-first-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            let secondRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-storage-key-scope-second-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            OsaurusPaths.overrideRoot = firstRoot
+            StorageKeyManager.shared.wipeCache()
+            defer {
+                StorageKeyManager.shared.wipeCache()
+                OsaurusPaths.overrideRoot = previousRoot
+                try? FileManager.default.removeItem(at: firstRoot)
+                try? FileManager.default.removeItem(at: secondRoot)
+            }
+
+            let first = try StorageKeyManager.shared.currentKey()
+            OsaurusPaths.overrideRoot = secondRoot
+            let second = try StorageKeyManager.shared.currentKey()
+
+            #expect(
+                first.withUnsafeBytes { Data($0) }
+                    != second.withUnsafeBytes { Data($0) }
+            )
+        }
+    }
 }

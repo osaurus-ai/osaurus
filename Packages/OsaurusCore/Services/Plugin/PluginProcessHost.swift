@@ -23,6 +23,7 @@
 //
 
 import Foundation
+import OsaurusRepository
 import os
 
 // MARK: - Mode / discovery
@@ -81,9 +82,52 @@ private struct HelperResponse: @unchecked Sendable {
 /// actor-isolated; the stdout reader runs as a child task feeding
 /// responses back through actor methods.
 actor PluginProcessHostClient {
+    private struct LaunchSnapshot: Sendable, Equatable {
+        let environment: [String: String]
+        let recognizedTestHost: Bool
+
+        var hasPendingTestLaunchMarker: Bool {
+            ProcessDataRootPolicy.hasTestLaunchMarker(environment: environment)
+        }
+
+        var requiresIsolation: Bool {
+            ProcessDataRootPolicy.shouldDisableKeychain(
+                environment: environment,
+                recognizedTestHost: recognizedTestHost
+            )
+        }
+
+        var isRestricted: Bool {
+            hasPendingTestLaunchMarker || recognizedTestHost || requiresIsolation
+        }
+    }
+
+    /// Recognized test hosts must not pass ambient credentials to a native
+    /// plugin helper. Keep only process-launch and locale context; the helper
+    /// receives Osaurus isolation markers from `ProcessDataRootPolicy` below.
+    private static let testHostAmbientEnvironmentKeys: Set<String> = [
+        "PATH",
+        "LANG",
+        "LC_ALL",
+        "LC_COLLATE",
+        "LC_CTYPE",
+        "LC_MESSAGES",
+        "LC_MONETARY",
+        "LC_NUMERIC",
+        "LC_TIME",
+        "TERM",
+        "TZ",
+    ]
+
     private let pluginId: String
     private let dylibPath: String
     private let helperURL: URL
+    private let allowsExecutionInRecognizedTestHost: Bool
+    private let environmentProvider: @Sendable () -> [String: String]
+    private let recognitionProvider: @Sendable ([String: String]) -> Bool
+    /// Synchronous seam used to make a policy transition deterministic in
+    /// tests immediately before the final admission check.
+    private let beforeRunHook: @Sendable () -> Void
 
     private var process: Process?
     private var stdinPipe: Pipe?
@@ -104,10 +148,26 @@ actor PluginProcessHostClient {
     /// Budget for load (dlopen + init + manifest) — generous but bounded.
     static let loadDeadlineSeconds: Double = 30
 
-    init(pluginId: String, dylibPath: String, helperURL: URL) {
+    init(
+        pluginId: String,
+        dylibPath: String,
+        helperURL: URL,
+        allowsExecutionInRecognizedTestHost: Bool = false,
+        environmentProvider: @escaping @Sendable () -> [String: String] = {
+            ProcessInfo.processInfo.environment
+        },
+        recognitionProvider: @escaping @Sendable ([String: String]) -> Bool = { _ in
+            ProcessDataRootPolicy.isRecognizedTestHostProcess
+        },
+        beforeRunHook: @escaping @Sendable () -> Void = {}
+    ) {
         self.pluginId = pluginId
         self.dylibPath = dylibPath
         self.helperURL = helperURL
+        self.allowsExecutionInRecognizedTestHost = allowsExecutionInRecognizedTestHost
+        self.environmentProvider = environmentProvider
+        self.recognitionProvider = recognitionProvider
+        self.beforeRunHook = beforeRunHook
     }
 
     // MARK: Public surface
@@ -178,6 +238,13 @@ actor PluginProcessHostClient {
     private func spawnAndLoad() async throws {
         await killProcess()
 
+        let initialSnapshot = captureLaunchSnapshot()
+        guard isLaunchAllowed(initialSnapshot) else {
+            throw PluginProcessHostError(
+                message: "Native plugin helper execution is disabled in test hosts."
+            )
+        }
+
         let proc = Process()
         proc.executableURL = helperURL
         let inPipe = Pipe()
@@ -185,6 +252,31 @@ actor PluginProcessHostClient {
         proc.standardInput = inPipe
         proc.standardOutput = outPipe
         proc.standardError = FileHandle.nullDevice
+
+        let launchSnapshot = captureLaunchSnapshot()
+        // Keep this check after all setup and immediately before run: XCTest
+        // recognition can become visible during application launch.
+        guard isLaunchAllowed(launchSnapshot) else {
+            throw PluginProcessHostError(
+                message: "Native plugin helper execution is disabled in test hosts."
+            )
+        }
+        // Use the same final snapshot for admission and environment assembly.
+        // An explicitly opted-in helper therefore still receives isolation if
+        // recognition became visible during process setup.
+        proc.environment = Self.buildChildEnvironmentForTesting(
+            parentEnvironment: launchSnapshot.environment,
+            parentRecognizedTestHost: launchSnapshot.recognizedTestHost
+        )
+        beforeRunHook()
+        let finalSnapshot = captureLaunchSnapshot()
+        guard finalSnapshot == launchSnapshot else {
+            throw PluginProcessHostError(
+                message: finalSnapshot.isRestricted
+                    ? "Native plugin helper execution is disabled in test hosts."
+                    : "Native plugin helper isolation changed before launch."
+            )
+        }
         try proc.run()
 
         processGeneration += 1
@@ -212,6 +304,56 @@ actor PluginProcessHostClient {
             "[PluginProcessHost] plugin=%@ loaded in helper pid=%d",
             pluginId, proc.processIdentifier
         )
+    }
+
+    private func captureLaunchSnapshot() -> LaunchSnapshot {
+        let environment = environmentProvider()
+        return LaunchSnapshot(
+            environment: environment,
+            recognizedTestHost: recognitionProvider(environment)
+        )
+    }
+
+    private func isLaunchAllowed(_ snapshot: LaunchSnapshot) -> Bool {
+        allowsExecutionInRecognizedTestHost || !snapshot.isRestricted
+    }
+
+    /// Production helpers retain the existing full ambient environment.
+    /// Isolated proof processes receive only locale/launch context plus the
+    /// shared disposable-root policy, so opting into native helper tests does
+    /// not opt ambient credentials into the child process.
+    static func buildChildEnvironmentForTesting(
+        parentEnvironment: [String: String],
+        parentRecognizedTestHost: Bool
+    ) -> [String: String] {
+        let parentIsolated = ProcessDataRootPolicy.shouldDisableKeychain(
+            environment: parentEnvironment,
+            recognizedTestHost: parentRecognizedTestHost
+        )
+        let baseEnvironment: [String: String]
+        if parentIsolated {
+            baseEnvironment = parentEnvironment.filter { key, _ in
+                testHostAmbientEnvironmentKeys.contains(key)
+            }
+        } else {
+            baseEnvironment = parentEnvironment
+        }
+
+        var childEnvironment = ProcessDataRootPolicy.applyingChildTestIsolation(
+            to: baseEnvironment,
+            parentEnvironment: parentEnvironment,
+            parentRecognizedTestHost: parentRecognizedTestHost
+        )
+        if parentIsolated,
+            let isolatedRoot = childEnvironment[
+                ProcessDataRootPolicy.testRootEnvironmentKey
+            ]
+        {
+            childEnvironment["HOME"] = isolatedRoot
+            childEnvironment["TMPDIR"] = isolatedRoot
+            childEnvironment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+        }
+        return childEnvironment
     }
 
     private func killProcess() async {

@@ -23,69 +23,77 @@ struct ToolSecretsLegacyMigrationTests {
 
     @Test("default-agent read falls back to the legacy account and migrates it")
     func defaultAgentReadMigrates() {
-        defer { ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: Agent.defaultId) }
-        ToolSecretsKeychain._testSeedRawAccount(legacyAccount, value: "sk-legacy")
+        ToolSecretsKeychain._withInMemoryStoreForTesting {
+            defer { ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: Agent.defaultId) }
+            ToolSecretsKeychain._testSeedRawAccount(legacyAccount, value: "sk-legacy")
 
-        let value = ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: Agent.defaultId)
+            let value = ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: Agent.defaultId)
 
-        #expect(value == "sk-legacy")
-        #expect(ToolSecretsKeychain._testRawAccountValue(canonicalAccount) == "sk-legacy")
-        #expect(ToolSecretsKeychain._testRawAccountValue(legacyAccount) == nil)
+            #expect(value == "sk-legacy")
+            #expect(ToolSecretsKeychain._testRawAccountValue(canonicalAccount) == "sk-legacy")
+            #expect(ToolSecretsKeychain._testRawAccountValue(legacyAccount) == nil)
 
-        // Subsequent reads hit the canonical account directly.
-        #expect(
-            ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: Agent.defaultId)
-                == "sk-legacy")
+            // Subsequent reads hit the canonical account directly.
+            #expect(
+                ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: Agent.defaultId)
+                    == "sk-legacy")
+        }
     }
 
     @Test("canonical value wins over a stale legacy twin")
     func canonicalValueWins() {
-        defer { ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: Agent.defaultId) }
-        ToolSecretsKeychain._testSeedRawAccount(legacyAccount, value: "sk-stale")
-        ToolSecretsKeychain.saveSecret("sk-current", id: key, for: pluginId, agentId: Agent.defaultId)
+        ToolSecretsKeychain._withInMemoryStoreForTesting {
+            defer { ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: Agent.defaultId) }
+            ToolSecretsKeychain._testSeedRawAccount(legacyAccount, value: "sk-stale")
+            ToolSecretsKeychain.saveSecret("sk-current", id: key, for: pluginId, agentId: Agent.defaultId)
 
-        let value = ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: Agent.defaultId)
+            let value = ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: Agent.defaultId)
 
-        #expect(value == "sk-current")
-        // The stale legacy twin is untouched by a canonical hit…
-        #expect(ToolSecretsKeychain._testRawAccountValue(legacyAccount) == "sk-stale")
+            #expect(value == "sk-current")
+            // The stale legacy twin is untouched by a canonical hit…
+            #expect(ToolSecretsKeychain._testRawAccountValue(legacyAccount) == "sk-stale")
 
-        // …but deleting the canonical secret removes both, so the fallback
-        // can never resurrect a deleted key.
-        ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: Agent.defaultId)
-        #expect(ToolSecretsKeychain._testRawAccountValue(legacyAccount) == nil)
-        #expect(ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: Agent.defaultId) == nil)
+            // …but deleting the canonical secret removes both, so the fallback
+            // can never resurrect a deleted key.
+            ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: Agent.defaultId)
+            #expect(ToolSecretsKeychain._testRawAccountValue(legacyAccount) == nil)
+            #expect(ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: Agent.defaultId) == nil)
+        }
     }
 
     @Test("non-default agents do not read the legacy namespace directly")
     func nonDefaultAgentDoesNotMigrate() {
-        let otherAgent = UUID()
-        defer {
-            ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: Agent.defaultId)
-            ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: otherAgent)
+        ToolSecretsKeychain._withInMemoryStoreForTesting {
+            let otherAgent = UUID()
+            defer {
+                ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: Agent.defaultId)
+                ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: otherAgent)
+            }
+            ToolSecretsKeychain._testSeedRawAccount(legacyAccount, value: "sk-legacy")
+
+            // Direct per-agent read: no legacy fallback for non-default agents.
+            #expect(ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: otherAgent) == nil)
+            #expect(ToolSecretsKeychain._testRawAccountValue(legacyAccount) == "sk-legacy")
+
+            // The resolution policy still surfaces it: per-agent reads fall back
+            // to Agent.defaultId, which triggers the migration.
+            let resolved = ToolSecretsKeychain.resolvedSecret(
+                id: key, for: pluginId, agentId: otherAgent)
+            #expect(resolved == "sk-legacy")
+            #expect(ToolSecretsKeychain._testRawAccountValue(canonicalAccount) == "sk-legacy")
+            #expect(ToolSecretsKeychain._testRawAccountValue(legacyAccount) == nil)
         }
-        ToolSecretsKeychain._testSeedRawAccount(legacyAccount, value: "sk-legacy")
-
-        // Direct per-agent read: no legacy fallback for non-default agents.
-        #expect(ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: otherAgent) == nil)
-        #expect(ToolSecretsKeychain._testRawAccountValue(legacyAccount) == "sk-legacy")
-
-        // The resolution policy still surfaces it: per-agent reads fall back
-        // to Agent.defaultId, which triggers the migration.
-        let resolved = ToolSecretsKeychain.resolvedSecret(
-            id: key, for: pluginId, agentId: otherAgent)
-        #expect(resolved == "sk-legacy")
-        #expect(ToolSecretsKeychain._testRawAccountValue(canonicalAccount) == "sk-legacy")
-        #expect(ToolSecretsKeychain._testRawAccountValue(legacyAccount) == nil)
     }
 
     @Test("hasSecret and required-secret checks see legacy values")
     func presenceChecksSeeLegacyValues() {
-        defer { ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: Agent.defaultId) }
-        ToolSecretsKeychain._testSeedRawAccount(legacyAccount, value: "sk-legacy")
+        ToolSecretsKeychain._withInMemoryStoreForTesting {
+            defer { ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: Agent.defaultId) }
+            ToolSecretsKeychain._testSeedRawAccount(legacyAccount, value: "sk-legacy")
 
-        #expect(ToolSecretsKeychain.hasSecret(id: key, for: pluginId, agentId: Agent.defaultId))
-        #expect(
-            ToolSecretsKeychain.hasResolvedSecret(id: key, for: pluginId, agentId: Agent.defaultId))
+            #expect(ToolSecretsKeychain.hasSecret(id: key, for: pluginId, agentId: Agent.defaultId))
+            #expect(
+                ToolSecretsKeychain.hasResolvedSecret(id: key, for: pluginId, agentId: Agent.defaultId))
+        }
     }
 }

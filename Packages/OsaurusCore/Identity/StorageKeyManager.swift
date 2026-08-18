@@ -29,6 +29,7 @@
 import CryptoKit
 import Foundation
 import LocalAuthentication
+import OsaurusRepository
 import Security
 import os
 
@@ -66,6 +67,17 @@ public enum StorageKeyError: LocalizedError {
 public final class StorageKeyManager: @unchecked Sendable {
     public static let shared = StorageKeyManager()
 
+    enum StoredArtifactEvidence {
+        case present
+        case absent
+        case retry
+    }
+
+    private struct IsolationScope: Equatable {
+        let isolated: Bool
+        let rootPath: String
+    }
+
     static let service = "com.osaurus.storage"
     static let keyAccount = "data-encryption-key"
     static let saltAccount = "data-encryption-salt"
@@ -98,95 +110,168 @@ public final class StorageKeyManager: @unchecked Sendable {
 
     private var lock = os_unfair_lock_s()
     private var cachedKey: SymmetricKey?
+    private var cachedKeyScope: IsolationScope?
     private var cachedReadFailureStatus: OSStatus?
+    private var cachedReadFailureScope: IsolationScope?
     private let keychainQueue = DispatchQueue(label: "ai.osaurus.storage-key.keychain")
 
     private init() {}
+
+    /// Cache identity is the complete storage namespace, not merely whether
+    /// Keychain access is disabled. Parallel tests routinely move between
+    /// distinct isolated roots inside one process; reusing a DEK or cached read
+    /// failure across those roots would cross-contaminate their encrypted data.
+    private static var currentIsolationScope: IsolationScope {
+        IsolationScope(
+            isolated: disablesKeychainForProcess,
+            rootPath: OsaurusPaths.root().standardizedFileURL.path
+        )
+    }
 
     // MARK: - Public API
 
     /// Live proof/test launches can set this to avoid reading or writing the
     /// user's login Keychain. Production launches leave it unset.
     public static var disablesKeychainForProcess: Bool {
-        ProcessInfo.processInfo.environment["OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS"] == "1"
+        ProcessDataRootPolicy.shouldDisableKeychain(
+            environment: ProcessInfo.processInfo.environment,
+            recognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
+        )
     }
 
     /// Returns the current data-encryption key, generating + persisting
     /// one on first call. Throws on Keychain or derivation failure.
     public func currentKey() throws -> SymmetricKey {
-        os_unfair_lock_lock(&lock)
-        if let cached = cachedKey {
-            os_unfair_lock_unlock(&lock)
-            return cached
-        }
-        if let cachedFailure = cachedReadFailureStatus {
-            os_unfair_lock_unlock(&lock)
-            throw StorageKeyError.keychainReadFailed(cachedFailure)
-        }
-        os_unfair_lock_unlock(&lock)
-
-        return try keychainQueue.sync {
-            os_unfair_lock_lock(&lock)
-            if let cached = cachedKey {
-                os_unfair_lock_unlock(&lock)
+        for _ in 0..<3 {
+            let scope = Self.currentIsolationScope
+            let cachedState = cachedState(for: scope)
+            guard scope == Self.currentIsolationScope else { continue }
+            if let cached = cachedState.key {
                 return cached
             }
-            if let cachedFailure = cachedReadFailureStatus {
-                os_unfair_lock_unlock(&lock)
+            if let cachedFailure = cachedState.failure {
                 throw StorageKeyError.keychainReadFailed(cachedFailure)
             }
-            os_unfair_lock_unlock(&lock)
 
-            let key: SymmetricKey
-            if Self.disablesKeychainForProcess {
-                key = try generateInMemoryKey()
-            } else if let existing = try readKeychainKey() {
-                key = SymmetricKey(data: existing)
-                markProvisioned()
-            } else if encryptedStorageExists() {
-                // Fail closed. The DEK is unreadable (both keychains missed) but
-                // encrypted artifacts already exist on disk. Generating a fresh
-                // key would re-key over data the old key still protects and
-                // permanently destroy it. Surface a recoverable error instead so
-                // the real key can be restored (e.g. a signing/entitlement fix,
-                // a retry once the keychain is unlocked) without data loss.
-                log.error(
-                    "Storage DEK is unreadable but encrypted storage already exists; refusing to mint a replacement key"
-                )
-                throw StorageKeyError.keyUnavailableForExistingData
-            } else {
-                key = try generateAndPersistKey()
-                markProvisioned()
+            return try keychainQueue.sync {
+                try resolveCurrentKeyOnKeychainQueue()
             }
-
-            cacheResidentKey(key)
-            return key
         }
+        throw StorageKeyError.keychainReadFailed(errSecInteractionNotAllowed)
     }
 
     /// Cache a freshly resolved key, posting `storageKeyDidBecomeResident`
     /// on the nil -> non-nil transition (outside the lock).
-    private func cacheResidentKey(_ key: SymmetricKey) {
+    @discardableResult
+    private func cacheResidentKey(_ key: SymmetricKey, scope: IsolationScope) -> Bool {
+        guard scope == Self.currentIsolationScope else { return false }
         os_unfair_lock_lock(&lock)
         let wasResident = cachedKey != nil
         cachedKey = key
+        cachedKeyScope = scope
         cachedReadFailureStatus = nil
+        cachedReadFailureScope = nil
         os_unfair_lock_unlock(&lock)
+        guard scope == Self.currentIsolationScope else {
+            discardCachedState(for: scope)
+            return false
+        }
         if !wasResident {
             NotificationCenter.default.post(
                 name: Self.storageKeyDidBecomeResident,
                 object: nil
             )
         }
+        return true
+    }
+
+    private func resolveCurrentKeyOnKeychainQueue() throws -> SymmetricKey {
+        for _ in 0..<3 {
+            let scope = Self.currentIsolationScope
+            let isolated = scope.isolated
+            let cachedState = cachedState(for: scope)
+            guard scope == Self.currentIsolationScope else { continue }
+            if let cached = cachedState.key { return cached }
+            if let cachedFailure = cachedState.failure {
+                throw StorageKeyError.keychainReadFailed(cachedFailure)
+            }
+
+            let key: SymmetricKey
+            let shouldMarkProvisioned: Bool
+            if isolated {
+                key = try generateInMemoryKey()
+                shouldMarkProvisioned = false
+            } else if let existing = try readKeychainKey() {
+                key = SymmetricKey(data: existing)
+                shouldMarkProvisioned = true
+            } else {
+                switch encryptedStorageExists(expectedIsolation: isolated) {
+                case .retry:
+                    continue
+                case .present:
+                    log.error(
+                        "Storage DEK is unreadable but encrypted storage already exists; refusing to mint a replacement key"
+                    )
+                    throw StorageKeyError.keyUnavailableForExistingData
+                case .absent:
+                    key = try generateAndPersistKey()
+                    shouldMarkProvisioned = true
+                }
+            }
+
+            guard scope == Self.currentIsolationScope else { continue }
+            if shouldMarkProvisioned {
+                markProvisioned(expectedIsolation: isolated)
+            }
+            guard scope == Self.currentIsolationScope else { continue }
+            guard cacheResidentKey(key, scope: scope) else { continue }
+            guard scope == Self.currentIsolationScope else {
+                discardCachedState(for: scope)
+                continue
+            }
+            return key
+        }
+        throw StorageKeyError.keychainReadFailed(errSecInteractionNotAllowed)
+    }
+
+    private func cachedState(for scope: IsolationScope) -> (
+        key: SymmetricKey?,
+        failure: OSStatus?
+    ) {
+        os_unfair_lock_lock(&lock)
+        if cachedKeyScope != nil, cachedKeyScope != scope {
+            cachedKey = nil
+            cachedKeyScope = nil
+        }
+        if cachedReadFailureScope != nil,
+            cachedReadFailureScope != scope {
+            cachedReadFailureStatus = nil
+            cachedReadFailureScope = nil
+        }
+        let state = (cachedKey, cachedReadFailureStatus)
+        os_unfair_lock_unlock(&lock)
+        return state
+    }
+
+    private func discardCachedState(for scope: IsolationScope) {
+        os_unfair_lock_lock(&lock)
+        if cachedKeyScope == scope {
+            cachedKey = nil
+            cachedKeyScope = nil
+        }
+        if cachedReadFailureScope == scope {
+            cachedReadFailureStatus = nil
+            cachedReadFailureScope = nil
+        }
+        os_unfair_lock_unlock(&lock)
     }
 
     /// True only when the key is already resident in this process. This never
     /// touches Keychain, so startup/UI code can fail closed without prompting.
     public var hasCachedKey: Bool {
-        os_unfair_lock_lock(&lock)
-        let cached = cachedKey != nil
-        os_unfair_lock_unlock(&lock)
-        return cached
+        let scope = Self.currentIsolationScope
+        let cached = cachedState(for: scope).key != nil
+        return scope == Self.currentIsolationScope && cached
     }
 
     /// True when storage can be opened/written right now without risking a
@@ -236,16 +321,25 @@ public final class StorageKeyManager: @unchecked Sendable {
             kSecReturnData as String: false,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
-        return SecItemCopyMatching(base as CFDictionary, nil) == errSecSuccess
+        let status = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: Self.service,
+            currentService: { Self.service },
+            isDisabled: { Self.disablesKeychainForProcess },
+            operation: { SecItemCopyMatching(base as CFDictionary, nil) }
+        ) ?? errSecInteractionNotAllowed
+        return status == errSecSuccess
     }
 
     /// Generate a new key, replacing the existing one. Caller is
     /// responsible for re-keying SQLCipher databases and re-wrapping
     /// `.osec` files. The cached key is updated atomically.
     public func rotate() throws -> SymmetricKey {
+        let scope = Self.currentIsolationScope
         let key = try generateAndPersistKey(forceFresh: true)
-        cacheResidentKey(key)
-        return key
+        if cacheResidentKey(key, scope: scope) {
+            return key
+        }
+        return try currentKey()
     }
 
     /// Atomically replace the cached + Keychain-persisted key with a
@@ -254,11 +348,15 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// can't call `rotate()` because that would generate a *third*
     /// unrelated key.
     public func install(key: SymmetricKey) throws {
+        let scope = Self.currentIsolationScope
+        let isolated = scope.isolated
         let bytes = key.withUnsafeBytes { Data($0) }
-        if !Self.disablesKeychainForProcess {
+        if !isolated {
             try persistKeychain(data: bytes)
         }
-        cacheResidentKey(key)
+        if !cacheResidentKey(key, scope: scope) {
+            _ = try currentKey()
+        }
     }
 
     /// Replace the current DEK with one deterministically derived from
@@ -268,10 +366,14 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// reproducible on another device with the same iCloud Keychain
     /// (and thus the same master key).
     public func deriveFromMasterKey(context: LAContext) throws -> SymmetricKey {
-        if Self.disablesKeychainForProcess {
+        let scope = Self.currentIsolationScope
+        let isolated = scope.isolated
+        if isolated {
             let key = try generateInMemoryKey()
-            cacheResidentKey(key)
-            return key
+            if cacheResidentKey(key, scope: scope) {
+                return key
+            }
+            return try currentKey()
         }
         guard MasterKey.exists() else {
             throw StorageKeyError.derivationFailed
@@ -284,7 +386,7 @@ public final class StorageKeyManager: @unchecked Sendable {
             }
         }
 
-        let salt = try fetchOrCreateSalt()
+        let salt = try fetchOrCreateSalt(expectedIsolation: isolated)
         let inputKey = SymmetricKey(data: masterBytes)
         let derived = HKDF<SHA256>.deriveKey(
             inputKeyMaterial: inputKey,
@@ -296,7 +398,9 @@ public final class StorageKeyManager: @unchecked Sendable {
         try persistKeychain(data: derivedBytes)
 
         let key = SymmetricKey(data: derivedBytes)
-        cacheResidentKey(key)
+        guard cacheResidentKey(key, scope: scope) else {
+            return try currentKey()
+        }
         log.info("Storage key re-derived from master key (HKDF-SHA256)")
         return key
     }
@@ -305,7 +409,9 @@ public final class StorageKeyManager: @unchecked Sendable {
     public func wipeCache() {
         os_unfair_lock_lock(&lock)
         cachedKey = nil
+        cachedKeyScope = nil
         cachedReadFailureStatus = nil
+        cachedReadFailureScope = nil
         os_unfair_lock_unlock(&lock)
     }
 
@@ -314,9 +420,15 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// **Irreversible.** Caller is responsible for moving any encrypted
     /// data out first if it should be preserved.
     public func resetForWipe() {
-        if Self.disablesKeychainForProcess {
-            try? FileManager.default.removeItem(at: saltFile())
-            try? FileManager.default.removeItem(at: provisionedMarkerFile())
+        let scope = Self.currentIsolationScope
+        let isolated = scope.isolated
+        guard let root = stableRoot(expectedIsolation: isolated) else {
+            wipeCache()
+            return
+        }
+        if isolated {
+            try? FileManager.default.removeItem(at: saltFile(root: root))
+            try? FileManager.default.removeItem(at: provisionedMarkerFile(root: root))
             wipeCache()
             return
         }
@@ -333,10 +445,17 @@ public final class StorageKeyManager: @unchecked Sendable {
             ],
         ]
         for q in queries {
-            _ = SecItemDelete(q as CFDictionary)
+            _ = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+                capturedService: Self.service,
+                currentService: { Self.service },
+                isDisabled: { Self.disablesKeychainForProcess },
+                operation: { SecItemDelete(q as CFDictionary) }
+            )
         }
-        try? FileManager.default.removeItem(at: saltFile())
-        try? FileManager.default.removeItem(at: provisionedMarkerFile())
+        if stableRoot(expectedIsolation: isolated) == root {
+            try? FileManager.default.removeItem(at: saltFile(root: root))
+            try? FileManager.default.removeItem(at: provisionedMarkerFile(root: root))
+        }
         wipeCache()
     }
 
@@ -348,35 +467,74 @@ public final class StorageKeyManager: @unchecked Sendable {
             || status == errSecUserCanceled
     }
 
-    private func cacheReadFailureIfNonInteractiveBlocked(_ status: OSStatus) {
+    private func cacheReadFailureIfNonInteractiveBlocked(
+        _ status: OSStatus,
+        scope: IsolationScope
+    ) {
         guard Self.requiresUserInteraction(status) else { return }
+        guard scope == Self.currentIsolationScope else { return }
         os_unfair_lock_lock(&lock)
         cachedReadFailureStatus = status
+        cachedReadFailureScope = scope
         os_unfair_lock_unlock(&lock)
     }
 
     // MARK: - Fail-closed provisioning guard
 
-    private func provisionedMarkerFile() -> URL {
-        OsaurusPaths.root().appendingPathComponent(Self.provisionedMarkerFilename)
+    private func provisionedMarkerFile(root: URL) -> URL {
+        root.appendingPathComponent(Self.provisionedMarkerFilename)
+    }
+
+    private func stableRoot(expectedIsolation: Bool) -> URL? {
+        guard expectedIsolation == Self.disablesKeychainForProcess else { return nil }
+        let root = OsaurusPaths.root()
+        guard expectedIsolation == Self.disablesKeychainForProcess,
+            root == OsaurusPaths.root()
+        else { return nil }
+        return root
     }
 
     /// Record that a DEK exists for this install. Best-effort and idempotent;
-    /// failure to write the marker is non-fatal because `encryptedStorageExists()`
-    /// also treats on-disk encrypted artifacts as proof of prior provisioning.
-    private func markProvisioned() {
-        let url = provisionedMarkerFile()
+    /// failure to write the marker is non-fatal because
+    /// `encryptedStorageExists(expectedIsolation:)` also treats on-disk
+    /// encrypted artifacts as proof of prior provisioning.
+    private func markProvisioned(expectedIsolation: Bool) {
+        guard expectedIsolation == Self.disablesKeychainForProcess else { return }
+        let root = OsaurusPaths.root()
+        let url = root.appendingPathComponent(Self.provisionedMarkerFilename)
         if FileManager.default.fileExists(atPath: url.path) { return }
-        OsaurusPaths.ensureExistsSilent(OsaurusPaths.root())
+        guard expectedIsolation == Self.disablesKeychainForProcess,
+            root == OsaurusPaths.root()
+        else { return }
+        OsaurusPaths.ensureExistsSilent(root)
+        guard expectedIsolation == Self.disablesKeychainForProcess,
+            root == OsaurusPaths.root()
+        else { return }
         try? Data([0x01]).write(to: url, options: [.atomic])
     }
 
     /// True when there is evidence a DEK was already provisioned: either the
     /// marker file or any SQLCipher-encrypted database. When this is true and the
     /// key read fails, we must fail closed rather than re-key over existing data.
-    private func encryptedStorageExists() -> Bool {
+    private func encryptedStorageExists(
+        expectedIsolation: Bool,
+        beforeFirstProbe: () -> Void = {}
+    ) -> StoredArtifactEvidence {
+        guard let root = stableRoot(expectedIsolation: expectedIsolation) else {
+            return .retry
+        }
+        beforeFirstProbe()
+        guard stableRoot(expectedIsolation: expectedIsolation) == root else {
+            return .retry
+        }
+
         let fm = FileManager.default
-        if fm.fileExists(atPath: provisionedMarkerFile().path) { return true }
+        let markerExists = fm.fileExists(atPath: provisionedMarkerFile(root: root).path)
+        guard stableRoot(expectedIsolation: expectedIsolation) == root else {
+            return .retry
+        }
+        if markerExists { return .present }
+
         let encryptedArtifacts = [
             OsaurusPaths.chatHistoryDatabaseFile(),
             OsaurusPaths.agentChannelMessagesDatabaseFile(),
@@ -385,12 +543,22 @@ public final class StorageKeyManager: @unchecked Sendable {
             OsaurusPaths.toolIndexDatabaseFile(),
             OsaurusPaths.workDatabaseFile(),
         ]
+        guard stableRoot(expectedIsolation: expectedIsolation) == root else {
+            return .retry
+        }
         for url in encryptedArtifacts {
-            if let size = try? fm.attributesOfItem(atPath: url.path)[.size] as? Int, size > 0 {
-                return true
+            guard stableRoot(expectedIsolation: expectedIsolation) == root else {
+                return .retry
+            }
+            let size = try? fm.attributesOfItem(atPath: url.path)[.size] as? Int
+            guard stableRoot(expectedIsolation: expectedIsolation) == root else {
+                return .retry
+            }
+            if let size, size > 0 {
+                return .present
             }
         }
-        return false
+        return stableRoot(expectedIsolation: expectedIsolation) == root ? .absent : .retry
     }
 
     private func generateAndPersistKey(forceFresh: Bool = false) throws -> SymmetricKey {
@@ -422,9 +590,12 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// Fetch the persisted HKDF salt or create a fresh one. We persist
     /// to **both** Keychain and a sidecar file so neither single delete
     /// breaks reproducibility.
-    private func fetchOrCreateSalt() throws -> Data {
-        if Self.disablesKeychainForProcess {
-            if let s = readSaltSidecar() {
+    private func fetchOrCreateSalt(expectedIsolation: Bool) throws -> Data {
+        guard let root = stableRoot(expectedIsolation: expectedIsolation) else {
+            throw StorageKeyError.keychainReadFailed(errSecInteractionNotAllowed)
+        }
+        if expectedIsolation {
+            if let s = readSaltSidecar(root: root, expectedIsolation: expectedIsolation) {
                 return s
             }
             var bytes = [UInt8](repeating: 0, count: 32)
@@ -432,14 +603,14 @@ public final class StorageKeyManager: @unchecked Sendable {
                 throw StorageKeyError.randomFailed
             }
             let salt = Data(bytes)
-            try? writeSaltSidecar(salt)
+            try? writeSaltSidecar(salt, root: root, expectedIsolation: expectedIsolation)
             return salt
         }
         if let s = try readKeychainSalt() {
-            try? writeSaltSidecar(s)
+            try? writeSaltSidecar(s, root: root, expectedIsolation: expectedIsolation)
             return s
         }
-        if let s = readSaltSidecar() {
+        if let s = readSaltSidecar(root: root, expectedIsolation: expectedIsolation) {
             try? persistKeychainSalt(s)
             return s
         }
@@ -449,28 +620,41 @@ public final class StorageKeyManager: @unchecked Sendable {
         }
         let salt = Data(bytes)
         try persistKeychainSalt(salt)
-        try? writeSaltSidecar(salt)
+        try? writeSaltSidecar(salt, root: root, expectedIsolation: expectedIsolation)
         return salt
     }
 
-    private func saltFile() -> URL {
-        OsaurusPaths.root().appendingPathComponent(Self.saltFilename)
+    private func saltFile(root: URL) -> URL {
+        root.appendingPathComponent(Self.saltFilename)
     }
 
-    private func writeSaltSidecar(_ data: Data) throws {
-        OsaurusPaths.ensureExistsSilent(OsaurusPaths.root())
-        try data.write(to: saltFile(), options: [.atomic])
+    private func writeSaltSidecar(
+        _ data: Data,
+        root: URL,
+        expectedIsolation: Bool
+    ) throws {
+        guard stableRoot(expectedIsolation: expectedIsolation) == root else {
+            throw StorageKeyError.keychainWriteFailed(errSecInteractionNotAllowed)
+        }
+        OsaurusPaths.ensureExistsSilent(root)
+        guard stableRoot(expectedIsolation: expectedIsolation) == root else {
+            throw StorageKeyError.keychainWriteFailed(errSecInteractionNotAllowed)
+        }
+        try data.write(to: saltFile(root: root), options: [.atomic])
     }
 
-    private func readSaltSidecar() -> Data? {
-        let url = saltFile()
-        return try? Data(contentsOf: url)
+    private func readSaltSidecar(root: URL, expectedIsolation: Bool) -> Data? {
+        guard stableRoot(expectedIsolation: expectedIsolation) == root else { return nil }
+        let data = try? Data(contentsOf: saltFile(root: root))
+        return stableRoot(expectedIsolation: expectedIsolation) == root ? data : nil
     }
 
     // MARK: - Keychain (key)
 
     private func persistKeychain(data: Data) throws {
-        if Self.disablesKeychainForProcess { return }
+        guard !Self.disablesKeychainForProcess else {
+            throw StorageKeyError.keychainWriteFailed(errSecInteractionNotAllowed)
+        }
         try persistItem(account: Self.keyAccount, data: data, label: "Osaurus Storage Encryption Key")
     }
 
@@ -482,7 +666,9 @@ public final class StorageKeyManager: @unchecked Sendable {
     // MARK: - Keychain (salt)
 
     private func persistKeychainSalt(_ data: Data) throws {
-        if Self.disablesKeychainForProcess { return }
+        guard !Self.disablesKeychainForProcess else {
+            throw StorageKeyError.keychainWriteFailed(errSecInteractionNotAllowed)
+        }
         try persistItem(account: Self.saltAccount, data: data, label: "Osaurus Storage Key Derivation Salt")
     }
 
@@ -499,6 +685,9 @@ public final class StorageKeyManager: @unchecked Sendable {
 
     /// Write `attributes` for `account` to the keychain (update-or-add).
     private func persistItem(account: String, data: Data, label: String) throws {
+        guard !Self.disablesKeychainForProcess else {
+            throw StorageKeyError.keychainWriteFailed(errSecInteractionNotAllowed)
+        }
         let baseQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
@@ -510,14 +699,29 @@ public final class StorageKeyManager: @unchecked Sendable {
             kSecAttrLabel as String: label,
         ]
 
-        let update = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
+        let update = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: Self.service,
+            currentService: { Self.service },
+            isDisabled: { Self.disablesKeychainForProcess },
+            operation: {
+                SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
+            }
+        ) ?? errSecInteractionNotAllowed
         if update == errSecSuccess { return }
+        guard !Self.disablesKeychainForProcess else {
+            throw StorageKeyError.keychainWriteFailed(errSecInteractionNotAllowed)
+        }
         if update != errSecItemNotFound {
             log.error("Storage item SecItemUpdate failed: \(update)")
         }
         var addQuery = baseQuery
         addQuery.merge(attributes) { _, new in new }
-        let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+        let addStatus = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: Self.service,
+            currentService: { Self.service },
+            isDisabled: { Self.disablesKeychainForProcess },
+            operation: { SecItemAdd(addQuery as CFDictionary, nil) }
+        ) ?? errSecInteractionNotAllowed
         guard addStatus == errSecSuccess else {
             throw StorageKeyError.keychainWriteFailed(addStatus)
         }
@@ -525,6 +729,8 @@ public final class StorageKeyManager: @unchecked Sendable {
 
     /// Read `account` from the keychain.
     private func readItem(account: String) throws -> Data? {
+        let scope = Self.currentIsolationScope
+        if scope.isolated { return nil }
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
@@ -535,10 +741,15 @@ public final class StorageKeyManager: @unchecked Sendable {
         ]
 
         var result: AnyObject?
-        let status = SecItemCopyMatching(base as CFDictionary, &result)
+        let status = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: Self.service,
+            currentService: { Self.service },
+            isDisabled: { Self.disablesKeychainForProcess },
+            operation: { SecItemCopyMatching(base as CFDictionary, &result) }
+        ) ?? errSecInteractionNotAllowed
         if status == errSecItemNotFound { return nil }
         if status != errSecSuccess {
-            cacheReadFailureIfNonInteractiveBlocked(status)
+            cacheReadFailureIfNonInteractiveBlocked(status, scope: scope)
             throw StorageKeyError.keychainReadFailed(status)
         }
         return result as? Data
@@ -551,10 +762,29 @@ public final class StorageKeyManager: @unchecked Sendable {
     extension StorageKeyManager {
         /// Inject a deterministic key for tests. Only available in DEBUG.
         /// Bypasses Keychain entirely.
-        public func _setKeyForTesting(_ key: SymmetricKey) {
+        public func _setKeyForTesting(
+            _ key: SymmetricKey,
+            isolated: Bool = StorageKeyManager.disablesKeychainForProcess
+        ) {
             os_unfair_lock_lock(&lock)
             cachedKey = key
+            cachedKeyScope = IsolationScope(
+                isolated: isolated,
+                rootPath: OsaurusPaths.root().standardizedFileURL.path
+            )
+            cachedReadFailureStatus = nil
+            cachedReadFailureScope = nil
             os_unfair_lock_unlock(&lock)
+        }
+
+        func _encryptedStorageExistsForTesting(
+            expectedIsolation: Bool,
+            beforeFirstProbe: () -> Void
+        ) -> StoredArtifactEvidence {
+            encryptedStorageExists(
+                expectedIsolation: expectedIsolation,
+                beforeFirstProbe: beforeFirstProbe
+            )
         }
     }
 #endif

@@ -8,17 +8,14 @@
 //  bug that stranded every derived agent / access key whenever onboarding
 //  was re-run.
 //
-//  These tests deliberately exercise the real Keychain, which means they
-//  modify the running user's `com.osaurus.account` Master Key. We isolate
-//  by snapshotting the existing master (if any) before each test and
-//  restoring it afterwards, so the developer's identity is not destroyed.
+//  These tests deliberately exercise the real Keychain through a unique,
+//  per-run service namespace. They never select the production identity slot;
+//  a pre-existing item in the generated namespace still fails closed.
 //
-//  CI gating: GitHub Actions macOS runners have no signed-in iCloud account
-//  and a constrained keychain. `SecItemAdd` with `kSecAttrSynchronizable: true`
-//  hangs there for several seconds before returning, which makes these tests
-//  flaky in CI. The whole suite is gated on `keychainAvailable`, which both
-//  sniffs `CI` / `GITHUB_ACTIONS` env vars and probes a throwaway keychain
-//  write before agreeing to run.
+//  The normal test process disables real Keychain access and never evaluates
+//  this suite. The separately filtered proof lane must set
+//  `OSAURUS_ALLOW_REAL_KEYCHAIN_FOR_TESTS=1`; once requested, unavailable or
+//  misconfigured Keychain access is a test failure rather than a silent skip.
 //
 
 import Foundation
@@ -28,12 +25,97 @@ import Testing
 
 @testable import OsaurusCore
 
+@Suite("MasterKey service isolation")
+struct MasterKeyServiceIsolationTests {
+    @Test
+    func proofNamespaceNeverUsesProductionService() {
+        #expect(
+            MasterKey.serviceName(realKeychainTestNamespace: nil)
+                == "com.osaurus.account"
+        )
+        #expect(
+            MasterKey.serviceName(
+                realKeychainTestNamespace: "01234567-89ab-cdef-0123-456789abcdef"
+            ) == "com.osaurus.tests.master-key.01234567-89ab-cdef-0123-456789abcdef"
+        )
+    }
+
+    @Test
+    func mnemonicAndExistenceCacheFollowEffectiveServiceNamespace() {
+        let production = MasterKey.serviceName(realKeychainTestNamespace: nil)
+        let proof = MasterKey.serviceName(
+            realKeychainTestNamespace: "01234567-89ab-cdef-0123-456789abcdef"
+        )
+
+        #expect(
+            MasterKey.cachedExistsValue(
+                cachedService: production,
+                cachedValue: true,
+                currentService: production
+            ) == true
+        )
+        #expect(
+            MasterKey.cachedExistsValue(
+                cachedService: production,
+                cachedValue: true,
+                currentService: proof
+            ) == nil
+        )
+        #expect(MasterMnemonicStore.service == MasterKey.service)
+    }
+
+    @Test
+    func securityOperationRequiresStableServiceAndEnabledPolicy() {
+        let production = MasterKey.serviceName(realKeychainTestNamespace: nil)
+        let proof = MasterKey.serviceName(
+            realKeychainTestNamespace: "01234567-89ab-cdef-0123-456789abcdef"
+        )
+        var operationCount = 0
+
+        let allowed = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: production,
+            currentService: { production },
+            isDisabled: { false },
+            operation: {
+                operationCount += 1
+                return errSecSuccess
+            }
+        )
+        #expect(allowed == errSecSuccess)
+        #expect(operationCount == 1)
+
+        let namespaceChanged = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: production,
+            currentService: { proof },
+            isDisabled: { false },
+            operation: {
+                operationCount += 1
+                return errSecSuccess
+            }
+        )
+        #expect(namespaceChanged == nil)
+        #expect(operationCount == 1)
+
+        let policyDisabled = KeychainQueryHelpers.performIfServiceAccessRemainsAllowed(
+            capturedService: production,
+            currentService: { production },
+            isDisabled: { true },
+            operation: {
+                operationCount += 1
+                return errSecSuccess
+            }
+        )
+        #expect(policyDisabled == nil)
+        #expect(operationCount == 1)
+    }
+}
+
 // `.serialized` is required because every test in this suite mutates the same
-// `com.osaurus.account` Master Key slot in Keychain. Without it Swift Testing
-// runs the four tests in parallel, races on the shared slot, and tests fail
+// per-run Master Key slot in Keychain. Without it Swift Testing runs the four
+// tests in parallel, races on that slot, and tests fail
 // non-deterministically with `.keychainWriteFailed` from `SecItemAdd`
 // returning `errSecDuplicateItem` mid-race.
-@Suite("MasterKey overwrite guard", .enabled(if: keychainAvailable), .serialized)
+@Suite("MasterKey overwrite guard", .enabled(if: realKeychainProofRequested), .serialized)
 struct MasterKeyExistsGuardTests {
 
     /// A fresh-generated master must throw `.masterAlreadyExists` if `generate`
@@ -100,120 +182,184 @@ struct MasterKeyExistsGuardTests {
         }
     }
 
-    // MARK: - Keychain Snapshot
+    /// The proof exception is intentionally limited to `MasterKey`. Recovery
+    /// phrases and every other wrapper must remain behind the disabled gate.
+    @Test
+    func mnemonicStoreRemainsDisabledInProofLane() throws {
+        try requireRealKeychainProofLane()
+        #expect(KeychainQueryHelpers.disablesKeychainForProcess)
 
-    /// Save the current master (if any), wipe Keychain, run `body`, then
-    /// restore the snapshotted master so we never destroy the developer's
-    /// real identity. If no master existed beforehand, the slot is left
-    /// empty after the test.
-    private func withEphemeralMaster(_ body: () throws -> Void) throws {
-        let snapshot = readRawMasterKeyFromKeychain()
-        defer {
-            MasterKey.delete()
-            if let snapshot {
-                _ = try? MasterKey.install(seed: snapshot, allowReplace: true)
+        do {
+            try MasterMnemonicStore.store(Array(repeating: "abandon", count: 24))
+            Issue.record("The proof lane unexpectedly wrote a recovery phrase")
+        } catch let error as OsaurusIdentityError {
+            guard case .keychainWriteFailed = error else {
+                Issue.record("Expected .keychainWriteFailed, got \(error)")
+                return
             }
         }
-        MasterKey.delete()
-        try body()
+        #expect(!MasterMnemonicStore.exists())
+        #expect(MasterMnemonicStore.delete())
     }
 
-    /// Tries to read the raw 32-byte master from Keychain WITHOUT prompting
-    /// for biometrics. Items written with `kSecAttrAccessibleWhenUnlocked`
-    /// don't gate on biometric ACL, so an empty `LAContext` is fine here —
-    /// any failure is silently absorbed (the test still runs, it just won't
-    /// restore on cleanup).
-    private func readRawMasterKeyFromKeychain() -> Data? {
-        guard MasterKey.exists() else { return nil }
-        let context = LAContext()
-        context.touchIDAuthenticationAllowableReuseDuration = 300
-        return try? MasterKey.getPrivateKey(context: context)
-    }
-}
+    // MARK: - Keychain Isolation
 
-// MARK: - Keychain Availability Probe
-
-/// `true` when the runtime has a working keychain we can write to using the
-/// same synchronizable path `MasterKey.generate` uses. False on:
-///
-/// - GitHub Actions macOS runners (no iCloud account, restricted keychain).
-/// - Any unsigned `swift test` bundle without an `application-identifier`
-///   entitlement — `SecItemAdd` fails with `errSecMissingEntitlement` (-34018)
-///   or hangs trying to talk to the iCloud Keychain daemon.
-///
-/// The probe runs once per process. Result is cached in this `let`.
-private let keychainAvailable: Bool = {
-    if isContinuousIntegrationEnvironment() { return false }
-    // Under OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1, `MasterKey` deliberately
-    // no-ops every read/write/delete (the documented hermetic contract), so the
-    // overwrite-guard semantics this suite asserts don't apply — skip it rather
-    // than fail on the intentional no-ops.
-    if KeychainQueryHelpers.disablesKeychainForProcess { return false }
-    return canProbeMasterKeyWritePath()
-}()
-
-private func isContinuousIntegrationEnvironment() -> Bool {
-    let env = ProcessInfo.processInfo.environment
-    let signals = ["CI", "GITHUB_ACTIONS", "BUILDKITE", "JENKINS_HOME", "TF_BUILD"]
-    return signals.contains(where: { env[$0] != nil })
-}
-
-/// Mirror `MasterKey.addToKeychain`'s exact write path on a unique throwaway
-/// service so we can tell whether the real generate flow would succeed in
-/// this environment. We attempt `synchronizable: true` first (matching the
-/// production code), then `synchronizable: false` as fallback. Both must
-/// succeed within a short watchdog window — if SecItemAdd hangs, we treat
-/// the environment as unavailable.
-private func canProbeMasterKeyWritePath() -> Bool {
-    let probeService = "com.osaurus.tests.keychain-probe"
-    let probeAccount = "probe-\(UUID().uuidString)"
-
-    defer {
-        let cleanup: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: probeService,
-            kSecAttrAccount as String: probeAccount,
-            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
-        ]
-        SecItemDelete(cleanup as CFDictionary)
-    }
-
-    func attemptAdd(synchronizable: Bool) -> OSStatus {
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: probeService,
-            kSecAttrAccount as String: probeAccount,
-            kSecValueData as String: Data([0x01]),
-        ]
-        if synchronizable {
-            query[kSecAttrSynchronizable as String] = true
-            query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
-        } else {
-            query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+    /// Run against a known-empty, per-run Master Key slot. The production
+    /// service identifier is never selected by this proof lane.
+    private func withEphemeralMaster(_ body: () throws -> Void) throws {
+        try requireRealKeychainProofLane()
+        let existingKeyMaterial = try readRawMasterKeyFromKeychain()
+        try #require(
+            existingKeyMaterial == nil,
+            "Refusing to modify an existing Master Key; run this proof on an ephemeral Keychain"
+        )
+        defer {
+            if !MasterKey.delete() {
+                Issue.record("The proof lane could not clear its temporary Master Key")
+            }
         }
-        return SecItemAdd(query as CFDictionary, nil)
+        #expect(!MasterKey.exists())
+        try body()
+        try verifyProofItemIsLocalOnly()
     }
 
-    return runWithWatchdog(timeoutSeconds: 1.0) {
-        let primary = attemptAdd(synchronizable: true)
-        if primary == errSecSuccess { return true }
-        return attemptAdd(synchronizable: false) == errSecSuccess
-    } ?? false
+    /// Reads the raw 32-byte master without allowing authentication UI. The
+    /// direct status check distinguishes a genuinely absent item from an access
+    /// failure; treating either case as `MasterKey.exists() == false` before a
+    /// delete would make this proof lane destructive.
+    private func readRawMasterKeyFromKeychain() throws -> Data? {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        context.touchIDAuthenticationAllowableReuseDuration = 300
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: MasterKey.service,
+            kSecAttrAccount as String: MasterKey.account,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+            kSecReturnData as String: true,
+            kSecUseAuthenticationContext as String: context,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        switch status {
+        case errSecItemNotFound:
+            return nil
+        case errSecSuccess:
+            guard let data = result as? Data else {
+                throw NSError(
+                    domain: NSOSStatusErrorDomain,
+                    code: Int(errSecDecode)
+                )
+            }
+            return data
+        default:
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
+    }
+
+    /// The proof lane uses a local-only item so normal deferred cleanup cannot
+    /// create another synchronizable item. A hard-killed run can leave a
+    /// UUID-scoped local item; the preflight above queries
+    /// `kSecAttrSynchronizableAny` so that residue, including an item from an
+    /// older proof implementation, fails closed instead of being overwritten.
+    private func verifyProofItemIsLocalOnly() throws {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: MasterKey.service,
+            kSecAttrAccount as String: MasterKey.account,
+            kSecAttrSynchronizable as String: false,
+            kSecReturnData as String: true,
+            kSecUseAuthenticationContext as String: context,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        try #require(status == errSecSuccess, "The proof Master Key was not stored as a local-only item")
+        try #require(
+            (result as? Data)?.count == 32,
+            "The proof Master Key local-only item did not contain a 32-byte seed"
+        )
+
+        var synchronizableQuery = query
+        synchronizableQuery[kSecAttrSynchronizable as String] = true
+        var synchronizableResult: AnyObject?
+        let synchronizableStatus = SecItemCopyMatching(
+            synchronizableQuery as CFDictionary,
+            &synchronizableResult
+        )
+        try #require(
+            synchronizableStatus == errSecItemNotFound,
+            "The proof Master Key unexpectedly has a synchronizable duplicate"
+        )
+    }
 }
 
-/// Run `body` on a background queue and wait up to `timeoutSeconds` for the
-/// result. Returns `nil` if the body did not complete in time — used here to
-/// catch the multi-second `SecItemAdd` hang that happens in unsigned test
-/// bundles trying to talk to the iCloud Keychain daemon.
-private func runWithWatchdog<T>(
-    timeoutSeconds: TimeInterval,
-    _ body: @escaping () -> T
-) -> T? {
-    let semaphore = DispatchSemaphore(value: 0)
-    var result: T?
-    DispatchQueue.global(qos: .userInitiated).async {
-        result = body()
-        semaphore.signal()
-    }
-    return semaphore.wait(timeout: .now() + timeoutSeconds) == .success ? result : nil
+// MARK: - Real-Keychain Proof Policy
+
+private let realKeychainProofRequested =
+    KeychainQueryHelpers.realKeychainProofWasRequested
+
+private func requireRealKeychainProofLane() throws {
+    try #require(
+        KeychainQueryHelpers.realKeychainProofWasRequested,
+        "Real-Keychain proof requires OSAURUS_ALLOW_REAL_KEYCHAIN_FOR_TESTS=1"
+    )
+    try #require(
+        KeychainQueryHelpers.realKeychainTestNamespace != nil,
+        "Real-Keychain proof requires a valid per-run namespace"
+    )
+    try #require(
+        !KeychainQueryHelpers.disablesIdentityKeyForProcess,
+        "Real-Keychain MasterKey proof is not enabled"
+    )
+    try #require(
+        KeychainQueryHelpers.disablesKeychainForProcess
+            && KeychainQueryHelpers.usesInMemoryKeychainStoreForTests,
+        "Non-MasterKey Keychain wrappers must remain isolated in the proof lane"
+    )
+    try #require(
+        MasterKey.service.hasPrefix("com.osaurus.tests.master-key.")
+            && MasterKey.service != "com.osaurus.account",
+        "Real-Keychain proof must not select the production identity slot"
+    )
+    try verifyRealKeychainWriteAndCleanup()
+}
+
+/// Verify that this process reaches Security.framework with the same
+/// local-only write contract used by the namespaced proof Master Key. The
+/// probe is intentionally direct so it creates no detached watchdog thread
+/// that can outlive the suite.
+private func verifyRealKeychainWriteAndCleanup() throws {
+    let namespace = try #require(KeychainQueryHelpers.realKeychainTestNamespace)
+    let probeService = "com.osaurus.tests.keychain-probe.\(namespace)"
+    let probeAccount = "probe"
+
+    let query: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: probeService,
+        kSecAttrAccount as String: probeAccount,
+        kSecValueData as String: Data([0x01]),
+        kSecAttrSynchronizable as String: false,
+        kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+    ]
+    let status = SecItemAdd(query as CFDictionary, nil)
+    try #require(
+        status == errSecSuccess,
+        "The host could not write a throwaway real-Keychain item (status \(status))"
+    )
+
+    let cleanup: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: probeService,
+        kSecAttrAccount as String: probeAccount,
+        kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+    ]
+    let cleanupStatus = SecItemDelete(cleanup as CFDictionary)
+    try #require(
+        cleanupStatus == errSecSuccess,
+        "The host could not remove its throwaway real-Keychain item (status \(cleanupStatus))"
+    )
 }

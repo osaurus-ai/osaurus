@@ -12,8 +12,130 @@ import Security
 /// All config is agent-scoped: account format is `"{agentId}.{pluginId}.{key}"`.
 public enum ToolSecretsKeychain {
     private static let service = "ai.osaurus.tools"
-    private static let testStoreLock = NSLock()
-    private nonisolated(unsafe) static var testStore: [String: String] = [:]
+
+    // MARK: - In-Memory Store (tests)
+
+    /// Lock-guarded mutable storage scoped to one task tree. A process-global
+    /// dictionary would let parallel test cases observe or delete one
+    /// another's credentials, so tests must bind a fresh store explicitly.
+    fileprivate final class InMemorySecretStore: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storage: [String: String] = [:]
+
+        func get(_ account: String) -> String? {
+            lock.lock()
+            defer { lock.unlock() }
+            return storage[account]
+        }
+
+        func set(_ account: String, _ value: String?) {
+            lock.lock()
+            defer { lock.unlock() }
+            storage[account] = value
+        }
+
+        func migrateValue(from legacyAccount: String, to canonicalAccount: String) -> String? {
+            lock.lock()
+            defer { lock.unlock() }
+            if let canonicalValue = storage[canonicalAccount] {
+                return canonicalValue
+            }
+            guard let legacyValue = storage[legacyAccount] else { return nil }
+            storage[canonicalAccount] = legacyValue
+            storage.removeValue(forKey: legacyAccount)
+            return legacyValue
+        }
+
+        func accounts() -> [String] {
+            lock.lock()
+            defer { lock.unlock() }
+            return Array(storage.keys)
+        }
+
+        func removeAll(matching predicate: (String) -> Bool) {
+            lock.lock()
+            defer { lock.unlock() }
+            storage = storage.filter { !predicate($0.key) }
+        }
+    }
+
+    /// Test persistence is task-local only. There is deliberately no
+    /// process-wide fallback: an unbound recognized test-host call must reach
+    /// the keychain-disabled/no-op path instead of sharing secrets or touching
+    /// the user's login Keychain.
+    @TaskLocal private static var taskLocalStore: InMemorySecretStore?
+
+    /// Opaque capability for the small number of production paths that must
+    /// cross an intentional `Task.detached` boundary during a test. Detached
+    /// tasks never inherit task locals, so callers must capture and rebind the
+    /// exact store rather than falling back to process-global test state.
+    struct InMemoryStoreContext: @unchecked Sendable {
+        fileprivate let store: InMemorySecretStore
+    }
+
+    private static var activeInMemoryStore: InMemorySecretStore? {
+        taskLocalStore
+    }
+
+    static func _withInMemoryStoreForTesting<T>(
+        _ body: () throws -> T
+    ) rethrows -> T {
+        try $taskLocalStore.withValue(InMemorySecretStore()) {
+            try body()
+        }
+    }
+
+    /// Async-body variant for tests that exercise asynchronous plugin and
+    /// lifecycle paths. Child tasks inherit the bound store; detached work is
+    /// intentionally unbound and therefore cannot bypass process isolation.
+    static func _withInMemoryStoreForTesting<T>(
+        _ body: @Sendable () async throws -> T
+    ) async rethrows -> T {
+        try await $taskLocalStore.withValue(InMemorySecretStore()) {
+            try await body()
+        }
+    }
+
+    static func _captureInMemoryStoreContextForTesting() -> InMemoryStoreContext? {
+        guard let store = taskLocalStore else { return nil }
+        return InMemoryStoreContext(store: store)
+    }
+
+    static func _withInMemoryStoreContextForTesting<T>(
+        _ context: InMemoryStoreContext?,
+        _ body: () throws -> T
+    ) rethrows -> T {
+        guard let context else { return try body() }
+        return try $taskLocalStore.withValue(context.store) {
+            try body()
+        }
+    }
+
+    static func _withInMemoryStoreContextForTesting<T>(
+        _ context: InMemoryStoreContext?,
+        _ body: @Sendable () async throws -> T
+    ) async rethrows -> T {
+        guard let context else { return try await body() }
+        return try await $taskLocalStore.withValue(context.store) {
+            try await body()
+        }
+    }
+
+    /// Production work remains an ordinary detached task. During tests this
+    /// helper carries only the caller's opaque task-local store capability, so
+    /// the real asynchronous path is exercised without introducing a shared
+    /// process-wide secret backend or permitting login-Keychain access.
+    static func _detachedTaskPreservingInMemoryStoreForTesting<T: Sendable>(
+        priority: TaskPriority? = nil,
+        operation: @escaping @Sendable () async -> T
+    ) -> Task<T, Never> {
+        let context = _captureInMemoryStoreContextForTesting()
+        return Task.detached(priority: priority) {
+            await _withInMemoryStoreContextForTesting(context) {
+                await operation()
+            }
+        }
+    }
 
     // MARK: - Presence memoization
 
@@ -68,8 +190,8 @@ public enum ToolSecretsKeychain {
         _ value: String, id: String, for pluginId: String, agentId: UUID
     ) -> KeychainMutationOutcome {
         let account = agentAccount(agentId: agentId, pluginId: pluginId, key: id)
-        if KeychainQueryHelpers.usesInMemoryKeychainStoreForTests {
-            testStoreLock.withLock { testStore[account] = value }
+        if let store = activeInMemoryStore {
+            store.set(account, value)
             return .success
         }
         guard let valueData = value.data(using: .utf8) else { return .failure(errSecParam) }
@@ -81,8 +203,8 @@ public enum ToolSecretsKeychain {
 
     public static func getSecret(id: String, for pluginId: String, agentId: UUID) -> String? {
         let account = agentAccount(agentId: agentId, pluginId: pluginId, key: id)
-        if KeychainQueryHelpers.usesInMemoryKeychainStoreForTests {
-            if let value = testStoreLock.withLock({ testStore[account] }) { return value }
+        if let store = activeInMemoryStore {
+            if let value = store.get(account) { return value }
             return migrateLegacySecretIfPresent(id: id, pluginId: pluginId, agentId: agentId)
         }
         if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
@@ -109,14 +231,10 @@ public enum ToolSecretsKeychain {
         let legacyAccount = "\(pluginId).\(id)"
         let canonicalAccount = agentAccount(agentId: agentId, pluginId: pluginId, key: id)
 
-        if KeychainQueryHelpers.usesInMemoryKeychainStoreForTests {
-            return testStoreLock.withLock {
-                guard let value = testStore[legacyAccount] else { return nil }
-                testStore[canonicalAccount] = value
-                testStore.removeValue(forKey: legacyAccount)
-                return value
-            }
+        if let store = activeInMemoryStore {
+            return store.migrateValue(from: legacyAccount, to: canonicalAccount)
         }
+        if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
         guard case .found(let data) = Keychain.readItem(service: service, account: legacyAccount),
             let value = String(data: data, encoding: .utf8)
         else { return nil }
@@ -129,9 +247,7 @@ public enum ToolSecretsKeychain {
 
     public static func hasSecret(id: String, for pluginId: String, agentId: UUID) -> Bool {
         let account = agentAccount(agentId: agentId, pluginId: pluginId, key: id)
-        if KeychainQueryHelpers.usesInMemoryKeychainStoreForTests
-            || KeychainQueryHelpers.disablesKeychainForProcess
-        {
+        if activeInMemoryStore != nil || KeychainQueryHelpers.disablesKeychainForProcess {
             return getSecret(id: id, for: pluginId, agentId: agentId) != nil
         }
         presenceLock.lock()
@@ -167,11 +283,9 @@ public enum ToolSecretsKeychain {
         // pre-migration `"{pluginId}.{key}"` twin — otherwise the legacy
         // read-through fallback would resurrect a secret the user deleted.
         let legacyAccount = agentId == Agent.defaultId ? "\(pluginId).\(id)" : nil
-        if KeychainQueryHelpers.usesInMemoryKeychainStoreForTests {
-            testStoreLock.withLock {
-                _ = testStore.removeValue(forKey: account)
-                if let legacyAccount { _ = testStore.removeValue(forKey: legacyAccount) }
-            }
+        if let store = activeInMemoryStore {
+            store.set(account, nil)
+            if let legacyAccount { store.set(legacyAccount, nil) }
             return true
         }
         if KeychainQueryHelpers.disablesKeychainForProcess { return true }
@@ -191,6 +305,11 @@ public enum ToolSecretsKeychain {
     /// Delete all agent-scoped secrets for a plugin across every agent.
     public static func deleteAllSecretsAllAgents(for pluginId: String) {
         clearPresenceCache()
+        if let store = activeInMemoryStore {
+            let suffix = ".\(pluginId)."
+            store.removeAll { $0.contains(suffix) }
+            return
+        }
         if KeychainQueryHelpers.disablesKeychainForProcess { return }
         let allItems = fetchAllItems(attributesOnly: true)
         let suffix = ".\(pluginId)."
@@ -320,15 +439,14 @@ public enum ToolSecretsKeychain {
     }
 
     private static func fetchAllItems(attributesOnly: Bool) -> [[String: Any]] {
-        if KeychainQueryHelpers.usesInMemoryKeychainStoreForTests {
-            return testStoreLock.withLock {
-                testStore.map { account, value in
-                    var item: [String: Any] = [kSecAttrAccount as String: account]
-                    if !attributesOnly {
-                        item[kSecValueData as String] = Data(value.utf8)
-                    }
-                    return item
+        if let store = activeInMemoryStore {
+            return store.accounts().compactMap { account in
+                guard let value = store.get(account) else { return nil }
+                var item: [String: Any] = [kSecAttrAccount as String: account]
+                if !attributesOnly {
+                    item[kSecValueData as String] = Data(value.utf8)
                 }
+                return item
             }
         }
         if KeychainQueryHelpers.disablesKeychainForProcess { return [] }
@@ -341,25 +459,20 @@ public enum ToolSecretsKeychain {
     /// entry) into the in-memory test store. Test-only: production code has
     /// no API that writes the legacy format anymore.
     static func _testSeedRawAccount(_ account: String, value: String) {
-        testStoreLock.withLock { testStore[account] = value }
+        activeInMemoryStore?.set(account, value)
     }
 
     /// Raw account lookup in the in-memory test store. Test-only.
     static func _testRawAccountValue(_ account: String) -> String? {
-        testStoreLock.withLock { testStore[account] }
+        activeInMemoryStore?.get(account)
     }
 
     private static func deleteAllMatchingPrefix(_ prefix: String) {
         // Bulk deletes are rare (plugin uninstall, agent deletion); dropping
         // the whole presence cache is simpler than prefix-matching it.
         clearPresenceCache()
-        if KeychainQueryHelpers.usesInMemoryKeychainStoreForTests {
-            testStoreLock.withLock {
-                let matchingAccounts = testStore.keys.filter { $0.hasPrefix(prefix) }
-                for account in matchingAccounts {
-                    testStore.removeValue(forKey: account)
-                }
-            }
+        if let store = activeInMemoryStore {
+            store.removeAll { $0.hasPrefix(prefix) }
             return
         }
         if KeychainQueryHelpers.disablesKeychainForProcess { return }

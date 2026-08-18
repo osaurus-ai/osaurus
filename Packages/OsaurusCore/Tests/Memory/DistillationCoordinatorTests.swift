@@ -3,12 +3,9 @@
 //  osaurus
 //
 //  Tests focus on the *coordination* primitives (single-flight queue,
-//  chat-idle wait bypass, requireResident bypass). The residency-true
-//  path depends on `MemoryService.canDistillCheaply` which wires through
-//  `ChatConfigurationStore`, `ModelManager`, and `ModelRuntime` —
-//  setting that up cleanly in a unit test would be more scaffolding
-//  than the value justifies, so it's covered manually + via the
-//  diagnostics panel rather than here.
+//  chat-idle wait bypass, residency gate, and timeout behavior). Each
+//  test uses an isolated coordinator with deterministic gate closures,
+//  leaving the production process-wide singleton untouched.
 //
 
 import Foundation
@@ -20,14 +17,18 @@ import Testing
 struct DistillationCoordinatorTests {
 
     @Test func snapshot_defaults_to_idle() async {
-        let coord = DistillationCoordinator.shared
+        let coord = DistillationCoordinator.makeForTesting()
         let snap = await coord.snapshot()
         #expect(snap.queued == 0)
         #expect(!snap.active)
     }
 
     @Test func run_executes_body_when_residency_disabled() async {
-        let coord = DistillationCoordinator.shared
+        let gates = DistillationGateProbe(resident: false, chatIdle: false)
+        let coord = DistillationCoordinator.makeForTesting(
+            canDistillCheaply: { await gates.checkResidency() },
+            waitForChatIdle: { timeoutMs in await gates.waitForChatIdle(timeoutMs) }
+        )
         let observer = ConcurrencyObserver()
 
         await coord.run(chatIdleWaitMs: 0, requireResident: false) {
@@ -37,6 +38,8 @@ struct DistillationCoordinatorTests {
 
         let total = await observer.totalEntries
         #expect(total == 1)
+        #expect(await gates.residencyChecks == 0)
+        #expect(await gates.chatIdleWaits.isEmpty)
 
         let snap = await coord.snapshot()
         #expect(snap.queued == 0)
@@ -44,13 +47,7 @@ struct DistillationCoordinatorTests {
     }
 
     @Test func concurrent_runs_serialize_strictly() async {
-        let coord = DistillationCoordinator.shared
-        // Drain anything still chained from a previous test before we
-        // start observing — `currentTask` could otherwise hold a
-        // reference whose await delays the first run far longer than
-        // the body's own sleep.
-        await coord.run(chatIdleWaitMs: 0, requireResident: false) {}
-
+        let coord = DistillationCoordinator.makeForTesting()
         let observer = ConcurrencyObserver()
 
         async let first: Void = coord.run(chatIdleWaitMs: 0, requireResident: false) {
@@ -75,32 +72,60 @@ struct DistillationCoordinatorTests {
     }
 
     @Test func chatIdleWaitMs_zero_proceeds_even_with_active_chat() async {
-        await InferenceLoadCoordinatorTestLock.shared.run {
-            let coord = DistillationCoordinator.shared
-            let load = InferenceLoadCoordinator.shared
+        let gates = DistillationGateProbe(resident: true, chatIdle: false)
+        let coord = DistillationCoordinator.makeForTesting(
+            waitForChatIdle: { timeoutMs in await gates.waitForChatIdle(timeoutMs) }
+        )
 
-            // Simulate a long-running chat. With chatIdleWaitMs=0 the
-            // coordinator must skip the idle wait entirely, so the body
-            // runs without waiting on `endChatGeneration`.
-            await load.beginChatGeneration()
-
-            let started = Date()
-            let bodyRan = AtomicBoolFlag()
-            await coord.run(chatIdleWaitMs: 0, requireResident: false) {
-                bodyRan.set()
-            }
-            let elapsed = Date().timeIntervalSince(started)
-            await load.endChatGeneration()
-
-            #expect(bodyRan.value)
-            // 0.5s is generous; the actual run should be < 50ms. We just
-            // need to confirm it didn't sit waiting on a chat-idle signal.
-            #expect(elapsed < 0.5)
+        let started = Date()
+        let bodyRan = AtomicBoolFlag()
+        await coord.run(chatIdleWaitMs: 0, requireResident: false) {
+            bodyRan.set()
         }
+        let elapsed = Date().timeIntervalSince(started)
+
+        #expect(bodyRan.value)
+        #expect(await gates.chatIdleWaits.isEmpty)
+        // 0.5s is generous; the actual run should be < 50ms. We just
+        // need to confirm it didn't sit waiting on a chat-idle signal.
+        #expect(elapsed < 0.5)
+    }
+
+    @Test func residency_gate_skips_body_when_model_is_not_cheap() async {
+        let gates = DistillationGateProbe(resident: false, chatIdle: true)
+        let coord = DistillationCoordinator.makeForTesting(
+            canDistillCheaply: { await gates.checkResidency() },
+            waitForChatIdle: { timeoutMs in await gates.waitForChatIdle(timeoutMs) }
+        )
+        let bodyRan = AtomicBoolFlag()
+
+        await coord.run(chatIdleWaitMs: 500, requireResident: true) {
+            bodyRan.set()
+        }
+
+        #expect(!bodyRan.value)
+        #expect(await gates.residencyChecks == 1)
+        #expect(await gates.chatIdleWaits.isEmpty)
+    }
+
+    @Test(arguments: [true, false])
+    func positive_chat_idle_wait_runs_after_gate(_ wentIdle: Bool) async {
+        let gates = DistillationGateProbe(resident: true, chatIdle: wentIdle)
+        let coord = DistillationCoordinator.makeForTesting(
+            waitForChatIdle: { timeoutMs in await gates.waitForChatIdle(timeoutMs) }
+        )
+        let bodyRan = AtomicBoolFlag()
+
+        await coord.run(chatIdleWaitMs: 321, requireResident: false) {
+            bodyRan.set()
+        }
+
+        #expect(bodyRan.value)
+        #expect(await gates.chatIdleWaits == [321])
     }
 
     @Test func snapshot_marks_active_during_body() async {
-        let coord = DistillationCoordinator.shared
+        let coord = DistillationCoordinator.makeForTesting()
         let started = AtomicBoolFlag()
         let observed = AtomicBoolFlag()
 
@@ -127,6 +152,28 @@ struct DistillationCoordinatorTests {
 
         let final = await coord.snapshot()
         #expect(!final.active)
+    }
+}
+
+private actor DistillationGateProbe {
+    private let resident: Bool
+    private let chatIdle: Bool
+    private(set) var residencyChecks = 0
+    private(set) var chatIdleWaits: [Int] = []
+
+    init(resident: Bool, chatIdle: Bool) {
+        self.resident = resident
+        self.chatIdle = chatIdle
+    }
+
+    func checkResidency() -> Bool {
+        residencyChecks += 1
+        return resident
+    }
+
+    func waitForChatIdle(_ timeoutMs: Int) -> Bool {
+        chatIdleWaits.append(timeoutMs)
+        return chatIdle
     }
 }
 

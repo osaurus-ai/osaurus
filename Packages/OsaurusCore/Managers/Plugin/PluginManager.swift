@@ -495,7 +495,9 @@ final class PluginManager {
         // is preserved because the sweep stays sequential inside one task,
         // keeping the crash-loop quarantine contract: a SIGABRT inside the
         // probe leaves the marker on disk for the next launch to read.
-        Task.detached(priority: .userInitiated) { [weak self] in
+        _ = ToolSecretsKeychain._detachedTaskPreservingInMemoryStoreForTesting(
+            priority: .userInitiated
+        ) { [weak self] in
             guard let self else { return }
             for loaded in loadedPlugins {
                 let pluginId = loaded.plugin.id
@@ -719,7 +721,9 @@ final class PluginManager {
         // Off the main actor: the keychain write blocks on security-daemon
         // XPC and `notifyConfigBatchSync` blocks until the plugin's C
         // callback returns.
-        await Task.detached(priority: .userInitiated) {
+        await ToolSecretsKeychain._detachedTaskPreservingInMemoryStoreForTesting(
+            priority: .userInitiated
+        ) {
             for loaded in routed {
                 Self.persistTunnelURLSecret(nil, pluginId: loaded.plugin.id, agentId: agentId)
                 loaded.plugin.notifyConfigBatchSync(
@@ -783,7 +787,9 @@ final class PluginManager {
         // and must not stall the main thread when an agent is added or a
         // relay reconnects.
         let loadedPlugins = plugins
-        Task.detached(priority: .userInitiated) { [weak self] in
+        _ = ToolSecretsKeychain._detachedTaskPreservingInMemoryStoreForTesting(
+            priority: .userInitiated
+        ) { [weak self] in
             guard let self else { return }
             for loaded in loadedPlugins {
                 self.deliverInitialConfig(to: loaded, agentId: agentId, force: force)
@@ -835,7 +841,9 @@ final class PluginManager {
             // fire-and-forget path persists and notifies off the main
             // actor. The write lands before the notify so plugins that
             // read the secret back see the new value.
-            Task.detached(priority: .userInitiated) {
+            _ = ToolSecretsKeychain._detachedTaskPreservingInMemoryStoreForTesting(
+                priority: .userInitiated
+            ) {
                 Self.persistTunnelURLSecret(url, pluginId: pluginId, agentId: agentId)
                 loaded.plugin.notifyConfigChanged(
                     key: "tunnel_url",

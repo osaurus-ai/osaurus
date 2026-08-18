@@ -10,27 +10,28 @@ import Foundation
 
 public enum ToolsPaths {
     /// Optional root directory override for tests
-    /// Note: nonisolated(unsafe) since this is only set during test setup before any concurrent access
-    public nonisolated(unsafe) static var overrideRoot: URL?
+    private static let overrideRootLock = NSLock()
+    nonisolated(unsafe) private static var overrideRootStorage: URL?
+    public static var overrideRoot: URL? {
+        get {
+            overrideRootLock.lock()
+            defer { overrideRootLock.unlock() }
+            return overrideRootStorage
+        }
+        set {
+            overrideRootLock.lock()
+            overrideRootStorage = newValue
+            overrideRootLock.unlock()
+        }
+    }
 
     /// The root data directory for Osaurus: `~/.osaurus/`
     public static func root() -> URL {
-        if let override = overrideRoot {
-            return override
-        }
-        // Honor the same test-root redirect as `OsaurusPaths.root()` (this
-        // type's documented contract is to mirror it). Without this, CLI
-        // verbs that WRITE config (e.g. `bench --tune-prefill`) target the
-        // real `~/.osaurus` while a test-rooted server process reads its
-        // hermetic root — the sweep then measures the default value for
-        // every candidate.
-        if let envRoot = ProcessInfo.processInfo.environment["OSAURUS_TEST_ROOT"],
-            !envRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
-            return URL(fileURLWithPath: envRoot, isDirectory: true)
-        }
-        let fm = FileManager.default
-        return fm.homeDirectoryForCurrentUser.appendingPathComponent(".osaurus", isDirectory: true)
+        ProcessDataRootPolicy.resolvedRoot(
+            overrideRoot: overrideRoot,
+            defaultRoot: FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".osaurus", isDirectory: true)
+        )
     }
 
     /// Tools directory (plugins)

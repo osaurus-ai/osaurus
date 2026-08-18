@@ -1181,16 +1181,22 @@ final class ExternalPlugin: @unchecked Sendable {
         let configFn = prep.configFn
         let filtered = prep.filtered
         let pluginId = self.id
+        let toolSecretsTestContext =
+            ToolSecretsKeychain._captureInMemoryStoreContextForTesting()
 
         // Serial — see `configEventQueue` for the rationale and contract.
         configEventQueue.async { [self] in
-            self.runConfigDelivery(
-                configFn: configFn,
-                ctx: ctx,
-                filtered: filtered,
-                pluginId: pluginId,
-                agentId: agentId
-            )
+            ToolSecretsKeychain._withInMemoryStoreContextForTesting(
+                toolSecretsTestContext
+            ) {
+                self.runConfigDelivery(
+                    configFn: configFn,
+                    ctx: ctx,
+                    filtered: filtered,
+                    pluginId: pluginId,
+                    agentId: agentId
+                )
+            }
             withExtendedLifetime(self) {}
         }
     }
@@ -1225,15 +1231,21 @@ final class ExternalPlugin: @unchecked Sendable {
         let configFn = prep.configFn
         let filtered = prep.filtered
         let pluginId = self.id
+        let toolSecretsTestContext =
+            ToolSecretsKeychain._captureInMemoryStoreContextForTesting()
 
         configEventQueue.sync { [self] in
-            self.runConfigDelivery(
-                configFn: configFn,
-                ctx: ctx,
-                filtered: filtered,
-                pluginId: pluginId,
-                agentId: agentId
-            )
+            ToolSecretsKeychain._withInMemoryStoreContextForTesting(
+                toolSecretsTestContext
+            ) {
+                self.runConfigDelivery(
+                    configFn: configFn,
+                    ctx: ctx,
+                    filtered: filtered,
+                    pluginId: pluginId,
+                    agentId: agentId
+                )
+            }
             withExtendedLifetime(self) {}
         }
     }

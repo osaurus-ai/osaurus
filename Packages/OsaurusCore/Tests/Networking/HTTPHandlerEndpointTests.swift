@@ -56,7 +56,6 @@ struct HTTPHandlerEndpointTests {
         #expect((resp as? HTTPURLResponse)?.statusCode == 200)
         let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
         #expect(modelsResponse.object == "list")
-        #expect(modelsResponse.data.count >= 0)
 
         // OpenAI-compatible alias.
         let (_, resp2) = try await URLSession.shared.data(
@@ -128,7 +127,8 @@ struct HTTPHandlerEndpointTests {
             let initial = VMLXServerRuntimeSettings()
             ServerRuntimeSettingsStore.save(initial)
 
-            let server = try await startServer()
+            let sideEffects = RuntimeSettingsSideEffectProbe()
+            let server = try await startServer(runtimeSideEffects: sideEffects)
             defer { Task { await server.shutdown() } }
 
             var next = initial
@@ -142,6 +142,8 @@ struct HTTPHandlerEndpointTests {
             #expect(decoded.settings.concurrency.maxConcurrentSequences == 2)
             #expect(decoded.effects?.runtimeConfigInvalidated == true)
             #expect(decoded.effects?.loadedModelRefreshNeeded == false)
+            let events = await sideEffects.snapshot()
+            #expect(events == [.invalidateRuntimeConfig])
 
             ServerRuntimeSettingsStore.invalidateSnapshot()
             let persisted = ServerRuntimeSettingsStore.snapshot()
@@ -151,16 +153,15 @@ struct HTTPHandlerEndpointTests {
     }
 
     @Test @MainActor
-    func runtimeSettings_put_clearPersistsNullAndResolvedCapacity()
-        async throws
-    {
+    func runtimeSettings_put_clearPersistsNullAndResolvedCapacity() async throws {
         let dir = try makeTempDirectory()
         try await withOverriddenRuntimeSettingsDirectory(dir) {
             var initial = VMLXServerRuntimeSettings()
             initial.concurrency.maxConcurrentSequences = 8
             ServerRuntimeSettingsStore.save(initial)
 
-            let server = try await startServer()
+            let sideEffects = RuntimeSettingsSideEffectProbe()
+            let server = try await startServer(runtimeSideEffects: sideEffects)
             defer { Task { await server.shutdown() } }
 
             var automatic = initial
@@ -189,6 +190,43 @@ struct HTTPHandlerEndpointTests {
                     for: persisted
                 ) == 1
             )
+            let events = await sideEffects.snapshot()
+            #expect(events == [.invalidateRuntimeConfig])
+        }
+    }
+
+    @Test func runtimeSettings_put_runsOnlyRequiredSideEffectsInOrder() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenRuntimeSettingsDirectory(dir) {
+            let initial = VMLXServerRuntimeSettings()
+            ServerRuntimeSettingsStore.save(initial)
+
+            let sideEffects = RuntimeSettingsSideEffectProbe()
+            let server = try await startServer(runtimeSideEffects: sideEffects)
+            defer { Task { await server.shutdown() } }
+
+            let (_, unchangedResponse) = try await putRuntimeSettings(
+                initial,
+                server: server
+            )
+            #expect((unchangedResponse as? HTTPURLResponse)?.statusCode == 200)
+            let unchangedEvents = await sideEffects.snapshot()
+            #expect(unchangedEvents.isEmpty)
+
+            var next = initial
+            next.generation.temperature = 0.42
+            next.performance = VMLXServerPerformanceSettings(
+                tiedHeadCodec: .q6,
+                compiledDecode: false,
+                deepseekV4ActivationQAT: false
+            )
+            let (_, changedResponse) = try await putRuntimeSettings(
+                next,
+                server: server
+            )
+            #expect((changedResponse as? HTTPURLResponse)?.statusCode == 200)
+            let events = await sideEffects.snapshot()
+            #expect(events == [.clearLoadedModels, .invalidateRuntimeConfig])
         }
     }
 
@@ -201,7 +239,8 @@ struct HTTPHandlerEndpointTests {
             let initial = VMLXServerRuntimeSettings()
             ServerRuntimeSettingsStore.save(initial)
 
-            let server = try await startServer()
+            let sideEffects = RuntimeSettingsSideEffectProbe()
+            let server = try await startServer(runtimeSideEffects: sideEffects)
             defer { Task { await server.shutdown() } }
 
             // Tied-head change alone: live via reload, no restart required.
@@ -217,6 +256,8 @@ struct HTTPHandlerEndpointTests {
             #expect(headDecoded.effects?.loadedModelRefreshNeeded == true)
             #expect(headDecoded.effects?.compiledDecodeRestartRequired == false)
             #expect(headDecoded.settings.effectivePerformance.tiedHeadCodec == .q6)
+            let headEvents = await sideEffects.snapshot()
+            #expect(headEvents == [.clearLoadedModels])
 
             // DSV4 activation QAT is another load-time graph choice. It must
             // unload the resident model but does not require an app restart.
@@ -233,6 +274,8 @@ struct HTTPHandlerEndpointTests {
             #expect(qatDecoded.effects?.loadedModelRefreshNeeded == true)
             #expect(qatDecoded.effects?.compiledDecodeRestartRequired == false)
             #expect(qatDecoded.settings.effectivePerformance.deepseekV4ActivationQAT == true)
+            let qatEvents = await sideEffects.snapshot()
+            #expect(qatEvents == [.clearLoadedModels, .clearLoadedModels])
 
             // Compiled-decode toggle: a process-startup lever, so the response
             // must report restart_required (it cannot engage mid-session).
@@ -251,6 +294,11 @@ struct HTTPHandlerEndpointTests {
             #expect(decoded.settings.effectivePerformance.compiledDecode == true)
             #expect(decoded.settings.effectivePerformance.tiedHeadCodec == .q6)
             #expect(decoded.settings.effectivePerformance.deepseekV4ActivationQAT == true)
+            let events = await sideEffects.snapshot()
+            #expect(
+                events
+                    == [.clearLoadedModels, .clearLoadedModels, .clearLoadedModels]
+            )
         }
     }
 
@@ -260,7 +308,8 @@ struct HTTPHandlerEndpointTests {
             let initial = VMLXServerRuntimeSettings()
             ServerRuntimeSettingsStore.save(initial)
 
-            let server = try await startServer()
+            let sideEffects = RuntimeSettingsSideEffectProbe()
+            let server = try await startServer(runtimeSideEffects: sideEffects)
             defer { Task { await server.shutdown() } }
 
             var next = initial
@@ -271,6 +320,8 @@ struct HTTPHandlerEndpointTests {
             ServerRuntimeSettingsStore.invalidateSnapshot()
             let persisted = ServerRuntimeSettingsStore.snapshot()
             #expect(persisted.network.port == initial.network.port)
+            let events = await sideEffects.snapshot()
+            #expect(events.isEmpty)
         }
     }
 
@@ -280,7 +331,8 @@ struct HTTPHandlerEndpointTests {
             let initial = VMLXServerRuntimeSettings()
             ServerRuntimeSettingsStore.save(initial)
 
-            let server = try await startServer()
+            let sideEffects = RuntimeSettingsSideEffectProbe()
+            let server = try await startServer(runtimeSideEffects: sideEffects)
             defer { Task { await server.shutdown() } }
 
             var next = initial
@@ -295,6 +347,8 @@ struct HTTPHandlerEndpointTests {
             ServerRuntimeSettingsStore.invalidateSnapshot()
             let persisted = ServerRuntimeSettingsStore.snapshot()
             #expect(persisted.concurrency.maxConcurrentSequences == initial.concurrency.maxConcurrentSequences)
+            let events = await sideEffects.snapshot()
+            #expect(events.isEmpty)
         }
     }
 
@@ -421,7 +475,9 @@ struct HTTPHandlerEndpointTests {
         }
     }
 
-    private func startServer() async throws -> TestServer {
+    private func startServer(
+        runtimeSideEffects: RuntimeSettingsSideEffectProbe = RuntimeSettingsSideEffectProbe()
+    ) async throws -> TestServer {
         let config = ServerConfiguration.default
         let lease = await HTTPServerTestLock.shared.acquire()
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
@@ -436,7 +492,14 @@ struct HTTPHandlerEndpointTests {
                                 configuration: config,
                                 apiKeyValidator: .empty,
                                 eventLoop: channel.eventLoop,
-                                trustLoopback: true
+                                trustLoopback: true,
+                                clearLoadedModels: {
+                                    await runtimeSideEffects.record(.clearLoadedModels)
+                                },
+                                invalidateRuntimeConfig: {
+                                    await runtimeSideEffects.record(.invalidateRuntimeConfig)
+                                },
+                                cacheStatsRuntimeSnapshot: { .empty }
                             )
                         )
                     }
@@ -453,6 +516,23 @@ struct HTTPHandlerEndpointTests {
             }
             await lease.release()
             throw error
+        }
+    }
+
+    private actor RuntimeSettingsSideEffectProbe {
+        enum Event: Equatable, Sendable {
+            case clearLoadedModels
+            case invalidateRuntimeConfig
+        }
+
+        private var events: [Event] = []
+
+        func record(_ event: Event) {
+            events.append(event)
+        }
+
+        func snapshot() -> [Event] {
+            events
         }
     }
 

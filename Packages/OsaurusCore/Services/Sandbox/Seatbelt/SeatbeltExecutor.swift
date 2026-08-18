@@ -12,6 +12,7 @@
 
 import Containerization
 import Foundation
+import OsaurusRepository
 
 enum SeatbeltExecutor {
 
@@ -59,6 +60,23 @@ enum SeatbeltExecutor {
         let stdoutTee: (any Writer)?
         let stderrTee: (any Writer)?
         let onProcessStarted: (@Sendable (ProcessHandle) -> Void)?
+    }
+
+    /// Build the environment for the confined child without inheriting the
+    /// parent's full environment. The shared policy restores only the
+    /// disposable-root/keychain-disable markers that child Osaurus code needs.
+    /// This pure seam keeps the security contract testable without launching
+    /// an arbitrary command.
+    static func environmentForChildProcess(
+        requestEnvironment: [String: String],
+        parentEnvironment: [String: String],
+        parentRecognizedTestHost: Bool
+    ) -> [String: String] {
+        ProcessDataRootPolicy.applyingChildTestIsolation(
+            to: requestEnvironment,
+            parentEnvironment: parentEnvironment,
+            parentRecognizedTestHost: parentRecognizedTestHost
+        )
     }
 
     /// Bytes collected from one pipe plus the last-output clock the
@@ -113,7 +131,11 @@ enum SeatbeltExecutor {
         process.executableURL = URL(fileURLWithPath: SeatbeltSandbox.sandboxExecPath)
         process.arguments = ["-p", request.profile, "/bin/sh", "-c", request.command]
 
-        var env = request.env
+        var env = environmentForChildProcess(
+            requestEnvironment: request.env,
+            parentEnvironment: ProcessInfo.processInfo.environment,
+            parentRecognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
+        )
         if env["PATH"] == nil {
             env["PATH"] = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         }

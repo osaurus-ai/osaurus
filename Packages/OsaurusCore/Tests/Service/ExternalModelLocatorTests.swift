@@ -9,10 +9,51 @@
 //
 
 import Foundation
+import OsaurusRepository
 import Testing
 
 @testable import OsaurusCore
 
+private final class ExternalRescanTransitionProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var allowed = true
+
+    func shouldContinue() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return allowed
+    }
+
+    func cancel() {
+        lock.lock()
+        allowed = false
+        lock.unlock()
+    }
+}
+
+private func waitForSignal(
+    _ semaphore: DispatchSemaphore,
+    timeout: TimeInterval
+) async -> DispatchTimeoutResult {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.global(qos: .userInitiated).async {
+            continuation.resume(returning: semaphore.wait(timeout: .now() + timeout))
+        }
+    }
+}
+
+private func waitForGroup(
+    _ group: DispatchGroup,
+    timeout: TimeInterval
+) async -> DispatchTimeoutResult {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.global(qos: .userInitiated).async {
+            continuation.resume(returning: group.wait(timeout: .now() + timeout))
+        }
+    }
+}
+
+@Suite(.serialized)
 struct ExternalModelLocatorTests {
 
     // MARK: - Helpers
@@ -306,6 +347,215 @@ struct ExternalModelLocatorTests {
 
         #expect(report?.discovered.contains { $0.id == "publisher/repo" } == true)
         #expect(report?.skipped.isEmpty == true)
+    }
+
+    @Test func rescan_doesNotCommitAfterIsolationTransition() async {
+        await OsaurusTestGlobals.withPathsLock {
+            let previousRoot = OsaurusPaths.overrideRoot
+            let previousOverride = ExternalModelLocator.testRootsOverride
+            let manifestRoot = makeTempDir()
+            let customRoot = makeTempDir()
+            let probe = ExternalRescanTransitionProbe()
+            OsaurusPaths.overrideRoot = manifestRoot
+            ExternalModelLocator.invalidateInMemory()
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                ExternalModelLocator.testRootsOverride = previousOverride
+                ExternalModelLocator.invalidateInMemory()
+                try? FileManager.default.removeItem(at: manifestRoot)
+                try? FileManager.default.removeItem(at: customRoot)
+            }
+
+            writeBundle(at: customRoot.appendingPathComponent("publisher/repo"))
+            ExternalModelLocator.testRootsOverride = [
+                (root: customRoot, source: .customModelFolder)
+            ]
+            #expect(ExternalModelLocator.models().isEmpty)
+            let generationBefore = ExternalModelLocator.registryGeneration()
+
+            let models = ExternalModelLocator.rescan(
+                shouldContinue: { probe.shouldContinue() },
+                afterRegistryMutationForTesting: { probe.cancel() }
+            )
+
+            #expect(models.isEmpty)
+            #expect(ExternalModelLocator.models().isEmpty)
+            #expect(ExternalModelLocator.registryGeneration() == generationBefore)
+        }
+    }
+
+    @Test func rescanRollsBackWhenPolicyChangesBeforePersistence() async {
+        await OsaurusTestGlobals.withPathsLock {
+            let previousRoot = OsaurusPaths.overrideRoot
+            let previousOverride = ExternalModelLocator.testRootsOverride
+            let manifestRoot = makeTempDir()
+            let customRoot = makeTempDir()
+            let probe = ExternalRescanTransitionProbe()
+            OsaurusPaths.overrideRoot = manifestRoot
+            ExternalModelLocator.invalidateInMemory()
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                ExternalModelLocator.testRootsOverride = previousOverride
+                ExternalModelLocator.invalidateInMemory()
+                try? FileManager.default.removeItem(at: manifestRoot)
+                try? FileManager.default.removeItem(at: customRoot)
+            }
+
+            writeBundle(at: customRoot.appendingPathComponent("publisher/repo"))
+            ExternalModelLocator.testRootsOverride = [
+                (root: customRoot, source: .customModelFolder)
+            ]
+            let generationBefore = ExternalModelLocator.registryGeneration()
+
+            let models = ExternalModelLocator.rescan(
+                shouldContinue: { probe.shouldContinue() },
+                beforePersistValidationForTesting: { probe.cancel() }
+            )
+
+            #expect(models.isEmpty)
+            #expect(ExternalModelLocator.models().isEmpty)
+            #expect(ExternalModelLocator.registryGeneration() > generationBefore)
+            ExternalModelLocator.invalidateInMemory()
+            #expect(ExternalModelLocator.models().isEmpty)
+        }
+    }
+
+    @Test func concurrentRescansPersistNewestCommittedRegistry() async {
+        await OsaurusTestGlobals.withPathsLock {
+            let previousRoot = OsaurusPaths.overrideRoot
+            let previousOverride = ExternalModelLocator.testRootsOverride
+            let manifestRoot = makeTempDir()
+            let firstRoot = makeTempDir()
+            let secondRoot = makeTempDir()
+            let firstReachedPersistence = DispatchSemaphore(value: 0)
+            let releaseFirstPersistence = DispatchSemaphore(value: 0)
+            let secondCommitted = DispatchSemaphore(value: 0)
+            let group = DispatchGroup()
+            OsaurusPaths.overrideRoot = manifestRoot
+            ExternalModelLocator.invalidateInMemory()
+            defer {
+                releaseFirstPersistence.signal()
+                OsaurusPaths.overrideRoot = previousRoot
+                ExternalModelLocator.testRootsOverride = previousOverride
+                ExternalModelLocator.invalidateInMemory()
+                try? FileManager.default.removeItem(at: manifestRoot)
+                try? FileManager.default.removeItem(at: firstRoot)
+                try? FileManager.default.removeItem(at: secondRoot)
+            }
+
+            writeBundle(at: firstRoot.appendingPathComponent("publisher/first"))
+            writeBundle(at: secondRoot.appendingPathComponent("publisher/second"))
+            ExternalModelLocator.testRootsOverride = [
+                (root: firstRoot, source: .customModelFolder)
+            ]
+
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                _ = ExternalModelLocator.rescan(
+                    beforePersistValidationForTesting: {
+                        firstReachedPersistence.signal()
+                        releaseFirstPersistence.wait()
+                    }
+                )
+                group.leave()
+            }
+            #expect(await waitForSignal(firstReachedPersistence, timeout: 2) == .success)
+
+            ExternalModelLocator.testRootsOverride = [
+                (root: secondRoot, source: .customModelFolder)
+            ]
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                _ = ExternalModelLocator.rescan(
+                    afterRegistryMutationForTesting: {
+                        secondCommitted.signal()
+                    }
+                )
+                group.leave()
+            }
+            #expect(await waitForSignal(secondCommitted, timeout: 2) == .success)
+            releaseFirstPersistence.signal()
+            #expect(await waitForGroup(group, timeout: 5) == .success)
+
+            ExternalModelLocator.invalidateInMemory()
+            let persisted = ExternalModelLocator.models()
+            #expect(persisted.map(\.id) == ["publisher/second"])
+        }
+    }
+
+    @Test func failedRescanPersistenceRollsBackInMemoryAndOnDisk() async {
+        await OsaurusTestGlobals.withPathsLock {
+            let previousRoot = OsaurusPaths.overrideRoot
+            let previousOverride = ExternalModelLocator.testRootsOverride
+            let manifestRoot = makeTempDir()
+            let firstRoot = makeTempDir()
+            let secondRoot = makeTempDir()
+            OsaurusPaths.overrideRoot = manifestRoot
+            ExternalModelLocator.invalidateInMemory()
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                ExternalModelLocator.testRootsOverride = previousOverride
+                ExternalModelLocator.invalidateInMemory()
+                try? FileManager.default.removeItem(at: manifestRoot)
+                try? FileManager.default.removeItem(at: firstRoot)
+                try? FileManager.default.removeItem(at: secondRoot)
+            }
+
+            writeBundle(at: firstRoot.appendingPathComponent("publisher/first"))
+            writeBundle(at: secondRoot.appendingPathComponent("publisher/second"))
+            ExternalModelLocator.testRootsOverride = [
+                (root: firstRoot, source: .customModelFolder)
+            ]
+            #expect(ExternalModelLocator.rescan().map(\.id) == ["publisher/first"])
+
+            ExternalModelLocator.testRootsOverride = [
+                (root: secondRoot, source: .customModelFolder)
+            ]
+            let result = ExternalModelLocator.rescan(
+                persistWriterForTesting: { _, _ in
+                    throw CocoaError(.fileWriteNoPermission)
+                }
+            )
+
+            #expect(result.map(\.id) == ["publisher/first"])
+            #expect(ExternalModelLocator.models().map(\.id) == ["publisher/first"])
+            ExternalModelLocator.invalidateInMemory()
+            #expect(ExternalModelLocator.models().map(\.id) == ["publisher/first"])
+        }
+    }
+
+    @Test func isolatedHostCannotForgetOrPrunePersistedRegistry() async {
+        await OsaurusTestGlobals.withPathsLock {
+            let previousRoot = OsaurusPaths.overrideRoot
+            let previousOverride = ExternalModelLocator.testRootsOverride
+            let manifestRoot = makeTempDir()
+            let customRoot = makeTempDir()
+            OsaurusPaths.overrideRoot = manifestRoot
+            ExternalModelLocator.invalidateInMemory()
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                ExternalModelLocator.testRootsOverride = previousOverride
+                ExternalModelLocator.invalidateInMemory()
+                try? FileManager.default.removeItem(at: manifestRoot)
+                try? FileManager.default.removeItem(at: customRoot)
+            }
+
+            writeBundle(at: customRoot.appendingPathComponent("publisher/repo"))
+            let fixtureRoots: [(root: URL, source: ExternalModelLocator.Source)] = [
+                (root: customRoot, source: .customModelFolder)
+            ]
+            ExternalModelLocator.testRootsOverride = fixtureRoots
+            #expect(ExternalModelLocator.rescan().map(\.id) == ["publisher/repo"])
+
+            ExternalModelLocator.testRootsOverride = nil
+            #expect(ProcessDataRootPolicy.isRecognizedTestHostProcess)
+            ExternalModelLocator.forget(id: "publisher/repo")
+            #expect(!ExternalModelLocator.pruneMissing())
+
+            ExternalModelLocator.testRootsOverride = fixtureRoots
+            ExternalModelLocator.invalidateInMemory()
+            #expect(ExternalModelLocator.models().map(\.id) == ["publisher/repo"])
+        }
     }
 
     // MARK: - HF cache scan + resolution (via test override)

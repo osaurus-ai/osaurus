@@ -20,6 +20,7 @@
 
     import Foundation
     import MCP
+    import OsaurusRepository
     import System
     import Darwin
 
@@ -31,6 +32,53 @@
         public let command: String
         public let args: [String]
 
+        /// Recognized test hosts must not pass ambient credentials to a host
+        /// MCP child. Keep only launch/locale context; provider configuration
+        /// is added explicitly below.
+        private static let testHostAmbientEnvironmentKeys: Set<String> = [
+            "PATH",
+            "LANG",
+            "LC_ALL",
+            "LC_COLLATE",
+            "LC_CTYPE",
+            "LC_MESSAGES",
+            "LC_MONETARY",
+            "LC_NUMERIC",
+            "LC_TIME",
+        ]
+
+        /// These controls can alter the code loaded by a child or redirect
+        /// work into Osaurus's own runtime. Ordinary provider settings remain
+        /// available in an isolated host child.
+        private static func isIsolatedProviderControl(_ key: String) -> Bool {
+            key.hasPrefix("DYLD_")
+                || key == "LD_PRELOAD"
+                || key == "LD_LIBRARY_PATH"
+                || key.hasPrefix("OSU_")
+                || key.hasPrefix("OSAURUS_")
+        }
+
+        private struct LaunchConfiguration {
+            let executablePath: String
+            let arguments: [String]
+            let environment: [String: String]
+            let workingDirectory: URL?
+        }
+
+        private struct LaunchContext: Equatable {
+            let environment: [String: String]
+            let recognizedTestHost: Bool
+        }
+
+        struct LaunchTestOverrides: Sendable {
+            let environmentProvider: @Sendable () -> [String: String]
+            let recognitionProvider: @Sendable () -> Bool
+            let beforeRunHook: @Sendable () -> Void
+        }
+
+        @TaskLocal static var launchTestOverrides: LaunchTestOverrides?
+
+        private let provider: MCPProvider
         private let process: Process
         private let stdinPipe: Pipe
         private let stdoutPipe: Pipe
@@ -56,29 +104,15 @@
             self.providerId = provider.id
             self.command = provider.command
             self.args = provider.args
-
-            let mergedEnv = Self.buildEnv(provider: provider)
-            let executablePath = try Self.resolveExecutablePath(
-                command: Self.expandUserPath(provider.command),
-                env: mergedEnv
-            )
+            self.provider = provider
 
             let stdinPipe = Pipe()
             let stdoutPipe = Pipe()
             let stderrPipe = Pipe()
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: executablePath)
-            process.arguments = provider.args
-            process.environment = mergedEnv
             process.standardInput = stdinPipe
             process.standardOutput = stdoutPipe
             process.standardError = stderrPipe
-            if let cwd = provider.workingDirectory, !cwd.isEmpty {
-                process.currentDirectoryURL = URL(
-                    fileURLWithPath: Self.expandUserPath(cwd),
-                    isDirectory: true
-                )
-            }
 
             self.process = process
             self.stdinPipe = stdinPipe
@@ -93,15 +127,136 @@
             self.transport = StdioTransport(input: readFD, output: writeFD)
         }
 
-        /// Process env = inherited app env merged with the provider's
-        /// own env (plain + Keychain-resolved secrets). Provider entries
-        /// win on key conflicts.
-        private static func buildEnv(provider: MCPProvider) -> [String: String] {
-            var env = ProcessInfo.processInfo.environment
-            for (key, value) in provider.resolvedEnv() {
-                env[key] = value
+        private static func makeLaunchConfiguration(
+            command: String,
+            args: [String],
+            workingDirectory: String?,
+            providerEnvironment: [String: String],
+            parentEnvironment: [String: String],
+            parentRecognizedTestHost: Bool
+        ) throws -> LaunchConfiguration {
+            guard !command.isEmpty else {
+                throw MCPStdioTransportError.missingCommand
             }
-            return env
+            let environment = buildEnvironmentForTesting(
+                parentEnvironment: parentEnvironment,
+                providerEnvironment: providerEnvironment,
+                parentRecognizedTestHost: parentRecognizedTestHost
+            )
+            let executablePath = try resolveExecutablePath(
+                command: expandUserPath(command, env: environment),
+                env: environment
+            )
+            let resolvedWorkingDirectory: URL?
+            if let workingDirectory, !workingDirectory.isEmpty {
+                resolvedWorkingDirectory = URL(
+                    fileURLWithPath: expandUserPath(workingDirectory, env: environment),
+                    isDirectory: true
+                )
+            } else {
+                resolvedWorkingDirectory = nil
+            }
+            return LaunchConfiguration(
+                executablePath: executablePath,
+                arguments: args,
+                environment: environment,
+                workingDirectory: resolvedWorkingDirectory
+            )
+        }
+
+        /// Pure environment assembly seam used to prove that provider
+        /// configuration cannot replace the parent test-isolation policy.
+        static func buildEnvironmentForTesting(
+            parentEnvironment: [String: String],
+            providerEnvironment: [String: String],
+            parentRecognizedTestHost: Bool
+        ) -> [String: String] {
+            let parentIsolated = ProcessDataRootPolicy.shouldDisableKeychain(
+                environment: parentEnvironment,
+                recognizedTestHost: parentRecognizedTestHost
+            )
+            var environment: [String: String]
+            if parentIsolated {
+                environment = parentEnvironment.filter { key, _ in
+                    testHostAmbientEnvironmentKeys.contains(key)
+                }
+            } else {
+                // Preserve production behavior: inherit the complete parent
+                // environment and overlay explicit provider configuration.
+                environment = parentEnvironment
+            }
+            let providerEnvironment = parentIsolated
+                ? providerEnvironment.filter { !isIsolatedProviderControl($0.key) }
+                : providerEnvironment
+            for (key, value) in providerEnvironment {
+                environment[key] = value
+            }
+            var childEnvironment = ProcessDataRootPolicy.applyingChildTestIsolation(
+                to: environment,
+                parentEnvironment: parentEnvironment,
+                parentRecognizedTestHost: parentRecognizedTestHost
+            )
+            if parentIsolated,
+                let isolatedRoot = childEnvironment[
+                    ProcessDataRootPolicy.testRootEnvironmentKey
+                ] {
+                // `/bin/sh` and several runtimes fall back to the account home
+                // when HOME is absent. Provider configuration also overlays the
+                // ambient allowlist above, so force HOME after that overlay.
+                // Host MCP remains an explicitly unconfined execution mode;
+                // this prevents accidental `~` expansion into persistent user
+                // state during tests, rather than claiming filesystem sandboxing.
+                childEnvironment["HOME"] = isolatedRoot
+                childEnvironment["TMPDIR"] = isolatedRoot
+                childEnvironment["PATH"] = isolatedSearchPath(
+                    childEnvironment["PATH"],
+                    parentEnvironment: parentEnvironment
+                )
+            }
+            return childEnvironment
+        }
+
+        /// An isolated child must not discover account-home executables through
+        /// an inherited or provider-overlaid PATH. Relative entries are also
+        /// excluded because their target depends on the configured working
+        /// directory. This is accidental test-state isolation, not containment
+        /// against a hostile process running as the same user.
+        private static func isolatedSearchPath(
+            _ path: String?,
+            parentEnvironment: [String: String]
+        ) -> String {
+            let restrictedRoots = [
+                parentEnvironment["HOME"],
+                FileManager.default.homeDirectoryForCurrentUser.path,
+            ]
+            .compactMap { $0 }
+            .flatMap(pathRepresentations)
+
+            let entries = (path ?? "")
+                .split(separator: ":", omittingEmptySubsequences: true)
+                .map(String.init)
+                .filter { entry in
+                    guard entry.hasPrefix("/") else { return false }
+                    let representations = pathRepresentations(entry)
+                    return !representations.contains { candidate in
+                        restrictedRoots.contains { root in
+                            candidate == root || candidate.hasPrefix(root + "/")
+                        }
+                    }
+                }
+
+            if entries.isEmpty {
+                return "/usr/bin:/bin:/usr/sbin:/sbin"
+            }
+            return entries.joined(separator: ":")
+        }
+
+        private static func pathRepresentations(_ path: String) -> [String] {
+            guard path.hasPrefix("/") else { return [] }
+            let url = URL(fileURLWithPath: path, isDirectory: true)
+            let lexical = url.standardizedFileURL.path
+            let resolved = url.resolvingSymlinksInPath().standardizedFileURL.path
+            return lexical == resolved ? [lexical] : [lexical, resolved]
         }
 
         /// Resolve `command` to an absolute path the kernel can exec.
@@ -139,13 +294,15 @@
                 .split(separator: ":", omittingEmptySubsequences: true)
                 .map(String.init)
                 ?? []
-            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            let home = effectiveHomeDirectory(env: env)
             for fallback in [
                 "/opt/homebrew/bin",
                 "/usr/local/bin",
                 "/opt/local/bin",
-                "\(home)/.local/bin",
-                "\(home)/bin",
+                URL(fileURLWithPath: home, isDirectory: true)
+                    .appendingPathComponent(".local/bin", isDirectory: true).path,
+                URL(fileURLWithPath: home, isDirectory: true)
+                    .appendingPathComponent("bin", isDirectory: true).path,
                 "/usr/bin",
                 "/bin",
                 "/usr/sbin",
@@ -156,52 +313,170 @@
             return entries.joined(separator: ":")
         }
 
-        private static func expandUserPath(_ path: String) -> String {
+        private static func effectiveHomeDirectory(env: [String: String]) -> String {
+            if let home = env["HOME"], !home.isEmpty, home.hasPrefix("/") {
+                return URL(fileURLWithPath: home, isDirectory: true).standardizedFileURL.path
+            }
+            return FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
+        }
+
+        private static func expandUserPath(_ path: String, env: [String: String]) -> String {
             guard path == "~" || path.hasPrefix("~/") else { return path }
-            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            let home = effectiveHomeDirectory(env: env)
             if path == "~" {
                 return home
             }
-            return home + String(path.dropFirst())
+            return URL(fileURLWithPath: home, isDirectory: true)
+                .appendingPathComponent(String(path.dropFirst(2)))
+                .standardizedFileURL.path
         }
 
         static func executableSearchPathForTesting(env: [String: String]) -> String {
             executableSearchPath(env: env)
         }
 
-        static func expandUserPathForTesting(_ path: String) -> String {
-            expandUserPath(path)
+        static func expandUserPathForTesting(
+            _ path: String,
+            env: [String: String]
+        ) -> String {
+            expandUserPath(path, env: env)
         }
 
         static func resolveExecutablePathForTesting(
             command: String,
             env: [String: String]
         ) throws -> String {
-            try resolveExecutablePath(command: expandUserPath(command), env: env)
+            try resolveExecutablePath(command: expandUserPath(command, env: env), env: env)
+        }
+
+        static func launchConfigurationForTesting(
+            command: String,
+            args: [String] = [],
+            workingDirectory: String? = nil,
+            providerEnvironment: [String: String],
+            parentEnvironment: [String: String],
+            parentRecognizedTestHost: Bool
+        ) throws -> (
+            executablePath: String,
+            arguments: [String],
+            environment: [String: String],
+            workingDirectory: URL?
+        ) {
+            let configuration = try makeLaunchConfiguration(
+                command: command,
+                args: args,
+                workingDirectory: workingDirectory,
+                providerEnvironment: providerEnvironment,
+                parentEnvironment: parentEnvironment,
+                parentRecognizedTestHost: parentRecognizedTestHost
+            )
+            return (
+                configuration.executablePath,
+                configuration.arguments,
+                configuration.environment,
+                configuration.workingDirectory
+            )
         }
 
         /// Set once a global spawn slot is held so `stop()` releases exactly
         /// one slot even if called twice.
         private var spawnSlotHeld = false
+        private var stopRequested = false
 
         /// Start the subprocess. Must be called before connecting `MCP.Client`
         /// to `transport`. Reserves a global MCP child-spawn slot first so a
         /// reconnect/launch storm can't exhaust PIDs/FDs.
         public func start() async throws {
+            try await start(connectionOperation: nil)
+        }
+
+        func start(connectionOperation: MCPConnectionOperation?) async throws {
+            try Task.checkCancellation()
+            try connectionOperation?.checkCancellation()
+            guard !stopRequested else { throw CancellationError() }
             try await MCPChildSpawnLimiter.shared.acquire()
             spawnSlotHeld = true
             do {
+                try Task.checkCancellation()
+                try connectionOperation?.checkCancellation()
+                guard !stopRequested else { throw CancellationError() }
                 process.terminationHandler = { [weak self] proc in
                     let code = proc.terminationStatus
                     Task { await self?.handleProcessExit(exitCode: code) }
                 }
                 startStderrPump()
-                try process.run()
+
+                let overrides = Self.launchTestOverrides
+                func currentLaunchContext() -> LaunchContext {
+                    LaunchContext(
+                        environment: overrides?.environmentProvider()
+                            ?? ProcessInfo.processInfo.environment,
+                        recognizedTestHost: overrides?.recognitionProvider()
+                            ?? ProcessDataRootPolicy.isRecognizedTestHostProcess
+                    )
+                }
+
+                // Secret resolution and executable lookup can overlap late
+                // XCTest recognition. Rebuild from a changed context and make
+                // one final equality check immediately before Process.run().
+                // A context that never stabilizes fails closed without spawning.
+                var launchContext = currentLaunchContext()
+                for attempt in 0..<3 {
+                    let launchConfiguration = try Self.makeLaunchConfiguration(
+                        command: provider.command,
+                        args: provider.args,
+                        workingDirectory: provider.workingDirectory,
+                        providerEnvironment: provider.resolvedEnv(),
+                        parentEnvironment: launchContext.environment,
+                        parentRecognizedTestHost: launchContext.recognizedTestHost
+                    )
+                    if attempt == 0 {
+                        overrides?.beforeRunHook()
+                    }
+
+                    let resolvedContext = currentLaunchContext()
+                    guard resolvedContext == launchContext else {
+                        launchContext = resolvedContext
+                        continue
+                    }
+
+                    process.executableURL = URL(fileURLWithPath: launchConfiguration.executablePath)
+                    process.arguments = launchConfiguration.arguments
+                    process.environment = launchConfiguration.environment
+                    process.currentDirectoryURL = launchConfiguration.workingDirectory
+
+                    let finalContext = currentLaunchContext()
+                    guard finalContext == launchContext else {
+                        launchContext = finalContext
+                        continue
+                    }
+                    try Task.checkCancellation()
+                    guard !stopRequested else { throw CancellationError() }
+                    if let connectionOperation {
+                        try connectionOperation.withLaunchPermission {
+                            try process.run()
+                        }
+                    } else {
+                        try process.run()
+                    }
+                    return
+                }
+                throw MCPStdioTransportError.processSpawnFailed(
+                    "process isolation context changed repeatedly"
+                )
             } catch {
                 // Release the slot we just reserved — the child never launched.
-                await MCPChildSpawnLimiter.shared.release()
-                spawnSlotHeld = false
+                if spawnSlotHeld {
+                    spawnSlotHeld = false
+                    await MCPChildSpawnLimiter.shared.release()
+                }
                 stopStderrPump()
+                if error is CancellationError {
+                    throw error
+                }
+                if let transportError = error as? MCPStdioTransportError {
+                    throw transportError
+                }
                 throw MCPStdioTransportError.processSpawnFailed(error.localizedDescription)
             }
         }
@@ -237,6 +512,7 @@
         /// Tear down the subprocess. Idempotent — safe to call from
         /// `disconnect()` paths even if `start()` failed.
         public func stop(forceKillGraceSeconds: TimeInterval = 2.0) async {
+            stopRequested = true
             // Intentional teardown: never route through the "unexpected exit"
             // handler, which would mark the provider as crashed.
             onProcessExitHandler = nil
@@ -261,6 +537,10 @@
 
         public func isRunning() -> Bool {
             process.isRunning
+        }
+
+        func launchedEnvironmentForTesting() -> [String: String]? {
+            process.environment
         }
 
         /// Walk the colon-separated `path` looking for an executable named

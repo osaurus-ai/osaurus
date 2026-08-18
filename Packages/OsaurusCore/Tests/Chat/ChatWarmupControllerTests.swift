@@ -37,6 +37,28 @@ struct ChatConfigurationWarmModelsOnLoadTests {
 @MainActor
 struct ChatWarmupControllerPromptShapeTests {
 
+    @Test("default policy seams follow live configuration and window state")
+    func defaultPolicySeamsUseProductionSources() async {
+        var configuration = ChatConfiguration.default
+        configuration.warmModelsOnLoad = false
+
+        await ChatConfigurationStore.withTestConfiguration(configuration) {
+            let controller = ChatWarmupController()
+            defer { controller.shutdown() }
+
+            #expect(!controller.warmModelsOnLoad())
+            #expect(
+                controller.isAnyWindowStreamingLocalModel()
+                    == ChatWindowManager.shared.isAnyWindowStreamingLocalModel
+            )
+
+            var updated = ChatConfigurationStore.load()
+            updated.warmModelsOnLoad = true
+            ChatConfigurationStore.save(updated)
+            #expect(controller.warmModelsOnLoad())
+        }
+    }
+
     @Test("DSV4 cold local send requires pre-send warm-up")
     func dsv4ColdSendRequiresWarmup() {
         #expect(
@@ -93,7 +115,7 @@ struct ChatWarmupControllerPromptShapeTests {
             fingerprint: "dsv4|required-pre-send"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.projectedLoadFeasibility = { _ in nil }
         // A smaller model may still be resident when the restored DSV4
         // selection becomes available.  A speculative warm-up would refuse;
@@ -126,7 +148,7 @@ struct ChatWarmupControllerPromptShapeTests {
             fingerprint: "dsv4|identical-payload"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.projectedLoadFeasibility = { _ in nil }
         controller.hasResidentModelOther = { _ in false }
 
@@ -165,7 +187,7 @@ struct ChatWarmupControllerPromptShapeTests {
             fingerprint: "test-model|settings-a"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.scheduleWarmup(session: session, debounce: .zero)
         for _ in 0 ..< 100 {
             if controller.state == .warm { break }
@@ -259,7 +281,7 @@ struct ChatWarmupControllerModelSwitchTests {
         var evictionCount = 0
         var lastEvictOthers: Bool?
         let session = WarmupTestSession()
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
 
         controller.handleModelSelectionChange(
             session: session,
@@ -287,7 +309,7 @@ struct ChatWarmupControllerModelSwitchTests {
     func rapidSwitchesSerialize() async {
         var evictionCount = 0
         let session = WarmupTestSession()
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
 
         controller.handleModelSelectionChange(
             session: session,
@@ -320,7 +342,7 @@ struct ChatWarmupControllerModelSwitchTests {
             fingerprint: "test-model|hint|"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.scheduleWarmup(session: session, debounce: .zero)
 
         // Wait until the warm-up generation is actually streaming.
@@ -384,6 +406,48 @@ struct ChatWarmupControllerRAMGateTests {
         )
     }
 
+    @Test("disabled warm-up policy skips generation deterministically")
+    func disabledPolicySkipsWarmup() {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|disabled"
+        )
+        let controller = makeWarmupController()
+        controller.warmModelsOnLoad = { false }
+
+        controller.scheduleWarmup(session: session, debounce: .zero)
+
+        #expect(engine.lastRequest == nil)
+        #expect(controller.state == .cold)
+    }
+
+    @Test("active local streaming in another window skips warm-up")
+    func activeLocalStreamSkipsWarmup() {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|active-stream"
+        )
+        let controller = makeWarmupController()
+        controller.isAnyWindowStreamingLocalModel = { true }
+
+        controller.scheduleWarmup(session: session, debounce: .zero)
+
+        #expect(engine.lastRequest == nil)
+        #expect(controller.state == .cold)
+    }
+
     /// Sentry APPLE-MACOS-3T: a window-open warm-up of a 31B model on a
     /// 24GB machine died in a fatal Metal OOM. Proactive warm-up must skip
     /// entirely when the projection is block-severity.
@@ -401,7 +465,7 @@ struct ChatWarmupControllerRAMGateTests {
             fingerprint: "test-model|hint|"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.projectedLoadFeasibility = { _ in
             Self.feasibility(
                 projected: 23 * gib,
@@ -435,7 +499,7 @@ struct ChatWarmupControllerRAMGateTests {
             fingerprint: "test-model|hint|"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.projectedLoadFeasibility = { _ in
             Self.feasibility(
                 projected: 18 * gib,
@@ -479,7 +543,7 @@ struct ChatWarmupControllerRequestTests {
             fingerprint: "test-model|hint|opts|"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.scheduleWarmup(session: session, debounce: .zero)
 
         for _ in 0 ..< 100 {
@@ -519,7 +583,7 @@ struct ChatWarmupControllerCompletedRunTests {
             fingerprint: "test-model|cancelled-run"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.handleRunCompleted(
             session: session,
             wasCancelled: true,
@@ -574,7 +638,7 @@ struct ChatWarmupControllerCompletedRunTests {
             fingerprint: "test-model|errored-tool-run"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.handleRunCompleted(
             session: session,
             wasCancelled: false,
@@ -626,7 +690,7 @@ struct ChatWarmupControllerCompletedRunTests {
             fingerprint: "test-model|successful-tool-run"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.handleRunCompleted(
             session: session,
             wasCancelled: false,
@@ -654,7 +718,7 @@ struct ChatWarmupControllerCompletedRunTests {
             fingerprint: "test-model|successful-run"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.handleRunCompleted(
             session: session,
             wasCancelled: false,
@@ -690,7 +754,7 @@ struct ChatWarmupControllerRuntimeResidencyTests {
         )
 
         let gate = FirstResidentPreflightGate()
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.projectedLoadFeasibility = { _ in nil }
         controller.hasResidentModelOther = { _ in
             await gate.check()
@@ -738,7 +802,7 @@ struct ChatWarmupControllerRuntimeResidencyTests {
             fingerprint: "org/test-model|hint|"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.scheduleWarmup(session: session, debounce: .zero)
 
         for _ in 0 ..< 100 {
@@ -788,7 +852,7 @@ struct ChatWarmupControllerRuntimeResidencyTests {
             fingerprint: "org/test-model|focus-rearm"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.projectedLoadFeasibility = { _ in nil }
         controller.hasResidentModelOther = { _ in false }
         controller.chatActivationResidencySnapshot = { _ in
@@ -839,7 +903,7 @@ struct ChatWarmupControllerRuntimeResidencyTests {
             fingerprint: "org/test-model|focus-debounce-eviction"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.projectedLoadFeasibility = { _ in nil }
         controller.hasResidentModelOther = { _ in false }
         controller.scheduleWarmup(session: session, debounce: .zero)
@@ -899,7 +963,7 @@ struct ChatWarmupControllerRuntimeResidencyTests {
             fingerprint: "org/test-model|post-coalesce-removal"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.projectedLoadFeasibility = { _ in nil }
         controller.hasResidentModelOther = { _ in false }
         controller.scheduleWarmup(session: session, debounce: .zero)
@@ -1004,7 +1068,7 @@ struct ChatWarmupControllerRuntimeResidencyTests {
             fingerprint: "org/test-model|focus-warming-removal"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.projectedLoadFeasibility = { _ in nil }
         controller.hasResidentModelOther = { _ in false }
         let debounce = WarmupDebounceGate()
@@ -1126,7 +1190,7 @@ struct ChatWarmupControllerRuntimeResidencyTests {
             fingerprint: "org/test-model|focus-rearm"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.projectedLoadFeasibility = { _ in nil }
         controller.hasResidentModelOther = { _ in false }
         controller.scheduleWarmup(session: session, debounce: .zero)
@@ -1171,7 +1235,7 @@ struct ChatWarmupControllerRuntimeResidencyTests {
             fingerprint: "org/test-model|focus-resident"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.chatActivationResidencySnapshot = { _ in
             activationResidencySnapshot(names: ["test-model"], revision: 1)
         }
@@ -1209,7 +1273,7 @@ struct ChatWarmupControllerRuntimeResidencyTests {
             fingerprint: "org/test-model|activation-order"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.scheduleWarmup(session: session, debounce: .zero)
         await controller.scheduledWarmupTaskForTests?.value
         await controller.awaitInFlightWarmup()
@@ -1266,7 +1330,7 @@ struct ChatWarmupControllerRuntimeResidencyTests {
             fingerprint: "org/test-model|activation-reset"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.scheduleWarmup(session: session, debounce: .zero)
         await controller.scheduledWarmupTaskForTests?.value
         await controller.awaitInFlightWarmup()
@@ -1308,7 +1372,7 @@ struct ChatWarmupControllerRuntimeResidencyTests {
             fingerprint: "org/test-model|activation-stop"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.scheduleWarmup(session: session, debounce: .zero)
         await controller.scheduledWarmupTaskForTests?.value
         await controller.awaitInFlightWarmup()
@@ -1349,7 +1413,7 @@ struct ChatWarmupControllerRuntimeResidencyTests {
             fingerprint: "org/test-model|hint|"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.scheduleWarmup(session: session, debounce: .zero)
         for _ in 0 ..< 100 {
             if controller.state == .warm { break }
@@ -1408,7 +1472,7 @@ struct ChatWarmupControllerRuntimeResidencyTests {
             fingerprint: "org/test-model|armed-idle-recovery"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.projectedLoadFeasibility = { _ in nil }
         controller.hasResidentModelOther = { _ in false }
         controller.chatActivationResidencySnapshot = { _ in
@@ -1456,7 +1520,7 @@ struct ChatWarmupControllerShutdownTests {
             fingerprint: "test-model|hint|"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.shutdown()
         controller.scheduleWarmup(session: session, debounce: .zero)
 
@@ -1480,7 +1544,7 @@ struct ChatWarmupControllerShutdownTests {
             fingerprint: "test-model|hint|"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.scheduleWarmup(session: session, debounce: .milliseconds(80))
         controller.shutdown()
 
@@ -1504,7 +1568,7 @@ struct ChatWarmupControllerShutdownTests {
             fingerprint: "test-model|explicit-unload"
         )
 
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.scheduleWarmup(session: session, debounce: .milliseconds(80))
         controller.cancelPendingWorkForExplicitModelUnload()
 
@@ -1531,7 +1595,7 @@ struct ChatWarmupControllerResidencyDotTests {
     @Test("residency snapshots drive selectedModelResident for the selected model")
     func residencySnapshotsDriveSelectedModelResident() {
         let session = WarmupTestSession()
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         #expect(!controller.selectedModelResident)
 
         controller.handleRuntimeResidencyChanged(
@@ -1554,7 +1618,7 @@ struct ChatWarmupControllerResidencyDotTests {
     @Test("a stale lower-revision snapshot cannot resurrect residency")
     func staleSnapshotCannotResurrectResidency() {
         let session = WarmupTestSession()
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
 
         controller.handleRuntimeResidencyChanged(
             session: session,
@@ -1573,7 +1637,7 @@ struct ChatWarmupControllerResidencyDotTests {
     @Test("org-prefixed resident names match a bare selected model id")
     func fuzzyTailMatchingCountsAsResident() {
         let session = WarmupTestSession()
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
 
         controller.handleRuntimeResidencyChanged(
             session: session,
@@ -1586,7 +1650,7 @@ struct ChatWarmupControllerResidencyDotTests {
     @Test("selection change re-evaluates residency immediately from last known names")
     func selectionChangeReevaluatesResidencyImmediately() async {
         let session = WarmupTestSession()
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
 
         controller.handleRuntimeResidencyChanged(
             session: session,
@@ -1611,7 +1675,7 @@ struct ChatWarmupControllerResidencyDotTests {
     @Test("seedRuntimeResidency populates the dot state before any notification")
     func seedPopulatesResidency() async {
         let session = WarmupTestSession()
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.runtimeResidencySnapshot = {
             residencySnapshot(names: ["test-model"], revision: 1)
         }
@@ -1628,7 +1692,7 @@ struct ChatWarmupControllerResidencyDotTests {
     func imageModelSelectionDoesNotStickWarming() async {
         let session = WarmupTestSession()
         session.imageGenerationModelIDs = ["image-model"]
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
 
         session.selectedModel = "image-model"
         controller.handleModelSelectionChange(
@@ -1799,7 +1863,7 @@ struct ChatWarmupControllerFreedSlotRewarmTests {
             modelOptions: nil,
             fingerprint: "org/test-model|freed-slot"
         )
-        let controller = ChatWarmupController()
+        let controller = makeWarmupController()
         controller.projectedLoadFeasibility = { _ in nil }
         controller.hasResidentModelOther = { _ in false }
         controller.runtimeResidencySnapshot = {
@@ -1807,6 +1871,16 @@ struct ChatWarmupControllerFreedSlotRewarmTests {
         }
         return (controller, session, engine)
     }
+}
+
+@MainActor
+private func makeWarmupController() -> ChatWarmupController {
+    let controller = ChatWarmupController()
+    controller.warmModelsOnLoad = { true }
+    controller.isAnyWindowStreamingLocalModel = { false }
+    controller.projectedLoadFeasibility = { _ in nil }
+    controller.hasResidentModelOther = { _ in false }
+    return controller
 }
 
 @MainActor

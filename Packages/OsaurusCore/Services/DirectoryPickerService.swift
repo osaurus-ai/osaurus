@@ -6,12 +6,18 @@
 //
 
 import Foundation
+import OsaurusRepository
 import SwiftUI
 
 /// Service for managing user-selected directory access with security-scoped bookmarks
 @MainActor
 final class DirectoryPickerService: ObservableObject {
     static let shared = DirectoryPickerService()
+
+    /// An isolated process may use `OSU_MODELS_DIR` only when a live model
+    /// proof explicitly opts out of disposable model-directory isolation.
+    nonisolated static let allowExternalModelsInTestHostsEnvironmentKey =
+        "OSAURUS_ALLOW_EXTERNAL_MODELS_FOR_TESTS"
 
     @Published var selectedDirectory: URL?
     @Published var hasValidDirectory: Bool = false
@@ -262,6 +268,13 @@ final class DirectoryPickerService: ObservableObject {
     /// access (model-list rendering can ask hundreds of times per frame). The
     /// answer only changes when the directory is reset, which clears the cache.
     nonisolated static func defaultModelsDirectory() -> URL {
+        if let override = modelsDirectoryEnvironmentOverride() {
+            return override
+        }
+        if let isolated = isolatedProcessModelsDirectory() {
+            return isolated
+        }
+
         cacheLock.lock()
         if let cached = cachedDefaultDirectory {
             cacheLock.unlock()
@@ -284,6 +297,9 @@ final class DirectoryPickerService: ObservableObject {
         let fileManager = FileManager.default
         if let override = modelsDirectoryEnvironmentOverride() {
             return override
+        }
+        if let isolated = isolatedProcessModelsDirectory() {
+            return isolated
         }
         let homeURL = fileManager.homeDirectoryForCurrentUser
         let newDefault = homeURL.appendingPathComponent("MLXModels")
@@ -315,6 +331,9 @@ final class DirectoryPickerService: ObservableObject {
         if let override = modelsDirectoryEnvironmentOverride() {
             return override
         }
+        if let isolated = isolatedProcessModelsDirectory() {
+            return isolated
+        }
 
         // Use cached bookmark URL to avoid expensive IPC
         if let cachedURL = getCachedBookmarkURL() {
@@ -325,13 +344,49 @@ final class DirectoryPickerService: ObservableObject {
         return defaultModelsDirectory()
     }
 
-    nonisolated private static func modelsDirectoryEnvironmentOverride() -> URL? {
+    nonisolated static func modelsDirectoryEnvironmentOverride(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        recognizedTestHost: Bool = ProcessDataRootPolicy.isRecognizedTestHostProcess
+    ) -> URL? {
+        // Use the same fail-closed predicate as data-root and Keychain
+        // isolation. This covers explicit test roots and disable-only proof
+        // launches even before an XCTest bundle becomes visible.
+        if ProcessDataRootPolicy.shouldDisableKeychain(
+            environment: environment,
+            recognizedTestHost: recognizedTestHost
+        ),
+            environment[allowExternalModelsInTestHostsEnvironmentKey] != "1" {
+            return nil
+        }
         guard
-            let raw = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"]?
+            let raw = environment["OSU_MODELS_DIR"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             !raw.isEmpty
         else { return nil }
         return URL(fileURLWithPath: (raw as NSString).expandingTildeInPath, isDirectory: true)
+    }
+
+    nonisolated private static func isolatedProcessModelsDirectory() -> URL? {
+        guard shouldUseIsolatedModelsDirectory(
+            environment: ProcessInfo.processInfo.environment,
+            recognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
+        ) else {
+            return nil
+        }
+        return OsaurusPaths.root().appendingPathComponent("MLXModels", isDirectory: true)
+    }
+
+    /// Keep model discovery aligned with the shared data-root/Keychain
+    /// isolation decision. This includes disable-only launches and malformed
+    /// real-Keychain proof markers, not just a configured root or XCTest host.
+    nonisolated static func shouldUseIsolatedModelsDirectory(
+        environment: [String: String],
+        recognizedTestHost: Bool
+    ) -> Bool {
+        ProcessDataRootPolicy.shouldDisableKeychain(
+            environment: environment,
+            recognizedTestHost: recognizedTestHost
+        )
     }
 
     /// Reset directory selection

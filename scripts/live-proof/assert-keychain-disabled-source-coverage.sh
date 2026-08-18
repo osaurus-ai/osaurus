@@ -43,10 +43,10 @@ require_text "$ROOT/Packages/OsaurusCore/Services/Keychain/ToolSecretsKeychain.s
   "tool secret enumeration bypasses Keychain"
 
 require_text "$ROOT/Packages/OsaurusCore/Services/Provider/RemoteProviderKeychain.swift" \
-  "if KeychainQueryHelpers.disablesKeychainForProcess { return nil }" \
+  "&& !Keychain.hasInjectedBackendForCurrentContext { return nil }" \
   "remote provider reads bypass Keychain"
 require_text "$ROOT/Packages/OsaurusCore/Services/Provider/RemoteProviderKeychain.swift" \
-  "if KeychainQueryHelpers.disablesKeychainForProcess { return false }" \
+  "&& !Keychain.hasInjectedBackendForCurrentContext { return false }" \
   "remote provider writes bypass Keychain"
 
 require_text "$ROOT/Packages/OsaurusCore/Services/MCP/MCPProviderKeychain.swift" \

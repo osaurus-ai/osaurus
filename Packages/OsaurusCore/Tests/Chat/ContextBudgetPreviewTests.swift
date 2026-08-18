@@ -497,12 +497,12 @@ struct ContextBudgetPreviewTests {
     @Test("same-id model_type enrichment invalidates the cached family preview")
     func sameIdModelTypeEnrichment_invalidatesFamilyPreview() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
-            var chatConfig = ChatConfigurationStore.load()
-            chatConfig.warmModelsOnLoad = false
-            ChatConfigurationStore.save(chatConfig)
-
             let modelId = "local/renamed-backbone"
             let session = ChatSession()
+            // This test only exercises picker metadata and prompt preview.
+            // Disable speculative work on its own session instead of changing
+            // the process-wide chat setting while other suites are running.
+            session.warmupController.shutdown()
             session.agentId = agentId
             session.pickerItems = [
                 ModelPickerItem(

@@ -45,6 +45,10 @@ struct ChatSessionStopTests {
         warmupSession: any ChatWarmupSessionContext,
         model: String
     ) async throws {
+        session.warmupController.warmModelsOnLoad = { true }
+        session.warmupController.isAnyWindowStreamingLocalModel = { false }
+        session.warmupController.projectedLoadFeasibility = { _ in nil }
+        session.warmupController.hasResidentModelOther = { _ in false }
         session.warmupController.handleModelSelectionChange(
             session: warmupSession,
             to: model,
@@ -324,12 +328,19 @@ struct ChatSessionStopTests {
             ChatConfigurationStore.save(chatConfig)
 
             let session = ChatSession()
+            session.warmupController.projectedLoadFeasibility = { _ in nil }
+            session.warmupController.hasResidentModelOther = { _ in false }
             let gate = IgnoringCancellationHandshakeGate()
             session.chatEngineFactory = { _ in PreSendHandshakeRecordingEngine() }
             try await beginSuspendedPreSendHandshake(session: session, gate: gate)
 
             session.send("old chat turn")
             session.reset()
+            // `reset()` also starts the session's normal focus-activation
+            // reconciliation. This case supplies its own synthetic incoming
+            // session below, so cancel that unrelated automatic candidate
+            // before proving the new warm-up survives the retiring handshake.
+            session.warmupController.cancelScheduledWarmup()
 
             let incomingEngine = IncomingWarmupRecordingEngine()
             let incomingSession = IncomingWarmupSession(engine: incomingEngine)
@@ -357,7 +368,10 @@ struct ChatSessionStopTests {
 
             let session = ChatSession()
             let controller = session.warmupController
+            controller.warmModelsOnLoad = { true }
+            controller.isAnyWindowStreamingLocalModel = { false }
             controller.projectedLoadFeasibility = { _ in nil }
+            controller.hasResidentModelOther = { _ in false }
             let gate = IgnoringCancellationHandshakeGate()
             let engine = CancellationIgnoringWarmupEngine(gate: gate)
             let warmupSession = IncomingWarmupSession(engine: engine)
@@ -409,7 +423,10 @@ struct ChatSessionStopTests {
 
             let session = ChatSession()
             let controller = session.warmupController
+            controller.warmModelsOnLoad = { true }
+            controller.isAnyWindowStreamingLocalModel = { false }
             controller.projectedLoadFeasibility = { _ in nil }
+            controller.hasResidentModelOther = { _ in false }
             let gate = IgnoringCancellationHandshakeGate()
             let warmupEngine = CancellationIgnoringWarmupEngine(gate: gate)
             let warmupSession = IncomingWarmupSession(engine: warmupEngine)

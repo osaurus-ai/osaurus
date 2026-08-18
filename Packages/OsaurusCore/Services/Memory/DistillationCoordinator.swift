@@ -42,6 +42,9 @@ private final class ResultBox<T: Sendable>: Sendable {
 public actor DistillationCoordinator {
     public static let shared = DistillationCoordinator()
 
+    private let canDistillCheaply: @Sendable () async -> Bool
+    private let waitForChatIdle: @Sendable (Int) async -> Bool
+
     /// The most-recently scheduled distillation task. Each new call to
     /// `run` awaits this before executing, forming an implicit FIFO
     /// queue. Previous-task references are dropped as soon as a new
@@ -58,7 +61,31 @@ public actor DistillationCoordinator {
     /// waiting" from "running now".
     private var bodyActive = false
 
-    private init() {}
+    private init(
+        canDistillCheaply: @escaping @Sendable () async -> Bool = {
+            await MemoryService.shared.canDistillCheaply()
+        },
+        waitForChatIdle: @escaping @Sendable (Int) async -> Bool = { timeoutMs in
+            await InferenceLoadCoordinator.shared.waitForChatIdle(timeoutMs: timeoutMs)
+        }
+    ) {
+        self.canDistillCheaply = canDistillCheaply
+        self.waitForChatIdle = waitForChatIdle
+    }
+
+#if DEBUG
+    /// Build an isolated coordinator with deterministic gates for unit tests.
+    /// Production code remains constrained to the process-wide singleton.
+    static func makeForTesting(
+        canDistillCheaply: @escaping @Sendable () async -> Bool = { true },
+        waitForChatIdle: @escaping @Sendable (Int) async -> Bool = { _ in true }
+    ) -> DistillationCoordinator {
+        DistillationCoordinator(
+            canDistillCheaply: canDistillCheaply,
+            waitForChatIdle: waitForChatIdle
+        )
+    }
+#endif
 
     // MARK: - Inspection
 
@@ -118,9 +145,10 @@ public actor DistillationCoordinator {
             // what makes the queue strictly serial. `previous?.value`
             // is non-throwing because we use `Task<Void, Never>`.
             await previous?.value
+            guard let self else { return }
 
             if requireResident {
-                let cheap = await MemoryService.shared.canDistillCheaply()
+                let cheap = await self.canDistillCheaply()
                 if !cheap {
                     MemoryLogger.service.info(
                         "DistillationCoordinator: skipping run — core model not resident or too large to cold-load"
@@ -130,9 +158,7 @@ public actor DistillationCoordinator {
             }
 
             if chatIdleWaitMs > 0 {
-                let wentIdle = await InferenceLoadCoordinator.shared.waitForChatIdle(
-                    timeoutMs: chatIdleWaitMs
-                )
+                let wentIdle = await self.waitForChatIdle(chatIdleWaitMs)
                 if !wentIdle {
                     // Proceed anyway. Long-running chats shouldn't
                     // starve the memory pipeline; we'd rather take the
@@ -150,9 +176,9 @@ public actor DistillationCoordinator {
             // fire-and-forget defer would leave `bodyActive == true`
             // briefly observable after `myTask.value` resumes, which
             // would race the diagnostics-panel snapshot.
-            await self?.setBodyActive(true)
+            await self.setBodyActive(true)
             box.set(await body())
-            await self?.setBodyActive(false)
+            await self.setBodyActive(false)
         }
 
         currentTask = myTask

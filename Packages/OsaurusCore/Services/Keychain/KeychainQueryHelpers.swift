@@ -7,29 +7,82 @@
 
 import Foundation
 import LocalAuthentication
+import OsaurusRepository
 import Security
 
 enum KeychainQueryHelpers {
+    /// Revalidate process-level Keychain policy immediately before a backend
+    /// operation. Callers that queue work must invoke this inside the queued
+    /// closure, not only when the work is admitted.
+    static func performIfAccessRemainsAllowed<Result>(
+        isDisabled: () -> Bool,
+        operation: () -> Result
+    ) -> Result? {
+        guard !isDisabled() else { return nil }
+        return operation()
+    }
+
+    /// Revalidate the service captured in a query immediately before invoking
+    /// Security.framework. Test-host recognition can latch while a query is
+    /// being assembled, so an entry guard alone is not sufficient for identity
+    /// reads, writes, or deletes.
+    static func performIfServiceAccessRemainsAllowed<Result>(
+        capturedService: String,
+        currentService: () -> String,
+        isDisabled: () -> Bool,
+        operation: () -> Result
+    ) -> Result? {
+        guard capturedService == currentService() else { return nil }
+        return performIfAccessRemainsAllowed(
+            isDisabled: isDisabled,
+            operation: operation
+        )
+    }
+
     /// Live proof/test launches set this to guarantee wrappers do not touch the
     /// user's login Keychain at all. This is stronger than noninteractive
     /// queries: reads return nil, writes return false, and deletes become
     /// no-ops so validation cannot produce "wants to use your confidential
     /// information" prompts.
     static var disablesKeychainForProcess: Bool {
-        ProcessInfo.processInfo.environment["OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS"] == "1"
+        ProcessDataRootPolicy.shouldDisableKeychain(
+            environment: ProcessInfo.processInfo.environment,
+            recognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
+        )
+    }
+
+    static var realKeychainTestsAreExplicitlyEnabled: Bool {
+        realKeychainTestNamespace != nil
+    }
+
+    /// Keep the explicit proof opt-in separate from namespace validation. A
+    /// malformed or missing namespace must make the proof fail, not disable
+    /// the suite and silently report zero tests.
+    static var realKeychainProofWasRequested: Bool {
+        ProcessDataRootPolicy.explicitlyAllowsRealKeychainForTests(
+            environment: ProcessInfo.processInfo.environment
+        )
+    }
+
+    /// The manual proof lane may reach only its namespaced MasterKey item.
+    /// Every other Keychain wrapper remains disabled in the test host so
+    /// filtered test discovery or incidental global initialization cannot
+    /// touch a user's production secrets.
+    static var disablesIdentityKeyForProcess: Bool {
+        disablesKeychainForProcess && !realKeychainTestsAreExplicitlyEnabled
+    }
+
+    static var realKeychainTestNamespace: String? {
+        ProcessDataRootPolicy.realKeychainTestNamespace(
+            environment: ProcessInfo.processInfo.environment,
+            recognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
+        )
     }
 
     /// Unit tests need deterministic secret storage without touching the user's
     /// login Keychain or the CI runner's flaky transient Keychain state.
     static var usesInMemoryKeychainStoreForTests: Bool {
-        let env = ProcessInfo.processInfo.environment
-        return env["XCTestConfigurationFilePath"] != nil
-            || env["XCTestBundlePath"] != nil
-            || ProcessInfo.processInfo.processName == "xctest"
-            // `swift test` (SwiftPM + swift-testing) runs suites inside this
-            // helper without any of the XCTest markers above.
-            || ProcessInfo.processInfo.processName == "swiftpm-testing-helper"
-            || Bundle.main.bundlePath.hasSuffix(".xctest")
+        ProcessDataRootPolicy.isRecognizedTestHostProcess && disablesKeychainForProcess
     }
 
     /// Build an authentication context that refuses interactive prompts.
@@ -38,23 +91,22 @@ enum KeychainQueryHelpers {
     /// matching `LAContext` prevents accidental password/biometric UI if the
     /// system decides the stored item needs an authentication context.
     ///
-    /// The context is created once and reused. `LAContext.init` performs a
-    /// synchronous XPC round-trip to `coreauthd`, and every Keychain read and
-    /// enumeration builds one — on the main thread that has stalled the UI for
-    /// seconds. A non-interactive context carries no per-query state, so a
-    /// single shared instance is safe to reuse across queries and threads.
+    /// `LAContext.init` performs a synchronous XPC round-trip to `coreauthd`,
+    /// and creating one for every Keychain query has stalled the main thread.
+    /// Cache one immutable, non-interactive context per calling thread instead:
+    /// synchronous queries reuse it without sharing mutable framework state
+    /// across the concurrent Keychain read executor.
     static func nonInteractiveContext() -> LAContext {
-        contextLock.lock()
-        defer { contextLock.unlock() }
-        if let cached = sharedNonInteractiveContext {
+        let threadDictionary = Thread.current.threadDictionary
+        if let cached = threadDictionary[nonInteractiveContextThreadKey] as? LAContext {
             return cached
         }
         let context = LAContext()
         context.interactionNotAllowed = true
-        sharedNonInteractiveContext = context
+        threadDictionary[nonInteractiveContextThreadKey] = context
         return context
     }
 
-    private static let contextLock = NSLock()
-    nonisolated(unsafe) private static var sharedNonInteractiveContext: LAContext?
+    private static let nonInteractiveContextThreadKey =
+        "ai.osaurus.keychain.non-interactive-context"
 }

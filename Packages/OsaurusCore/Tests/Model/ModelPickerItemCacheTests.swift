@@ -25,6 +25,56 @@ import Testing
 @MainActor
 struct ModelPickerItemCacheTests {
 
+    private func withIsolatedLocalModels<T: Sendable>(
+        _ models: [MLXModel],
+        operation: @MainActor @Sendable () async throws -> T
+    ) async rethrows -> T {
+        let previousRoot = OsaurusPaths.overrideRoot
+        let previousScan = ModelManager.scanLocalModelsOverrideForTests
+        let previousWait = ModelManager.localModelsScanWaitLimitOverrideForTests
+        let previousExternal = ExternalModelLocator.testRootsOverride
+        let previousFoundationAvailability =
+            ModelPickerItemCache.foundationModelAvailabilityOverrideForTests
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osu-picker-cache-root-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        OsaurusPaths.overrideRoot = root
+        ExternalModelLocator.testRootsOverride = []
+        ExternalModelLocator.invalidateInMemory()
+        ExternalModelLocator.rescan()
+        ModelManager.scanLocalModelsOverrideForTests = { _ in models }
+        ModelManager.localModelsScanWaitLimitOverrideForTests = 2
+        ModelPickerItemCache.foundationModelAvailabilityOverrideForTests = { false }
+        ModelManager.invalidateLocalModelsCache()
+        _ = ModelManager.discoverLocalModels()
+
+        func restore() {
+            ModelManager.scanLocalModelsOverrideForTests = previousScan
+            ModelManager.localModelsScanWaitLimitOverrideForTests = previousWait
+            ExternalModelLocator.testRootsOverride = previousExternal
+            ModelPickerItemCache.foundationModelAvailabilityOverrideForTests =
+                previousFoundationAvailability
+            ExternalModelLocator.invalidateInMemory()
+            OsaurusPaths.overrideRoot = previousRoot
+            ModelManager.invalidateLocalModelsCache()
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        do {
+            let value = try await operation()
+            restore()
+            _ = await ModelPickerItemCache.shared.buildModelPickerItems()
+            return value
+        } catch {
+            restore()
+            _ = await ModelPickerItemCache.shared.buildModelPickerItems()
+            throw error
+        }
+    }
+
     /// Hammer the cache from many concurrent tasks. Because the underlying
     /// state (foundation availability, local models, remote providers) does
     /// not change during the test, every concurrent caller MUST observe the
@@ -33,35 +83,30 @@ struct ModelPickerItemCacheTests {
     /// one with `includeRemote: true` — could finish in non-deterministic
     /// order, so callers could disagree about whether remote models were
     /// present.
-    @Test func concurrentCallers_returnIdenticalResults() async throws {
-        await RemoteProviderTestLock.shared.run {
-            // Establish a baseline so we know what to compare against, and so
-            // any work needed to populate the cache (e.g. local model
-            // discovery) doesn't perturb the concurrent run below.
-            let baselineItems = await ModelPickerItemCache.shared.buildModelPickerItems()
-            let baselineIds = baselineItems.map(\.id)
+    @Test func concurrentCallers_returnIdenticalResults() async {
+        await StoragePathsTestLock.shared.run {
+            await RemoteProviderTestLock.shared.run {
+                await withIsolatedLocalModels([]) {
+                    let baselineItems = await ModelPickerItemCache.shared.buildModelPickerItems()
+                    let baselineIds = baselineItems.map(\.id)
 
-            // Spawn many detached tasks that each call into the @MainActor
-            // cache. Detached tasks are deliberately used so the calls hop
-            // back into the MainActor at the await point and exercise the
-            // serialized rebuild path the way real callers do (notification
-            // observer Tasks, the AppDelegate prewarm Task, ChatView's
-            // refresh Task, and so on).
-            var tasks: [Task<[String], Never>] = []
-            for _ in 0 ..< 32 {
-                tasks.append(
-                    Task.detached {
-                        let items = await ModelPickerItemCache.shared.buildModelPickerItems()
-                        return items.map(\.id)
+                    var tasks: [Task<[String], Never>] = []
+                    for _ in 0 ..< 32 {
+                        tasks.append(
+                            Task.detached {
+                                let items = await ModelPickerItemCache.shared.buildModelPickerItems()
+                                return items.map(\.id)
+                            }
+                        )
                     }
-                )
-            }
 
-            for task in tasks {
-                let ids = await task.value
-                #expect(ids == baselineIds)
+                    for task in tasks {
+                        let ids = await task.value
+                        #expect(ids == baselineIds)
+                    }
+                    #expect(ModelPickerItemCache.shared.isLoaded)
+                }
             }
-            #expect(ModelPickerItemCache.shared.isLoaded)
         }
     }
 
@@ -72,49 +117,50 @@ struct ModelPickerItemCacheTests {
     /// notably `ChatView.init` — would snapshot an empty list. This test
     /// asserts the invariant that, once populated, `items` never goes
     /// empty across rebuilds.
-    @Test func notificationBurst_doesNotTransientlyEmptyItems() async throws {
-        await RemoteProviderTestLock.shared.run {
-            let cache = ModelPickerItemCache.shared
+    @Test func notificationBurst_doesNotTransientlyEmptyItems() async {
+        await StoragePathsTestLock.shared.run {
+            await RemoteProviderTestLock.shared.run {
+                await withIsolatedLocalModels([]) {
+                    let cache = ModelPickerItemCache.shared
 
-            // Make sure we start populated. If this machine has no foundation
-            // model, no local MLX models, and no connected remote providers,
-            // the invariant is trivially satisfied - skip in that case so CI
-            // doesn't false-positive.
-            _ = await cache.buildModelPickerItems()
-            guard !cache.items.isEmpty else { return }
-            let initialCount = cache.items.count
+                    // Make sure we start populated. If this machine has no
+                    // local MLX models or connected remote providers, the
+                    // invariant is trivially satisfied.
+                    _ = await cache.buildModelPickerItems()
+                    guard !cache.items.isEmpty else { return }
+                    let initialCount = cache.items.count
 
-            // Spam many notifications. Each one schedules an observer Task
-            // that calls `buildModelPickerItems()`. Pre-fix, each Task would
-            // first set `items = []` and `isLoaded = false`.
-            for _ in 0 ..< 50 {
-                NotificationCenter.default.post(
-                    name: .remoteProviderModelsChanged,
-                    object: nil
-                )
+                    // Spam many notifications. Each one schedules an observer
+                    // Task that calls `buildModelPickerItems()`. Pre-fix, each
+                    // Task first set `items = []` and `isLoaded = false`.
+                    for _ in 0 ..< 50 {
+                        NotificationCenter.default.post(
+                            name: .remoteProviderModelsChanged,
+                            object: nil
+                        )
+                    }
+
+                    // Drain the observer Tasks by repeatedly yielding the
+                    // MainActor and sampling `items`. A rebuild only assigns
+                    // `items` after it has the full list.
+                    var samples: [Int] = []
+                    for _ in 0 ..< 200 {
+                        samples.append(cache.items.count)
+                        try? await Task.sleep(nanoseconds: 200_000)  // 0.2ms
+                    }
+
+                    #expect(
+                        !samples.contains(0),
+                        "items must remain populated during rebuilds; observed sample counts: \(samples)"
+                    )
+
+                    // State did not change, so the final list remains populated
+                    // and has the same count.
+                    let final = await cache.buildModelPickerItems()
+                    #expect(!final.isEmpty)
+                    #expect(final.count == initialCount)
+                }
             }
-
-            // Drain the observer Tasks by repeatedly yielding the MainActor
-            // and sampling `items`. With the fix, every sample must be
-            // non-empty - the rebuild only assigns `items` when it has the
-            // full list.
-            var samples: [Int] = []
-            for _ in 0 ..< 200 {
-                samples.append(cache.items.count)
-                try? await Task.sleep(nanoseconds: 200_000)  // 0.2ms
-            }
-
-            #expect(
-                !samples.contains(0),
-                "items must remain populated during rebuilds; observed sample counts: \(samples)"
-            )
-
-            // After the burst settles, the cache should still hold a
-            // populated list (state hasn't actually changed, so it should
-            // match the initial count).
-            let final = await cache.buildModelPickerItems()
-            #expect(!final.isEmpty)
-            #expect(final.count == initialCount)
         }
     }
 
@@ -122,68 +168,59 @@ struct ModelPickerItemCacheTests {
     /// HF cache by the memory feature) must be excluded from the chat
     /// picker's item list, while regular causal-LM bundles pass through.
     @Test func computeItems_excludesLocalEmbeddingBundles() async throws {
-        try await RemoteProviderTestLock.shared.run {
-            // Two on-disk fixture bundles classified purely via config.json.
-            func makeBundle(config: [String: Any]) throws -> URL {
-                let dir = FileManager.default.temporaryDirectory
-                    .appendingPathComponent(
-                        "osu-picker-cache-\(UUID().uuidString)",
-                        isDirectory: true
+        try await StoragePathsTestLock.shared.run {
+            try await RemoteProviderTestLock.shared.run {
+                func makeBundle(config: [String: Any]) throws -> URL {
+                    let dir = FileManager.default.temporaryDirectory
+                        .appendingPathComponent(
+                            "osu-picker-cache-\(UUID().uuidString)",
+                            isDirectory: true
+                        )
+                    try FileManager.default.createDirectory(
+                        at: dir,
+                        withIntermediateDirectories: true
                     )
-                try FileManager.default.createDirectory(
-                    at: dir,
-                    withIntermediateDirectories: true
-                )
-                try JSONSerialization.data(withJSONObject: config)
-                    .write(to: dir.appendingPathComponent("config.json"))
-                return dir
+                    try JSONSerialization.data(withJSONObject: config)
+                        .write(to: dir.appendingPathComponent("config.json"))
+                    return dir
+                }
+                let chatDir = try makeBundle(config: [
+                    "model_type": "qwen2",
+                    "architectures": ["Qwen2ForCausalLM"],
+                ])
+                let embedDir = try makeBundle(config: [
+                    "model_type": "model2vec",
+                    "architectures": ["StaticModel"],
+                ])
+                defer {
+                    try? FileManager.default.removeItem(at: chatDir)
+                    try? FileManager.default.removeItem(at: embedDir)
+                }
+
+                let fixtures = [
+                    MLXModel(
+                        id: "fixture/chat-model-4bit",
+                        name: "Fixture Chat Model",
+                        description: "fixture",
+                        downloadURL: "https://example.invalid/chat",
+                        bundleDirectory: chatDir
+                    ),
+                    MLXModel(
+                        id: "fixture/potion-base-4M",
+                        name: "Fixture Embedding Model",
+                        description: "fixture",
+                        downloadURL: "https://example.invalid/potion",
+                        bundleDirectory: embedDir
+                    ),
+                ]
+
+                let ids = await withIsolatedLocalModels(fixtures) {
+                    await ModelPickerItemCache.shared.buildModelPickerItems().map(\.id)
+                }
+
+                #expect(ids.contains("fixture/chat-model-4bit"))
+                #expect(!ids.contains("fixture/potion-base-4M"))
             }
-            let chatDir = try makeBundle(config: [
-                "model_type": "qwen2",
-                "architectures": ["Qwen2ForCausalLM"],
-            ])
-            let embedDir = try makeBundle(config: [
-                "model_type": "model2vec",
-                "architectures": ["StaticModel"],
-            ])
-
-            let fixtures = [
-                MLXModel(
-                    id: "fixture/chat-model-4bit",
-                    name: "Fixture Chat Model",
-                    description: "fixture",
-                    downloadURL: "https://example.invalid/chat",
-                    bundleDirectory: chatDir
-                ),
-                MLXModel(
-                    id: "fixture/potion-base-4M",
-                    name: "Fixture Embedding Model",
-                    description: "fixture",
-                    downloadURL: "https://example.invalid/potion",
-                    bundleDirectory: embedDir
-                ),
-            ]
-
-            let prevScan = ModelManager.scanLocalModelsOverrideForTests
-            let prevWait = ModelManager.localModelsScanWaitLimitOverrideForTests
-            ModelManager.localModelsScanWaitLimitOverrideForTests = 2.0
-            ModelManager.scanLocalModelsOverrideForTests = { _ in fixtures }
-            ModelManager.invalidateLocalModelsCache()
-
-            let items = await ModelPickerItemCache.shared.buildModelPickerItems()
-            let ids = items.map(\.id)
-
-            // Restore globals and rebuild before asserting so fixture
-            // entries can't linger in the shared cache for later suites.
-            ModelManager.scanLocalModelsOverrideForTests = prevScan
-            ModelManager.localModelsScanWaitLimitOverrideForTests = prevWait
-            ModelManager.invalidateLocalModelsCache()
-            await ModelPickerItemCache.shared.buildModelPickerItems()
-            try? FileManager.default.removeItem(at: chatDir)
-            try? FileManager.default.removeItem(at: embedDir)
-
-            #expect(ids.contains("fixture/chat-model-4bit"))
-            #expect(!ids.contains("fixture/potion-base-4M"))
         }
     }
 

@@ -119,6 +119,47 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("canonical test hosts isolate filesystem roots at the shared resolver")
+    func canonicalTestHostsUseSharedDisposableRoots() throws {
+        let corePaths = try Self.source("Utils/OsaurusPaths.swift")
+        let toolsPaths = try Self.source("../OsaurusRepository/ToolsPaths.swift")
+        let policy = try Self.source("../OsaurusRepository/ProcessDataRootPolicy.swift")
+
+        #expect(corePaths.contains("ProcessDataRootPolicy.resolvedRoot"))
+        #expect(toolsPaths.contains("ProcessDataRootPolicy.resolvedRoot"))
+        #expect(policy.contains("isRecognizedTestHostProcess"))
+        #expect(policy.contains("return automaticTestRoot"))
+        #expect(policy.contains("prepareProgrammaticTestOverrideRoot"))
+    }
+
+    @Test("test root overrides use the process-wide path lock")
+    func testRootOverridesUseProcessWideLock() throws {
+        let assignment = try NSRegularExpression(
+            pattern: #"(?m)^\s*OsaurusPaths\.overrideRoot\s*="#
+        )
+        let acceptedGuards = [
+            "StoragePathsTestLock",
+            "runWithStoragePaths",
+            "withPathsLock",
+        ]
+
+        let unguarded = try Self.swiftFiles(under: "Tests").compactMap { url -> String? in
+            let source = try String(contentsOf: url, encoding: .utf8)
+            let range = NSRange(source.startIndex ..< source.endIndex, in: source)
+            guard assignment.firstMatch(in: source, range: range) != nil else { return nil }
+            guard !acceptedGuards.contains(where: source.contains) else { return nil }
+            return url.path.replacingOccurrences(
+                of: Self.packageRoot().appendingPathComponent("Tests").path + "/",
+                with: ""
+            )
+        }
+
+        #expect(
+            unguarded.isEmpty,
+            "Tests that mutate OsaurusPaths.overrideRoot must hold StoragePathsTestLock: \(unguarded)"
+        )
+    }
+
     @Test("AppDelegate leaves DSV4 cache topology to vmlx")
     func appDelegateDoesNotForceDSV4DiagnosticCacheMode() throws {
         let source = try Self.source("AppDelegate.swift")
@@ -289,7 +330,9 @@ struct RuntimePolicySourceTests {
 
         // The fail-closed guard and its error must exist.
         #expect(source.contains("case keyUnavailableForExistingData"))
-        #expect(source.contains("encryptedStorageExists()"))
+        #expect(
+            source.contains("switch encryptedStorageExists(expectedIsolation: isolated)")
+        )
 
         // The guard must sit *between* a missed key read and the
         // generate-and-persist fallback so a populated install can never re-key
@@ -512,7 +555,16 @@ struct RuntimePolicySourceTests {
             "Services/MCP/MCPProviderKeychain.swift",
         ] {
             let source = try Self.source(path)
-            #expect(source.contains("if KeychainQueryHelpers.disablesKeychainForProcess"))
+            if path == "Services/Provider/RemoteProviderKeychain.swift" {
+                #expect(source.contains("if KeychainQueryHelpers.disablesKeychainForProcess"))
+                #expect(source.contains("Keychain.hasInjectedBackendForCurrentContext"))
+            } else {
+                #expect(
+                    source.contains(
+                        "if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"
+                    )
+                )
+            }
             let queryCount =
                 source.components(separatedBy: "kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip").count
                 - 1
@@ -539,7 +591,12 @@ struct RuntimePolicySourceTests {
         #expect(storageKey.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
         #expect(!storageKey.contains("KeychainQueryHelpers.nonInteractiveContext()"))
         #expect(storageKey.contains("if Self.disablesKeychainForProcess { return nil }"))
-        #expect(storageKey.contains("if Self.disablesKeychainForProcess { return }"))
+        #expect(storageKey.contains("guard !Self.disablesKeychainForProcess else {"))
+        #expect(
+            storageKey.contains(
+                "throw StorageKeyError.keychainWriteFailed(errSecInteractionNotAllowed)"
+            )
+        )
     }
 
     @Test("secret stores route through the shared legacy Keychain helper")
@@ -2384,14 +2441,15 @@ struct RuntimePolicySourceTests {
         let remoteProvider = try Self.source("Services/Provider/RemoteProviderKeychain.swift")
         let mcpProvider = try Self.source("Services/MCP/MCPProviderKeychain.swift")
 
-        #expect(paths.contains("OSAURUS_TEST_ROOT"))
-        #expect(storage.contains("OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS"))
+        #expect(paths.contains("ProcessDataRootPolicy.resolvedRoot"))
+        #expect(storage.contains("ProcessDataRootPolicy.shouldDisableKeychain"))
+        #expect(storage.contains("ProcessDataRootPolicy.isRecognizedTestHostProcess"))
         #expect(storage.contains("generateInMemoryKey()"))
         #expect(storage.contains("if Self.disablesKeychainForProcess"))
         #expect(appDelegate.contains("private var keychainDisabledTestMode"))
         #expect(appDelegate.contains("private var keychainDisabledUIPresentationMode"))
         #expect(appDelegate.contains("OSAURUS_KEYCHAIN_FREE_SHOW_UI"))
-        #expect(appDelegate.contains("Keychain disabled by OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1"))
+        #expect(appDelegate.contains("Keychain disabled for isolated test process"))
         #expect(appDelegate.contains("if keychainDisabledTestMode {"))
         // The provider connects stay behind the keychain-disabled gate and
         // run concurrently (one slow MCP server must not delay every model
@@ -2422,10 +2480,15 @@ struct RuntimePolicySourceTests {
         )
         #expect(appDelegate.contains("Headless live-proof launches only need the local HTTP server"))
         #expect(appDelegate.contains("keychainDisabledTestMode && !keychainDisabledUIPresentationMode"))
-        #expect(keychainHelper.contains("disablesKeychainForProcess"))
+        #expect(keychainHelper.contains("ProcessDataRootPolicy.shouldDisableKeychain"))
+        #expect(keychainHelper.contains("ProcessDataRootPolicy.isRecognizedTestHostProcess"))
         #expect(agentSecrets.contains("if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"))
         #expect(toolSecrets.contains("if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"))
-        #expect(remoteProvider.contains("if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"))
+        #expect(remoteProvider.contains("KeychainQueryHelpers.disablesKeychainForProcess"))
+        #expect(remoteProvider.contains("Keychain.hasInjectedBackendForCurrentContext"))
+        #expect(remoteProvider.contains("await Keychain.performRead(operation)"))
+        #expect(remoteProvider.contains("await Keychain.perform {"))
+        #expect(!remoteProvider.contains("DispatchQueue.global"))
         #expect(mcpProvider.contains("if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"))
     }
 
@@ -2778,7 +2841,8 @@ struct RuntimePolicySourceTests {
 
         #expect(httpHandler.contains("@preconcurrency import MLXLMCommon"))
         #expect(httpHandler.contains("let runtimeSettings = ServerRuntimeSettingsStore.snapshot()"))
-        #expect(httpHandler.contains("let memoryStatus = MemoryStatus.snapshot()"))
+        #expect(httpHandler.contains("memoryStatus: MemoryStatus.snapshot()"))
+        #expect(httpHandler.contains("let memoryStatus = runtimeSnapshot.memoryStatus"))
         #expect(httpHandler.contains("ServerRuntimeSettingsStore.resolvedMemorySafetyPlan("))
         #expect(httpHandler.contains("\"memory_safety\""))
         #expect(httpHandler.contains("\"mode\": memorySafety.mode.rawValue"))
@@ -2786,7 +2850,8 @@ struct RuntimePolicySourceTests {
         #expect(httpHandler.contains("\"allowed\": plan.blockingIssues.isEmpty"))
         #expect(httpHandler.contains("\"load_configuration\": loadConfigurationJSONObject(plan.loadConfiguration)"))
         #expect(httpHandler.contains("\"deepseek_v4_activation_qat\""))
-        #expect(httpHandler.contains("\"memory_status\": memoryStatusJSONObject(memoryStatus)"))
+        #expect(httpHandler.contains("\"memory_status\":"))
+        #expect(httpHandler.contains("memoryStatus.map(memoryStatusJSONObject)"))
         #expect(httpHandler.contains("\"warnings\": plan.warnings"))
         #expect(httpHandler.contains("\"blocking_issues\": plan.blockingIssues.map(settingsIssueJSONObject)"))
         #expect(httpHandler.contains("lastMemorySafetyLoadDecisionSnapshot()"))

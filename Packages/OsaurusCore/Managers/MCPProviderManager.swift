@@ -15,6 +15,46 @@ extension Foundation.Notification.Name {
     static let mcpProviderStatusChanged = Foundation.Notification.Name("MCPProviderStatusChanged")
 }
 
+/// Cross-actor cancellation token for one provider connection attempt. The
+/// launch lock makes host child admission atomic with cancellation: either the
+/// child starts and disconnect can see its registered runner, or cancellation
+/// wins and no child is launched.
+final class MCPConnectionOperation: @unchecked Sendable {
+    let providerId: UUID
+    let generation: UInt64
+
+    private let lock = NSLock()
+    private var cancelled = false
+
+    init(providerId: UUID, generation: UInt64) {
+        self.providerId = providerId
+        self.generation = generation
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+    }
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    func checkCancellation() throws {
+        guard !isCancelled else { throw CancellationError() }
+    }
+
+    func withLaunchPermission(_ launch: () throws -> Void) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !cancelled else { throw CancellationError() }
+        try launch()
+    }
+}
+
 /// Manages all remote MCP provider connections
 @MainActor
 public final class MCPProviderManager: ObservableObject {
@@ -28,12 +68,21 @@ public final class MCPProviderManager: ObservableObject {
 
     /// Active MCP clients keyed by provider ID
     private var clients: [UUID: MCP.Client] = [:]
+    private var clientGenerations: [UUID: UInt64] = [:]
+
+    /// A monotonically increasing generation plus the currently in-flight
+    /// operation prevent a suspended connection from committing after a
+    /// disconnect or a newer connection attempt.
+    private var connectionGenerations: [UUID: UInt64] = [:]
+    private var activeConnectionOperations: [UUID: MCPConnectionOperation] = [:]
+    private var disconnectEpochs: [UUID: UInt64] = [:]
 
     /// Discovered MCP tools keyed by provider ID
     private var discoveredTools: [UUID: [MCP.Tool]] = [:]
 
     /// Registered tool instances keyed by provider ID
     private var registeredTools: [UUID: [MCPProviderTool]] = [:]
+    private var registeredToolGenerations: [UUID: UInt64] = [:]
 
     /// Host-resident stdio subprocess owners keyed by provider ID. Held so
     /// `disconnect(...)` can terminate them — the subprocess only stays
@@ -43,6 +92,8 @@ public final class MCPProviderManager: ObservableObject {
     /// Sandbox-resident stdio subprocess owners keyed by provider ID. Same
     /// lifecycle as `hostStdioRunners` but routed through the container.
     private var sandboxStdioRunners: [UUID: SandboxStdioRunner] = [:]
+    private var stdioRunnerOperations: [UUID: MCPConnectionOperation] = [:]
+    private var stdioRunnerTokens: [UUID: UUID] = [:]
 
     private init() {
         self.configuration = MCPProviderConfigurationStore.load()
@@ -118,9 +169,15 @@ public final class MCPProviderManager: ObservableObject {
     /// Update an existing provider
     public func updateProvider(_ provider: MCPProvider, token: String?) {
         let wasConnected = providerStates[provider.id]?.isConnected ?? false
+        let wasConnecting = providerStates[provider.id]?.isConnecting ?? false
 
-        // Disconnect if connected
-        if wasConnected {
+        // Cancel both established and in-flight runtimes before replacing the
+        // configuration snapshot they were built from.
+        if wasConnected || wasConnecting
+            || activeConnectionOperations[provider.id] != nil
+            || clients[provider.id] != nil
+            || hostStdioRunners[provider.id] != nil
+            || sandboxStdioRunners[provider.id] != nil {
             disconnect(providerId: provider.id)
         }
 
@@ -131,7 +188,7 @@ public final class MCPProviderManager: ObservableObject {
         // only after the keychain mutations land, and reconnect after both so
         // connect() reads the fresh token.
         let providerId = provider.id
-        let shouldReconnect = wasConnected && provider.enabled
+        let shouldReconnect = (wasConnected || wasConnecting) && provider.enabled
         let dropsOAuth = previous?.authType == .oauth && provider.authType != .oauth
         Keychain.performInBackground {
             var credentialsDurable = true
@@ -214,17 +271,62 @@ public final class MCPProviderManager: ObservableObject {
 
     // MARK: - Connection Management
 
+    @discardableResult
+    func beginConnectionOperation(providerId: UUID) -> MCPConnectionOperation {
+        activeConnectionOperations[providerId]?.cancel()
+        let generation = (connectionGenerations[providerId] ?? 0) &+ 1
+        connectionGenerations[providerId] = generation
+        let operation = MCPConnectionOperation(providerId: providerId, generation: generation)
+        activeConnectionOperations[providerId] = operation
+        return operation
+    }
+
+    func connectionOperationIsCurrent(_ operation: MCPConnectionOperation) -> Bool {
+        activeConnectionOperations[operation.providerId] === operation
+            && connectionGenerations[operation.providerId] == operation.generation
+            && !operation.isCancelled
+    }
+
+    private func requireCurrentConnectionOperation(_ operation: MCPConnectionOperation) throws {
+        try Task.checkCancellation()
+        try operation.checkCancellation()
+        guard connectionOperationIsCurrent(operation) else { throw CancellationError() }
+    }
+
+    private func finishConnectionOperation(_ operation: MCPConnectionOperation) {
+        guard activeConnectionOperations[operation.providerId] === operation else { return }
+        activeConnectionOperations.removeValue(forKey: operation.providerId)
+    }
+
+    private func invalidateConnectionOperation(providerId: UUID) {
+        activeConnectionOperations.removeValue(forKey: providerId)?.cancel()
+        stdioRunnerOperations[providerId]?.cancel()
+        connectionGenerations[providerId] = (connectionGenerations[providerId] ?? 0) &+ 1
+        disconnectEpochs[providerId] = (disconnectEpochs[providerId] ?? 0) &+ 1
+    }
+
     /// Connect to a provider
     public func connect(providerId: UUID) async throws {
         guard let provider = configuration.provider(id: providerId) else {
             throw MCPProviderError.providerNotFound
         }
-        try await performConnect(provider: provider, allowOAuthRetry: true)
+        let operation = beginConnectionOperation(providerId: providerId)
+        defer { finishConnectionOperation(operation) }
+        try await performConnect(
+            provider: provider,
+            allowOAuthRetry: true,
+            operation: operation
+        )
     }
 
-    private func performConnect(provider: MCPProvider, allowOAuthRetry: Bool) async throws {
+    private func performConnect(
+        provider: MCPProvider,
+        allowOAuthRetry: Bool,
+        operation: MCPConnectionOperation
+    ) async throws {
         let providerId = provider.id
 
+        try requireCurrentConnectionOperation(operation)
         guard provider.enabled else {
             throw MCPProviderError.providerDisabled
         }
@@ -233,6 +335,7 @@ public final class MCPProviderManager: ObservableObject {
         var state = providerStates[providerId] ?? MCPProviderState(providerId: providerId)
         state.isConnecting = true
         state.lastError = nil
+        state.lastFailureWasTransient = false
         // Clear any stale "needs auth" state from a prior attempt — we'll re-set it below
         // if this attempt also surfaces a 401.
         state.requiresAuth = false
@@ -248,7 +351,8 @@ public final class MCPProviderManager: ObservableObject {
 
         do {
             // Create authenticated transport
-            let transport = try await createTransport(for: provider)
+            let transport = try await createTransport(for: provider, operation: operation)
+            try requireCurrentConnectionOperation(operation)
 
             // Create MCP client
             let client = MCP.Client(
@@ -265,6 +369,7 @@ public final class MCPProviderManager: ObservableObject {
             try await withTimeout(seconds: provider.discoveryTimeout) {
                 _ = try await client.connect(transport: transport)
             }
+            try requireCurrentConnectionOperation(operation)
 
             // Store client, tearing down any client we're replacing (a
             // connect on an already-connected provider must not leak the
@@ -273,29 +378,41 @@ public final class MCPProviderManager: ObservableObject {
                 Task.detached { await replaced.disconnect() }
             }
             clients[providerId] = client
+            clientGenerations[providerId] = operation.generation
 
-            await registerRemoteToolListChangedHandler(client: client, providerId: providerId)
+            await registerRemoteToolListChangedHandler(
+                client: client,
+                providerId: providerId,
+                generation: operation.generation
+            )
+            try requireCurrentConnectionOperation(operation)
 
             // Discover tools
-            try await discoverTools(for: providerId, client: client, provider: provider)
+            try await discoverTools(
+                for: providerId,
+                client: client,
+                provider: provider,
+                operation: operation
+            )
+            try requireCurrentConnectionOperation(operation)
 
-            // Update state to connected (re-read state since discoverTools modified it)
-            if var updatedState = providerStates[providerId] {
-                updatedState.isConnecting = false
-                updatedState.isConnected = true
-                updatedState.lastConnectedAt = Date()
-                updatedState.lastError = nil
-                updatedState.requiresAuth = false
-                updatedState.resourceMetadataURL = nil
-                updatedState.lastFailureWasTransient = false
-                providerStates[providerId] = updatedState
-                print(
-                    "[Osaurus] MCP Provider '\(provider.name)': Connected with \(updatedState.discoveredToolCount) tools"
-                )
+            guard commitConnectedState(provider: provider, operation: operation) else {
+                throw CancellationError()
             }
             notifyStatusChanged()
 
         } catch {
+            let connectionError = error
+            guard connectionOperationIsCurrent(operation), !Task.isCancelled else {
+                await cleanupConnectAttempt(
+                    providerId: providerId,
+                    attemptClient: attemptClient,
+                    operation: operation,
+                    clearCurrentResources: false
+                )
+                throw CancellationError()
+            }
+
             // Stdio transports talk to a local subprocess, not an HTTP server,
             // so there's no 401 to probe — the error is either a spawn
             // failure or a protocol mismatch.
@@ -303,6 +420,15 @@ public final class MCPProviderManager: ObservableObject {
                 provider.transport == .http
                 ? await probeAuthFailure(for: provider)
                 : nil
+            guard connectionOperationIsCurrent(operation), !Task.isCancelled else {
+                await cleanupConnectAttempt(
+                    providerId: providerId,
+                    attemptClient: attemptClient,
+                    operation: operation,
+                    clearCurrentResources: false
+                )
+                throw CancellationError()
+            }
 
             if let authFailure {
                 // Try one refresh+retry for OAuth providers when we already have tokens.
@@ -313,21 +439,50 @@ public final class MCPProviderManager: ObservableObject {
                         priority: .userInitiated,
                         operation: { MCPProviderKeychain.getOAuthTokens(for: providerId) }
                     ).value,
-                    tokens.refreshToken?.isEmpty == false
-                {
+                    tokens.refreshToken?.isEmpty == false {
+                    guard connectionOperationIsCurrent(operation), !Task.isCancelled else {
+                        await cleanupConnectAttempt(
+                            providerId: providerId,
+                            attemptClient: attemptClient,
+                            operation: operation,
+                            clearCurrentResources: false
+                        )
+                        throw CancellationError()
+                    }
                     do {
                         _ = try await MCPOAuthService.refresh(provider: provider, tokens: tokens)
+                        try requireCurrentConnectionOperation(operation)
+                        await cleanupConnectAttempt(
+                            providerId: providerId,
+                            attemptClient: attemptClient,
+                            operation: operation,
+                            clearCurrentResources: true
+                        )
                         // Re-enter without retry budget so we can't loop.
-                        try await performConnect(provider: provider, allowOAuthRetry: false)
+                        try await performConnect(
+                            provider: provider,
+                            allowOAuthRetry: false,
+                            operation: operation
+                        )
                         return
-                    } catch {
-                        if MCPOAuthService.isPermanentAuthFailure(error) {
+                    } catch let refreshError {
+                        guard connectionOperationIsCurrent(operation), !Task.isCancelled else {
+                            await cleanupConnectAttempt(
+                                providerId: providerId,
+                                attemptClient: attemptClient,
+                                operation: operation,
+                                clearCurrentResources: false
+                            )
+                            throw CancellationError()
+                        }
+                        if MCPOAuthService.isPermanentAuthFailure(refreshError) {
                             handlePermanentOAuthFailure(providerId: providerId)
                         }
                         // Fall through and surface the original auth challenge.
                     }
                 }
 
+                state = providerStates[providerId] ?? MCPProviderState(providerId: providerId)
                 state.requiresAuth = true
                 state.resourceMetadataURL = authFailure.challenge?.resourceMetadataURL
                 state.lastError = MCPAuthFailureProbe.failureDescription(
@@ -335,7 +490,8 @@ public final class MCPProviderManager: ObservableObject {
                     probe: authFailure
                 )
             } else {
-                state.lastError = error.localizedDescription
+                state = providerStates[providerId] ?? MCPProviderState(providerId: providerId)
+                state.lastError = connectionError.localizedDescription
             }
 
             state.isConnecting = false
@@ -346,41 +502,95 @@ public final class MCPProviderManager: ObservableObject {
             // else is classified so the launch/network/wake/activation
             // recovery paths know whether a retry can help.
             state.lastFailureWasTransient =
-                authFailure == nil && Self.isTransientConnectError(error)
+                authFailure == nil && Self.isTransientConnectError(connectionError)
             providerStates[providerId] = state
 
-            // Unregister any tools that were registered before the failure.
-            // A failed initial/reconnect attempt leaves no executable client,
-            // so active sessions must also discard any frozen schemas.
-            if let tools = registeredTools[providerId] {
-                ToolRegistry.shared.unregister(names: tools.map { $0.name })
-            }
+            await cleanupConnectAttempt(
+                providerId: providerId,
+                attemptClient: attemptClient,
+                operation: operation,
+                clearCurrentResources: true
+            )
 
-            // Clean up local state. The half-connected client from THIS
-            // attempt must be disconnected explicitly so its transport
-            // invalidates the URLSession and stops any SSE retry loop.
-            let staleClient = clients.removeValue(forKey: providerId)
-            var teardown: [MCP.Client] = []
-            if let attemptClient { teardown.append(attemptClient) }
-            if let staleClient, staleClient !== attemptClient { teardown.append(staleClient) }
-            for client in teardown {
-                Task.detached { await client.disconnect() }
+            print("[Osaurus] MCP Provider '\(provider.name)': Connection failed - \(connectionError)")
+            notifyStatusChanged()
+            throw connectionError
+        }
+    }
+
+    private func cleanupConnectAttempt(
+        providerId: UUID,
+        attemptClient: MCP.Client?,
+        operation: MCPConnectionOperation,
+        clearCurrentResources: Bool
+    ) async {
+        let mayClearCurrentResources =
+            clearCurrentResources && connectionOperationIsCurrent(operation)
+        var teardown: [MCP.Client] = []
+        if let attemptClient { teardown.append(attemptClient) }
+
+        let ownsStoredClient = clientGenerations[providerId] == operation.generation
+        if mayClearCurrentResources || ownsStoredClient {
+            if let storedClient = clients.removeValue(forKey: providerId),
+                storedClient !== attemptClient {
+                teardown.append(storedClient)
+            }
+            clientGenerations.removeValue(forKey: providerId)
+        }
+
+        let ownsRegisteredTools = registeredToolGenerations[providerId] == operation.generation
+        var catalogChanged = false
+        if mayClearCurrentResources || ownsRegisteredTools {
+            if let tools = registeredTools[providerId] {
+                ToolRegistry.shared.unregister(names: tools.map(\.name))
+                catalogChanged = true
             }
             discoveredTools.removeValue(forKey: providerId)
             registeredTools.removeValue(forKey: providerId)
-            await publishToolCatalogChanged()
-            // Stdio subprocesses might have been spawned successfully even
-            // though the MCP handshake failed — make sure we don't leak them.
-            stopStdioRunners(for: providerId)
-
-            print("[Osaurus] MCP Provider '\(provider.name)': Connection failed - \(error)")
-            notifyStatusChanged()
-            throw error
+            registeredToolGenerations.removeValue(forKey: providerId)
         }
+
+        stopStdioRunners(
+            for: providerId,
+            operation: mayClearCurrentResources ? nil : operation
+        )
+        for client in teardown {
+            await client.disconnect()
+        }
+        if catalogChanged {
+            await publishToolCatalogChanged()
+        }
+    }
+
+    @discardableResult
+    func commitConnectedState(
+        provider: MCPProvider,
+        operation: MCPConnectionOperation
+    ) -> Bool {
+        guard !Task.isCancelled,
+            connectionOperationIsCurrent(operation),
+            var updatedState = providerStates[provider.id]
+        else { return false }
+        updatedState.isConnecting = false
+        updatedState.isConnected = true
+        updatedState.lastConnectedAt = Date()
+        updatedState.lastError = nil
+        updatedState.requiresAuth = false
+        updatedState.resourceMetadataURL = nil
+        updatedState.lastFailureWasTransient = false
+        providerStates[provider.id] = updatedState
+        print(
+            "[Osaurus] MCP Provider '\(provider.name)': Connected with \(updatedState.discoveredToolCount) tools"
+        )
+        return true
     }
 
     /// Disconnect from a provider
     public func disconnect(providerId: UUID) {
+        // Invalidate first so any suspended connect/retry observes cancellation
+        // before it can publish a client, tools, or connected state.
+        invalidateConnectionOperation(providerId: providerId)
+
         // Unregister tools
         if let tools = registeredTools[providerId] {
             let toolNames = tools.map { $0.name }
@@ -394,8 +604,10 @@ public final class MCPProviderManager: ObservableObject {
         if let client = clients.removeValue(forKey: providerId) {
             Task.detached { await client.disconnect() }
         }
+        clientGenerations.removeValue(forKey: providerId)
         discoveredTools.removeValue(forKey: providerId)
         registeredTools.removeValue(forKey: providerId)
+        registeredToolGenerations.removeValue(forKey: providerId)
 
         // Tear down any stdio subprocesses owned by this provider.
         stopStdioRunners(for: providerId)
@@ -476,7 +688,12 @@ public final class MCPProviderManager: ObservableObject {
         maxAttempts: Int = MCPProviderManager.connectMaxAttempts
     ) async {
         let attempts = max(1, maxAttempts)
+        let disconnectEpoch = disconnectEpochs[providerId] ?? 0
         for attempt in 1 ... attempts {
+            guard (disconnectEpochs[providerId] ?? 0) == disconnectEpoch,
+                configuration.provider(id: providerId)?.enabled == true,
+                !Task.isCancelled
+            else { return }
             do {
                 if let testConnectOverride {
                     try await testConnectOverride(providerId)
@@ -498,9 +715,16 @@ public final class MCPProviderManager: ObservableObject {
                 } else {
                     try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 }
+                guard (disconnectEpochs[providerId] ?? 0) == disconnectEpoch,
+                    configuration.provider(id: providerId)?.enabled == true,
+                    !Task.isCancelled
+                else { return }
                 // Another path (manual connect, OAuth sign-in) may have
                 // connected while we waited — don't pile on a duplicate.
-                if providerStates[providerId]?.isConnected == true { return }
+                if providerStates[providerId]?.isConnected == true
+                    || providerStates[providerId]?.isConnecting == true {
+                    return
+                }
             }
         }
     }
@@ -645,7 +869,10 @@ public final class MCPProviderManager: ObservableObject {
     func _testRemoveProviders(ids: [UUID]) {
         configuration.providers.removeAll { ids.contains($0.id) }
         for id in ids {
+            disconnect(providerId: id)
             providerStates.removeValue(forKey: id)
+            connectionGenerations.removeValue(forKey: id)
+            disconnectEpochs.removeValue(forKey: id)
         }
         networkRecoveryTask?.cancel()
         networkRecoveryTask = nil
@@ -655,9 +882,38 @@ public final class MCPProviderManager: ObservableObject {
         testNetworkRecoverySettleDelayOverride = nil
     }
 
+    func _testInvalidateConnectionOperation(providerId: UUID) {
+        invalidateConnectionOperation(providerId: providerId)
+    }
+
+    func _testRegisterStdioRunnerOperation(_ operation: MCPConnectionOperation) -> UUID {
+        let token = UUID()
+        stdioRunnerOperations[operation.providerId] = operation
+        stdioRunnerTokens[operation.providerId] = token
+        return token
+    }
+
+    func _testHandleStdioProcessExit(
+        providerId: UUID,
+        runnerToken: UUID,
+        exitCode: Int32 = 1,
+        stderrTail: String = "fixture exit"
+    ) {
+        handleStdioProcessExit(
+            providerId: providerId,
+            runnerToken: runnerToken,
+            exitCode: exitCode,
+            stderrTail: stderrTail
+        )
+    }
+
     /// Disconnect from all providers
     public func disconnectAll() {
-        for providerId in clients.keys {
+        let providerIds = Set(clients.keys)
+            .union(activeConnectionOperations.keys)
+            .union(hostStdioRunners.keys)
+            .union(sandboxStdioRunners.keys)
+        for providerId in providerIds {
             disconnect(providerId: providerId)
         }
     }
@@ -674,6 +930,8 @@ public final class MCPProviderManager: ObservableObject {
         let sandboxRunners = Array(sandboxStdioRunners.values)
         hostStdioRunners.removeAll()
         sandboxStdioRunners.removeAll()
+        stdioRunnerOperations.removeAll()
+        stdioRunnerTokens.removeAll()
 
         disconnectAll()
 
@@ -704,7 +962,7 @@ public final class MCPProviderManager: ObservableObject {
         // at launch, earlier session loss) is recoverable — reconnect instead
         // of failing the model's tool call outright.
         if clients[providerId] == nil, provider.enabled {
-            try await performConnect(provider: provider, allowOAuthRetry: true)
+            try await connect(providerId: providerId)
         }
         guard let client = clients[providerId] else {
             throw MCPProviderError.notConnected
@@ -738,7 +996,7 @@ public final class MCPProviderManager: ObservableObject {
             // OAuth/bearer credentials and negotiates a new session. If the
             // reconnect fails we surface the reconnect error (it is the more
             // actionable one: auth required, server down, ...).
-            try await performConnect(provider: provider, allowOAuthRetry: true)
+            try await connect(providerId: providerId)
             guard let freshClient = clients[providerId] else {
                 throw MCPProviderError.notConnected
             }
@@ -823,42 +1081,26 @@ public final class MCPProviderManager: ObservableObject {
     /// success label. Stdio test runs are intentionally short-lived;
     /// the provider isn't persisted and no state is left behind.
     public func testStdioConnection(provider: MCPProvider) async throws -> Int {
-        // Build the production transport; spawning a real subprocess is
-        // the whole point — fake-test paths would miss PATH lookup, env
-        // resolution, and protocol mismatches.
-        let transport: any MCP.Transport
-        do {
-            transport = try await createStdioTransport(for: provider)
-        } catch {
-            // `createStdioTransport` retains the runner in
-            // `hostStdioRunners` / `sandboxStdioRunners` on success but
-            // we don't want a test attempt to register one — wipe both
-            // before rethrowing.
-            stopStdioRunners(for: provider.id)
-            throw error
+        let result = await MCPProviderProbeService.probeStdio(provider: provider)
+        guard result.succeeded else {
+            throw MCPProviderError.connectionFailed(result.redactedMessage)
         }
-
-        let client = MCP.Client(name: "Osaurus", version: "1.0.0")
-
-        do {
-            try await withTimeout(seconds: 10) {
-                _ = try await client.connect(transport: transport)
-            }
-            let tools = try await withTimeout(seconds: 10) {
-                try await client.listAllTools()
-            }
-            stopStdioRunners(for: provider.id)
-            return tools.count
-        } catch {
-            stopStdioRunners(for: provider.id)
-            throw error
-        }
+        return result.toolCount
     }
 
-    /// Tear down any stdio runners registered against `providerId`. Used
-    /// by `testStdioConnection` so probe attempts don't leak subprocesses,
-    /// and by `connect`'s catch path for the same reason.
-    private func stopStdioRunners(for providerId: UUID) {
+    /// Tear down any live-connection stdio runners registered against
+    /// `providerId`, including half-started runners in `connect`'s catch path.
+    private func stopStdioRunners(
+        for providerId: UUID,
+        operation: MCPConnectionOperation? = nil
+    ) {
+        if let operation {
+            guard let registered = stdioRunnerOperations[providerId], registered === operation else {
+                return
+            }
+        }
+        stdioRunnerOperations.removeValue(forKey: providerId)
+        stdioRunnerTokens.removeValue(forKey: providerId)
         if let runner = hostStdioRunners.removeValue(forKey: providerId) {
             Task { await runner.stop() }
         }
@@ -990,12 +1232,15 @@ public final class MCPProviderManager: ObservableObject {
     /// `MCPStdioHostRunner` or `SandboxStdioRunner` depending on the
     /// provider's `executionHost`. The runner is retained in the manager
     /// so `disconnect(...)` can stop the subprocess later.
-    private func createTransport(for provider: MCPProvider) async throws -> any MCP.Transport {
+    private func createTransport(
+        for provider: MCPProvider,
+        operation: MCPConnectionOperation? = nil
+    ) async throws -> any MCP.Transport {
         switch provider.transport {
         case .http:
-            return try await createHTTPTransport(for: provider)
+            return try await createHTTPTransport(for: provider, operation: operation)
         case .stdio:
-            return try await createStdioTransport(for: provider)
+            return try await createStdioTransport(for: provider, operation: operation)
         }
     }
 
@@ -1004,28 +1249,53 @@ public final class MCPProviderManager: ObservableObject {
     /// stays alive — without that the actor would be deallocated, the
     /// `FileDescriptor`s would close, and the MCP client would see an EOF on
     /// its first read.
-    private func createStdioTransport(for provider: MCPProvider) async throws -> any MCP.Transport {
+    private func createStdioTransport(
+        for provider: MCPProvider,
+        operation: MCPConnectionOperation? = nil
+    ) async throws -> any MCP.Transport {
         switch provider.executionHost {
         case .host:
             let runner = try MCPStdioHostRunner(provider: provider)
             let providerId = provider.id
+            let runnerToken = UUID()
+            stopStdioRunners(for: providerId)
+            hostStdioRunners[providerId] = runner
+            stdioRunnerTokens[providerId] = runnerToken
+            if let operation {
+                stdioRunnerOperations[providerId] = operation
+            }
             await runner.setProcessExitHandler { [weak self] exitCode in
                 Task { @MainActor in
                     guard let self else { return }
                     let tail = await runner.lastStderrTail()
                     self.handleStdioProcessExit(
                         providerId: providerId,
+                        runnerToken: runnerToken,
                         exitCode: exitCode,
                         stderrTail: tail
                     )
                 }
             }
-            try await runner.start()
-            hostStdioRunners[provider.id] = runner
+            do {
+                try await runner.start(connectionOperation: operation)
+                if let operation {
+                    try requireCurrentConnectionOperation(operation)
+                }
+            } catch {
+                if stdioRunnerTokens[providerId] == runnerToken {
+                    stopStdioRunners(for: providerId)
+                } else {
+                    await runner.stop()
+                }
+                throw error
+            }
             return runner.transport
         case .sandbox:
             #if os(macOS)
                 let availability = await SandboxManager.shared.checkAvailability()
+                if let operation {
+                    try requireCurrentConnectionOperation(operation)
+                }
                 guard availability.isAvailable else {
                     // OS doesn't support the sandbox at all (macOS < 26).
                     // No amount of provisioning will fix this — surface
@@ -1040,6 +1310,9 @@ public final class MCPProviderManager: ObservableObject {
                 if await SandboxManager.shared.status() != .running {
                     do {
                         try await SandboxManager.shared.startContainer()
+                        if let operation {
+                            try requireCurrentConnectionOperation(operation)
+                        }
                     } catch {
                         throw MCPStdioTransportError.processSpawnFailed(
                             "Could not start the Osaurus sandbox: "
@@ -1057,6 +1330,9 @@ public final class MCPProviderManager: ObservableObject {
                 let agentName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
                 do {
                     try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
+                    if let operation {
+                        try requireCurrentConnectionOperation(operation)
+                    }
                 } catch {
                     throw MCPStdioTransportError.processSpawnFailed(
                         "Could not provision the sandbox agent: " + error.localizedDescription
@@ -1064,19 +1340,38 @@ public final class MCPProviderManager: ObservableObject {
                 }
                 let runner = try SandboxStdioRunner(provider: provider, agentName: agentName)
                 let providerId = provider.id
+                let runnerToken = UUID()
+                stopStdioRunners(for: providerId)
+                sandboxStdioRunners[providerId] = runner
+                stdioRunnerTokens[providerId] = runnerToken
+                if let operation {
+                    stdioRunnerOperations[providerId] = operation
+                }
                 await runner.setProcessExitHandler { [weak self] exitCode in
                     Task { @MainActor in
                         guard let self else { return }
                         let tail = await runner.lastStderrTail()
                         self.handleStdioProcessExit(
                             providerId: providerId,
+                            runnerToken: runnerToken,
                             exitCode: exitCode,
                             stderrTail: tail
                         )
                     }
                 }
-                try await runner.start()
-                sandboxStdioRunners[provider.id] = runner
+                do {
+                    try await runner.start(connectionOperation: operation)
+                    if let operation {
+                        try requireCurrentConnectionOperation(operation)
+                    }
+                } catch {
+                    if stdioRunnerTokens[providerId] == runnerToken {
+                        stopStdioRunners(for: providerId)
+                    } else {
+                        await runner.stop()
+                    }
+                    throw error
+                }
                 return runner.transport
             #else
                 throw MCPStdioTransportError.sandboxUnavailable
@@ -1093,7 +1388,10 @@ public final class MCPProviderManager: ObservableObject {
     /// unsupported for `Authorization`, and per-request injection also covers
     /// the SDK's SSE reconnects. Timeout semantics live in
     /// `MCPHTTPTransportBuilder`.
-    private func createHTTPTransport(for provider: MCPProvider) async throws -> HTTPClientTransport {
+    private func createHTTPTransport(
+        for provider: MCPProvider,
+        operation: MCPConnectionOperation? = nil
+    ) async throws -> HTTPClientTransport {
         guard let endpoint = URL(string: provider.url) else {
             throw MCPProviderError.invalidURL
         }
@@ -1102,7 +1400,7 @@ public final class MCPProviderManager: ObservableObject {
         var headers = provider.resolvedHeaders()
         switch provider.authType {
         case .oauth:
-            let tokens = try await ensureFreshOAuthTokens(for: provider)
+            let tokens = try await ensureFreshOAuthTokens(for: provider, operation: operation)
             headers["Authorization"] = "Bearer \(tokens.accessToken)"
         case .bearerToken:
             // Reading the token from the Keychain blocks on a securityd XPC round
@@ -1112,6 +1410,9 @@ public final class MCPProviderManager: ObservableObject {
             let token = await Task.detached(priority: .userInitiated) {
                 MCPProviderKeychain.getToken(for: providerId)
             }.value
+            if let operation {
+                try requireCurrentConnectionOperation(operation)
+            }
             if let token, !token.isEmpty {
                 headers["Authorization"] = "Bearer \(token)"
             }
@@ -1129,12 +1430,18 @@ public final class MCPProviderManager: ObservableObject {
     }
 
     /// Refresh OAuth tokens proactively if they are at-or-near expiry.
-    private func ensureFreshOAuthTokens(for provider: MCPProvider) async throws -> MCPOAuthTokens {
+    private func ensureFreshOAuthTokens(
+        for provider: MCPProvider,
+        operation: MCPConnectionOperation? = nil
+    ) async throws -> MCPOAuthTokens {
         // Off the main actor: the Keychain read blocks on securityd XPC + decrypt.
         let providerId = provider.id
         let stored = await Task.detached(priority: .userInitiated) {
             MCPProviderKeychain.getOAuthTokens(for: providerId)
         }.value
+        if let operation {
+            try requireCurrentConnectionOperation(operation)
+        }
         guard let tokens = stored else {
             throw MCPProviderError.connectionFailed("Sign in required")
         }
@@ -1145,9 +1452,14 @@ public final class MCPProviderManager: ObservableObject {
             throw MCPProviderError.connectionFailed("Session expired — please sign in again")
         }
         do {
-            return try await MCPOAuthService.refresh(provider: provider, tokens: tokens)
+            let refreshed = try await MCPOAuthService.refresh(provider: provider, tokens: tokens)
+            if let operation {
+                try requireCurrentConnectionOperation(operation)
+            }
+            return refreshed
         } catch {
-            if MCPOAuthService.isPermanentAuthFailure(error) {
+            let mayMutateAuthState = operation.map { connectionOperationIsCurrent($0) } ?? true
+            if MCPOAuthService.isPermanentAuthFailure(error), mayMutateAuthState {
                 handlePermanentOAuthFailure(providerId: provider.id)
             }
             throw MCPProviderError.connectionFailed(
@@ -1168,18 +1480,63 @@ public final class MCPProviderManager: ObservableObject {
         notifyStatusChanged()
     }
 
-    private func handleStdioProcessExit(providerId: UUID, exitCode: Int32, stderrTail: String) {
-        guard providerStates[providerId]?.isConnected == true else { return }
+    private func handleStdioProcessExit(
+        providerId: UUID,
+        runnerToken: UUID,
+        exitCode: Int32,
+        stderrTail: String
+    ) {
+        guard stdioRunnerTokens[providerId] == runnerToken else { return }
+        let runnerOperation = stdioRunnerOperations[providerId]
+        let runnerGeneration = runnerOperation?.generation
+        let isSuperseded = runnerGeneration.map {
+            connectionGenerations[providerId] != $0
+        } ?? false
 
-        if let tools = registeredTools[providerId] {
-            ToolRegistry.shared.unregister(names: tools.map { $0.name })
+        if let runnerOperation {
+            runnerOperation.cancel()
+            if activeConnectionOperations[providerId] === runnerOperation {
+                activeConnectionOperations.removeValue(forKey: providerId)
+            }
+            if !isSuperseded {
+                connectionGenerations[providerId] = (connectionGenerations[providerId] ?? 0) &+ 1
+            }
         }
-        if let client = clients.removeValue(forKey: providerId) {
-            Task.detached { await client.disconnect() }
+
+        var catalogChanged = false
+        let ownsRegisteredTools = runnerGeneration.map {
+            registeredToolGenerations[providerId] == $0
+        } ?? true
+        if ownsRegisteredTools {
+            if let tools = registeredTools[providerId] {
+                ToolRegistry.shared.unregister(names: tools.map { $0.name })
+                catalogChanged = true
+            }
+            discoveredTools.removeValue(forKey: providerId)
+            registeredTools.removeValue(forKey: providerId)
+            registeredToolGenerations.removeValue(forKey: providerId)
         }
-        discoveredTools.removeValue(forKey: providerId)
-        registeredTools.removeValue(forKey: providerId)
-        stopStdioRunners(for: providerId)
+
+        let ownsClient = runnerGeneration.map {
+            clientGenerations[providerId] == $0
+        } ?? true
+        if ownsClient {
+            if let client = clients.removeValue(forKey: providerId) {
+                Task.detached { await client.disconnect() }
+            }
+            clientGenerations.removeValue(forKey: providerId)
+        }
+
+        stopStdioRunners(for: providerId, operation: runnerOperation)
+
+        // An old subprocess can exit while a replacement connection is still
+        // resolving credentials or provisioning its runner. Its token may
+        // still be installed, but it must not overwrite the replacement's
+        // connecting/connected state.
+        guard !isSuperseded else {
+            if catalogChanged { scheduleToolCatalogChanged() }
+            return
+        }
 
         if var state = providerStates[providerId] {
             state.isConnected = false
@@ -1193,33 +1550,52 @@ public final class MCPProviderManager: ObservableObject {
             } else {
                 state.lastError = "Stdio MCP subprocess exited\(codeSuffix): \(stderrTail)"
             }
+            state.lastFailureWasTransient = false
             providerStates[providerId] = state
         }
-        scheduleToolCatalogChanged()
+        if catalogChanged { scheduleToolCatalogChanged() }
         notifyStatusChanged()
     }
 
-    private func registerRemoteToolListChangedHandler(client: MCP.Client, providerId: UUID) async {
+    private func registerRemoteToolListChangedHandler(
+        client: MCP.Client,
+        providerId: UUID,
+        generation: UInt64
+    ) async {
         await client.onNotification(ToolListChangedNotification.self) { [weak self] _ in
-            Task { @MainActor in
-                await self?.handleRemoteToolListChanged(providerId: providerId)
+            Task { @MainActor [weak self] in
+                await self?.handleRemoteToolListChanged(
+                    providerId: providerId,
+                    generation: generation
+                )
             }
         }
     }
 
-    private func handleRemoteToolListChanged(providerId: UUID) async {
+    private func handleRemoteToolListChanged(
+        providerId: UUID,
+        generation: UInt64
+    ) async {
         guard let provider = configuration.provider(id: providerId),
-            let client = clients[providerId]
+            let client = clients[providerId],
+            clientGenerations[providerId] == generation
         else { return }
 
         do {
-            try await discoverTools(for: providerId, client: client, provider: provider)
+            try await discoverTools(
+                for: providerId,
+                client: client,
+                provider: provider,
+                expectedGeneration: generation
+            )
         } catch {
-            if var state = providerStates[providerId] {
+            if clients[providerId] === client,
+                clientGenerations[providerId] == generation,
+                var state = providerStates[providerId] {
                 state.lastError = "Tool list refresh failed: \(error.localizedDescription)"
                 providerStates[providerId] = state
+                notifyStatusChanged()
             }
-            notifyStatusChanged()
         }
     }
 
@@ -1273,8 +1649,19 @@ public final class MCPProviderManager: ObservableObject {
         }
     }
 
-    private func discoverTools(for providerId: UUID, client: MCP.Client, provider: MCPProvider) async throws {
-        try await refreshDiscoveredTools(for: providerId, provider: provider) {
+    private func discoverTools(
+        for providerId: UUID,
+        client: MCP.Client,
+        provider: MCPProvider,
+        operation: MCPConnectionOperation? = nil,
+        expectedGeneration: UInt64? = nil
+    ) async throws {
+        try await refreshDiscoveredTools(
+            for: providerId,
+            provider: provider,
+            operation: operation,
+            expectedGeneration: operation?.generation ?? expectedGeneration
+        ) {
             // List tools with timeout, following pagination cursors so servers
             // that split tools/list across pages (e.g. Baserow, #1999) aren't
             // truncated to their first page.
@@ -1290,13 +1677,28 @@ public final class MCPProviderManager: ObservableObject {
     internal func refreshDiscoveredTools(
         for providerId: UUID,
         provider: MCPProvider,
+        operation: MCPConnectionOperation? = nil,
+        expectedGeneration: UInt64? = nil,
         fetch: () async throws -> [MCP.Tool]
     ) async throws {
         let mcpTools = try await fetch()
+        if let operation {
+            try requireCurrentConnectionOperation(operation)
+        }
+        if let expectedGeneration {
+            guard clientGenerations[providerId] == expectedGeneration else {
+                throw CancellationError()
+            }
+        }
         // Only replace the live catalog after the complete paginated fetch
         // succeeds. A failed tools/list refresh therefore leaves the last
         // executable catalog intact instead of erasing it first.
-        replaceDiscoveredTools(mcpTools, for: providerId, provider: provider)
+        replaceDiscoveredTools(
+            mcpTools,
+            for: providerId,
+            provider: provider,
+            generation: expectedGeneration
+        )
         await publishToolCatalogChanged()
     }
 
@@ -1308,7 +1710,8 @@ public final class MCPProviderManager: ObservableObject {
     internal func replaceDiscoveredTools(
         _ mcpTools: [MCP.Tool],
         for providerId: UUID,
-        provider: MCPProvider
+        provider: MCPProvider,
+        generation: UInt64? = nil
     ) -> [MCPProviderTool] {
         if let oldTools = registeredTools[providerId] {
             ToolRegistry.shared.unregister(names: oldTools.map(\.name))
@@ -1317,6 +1720,11 @@ public final class MCPProviderManager: ObservableObject {
         discoveredTools[providerId] = mcpTools
         let tools = registerDiscoveredTools(mcpTools, for: providerId, provider: provider)
         registeredTools[providerId] = tools
+        if let generation {
+            registeredToolGenerations[providerId] = generation
+        } else {
+            registeredToolGenerations.removeValue(forKey: providerId)
+        }
 
         if var state = providerStates[providerId] {
             state.discoveredToolCount = tools.count

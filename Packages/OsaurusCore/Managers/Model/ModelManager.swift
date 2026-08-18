@@ -9,6 +9,7 @@ import Combine
 import Darwin
 import Foundation
 import MLXLLM
+import OsaurusRepository
 import SwiftUI
 import os
 
@@ -230,6 +231,80 @@ final class ModelManager: NSObject, ObservableObject {
     /// async HF response can't race with their assertions and replace
     /// injected entries with whatever HF currently lists.
     nonisolated(unsafe) static var skipBackgroundOrgFetchForTests: Bool = false
+    nonisolated static var allowsAutomaticCatalogWorkForCurrentProcess: Bool {
+        allowsAutomaticCatalogWork(
+            environment: ProcessInfo.processInfo.environment,
+            recognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
+        )
+    }
+
+    /// Suppress catalog networking and home-directory discovery while an
+    /// app-hosted XCTest launch is pending as well as after it is recognized.
+    /// Explicit non-XCTest live-proof launches remain able to read a selected
+    /// model directory; the separate mutation gate keeps automatic top-up off.
+    nonisolated static func allowsAutomaticCatalogWork(
+        environment: [String: String],
+        recognizedTestHost: Bool
+    ) -> Bool {
+        !recognizedTestHost
+            && !ProcessDataRootPolicy.hasTestLaunchMarker(environment: environment)
+    }
+
+    /// Catalog reads remain available to explicit live-proof launches, but an
+    /// isolated process must never mutate a model bundle automatically. This
+    /// uses the same predicate as data-root and Keychain isolation so partial
+    /// launcher configuration still fails closed.
+    nonisolated static var allowsAutomaticCatalogMutationForCurrentProcess: Bool {
+        allowsAutomaticCatalogMutation(
+            environment: ProcessInfo.processInfo.environment,
+            recognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
+        )
+    }
+
+    nonisolated static func allowsAutomaticCatalogMutation(
+        environment: [String: String],
+        recognizedTestHost: Bool
+    ) -> Bool {
+        !hasModelsDirectoryOverride(environment: environment)
+            && !ProcessDataRootPolicy.shouldDisableKeychain(
+                environment: environment,
+                recognizedTestHost: recognizedTestHost
+            )
+    }
+
+    /// Org networking and ambient cache discovery are broader than reading an
+    /// explicitly selected model directory. Keep those side effects disabled
+    /// for every isolated launch and whenever `OSU_MODELS_DIR` selects a
+    /// read-only live-proof collection.
+    nonisolated static var allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess: Bool {
+        allowsAutomaticAmbientCatalogDiscovery(
+            environment: ProcessInfo.processInfo.environment,
+            recognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
+        )
+    }
+
+    nonisolated static func allowsAutomaticAmbientCatalogDiscovery(
+        environment: [String: String],
+        recognizedTestHost: Bool
+    ) -> Bool {
+        allowsAutomaticCatalogMutation(
+            environment: environment,
+            recognizedTestHost: recognizedTestHost
+        )
+    }
+
+    nonisolated private static func hasModelsDirectoryOverride(
+        environment: [String: String]
+    ) -> Bool {
+        guard let raw = environment["OSU_MODELS_DIR"] else { return false }
+        return !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    #if DEBUG
+        /// Records automatic top-up scheduling without allowing tests to
+        /// replace the production download implementation.
+        static var automaticCatalogTopUpScheduleObserverForTests: (([MLXModel]) -> Void)?
+    #endif
 
     // MARK: - Initialization
     override init() {
@@ -237,12 +312,14 @@ final class ModelManager: NSObject, ObservableObject {
 
         loadAvailableModels()
 
-        NotificationCenter.default.publisher(for: .localModelsChanged)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.refreshDownloadStates()
-            }
-            .store(in: &cancellables)
+        if Self.allowsAutomaticCatalogWorkForCurrentProcess {
+            NotificationCenter.default.publisher(for: .localModelsChanged)
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    self?.refreshDownloadStates()
+                }
+                .store(in: &cancellables)
+        }
 
         downloadService.objectWillChange
             .receive(on: DispatchQueue.main)
@@ -253,14 +330,21 @@ final class ModelManager: NSObject, ObservableObject {
 
         // Pull the OsaurusAI HF org listing once on launch so newly published
         // models surface in the Recommended tab without requiring a code push.
-        if !Self.skipBackgroundOrgFetchForTests {
-            Task { [weak self] in await self?.loadOsaurusAIOrgModels() }
+        if !Self.skipBackgroundOrgFetchForTests
+            && Self.allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess {
+            Task { [weak self] in
+                guard Self.allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess else { return }
+                await self?.loadOsaurusAIOrgModels()
+            }
 
             // Discover external bundles (HF cache, LM Studio, custom folders) off the main
             // thread. `rescan()` posts `.localModelsChanged` when the set
             // changes, which re-runs `refreshDownloadStates()` to merge them.
             Task.detached(priority: .utility) {
-                ExternalModelLocator.rescan()
+                guard Self.allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess else { return }
+                ExternalModelLocator.rescan(shouldContinue: {
+                    Self.allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess
+                })
             }
         }
     }
@@ -293,21 +377,40 @@ final class ModelManager: NSObject, ObservableObject {
         // Merge the results back on the main actor when they land. The wait
         // is pushed off-main by `discoverLocalModelsOffMain()`; this `Task`
         // stays main-actor isolated so `self` never crosses actor boundaries.
-        Task { [weak self] in
-            let localModels = await Self.discoverLocalModelsOffMain()
-            self?.mergeAvailable(
-                with: localModels,
-                refreshLocalInstallationMetadata: true
-            )
+        if Self.allowsAutomaticCatalogWorkForCurrentProcess {
+            Task { [weak self] in
+                guard Self.allowsAutomaticCatalogWorkForCurrentProcess else { return }
+                let localModels = await Self.discoverLocalModelsOffMain()
+                guard Self.allowsAutomaticCatalogWorkForCurrentProcess else { return }
+                self?.mergeAvailable(
+                    with: localModels,
+                    refreshLocalInstallationMetadata: true
+                )
+            }
         }
 
         isLoadingModels = false
 
         checkForDeprecatedModels()
 
-        let allModels = availableModels + suggestedModels
-        Task { [downloadService] in
-            await downloadService.topUpCompletedModels(allModels)
+        // A top-up can write missing tokenizer/config files into an otherwise
+        // complete bundle. Test hosts may explicitly point OSU_MODELS_DIR at a
+        // real model collection for live proof, so catalog reads are allowed
+        // but this automatic mutation must remain disabled there.
+        if Self.allowsAutomaticCatalogMutationForCurrentProcess {
+            let allModels = availableModels + suggestedModels
+            #if DEBUG
+                Self.automaticCatalogTopUpScheduleObserverForTests?(allModels)
+            #endif
+            Task { [downloadService] in
+                guard Self.allowsAutomaticCatalogMutationForCurrentProcess else { return }
+                await downloadService.topUpCompletedModels(
+                    allModels,
+                    shouldContinue: {
+                        Self.allowsAutomaticCatalogMutationForCurrentProcess
+                    }
+                )
+            }
         }
     }
 
@@ -1524,17 +1627,20 @@ extension ModelManager {
     /// (callers without a cheap revision signal) the cache's TTL applies.
     fileprivate static func resolveDownloadSize(
         repoId: String,
-        revision: String?
+        revision: String?,
+        shouldContinue: @Sendable () -> Bool = { true }
     ) async -> Int64? {
+        guard shouldContinue() else { return nil }
         if let cached = ModelSizeCache.bytes(forId: repoId, matchingRevision: revision) {
             return cached
         }
+        guard shouldContinue() else { return nil }
         let fetched = await HuggingFaceService.shared.estimateTotalSize(
             repoId: repoId,
             patterns: ModelDownloadService.downloadFilePatterns,
             excludedFiles: ModelDownloadService.downloadExcludedFiles
         )
-        if let fetched {
+        if let fetched, shouldContinue() {
             ModelSizeCache.record(id: repoId, bytes: fetched, revision: revision)
         }
         return fetched
@@ -1711,6 +1817,7 @@ extension ModelManager {
     /// them into `suggestedModels`. Curated entries always win on duplicate
     /// IDs so editorial descriptions and Top-Pick flags survive.
     func loadOsaurusAIOrgModels() async {
+        guard Self.allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess else { return }
         guard
             let url = Self.makeHFModelsURL(
                 author: Self.osaurusOrgAuthor,
@@ -1720,6 +1827,7 @@ extension ModelManager {
         else { return }
 
         let fetched = (try? await Self.requestHFModels(at: url)) ?? []
+        guard Self.allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess else { return }
         guard !fetched.isEmpty else { return }
 
         // Drop repos that other Settings panels own (rampart PII guard,
@@ -1770,9 +1878,18 @@ extension ModelManager {
             for repoId in repoIdsToSize {
                 let revision = revisionById[repoId.lowercased()]
                 group.addTask {
-                    (
+                    guard Self.allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess else {
+                        return (repoId.lowercased(), nil)
+                    }
+                    return (
                         repoId.lowercased(),
-                        await Self.resolveDownloadSize(repoId: repoId, revision: revision)
+                        await Self.resolveDownloadSize(
+                            repoId: repoId,
+                            revision: revision,
+                            shouldContinue: {
+                                Self.allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess
+                            }
+                        )
                     )
                 }
             }
@@ -1783,6 +1900,7 @@ extension ModelManager {
             return collected
         }
 
+        guard Self.allowsAutomaticAmbientCatalogDiscoveryForCurrentProcess else { return }
         applyOsaurusOrgFetch(autoFetched: autoFetched, statsById: statsById, sizesById: sizesById)
     }
 
@@ -1876,8 +1994,34 @@ extension ModelManager {
     private static nonisolated(unsafe) var localModelsScanInFlight = false
     private static nonisolated let localModelsScanWaitLimit: TimeInterval = 10
     private static nonisolated(unsafe) var lastLocalModelsScanDiagnostic: [String: Any]?
-    nonisolated(unsafe) static var scanLocalModelsOverrideForTests: ((URL) -> [MLXModel])?
-    nonisolated(unsafe) static var localModelsScanWaitLimitOverrideForTests: TimeInterval?
+    nonisolated(unsafe) private static var scanLocalModelsOverrideForTestsStorage: ((URL) -> [MLXModel])?
+    nonisolated(unsafe) private static var localModelsScanWaitLimitOverrideForTestsStorage: TimeInterval?
+
+    nonisolated static var scanLocalModelsOverrideForTests: ((URL) -> [MLXModel])? {
+        get {
+            localModelsCacheCondition.lock()
+            defer { localModelsCacheCondition.unlock() }
+            return scanLocalModelsOverrideForTestsStorage
+        }
+        set {
+            localModelsCacheCondition.lock()
+            scanLocalModelsOverrideForTestsStorage = newValue
+            localModelsCacheCondition.unlock()
+        }
+    }
+
+    nonisolated static var localModelsScanWaitLimitOverrideForTests: TimeInterval? {
+        get {
+            localModelsCacheCondition.lock()
+            defer { localModelsCacheCondition.unlock() }
+            return localModelsScanWaitLimitOverrideForTestsStorage
+        }
+        set {
+            localModelsCacheCondition.lock()
+            localModelsScanWaitLimitOverrideForTestsStorage = newValue
+            localModelsCacheCondition.unlock()
+        }
+    }
 
     nonisolated static func invalidateLocalModelsCache() {
         localModelsCacheCondition.lock()
@@ -1937,18 +2081,18 @@ extension ModelManager {
         // rather than letting it silently beachball; behavior is unchanged.
         if Thread.isMainThread {
             Self.discoveryLog.error(
-                "discoverLocalModels() called on the MAIN THREAD with a cold cache — it may block up to \(localModelsScanWaitLimitOverrideForTests ?? localModelsScanWaitLimit, privacy: .public)s. Use discoverLocalModelsOffMain() from UI/handoff paths."
+                "discoverLocalModels() called on the MAIN THREAD with a cold cache — it may block up to \(localModelsScanWaitLimitOverrideForTestsStorage ?? localModelsScanWaitLimit, privacy: .public)s. Use discoverLocalModelsOffMain() from UI/handoff paths."
             )
         }
 
         if localModelsScanInFlight {
-            let waitLimit = localModelsScanWaitLimitOverrideForTests ?? localModelsScanWaitLimit
+            let waitLimit = localModelsScanWaitLimitOverrideForTestsStorage ?? localModelsScanWaitLimit
             let cached = waitForLocalModelsScan(until: Date().addingTimeInterval(waitLimit)) ?? []
             localModelsCacheCondition.unlock()
             return mergeExternalModels(into: cached)
         }
 
-        let waitLimit = localModelsScanWaitLimitOverrideForTests ?? localModelsScanWaitLimit
+        let waitLimit = localModelsScanWaitLimitOverrideForTestsStorage ?? localModelsScanWaitLimit
         let deadline = Date().addingTimeInterval(waitLimit)
         startLocalModelsScanLocked()
 

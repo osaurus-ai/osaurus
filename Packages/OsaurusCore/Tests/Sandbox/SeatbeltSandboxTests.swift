@@ -1,4 +1,5 @@
 import Foundation
+import OsaurusRepository
 import Testing
 
 @testable import OsaurusCore
@@ -86,6 +87,40 @@ struct SeatbeltSandboxTests {
     }
 
     // MARK: - Profile generation
+
+    @Test("Seatbelt child preserves isolation and rejects reserved overlays")
+    func childEnvironmentPreservesIsolationPolicy() throws {
+        let parentRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-seatbelt-parent-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: parentRoot) }
+        try FileManager.default.createDirectory(at: parentRoot, withIntermediateDirectories: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: parentRoot.path)
+
+        let environment = SeatbeltExecutor.environmentForChildProcess(
+            requestEnvironment: [
+                "TOOL_SETTING": "retained",
+                ProcessDataRootPolicy.testRootEnvironmentKey: "/tmp/provider-root",
+                ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "0",
+                ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey: "1",
+            ],
+            parentEnvironment: [
+                ProcessDataRootPolicy.testRootEnvironmentKey: "  \(parentRoot.path)  ",
+                ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+            ],
+            parentRecognizedTestHost: false
+        )
+
+        #expect(environment["TOOL_SETTING"] == "retained")
+        #expect(
+            environment[ProcessDataRootPolicy.testRootEnvironmentKey]
+                == parentRoot.standardizedFileURL.resolvingSymlinksInPath().path
+        )
+        #expect(
+            environment[ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey] == "1"
+        )
+        #expect(environment[ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey] == nil)
+        #expect(environment[ProcessDataRootPolicy.realKeychainTestNamespaceEnvironmentKey] == nil)
+    }
 
     @Test("profile is deny-by-default and grants workspace + temp writes")
     func profileShape() {
