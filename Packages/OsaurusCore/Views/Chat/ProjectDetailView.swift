@@ -43,6 +43,10 @@ struct ProjectDetailView: View {
     @State private var contentSearchTask: Task<Void, Never>?
     @State private var isContentSearchInFlight: Bool = false
     @State private var isAgentPickerPresented = false
+    /// A few lines of this project's shared memory, for the at-a-glance
+    /// snippet on the page (the full view lives in Memory settings).
+    @State private var memoryPreviewLines: [String] = []
+    @State private var memoryItemCount: Int = 0
 
     private var memberSessions: [ChatSessionData] {
         sessionsManager.sessions.filter { $0.projectId == project.id && !$0.archived }
@@ -144,6 +148,7 @@ struct ProjectDetailView: View {
                 VStack(alignment: .leading, spacing: 28) {
                     instructionsSection
                     knowledgeSection
+                    memorySection
                     defaultAgentSection
                 }
                 .padding(.horizontal, 24)
@@ -164,6 +169,7 @@ struct ProjectDetailView: View {
                 header
                 instructionsSection
                 knowledgeSection
+                memorySection
                 defaultAgentSection
                 conversationsSection
             }
@@ -184,6 +190,107 @@ struct ProjectDetailView: View {
         contentSearchTask?.cancel()
         contentMatchedSessionIds = []
         isContentSearchInFlight = false
+        loadMemoryPreview()
+    }
+
+    /// Load a small snippet of the project's shared memory for the page.
+    /// Prefers curated facts, then episode summaries, then raw turns, so the
+    /// snippet reads as cleanly as what's available. Off-main (DB reads).
+    private func loadMemoryPreview() {
+        let key = MemoryNamespace.project(project.id).key
+        Task.detached {
+            let facts = (try? MemoryDatabase.shared.loadPinnedFacts(agentId: key, limit: 20)) ?? []
+            let episodes =
+                (try? MemoryDatabase.shared.loadEpisodes(agentId: key, days: 3650, limit: 20)) ?? []
+            let transcripts =
+                (try? MemoryDatabase.shared.loadTranscript(agentId: key, days: 3650, limit: 20)) ?? []
+            let count = facts.count + episodes.count + transcripts.count
+
+            var raw: [String] = facts.map(\.content)
+            if raw.count < 3 { raw += episodes.map(\.summary) }
+            if raw.count < 3 { raw += transcripts.map(\.content) }
+            let lines = raw.prefix(3).map { line -> String in
+                let t = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                return t.count > 110 ? String(t.prefix(110)) + "…" : t
+            }
+
+            await MainActor.run {
+                memoryItemCount = count
+                memoryPreviewLines = Array(lines)
+            }
+        }
+    }
+
+    private func openProjectMemory() {
+        ManagementStateManager.shared.pendingMemoryProjectPreview =
+            MemoryNamespace.project(project.id).key
+        AppDelegate.shared?.showManagementWindow(initialTab: .memory)
+    }
+
+    // MARK: - Shared Memory
+
+    /// At-a-glance snippet of what the project's chats have learned, with a
+    /// jump into the full view in Memory settings. Surfaces project memory
+    /// on the page instead of burying it in Settings → Memory → Agents.
+    private var memorySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Shared Memory", bundle: .module)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+                Button(action: openProjectMemory) {
+                    HStack(spacing: 3) {
+                        Text("Open in Memory", bundle: .module)
+                            .font(.system(size: 11, weight: .semibold))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .foregroundColor(theme.accentColor)
+                }
+                .buttonStyle(.plain)
+                .pointingHandCursor()
+            }
+
+            Text("What chats in this project have learned, shared across every agent.", bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+
+            if memoryPreviewLines.isEmpty {
+                Text("Chats in this project will build shared memory here.", bundle: .module)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.35 : 0.5))
+                    )
+            } else {
+                VStack(alignment: .leading, spacing: 7) {
+                    ForEach(Array(memoryPreviewLines.enumerated()), id: \.offset) { _, line in
+                        HStack(alignment: .top, spacing: 7) {
+                            Circle()
+                                .fill(theme.accentColor.opacity(0.6))
+                                .frame(width: 4, height: 4)
+                                .padding(.top, 6)
+                            Text(verbatim: line)
+                                .font(.system(size: 12))
+                                .foregroundColor(theme.primaryText)
+                                .lineLimit(2)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.35 : 0.5))
+                )
+            }
+        }
     }
 
     // MARK: - Header
