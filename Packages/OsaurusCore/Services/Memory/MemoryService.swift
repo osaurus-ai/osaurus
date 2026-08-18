@@ -1154,11 +1154,36 @@ public actor MemoryService {
             MemoryLogger.service.info(
                 "distill: mirrored episode #\(mirroredId) (+\(pinned) pinned) to \(namespaceKey, privacy: .public)"
             )
+
+            // Compact the immediate lane: this episode now covers the
+            // conversation's older mirrored transcript turns, so drop them
+            // (keep a small recent window for in-flight immediacy). Bounds
+            // transcript growth. A namespace whose distillation never runs
+            // never reaches here, so its transcripts persist as its memory.
+            let prunedChunks =
+                (try? db.pruneTranscript(
+                    agentId: namespaceKey,
+                    conversationId: conversationId,
+                    keepLast: Self.projectTranscriptKeepLast
+                )) ?? []
+            if !prunedChunks.isEmpty {
+                await MemorySearchService.shared.removeTranscriptDocs(
+                    conversationId: conversationId,
+                    chunkIndexes: prunedChunks,
+                    agentId: namespaceKey
+                )
+            }
         } catch {
             MemoryLogger.service.error(
                 "distill: project mirror failed for \(conversationId): \(error)")
         }
     }
+
+    /// Recent mirrored transcript turns kept per conversation after a
+    /// project episode compacts the rest — a small in-flight window so a
+    /// just-said fact stays instantly recallable even in the gap between
+    /// distills.
+    private static let projectTranscriptKeepLast = 4
 
     /// Immediately mirror a raw transcript turn into a project's shared
     /// memory namespace (a SQL row keyed by the project namespace + a vector

@@ -2211,6 +2211,55 @@ public final class MemoryDatabase: @unchecked Sendable {
         }
     }
 
+    /// Drop a conversation's older transcript rows within one namespace,
+    /// keeping the `keepLast` most recent (by chunk index). Returns the
+    /// chunk indexes deleted so the caller can evict the matching vector
+    /// docs. Used to compact a project namespace's immediate-memory
+    /// transcripts once a distilled episode has superseded them — bounding
+    /// growth without touching namespaces whose distillation never runs
+    /// (no episode → this is never called → transcripts persist as their
+    /// only memory). No-op when nothing exceeds `keepLast`.
+    public func pruneTranscript(
+        agentId: String,
+        conversationId: String,
+        keepLast: Int
+    ) throws -> [Int] {
+        var deleted: [Int] = []
+        try prepareAndExecute(
+            """
+            SELECT chunk_index FROM transcript
+            WHERE agent_id = ?1 AND conversation_id = ?2
+            ORDER BY chunk_index DESC
+            LIMIT -1 OFFSET ?3
+            """,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: agentId)
+                Self.bindText(stmt, index: 2, value: conversationId)
+                sqlite3_bind_int(stmt, 3, Int32(max(0, keepLast)))
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    deleted.append(Int(sqlite3_column_int(stmt, 0)))
+                }
+            }
+        )
+        guard !deleted.isEmpty else { return [] }
+        let placeholders = deleted.indices.map { "?\($0 + 3)" }.joined(separator: ", ")
+        _ = try executeUpdate(
+            """
+            DELETE FROM transcript
+            WHERE agent_id = ?1 AND conversation_id = ?2 AND chunk_index IN (\(placeholders))
+            """
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: agentId)
+            Self.bindText(stmt, index: 2, value: conversationId)
+            for (i, idx) in deleted.enumerated() {
+                sqlite3_bind_int(stmt, Int32(i + 3), Int32(idx))
+            }
+        }
+        return deleted
+    }
+
     public func loadTranscript(
         agentId: String? = nil,
         days: Int = 30,

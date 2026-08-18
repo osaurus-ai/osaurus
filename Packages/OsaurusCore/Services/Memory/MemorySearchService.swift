@@ -287,6 +287,30 @@ public actor MemorySearchService {
         }
     }
 
+    /// Evict specific transcript vector docs (by conversation + chunk
+    /// index) from one namespace's index. The doc id is the same
+    /// deterministic UUID `indexTranscriptTurn` uses, but deletion is
+    /// scoped to this namespace's bucket only — an identical id living in
+    /// another namespace's index (the same turn mirrored elsewhere) is
+    /// untouched. Used when a project episode supersedes older mirrored
+    /// transcript turns. `transcriptKeyMap` is left alone: it's a
+    /// cross-bucket cache other buckets may still need, and it rebuilds
+    /// lazily.
+    public func removeTranscriptDocs(
+        conversationId: String,
+        chunkIndexes: [Int],
+        agentId: String
+    ) async {
+        guard !chunkIndexes.isEmpty else { return }
+        guard await vectorWorkAllowed("removeTranscriptDocs"),
+            let db = await ensureVectorDB(for: agentId)
+        else { return }
+        let ids = chunkIndexes.map {
+            TextSimilarity.deterministicUUID(from: "transcript:\(conversationId):\($0)")
+        }
+        try? await db.deleteDocuments(ids: ids)
+    }
+
     /// Remove a document by id. Without an agent hint we have to try
     /// every open bucket — IDs are deterministic UUIDs so this is
     /// idempotent. Pass `agentId` when known to avoid the fan-out.
