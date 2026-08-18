@@ -23,6 +23,14 @@ public struct Project: Codable, Identifiable, Sendable, Equatable {
     /// nudge toward one-agent projects, never a restriction: chats from any
     /// agent can still be moved in.
     public var defaultAgentId: UUID?
+    /// When true, every chat in this project reads and writes the project's
+    /// shared memory namespace regardless of each agent's own memory
+    /// toggle — the explicit opt-in that makes projects deliver shared
+    /// memory by default. Still gated by the GLOBAL memory switch (that
+    /// stays the master kill-switch). The override is scoped to the project
+    /// namespace only: an agent's own personal memory continues to honor
+    /// its own toggle. Defaults on; legacy projects decode as true.
+    public var sharedMemoryEnabled: Bool
     public let createdAt: Date
     public var updatedAt: Date
 
@@ -32,6 +40,7 @@ public struct Project: Codable, Identifiable, Sendable, Equatable {
         instructions: String = "",
         knowledgeCollectionIds: [UUID] = [],
         defaultAgentId: UUID? = nil,
+        sharedMemoryEnabled: Bool = true,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -40,6 +49,7 @@ public struct Project: Codable, Identifiable, Sendable, Equatable {
         self.instructions = instructions
         self.knowledgeCollectionIds = knowledgeCollectionIds
         self.defaultAgentId = defaultAgentId
+        self.sharedMemoryEnabled = sharedMemoryEnabled
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -52,11 +62,15 @@ public struct Project: Codable, Identifiable, Sendable, Equatable {
         knowledgeCollectionIds =
             try c.decodeIfPresent([UUID].self, forKey: .knowledgeCollectionIds) ?? []
         defaultAgentId = try c.decodeIfPresent(UUID.self, forKey: .defaultAgentId)
+        // Legacy projects (pre-toggle) had project memory unconditionally on,
+        // so absent → true preserves their behavior.
+        sharedMemoryEnabled = try c.decodeIfPresent(Bool.self, forKey: .sharedMemoryEnabled) ?? true
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, instructions, knowledgeCollectionIds, defaultAgentId, createdAt, updatedAt
+        case id, name, instructions, knowledgeCollectionIds, defaultAgentId
+        case sharedMemoryEnabled, createdAt, updatedAt
     }
 }
