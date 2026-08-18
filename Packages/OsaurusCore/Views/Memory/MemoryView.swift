@@ -224,6 +224,7 @@ struct MemoryView: View {
                 managementState.memorySubTabRequest = nil
             }
             loadData(staleAfter: Self.memoryDataFreshWindow)
+            applyPendingProjectPreview()
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
@@ -232,6 +233,11 @@ struct MemoryView: View {
             guard let requested = newValue, let tab = MemoryTab(rawValue: requested) else { return }
             selectedTab = tab
             managementState.memorySubTabRequest = nil
+        }
+        // Deep link from a project page's memory section: jump to the Agents
+        // subtab and open that project's shared-memory preview.
+        .onChange(of: managementState.pendingMemoryProjectPreview) { _, _ in
+            applyPendingProjectPreview()
         }
         .sheet(isPresented: $showIdentityEditor) {
             IdentityEditSheet(
@@ -766,6 +772,18 @@ struct MemoryView: View {
     /// "## Shared project memory" block the composer injects. Reads the
     /// rows directly (no relevance gate, no vector search) so the preview
     /// always reflects what's on disk. Blocking DB reads — call off main.
+    /// Consume a one-shot deep link to a project's shared memory: switch to
+    /// the Agents subtab (where the project rows live) and open its preview.
+    private func applyPendingProjectPreview() {
+        guard let key = managementState.pendingMemoryProjectPreview else { return }
+        managementState.pendingMemoryProjectPreview = nil
+        selectedTab = .agents
+        Task.detached {
+            let text = Self.projectNamespacePreview(key)
+            await MainActor.run { contextPreviewItem = ContextPreviewItem(text: text) }
+        }
+    }
+
     private nonisolated static func projectNamespacePreview(_ namespaceKey: String) -> String {
         let facts = (try? MemoryDatabase.shared.loadPinnedFacts(agentId: namespaceKey, limit: 50)) ?? []
         let episodes =

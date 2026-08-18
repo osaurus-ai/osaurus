@@ -90,6 +90,12 @@ public final class ManagementStateManager: ObservableObject {
     /// `AgentsView` observes this and resets it to nil after applying.
     @Published public var pendingRemoteAgentDetailId: UUID?
 
+    /// One-shot request to reveal a project's shared memory — the namespace
+    /// key (`project-<uuid>`). `MemoryView` observes this, switches to its
+    /// Agents subtab, opens the project's context preview, and resets it to
+    /// nil. Set from a project page's memory section "Open in Memory" button.
+    @Published public var pendingMemoryProjectPreview: String?
+
     /// One-shot request to open the schedule editor for a specific schedule id.
     /// `SchedulesView` observes this and resets it to nil after applying. Used
     /// by the Claude plugin import summary to deep-link to schedules that
