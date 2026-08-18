@@ -310,17 +310,25 @@ struct ChatSessionSidebar: View {
             clearSelection()
         }
         // Deep link from the "What's New" projects announcement: flip the
-        // lens to Projects so the user lands on the new feature.
+        // lens to Projects so the user lands on the new feature. The mutation
+        // is deferred to the next runloop tick: assigning `selectedTab`
+        // synchronously inside an onChange driven by an ObservableObject
+        // publish is a reentrant state change SwiftUI can silently drop.
         .onChange(of: projectManager.pendingRevealProjectsTab) { _, reveal in
             guard reveal else { return }
-            selectedTab = .projects
-            projectManager.pendingRevealProjectsTab = false
+            revealProjectsTab()
         }
         .onAppear {
             if projectManager.pendingRevealProjectsTab {
-                selectedTab = .projects
-                projectManager.pendingRevealProjectsTab = false
+                revealProjectsTab()
             }
+        }
+    }
+
+    private func revealProjectsTab() {
+        DispatchQueue.main.async {
+            selectedTab = .projects
+            projectManager.pendingRevealProjectsTab = false
         }
     }
 
