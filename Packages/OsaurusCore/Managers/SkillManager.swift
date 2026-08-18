@@ -744,7 +744,24 @@ public final class SkillManager {
         for skill: Skill,
         referenceBudget: Int = .max
     ) async -> String {
-        var sections = [skill.instructions]
+        var sections: [String] = []
+
+        // Issue #1803: surface the skill's absolute directory before the
+        // instructions so the model can resolve relative paths the skill
+        // body refers to (`python3 scripts/main.py`, `open references/...`,
+        // etc.). The directory is stored on the skill at import time but
+        // was previously never rendered, so the model had no anchor for
+        // relative paths and constructed them against the exec tool's
+        // working directory, which is usually the sandbox or selected
+        // folder — not the skill's directory. `SkillStore.skillDirectory`
+        // falls back to the skill's slug when `directoryName` is nil, so
+        // this is always populated for a usable skill.
+        let directoryPath = SkillStore.skillDirectory(for: skill).path
+        if !directoryPath.isEmpty {
+            sections.append("Skill directory: `\(directoryPath)`")
+        }
+
+        sections.append(skill.instructions)
 
         if !skill.references.isEmpty {
             let refs = await loadReferenceContents(for: skill, budget: referenceBudget)

@@ -96,6 +96,55 @@ struct SkillManagerResolutionTests {
         }
     }
 
+    // MARK: - Directory annotation (issue #1803)
+
+    @Test @MainActor
+    func fullInstructionsIncludeAbsoluteSkillDirectoryAnnotation() async throws {
+        // #1803: a skill's `python3 scripts/main.py`-style instructions
+        // need an anchor for the relative path. Surface the resolved
+        // directory on the model-visible prompt so the model can construct
+        // the path. Without this line the model was constructing the path
+        // against the exec tool's working directory, which is the sandbox
+        // or selected folder — not the skill's directory.
+        try await Self.withTempSkillStorage {
+            let skill = await SkillManager.shared.create(
+                name: "Directory Annotation \(UUID().uuidString.prefix(6))",
+                description: "directory annotation fixture",
+                instructions: "Run `python3 scripts/main.py`."
+            )
+            let expectedDirectory = SkillStore.skillDirectory(for: skill).path
+
+            let full = await SkillManager.shared.buildFullInstructions(for: skill)
+
+            #expect(
+                full.contains("Skill directory: `\(expectedDirectory)`"),
+                "the rendered prompt must carry the absolute directory the model can resolve relative paths against"
+            )
+            #expect(full.contains("Run `python3 scripts/main.py`."))
+        }
+    }
+
+    @Test @MainActor
+    func fullInstructionsKeepDirectoryAnnotationAheadOfBody() async throws {
+        // The directory annotation is only useful if it appears *before*
+        // any path-bearing instruction. Place it ahead of the body so a
+        // model reading top-to-bottom sees the anchor first.
+        try await Self.withTempSkillStorage {
+            let skill = await SkillManager.shared.create(
+                name: "Directory Order \(UUID().uuidString.prefix(6))",
+                description: "ordering fixture",
+                instructions: "Body sentence with `scripts/main.py`."
+            )
+
+            let full = await SkillManager.shared.buildFullInstructions(for: skill)
+
+            let directoryRange = full.range(of: "Skill directory: `")
+            let bodyRange = full.range(of: "Body sentence")
+            #expect(directoryRange != nil && bodyRange != nil)
+            #expect(directoryRange!.lowerBound < bodyRange!.lowerBound)
+        }
+    }
+
     // MARK: - Fixtures
 
     /// Creates a user skill with two references: `alpha.md` (tiny, sorts
