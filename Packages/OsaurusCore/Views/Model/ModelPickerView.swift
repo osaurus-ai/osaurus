@@ -6,6 +6,7 @@
 //  and metadata display.
 //
 
+import AppKit
 import SwiftUI
 
 /// Semantic Thinking row state for the picker's options section. Carries
@@ -125,6 +126,8 @@ struct ModelPickerView: View {
     let onDismiss: () -> Void
 
     @State private var searchText = ""
+    /// Tracks IME composition so the placeholder hides while composing.
+    @State private var isSearchComposing = false
     @State private var selectedTabKey: String?
     @State private var sortOrder: ModelPickerSortOrder = .default
     @State private var contextFilter: ModelPickerContextFilter = .any
@@ -733,17 +736,19 @@ struct ModelPickerView: View {
                 .foregroundColor(theme.secondaryText)
 
             ZStack(alignment: .leading) {
-                if searchText.isEmpty {
+                if searchText.isEmpty && !isSearchComposing {
                     Text("Search models...", bundle: .module)
                         .font(.system(size: 13))
                         .foregroundColor(theme.secondaryText)
                         .allowsHitTesting(false)
                 }
-                TextField("", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .focusEffectDisabled()
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.primaryText)
+                IMEAwareTextField(
+                    text: $searchText,
+                    isComposing: $isSearchComposing,
+                    font: .systemFont(ofSize: 13),
+                    textColor: NSColor(theme.primaryText)
+                )
+                .frame(height: 17)
             }
 
             if !searchText.isEmpty {

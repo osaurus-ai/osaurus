@@ -41,6 +41,14 @@ struct CapabilitySchemaDiagnostic: Sendable {
 actor CapabilityLoadBuffer {
     static let shared = CapabilityLoadBuffer()
 
+    /// Task-scoped override so tests that assert on drained specs stop
+    /// racing each other through the process-global buffer: parallel suites
+    /// each drain `shared`, so one suite's drain can steal the entry another
+    /// suite just pushed (intermittent `loaded == []`). Production code
+    /// always resolves `current` (== `shared` outside an override).
+    @TaskLocal static var overrideForTests: CapabilityLoadBuffer?
+    static var current: CapabilityLoadBuffer { overrideForTests ?? shared }
+
     /// Tool calls that may publish schemas for the next model iteration.
     /// Shared by chat and eval loops so first-use provisioning, plugin
     /// registration, and capability loading have identical activation rules.
@@ -199,7 +207,7 @@ final class CapabilitiesTool: OsaurusTool, @unchecked Sendable {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        if let ids = args["ids"] as? [String], !ids.isEmpty {
+        if let ids = Self.recoveredIds(from: args), !ids.isEmpty {
             let data = try JSONSerialization.data(withJSONObject: ["ids": ids])
             let result = try await CapabilitiesLoadTool().execute(
                 argumentsJSON: String(decoding: data, as: UTF8.self)
@@ -215,13 +223,49 @@ final class CapabilitiesTool: OsaurusTool, @unchecked Sendable {
             )
             return relabel(Self.normalizeLegacyNames(result))
         }
-        return ToolEnvelope.failure(
-            kind: .invalidArgs,
-            message: "Provide either a non-empty `query` or non-empty `ids`.",
-            field: "query",
-            expected: "non-empty query string or ids array",
-            tool: name
+        // A bare `capabilities` call ({} — no ids, no query) is the natural
+        // "what do I have?" probe, and answering it with invalid_args made a
+        // dead loop: Raptor was observed re-issuing the identical rejected
+        // call until the turn collapsed into verbatim repetition. Answer the
+        // question instead — the enabled list is read-only, and it hands the
+        // model the exact ids its NEXT call needs, which is what actually
+        // breaks the loop.
+        return relabel(
+            Self.normalizeLegacyNames(
+                await CapabilitiesDiscoverTool.listEnabledCapabilities(
+                    page: 1, agentId: agentId, tool: name)
+            )
         )
+    }
+
+    /// Accept the schema's `ids` array plus the argument shapes models
+    /// actually emit for it — the same local-recovery class the discovery
+    /// tool applies to `query`/`queries`:
+    /// - `ids` as a bare string (a single id, or a stringified JSON array)
+    /// - the singular `id` spelling, string or array
+    /// Returns nil when no id-shaped argument is present at all.
+    static func recoveredIds(from args: [String: Any]) -> [String]? {
+        func parse(_ value: Any?) -> [String]? {
+            if let array = value as? [String] {
+                let trimmed = array
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            if let string = value as? String {
+                let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                if trimmed.hasPrefix("["),
+                    let data = trimmed.data(using: .utf8),
+                    let decoded = try? JSONSerialization.jsonObject(with: data) as? [String]
+                {
+                    return parse(decoded)
+                }
+                return [trimmed]
+            }
+            return nil
+        }
+        return parse(args["ids"]) ?? parse(args["id"])
     }
 
     /// Wrapped compatibility tools compose result and failure text using their
@@ -914,14 +958,14 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        let idsReq = requireStringArray(
-            args,
-            "ids",
-            expected:
-                "non-empty array of `<type>/<id>` strings from the Enabled capabilities list or `capabilities_discover` results",
-            tool: name
-        )
-        guard case .value(let ids) = idsReq else { return idsReq.failureEnvelope ?? "" }
+        // Same id-shape recovery as the unified `capabilities` tool, and the
+        // same loop-breaker: a call with no id-shaped argument at all gets
+        // the enabled list (the ids its next call needs) instead of a bare
+        // rejection it will re-issue verbatim.
+        guard let ids = CapabilitiesTool.recoveredIds(from: args) else {
+            return await CapabilitiesDiscoverTool.listEnabledCapabilities(
+                page: 1, agentId: nil, tool: name)
+        }
 
         var sections: [String] = []
         var failures: [LoadFailure] = []
@@ -1222,7 +1266,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 )
             )
         }
-        if let diagnostic = await CapabilityLoadBuffer.shared.add(spec) {
+        if let diagnostic = await CapabilityLoadBuffer.current.add(spec) {
             return .failure(
                 LoadFailure(
                     kind: diagnostic.kind,
@@ -1351,7 +1395,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         var loadedSpecs: [Tool] = []
         var skippedLines: [String] = []
         for spec in specs {
-            if let diagnostic = await CapabilityLoadBuffer.shared.add(spec) {
+            if let diagnostic = await CapabilityLoadBuffer.current.add(spec) {
                 skippedLines.append("Skipped tool '\(diagnostic.toolName)': \(diagnostic.message)")
             } else {
                 loadedNames.append(spec.function.name)

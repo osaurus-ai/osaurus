@@ -346,8 +346,24 @@ evals-all-report: evals-prep
 # regression (floors.json pins their pass rate at 1.0). Safe on hosted CI
 # runners; the CI `test-evals` job runs this after the harness unit tests.
 # No `evals-prep` dependency: these lanes never touch MLX or the embedder.
-EVALS_DETERMINISTIC_SUITES := Schema ToolEnvelope PrefixHash ArgumentCoercion \
-	ToolResultGrounding AgentChannels ComputerUse ScreenContext
+#
+# SINGLE SOURCE OF TRUTH: `Config/floors.json#suitePassRates`. This list is
+# derived from it, never hand-edited — a hand-maintained copy silently ships a
+# thinner CI lane than the floor gate enforces the moment someone adds a suite
+# to one file and forgets the other (issue #2266). Add or remove a
+# deterministic suite by editing floors.json alone.
+# `scripts/live-proof/assert-eval-floors-makefile-sync.sh` fails if this
+# derivation is replaced by a literal list or if a declared suite has no
+# `Suites/<name>/` directory.
+EVALS_FLOORS_JSON := Packages/OsaurusEvals/Config/floors.json
+EVALS_DETERMINISTIC_SUITES := $(shell jq -r '.suitePassRates | keys_unsorted[]' $(EVALS_FLOORS_JSON))
+
+# Machine-readable echo of the derived list, so the sync guard can assert the
+# derivation actually expands (a jq typo yields an EMPTY list, and the loop
+# below would then "pass" by running nothing).
+.PHONY: print-evals-deterministic-suites
+print-evals-deterministic-suites:
+	@echo $(EVALS_DETERMINISTIC_SUITES)
 
 evals-deterministic:
 	@rc=0; for name in $(EVALS_DETERMINISTIC_SUITES); do \

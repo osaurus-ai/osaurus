@@ -133,10 +133,16 @@ public actor FollowUpSuggestionService {
                 timeout: Self.timeout,
                 fallbackModel: fallbackModel,
                 // Follow-ups are a nicety: never load/evict a model for them.
-                // When no model is resident the call fails fast and we render
-                // nothing.
                 intent: .background,
                 modelOverride: modelOverride,
+                // But when the configured follow-up model can't load without
+                // evicting a resident, fall back to the chat model rather than
+                // silently rendering nothing. This is the case for a user
+                // chatting on a remote provider (the chat model is remote, so
+                // the fallback runs there and evicts nothing) while a local
+                // model happens to be resident — without this the follow-up
+                // only worked when its model equalled the active remote one.
+                fallBackOnResidencyRefusal: true,
                 modelOptions: modelOptions
             )
             return Self.parse(raw)

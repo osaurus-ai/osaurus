@@ -3,6 +3,86 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.22</title>
+            <pubDate>Fri, 14 Aug 2026 19:28:58 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.22</sparkle:version>
+            <sparkle:shortVersionString>0.22.22</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.22/Osaurus-0.22.22.dmg" length="70977372" type="application/octet-stream" sparkle:edSignature="r/9HPjlzETHgtmra7eVAfHFveZjfXnS5ZXE+t75y53gjaInDjgDSPyuhaMlgatrBXrjRFgr016HwlKApDmGwBg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Repin vmlx-swift: MTP sampled-engage overhaul + hybrid post-answer replay kill (#2396) by @jjang-ai
+- Constrain reasoning\_effort to the bundle's declared set so Qwen3.8 cannot hard-fail the render (#2395) by @jjang-ai
+- Repin vmlx-swift to e77cdf59: fix Qwen3.6-27B image crash (vision quant dims) (#2389) by @jjang-ai
+- Repin vmlx-swift to cf3f16de (#2386) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- Answer a bare capabilities call with the enabled list, not a rejection (#2393) by @jjang-ai
+- Report an unusable AppleScript model assignment instead of swapping it (#2394) by @jjang-ai
+- fix model search placeholder overlapping IME composition text (#2391) by @RaajeevChandran
+- Record a user Stop as `cancelled`, not as a natural `stop` (#2388) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.21...0.22.22
+]]></description>
+        </item>
+        <item>
+            <title>0.22.21</title>
+            <pubDate>Thu, 13 Aug 2026 20:11:21 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.21</sparkle:version>
+            <sparkle:shortVersionString>0.22.21</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.21/Osaurus-0.22.21.dmg" length="70925840" type="application/octet-stream" sparkle:edSignature="oZsYH8GlqZr/2hNNuK35a8eWW3k//OdCC34KCLfxNmKGwxeMQWhe12sWP3jaf3QMEvQ83OWxASQ25LPU4IphBA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Repin vmlx-swift to a983c6fc so the reasoning ceiling reaches the app (#2382) by @jjang-ai
+- Repin vmlx-swift to 294c11e9 so LFM2.5-VL can ship (#2379) by @jjang-ai
+- Repin vmlx-swift to 11a43493 (#2377) by @jjang-ai
+- Repin vmlx-swift to 3c354fb0: the repetition guard now reaches this app (#2362) by @jjang-ai
+- Fix #2327: a reasoning-only turn with tools offered was classified as a finished answer (#2344) by @jjang-ai
+- Repin vmlx-swift to 751a5779 (#2361) by @jjang-ai
+- Nemotron 3.5 Lightning: native MTP head + fix the fallback template eating its newlines (#2360) by @jjang-ai
+- Let TTFT phase tracing be turned on in release (#2357) by @jjang-ai
+- Repin vmlx: fix the Muse tool-recipient header leak (#2356) by @jjang-ai
+- Repin vmlx: stop generation on a verbatim output cycle (#2353) by @jjang-ai
+- Repin vmlx to the Muse Glimmer centered-norm fold (#2342) by @jjang-ai
+
+## 🚀 Features
+
+- add follow up question suggestions after a turn (#2384) by @RaajeevChandran
+- added full screen preview for generated images (#2381) by @RaajeevChandran
+- allow deleting individual assistant messages (#2371) by @RaajeevChandran
+- added a delete all data option to agent settings (#2355) by @RaajeevChandran
+- allow creating new folders in folder selection panels (#2349) by @RaajeevChandran
+- pass full frontmatter through in read\_knowledge output (#2338) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- fix knowledge search timeouts and improve what gets indexed (#2383) by @RaajeevChandran
+- fix skill editor sheet clipping on small screens (#2380) by @RaajeevChandran
+- open schema ahead chat history databases instead of refusing them (#2375) by @RaajeevChandran
+- Give a quarantined plugin one retry after it or the app is upgraded (#2378) by @jjang-ai
+- Stop agent plugin reads from depending on the Plugins UI being opened (#2372) by @jjang-ai
+- Give host-folder artifact sharing the basename fallback it documents (#2370) by @jjang-ai
+- Start the TTFT trace when the user hits send, not when generation does (#2369) by @jjang-ai
+- Render $…$ inline math instead of showing its delimiters (#2368) by @jjang-ai
+- minor UI polish (#2365) by @RaajeevChandran
+- skip workspace baseline clones for oversized folders (#2359) by @RaajeevChandran
+- Give the orphaned local-model lock a way out (#2363) by @jjang-ai
+- Route a lone mac\_query string to `question` when that field is absent (#2352) by @jjang-ai
+- Accept a string `contents` on mac\_query instead of rejecting it (#2351) by @jjang-ai
+- Repin vmlx: parse GLM/DeepSeek tool calls that take no arguments (#2346) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.20...0.22.21
+]]></description>
+        </item>
+        <item>
             <title>0.22.20</title>
             <pubDate>Tue, 11 Aug 2026 01:42:01 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

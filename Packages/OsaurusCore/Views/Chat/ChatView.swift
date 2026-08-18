@@ -2204,7 +2204,19 @@ final class ChatSession: ObservableObject {
         return !Task.isCancelled
     }
 
-    func stop() {
+    /// `preservesCancelledMarker` distinguishes the user's Stop button (the
+    /// transcript must record that a run was cancelled — see the trim guard)
+    /// from internal lifecycle stops (explicit model unload) where the run
+    /// dying is a side effect the user never chose; those keep the historical
+    /// clean trim so no ghost "cancelled" row appears in the transcript.
+    func stop(preservesCancelledMarker: Bool = true) {
+        stopPreservesCancelledMarker = preservesCancelledMarker
+        // Capture BEFORE any cancellation: whether a send was in flight when
+        // the user hit Stop. The marker decision below must not depend on
+        // state the cleanup path is about to reset.
+        let hadActiveSend =
+            isSendActiveForComposer || isStreaming || activeRunId != nil
+            || currentTask != nil || awaitingPreSendHandshake
         let wasAwaitingPreSendHandshake = awaitingPreSendHandshake
         invalidatePreSendHandshake()
         if wasAwaitingPreSendHandshake {
@@ -2224,6 +2236,23 @@ final class ChatSession: ObservableObject {
         } else {
             completeRunCleanup()
         }
+        // A user Stop that cancels the send before the run task appended its
+        // assistant turn (the pre-send handshake window, or simply a Stop
+        // that wins the race to the first append — CI machines hit the
+        // latter on a plain send) leaves the transcript ending on the user
+        // row with no record that a run happened. Append the cancelled
+        // marker AFTER cleanup so it cannot be trimmed and so the
+        // stamped-placeholder path (finalizeRun stamped an existing turn,
+        // which the trim keeps) never produces a second marker.
+        if preservesCancelledMarker, hadActiveSend,
+            let last = turns.last, last.role == .user
+        {
+            let cancelledTurn = ChatTurn(role: .assistant, content: "")
+            cancelledTurn.terminalStopReason = "cancelled"
+            turns.append(cancelledTurn)
+            isDirty = true
+            rebuildVisibleBlocks()
+        }
     }
 
     /// Put this session on the same cancellation path as its visible Stop
@@ -2235,7 +2264,10 @@ final class ChatSession: ObservableObject {
     func prepareForExplicitModelUnload() {
         warmupController.cancelPendingWorkForExplicitModelUnload()
         if isSendActiveForComposer {
-            stop()
+            // Lifecycle stop: the user chose to unload a model, not to cancel
+            // a chat turn — suppress the cancelled marker so the transcript
+            // keeps the historical clean trim.
+            stop(preservesCancelledMarker: false)
         }
     }
 
@@ -3628,11 +3660,29 @@ final class ChatSession: ObservableObject {
             // Never drop a turn the router billed — even a zero-output charge
             // must stay so the user sees the "you were charged" notice instead
             // of a silent gap.
-            lastTurn.routerBilling == nil
+            lastTurn.routerBilling == nil,
+            // Never drop a turn that carries a terminal stop reason. A Stop
+            // that lands before the first delta leaves the turn blank AND
+            // stat-less, but `finalizeRun` has already stamped it
+            // `cancelled` — trimming it here erased the only record that a
+            // run happened at all, so the persisted session ended on the
+            // user row with no assistant row (fast models hit this
+            // consistently; slower ones persisted a truncated row instead,
+            // purely by timing). Lifecycle stops (`stop(preservesCancelledMarker:
+            // false)`) opt back into the clean trim: the user did not cancel
+            // anything, so no marker row belongs in the transcript.
+            lastTurn.terminalStopReason == nil || !stopPreservesCancelledMarker
         {
             turns.removeLast()
         }
+        stopPreservesCancelledMarker = true
     }
+
+    /// Whether the in-flight stop should leave a persisted `cancelled` marker
+    /// when the assistant turn is otherwise empty. Set by `stop(...)`, reset
+    /// after the trailing trim so a later non-stop cleanup path never
+    /// inherits a lifecycle stop's suppression.
+    private var stopPreservesCancelledMarker = true
 
     private func consolidateAssistantTurns() {
         for turn in turns where turn.role == .assistant {
@@ -4041,6 +4091,23 @@ final class ChatSession: ObservableObject {
 
         let context = activeRunContext
         let runCompletedCleanly = !stopRequested && lastStreamError == nil
+
+        // A user Stop leaves the engine reporting its own natural `stop`, so the
+        // persisted turn was indistinguishable from one that finished on its own
+        // — same `terminal_stop_reason`, just fewer tokens. Anything that reads
+        // that field to decide "the model finished" (cache warm-ups, completed
+        // transcript indexing, agent-task announcements, eval scoring) then
+        // treats a cancelled turn as a complete answer. Stamp the truth on the
+        // turn we already know was stopped; `runCompletedCleanly` above already
+        // keeps it out of memory/indexing, this makes the record agree.
+        if stopRequested, let lastAssistant = turns.lastIndex(where: { $0.role == .assistant }) {
+            if turns[lastAssistant].terminalStopReason == nil
+                || turns[lastAssistant].terminalStopReason == "stop"
+            {
+                turns[lastAssistant].terminalStopReason = "cancelled"
+            }
+        }
+
         activeRunId = nil
         activeRunContext = nil
         completeRunCleanup()
@@ -4197,6 +4264,12 @@ final class ChatSession: ObservableObject {
         selectedModel: String?
     ) async throws -> (invocations: [ServiceToolInvocation], finalTurn: ChatTurn) {
         var currentTurn = assistantTurn
+        // A stream that arrives for an already-finalized run (Stop landed
+        // while engine setup ignored cooperative cancellation) must not
+        // write anything: the run's cleanup already finished, so every
+        // mutation here would ghost into the transcript — starting with the
+        // reset below erasing the `cancelled` stamp finalizeRun recorded.
+        guard activeRunId == runId else { throw CancellationError() }
         // A continuation or transient retry may reuse this stream processor
         // after the prior assistant step set terminal metadata. Each model
         // generation owns fresh terminal state; carrying `stop` or an
@@ -5497,6 +5570,16 @@ final class ChatSession: ObservableObject {
                 turnGenerationControls.enableThinking
             ) { [self] in
                 debugLog("send: task started runId=\(runId) model=\(self.selectedModel ?? "nil")")
+                // A Stop can land between beginRun (synchronous in send) and
+                // this task's first line: stop() has then already finalized
+                // this runId, and the deferred finalizeRun below would no-op
+                // as a duplicate — so everything appended here would survive
+                // as a ghost (an empty assistant bubble and a resurrected
+                // isStreaming) with no cleanup left to remove it.
+                guard self.activeRunId == runId else {
+                    debugLog("send: run \(runId) finalized before its task started — skipping")
+                    return
+                }
                 lastStreamError = nil
                 isStreaming = true
                 ServerController.signalGenerationStart()

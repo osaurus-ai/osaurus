@@ -261,6 +261,16 @@ final class ChatWindowState: ObservableObject {
         selectedDiscoveredAgent = nil
         selectedDiscoveredAgentProviderId = nil
         selectedRelayAgent = nil
+        // Persist BEFORE stop(), exactly like switchAgent/startNewChat do:
+        // stop() on a mid-prepare cancel takes the draft-restore rollback,
+        // which REMOVES the just-sent user turn to put its text back in the
+        // composer — but this window is being destroyed, so the restored
+        // draft dies with it and the close callback's later save() finds
+        // empty turns and bails. Verified live: closing during model load
+        // silently lost the user's message with no persisted trace. Saving
+        // first keeps the message; for a mid-stream close the post-cleanup
+        // save then overwrites this snapshot with the cancel-stamped turns.
+        if !session.turns.isEmpty { session.save() }
         // Shut the warm-up controller BEFORE stop(): stop() on an idle session
         // runs completeRunCleanup(), whose run-completed hook would otherwise
         // schedule a fresh warm-up for a session that is being torn down.

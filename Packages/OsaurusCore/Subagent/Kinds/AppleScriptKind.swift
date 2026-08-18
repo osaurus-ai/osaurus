@@ -100,14 +100,24 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
 
         // Dedicated model: an explicit per-agent id, otherwise the global
         // Computer Use default, otherwise the first installed catalog model.
-        // `nil` after catalog resolution → none installed → fail cleanly.
+        // An assignment that cannot be honored is REPORTED, never silently
+        // replaced — substituting here ran the subagent on a model the user
+        // never chose and looked exactly like "model assignment doesn't take".
         let preferred = SubagentToolVisibility.effectiveAppleScriptModel(
             isDefault: isDefault,
             config: config,
             settings: settings
         )
-        guard let modelId = AppleScriptModelCatalog.resolveInstalledModelId(preferred: preferred)
-        else {
+        let modelId: String
+        switch AppleScriptModelCatalog.resolveAssignment(preferred: preferred) {
+        case .resolved(let id):
+            modelId = id
+        case .assignedButNotInstalled(let assigned):
+            throw SubagentError.unavailable(
+                "The assigned AppleScript model '\(assigned)' is not installed. "
+                    + "Install it, or pick an installed one in Settings → Computer Use → Models."
+            )
+        case .noneInstalled:
             throw SubagentError.unavailable(
                 "No AppleScript model is installed. Download one in Settings → Computer Use → Models."
             )

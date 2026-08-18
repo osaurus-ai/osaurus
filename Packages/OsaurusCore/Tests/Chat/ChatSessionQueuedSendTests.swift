@@ -358,9 +358,15 @@ struct ChatSessionQueuedSendTests {
 
             try await waitUntil(timeout: .seconds(1)) { !session.isStreaming }
             let persisted = try #require(ChatSessionStore.load(id: sessionId))
-            #expect(persisted.turns.count == 1)
+            // This is the pre-persist cancel race itself: the Stop landed
+            // before the first delta, so the assistant turn is blank — and
+            // it must now PERSIST as the cancelled marker instead of leaving
+            // the session ending on a user row with no record of the run.
+            #expect(persisted.turns.count == 2)
             #expect(persisted.turns[0].role == .user)
             #expect(persisted.turns[0].content == "keep this after stop")
+            #expect(persisted.turns[1].role == .assistant)
+            #expect(persisted.turns[1].terminalStopReason == "cancelled")
         }
     }
 
