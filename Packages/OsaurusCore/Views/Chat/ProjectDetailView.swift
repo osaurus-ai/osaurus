@@ -688,26 +688,21 @@ struct ProjectDetailView: View {
                     .foregroundColor(theme.primaryText)
                 Spacer()
                 Button(action: requestAddExistingChats) {
-                    Image(systemName: "tray.and.arrow.down")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.accentColor)
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
+                    Image(systemName: "square.and.arrow.down")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
                 }
                 .buttonStyle(.plain)
                 .pointingHandCursor()
                 .localizedHelp("Add existing chats")
                 Button(action: onNewChat) {
-                    HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Image(systemName: "square.and.pencil")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("New Chat", bundle: .module)
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .foregroundColor(theme.accentColor)
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
                 }
                 .buttonStyle(.plain)
                 .pointingHandCursor()
+                .localizedHelp("New Chat")
             }
 
             if !memberSessions.isEmpty {
