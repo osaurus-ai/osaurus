@@ -368,18 +368,52 @@ public struct SystemPromptComposer: Sendable {
         let config = MemoryConfigurationStore.load()
         guard config.enabled else { return agentSection }
 
+        let namespaceKey = MemoryNamespace.project(projectId).key
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let budget = config.memoryBudgetTokens
         let agentTokens = (agentSection?.count ?? 0) / MemoryConfiguration.charsPerToken
         let projectBudget = max(budget / 4, budget - agentTokens)
 
-        let raw = await MemoryContextAssembler.assembleContext(
-            agentId: MemoryNamespace.project(projectId).key,
+        // Curated lane: distilled episodes / pinned facts (may be empty
+        // until the background distillation has run).
+        let curated = await MemoryContextAssembler.assembleContext(
+            agentId: namespaceKey,
             config: config,
-            query: query.trimmingCharacters(in: .whitespacesAndNewlines),
+            query: trimmedQuery,
             budgetTokensOverride: projectBudget,
             includeGlobalBlocks: false
-        )
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Immediate lane: raw transcript turns mirrored on write, so a fact
+        // stated seconds ago is recallable before any distillation. Only
+        // meaningful with a query to retrieve against. Deduped against the
+        // curated lane so a fact that's already been distilled isn't echoed.
+        let curatedTokens = curated.split(separator: "\n").map {
+            TextSimilarity.tokenize(String($0).trimmingCharacters(in: .whitespaces))
+        }
+        var transcriptLines: [String] = []
+        if !trimmedQuery.isEmpty {
+            let hits = await MemorySearchService.shared.searchTranscript(
+                query: trimmedQuery, agentId: namespaceKey, topK: 4
+            )
+            for hit in hits {
+                let text = hit.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard text.count > 3 else { continue }
+                let clipped = text.count > 220 ? String(text.prefix(220)) + "…" : text
+                let tokens = TextSimilarity.tokenize(clipped)
+                let alreadyCurated = curatedTokens.contains {
+                    TextSimilarity.jaccardTokenized($0, tokens) > 0.85
+                }
+                if !alreadyCurated { transcriptLines.append("- \(clipped)") }
+            }
+        }
+
+        var parts: [String] = []
+        if !curated.isEmpty { parts.append(curated) }
+        if !transcriptLines.isEmpty {
+            parts.append("## Recent project notes\n" + transcriptLines.joined(separator: "\n"))
+        }
+        let trimmed = parts.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return agentSection }
 
         // Dedupe against the agent lane. Exact match catches the same

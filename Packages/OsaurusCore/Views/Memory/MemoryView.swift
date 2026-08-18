@@ -782,6 +782,19 @@ struct MemoryView: View {
             }
             blocks.append("## What we discussed before\n" + lines.joined(separator: "\n"))
         }
+        // Raw turns mirrored on write (immediate memory) — shown so the
+        // project's shared memory is inspectable before distillation runs.
+        let transcripts =
+            (try? MemoryDatabase.shared.loadTranscript(agentId: namespaceKey, days: 3650, limit: 30))
+            ?? []
+        if !transcripts.isEmpty {
+            let lines = transcripts.prefix(30).map { turn -> String in
+                let text = turn.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                let clipped = text.count > 200 ? String(text.prefix(200)) + "…" : text
+                return "- [\(turn.role)] \(clipped)"
+            }
+            blocks.append("## Recent project notes\n" + lines.joined(separator: "\n"))
+        }
         guard !blocks.isEmpty else {
             return L("(No memory context assembled — memory may be empty or disabled)")
         }

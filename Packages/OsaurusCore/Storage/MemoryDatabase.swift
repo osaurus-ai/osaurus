@@ -1592,6 +1592,9 @@ public final class MemoryDatabase: @unchecked Sendable {
                 UNION ALL
                 SELECT agent_id, COUNT(*) AS n FROM pinned_facts
                     WHERE agent_id LIKE 'project-%' AND status = 'active' GROUP BY agent_id
+                UNION ALL
+                SELECT agent_id, COUNT(*) AS n FROM transcript
+                    WHERE agent_id LIKE 'project-%' GROUP BY agent_id
             ) GROUP BY agent_id ORDER BY 2 DESC
             """,
             bind: { _ in },
