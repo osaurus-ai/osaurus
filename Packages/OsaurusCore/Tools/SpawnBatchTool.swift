@@ -2990,6 +2990,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
     static func constrainedSpec(
         _ tool: Tool,
         allowedAgentIDs: [UUID],
+        allowedAgentNames: [String] = [],
         allowedModelIds: [String],
         maxParallel: Int
     ) -> Tool {
@@ -2999,7 +3000,14 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         let models = SubagentConfiguration.normalizedSpawnableModelNames(
             allowedModelIds
         )
-        let targets = Array(Set(agents + models)).sorted()
+        // Agent display names join the union so a strict, enum-enforcing
+        // provider accepts a name for an agent job as well as a UUID (issue
+        // #2408). `resolveAgentJobNames` maps a name back before execution.
+        let agentNames =
+            allowedAgentNames
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let targets = Array(Set(agents + agentNames + models)).sorted()
         guard !targets.isEmpty,
             case .object(var root)? = tool.function.parameters,
             case .object(var properties)? = root["properties"],

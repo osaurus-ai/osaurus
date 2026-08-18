@@ -2881,6 +2881,13 @@ public struct SystemPromptComposer: Sendable {
             .filter { $0 != snapshot.agentId }
         let allowedModelIds =
             spawnTargets?.runnableModelIds ?? configuredModelIds
+        // Display names for the allow-listed agents, in `allowedAgentIDs` order.
+        // Threaded into the schema enums so a strict, enum-enforcing provider
+        // accepts a name as well as a UUID (issue #2408). `constrainedSpec`
+        // sorts/normalizes, so the resolved order here need not be canonical.
+        let allowedAgentNames = allowedAgentIDs.compactMap {
+            AgentManager.shared.agent(for: $0)?.name
+        }
 
         if let spawnAgent = byName[SubagentCapabilityRegistry.spawnAgentToolName] {
             if spawnTargets != nil, allowedAgentIDs.isEmpty {
@@ -2889,7 +2896,8 @@ public struct SystemPromptComposer: Sendable {
                 byName[SubagentCapabilityRegistry.spawnAgentToolName] =
                     SpawnAgentTool.constrainedSpec(
                         spawnAgent,
-                        allowedAgentIDs: allowedAgentIDs
+                        allowedAgentIDs: allowedAgentIDs,
+                        allowedAgentNames: allowedAgentNames
                     )
             }
         }
@@ -2922,6 +2930,7 @@ public struct SystemPromptComposer: Sendable {
                     SpawnBatchTool.constrainedSpec(
                         spawnBatch,
                         allowedAgentIDs: allowedAgentIDs,
+                        allowedAgentNames: allowedAgentNames,
                         allowedModelIds: allowedModelIds,
                         maxParallel: maxParallel
                     )

@@ -49,16 +49,33 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
     /// Narrow the request-local schema to the launching agent's currently
     /// runnable agent pool. Execution still enforces the durable allow-list;
     /// this enum is exact identity guidance and provider-side validation.
-    static func constrainedSpec(_ tool: Tool, allowedAgentIDs: [UUID]) -> Tool {
-        let normalized = SpawnableAgentIdentity.normalizedIDs(allowedAgentIDs)
+    ///
+    /// The enum carries BOTH each allow-listed agent's UUID and its display name
+    /// so a strict, enum-enforcing provider accepts either form — small models
+    /// emit the name, not the UUID (issue #2408). `execute` resolves a name back
+    /// to its UUID. Names are appended after the UUIDs and de-duplicated so the
+    /// enum stays byte-stable for the frozen-prefix cache.
+    static func constrainedSpec(
+        _ tool: Tool,
+        allowedAgentIDs: [UUID],
+        allowedAgentNames: [String] = []
+    ) -> Tool {
+        let uuids = SpawnableAgentIdentity.normalizedIDs(allowedAgentIDs)
             .map(\.uuidString)
-        guard !normalized.isEmpty,
+        let uuidSet = Set(uuids)
+        var seenNames = Set<String>()
+        let names = allowedAgentNames.filter { name in
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !uuidSet.contains(trimmed) else { return false }
+            return seenNames.insert(trimmed).inserted
+        }
+        guard !uuids.isEmpty,
             case .object(var root)? = tool.function.parameters,
             case .object(var properties)? = root["properties"],
             case .object(var agent)? = properties["agent"]
         else { return tool }
 
-        agent["enum"] = .array(normalized.map(JSONValue.string))
+        agent["enum"] = .array((uuids + names).map(JSONValue.string))
         properties["agent"] = .object(agent)
         root["properties"] = .object(properties)
         return Tool(
