@@ -326,6 +326,21 @@ struct AgentLoopHooks {
     /// reasoning tag, sampler override, EOS override, or other coercion.
     var prepareIncompleteReasoningContinuation: (() async -> Void)?
 
+    /// Surface prep for one bounded budget-forced answer pass. The driver calls
+    /// this INSTEAD of `prepareIncompleteReasoningContinuation` when both are
+    /// set: the surface marks its state (e.g. sets a one-shot flag) so the next
+    /// `modelStep` invocation disables thinking and prepends a directive
+    /// "you began reasoning but ran out of time — give your final answer now"
+    /// anchored to the tail of the truncated reasoning. The natural replay path
+    /// and the budget-forced path are mutually exclusive on the first
+    /// `.incompleteReasoning` observation: whichever hook the surface provides
+    /// wins. A second `.incompleteReasoning` ends the run with
+    /// `.incompleteReasoningExhausted` regardless of which path ran first.
+    /// Opt-in by the surface; chat wires this when the agent has
+    /// `budgetForcedAnswer = true`; headless surfaces leave it nil and keep the
+    /// existing natural-replay behaviour.
+    var prepareBudgetForcedAnswer: (() async -> Void)?
+
     /// Preserve an ordinary assistant response visibly when a run that
     /// successfully created/updated a todo list stops while structured work
     /// remains, then prepare a fresh output buffer for the next model step.
@@ -396,6 +411,7 @@ struct AgentLoopHooks {
         buildMessages: @escaping (_ notices: [String]) async -> AgentLoopIterationInput,
         modelStep: @escaping (_ messages: [ChatMessage], _ iteration: Int) async throws -> AgentLoopModelStep,
         prepareIncompleteReasoningContinuation: (() async -> Void)? = nil,
+        prepareBudgetForcedAnswer: (() async -> Void)? = nil,
         prepareTrackedTaskContinuation: (() async -> Void)? = nil,
         willProcessCall: @escaping (_ invocation: ServiceToolInvocation, _ callId: String) async -> Void = { _, _ in },
         onDedupedResult:
@@ -417,6 +433,7 @@ struct AgentLoopHooks {
         self.buildMessages = buildMessages
         self.modelStep = modelStep
         self.prepareIncompleteReasoningContinuation = prepareIncompleteReasoningContinuation
+        self.prepareBudgetForcedAnswer = prepareBudgetForcedAnswer
         self.prepareTrackedTaskContinuation = prepareTrackedTaskContinuation
         self.willProcessCall = willProcessCall
         self.onDedupedResult = onDedupedResult
@@ -1885,16 +1902,36 @@ enum AgentToolLoop {
                 return RunResult(exit: .lengthExhausted, iterations: iteration)
 
             case .incompleteReasoning:
-                if let prepareRetry = hooks.prepareIncompleteReasoningContinuation,
-                    incompleteReasoningRetries < Self.maxIncompleteReasoningRetries
-                {
-                    incompleteReasoningRetries += 1
-                    // Keep the incomplete reasoning visible to the surface,
-                    // but replay the exact pre-attempt model-visible history
-                    // from a fresh output buffer. No synthetic notice, closing
-                    // tag, prompt coercion, sampler override, or EOS override
-                    // is introduced here.
-                    await prepareRetry()
+                if incompleteReasoningRetries < Self.maxIncompleteReasoningRetries {
+                    // The surface opts into the budget-forced path by setting
+                    // `prepareBudgetForcedAnswer`. On the first incomplete
+                    // observation the budget-forced hook wins, even when the
+                    // natural-replay hook is also set, because the two paths
+                    // are mutually exclusive: the budget-forced pass disables
+                    // thinking and prepends a "give your final answer now"
+                    // directive anchored to the tail of the truncated
+                    // reasoning, while the natural replay keeps thinking on
+                    // and re-uses the same history. The surface should set at
+                    // most one of the two hooks.
+                    if incompleteReasoningRetries == 0,
+                        let prepareBudget = hooks.prepareBudgetForcedAnswer
+                    {
+                        incompleteReasoningRetries += 1
+                        await prepareBudget()
+                    } else if let prepareRetry = hooks.prepareIncompleteReasoningContinuation {
+                        incompleteReasoningRetries += 1
+                        // Keep the incomplete reasoning visible to the surface,
+                        // but replay the exact pre-attempt model-visible history
+                        // from a fresh output buffer. No synthetic notice, closing
+                        // tag, prompt coercion, sampler override, or EOS override
+                        // is introduced here.
+                        await prepareRetry()
+                    } else {
+                        return RunResult(
+                            exit: .incompleteReasoningExhausted,
+                            iterations: iteration
+                        )
+                    }
                     // This is protocol continuation rather than agent/tool
                     // progress, so do not charge it against the tool budget.
                     iteration -= 1

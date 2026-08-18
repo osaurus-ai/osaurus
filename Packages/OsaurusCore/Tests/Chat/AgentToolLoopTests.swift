@@ -40,6 +40,8 @@ private final class ScriptedLoopSurface {
     var emittedFinalTexts: [String] = []
     var incompleteContinuationPreparations = 0
     var cancelOnIncompleteContinuation = false
+    var budgetForcedAnswerPreparations = 0
+    var cancelOnBudgetForcedAnswer = false
     var trackedTaskContinuationPreparations = 0
     var cancelOnTrackedTaskContinuation = false
     var todoProgressSnapshotCalls = 0
@@ -51,7 +53,8 @@ private final class ScriptedLoopSurface {
 
     func makeHooks(
         includeFallbackText: Bool = true,
-        includeTrackedTaskContinuation: Bool = false
+        includeTrackedTaskContinuation: Bool = false,
+        includeBudgetForcedAnswer: Bool = false
     ) -> AgentLoopHooks {
         var hooks = AgentLoopHooks(
             isCancelled: { self.cancelled },
@@ -72,6 +75,14 @@ private final class ScriptedLoopSurface {
                     self.cancelled = true
                 }
             },
+            prepareBudgetForcedAnswer: includeBudgetForcedAnswer
+                ? {
+                    self.budgetForcedAnswerPreparations += 1
+                    if self.cancelOnBudgetForcedAnswer {
+                        self.cancelled = true
+                    }
+                }
+                : nil,
             prepareTrackedTaskContinuation: includeTrackedTaskContinuation
                 ? {
                     self.trackedTaskContinuationPreparations += 1
@@ -680,6 +691,61 @@ struct AgentToolLoopTests {
         #expect(surface.builtNotices == [[], []])
         #expect(surface.incompleteContinuationPreparations == 1)
         #expect(surface.emittedFinalTexts.isEmpty)
+    }
+
+    @Test func budgetForcedAnswerWinsOnFirstIncompleteAndSkipsNaturalReplay() async throws {
+        // When the surface opts into the budget-forced pass, the first
+        // `.incompleteReasoning` must route to `prepareBudgetForcedAnswer`
+        // and skip the natural-replay hook entirely. A second
+        // `.incompleteReasoning` ends the run with
+        // `.incompleteReasoningExhausted` — the budget-forced pass is
+        // one-shot, never a retry-on-retry.
+        let surface = ScriptedLoopSurface(steps: [
+            .incompleteReasoning,
+            .incompleteReasoning,
+            .finalResponse,
+        ])
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeBudgetForcedAnswer: true)
+        )
+
+        #expect(
+            result
+                == AgentToolLoop.RunResult(
+                    exit: .incompleteReasoningExhausted,
+                    iterations: 1
+                )
+        )
+        #expect(surface.steps.count == 1, "the second generation must not start")
+        #expect(
+            surface.budgetForcedAnswerPreparations == 1,
+            "the budget-forced hook runs exactly once and is not retried"
+        )
+        #expect(
+            surface.incompleteContinuationPreparations == 0,
+            "natural replay is skipped when the budget-forced hook wins"
+        )
+        #expect(surface.emittedFinalTexts.isEmpty)
+    }
+
+    @Test func budgetForcedAnswerDisabledKeepsNaturalReplayUntouched() async throws {
+        // When the surface does NOT opt into the budget-forced pass
+        // (the default for headless and plugin surfaces), the natural
+        // replay hook is the only recovery path — same behaviour as
+        // before this work landed. The new hook field is nil and never
+        // observed.
+        let surface = ScriptedLoopSurface(steps: [.incompleteReasoning, .finalResponse])
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 1))
+        #expect(surface.budgetForcedAnswerPreparations == 0)
+        #expect(surface.incompleteContinuationPreparations == 1)
     }
 
     @Test func repeatedReasoningOnlyTurnEndsHonestlyWithoutLooping() async throws {
