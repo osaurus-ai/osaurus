@@ -32,112 +32,6 @@
       },
       "shouldTranslate" : false
     },
-    "%lld chats" : {
-      "localizations" : {
-        "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld chat"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld chats"
-                }
-              }
-            }
-          }
-        },
-        "de" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld Chat"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld Chats"
-                }
-              }
-            }
-          }
-        },
-        "ko" : {
-          "variations" : {
-            "plural" : {
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "채팅 %lld개"
-                }
-              }
-            }
-          }
-        },
-        "ru" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld чат"
-                }
-              },
-              "few" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld чата"
-                }
-              },
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld чатов"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld чата"
-                }
-              }
-            }
-          }
-        },
-        "zh-Hans" : {
-          "variations" : {
-            "plural" : {
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld 个聊天"
-                }
-              }
-            }
-          }
-        },
-        "zh-Hant" : {
-          "variations" : {
-            "plural" : {
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld 個聊天"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "" : {
       "shouldTranslate" : false
     },
@@ -4298,6 +4192,112 @@
         }
       }
     },
+    "%lld chats" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld Chat"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld Chats"
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld chat"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld chats"
+                }
+              }
+            }
+          }
+        },
+        "ko" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "채팅 %lld개"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld чата"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld чатов"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld чат"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld чата"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld 个聊天"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld 個聊天"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld connected • %lld model%@ available" : {
       "localizations" : {
         "de" : {
@@ -4351,6 +4351,7 @@
       }
     },
     "%lld conversations" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "variations" : {
@@ -40340,40 +40341,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "智能体可以读取的聊天。"
-          }
-        }
-      }
-    },
-    "Chats in this project share what they learn, so any agent can recall it. Applies even to agents with their own memory turned off, and never builds those agents' personal memory. Requires memory enabled in Settings." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Chats in diesem Projekt teilen, was sie lernen, sodass jeder Agent darauf zugreifen kann. Gilt auch für Agenten mit deaktiviertem eigenem Speicher und baut deren persönlichen Speicher nie auf. Erfordert aktivierten Speicher in den Einstellungen."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이 프로젝트의 채팅은 학습한 내용을 공유하여 모든 에이전트가 기억할 수 있습니다. 자체 메모리를 끈 에이전트에도 적용되며, 해당 에이전트의 개인 메모리는 만들지 않습니다. 설정에서 메모리를 켜야 합니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Чаты в этом проекте делятся тем, что узнают, чтобы любой агент мог это вспомнить. Действует даже для агентов с отключённой собственной памятью и никогда не формирует их личную память. Требует включённой памяти в настройках."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "此项目中的聊天会共享所学内容，任何智能体都能调用。即使智能体自身关闭了记忆也适用，并且不会建立这些智能体的个人记忆。需要在设置中启用记忆。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "此專案中的聊天會共享所學內容，任何代理都能調用。即使代理自身關閉了記憶也適用，並且不會建立這些代理的個人記憶。需要在設定中啟用記憶。"
           }
         }
       }
@@ -178224,6 +178191,7 @@
       "isCommentAutoGenerated" : true
     },
     "Search conversations..." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -185526,40 +185494,6 @@
       }
     },
     "Shared memory" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Gemeinsamer Speicher"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "공유 메모리"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Общая память"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "共享记忆"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "共享記憶"
-          }
-        }
-      }
-    },
-    "Shared Memory" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {

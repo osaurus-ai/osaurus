@@ -900,12 +900,12 @@ public actor MemoryService {
             )
 
             // Whether to build THIS agent's own memory. A turn can reach
-            // distillation solely because it belongs to a shared-memory
-            // project while the agent itself has memory off (see the buffer
-            // gate in ChatView). In that case we distill for the project
-            // namespace only and never write the agent's own episodes,
-            // pinned facts, or identity — the agent's opt-out is honored,
-            // the project's opt-in is served.
+            // distillation while the agent's own memory is off, purely
+            // because it belongs to a project (see the buffer gate in
+            // ChatView): projects always share memory. In that case we
+            // distill into the project namespace ONLY and never write the
+            // agent's own episodes, pinned facts, or identity — the agent's
+            // personal-memory opt-out is honored, the project pool is served.
             let agentMemoryOn = await MainActor.run { () -> Bool in
                 guard let uuid = UUID(uuidString: agentId) else { return true }
                 return !AgentManager.shared.effectiveMemoryDisabled(for: uuid)
@@ -952,12 +952,11 @@ public actor MemoryService {
                 )
                 : 0
 
-            // Shared project memory: if the conversation belongs to a
-            // project that opted into shared memory, mirror the distilled
-            // episode (and pinned candidates) into the project's namespace
-            // so other chats in the project can recall it. Best-effort and
-            // gated on the project's `sharedMemoryEnabled`; no pending
-            // signals are ever written under the project namespace.
+            // Shared project memory: mirror the distilled episode (and pinned
+            // candidates) into the project's namespace so every chat in the
+            // project can recall it — including from agents that have their
+            // own memory off. Best-effort and additive; no pending signals
+            // are ever written under the project namespace.
             await mirrorDistillateToProject(
                 episode: ep,
                 pinnedCandidates: parsed.pinnedCandidates,
@@ -1135,14 +1134,6 @@ public actor MemoryService {
             }
         }
         guard let projectId else { return }
-        // Honor the project's shared-memory opt-in. Off (or a since-deleted
-        // project) → write nothing to the project namespace. This is also
-        // what keeps an agent-memory-ON chat in a sharing-OFF project from
-        // leaking into the project pool.
-        let sharesMemory = await MainActor.run {
-            ProjectManager.shared.project(for: projectId)?.sharedMemoryEnabled ?? false
-        }
-        guard sharesMemory else { return }
         let namespaceKey = MemoryNamespace.project(projectId).key
 
         var mirrored = episode

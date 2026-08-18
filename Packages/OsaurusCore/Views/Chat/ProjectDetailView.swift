@@ -144,7 +144,6 @@ struct ProjectDetailView: View {
                 VStack(alignment: .leading, spacing: 28) {
                     instructionsSection
                     knowledgeSection
-                    memorySection
                     defaultAgentSection
                 }
                 .padding(.horizontal, 24)
@@ -165,7 +164,6 @@ struct ProjectDetailView: View {
                 header
                 instructionsSection
                 knowledgeSection
-                memorySection
                 defaultAgentSection
                 conversationsSection
             }
@@ -319,47 +317,6 @@ struct ProjectDetailView: View {
             try? await Task.sleep(nanoseconds: 1_800_000_000)
             withAnimation(theme.animationQuick()) { instructionsJustSaved = false }
         }
-    }
-
-    // MARK: - Shared Memory
-
-    /// Project-level opt-in for shared memory. When on, every chat in the
-    /// project reads and writes the project's shared memory namespace even
-    /// if the chatting agent has memory off — the explicit opt-in that makes
-    /// projects deliver shared memory by default, mirroring how granting a
-    /// knowledge collection opts the project into shared knowledge.
-    private var memorySection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Shared Memory", bundle: .module)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(
-                        "Chats in this project share what they learn, so any agent can recall it. Applies even to agents with their own memory turned off, and never builds those agents' personal memory. Requires memory enabled in Settings.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 0)
-                Toggle("", isOn: sharedMemoryBinding)
-                    .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                    .labelsHidden()
-            }
-        }
-    }
-
-    private var sharedMemoryBinding: Binding<Bool> {
-        Binding(
-            get: { project.sharedMemoryEnabled },
-            set: { newValue in
-                var updated = project
-                updated.sharedMemoryEnabled = newValue
-                ProjectManager.shared.update(updated)
-            }
-        )
     }
 
     // MARK: - Default Agent

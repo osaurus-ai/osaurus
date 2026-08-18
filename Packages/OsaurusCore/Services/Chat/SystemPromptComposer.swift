@@ -338,9 +338,8 @@ public struct SystemPromptComposer: Sendable {
         trace?.mark("memory_start")
         // The agent's own memory lane still honors the agent's toggle. The
         // project lane (below) is assembled even when the agent has memory
-        // off: a project that opted into shared memory injects it into
-        // every one of its chats. `appendProjectMemory` enforces the
-        // project's `sharedMemoryEnabled` and the global memory switch.
+        // off: every chat in a project recalls the project's shared memory.
+        // `appendProjectMemory` enforces the global memory switch.
         let section =
             snapshot.memoryDisabled
             ? nil
@@ -368,13 +367,6 @@ public struct SystemPromptComposer: Sendable {
         guard let projectId else { return agentSection }
         let config = MemoryConfigurationStore.load()
         guard config.enabled else { return agentSection }
-        // The project's explicit opt-in. Off → no project lane (and a
-        // deleted/unknown project can't inject). Defaults on for legacy
-        // projects (see `Project.sharedMemoryEnabled`).
-        let sharesMemory = await MainActor.run {
-            ProjectManager.shared.project(for: projectId)?.sharedMemoryEnabled ?? false
-        }
-        guard sharesMemory else { return agentSection }
 
         let budget = config.memoryBudgetTokens
         let agentTokens = (agentSection?.count ?? 0) / MemoryConfiguration.charsPerToken
