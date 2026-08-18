@@ -4131,6 +4131,18 @@ final class ChatSession: ObservableObject {
 
         let agentUUID = UUID(uuidString: context.memoryAgentId) ?? Agent.defaultId
         let memoryOff = AgentManager.shared.effectiveMemoryDisabled(for: agentUUID)
+        // A shared-memory project overrides the agent's memory-off for the
+        // PROJECT lane only: the turn is buffered and distilled into the
+        // project namespace so every chat in the project accumulates shared
+        // memory, while the agent still builds none of its own (the distill
+        // path skips the agent namespace, and transcripts below stay
+        // agent-gated). Still under the global memory switch, which
+        // `bufferTurn` enforces.
+        let projectSharesMemory: Bool = {
+            guard let pid = context.memoryProjectId else { return false }
+            return ProjectManager.shared.project(for: pid)?.sharedMemoryEnabled ?? false
+        }()
+        let bufferForMemory = !memoryOff || projectSharesMemory
 
         if !memoryOff, context.hasContent, let sid = sessionId {
             let convId = sid.uuidString
@@ -4203,7 +4215,7 @@ final class ChatSession: ObservableObject {
             }
         }
 
-        if !memoryOff, context.hasContent {
+        if bufferForMemory, context.hasContent {
             let formatter = Self.sessionDateFormatter
             formatter.timeZone = .current
             let today = formatter.string(from: Date())

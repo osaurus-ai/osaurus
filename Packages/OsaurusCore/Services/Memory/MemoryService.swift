@@ -899,43 +899,65 @@ public actor MemoryService {
                 conversationAt: resolvedDate
             )
 
-            let episodeId: Int
-            do {
-                // Id-scoped marking (D2): only the snapshotted ids are
-                // cleared inside the same transaction as the episode insert.
-                episodeId = try db.insertEpisodeAndMarkProcessed(ep, signalIds: signalIds)
-            } catch {
-                MemoryLogger.service.error("distill: failed to insert episode for \(conversationId): \(error)")
-                return recordRetryableDistillFailure(
-                    message: "episode_insert_failed: \(error.localizedDescription)",
-                    agentId: agentId,
-                    conversationId: conversationId,
-                    coreModelId: coreModelId,
-                    signalIds: signalIds,
-                    durationMs: durationMs
-                )
+            // Whether to build THIS agent's own memory. A turn can reach
+            // distillation solely because it belongs to a shared-memory
+            // project while the agent itself has memory off (see the buffer
+            // gate in ChatView). In that case we distill for the project
+            // namespace only and never write the agent's own episodes,
+            // pinned facts, or identity — the agent's opt-out is honored,
+            // the project's opt-in is served.
+            let agentMemoryOn = await MainActor.run { () -> Bool in
+                guard let uuid = UUID(uuidString: agentId) else { return true }
+                return !AgentManager.shared.effectiveMemoryDisabled(for: uuid)
             }
 
-            // Index the episode for search.
-            var stored = ep
-            stored.id = episodeId
-            await MemorySearchService.shared.indexEpisode(stored)
+            let episodeId: Int
+            if agentMemoryOn {
+                do {
+                    // Id-scoped marking (D2): only the snapshotted ids are
+                    // cleared inside the same transaction as the episode insert.
+                    episodeId = try db.insertEpisodeAndMarkProcessed(ep, signalIds: signalIds)
+                } catch {
+                    MemoryLogger.service.error("distill: failed to insert episode for \(conversationId): \(error)")
+                    return recordRetryableDistillFailure(
+                        message: "episode_insert_failed: \(error.localizedDescription)",
+                        agentId: agentId,
+                        conversationId: conversationId,
+                        coreModelId: coreModelId,
+                        signalIds: signalIds,
+                        durationMs: durationMs
+                    )
+                }
 
-            // Promote pinned candidates that are explicit, novel, and not already represented.
-            let storedPinned = await persistPinnedCandidates(
-                parsed.pinnedCandidates,
-                agentId: agentId,
-                episodeId: episodeId
-            )
+                // Index the episode for search.
+                var stored = ep
+                stored.id = episodeId
+                await MemorySearchService.shared.indexEpisode(stored)
+            } else {
+                // Agent memory off: clear the snapshotted signals so they
+                // don't redistill, and write nothing to the agent namespace.
+                // The project mirror below is the only durable write.
+                try? db.markSignals(ids: signalIds, status: "processed")
+                episodeId = 0
+            }
+
+            // Promote pinned candidates that are explicit, novel, and not
+            // already represented — agent namespace only.
+            let storedPinned =
+                agentMemoryOn
+                ? await persistPinnedCandidates(
+                    parsed.pinnedCandidates,
+                    agentId: agentId,
+                    episodeId: episodeId
+                )
+                : 0
 
             // Shared project memory: if the conversation belongs to a
-            // project, mirror the distilled episode (and pinned candidates)
-            // into the project's namespace so other chats in the project can
-            // recall it. Strictly additive and best-effort — the agent
-            // write above already succeeded and its outcome is never
-            // affected by anything in this block. One LLM distill, two
-            // cheap row inserts; no pending signals are ever written under
-            // the project namespace.
+            // project that opted into shared memory, mirror the distilled
+            // episode (and pinned candidates) into the project's namespace
+            // so other chats in the project can recall it. Best-effort and
+            // gated on the project's `sharedMemoryEnabled`; no pending
+            // signals are ever written under the project namespace.
             await mirrorDistillateToProject(
                 episode: ep,
                 pinnedCandidates: parsed.pinnedCandidates,
@@ -943,9 +965,9 @@ public actor MemoryService {
             )
 
             // Apply identity delta: the distillation may declare new
-            // identity-grade facts. We append them to overrides only when the
-            // model marked them as identity-relevant.
-            if !parsed.identityFacts.isEmpty {
+            // identity-grade facts. Agent namespace only, so skip it when
+            // the agent isn't building its own memory.
+            if agentMemoryOn, !parsed.identityFacts.isEmpty {
                 applyIdentityDelta(
                     facts: parsed.identityFacts,
                     currentIdentity: identity,
@@ -1113,6 +1135,14 @@ public actor MemoryService {
             }
         }
         guard let projectId else { return }
+        // Honor the project's shared-memory opt-in. Off (or a since-deleted
+        // project) → write nothing to the project namespace. This is also
+        // what keeps an agent-memory-ON chat in a sharing-OFF project from
+        // leaking into the project pool.
+        let sharesMemory = await MainActor.run {
+            ProjectManager.shared.project(for: projectId)?.sharedMemoryEnabled ?? false
+        }
+        guard sharesMemory else { return }
         let namespaceKey = MemoryNamespace.project(projectId).key
 
         var mirrored = episode
