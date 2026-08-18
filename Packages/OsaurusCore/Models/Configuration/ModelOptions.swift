@@ -650,11 +650,14 @@ struct MistralReasoningProfile: ModelProfile {
 /// Z.ai GLM models hosted by Mistral (e.g. `zai-glm-5-2`). Mistral serves these
 /// third-party open models unmodified behind its own chat-completions API, so
 /// they inherit Mistral's platform-level adjustable-reasoning contract rather
-/// than any GLM-native thinking switch. Per Mistral's reasoning docs (audited
-/// 2026-08), `reasoning_effort` accepts only `none` and `high`; `low`/`medium`
-/// are rejected with HTTP 400, and there is no `max` level. The match is on the
-/// bare `zai-glm` prefix so future GLM revisions hosted the same way are covered
-/// without a registry edit.
+/// than any GLM-native thinking switch. `reasoning_effort` on these models
+/// accepts `none`, `high`, and `max`. Mistral's reasoning docs only document
+/// `none`/`high` (with `high` recommended for agentic/code use); `max` is not
+/// in the docs but is accepted in practice (verified empirically, 2026-08).
+/// `low`/`medium` are not offered — the docs list neither and sending an
+/// unaccepted value returns HTTP 400. The match is on the bare `zai-glm` prefix
+/// so future GLM revisions hosted the same way are covered without a registry
+/// edit.
 struct ZaiGlmReasoningProfile: ModelProfile {
     static let displayName = "Reasoning Effort"
 
@@ -673,6 +676,7 @@ struct ZaiGlmReasoningProfile: ModelProfile {
             kind: .segmented([
                 ModelOptionSegment(id: "none", label: L("None")),
                 ModelOptionSegment(id: "high", label: L("High")),
+                ModelOptionSegment(id: "max", label: L("Max")),
             ])
         )
     ]

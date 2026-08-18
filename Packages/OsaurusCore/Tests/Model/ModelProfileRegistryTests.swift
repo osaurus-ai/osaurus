@@ -466,7 +466,7 @@ struct ModelProfileRegistryTests {
         }
     }
 
-    @Test("Z.ai GLM hosted by Mistral exposes only none/high reasoning effort")
+    @Test("Z.ai GLM hosted by Mistral exposes none/high/max reasoning effort")
     func zaiGlm_matchesReasoningEffortProfile() {
         for id in [
             "zai-glm-5-2",
@@ -481,12 +481,12 @@ struct ModelProfileRegistryTests {
                 Issue.record("expected segmented reasoningEffort option for \(id)")
                 continue
             }
-            #expect(segments.map(\.id) == ["none", "high"])
+            #expect(segments.map(\.id) == ["none", "high", "max"])
             #expect(profile?.thinkingOption?.id == nil)
 
-            // Mistral rejects low/medium with HTTP 400, so narrowed-out values
+            // Mistral rejects low/medium with HTTP 400, so unoffered values
             // must be dropped rather than reach the wire.
-            for stale in ["low", "medium", "max"] {
+            for stale in ["low", "medium"] {
                 let normalized = ModelProfileRegistry.normalizedOptions(
                     for: id,
                     persisted: ["reasoningEffort": .string(stale)]
@@ -494,11 +494,13 @@ struct ModelProfileRegistryTests {
                 #expect(normalized["reasoningEffort"] == nil)
             }
 
-            let explicit = ModelProfileRegistry.normalizedOptions(
-                for: id,
-                persisted: ["reasoningEffort": .string("high")]
-            )
-            #expect(explicit["reasoningEffort"]?.stringValue == "high")
+            for valid in ["none", "high", "max"] {
+                let explicit = ModelProfileRegistry.normalizedOptions(
+                    for: id,
+                    persisted: ["reasoningEffort": .string(valid)]
+                )
+                #expect(explicit["reasoningEffort"]?.stringValue == valid)
+            }
         }
     }
 
