@@ -123,8 +123,8 @@ struct WhatsNewGateFilterTests {
     @Test
     func catalogContainsOnlyRetainedReleasesInOrder() {
         #expect(
-            WhatsNewContent.releases.map(\.version) == ["0.22.7", "0.22.9", "0.22.13"]
+            WhatsNewContent.releases.map(\.version) == ["0.22.9", "0.22.13", "0.22.23"]
         )
-        #expect(WhatsNewContent.latest?.version == "0.22.13")
+        #expect(WhatsNewContent.latest?.version == "0.22.23")
     }
 }

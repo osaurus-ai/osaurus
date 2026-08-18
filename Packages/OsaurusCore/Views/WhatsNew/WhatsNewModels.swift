@@ -105,48 +105,10 @@ public enum WhatsNewContent {
     /// here whose `version` matches `CFBundleShortVersionString` for each
     /// release that should announce changes on first launch after update.
     public static let releases: [WhatsNewRelease] = [
-        knowledge_0_22_7,
         browserUse_0_22_9,
         channels_0_22_13,
         projects_0_22_23,
     ]
-
-    /// First-launch announcement for knowledge collections in 0.22.7.
-    /// Three pages: what a collection is and the formats it indexes,
-    /// the per-agent grant model in the Abilities tab, and the curator
-    /// propose/approve loop. The final CTA deep-links to
-    /// Management → Knowledge via `openKnowledgeSettings`.
-    private static let knowledge_0_22_7 = WhatsNewRelease(
-        version: "0.22.7",
-        pages: [
-            WhatsNewPage(
-                id: "knowledge-0.22.7:summary",
-                title: "Knowledge Base",
-                titlePrefix: "Introducing",
-                description:
-                    "Point Osaurus at folders of reference material like team guides, standards, specs, and spreadsheets, and your agents can search and read them on demand. Markdown, plain text, code, PDF, Word, Excel, PowerPoint, and CSV files are all indexed, entirely on your Mac.",
-                systemImage: "books.vertical.fill"
-            ),
-            WhatsNewPage(
-                id: "knowledge-0.22.7:grants",
-                title: "Granted per agent",
-                eyebrow: "Introducing Knowledge Base",
-                description:
-                    "Each agent only sees the knowledge bases you check in its Abilities tab. Everything else stays invisible to it. Edit a file in the folder and the index updates live, no restart needed.",
-                systemImage: "checklist"
-            ),
-            WhatsNewPage(
-                id: "knowledge-0.22.7:curation",
-                title: "Agents propose, you approve",
-                eyebrow: "Introducing Knowledge Base",
-                description:
-                    "Turn on the Curator ability and an agent can flag stale documents and draft updates, but nothing is ever written until you review the diff and approve it in the Knowledge tab.",
-                systemImage: "checkmark.seal.fill",
-                actionLabel: "Open Knowledge",
-                action: .openKnowledgeSettings
-            ),
-        ]
-    )
 
     /// First-launch announcement for native Browser Use in 0.22.9.
     /// Three pages: what it does and the persistent per-agent sessions
