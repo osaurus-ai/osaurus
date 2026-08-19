@@ -1309,19 +1309,15 @@ private struct SessionRow: View {
                             // instead let the text hug its ideal and truncate
                             // early while empty space sat after the badges.
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .border(Color.green)  // DEBUG
 
                         if session.source != .chat {
                             sourceBadge
-                                .border(Color.orange)  // DEBUG
                         }
 
                         if !session.capabilities.isEmpty {
                             capabilityBadges
-                                .border(Color.purple)  // DEBUG
                         }
                     }
-                    .border(Color.blue)  // DEBUG
 
                     // Live status replaces the relative timestamp while the
                     // session's run is active so the state is glanceable.
