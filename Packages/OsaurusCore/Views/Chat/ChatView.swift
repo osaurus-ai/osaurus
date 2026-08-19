@@ -8183,8 +8183,8 @@ struct ChatView: View {
                     .fill(theme.secondaryText.opacity(liveSidebarWidth != nil ? 0.55 : 0.12))
                     .frame(width: 1)
             }
-            .overlay(ResizeCursorArea())
             .contentShape(Rectangle())
+            .pointerStyle(.columnResize)
             .offset(x: 5)
             .gesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .global)
@@ -10433,42 +10433,3 @@ private enum PairingClient {
 
 // MARK: - Shared Header Components
 // HeaderActionButton, SettingsButton, CloseButton, PinButton are now in SharedHeaderComponents.swift
-
-// MARK: - Resize Cursor Area
-
-/// A thin AppKit-backed strip that shows the horizontal-resize cursor whenever
-/// the pointer is over it. SwiftUI's `.onHover` + `NSCursor.push/pop` is
-/// unreliable for narrow edge handles (the exit callback is easily missed,
-/// leaving the cursor stuck or never shown); a tracking area with
-/// `cursorUpdate` is the robust way to own the cursor for a rect.
-private struct ResizeCursorArea: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { CursorView() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
-
-    private final class CursorView: NSView {
-        override func resetCursorRects() {
-            addCursorRect(bounds, cursor: .resizeLeftRight)
-        }
-
-        override func updateTrackingAreas() {
-            super.updateTrackingAreas()
-            trackingAreas.forEach(removeTrackingArea)
-            addTrackingArea(
-                NSTrackingArea(
-                    rect: bounds,
-                    options: [.cursorUpdate, .activeInActiveApp, .inVisibleRect],
-                    owner: self
-                )
-            )
-        }
-
-        override func cursorUpdate(with event: NSEvent) {
-            NSCursor.resizeLeftRight.set()
-        }
-
-        // Stay transparent to clicks/drags: the tracking area still drives the
-        // cursor, but mouse events fall through to the SwiftUI DragGesture that
-        // actually performs the resize.
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    }
-}
