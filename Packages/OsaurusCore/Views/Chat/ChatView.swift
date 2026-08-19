@@ -7609,6 +7609,13 @@ struct ChatView: View {
 
     @State private var focusTrigger: Int = 0
     @State private var isPinnedToBottom: Bool = true
+    /// User-adjustable width of the History sidebar, persisted across launches
+    /// so a chosen width sticks. Clamped to `sidebarWidthRange` on read so a
+    /// stale out-of-bounds value can never wedge the layout.
+    @AppStorage("chatSidebarWidth") private var storedSidebarWidth: Double = 240
+    /// Sidebar width captured at the start of an edge drag; the gesture adds
+    /// its horizontal translation to this so the resize tracks the cursor.
+    @State private var sidebarDragStartWidth: Double?
     /// Project whose detail page is shown in the content area (opened from
     /// the sidebar's Projects tab). nil shows the normal chat surface.
     @State private var openProjectId: UUID?
@@ -8138,11 +8145,21 @@ struct ChatView: View {
         .animation(theme.springAnimation(), value: current?.id)
     }
 
+    /// Allowed range for the resizable sidebar. The floor keeps the header
+    /// controls usable; the ceiling stops the sidebar from crowding out the
+    /// chat on narrow windows.
+    private static let sidebarWidthRange: ClosedRange<Double> = 200...460
+
+    /// Persisted sidebar width, clamped to the allowed range.
+    private var clampedSidebarWidth: CGFloat {
+        CGFloat(min(max(storedSidebarWidth, Self.sidebarWidthRange.lowerBound), Self.sidebarWidthRange.upperBound))
+    }
+
     /// Chat mode content - the original ChatView implementation
     @ViewBuilder
     private var chatModeContent: some View {
         GeometryReader { proxy in
-            let sidebarWidth: CGFloat = windowState.showSidebar ? 240 : 0
+            let sidebarWidth: CGFloat = windowState.showSidebar ? clampedSidebarWidth : 0
             let chatWidth = proxy.size.width - sidebarWidth
             let effectiveContentWidth = min(chatWidth, 1100)
 
