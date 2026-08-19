@@ -8154,7 +8154,7 @@ struct ChatView: View {
     /// Allowed range for the resizable sidebar. The floor keeps the header
     /// controls usable; the ceiling stops the sidebar from crowding out the
     /// chat on narrow windows.
-    private static let sidebarWidthRange: ClosedRange<Double> = 200...460
+    private static let sidebarWidthRange: ClosedRange<Double> = 260...460
 
     /// Clamp a raw width to the allowed range.
     private func clampSidebarWidth(_ raw: Double) -> Double {
