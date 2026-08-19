@@ -1331,7 +1331,10 @@ private struct SessionRow: View {
                     .font(.system(size: 10))
                     .lineLimit(1)
                 }
-                Spacer()
+                // Fill the row so the title uses the full available width
+                // instead of hugging its ideal size and letting the trailing
+                // Spacer eat the slack (which truncated titles prematurely).
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 // Persistent (not hover-gated) Stop for the live run, so an
                 // active task can be halted straight from the sidebar.
