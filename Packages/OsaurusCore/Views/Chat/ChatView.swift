@@ -8242,6 +8242,7 @@ struct ChatView: View {
                                 if let projectId {
                                     session.projectId = projectId
                                 }
+                                applyProjectFolderIfNeeded(for: projectId)
                             },
                             onDelete: { id in
                                 // Deleting a chat is an explicit destructive
@@ -8553,6 +8554,7 @@ struct ChatView: View {
                                 windowState.enteredChatFromProjectPage = true
                                 startProjectChat(defaultAgentId: project.defaultAgentId)
                                 session.projectId = project.id
+                                applyProjectFolderIfNeeded(for: project.id)
                             },
                             onDelete: {
                                 ChatSessionsManager.shared.deleteProject(id: project.id)
@@ -9865,6 +9867,24 @@ extension ChatView {
         } else {
             windowState.startNewChat()
         }
+    }
+
+    /// Open a fresh project chat with the project's working folder, if one is
+    /// set. Applied only when the new chat has no folder of its own, so it's a
+    /// default and never overrides a folder the user later picks in the chat
+    /// (mirrors how `defaultAgentId` nudges without locking). Restoring the
+    /// project's security-scoped bookmark is the same path a persisted chat
+    /// folder takes on reopen.
+    private func applyProjectFolderIfNeeded(for projectId: UUID?) {
+        guard let projectId,
+            let project = projectManager.project(for: projectId),
+            project.folderBookmark != nil,
+            !windowState.session.folderState.hasActiveFolder
+        else { return }
+        windowState.session.folderState.restore(
+            bookmark: project.folderBookmark,
+            path: project.folderPath
+        )
     }
 
     private func setupKeyMonitor() {
