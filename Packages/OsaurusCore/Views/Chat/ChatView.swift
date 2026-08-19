@@ -8155,6 +8155,45 @@ struct ChatView: View {
         CGFloat(min(max(storedSidebarWidth, Self.sidebarWidthRange.lowerBound), Self.sidebarWidthRange.upperBound))
     }
 
+    /// Draggable divider on the sidebar's trailing edge. A thin visible seam
+    /// with a wider invisible hit area; dragging resizes the sidebar and the
+    /// two-headed resize cursor telegraphs that it's grabbable.
+    private var sidebarResizeHandle: some View {
+        Rectangle()
+            .fill(Color.clear)
+            .frame(width: 10)
+            .overlay(alignment: .center) {
+                Rectangle()
+                    .fill(theme.secondaryText.opacity(sidebarDragStartWidth != nil ? 0.5 : 0.15))
+                    .frame(width: 1)
+            }
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                if hovering {
+                    NSCursor.resizeLeftRight.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        let start = sidebarDragStartWidth ?? Double(clampedSidebarWidth)
+                        if sidebarDragStartWidth == nil {
+                            sidebarDragStartWidth = start
+                        }
+                        let proposed = start + Double(value.translation.width)
+                        storedSidebarWidth = min(
+                            max(proposed, Self.sidebarWidthRange.lowerBound),
+                            Self.sidebarWidthRange.upperBound
+                        )
+                    }
+                    .onEnded { _ in
+                        sidebarDragStartWidth = nil
+                    }
+            )
+    }
+
     /// Chat mode content - the original ChatView implementation
     @ViewBuilder
     private var chatModeContent: some View {
@@ -8288,6 +8327,11 @@ struct ChatView: View {
                 .frame(width: sidebarWidth, alignment: .top)
                 .frame(maxHeight: .infinity, alignment: .top)
                 .clipped()
+                .overlay(alignment: .trailing) {
+                    if windowState.showSidebar {
+                        sidebarResizeHandle
+                    }
+                }
                 .zIndex(1)
 
                 // Main chat area
