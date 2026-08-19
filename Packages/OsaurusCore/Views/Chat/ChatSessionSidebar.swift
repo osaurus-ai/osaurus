@@ -1318,7 +1318,6 @@ private struct SessionRow: View {
                             capabilityBadges
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     // Live status replaces the relative timestamp while the
                     // session's run is active so the state is glanceable.
