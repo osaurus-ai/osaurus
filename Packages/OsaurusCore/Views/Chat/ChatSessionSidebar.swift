@@ -1340,6 +1340,7 @@ private struct SessionRow: View {
                 // instead of hugging its ideal size and letting the trailing
                 // Spacer eat the slack (which truncated titles prematurely).
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.red.opacity(0.25))  // DEBUG: remove
 
                 // Persistent (not hover-gated) Stop for the live run, so an
                 // active task can be halted straight from the sidebar.
