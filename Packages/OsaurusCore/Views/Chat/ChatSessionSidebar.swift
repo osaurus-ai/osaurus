@@ -1303,6 +1303,10 @@ private struct SessionRow: View {
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(theme.primaryText)
                             .lineLimit(1)
+                            // Win the width competition against the trailing
+                            // badges so the title claims all the free space and
+                            // only truncates at the row edge, never early.
+                            .layoutPriority(1)
 
                         if session.source != .chat {
                             sourceBadge
@@ -1312,6 +1316,7 @@ private struct SessionRow: View {
                             capabilityBadges
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     // Live status replaces the relative timestamp while the
                     // session's run is active so the state is glanceable.
