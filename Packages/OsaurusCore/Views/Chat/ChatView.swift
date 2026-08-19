@@ -7613,9 +7613,15 @@ struct ChatView: View {
     /// so a chosen width sticks. Clamped to `sidebarWidthRange` on read so a
     /// stale out-of-bounds value can never wedge the layout.
     @AppStorage("chatSidebarWidth") private var storedSidebarWidth: Double = 240
-    /// Sidebar width captured at the start of an edge drag; the gesture adds
-    /// its horizontal translation to this so the resize tracks the cursor.
-    @State private var sidebarDragStartWidth: Double?
+    /// Transient width while an edge drag is in flight. Kept in view state so
+    /// the resize tracks the cursor at 60fps without hitting UserDefaults on
+    /// every frame; the final value is committed to `storedSidebarWidth` on
+    /// drag end. `nil` means no drag is active.
+    @State private var liveSidebarWidth: Double?
+    /// Width captured at the start of a drag. `translation` is cumulative from
+    /// the gesture start, so the live width is always `anchor + translation`
+    /// (adding to the running live value would double-count the delta).
+    @State private var sidebarDragAnchor: Double?
     /// Project whose detail page is shown in the content area (opened from
     /// the sidebar's Projects tab). nil shows the normal chat surface.
     @State private var openProjectId: UUID?
@@ -8150,46 +8156,53 @@ struct ChatView: View {
     /// chat on narrow windows.
     private static let sidebarWidthRange: ClosedRange<Double> = 200...460
 
-    /// Persisted sidebar width, clamped to the allowed range.
+    /// Clamp a raw width to the allowed range.
+    private func clampSidebarWidth(_ raw: Double) -> Double {
+        min(max(raw, Self.sidebarWidthRange.lowerBound), Self.sidebarWidthRange.upperBound)
+    }
+
+    /// Effective sidebar width: the live drag value while resizing, otherwise
+    /// the persisted width. Always clamped.
     private var clampedSidebarWidth: CGFloat {
-        CGFloat(min(max(storedSidebarWidth, Self.sidebarWidthRange.lowerBound), Self.sidebarWidthRange.upperBound))
+        CGFloat(clampSidebarWidth(liveSidebarWidth ?? storedSidebarWidth))
     }
 
     /// Draggable divider on the sidebar's trailing edge. A thin visible seam
     /// with a wider invisible hit area; dragging resizes the sidebar and the
     /// two-headed resize cursor telegraphs that it's grabbable.
     private var sidebarResizeHandle: some View {
-        Rectangle()
-            .fill(Color.clear)
-            .frame(width: 10)
-            .overlay(alignment: .center) {
+        // An 11pt-wide interactive strip straddling the trailing edge (offset
+        // pushes half of it past the border) so the seam is grabbable right at
+        // the boundary. The visible seam is a 1pt line at the strip's center;
+        // the AppKit cursor area fills the strip.
+        Color.clear
+            .frame(width: 11)
+            .frame(maxHeight: .infinity)
+            .overlay {
                 Rectangle()
-                    .fill(theme.secondaryText.opacity(sidebarDragStartWidth != nil ? 0.5 : 0.15))
+                    .fill(theme.secondaryText.opacity(liveSidebarWidth != nil ? 0.55 : 0.12))
                     .frame(width: 1)
             }
+            .overlay(ResizeCursorArea())
             .contentShape(Rectangle())
-            .onHover { hovering in
-                if hovering {
-                    NSCursor.resizeLeftRight.push()
-                } else {
-                    NSCursor.pop()
-                }
-            }
+            .offset(x: 5)
             .gesture(
-                DragGesture(minimumDistance: 1)
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
                     .onChanged { value in
-                        let start = sidebarDragStartWidth ?? Double(clampedSidebarWidth)
-                        if sidebarDragStartWidth == nil {
-                            sidebarDragStartWidth = start
+                        // Anchor to the width at gesture start so the rail
+                        // tracks the cursor 1:1 without accumulating drift.
+                        let anchor = sidebarDragAnchor ?? Double(clampedSidebarWidth)
+                        if sidebarDragAnchor == nil {
+                            sidebarDragAnchor = anchor
                         }
-                        let proposed = start + Double(value.translation.width)
-                        storedSidebarWidth = min(
-                            max(proposed, Self.sidebarWidthRange.lowerBound),
-                            Self.sidebarWidthRange.upperBound
-                        )
+                        liveSidebarWidth = clampSidebarWidth(anchor + Double(value.translation.width))
                     }
                     .onEnded { _ in
-                        sidebarDragStartWidth = nil
+                        if let final = liveSidebarWidth {
+                            storedSidebarWidth = clampSidebarWidth(final)
+                        }
+                        liveSidebarWidth = nil
+                        sidebarDragAnchor = nil
                     }
             )
     }
@@ -8210,6 +8223,7 @@ struct ChatView: View {
                             sessions: windowState.filteredSessions,
                             agentId: windowState.agentId,
                             currentSessionId: session.sessionId,
+                            width: sidebarWidth,
                             onSelect: { data in
                                 openProjectId = nil
                                 windowState.enteredChatFromProjectPage = false
@@ -10419,3 +10433,42 @@ private enum PairingClient {
 
 // MARK: - Shared Header Components
 // HeaderActionButton, SettingsButton, CloseButton, PinButton are now in SharedHeaderComponents.swift
+
+// MARK: - Resize Cursor Area
+
+/// A thin AppKit-backed strip that shows the horizontal-resize cursor whenever
+/// the pointer is over it. SwiftUI's `.onHover` + `NSCursor.push/pop` is
+/// unreliable for narrow edge handles (the exit callback is easily missed,
+/// leaving the cursor stuck or never shown); a tracking area with
+/// `cursorUpdate` is the robust way to own the cursor for a rect.
+private struct ResizeCursorArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { CursorView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class CursorView: NSView {
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .resizeLeftRight)
+        }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(
+                NSTrackingArea(
+                    rect: bounds,
+                    options: [.cursorUpdate, .activeInActiveApp, .inVisibleRect],
+                    owner: self
+                )
+            )
+        }
+
+        override func cursorUpdate(with event: NSEvent) {
+            NSCursor.resizeLeftRight.set()
+        }
+
+        // Stay transparent to clicks/drags: the tracking area still drives the
+        // cursor, but mouse events fall through to the SwiftUI DragGesture that
+        // actually performs the resize.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+}
