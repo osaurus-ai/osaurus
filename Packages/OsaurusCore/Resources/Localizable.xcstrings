@@ -41713,6 +41713,40 @@
         }
       }
     },
+    "Choose a folder new chats in this project open with": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wähle einen Ordner, mit dem neue Chats in diesem Projekt öffnen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 프로젝트의 새 채팅이 열릴 폴더를 선택하세요"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выберите папку, с которой будут открываться новые чаты в этом проекте"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择此项目中新聊天打开时使用的文件夹"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選擇此專案中新聊天開啟時使用的資料夾"
+          }
+        }
+      }
+    },
     "Choose a folder this agent may read and write inside.": {
       "localizations": {
         "de": {
@@ -42485,6 +42519,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "選擇檔案…"
+          }
+        }
+      }
+    },
+    "Choose Folder…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ordner auswählen…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "폴더 선택…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выбрать папку…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择文件夹…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選擇資料夾…"
           }
         }
       }
@@ -119743,6 +119811,40 @@
         }
       }
     },
+    "New chats in this project open with this folder.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neue Chats in diesem Projekt öffnen mit diesem Ordner."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 프로젝트의 새 채팅은 이 폴더로 시작합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Новые чаты в этом проекте открываются с этой папкой."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此项目中的新聊天将以此文件夹打开。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此專案中的新聊天將以此資料夾開啟。"
+          }
+        }
+      }
+    },
     "New chats started from this project use this agent.": {
       "localizations": {
         "de": {
@@ -162037,6 +162139,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "移除文件"
+          }
+        }
+      }
+    },
+    "Remove folder": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ordner entfernen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "폴더 제거"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить папку"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除文件夹"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除資料夾"
           }
         }
       }
@@ -227006,6 +227142,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "工作目錄"
+          }
+        }
+      }
+    },
+    "Working Folder": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arbeitsordner"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "작업 폴더"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Рабочая папка"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作文件夹"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作資料夾"
           }
         }
       }

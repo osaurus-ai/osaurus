@@ -7,6 +7,7 @@
 //  content area when a project is opened from the sidebar's Projects tab.
 //
 
+import AppKit
 import SwiftUI
 
 struct ProjectDetailView: View {
@@ -47,6 +48,9 @@ struct ProjectDetailView: View {
     /// snippet on the page (the full view lives in Memory settings).
     @State private var memoryPreviewLines: [String] = []
     @State private var memoryItemCount: Int = 0
+    /// Display path of the project's working folder, mirrored from the model
+    /// so the section updates the instant the user picks or clears one.
+    @State private var folderDisplayPath: String?
 
     private var memberSessions: [ChatSessionData] {
         sessionsManager.sessions.filter { $0.projectId == project.id && !$0.archived }
@@ -148,6 +152,7 @@ struct ProjectDetailView: View {
                 VStack(alignment: .leading, spacing: 28) {
                     instructionsSection
                     knowledgeSection
+                    folderSection
                     memorySection
                     defaultAgentSection
                 }
@@ -169,6 +174,7 @@ struct ProjectDetailView: View {
                 header
                 instructionsSection
                 knowledgeSection
+                folderSection
                 memorySection
                 defaultAgentSection
                 conversationsSection
@@ -190,6 +196,7 @@ struct ProjectDetailView: View {
         contentSearchTask?.cancel()
         contentMatchedSessionIds = []
         isContentSearchInFlight = false
+        folderDisplayPath = project.folderPath
         loadMemoryPreview()
     }
 
@@ -676,6 +683,118 @@ struct ProjectDetailView: View {
             updated.knowledgeCollectionIds.append(id)
         }
         ProjectManager.shared.update(updated)
+    }
+
+    // MARK: - Working Folder
+
+    /// Picker for the folder new chats in this project open with. A default,
+    /// not a lock: chats can still pick their own folder, and existing chats
+    /// are untouched. Answers the "select a folder every time" gripe.
+    private var folderSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Working Folder", bundle: .module)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+
+            Text("New chats in this project open with this folder.", bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+
+            if let path = folderDisplayPath, !path.isEmpty {
+                HStack(spacing: 10) {
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(verbatim: (path as NSString).lastPathComponent)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+                            .lineLimit(1)
+                        Text(verbatim: (path as NSString).abbreviatingWithTildeInPath)
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.secondaryText.opacity(0.85))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer()
+                    Button(action: chooseFolder) {
+                        Text("Change", bundle: .module)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                    .pointingHandCursor()
+                    Button(action: clearFolder) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(theme.tertiaryText)
+                            .frame(width: 20, height: 20)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .pointingHandCursor()
+                    .localizedHelp("Remove folder")
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.35 : 0.5))
+                )
+            } else {
+                Button(action: chooseFolder) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "folder.badge.plus")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                        Text("Choose Folder…", bundle: .module)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.35 : 0.5))
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .pointingHandCursor()
+            }
+        }
+    }
+
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.title = L("Select Working Directory")
+        panel.message = L("Choose a folder new chats in this project open with")
+        panel.prompt = L("Select")
+
+        let projectId = project.id
+        let complete: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in
+                if let path = await ProjectManager.shared.setFolder(url, for: projectId) {
+                    folderDisplayPath = path
+                }
+            }
+        }
+        if let window = NSApp.keyWindow {
+            panel.beginSheetModal(for: window, completionHandler: complete)
+        } else {
+            complete(panel.runModal())
+        }
+    }
+
+    private func clearFolder() {
+        ProjectManager.shared.clearFolder(for: project.id)
+        folderDisplayPath = nil
     }
 
     // MARK: - Conversations
