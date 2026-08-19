@@ -1303,10 +1303,12 @@ private struct SessionRow: View {
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(theme.primaryText)
                             .lineLimit(1)
-                            // Win the width competition against the trailing
-                            // badges so the title claims all the free space and
-                            // only truncates at the row edge, never early.
-                            .layoutPriority(1)
+                            // The Text itself must be greedy so it claims all
+                            // free width and pushes the trailing badges to the
+                            // right; putting maxWidth on the enclosing HStack
+                            // instead let the text hug its ideal and truncate
+                            // early while empty space sat after the badges.
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
                         if session.source != .chat {
                             sourceBadge
@@ -1340,7 +1342,6 @@ private struct SessionRow: View {
                 // instead of hugging its ideal size and letting the trailing
                 // Spacer eat the slack (which truncated titles prematurely).
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.red.opacity(0.25))  // DEBUG: remove
 
                 // Persistent (not hover-gated) Stop for the live run, so an
                 // active task can be halted straight from the sidebar.
