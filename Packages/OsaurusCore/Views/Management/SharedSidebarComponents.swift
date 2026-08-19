@@ -47,13 +47,22 @@ struct SidebarContainer<Content: View>: View {
     let attachedEdge: Edge?
     /// Top padding for the content (useful for window control clearance)
     let topPadding: CGFloat
+    /// Fixed width of the container. Defaults to the shared constant; callers
+    /// that support a user-resizable rail pass a live width instead.
+    let width: CGFloat
 
     @ViewBuilder let content: () -> Content
     @Environment(\.theme) private var theme
 
-    init(attachedEdge: Edge? = nil, topPadding: CGFloat = 0, @ViewBuilder content: @escaping () -> Content) {
+    init(
+        attachedEdge: Edge? = nil,
+        topPadding: CGFloat = 0,
+        width: CGFloat = SidebarStyle.width,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
         self.attachedEdge = attachedEdge
         self.topPadding = topPadding
+        self.width = width
         self.content = content
     }
 
@@ -62,7 +71,7 @@ struct SidebarContainer<Content: View>: View {
             content()
         }
         .padding(.top, topPadding)
-        .frame(width: SidebarStyle.width, alignment: .top)
+        .frame(width: width, alignment: .top)
         .frame(maxHeight: .infinity, alignment: .top)
         .background { SidebarBackground() }
         .clipShape(containerShape)

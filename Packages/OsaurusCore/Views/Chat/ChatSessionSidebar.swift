@@ -27,6 +27,9 @@ struct ChatSessionSidebar: View {
     /// confusing "no results" empty state.
     let agentId: UUID
     let currentSessionId: UUID?
+    /// Live width of the rail, driven by the parent's resize handle so the
+    /// inner content (titles, chips, rows) reflows to fill the chosen width.
+    var width: CGFloat = SidebarStyle.width
     let onSelect: (ChatSessionData) -> Void
     /// Start a new chat. The argument is the sidebar's selected project id
     /// (nil when no project lens is active) so the fresh chat lands in the
@@ -217,7 +220,7 @@ struct ChatSessionSidebar: View {
     }
 
     var body: some View {
-        SidebarContainer(attachedEdge: .leading, topPadding: 40) {
+        SidebarContainer(attachedEdge: .leading, topPadding: 40, width: width) {
             // Chats | Projects lens switcher, above the section header so
             // the lens is the first thing the eye lands on. As the first
             // child it owns the window-control clearance the header used to
