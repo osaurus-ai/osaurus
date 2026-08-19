@@ -911,7 +911,9 @@ private struct ChatFullScreenHeaderView: View {
         ZStack {
             HStack(spacing: 8) {
                 ChatToolbarSidebarView(windowState: windowState)
-                ChatToolbarBackView(windowState: windowState, sidebarOpenInset: 164)
+                // Full-screen header has no traffic lights, so only the toggle
+                // precedes this item.
+                ChatToolbarBackView(windowState: windowState, leadingChromeWidth: 76)
                 Spacer()
                 ChatToolbarActionView(windowState: windowState)
                 ChatToolbarTrailingView(windowState: windowState)
@@ -1169,26 +1171,37 @@ extension Notification.Name {
 /// session-replacement reason as `ChatToolbarActionView` below.
 private struct ChatToolbarBackView: View {
     @ObservedObject var windowState: ChatWindowState
-    /// Leading inset applied while the sidebar is open so the button lands
-    /// at the CONTENT area's top-left instead of over the sidebar. Differs
-    /// between the NSToolbar (traffic lights + toggle item precede it) and
-    /// the full-screen header (no traffic lights).
-    var sidebarOpenInset: CGFloat = 104
+    /// Width of the chrome that precedes this item on the leading edge
+    /// (traffic lights + sidebar toggle in the NSToolbar; just the toggle in
+    /// the full-screen header). Subtracted from the live sidebar width to land
+    /// the button at the CONTENT area's top-left, whatever the sidebar's
+    /// user-chosen width.
+    var leadingChromeWidth: CGFloat = 136
 
     var body: some View {
         ChatToolbarBackContent(
             windowState: windowState, session: windowState.session,
-            sidebarOpenInset: sidebarOpenInset)
+            leadingChromeWidth: leadingChromeWidth)
     }
 }
 
 private struct ChatToolbarBackContent: View {
     @ObservedObject var windowState: ChatWindowState
     @ObservedObject var session: ChatSession
-    var sidebarOpenInset: CGFloat = 104
+    var leadingChromeWidth: CGFloat = 136
     @ObservedObject private var projectManager = ProjectManager.shared
+    /// The sidebar's user-chosen width, shared with the resizable sidebar via
+    /// the same defaults key so the pill tracks the content edge as it moves.
+    @AppStorage("chatSidebarWidth") private var storedSidebarWidth: Double = 240
 
     @State private var isHovered = false
+
+    /// Leading inset that keeps the pill at the content area's left edge:
+    /// the (clamped) sidebar width minus the chrome that precedes this item.
+    private var sidebarOpenInset: CGFloat {
+        let clamped = min(max(storedSidebarWidth, 260), 460)
+        return max(0, CGFloat(clamped) - leadingChromeWidth)
+    }
 
     var body: some View {
         if !windowState.isProjectPageVisible,
@@ -1251,8 +1264,9 @@ private struct ChatToolbarBackContent: View {
                     bundle: .module))
             // Anchor to the CONTENT area's top-left, not the window's:
             // with the sidebar open, the un-padded item would sit over the
-            // sidebar beside its toggle. The inset ≈ sidebar width (240)
-            // minus what precedes this item on the leading edge.
+            // sidebar beside its toggle. The inset is the live sidebar width
+            // minus what precedes this item on the leading edge, so the pill
+            // follows the content edge as the sidebar is resized.
             .padding(.leading, windowState.showSidebar ? sidebarOpenInset : 0)
             .animation(windowState.theme.animationQuick(), value: windowState.showSidebar)
             .environment(\.theme, windowState.theme)
