@@ -2467,6 +2467,14 @@ extension FloatingInputCard {
                 }
             }
 
+            // Effective execution mode indicator (issue #2320). The badge
+            // is read-only and surfaces what the agent loop will actually
+            // resolve to on the next send — closing the inverse gap where
+            // the folder chip stays visible while sandbox wins. Hidden
+            // when the user is in the trivial "no folder, no sandbox,
+            // no autonomous" default state, where it would be visual noise.
+            executionModeBadge()
+
             // Clipboard / paste chip — last in the left cluster.
             if AppConfiguration.shared.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent {
                 clipboardToggleChip(compact: compact)
@@ -3981,6 +3989,102 @@ extension FloatingInputCard {
             }
         }
         .animation(.easeOut(duration: 0.15), value: hasFolder)
+    }
+
+    /// Resolved execution mode for the current chat. Mirrors the precedence
+    /// pinned by `ToolRegistry.resolveExecutionMode` and the
+    /// `ResolveExecutionModeTests` suite, so the chat-composer indicator
+    /// can never disagree with the agent loop's runtime decision.
+    ///
+    /// `isSandboxEnabled` is the user-controlled autonomous toggle. The
+    /// `.sandbox` branch only applies when the toggle is on AND
+    /// `sandbox_exec` is registered with the tool registry; the chip
+    /// surfaces that via `sandboxState.availability.isAvailable`, which
+    /// tracks the same registration. Issue #2320: the legibility gap
+    /// was that the folder chip stayed visible even when the resolver
+    /// would resolve to `.sandbox`, so the UI read as though both
+    /// selections were in effect. The badge closes that.
+    private var effectiveExecutionMode: ExecutionMode {
+        ToolRegistry.shared.resolveExecutionMode(
+            folderContext: folderState.context,
+            autonomousEnabled: isSandboxEnabled
+        )
+    }
+
+    /// Read-only mode indicator for the toggle chip cluster. Pinned by
+    /// `executionModeBadgeRendersForResolvedMode` so the three states
+    /// (VM / Host / Off) cannot drift from `ToolRegistry.resolveExecutionMode`.
+    @ViewBuilder
+    private func executionModeBadge() -> some View {
+        // The indicator is only useful when it carries information the
+        // adjacent chips do not already show. Hide it on the Default
+        // (configuration) agent (no folder, no sandbox) and in Mode 2
+        // (remote agents run their own tools server-side; the local
+        // mode indicator would be misleading).
+        if isDefaultConfigAgent || isRemoteAgentRun {
+            EmptyView()
+        } else {
+            switch effectiveExecutionMode {
+            case .sandbox:
+                modeBadgeContent(
+                    icon: "shippingbox.fill",
+                    text: L("VM"),
+                    tint: .green,
+                    help: L("Autonomous tools run inside the OS-level sandbox VM. Selected folder is suspended.")
+                )
+            case .hostFolder(let folder):
+                modeBadgeContent(
+                    icon: "folder.fill",
+                    text: L("Host"),
+                    tint: .orange,
+                    help: L("Autonomous tools run on the host as the current user in `\(folder.rootPath.lastPathComponent)`. Sandbox VM is off.")
+                )
+            case .none:
+                // Off: only render when there is a real no-op risk — i.e.
+                // the user has selected a folder they expect to act on,
+                // or the sandbox toggle is on but unregistered. Pure
+                // "no folder, no sandbox, no autonomous" is the agent
+                // default and would be visual noise.
+                if folderState.hasActiveFolder || isSandboxEnabled {
+                    modeBadgeContent(
+                        icon: "circle.dashed",
+                        text: L("Off"),
+                        tint: .secondary,
+                        help: L("Autonomous tools will not run this turn. Enable sandbox, or pick a folder that supports host execution.")
+                    )
+                } else {
+                    EmptyView()
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func modeBadgeContent(
+        icon: String,
+        text: String,
+        tint: Color,
+        help: String
+    ) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(tint)
+            Text(text)
+                .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .semibold))
+                .foregroundColor(tint)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            Capsule().fill(tint.opacity(0.12))
+        )
+        .overlay(
+            Capsule().strokeBorder(tint.opacity(0.35), lineWidth: 0.5)
+        )
+        .help(help)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text("Execution mode: \(text)"))
     }
 
     @ViewBuilder
