@@ -732,6 +732,54 @@ struct AgentToolLoopTests {
         }
     }
 
+    /// The stream consumer's cut is authoritative — it stopped reading, so
+    /// whatever terminal reason the runtime reports describes a generation
+    /// nobody finished. A wall of one repeated sentence is never an answer.
+    @Test func repetitionLoopOutranksTheReportedStopReason() {
+        for stopReason in ["stop", "length", nil] {
+            let step = AgentLoopModelStep.classifyTerminal(
+                contentIsBlank: false,
+                thinkingIsBlank: true,
+                stopReason: stopReason,
+                requiresVisibleFinalResponse: false,
+                toolsWereOffered: true,
+                content: "Let me continue:",
+                repetitionLoopPhrase: "let me continue"
+            )
+            guard case .repetitionLoop(let phrase) = step else {
+                Issue.record("a cut stream must classify as a loop (stop=\(stopReason ?? "nil"))")
+                return
+            }
+            #expect(phrase == "let me continue")
+        }
+    }
+
+    /// Turns the consumer did not cut are unaffected.
+    @Test func absentRepetitionPhraseLeavesClassificationUnchanged() {
+        let step = AgentLoopModelStep.classifyTerminal(
+            contentIsBlank: false,
+            thinkingIsBlank: true,
+            stopReason: "stop",
+            requiresVisibleFinalResponse: false,
+            toolsWereOffered: true,
+            content: "All ten documents are loaded."
+        )
+        guard case .finalResponse = step else {
+            Issue.record("an ordinary turn must not be treated as a loop")
+            return
+        }
+    }
+
+    /// The notice has to name the repeated phrase — a generic "you repeated
+    /// yourself" gives a small model nothing to steer away from.
+    @Test func repetitionNoticeNamesThePhraseAndDemandsOneAction() {
+        let notice = AgentToolLoop.repetitionLoopNotice(phrase: "let me continue")
+        #expect(notice.contains("let me continue"))
+        #expect(notice.contains("exactly ONE concrete thing"))
+        // Degrades cleanly when the phrase was not captured.
+        #expect(!AgentToolLoop.repetitionLoopNotice(phrase: nil).contains("(\"\")"))
+    }
+
     @Test func recoveryIdempotencyOrdinalDistinguishesLogicalReplayOnly() {
         let messages = [ChatMessage(role: "user", content: "Do the task.")]
         let first = AgentToolLoop.recoveryAwareIdempotencySuffix(

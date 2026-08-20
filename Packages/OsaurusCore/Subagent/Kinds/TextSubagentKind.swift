@@ -844,6 +844,11 @@ final class TextSubagentKind:
                     "Subagent '\(targetLabel)' repeatedly reached its output limit inside a tool call.",
                 retryable: false
             )
+        case .repetitionLoopExhausted:
+            throw SubagentError.executionFailed(
+                message: "Subagent '\(targetLabel)' got stuck repeating itself.",
+                retryable: false
+            )
         case .incompleteReasoningExhausted:
             throw SubagentError.executionFailed(
                 message: "Subagent '\(targetLabel)' ended in reasoning without producing a visible result.",

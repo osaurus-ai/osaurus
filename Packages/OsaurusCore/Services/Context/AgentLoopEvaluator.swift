@@ -1686,6 +1686,7 @@ public enum AgentLoopEvaluator {
         case .lengthExhausted: return "lengthExhausted"
         case .oversizedToolCallExhausted: return "oversizedToolCallExhausted"
         case .truncatedToolCallExhausted: return "truncatedToolCallExhausted"
+        case .repetitionLoopExhausted: return "repetitionLoopExhausted"
         case .incompleteReasoningExhausted: return "incompleteReasoningExhausted"
         }
     }
