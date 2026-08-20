@@ -91,7 +91,7 @@ struct CreditsView: View {
         .sheet(isPresented: $showRouterUsageCenter) {
             RouterAccountUsageCenterView()
                 .environment(\.theme, themeManager.currentTheme)
-                .frame(width: 980, height: 760)
+                .fittedSheetFrame(width: 980, height: 760)
         }
         .confirmationDialog(
             Text("Turn off Osaurus Router?", bundle: .module),

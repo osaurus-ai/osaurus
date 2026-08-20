@@ -86,7 +86,7 @@ struct ChatChangesView: View {
                 )
             )
         }
-        .frame(width: 600, height: 620)
+        .fittedSheetFrame(width: 600, height: 620)
         .background(theme.cardBackground)
         .task { await reload() }
         .onReceive(
