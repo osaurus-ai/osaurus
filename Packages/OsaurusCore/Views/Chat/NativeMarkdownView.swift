@@ -15,8 +15,16 @@
 
 import AppKit
 import Foundation
+import SwiftMath
 
 // MARK: - NativeMarkdownView
+
+final class MathFormulaImageView: NSImageView {
+    override var intrinsicContentSize: NSSize {
+        guard let image else { return NSSize(width: NSView.noIntrinsicMetric, height: 32) }
+        return image.size
+    }
+}
 
 final class NativeMarkdownView: NSView {
 
@@ -59,6 +67,7 @@ final class NativeMarkdownView: NSView {
     /// constraint mutations at all.
     private var installedSegmentLayoutSignature: [String] = []
     private var heightConstraint: NSLayoutConstraint?
+    private var mathHeightConstraints: [String: NSLayoutConstraint] = [:]
 
     // MARK: State
 
@@ -745,6 +754,14 @@ final class NativeMarkdownView: NSView {
         if let tb = view as? NativeMarkdownTableView {
             return tb.measuredHeight()
         }
+        if let formulaView = view as? MathFormulaImageView {
+            let imageSize = formulaView.image?.size ?? .zero
+            let availableWidth = max(width, 1)
+            let scale = imageSize.width > availableWidth ? availableWidth / imageSize.width : 1
+            let h = imageSize.height * scale
+            if h.isFinite, h > 0 { return ceil(h) }
+            return 32
+        }
         if view is NSImageView {
             return imageHeight(forSegmentId: key, width: width)
         }
@@ -942,6 +959,9 @@ final class NativeMarkdownView: NSView {
             cancelImageLoadTask(forSegmentId: entry.key)
             imageHeightConstraints.removeValue(forKey: entry.key)
             imageAspectRatios.removeValue(forKey: entry.key)
+            if let constraint = mathHeightConstraints.removeValue(forKey: entry.key) {
+                constraint.isActive = false
+            }
             entry.view.removeFromSuperview()
             return false
         }
@@ -1090,25 +1110,41 @@ final class NativeMarkdownView: NSView {
                 scheduleImageLoad(segmentId: seg.id, urlString: urlString, imageView: iv)
                 segView = iv
 
-            case .math:
-                let lv: NSTextField
-                if let existing = existingEntry?.view as? NSTextField {
-                    lv = existing
+            case .math(let latex):
+                let formulaView: MathFormulaImageView
+                if let existing = existingEntry?.view as? MathFormulaImageView {
+                    formulaView = existing
                 } else {
-                    lv = NSTextField(labelWithString: "")
-                    lv.translatesAutoresizingMaskIntoConstraints = false
-                    lv.isEditable = false; lv.isSelectable = true; lv.isBordered = false; lv.drawsBackground = false
-                    lv.maximumNumberOfLines = 0
-                    lv.lineBreakMode = .byWordWrapping
-                    addSubview(lv)
-                    register(lv)
+                    formulaView = MathFormulaImageView()
+                    formulaView.translatesAutoresizingMaskIntoConstraints = false
+                    formulaView.imageScaling = .scaleProportionallyDown
+                    formulaView.imageAlignment = .alignCenter
+                    addSubview(formulaView)
+                    register(formulaView)
                 }
-                // Set on every pass, not just creation, so reused labels pick
-                // up theme/font-zoom changes.
-                lv.font = NSFont.monospacedSystemFont(ofSize: CGFloat(theme.codeSize), weight: .regular)
-                lv.textColor = NSColor(theme.primaryText)
-                if case .math(let latex) = seg.kind { lv.stringValue = latex }
-                segView = lv
+                let formulaImage = LaTeXRenderer.shared.renderToImage(
+                    latex: latex,
+                    fontSize: CGFloat(theme.bodySize) * 1.15,
+                    textColor: NSColor(theme.primaryText),
+                    labelMode: .display,
+                    textAlignment: .center
+                )
+                formulaView.image = formulaImage
+                let imageSize = formulaView.image?.size ?? .zero
+                let availableWidth = max(width, 1)
+                let scale = imageSize.width > availableWidth ? availableWidth / imageSize.width : 1
+                let formulaHeight = imageSize.height * scale
+                if formulaHeight.isFinite, formulaHeight > 0 {
+                    let constraint = mathHeightConstraints[seg.id] ?? formulaView.heightAnchor.constraint(equalToConstant: 0)
+                    constraint.constant = ceil(formulaHeight)
+                    if !constraint.isActive {
+                        constraint.isActive = true
+                    }
+                    mathHeightConstraints[seg.id] = constraint
+                } else if let constraint = mathHeightConstraints.removeValue(forKey: seg.id) {
+                    constraint.isActive = false
+                }
+                segView = formulaView
 
             case .table(let headers, let rows):
                 let tv: NativeMarkdownTableView
@@ -1267,6 +1303,10 @@ final class NativeMarkdownView: NSView {
         installedSegmentLayoutSignature = []
         imageHeightConstraints.removeAll()
         imageAspectRatios.removeAll()
+        for constraint in mathHeightConstraints.values {
+            constraint.isActive = false
+        }
+        mathHeightConstraints.removeAll()
     }
 
     private func cancelAllImageLoadTasks() {

@@ -22,6 +22,23 @@ import Testing
 @Suite
 struct InlineMathScannerTests {
 
+    @Test(arguments: [
+        ("$$x^2 + y^2 = z^2$$", "x^2 + y^2 = z^2"),
+        ("\\[\\frac{a}{b}\\]", "\\frac{a}{b}"),
+    ])
+    func recognizesDisplayMath(_ source: String, latex: String) {
+        let blocks = parseBlocks(source)
+        #expect(blocks.count == 1)
+        #expect(blocks.first?.kind == .math(latex))
+    }
+
+    @Test
+    func leavesUnclosedDisplayMathAsTextWhileStreaming() {
+        let blocks = parseBlocks("$$\\frac{a}{b}")
+        #expect(blocks.count == 1)
+        #expect(blocks.first?.kind == .paragraph("$$\\frac{a}{b}"))
+    }
+
     /// The exact spans from the bug report, plus the form that always worked.
     @Test(arguments: [
         "$O(n)$",
