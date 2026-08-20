@@ -36,6 +36,11 @@ struct ToolPermissionView: View {
     /// consent moved to this modal precisely so it could be reviewed here.
     /// Nil for every other tool, which keeps the JSON block.
     var knowledgeWritePreview: KnowledgeWritePreview? = nil
+    /// Hides "Always Allow" (the caller also passes a nil `onAllowForRun`) so
+    /// this call cannot be pre-granted. Set for destructive tools where a
+    /// blanket grant would be the wrong thing to be able to give. See
+    /// `PerCallApprovalTool`.
+    var perCallApprovalOnly: Bool = false
 
     @ObservedObject private var themeManager = ThemeManager.shared
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -297,11 +302,13 @@ struct ToolPermissionView: View {
                     action: onAllow
                 )
             }
-            HStack(spacing: 10) {
-                if let onAllowForRun {
-                    RunAllowButton(action: onAllowForRun)
+            if !perCallApprovalOnly {
+                HStack(spacing: 10) {
+                    if let onAllowForRun {
+                        RunAllowButton(action: onAllowForRun)
+                    }
+                    AlwaysAllowButton(action: { showAlwaysAllowConfirm = true })
                 }
-                AlwaysAllowButton(action: { showAlwaysAllowConfirm = true })
             }
         }
     }

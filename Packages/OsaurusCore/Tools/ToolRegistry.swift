@@ -235,6 +235,10 @@ public final class ToolRegistry: ObservableObject {
             // the agent can verify them with `search_knowledge` — the loop
             // closure the proposal queue structurally could not provide.
             WriteKnowledgeTool(),
+            // Deletion is separate from writing, and conforms to
+            // `PerCallApprovalTool`: a lease taken for a bulk import must never
+            // end up covering removal later in the same run.
+            DeleteKnowledgeTool(),
             // Knowledge curation loop: staleness tickets (annotation only,
             // same gate as the retrieval tools). Tickets remain the right
             // shape for drift the agent NOTICES but is not being asked to fix
@@ -532,10 +536,10 @@ public final class ToolRegistry: ObservableObject {
         "file_write", "file_edit", "file_copy", "shell_run", "git_commit", "file_undo",
         // Curator draft path: never invocable from external surfaces.
         "propose_knowledge_update",
-        // Direct corpus mutation. Its ONLY gate is the interactive approval
+        // Direct corpus mutation. Their ONLY gate is the interactive approval
         // modal, which an external caller cannot be shown, so there is no
-        // safe way to honor this off-surface.
-        "write_knowledge",
+        // safe way to honor these off-surface.
+        "write_knowledge", "delete_knowledge",
     ]
 
     /// Tool classes that must never be invocable from EXTERNAL surfaces
@@ -715,9 +719,17 @@ public final class ToolRegistry: ObservableObject {
                 )
             case .ask:
                 let approved: Bool
+                // A per-call tool refuses every pre-grant: the run lease and
+                // the global auto-allow both go through the shortcuts below,
+                // and a lease taken for a bulk WRITE must not end up covering
+                // a delete later in the same run.
+                let perCallApproval =
+                    (tool as? PerCallApprovalTool)?.requiresApprovalEveryCall == true
                 if ChatExecutionContext.autoApproveToolPrompts {
                     approved = true
-                } else if ChatExecutionContext.toolPermissionRunScope?.allows(name) == true {
+                } else if !perCallApproval,
+                    ChatExecutionContext.toolPermissionRunScope?.allows(name) == true
+                {
                     approved = true
                 } else if ChatExecutionContext.denyUnapprovedToolPrompts {
                     // Headless eval / external MCP with no UI: deny instead of
@@ -746,10 +758,12 @@ public final class ToolRegistry: ObservableObject {
                     // moves into the outbox rather than blocking the run on a
                     // card nobody can answer.
                     approved = true
-                } else if ToolApprovalSettings.autoAllowAll {
+                } else if ToolApprovalSettings.autoAllowAll, !perCallApproval {
                     // User opted into the global auto-allow chat setting: skip
                     // the interactive card. Only reachable where a card would
                     // have been shown, so external/headless denials above win.
+                    // A per-call tool opts out: "auto-allow tools" is not
+                    // consent to destroy a knowledge collection unseen.
                     approved = true
                 } else {
                     // A knowledge write renders paths + diffs instead of the
@@ -762,7 +776,8 @@ public final class ToolRegistry: ObservableObject {
                         toolName: name,
                         description: tool.description,
                         argumentsJSON: approvalArgumentsJSON,
-                        knowledgeWritePreview: writePreview
+                        knowledgeWritePreview: writePreview,
+                        perCallApprovalOnly: perCallApproval
                     )
                     switch outcome {
                     case .denied:
@@ -770,7 +785,13 @@ public final class ToolRegistry: ObservableObject {
                     case .allowOnce, .alwaysAllow:
                         approved = true
                     case .allowForRun:
-                        ChatExecutionContext.toolPermissionRunScope?.allow(name)
+                        // Never record a lease for a per-call tool. The modal
+                        // does not offer the button, but the outcome is
+                        // re-checked here so the invariant does not depend on
+                        // the view.
+                        if !perCallApproval {
+                            ChatExecutionContext.toolPermissionRunScope?.allow(name)
+                        }
                         approved = true
                     }
                 }

@@ -366,3 +366,250 @@ final class WriteKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePre
         return ToolEnvelope.success(tool: tool, text: text)
     }
 }
+
+// MARK: - delete_knowledge
+
+/// Remove documents from a granted collection.
+///
+/// A separate tool from `write_knowledge`, not a mode of it, and conforming to
+/// `PerCallApprovalTool` so no lease or blanket grant can ever cover it.
+/// Deletion is the highest-blast-radius operation here and it is precisely
+/// what went wrong in osaurus#2439: asked to "delete all of them", the agent
+/// ran `rm -rf` on a sandbox directory, reported 62 documents deleted from a
+/// collection that never held them, and left the real source untouched to be
+/// re-found hours later.
+///
+/// Every delete is logged with the full prior content, so the Knowledge tab
+/// can restore it. That is what makes approving one at a glance defensible.
+final class DeleteKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePreviewingTool,
+    PerCallApprovalTool, @unchecked Sendable
+{
+    let name = "delete_knowledge"
+
+    let description =
+        "Delete documents from one of this agent's knowledge collections. The user reviews the "
+        + "exact paths and their contents before anything is removed, and approves EVERY call "
+        + "individually. Pass all paths for a task in one call. Deletions are recorded and can be "
+        + "restored from the Knowledge tab. Use `write_knowledge` to add or replace instead."
+
+    var requirements: [String] { [] }
+    var defaultPermissionPolicy: ToolPermissionPolicy { .ask }
+
+    /// Same bound as a write: one reviewable manifest per call.
+    static let maxPathsPerCall = WriteKnowledgeTool.maxDocumentsPerCall
+
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "collection": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Collection name. Required only when more than one collection is granted."
+                ),
+            ]),
+            "paths": .object([
+                "type": .string("array"),
+                "description": .string(
+                    "Collection-relative document paths to delete. Send them all in one call."
+                ),
+                "items": .object(["type": .string("string")]),
+            ]),
+            "rationale": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Why these documents are being removed. Required, and shown to the user in "
+                        + "the approval card."
+                ),
+            ]),
+        ]),
+        "required": .array([.string("paths"), .string("rationale")]),
+    ])
+
+    init() {}
+
+    func approvalPreview(argumentsJSON: String) async -> KnowledgeWritePreview? {
+        guard let args = WriteKnowledgeTool.parsedArguments(argumentsJSON) else { return nil }
+        guard case .granted(let collections) = await KnowledgeToolScope.resolve(
+            tool: name,
+            collectionName: args["collection"] as? String
+        ),
+            let collection = collections.first, collections.count == 1
+        else { return nil }
+        return KnowledgeWritePreviewBuilder.build(
+            collection: collection,
+            argumentsJSON: argumentsJSON,
+            isDelete: true
+        )
+    }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        let pathsReq = Self.paths(from: args, tool: name)
+        guard case .success(let paths) = pathsReq else { return pathsReq.failureEnvelope ?? "" }
+
+        // Required, not optional as it is for a write: a deletion with no
+        // stated reason is not something a reviewer can judge.
+        let rationale = ((args["rationale"] as? String) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rationale.isEmpty else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "`rationale` is required for a deletion. Say why these documents go.",
+                field: "rationale",
+                expected: "one line explaining the deletion",
+                tool: name
+            )
+        }
+
+        let scope = await KnowledgeToolScope.resolve(
+            tool: name,
+            collectionName: args["collection"] as? String
+        )
+        guard case .granted(let collections) = scope else {
+            if case .failure(let envelope) = scope { return envelope }
+            return ""
+        }
+        guard collections.count == 1, let collection = collections.first else {
+            let names = collections.map(\.name).joined(separator: ", ")
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "More than one collection is granted, so `collection` is required for a "
+                    + "deletion. Granted collections: \(names).",
+                field: "collection",
+                expected: "one of the agent's granted collection names",
+                tool: name
+            )
+        }
+        guard collection.isEnabled, collection.folderExists else {
+            return ToolEnvelope.failure(
+                kind: .unavailable,
+                message:
+                    "Collection \(collection.name) is unavailable (disabled, or its folder is missing).",
+                tool: name,
+                retryable: false
+            )
+        }
+
+        let runId = (ChatExecutionContext.currentRunId ?? UUID()).uuidString
+        let createdBy = ChatExecutionContext.currentAgentId?.uuidString ?? ""
+
+        var removed: [KnowledgeWriteOutcome] = []
+        var failures: [(path: String, reason: String)] = []
+        for path in paths {
+            do {
+                removed.append(
+                    try await KnowledgeWriteService.shared.delete(
+                        collection: collection,
+                        relPath: path,
+                        runId: runId,
+                        createdBy: createdBy,
+                        rationale: rationale
+                    )
+                )
+            } catch {
+                failures.append(
+                    (
+                        path,
+                        (error as? KnowledgeWriteError)?.errorDescription
+                            ?? error.localizedDescription
+                    )
+                )
+            }
+        }
+
+        return Self.resultEnvelope(
+            tool: name,
+            collection: collection,
+            removed: removed,
+            failures: failures
+        )
+    }
+
+    // MARK: - Arguments
+
+    static func paths(from args: [String: Any], tool: String) -> WriteKnowledgeTool.DocumentsResult
+    {
+        var paths: [String] = []
+        if let raw = args["paths"] as? [String] {
+            paths = raw.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        } else if let single = args["path"] as? String {
+            paths = [single.trimmingCharacters(in: .whitespacesAndNewlines)]
+        }
+        paths = paths.filter { !$0.isEmpty }
+
+        guard !paths.isEmpty else {
+            return .failure(
+                ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "No paths to delete. Pass `paths` as an array of document paths.",
+                    field: "paths",
+                    expected: "non-empty array of collection-relative paths",
+                    tool: tool
+                )
+            )
+        }
+        guard paths.count <= maxPathsPerCall else {
+            return .failure(
+                ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "\(paths.count) paths in one call exceeds the limit of \(maxPathsPerCall). "
+                        + "Split the deletion into smaller batches.",
+                    field: "paths",
+                    expected: "at most \(maxPathsPerCall) paths",
+                    tool: tool
+                )
+            )
+        }
+        var seen: Set<String> = []
+        for path in paths where !seen.insert(path).inserted {
+            return .failure(
+                ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`\(path)` appears more than once.",
+                    field: "paths",
+                    expected: "unique paths",
+                    tool: tool
+                )
+            )
+        }
+        return .success(paths.map { WriteKnowledgeTool.PendingDocument(path: $0, content: "") })
+    }
+
+    // MARK: - Result
+
+    static func resultEnvelope(
+        tool: String,
+        collection: KnowledgeCollection,
+        removed: [KnowledgeWriteOutcome],
+        failures: [(path: String, reason: String)]
+    ) -> String {
+        if removed.isEmpty {
+            let detail = failures.map { "- \($0.path): \($0.reason)" }.joined(separator: "\n")
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: "Nothing was deleted from \(collection.name).\n\(detail)",
+                tool: tool,
+                retryable: false
+            )
+        }
+
+        var text = "Deleted \(removed.count) document(s) from [\(collection.name)]:\n"
+        text += removed.map { "- \($0.relPath)" }.joined(separator: "\n")
+        if !failures.isEmpty {
+            text += "\n\nNot deleted (\(failures.count)):\n"
+            text += failures.map { "- \($0.path): \($0.reason)" }.joined(separator: "\n")
+        }
+        // The agent must not report a deletion it cannot see the effect of —
+        // the failure that started all this was confidently reporting 62
+        // documents gone from a collection that never had them.
+        text +=
+            "\n\nThese are gone from the collection now, and restorable from the Knowledge tab. "
+            + "Confirm with `search_knowledge` before reporting them as removed."
+        return ToolEnvelope.success(tool: tool, text: text)
+    }
+}

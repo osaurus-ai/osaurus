@@ -182,3 +182,127 @@ struct WriteKnowledgeToolTests {
         #expect(WriteKnowledgeTool().defaultPermissionPolicy == .ask)
     }
 }
+
+/// `delete_knowledge` and, above all, the guarantee that no blanket grant can
+/// ever cover it.
+///
+/// osaurus#2439 asked "delete all of them" and got a confident report of 62
+/// documents removed from a collection that never held them, while the real
+/// source survived to be re-found hours later. Deletion is the operation that
+/// most needs a human looking at the actual paths.
+@Suite
+struct DeleteKnowledgeToolTests {
+
+    private func paths(_ args: [String: Any]) -> WriteKnowledgeTool.DocumentsResult {
+        DeleteKnowledgeTool.paths(from: args, tool: "delete_knowledge")
+    }
+
+    private func parsed(_ result: WriteKnowledgeTool.DocumentsResult) -> [String]? {
+        if case .success(let docs) = result { return docs.map(\.path) }
+        return nil
+    }
+
+    // MARK: - Per-call approval
+
+    /// The invariant this tool exists to protect. A lease taken for a bulk
+    /// WRITE must not silently authorize removal later in the same run.
+    @Test func approvalCanNeverBePreGranted() {
+        #expect(DeleteKnowledgeTool().requiresApprovalEveryCall)
+        // Writing may be leased; deleting may not. The asymmetry is the point.
+        #expect((WriteKnowledgeTool() as Any) is PerCallApprovalTool == false)
+    }
+
+    @Test func asksForApprovalByDefault() {
+        #expect(DeleteKnowledgeTool().defaultPermissionPolicy == .ask)
+    }
+
+    @Test func externalSurfacesAreDenied() {
+        #expect(ToolRegistry.externallyDeniedToolNames.contains("delete_knowledge"))
+    }
+
+    /// No downstream human gate exists for a direct delete, so an unattended
+    /// run must stall rather than destroy documents unseen.
+    @Test func unattendedRunsMayNotAutoApproveIt() {
+        #expect(!ToolRegistry.unattendedAutoApprovableToolNames.contains("delete_knowledge"))
+    }
+
+    @Test func reachesTheSchemaWithOrdinaryKnowledgeGrants() {
+        #expect(SystemPromptComposer.knowledgeToolNames.contains("delete_knowledge"))
+    }
+
+    // MARK: - Arguments
+
+    @Test func pathsArrayParses() {
+        #expect(parsed(paths(["paths": ["a.md", "b.md"]])) == ["a.md", "b.md"])
+    }
+
+    @Test func singularPathIsAccepted() {
+        #expect(parsed(paths(["path": "solo.md"])) == ["solo.md"])
+    }
+
+    @Test func blankAndMissingPathsAreRejected() {
+        for args in [[:], ["paths": []], ["paths": ["", "   "]]] as [[String: Any]] {
+            #expect(paths(args).failureEnvelope?.contains("No paths to delete") == true)
+        }
+    }
+
+    @Test func duplicatePathsAreRejected() {
+        #expect(
+            paths(["paths": ["a.md", "a.md"]]).failureEnvelope?
+                .contains("appears more than once") == true
+        )
+    }
+
+    @Test func tooManyPathsInOneCallIsRejected() {
+        let many = (0...DeleteKnowledgeTool.maxPathsPerCall).map { "doc-\($0).md" }
+        #expect(paths(["paths": many]).failureEnvelope?.contains("exceeds the limit") == true)
+    }
+
+    // MARK: - Result reporting
+
+    private let collection = KnowledgeCollection(name: "packaging", folderPath: "/tmp/pkg")
+
+    /// The result must name what is gone AND that it is recoverable, because
+    /// approving a delete at a glance is only defensible if undo is real.
+    @Test func successNamesEveryPathAndTheRestorePath() {
+        let envelope = DeleteKnowledgeTool.resultEnvelope(
+            tool: "delete_knowledge",
+            collection: collection,
+            removed: [
+                .init(relPath: "old/a.md", operation: .delete, recordId: 1),
+                .init(relPath: "old/b.md", operation: .delete, recordId: 2),
+            ],
+            failures: []
+        )
+        #expect(ToolEnvelope.isSuccess(envelope))
+        #expect(envelope.contains("old/a.md"))
+        #expect(envelope.contains("old/b.md"))
+        #expect(envelope.contains("restorable from the Knowledge tab"))
+        #expect(envelope.contains("search_knowledge"))
+    }
+
+    @Test func partialDeletionNamesWhatSurvived() {
+        let envelope = DeleteKnowledgeTool.resultEnvelope(
+            tool: "delete_knowledge",
+            collection: collection,
+            removed: [.init(relPath: "gone.md", operation: .delete, recordId: 1)],
+            failures: [("ghost.md", "No document at ghost.md in this collection.")]
+        )
+        #expect(ToolEnvelope.isSuccess(envelope))
+        #expect(envelope.contains("Not deleted (1)"))
+        #expect(envelope.contains("ghost.md"))
+    }
+
+    /// Reporting a deletion that did not happen is the exact failure from the
+    /// original session, so nothing-removed is an error.
+    @Test func deletingNothingIsAnError() {
+        let envelope = DeleteKnowledgeTool.resultEnvelope(
+            tool: "delete_knowledge",
+            collection: collection,
+            removed: [],
+            failures: [("ghost.md", "No document at ghost.md in this collection.")]
+        )
+        #expect(ToolEnvelope.isError(envelope))
+        #expect(envelope.contains("Nothing was deleted"))
+    }
+}

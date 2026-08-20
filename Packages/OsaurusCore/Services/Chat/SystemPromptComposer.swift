@@ -2141,7 +2141,7 @@ public struct SystemPromptComposer: Sendable {
         // grant is the access boundary and the approval modal is the consent
         // gate. Gating it behind an extra opt-in is what left an agent with
         // knowledge grants unable to write and unable to say why (#2439).
-        "write_knowledge",
+        "write_knowledge", "delete_knowledge",
     ]
 
     /// Curator-only knowledge tools, gated on
