@@ -472,12 +472,18 @@ public actor RemoteProviderService: ToolCapableService {
         parameters: GenerationParameters
     ) async throws -> (messages: [ChatMessage], map: RedactionMap?) {
         do {
-            return try await PrivacyFilterPipeline.applyOutbound(
+            let scrubbed = try await PrivacyFilterPipeline.applyOutbound(
                 messages: messages,
                 sessionId: parameters.sessionId,
                 providerId: provider.id,
                 requestSource: parameters.requestSource
             )
+            // Every remote request funnels through here, so this is the one
+            // place attached images get sized for the wire (oversized Retina
+            // captures → relay/provider 413, mislabeled containers → 400).
+            // The local model path never enters this service and keeps
+            // full-resolution input.
+            return (RemoteImagePayloadPolicy.prepared(scrubbed.messages), scrubbed.map)
         } catch PrivacyFilterPipelineError.reviewCanceled {
             throw CancellationError()
         }
