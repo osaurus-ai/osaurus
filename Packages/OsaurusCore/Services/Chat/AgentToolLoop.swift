@@ -168,6 +168,13 @@ enum AgentLoopModelStep {
     /// decoding failure, not an answer, so ending here would present a wall
     /// of the same sentence as the response.
     case repetitionLoop(phrase: String?)
+    /// The turn ended by asking the user for permission to carry on ("would
+    /// you like me to continue?") instead of carrying on. Only a stall when
+    /// tracked work is still pending — the driver checks that before
+    /// recovering, so a genuine question to the user still ends the run.
+    /// `clarify` is the tool for real questions; this shape is the model
+    /// handing back a turn it was asked to finish.
+    case continuationRequest
 
     /// Classify a naturally completed model step from its rendered channels
     /// and authoritative terminal stop reason.
@@ -232,12 +239,41 @@ enum AgentLoopModelStep {
             return .incompleteReasoning
         }
         // Visible text, no call, tools available — check whether that text is
-        // an answer or only a preamble to a call the model never emitted.
-        if toolsWereOffered, let content, isAnnounceOnly(content) {
-            return .announcedToolCall
+        // an answer, a request to be allowed to carry on, or only a preamble
+        // to a call the model never emitted.
+        if toolsWereOffered, let content {
+            if isContinuationRequest(content) { return .continuationRequest }
+            if isAnnounceOnly(content) { return .announcedToolCall }
         }
         return .finalResponse
     }
+
+    /// Whether visible content ends by asking permission to keep going.
+    ///
+    /// Matches only the closing line, and only an explicit ask about
+    /// CONTINUING — not questions in general. A model that asks something
+    /// substantive ("which version of the toolkit do you mean?") is doing the
+    /// right thing and must still end the turn.
+    static func isContinuationRequest(_ content: String) -> Bool {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasSuffix("?") else { return false }
+        guard trimmed.components(separatedBy: "```").count % 2 == 1 else { return false }
+
+        let lines = trimmed.split(whereSeparator: \.isNewline)
+        guard let last = lines.last?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        else { return false }
+        return Self.continuationRequestPhrases.contains { last.contains($0) }
+    }
+
+    /// Ways a model asks to be let off the hook mid-task. Lowercased,
+    /// matched anywhere in the closing line.
+    private static let continuationRequestPhrases: [String] = [
+        "would you like me to continue", "want me to continue", "shall i continue",
+        "should i continue", "do you want me to continue", "shall i proceed",
+        "should i proceed", "would you like me to proceed", "want me to proceed",
+        "shall i keep going", "should i keep going", "want me to keep going",
+        "would you like me to keep going", "ok to continue", "okay to continue",
+    ]
 
     /// Whether visible content reads as a preamble to a tool call rather than
     /// an answer to the user.
@@ -1000,6 +1036,26 @@ enum AgentToolLoop {
         "[System Notice] Your previous turn described a tool call but did not actually emit one, so nothing ran. "
         + "No file was written and no command executed. Emit the tool call itself now, as a real call — "
         + "do not describe it, narrate it, or claim it already ran."
+
+    /// How many times a run will push back on "shall I continue?" before
+    /// letting the question stand. Two: enough to get past a model that asks
+    /// reflexively, few enough that a user who really is being consulted is
+    /// not talked over indefinitely.
+    static let maxContinuationRequestRetries = 2
+
+    /// Staged before a continuation-request retry. States the standing
+    /// authorization explicitly — a model that asks permission mid-task is
+    /// usually unsure it has any — and names the pending count so "continue"
+    /// has a concrete referent.
+    static func continuationRequestNotice(pending: Int) -> String {
+        let items = pending == 1 ? "1 item remains" : "\(pending) items remain"
+        return
+            "[System Notice] You asked whether to continue. Yes — continue. The user's request "
+            + "already authorized this work and \(items) unchecked on your todo. Do not ask "
+            + "again: proceed with the next pending item now. If you are genuinely blocked on "
+            + "something only the user can decide, call `clarify` with the specific question "
+            + "instead of asking in prose."
+    }
 
     /// One retry. A model that degenerated once usually degenerates again,
     /// and each attempt costs the user real wall-clock time.
@@ -1833,6 +1889,8 @@ enum AgentToolLoop {
         var consecutiveAnnouncedToolCalls = 0
         // Total repetition-loop recoveries this run.
         var repetitionLoopRetries = 0
+        // Consecutive "shall I continue?" hand-backs this run.
+        var consecutiveContinuationRequests = 0
         // Total (not merely consecutive) reasoning-only recovery attempts.
         // A tool call between attempts must not re-arm another potentially
         // huge reasoning cycle in the same logical run.
@@ -2012,6 +2070,28 @@ enum AgentToolLoop {
                 }
                 return RunResult(exit: .finalResponse, iterations: iteration)
 
+            case .continuationRequest:
+                // Asking "would you like me to continue?" is only a stall when
+                // there IS tracked work left. With nothing pending it is a
+                // real question and the user should get it, so fall through to
+                // an ordinary final response rather than talking past them.
+                let pending = await hooks.pendingTodoCount?() ?? 0
+                guard pending > 0 else {
+                    return RunResult(exit: .finalResponse, iterations: iteration)
+                }
+                consecutiveContinuationRequests += 1
+                if consecutiveContinuationRequests <= Self.maxContinuationRequestRetries {
+                    pendingStateNotice = Self.continuationRequestNotice(pending: pending)
+                    // Not charged against the tool-iteration budget.
+                    iteration -= 1
+                    continue
+                }
+                // Recovery spent: the model will not proceed on its own. Hand
+                // the question to the user rather than looping on it — the
+                // text is already on screen and is a reasonable thing to end
+                // on once we have tried twice.
+                return RunResult(exit: .finalResponse, iterations: iteration)
+
             case .repetitionLoop(let phrase):
                 repetitionLoopRetries += 1
                 if repetitionLoopRetries <= Self.maxRepetitionLoopRetries {
@@ -2068,6 +2148,7 @@ enum AgentToolLoop {
                 // fresh allowance.
                 consecutiveEmptyTurns = 0
                 consecutiveAnnouncedToolCalls = 0
+                consecutiveContinuationRequests = 0
 
                 // A desktop subagent already completed successfully, and the
                 // very next model step emitted only a malformed repeat of that

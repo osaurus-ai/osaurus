@@ -732,6 +732,88 @@ struct AgentToolLoopTests {
         }
     }
 
+    // MARK: - Continuation requests (osaurus#2439)
+
+    /// "keeps stopping and asking to be let to continue". The model ends a
+    /// turn it was asked to finish by requesting permission to carry on. The
+    /// classifier flags the shape; the driver decides, using the pending-todo
+    /// count, whether it is a stall or a real question.
+    @Test func permissionToContinueIsFlagged() {
+        let stalls = [
+            "I'm actively working on pages 2-11 of the documentation scrape. "
+                + "Let me keep this going — would you like me to continue or make any adjustments?",
+            "Shall I continue?",
+            "That's 22 of 30 done. Want me to keep going?",
+            "I can do the rest the same way. Should I proceed?",
+        ]
+        for text in stalls {
+            let step = AgentLoopModelStep.classifyTerminal(
+                contentIsBlank: false,
+                thinkingIsBlank: true,
+                stopReason: "stop",
+                requiresVisibleFinalResponse: false,
+                toolsWereOffered: true,
+                content: text
+            )
+            guard case .continuationRequest = step else {
+                Issue.record("permission-to-continue must be flagged: \(text)")
+                return
+            }
+        }
+    }
+
+    /// A substantive question is the model doing the right thing and must
+    /// still reach the user. This is the boundary the whole fix rests on.
+    @Test func substantiveQuestionsAreNotTreatedAsStalls() {
+        let questions = [
+            "Which version of the toolkit do you mean — v3 or v4.1?",
+            "The wiki and the docs site disagree on the default log path. Which should I trust?",
+            "Do you want the nested function pages too, or just the top-level categories?",
+            "I found 62 documents. Should I delete them all, or only the v3 ones?",
+        ]
+        for text in questions {
+            let step = AgentLoopModelStep.classifyTerminal(
+                contentIsBlank: false,
+                thinkingIsBlank: true,
+                stopReason: "stop",
+                requiresVisibleFinalResponse: false,
+                toolsWereOffered: true,
+                content: text
+            )
+            guard case .finalResponse = step else {
+                Issue.record("a real question must end the turn: \(text)")
+                return
+            }
+        }
+    }
+
+    /// Only the CLOSING line counts — a mid-answer aside about continuing
+    /// does not make a finished answer a stall.
+    @Test func continuationPhraseMidAnswerDoesNotFlag() {
+        let step = AgentLoopModelStep.classifyTerminal(
+            contentIsBlank: false,
+            thinkingIsBlank: true,
+            stopReason: "stop",
+            requiresVisibleFinalResponse: false,
+            toolsWereOffered: true,
+            content: "You asked whether I should continue, so I did.\nAll 30 pages are loaded."
+        )
+        guard case .finalResponse = step else {
+            Issue.record("a completed answer must not be re-run")
+            return
+        }
+    }
+
+    /// The nudge has to grant the authorization explicitly and point at
+    /// `clarify` for questions that really do need the user.
+    @Test func continuationNoticeAuthorizesAndRedirectsRealQuestions() {
+        let notice = AgentToolLoop.continuationRequestNotice(pending: 9)
+        #expect(notice.contains("Yes — continue"))
+        #expect(notice.contains("9 items remain"))
+        #expect(notice.contains("`clarify`"))
+        #expect(AgentToolLoop.continuationRequestNotice(pending: 1).contains("1 item remains"))
+    }
+
     /// The stream consumer's cut is authoritative — it stopped reading, so
     /// whatever terminal reason the runtime reports describes a generation
     /// nobody finished. A wall of one repeated sentence is never an answer.
