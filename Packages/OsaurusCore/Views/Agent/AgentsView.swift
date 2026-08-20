@@ -3310,17 +3310,12 @@ struct AgentDetailView: View {
                     }
                 }
             }
-            if knowledgeEnabled {
-                AgentAbilityCard(
-                    title: "Curator",
-                    subtitle:
-                        "Let this agent draft document updates as pending proposals (it can also file and work staleness tickets). Nothing changes in a collection until you approve a proposal in the Knowledge section.",
-                    icon: "checkmark.seal",
-                    isOn: toolBackedSaveBinding($knowledgeCuratorEnabled),
-                    pausedNote: toolsPausedNote,
-                    onPausedNoteTap: flashToolsToggle
-                )
-            }
+            // The Curator toggle is gone. It gated `propose_knowledge_update`,
+            // which asked for consent twice and could never tell the agent
+            // whether its own work had landed. Writing follows the collection
+            // grant above, and each write is approved with a diff at call
+            // time. `knowledgeCuratorEnabled` remains on the model only so
+            // existing agent JSON still decodes; nothing reads it.
 
             AgentAbilityGroupHeader(
                 label: "Web",

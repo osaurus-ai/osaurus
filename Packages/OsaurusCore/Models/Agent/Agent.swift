@@ -550,9 +550,9 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// agent can never reach a collection it wasn't granted. Empty → the
     /// knowledge tools stay hidden (nothing to search).
     public var knowledgeCollectionIds: [UUID]
-    /// Curator role: `propose_knowledge_update` exposed to the model.
-    /// A child of `knowledgeEnabled` — proposals still only ever create
-    /// pending drafts reviewed by the user.
+    /// DEPRECATED and inert. Gated `propose_knowledge_update`, removed with
+    /// the proposal architecture. Kept so existing agent JSON still decodes;
+    /// nothing reads it, and writing follows the collection grant instead.
     public var knowledgeCuratorEnabled: Bool
 
     public init(
@@ -955,10 +955,9 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// execution time, so the grant list — not the schema — is the
     /// security boundary. Empty → the knowledge tools stay hidden.
     public var knowledgeCollectionIds: [UUID]
-    /// Curator role opt-in: exposes `propose_knowledge_update` (`.ask`
-    /// policy) so this agent can draft document replacements as pending
-    /// proposals. A child of `knowledgeEnabled`; proposals never touch
-    /// the corpus until the user approves them in the Knowledge tab.
+    /// DEPRECATED and inert. Gated `propose_knowledge_update`, removed with
+    /// the proposal architecture. Kept so existing agent JSON still decodes;
+    /// nothing reads it, and writing follows the collection grant instead.
     public var knowledgeCuratorEnabled: Bool
 
     public init(
