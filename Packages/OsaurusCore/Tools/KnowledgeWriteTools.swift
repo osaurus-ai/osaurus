@@ -448,7 +448,11 @@ final class DeleteKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePr
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
         let pathsReq = Self.paths(from: args, tool: name)
-        guard case .success(let paths) = pathsReq else { return pathsReq.failureEnvelope ?? "" }
+        guard case .success(let validated) = pathsReq else { return pathsReq.failureEnvelope ?? "" }
+        // `DocumentsResult` is shared with the write path for its
+        // validated-list-or-failure-envelope shape; a delete carries no
+        // content, so take just the paths.
+        let paths = validated.map(\.path)
 
         // Required, not optional as it is for a write: a deletion with no
         // stated reason is not something a reviewer can judge.
