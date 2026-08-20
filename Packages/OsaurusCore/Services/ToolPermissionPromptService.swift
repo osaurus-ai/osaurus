@@ -39,22 +39,28 @@ enum ToolPermissionPromptService {
     static func requestApproval(
         toolName: String,
         description: String,
-        argumentsJSON: String
+        argumentsJSON: String,
+        knowledgeWritePreview: KnowledgeWritePreview? = nil
     ) async -> Bool {
         switch await requestApprovalOutcome(
             toolName: toolName,
             description: description,
-            argumentsJSON: argumentsJSON
+            argumentsJSON: argumentsJSON,
+            knowledgeWritePreview: knowledgeWritePreview
         ) {
         case .denied: return false
         case .allowOnce, .allowForRun, .alwaysAllow: return true
         }
     }
 
+    /// `knowledgeWritePreview` swaps the generic JSON arguments block for a
+    /// per-document manifest with diffs. Supplied only by the knowledge write
+    /// tools; every other caller leaves it nil and the modal is unchanged.
     static func requestApprovalOutcome(
         toolName: String,
         description: String,
-        argumentsJSON: String
+        argumentsJSON: String,
+        knowledgeWritePreview: KnowledgeWritePreview? = nil
     ) async -> ApprovalOutcome {
         if Task.isCancelled { return .denied }
 
@@ -92,7 +98,8 @@ enum ToolPermissionPromptService {
                     onAllow: onAllow,
                     onDeny: onDeny,
                     onAlwaysAllow: onAlwaysAllow,
-                    onAllowForRun: onAllowForRun
+                    onAllowForRun: onAllowForRun,
+                    knowledgeWritePreview: knowledgeWritePreview
                 )
                 .environment(\.theme, themeManager.currentTheme)
                 presentPanel(view: permissionView, onAllow: onAllow, onDeny: onDeny)

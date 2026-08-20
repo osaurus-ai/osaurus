@@ -30,6 +30,12 @@ struct ToolPermissionView: View {
     var spawnModelOptions: [SpawnModelChoice] = []
     var initialSpawnModel: String? = nil
     var onModelSelected: ((String) -> Void)? = nil
+    /// Knowledge writes replace the generic JSON arguments block with a
+    /// per-document manifest and diffs. Approving a document replacement out
+    /// of a pretty-printed JSON blob is not informed consent, and knowledge
+    /// consent moved to this modal precisely so it could be reviewed here.
+    /// Nil for every other tool, which keeps the JSON block.
+    var knowledgeWritePreview: KnowledgeWritePreview? = nil
 
     @ObservedObject private var themeManager = ThemeManager.shared
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -103,7 +109,13 @@ struct ToolPermissionView: View {
                     .offset(y: appeared ? 0 : -4)
                 }
 
-                if hasArguments {
+                if let knowledgeWritePreview {
+                    KnowledgeWritePreviewView(preview: knowledgeWritePreview)
+                        .padding(.top, 12)
+                        .padding(.horizontal, 24)
+                        .opacity(appeared ? 1 : 0)
+                        .offset(y: appeared ? 0 : 4)
+                } else if hasArguments {
                     argumentsBlock
                         .padding(.top, 12)
                         .padding(.horizontal, 24)
@@ -478,5 +490,70 @@ private struct AlwaysAllowButton: View {
         .preferredColorScheme(.dark)
         .padding(40)
         .background(Color.black.opacity(0.8))
+    }
+
+    /// The batch shape that motivated this rendering: the 62-document import
+    /// from osaurus#2439, shown as a manifest rather than a JSON blob.
+    #Preview("Tool Permission - Knowledge Batch Write") {
+        ToolPermissionView(
+            toolName: "write_knowledge",
+            description: "Create or replace documents in a knowledge collection.",
+            argumentsJSON: "{}",
+            onAllow: { print("Allowed") },
+            onDeny: { print("Denied") },
+            onAlwaysAllow: { print("Always Allow") },
+            knowledgeWritePreview: KnowledgeWritePreview(
+                collectionName: "packaging",
+                entries: [
+                    KnowledgeWritePreviewEntry(
+                        relPath: "usage/how-to-deploy.md",
+                        operation: .replace,
+                        diff: """
+                            --- usage/how-to-deploy.md (before)
+                            +++ usage/how-to-deploy.md (after)
+                            -Applies to PSAppDeployToolkit v3.
+                            +Applies to PSAppDeployToolkit v4.1.
+                            """,
+                        diffTruncated: false,
+                        deletedContent: "",
+                        addedLines: 1,
+                        removedLines: 1,
+                        problem: nil
+                    ),
+                    KnowledgeWritePreviewEntry(
+                        relPath: "getting-started/download.md",
+                        operation: .create,
+                        diff: """
+                            --- getting-started/download.md (before (new file))
+                            +++ getting-started/download.md (after)
+                            +# Download
+                            +Install from the PowerShell Gallery.
+                            """,
+                        diffTruncated: false,
+                        deletedContent: "",
+                        addedLines: 2,
+                        removedLines: 0,
+                        problem: nil
+                    ),
+                    KnowledgeWritePreviewEntry(
+                        relPath: "manual.pdf",
+                        operation: .create,
+                        diff: "",
+                        diffTruncated: false,
+                        deletedContent: "",
+                        addedLines: 0,
+                        removedLines: 0,
+                        problem: "Path manual.pdf is not a markdown document; "
+                            + "only markdown documents can be written."
+                    ),
+                ],
+                rationale: "Replace the v3 wiki content with the 4.1 docs site.",
+                parseError: nil
+            )
+        )
+        .environment(\.theme, LightTheme())
+        .preferredColorScheme(.light)
+        .padding(40)
+        .background(Color.gray.opacity(0.2))
     }
 #endif
