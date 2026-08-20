@@ -47,6 +47,38 @@ struct HostPathRedirectTests {
         #expect(hint?.contains("file_read") == true)
     }
 
+    /// osaurus#2439: `shell_run` cloned a repo into `/tmp/psapp/wiki`, then
+    /// `file_read` rejected that path as outside the agent home. The bare
+    /// rejection reads as "the file tools are broken" — the model abandoned
+    /// the read path entirely rather than copying the tree one level over.
+    @Test func sandboxPathOutsideAgentHomeSuggestsCopyingItIn() {
+        let home = "/workspace/agents/abc"
+        let requirement = requirePath("/tmp/psapp/wiki/Home.md", home: home, tool: "file_read")
+        guard case .failure(let envelope) = requirement else {
+            Issue.record("expected a rejection for a path outside the agent home")
+            return
+        }
+        #expect(envelope.contains("shell_run"))
+        #expect(envelope.contains("cp -r /tmp/psapp/wiki/Home.md \(home)/"))
+    }
+
+    /// A host path keeps the existing host-tool redirect; it must not also
+    /// pick up the copy-it-in advice, which does not apply across the
+    /// sandbox boundary.
+    @Test func hostPathKeepsHostRedirectNotTheCopyHint() {
+        let requirement = requirePath(
+            "/Users/tpae/Desktop/notes.txt",
+            home: "/workspace/agents/abc",
+            tool: "file_read"
+        )
+        guard case .failure(let envelope) = requirement else {
+            Issue.record("expected a rejection for a host path")
+            return
+        }
+        #expect(envelope.contains("file_read"))
+        #expect(!envelope.contains("cp -r"))
+    }
+
     @Test func relativePathDoesNotRedirect() {
         #expect(hostPathRedirectHint(path: "Desktop") == nil)
         #expect(hostPathRedirectHint(path: "src/main.py") == nil)

@@ -236,7 +236,7 @@ private func validatePath(_ path: String, home: String) -> String? {
 /// Validate a path argument; on rejection returns a fully-formed
 /// `invalid_args` envelope carrying the sanitizer's reason (traversal,
 /// dangerous char, outside roots, ...) so the model can self-correct.
-private func requirePath(
+internal func requirePath(
     _ path: String,
     home: String,
     field: String = "path",
@@ -249,6 +249,17 @@ private func requirePath(
         var message = "Argument `\(field)` rejected: \(rejection.reason). Got `\(path)`."
         if let redirect = hostPathRedirectHint(path: path) {
             message += " " + redirect
+        } else if rejection == .outsideAllowedRoots {
+            // A sandbox path that is simply outside the agent home — most
+            // often somewhere the model's OWN earlier `shell_run` put it
+            // (`git clone` into `/tmp/...`). The bare rejection is a dead end:
+            // in osaurus#2439 the model read it as the file tools being
+            // broken and abandoned the read path entirely. `shell_run` still
+            // reaches both sides, so name the one-step recovery.
+            message +=
+                " `shell_run` can still reach that path even though the file tools cannot: "
+                + "copy it under the agent home first (e.g. "
+                + "`cp -r \(path) \(home)/`) and then read it from there."
         }
         return .failure(
             ToolEnvelope.failure(
