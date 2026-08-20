@@ -216,7 +216,7 @@ let package = Package(
         // spelling this bundle emits, so an offered tool is no longer dropped.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "08fde1d6aa812e948e68aba4b3b6b63f2e66d85e"
+            revision: "22b214d9be65701232d59362ea57c4437ba3f667"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
