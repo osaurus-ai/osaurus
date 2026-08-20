@@ -342,6 +342,22 @@ public final class KnowledgeWriteLogDatabase: @unchecked Sendable {
         return records
     }
 
+    /// Recent records across every collection, newest first. Drives the
+    /// Knowledge tab's history view, which is not scoped to one collection.
+    public func recentRecords(limit: Int = 200) throws -> [KnowledgeWriteRecord] {
+        var records: [KnowledgeWriteRecord] = []
+        try prepareAndExecute(
+            "SELECT \(Self.columns) FROM knowledge_writes ORDER BY id DESC LIMIT ?1",
+            bind: { stmt in sqlite3_bind_int(stmt, 1, Int32(limit)) },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    records.append(Self.readRecord(stmt))
+                }
+            }
+        )
+        return records
+    }
+
     /// Stamp a record reverted. Keeps the row so history stays readable.
     public func markReverted(id: Int, revertedAt: String) throws {
         try prepareAndExecute(

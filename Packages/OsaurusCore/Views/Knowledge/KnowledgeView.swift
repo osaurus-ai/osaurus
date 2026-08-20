@@ -41,6 +41,8 @@ struct KnowledgeView: View {
     // Curation review state (Phase 2).
     @State private var openTickets: [KnowledgeTicket] = []
     @State private var pendingProposals: [KnowledgeProposal] = []
+    /// Recent agent writes, grouped by run, for the history + revert section.
+    @State private var writeRuns: [KnowledgeWriteRun] = []
     @State private var reviewingProposal: KnowledgeProposal?
 
     var body: some View {
@@ -86,6 +88,7 @@ struct KnowledgeView: View {
                 } else {
                     ScrollView {
                         curationSection
+                        writeHistorySection
                         LazyVGrid(
                             columns: [
                                 GridItem(.flexible(minimum: 300), spacing: 20),
@@ -496,6 +499,51 @@ struct KnowledgeView: View {
         showSuccess(L("Opened \(agent.name) with a briefing for ticket #\(ticket.id). Review it and hit send."))
     }
 
+    /// Recent agent writes with revert. Hidden until an agent has actually
+    /// written something, so a collection nobody's agent touches carries no
+    /// extra chrome.
+    @ViewBuilder
+    private var writeHistorySection: some View {
+        if !writeRuns.isEmpty {
+            KnowledgeWriteHistoryView(
+                runs: writeRuns,
+                onRevertRun: { run in
+                    showSuccess(L("Reverting \(run.records.count) document(s)…"))
+                    Task {
+                        let failures = await KnowledgeWriteService.shared.revertRun(
+                            runId: run.runId
+                        )
+                        if failures.isEmpty {
+                            showSuccess(L("Reverted \(run.records.count) document(s)"))
+                        } else {
+                            // Best-effort per record: say what could not be put
+                            // back rather than implying the whole run undid.
+                            showSuccess(
+                                L(
+                                    "Reverted \(run.records.count - failures.count) of \(run.records.count). \(failures.count) could not be restored, most likely changed since."
+                                )
+                            )
+                        }
+                        reloadCuration()
+                    }
+                },
+                onRevertRecord: { record in
+                    Task {
+                        do {
+                            try await KnowledgeWriteService.shared.revert(recordId: record.id)
+                            showSuccess(L("Reverted \(record.relPath)"))
+                        } catch {
+                            showSuccess(L("Could not revert: \(error.localizedDescription)"))
+                        }
+                        reloadCuration()
+                    }
+                }
+            )
+            .padding(.horizontal, 24)
+            .padding(.top, 20)
+        }
+    }
+
     /// Load open tickets + pending proposals off the main thread (the
     /// database serializes on its own queue).
     private func reloadCuration() {
@@ -506,12 +554,33 @@ struct KnowledgeView: View {
             guard KnowledgeDatabase.shared.isOpen else { return }
             let tickets = (try? KnowledgeDatabase.shared.listTickets(collectionIds: nil, status: .open)) ?? []
             let proposals = (try? KnowledgeDatabase.shared.listProposals(status: .pending)) ?? []
+            // The write log is a separate store (it is primary data, not a
+            // rebuildable index), so it opens independently.
+            if !KnowledgeWriteLogDatabase.shared.isOpen {
+                try? KnowledgeWriteLogDatabase.shared.open()
+            }
+            let writes =
+                (try? KnowledgeWriteLogDatabase.shared.recentRecords(limit: 200)) ?? []
+            let names = await MainActor.run {
+                Dictionary(
+                    uniqueKeysWithValues: KnowledgeManager.shared.collections.map {
+                        ($0.id.uuidString, $0.name)
+                    }
+                )
+            }
+            let runs = KnowledgeWriteRun.group(writes, collectionNames: names)
             await MainActor.run {
                 // Assign only on a real change so the periodic poll can't churn
                 // the view every tick. Both lists are single-status queries, so
                 // comparing ids is sufficient to detect add/remove/status moves.
                 if tickets.map(\.id) != openTickets.map(\.id) { openTickets = tickets }
                 if proposals.map(\.id) != pendingProposals.map(\.id) { pendingProposals = proposals }
+                // Compare the flattened record ids AND their reverted state:
+                // a revert changes no ids, only status, and the row has to
+                // stop offering a button that would now fail.
+                let incoming = runs.flatMap { $0.records.map { "\($0.id):\($0.isReverted)" } }
+                let current = writeRuns.flatMap { $0.records.map { "\($0.id):\($0.isReverted)" } }
+                if incoming != current { writeRuns = runs }
             }
         }
     }
