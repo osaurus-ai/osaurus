@@ -431,7 +431,13 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Speculative Decoding",
             title: "Speculative Decoding",
-            keywords: ["speculative", "mtp", "draft model"],
+            keywords: [
+                "speculative", "mtp", "draft model",
+                // The drafter picker lives in this card. Someone who has
+                // just downloaded a DFlash 2 checkpoint searches for its
+                // name, not for "speculative decoding".
+                "dflash", "dflash 2", "drafter", "block diffusion",
+            ],
             subTab: "speculative"
         ),
         .init(
