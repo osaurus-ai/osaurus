@@ -1,0 +1,347 @@
+//
+//  KnowledgeWritePreviewTests.swift
+//  OsaurusCoreTests — Knowledge
+//
+//  The manifest the approval modal renders for a pending knowledge write.
+//
+//  Everything about moving consent to call time rests on this being honest:
+//  the operation shown must be what would actually happen, not what the model
+//  claimed; a path that cannot be applied must be visible BEFORE approval
+//  rather than failing halfway through an approved batch; and truncation must
+//  be admitted rather than implying the reader saw the whole document.
+//
+
+import Foundation
+import Testing
+
+@testable import OsaurusCore
+
+@Suite
+struct KnowledgeWritePreviewTests {
+
+    /// A real folder on disk: the builder resolves create vs replace by
+    /// reading it, so an in-memory fixture would test nothing.
+    private func withCollection(
+        _ body: (KnowledgeCollection, URL) throws -> Void
+    ) throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-knowledge-preview-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let collection = KnowledgeCollection(name: "packaging", folderPath: root.path)
+        try body(collection, root)
+    }
+
+    private func seed(_ root: URL, _ relPath: String, _ content: String) throws {
+        let url = root.appendingPathComponent(relPath)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data(content.utf8).write(to: url)
+    }
+
+    // MARK: - Operation resolution
+
+    /// The agent does not get to declare create vs replace. A model that
+    /// believes it is creating a fresh document while silently clobbering an
+    /// existing one is exactly the osaurus#2439 failure, and the modal has to
+    /// show the truth.
+    @Test func operationIsResolvedFromDiskNotFromTheCall() throws {
+        try withCollection { collection, root in
+            try seed(root, "existing.md", "# Existing\n\nold body\n")
+
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [
+                    ("existing.md", "# Existing\n\nnew body\n"),
+                    ("brand-new.md", "# New\n"),
+                ],
+                isDelete: false,
+                rationale: "refresh"
+            )
+
+            #expect(preview.entries.count == 2)
+            #expect(preview.entries[0].operation == .replace)
+            #expect(preview.entries[1].operation == .create)
+            #expect(preview.replaceCount == 1)
+            #expect(preview.createCount == 1)
+        }
+    }
+
+    @Test func replaceCarriesADiffAgainstWhatIsOnDisk() throws {
+        try withCollection { collection, root in
+            try seed(root, "a.md", "line one\nline two\n")
+
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [("a.md", "line one\nline CHANGED\n")],
+                isDelete: false,
+                rationale: ""
+            )
+
+            let entry = try #require(preview.entries.first)
+            #expect(entry.diff.contains("-line two"))
+            #expect(entry.diff.contains("+line CHANGED"))
+            #expect(entry.addedLines == 1)
+            #expect(entry.removedLines == 1)
+        }
+    }
+
+    /// A brand-new one-line file is `+1 -0`, never `+1 -1`. An empty side has
+    /// zero lines, not one empty line.
+    @Test func createCountsNoPhantomRemoval() throws {
+        try withCollection { collection, _ in
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [("new.md", "only line\n")],
+                isDelete: false,
+                rationale: ""
+            )
+            let entry = try #require(preview.entries.first)
+            #expect(entry.operation == .create)
+            #expect(entry.removedLines == 0)
+        }
+    }
+
+    // MARK: - Deletes
+
+    @Test func deleteShowsTheContentThatWouldBeLost() throws {
+        try withCollection { collection, root in
+            try seed(root, "doomed.md", "a\nb\nc\n")
+
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [("doomed.md", "")],
+                isDelete: true,
+                rationale: "wrong version"
+            )
+
+            let entry = try #require(preview.entries.first)
+            #expect(entry.operation == .delete)
+            #expect(entry.deletedContent == "a\nb\nc\n")
+            #expect(entry.isValid)
+            #expect(preview.deleteCount == 1)
+        }
+    }
+
+    /// Deleting something that is not there is surfaced before approval,
+    /// not as a mid-batch error afterwards.
+    @Test func deletingAMissingDocumentIsFlaggedUpFront() throws {
+        try withCollection { collection, _ in
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [("ghost.md", "")],
+                isDelete: true,
+                rationale: ""
+            )
+            let entry = try #require(preview.entries.first)
+            #expect(!entry.isValid)
+            #expect(entry.problem == "No document at this path.")
+            #expect(preview.invalidCount == 1)
+        }
+    }
+
+    // MARK: - Invalid entries
+
+    /// A partly-invalid batch must be visible in the manifest. Approving and
+    /// then discovering half the paths were rejected is the shape of failure
+    /// this whole change exists to remove.
+    @Test func unappliableEntriesAppearInTheManifestWithTheirReason() throws {
+        try withCollection { collection, _ in
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [
+                    ("fine.md", "ok"),
+                    ("../escape.md", "nope"),
+                    ("manual.pdf", "nope"),
+                ],
+                isDelete: false,
+                rationale: ""
+            )
+
+            #expect(preview.entries.count == 3)
+            #expect(preview.entries[0].isValid)
+            #expect(!preview.entries[1].isValid)
+            #expect(!preview.entries[2].isValid)
+            #expect(preview.entries[1].problem?.contains("outside the collection") == true)
+            #expect(preview.entries[2].problem?.contains("not a markdown document") == true)
+            #expect(preview.invalidCount == 2)
+            #expect(preview.summary.contains("2 cannot be applied"))
+        }
+    }
+
+    // MARK: - Truncation
+
+    /// Scrolling a 2MB diff is not reviewing. The cap is fine; pretending the
+    /// whole document was shown is not.
+    @Test func oversizedDiffsAreCappedAndSaySo() throws {
+        try withCollection { collection, root in
+            try seed(root, "big.md", String(repeating: "old line\n", count: 8000))
+
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [("big.md", String(repeating: "new line\n", count: 8000))],
+                isDelete: false,
+                rationale: ""
+            )
+
+            let entry = try #require(preview.entries.first)
+            // Capped by `WorkspaceWriteSafety` (80 lines / 12K chars), the same
+            // cap the chat diff-card uses, so both surfaces agree.
+            #expect(entry.diffTruncated)
+            #expect(entry.diff.count < 20_000)
+        }
+    }
+
+    /// A delete has no diff, so its content needs its own bound. Without one a
+    /// 62-document delete of large files lands whole in the modal.
+    @Test func deletePreviewIsCapped() throws {
+        try withCollection { collection, root in
+            let huge = String(repeating: "x", count: 60_000)
+            try seed(root, "huge.md", huge)
+
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [("huge.md", "")],
+                isDelete: true,
+                rationale: ""
+            )
+            let entry = try #require(preview.entries.first)
+            #expect(
+                entry.deletedContent.count
+                    == KnowledgeWritePreviewBuilder.maxDeletePreviewCharacters
+            )
+        }
+    }
+
+    /// No entry may carry a full document for a create or replace: the diff is
+    /// the rendering, and duplicating prior + new content per entry would put
+    /// well over 100MB behind the 62-document batch that motivated batching in
+    /// the first place.
+    @Test func createAndReplaceEntriesCarryNoFullDocumentText() throws {
+        try withCollection { collection, root in
+            let big = String(repeating: "line\n", count: 50_000)
+            try seed(root, "replaced.md", big)
+
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [("replaced.md", big + "tail\n"), ("created.md", big)],
+                isDelete: false,
+                rationale: ""
+            )
+
+            for entry in preview.entries {
+                #expect(entry.deletedContent.isEmpty)
+                // Only the capped diff survives onto the entry.
+                #expect(entry.diff.count < 20_000)
+            }
+        }
+    }
+
+    // MARK: - Summary
+
+    @Test func summaryReadsAsASentence() throws {
+        try withCollection { collection, root in
+            try seed(root, "replaced.md", "old")
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [("replaced.md", "new"), ("added.md", "x")],
+                isDelete: false,
+                rationale: ""
+            )
+            #expect(preview.summary == "2 documents in \"packaging\": 1 new, 1 replaced.")
+            // UI copy convention: no em dashes.
+            #expect(!preview.summary.contains("—"))
+        }
+    }
+
+    @Test func singleDocumentSummaryIsSingular() throws {
+        try withCollection { collection, _ in
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [("one.md", "x")],
+                isDelete: false,
+                rationale: ""
+            )
+            #expect(preview.summary == "1 document in \"packaging\": 1 new.")
+        }
+    }
+
+    // MARK: - Argument parsing
+
+    @Test func batchArgumentsParse() throws {
+        try withCollection { collection, _ in
+            let json = """
+                {"collection":"packaging","rationale":"import the 4.1 docs",
+                 "documents":[{"path":"a.md","content":"A"},{"path":"b.md","content":"B"}]}
+                """
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                argumentsJSON: json,
+                isDelete: false
+            )
+            #expect(preview.entries.map(\.relPath) == ["a.md", "b.md"])
+            #expect(preview.rationale == "import the 4.1 docs")
+        }
+    }
+
+    /// A model handed an array parameter reliably sends one of each shape.
+    /// Rejecting the singular form would surface as an unexplained modal
+    /// failure rather than a write.
+    @Test func singularArgumentShapeIsAccepted() throws {
+        try withCollection { collection, _ in
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                argumentsJSON: #"{"path":"solo.md","content":"S"}"#,
+                isDelete: false
+            )
+            #expect(preview.entries.map(\.relPath) == ["solo.md"])
+            #expect(preview.entries.first?.operation == .create)
+        }
+    }
+
+    @Test func deleteArgumentsAcceptPathsArrayAndSinglePath() throws {
+        try withCollection { collection, root in
+            try seed(root, "x.md", "x")
+            try seed(root, "y.md", "y")
+
+            let many = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                argumentsJSON: #"{"paths":["x.md","y.md"],"rationale":"stale"}"#,
+                isDelete: true
+            )
+            #expect(many.entries.map(\.relPath) == ["x.md", "y.md"])
+            #expect(many.deleteCount == 2)
+
+            let one = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                argumentsJSON: #"{"path":"x.md"}"#,
+                isDelete: true
+            )
+            #expect(one.entries.map(\.relPath) == ["x.md"])
+        }
+    }
+
+    /// The modal must render something for every call. "This could not be
+    /// read" is itself a reason to deny, so a parse failure is a preview
+    /// state rather than a thrown error.
+    @Test func unreadableArgumentsBecomeAVisibleParseError() throws {
+        try withCollection { collection, _ in
+            let broken = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                argumentsJSON: "not json at all",
+                isDelete: false
+            )
+            #expect(broken.parseError != nil)
+            #expect(broken.summary == "This call could not be read.")
+
+            let empty = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                argumentsJSON: #"{"rationale":"nothing here"}"#,
+                isDelete: false
+            )
+            #expect(empty.parseError == "No documents named in this call.")
+        }
+    }
+}
