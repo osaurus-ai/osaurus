@@ -154,13 +154,34 @@ public final class KnowledgeDatabase: @unchecked Sendable {
 
     // MARK: - Schema & Migrations
 
+    /// Every knowledge migration so far only ADDS tables or columns; none
+    /// drops, renames, re-types, or changes the meaning of anything an older
+    /// build already reads. A DB stamped by a newer build is therefore safe to
+    /// open here: unknown columns are ignored on read, and this build's writes
+    /// all name their columns explicitly.
+    ///
+    /// IMPORTANT: if a future migration ever becomes destructive, this
+    /// forward-open stops being safe and MUST be replaced by an explicit
+    /// minimum-compatible-version gate. Same contract as
+    /// `ChatHistoryDatabase.migrationsAreAdditiveOnly`.
+    static let migrationsAreAdditiveOnly = true
+
     private func runMigrations() throws {
         let currentVersion = try getSchemaVersion()
+        // Forward-compatible open. Hard-refusing a schema-ahead file is what
+        // turned a harmless channel bounce into "all my chat history is gone"
+        // (the same bug, one database over). The knowledge index is
+        // rebuildable, so refusing looks even more like data loss here: every
+        // collection renders empty and every `search_knowledge` comes back
+        // with nothing, which is exactly the symptom osaurus#2439 opened with.
+        //
+        // Leave `user_version` untouched so a newer build still recognizes its
+        // own schema and re-applies its idempotent migrations.
         if currentVersion > Self.latestSchemaVersion {
-            throw KnowledgeDatabaseError.databaseFromNewerVersion(
-                found: currentVersion,
-                expected: Self.latestSchemaVersion
+            KnowledgeLogger.database.info(
+                "Opening schema-ahead knowledge database (found v\(currentVersion), this build writes v\(Self.latestSchemaVersion))"
             )
+            return
         }
         if currentVersion < 1 {
             try runMigrationStep(1, migrateToV1)
