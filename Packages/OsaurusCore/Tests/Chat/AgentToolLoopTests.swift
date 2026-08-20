@@ -624,6 +624,114 @@ struct AgentToolLoopTests {
         }
     }
 
+    // MARK: - Announce-only turns (osaurus#2439)
+
+    /// The failure the user reported as "the file_write calls are not
+    /// executing". The model wrote "Let me write the first batch:" and
+    /// stopped; the loop read that as a finished answer and ended the turn,
+    /// so nothing ran and the next turn the model concluded its own tools
+    /// were broken. Text that only announces a call is recoverable.
+    @Test func announceOnlyTextIsRecoverableNotFinal() {
+        let announcements = [
+            "Let me write the first batch:",
+            "Reading the core wiki pages and writing them:",
+            "Good — the wiki is cloned. Let me start:",
+            "The file-write tool is still down. Let me take a different approach:",
+            "Let me check the result",
+            "I'll write the remaining documents now",
+        ]
+        for text in announcements {
+            let step = AgentLoopModelStep.classifyTerminal(
+                contentIsBlank: false,
+                thinkingIsBlank: true,
+                stopReason: "stop",
+                requiresVisibleFinalResponse: false,
+                toolsWereOffered: true,
+                content: text
+            )
+            guard case .announcedToolCall = step else {
+                Issue.record("announce-only text must not end the run: \(text)")
+                return
+            }
+        }
+    }
+
+    /// The guard that matters most: a real answer must never be re-run. A
+    /// false positive here costs the user a duplicated response.
+    @Test func genuineAnswersStayFinal() {
+        let answers = [
+            "I loaded 10 wiki pages into the collection. Search for `Execute-MSI` to find them.",
+            "Here is what I found:\n\n- Home.md\n- README.md\n- Toolkit-Usage.md",
+            "The repo is cloned at `~/psapp/wiki`.",
+            "Done. Both files were written.",
+            "```\nlet me start:\n```",
+        ]
+        for text in answers {
+            let step = AgentLoopModelStep.classifyTerminal(
+                contentIsBlank: false,
+                thinkingIsBlank: true,
+                stopReason: "stop",
+                requiresVisibleFinalResponse: false,
+                toolsWereOffered: true,
+                content: text
+            )
+            guard case .finalResponse = step else {
+                Issue.record("a real answer must stay final: \(text)")
+                return
+            }
+        }
+    }
+
+    /// With no tools in the schema there is no call to be missing, so the
+    /// same text is simply the answer.
+    @Test func announceOnlyTextIsFinalWhenNoToolsWereOffered() {
+        let step = AgentLoopModelStep.classifyTerminal(
+            contentIsBlank: false,
+            thinkingIsBlank: true,
+            stopReason: "stop",
+            requiresVisibleFinalResponse: false,
+            toolsWereOffered: false,
+            content: "Let me write the first batch:"
+        )
+        guard case .finalResponse = step else {
+            Issue.record("tools-off turns have no missing call to recover")
+            return
+        }
+    }
+
+    /// Surfaces that do not pass `content` keep their previous behaviour
+    /// exactly — the recovery is opt-in per call site.
+    @Test func omittedContentPreservesFinalResponseClassification() {
+        let step = AgentLoopModelStep.classifyTerminal(
+            contentIsBlank: false,
+            thinkingIsBlank: true,
+            stopReason: "stop",
+            requiresVisibleFinalResponse: false,
+            toolsWereOffered: true
+        )
+        guard case .finalResponse = step else {
+            Issue.record("classification must be unchanged when content is not supplied")
+            return
+        }
+    }
+
+    /// `stop=length` and reasoning-only outcomes are decided before the
+    /// announcement check and keep their own typed recoveries.
+    @Test func announceCheckDoesNotShadowEarlierTerminalReasons() {
+        let truncated = AgentLoopModelStep.classifyTerminal(
+            contentIsBlank: false,
+            thinkingIsBlank: true,
+            stopReason: "length",
+            requiresVisibleFinalResponse: false,
+            toolsWereOffered: true,
+            content: "Let me write the first batch:"
+        )
+        guard case .lengthExhausted = truncated else {
+            Issue.record("an output-cap stop stays authoritative")
+            return
+        }
+    }
+
     @Test func recoveryIdempotencyOrdinalDistinguishesLogicalReplayOnly() {
         let messages = [ChatMessage(role: "user", content: "Do the task.")]
         let first = AgentToolLoop.recoveryAwareIdempotencySuffix(
