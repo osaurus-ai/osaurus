@@ -2075,7 +2075,13 @@ enum AgentToolLoop {
                 // there IS tracked work left. With nothing pending it is a
                 // real question and the user should get it, so fall through to
                 // an ordinary final response rather than talking past them.
-                let pending = await hooks.pendingTodoCount?() ?? 0
+                // Matches the todo-staleness call shape below: unwrap the hook
+                // first, then await it. A surface that supplies no hook has no
+                // tracked work to appeal to, so the question stands.
+                var pending = 0
+                if let pendingTodoCount = hooks.pendingTodoCount {
+                    pending = await pendingTodoCount()
+                }
                 guard pending > 0 else {
                     return RunResult(exit: .finalResponse, iterations: iteration)
                 }
