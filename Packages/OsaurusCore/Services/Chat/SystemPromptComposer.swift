@@ -2137,6 +2137,11 @@ public struct SystemPromptComposer: Sendable {
     static let knowledgeToolNames: Set<String> = [
         "search_knowledge", "read_knowledge", "list_knowledge",
         "flag_knowledge_stale", "list_knowledge_tickets",
+        // Direct write follows the collection grant, not a separate role: the
+        // grant is the access boundary and the approval modal is the consent
+        // gate. Gating it behind an extra opt-in is what left an agent with
+        // knowledge grants unable to write and unable to say why (#2439).
+        "write_knowledge",
     ]
 
     /// Curator-only knowledge tools, gated on

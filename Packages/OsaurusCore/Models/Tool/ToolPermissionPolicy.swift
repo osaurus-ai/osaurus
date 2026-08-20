@@ -90,3 +90,19 @@ protocol ContextualPermissionedTool: PermissionedTool {
 extension ContextualPermissionedTool {
     func unattendedAskQueuesForApproval(argumentsJSON: String) async -> Bool { false }
 }
+
+/// A tool whose approval card renders a domain-specific review surface
+/// instead of the generic pretty-printed JSON arguments block.
+///
+/// Exists because a knowledge write cannot be consented to as JSON: the
+/// decision needs paths, create-vs-replace, and a diff. Deliberately narrow —
+/// one method, resolved next to `ContextualPermissionedTool` in the registry's
+/// `.ask` branch — rather than a general "custom approval view" mechanism
+/// nothing else needs yet.
+protocol KnowledgeWritePreviewingTool {
+    /// Build the manifest for this invocation. Must be side-effect free: it
+    /// runs before approval and before execution. Returning nil falls back to
+    /// the JSON block, so a preview that cannot be built never blocks the call
+    /// from being reviewed at all.
+    func approvalPreview(argumentsJSON: String) async -> KnowledgeWritePreview?
+}

@@ -229,9 +229,16 @@ public final class ToolRegistry: ObservableObject {
             SearchKnowledgeTool(),
             ReadKnowledgeTool(),
             ListKnowledgeTool(),
+            // Direct write, gated by the ordinary permission modal, which
+            // renders paths + diffs for this tool instead of raw JSON. The
+            // user approves the call and the documents land immediately, so
+            // the agent can verify them with `search_knowledge` — the loop
+            // closure the proposal queue structurally could not provide.
+            WriteKnowledgeTool(),
             // Knowledge curation loop: staleness tickets (annotation only,
-            // same gate as the retrieval tools). The corpus itself is never
-            // written by a tool.
+            // same gate as the retrieval tools). Tickets remain the right
+            // shape for drift the agent NOTICES but is not being asked to fix
+            // now; that is an async signal to a human, not a consent gate.
             FlagKnowledgeStaleTool(),
             ListKnowledgeTicketsTool(),
             // Curator-only draft path (`.ask` policy, external-surface
@@ -525,6 +532,10 @@ public final class ToolRegistry: ObservableObject {
         "file_write", "file_edit", "file_copy", "shell_run", "git_commit", "file_undo",
         // Curator draft path: never invocable from external surfaces.
         "propose_knowledge_update",
+        // Direct corpus mutation. Its ONLY gate is the interactive approval
+        // modal, which an external caller cannot be shown, so there is no
+        // safe way to honor this off-surface.
+        "write_knowledge",
     ]
 
     /// Tool classes that must never be invocable from EXTERNAL surfaces
@@ -561,6 +572,12 @@ public final class ToolRegistry: ObservableObject {
     /// document is written. Without this, a scheduled Knowledge/Curator agent
     /// stalls forever on an approval card nobody is present to click. The
     /// interactive chat surface is unaffected — it still shows the card.
+    ///
+    /// `write_knowledge` is deliberately NOT here. The justification above is
+    /// a separate human gate DOWNSTREAM of the tool, and direct write has
+    /// none: approving the card is the only review, so auto-approving it on an
+    /// unattended run would let a scheduled agent rewrite a collection with
+    /// nobody ever seeing a diff. An unattended write stays denied.
     nonisolated static let unattendedAutoApprovableToolNames: Set<String> = [
         "propose_knowledge_update"
     ]
@@ -735,10 +752,17 @@ public final class ToolRegistry: ObservableObject {
                     // have been shown, so external/headless denials above win.
                     approved = true
                 } else {
+                    // A knowledge write renders paths + diffs instead of the
+                    // JSON block; nil for every other tool keeps the card
+                    // exactly as it was.
+                    let writePreview =
+                        await (tool as? KnowledgeWritePreviewingTool)?
+                        .approvalPreview(argumentsJSON: approvalArgumentsJSON)
                     let outcome = await ToolPermissionPromptService.requestApprovalOutcome(
                         toolName: name,
                         description: tool.description,
-                        argumentsJSON: approvalArgumentsJSON
+                        argumentsJSON: approvalArgumentsJSON,
+                        knowledgeWritePreview: writePreview
                     )
                     switch outcome {
                     case .denied:
