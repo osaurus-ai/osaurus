@@ -5366,6 +5366,14 @@ extension RemoteProviderService {
             let discovery = try await fetchOpenAICompatibleModelsDiscovery(from: provider)
             return (discovery.models, discovery.contextLengths)
         }
+        // ChatGPT/Codex sign-in models expose their real per-model window via
+        // the same catalog `fetchModels` already queries. `fetchModels` populates
+        // `lastDiscoverySummary` as a side effect, so read the windows back from
+        // there rather than fetching the catalog twice.
+        if provider.providerType == .openAICodex {
+            let models = try await fetchModels(from: provider)
+            return (models, OpenAICodexOAuthService.lastContextWindows)
+        }
         return (try await fetchModels(from: provider), [:])
     }
 
