@@ -544,7 +544,7 @@ struct WatcherEditorSheet: View {
 
             footerView
         }
-        .frame(width: 580, height: 640)
+        .fittedSheetFrame(width: 580, height: 640)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(

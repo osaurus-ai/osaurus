@@ -726,7 +726,7 @@ private struct ScheduleHistorySheet: View {
 
             footer
         }
-        .frame(width: 640, height: 560)
+        .fittedSheetFrame(width: 640, height: 560)
         .background(theme.primaryBackground)
     }
 
@@ -2293,7 +2293,7 @@ struct ScheduleEditorSheet: View {
 
             footerView
         }
-        .frame(width: 580, height: 680)
+        .fittedSheetFrame(width: 580, height: 680)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
