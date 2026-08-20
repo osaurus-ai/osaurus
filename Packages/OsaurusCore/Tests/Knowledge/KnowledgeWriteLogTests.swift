@@ -18,20 +18,20 @@ import Testing
 @Suite
 struct KnowledgeWriteLogTests {
 
-    private func makeDB() -> KnowledgeDatabase? {
-        let db = KnowledgeDatabase()
+    private func makeDB() -> KnowledgeWriteLogDatabase? {
+        let db = KnowledgeWriteLogDatabase()
         do {
             try db.openInMemory()
             return db
         } catch {
-            Issue.record("Could not open in-memory knowledge database: \(error)")
+            Issue.record("Could not open in-memory knowledge write log: \(error)")
             return nil
         }
     }
 
     @discardableResult
     private func log(
-        _ db: KnowledgeDatabase,
+        _ db: KnowledgeWriteLogDatabase,
         collectionId: String = "c1",
         relPath: String = "a.md",
         operation: KnowledgeWriteOperation = .replace,
@@ -40,7 +40,7 @@ struct KnowledgeWriteLogTests {
         runId: String = "run-1",
         rationale: String = "because"
     ) throws -> Int {
-        try db.insertWriteRecord(
+        try db.insert(
             collectionId: collectionId,
             relPath: relPath,
             operation: operation,
@@ -61,7 +61,7 @@ struct KnowledgeWriteLogTests {
     @Test func recordRoundTripsEveryField() throws {
         guard let db = makeDB() else { return }
         let id = try log(db, priorContent: "old body", resultContent: "new body")
-        let record = try #require(db.getWriteRecord(id: id))
+        let record = try #require(db.record(id: id))
 
         #expect(record.collectionId == "c1")
         #expect(record.relPath == "a.md")
@@ -81,7 +81,7 @@ struct KnowledgeWriteLogTests {
     @Test func createRecordsNoPriorContent() throws {
         guard let db = makeDB() else { return }
         let id = try log(db, operation: .create, priorContent: "", resultContent: "fresh")
-        let record = try #require(db.getWriteRecord(id: id))
+        let record = try #require(db.record(id: id))
         #expect(record.operation == .create)
         #expect(record.priorContent.isEmpty)
         #expect(record.priorContentHash.isEmpty)
@@ -94,7 +94,7 @@ struct KnowledgeWriteLogTests {
     @Test func deleteRecordsEmptyResultHash() throws {
         guard let db = makeDB() else { return }
         let id = try log(db, operation: .delete, priorContent: "doomed", resultContent: "")
-        let record = try #require(db.getWriteRecord(id: id))
+        let record = try #require(db.record(id: id))
         #expect(record.operation == .delete)
         #expect(record.priorContent == "doomed")
         #expect(record.resultContentHash.isEmpty)
@@ -108,7 +108,7 @@ struct KnowledgeWriteLogTests {
         let second = try log(db, collectionId: "c1", relPath: "two.md")
         try log(db, collectionId: "other", relPath: "hidden.md")
 
-        let history = try db.listWriteRecords(collectionId: "c1")
+        let history = try db.records(collectionId: "c1")
         #expect(history.map(\.id) == [second, first])
         // Scoping is structural, like every other knowledge read.
         #expect(!history.contains { $0.relPath == "hidden.md" })
@@ -124,26 +124,93 @@ struct KnowledgeWriteLogTests {
         let third = try log(db, relPath: "b.md", runId: "import")
         try log(db, relPath: "c.md", runId: "unrelated")
 
-        let run = try db.listWriteRecords(runId: "import")
+        let run = try db.records(runId: "import")
         #expect(run.map(\.id) == [third, second, first])
     }
 
     @Test func revertedRecordsLeaveTheRunQueueButStayInHistory() throws {
         guard let db = makeDB() else { return }
         let id = try log(db, runId: "import")
-        try db.markWriteRecordReverted(id: id, revertedAt: "2026-08-20T11:00:00Z")
+        try db.markReverted(id: id, revertedAt: "2026-08-20T11:00:00Z")
 
         // A reverted write must not be reverted twice by a later batch call.
-        #expect(try db.listWriteRecords(runId: "import").isEmpty)
+        #expect(try db.records(runId: "import").isEmpty)
 
         // But history stays readable rather than silently shrinking.
-        let history = try db.listWriteRecords(collectionId: "c1")
+        let history = try db.records(collectionId: "c1")
         #expect(history.count == 1)
         #expect(history[0].isReverted)
         #expect(history[0].revertedAt == "2026-08-20T11:00:00Z")
 
-        let filtered = try db.listWriteRecords(collectionId: "c1", includeReverted: false)
+        let filtered = try db.records(collectionId: "c1", includeReverted: false)
         #expect(filtered.isEmpty)
+    }
+
+    // MARK: - Retention
+    //
+    // The log stores WHOLE prior documents, so an unbounded history of a
+    // frequently rewritten collection would grow without limit. Pruning has to
+    // protect the undo that still matters, not just the newest rows.
+
+    /// Reverted rows are pure history — their content was already restored —
+    /// so they are discarded before any un-reverted row, whatever their age.
+    @Test func pruningDiscardsRevertedHistoryBeforeLiveUndo() throws {
+        guard let db = makeDB() else { return }
+        let limit = KnowledgeWriteLogDatabase.retentionLimitPerCollection
+
+        // Oldest rows, all reverted: pure history.
+        var revertedIds: [Int] = []
+        for index in 0 ..< 10 {
+            let id = try log(db, relPath: "reverted-\(index).md")
+            try db.markReverted(id: id, revertedAt: "2026-08-20T11:00:00Z")
+            revertedIds.append(id)
+        }
+        // Then fill exactly to the limit with live, revertable writes.
+        var liveIds: [Int] = []
+        for index in 0 ..< limit {
+            liveIds.append(try log(db, relPath: "live-\(index).md"))
+        }
+
+        let kept = Set(try db.records(collectionId: "c1", limit: limit * 2).map(\.id))
+        // Every live undo survived...
+        #expect(liveIds.allSatisfy { kept.contains($0) })
+        // ...and the reverted history was what got dropped.
+        #expect(revertedIds.allSatisfy { !kept.contains($0) })
+    }
+
+    /// Under the limit nothing is pruned at all.
+    @Test func pruningLeavesSmallHistoriesAlone() throws {
+        guard let db = makeDB() else { return }
+        var ids: [Int] = []
+        for index in 0 ..< 20 {
+            ids.append(try log(db, relPath: "doc-\(index).md"))
+        }
+        let kept = Set(try db.records(collectionId: "c1").map(\.id))
+        #expect(ids.allSatisfy { kept.contains($0) })
+    }
+
+    /// Pruning is scoped per collection, so a busy collection cannot evict a
+    /// quiet one's undo history.
+    @Test func pruningIsScopedPerCollection() throws {
+        guard let db = makeDB() else { return }
+        let quiet = try log(db, collectionId: "quiet", relPath: "rare.md")
+        for index in 0 ..< (KnowledgeWriteLogDatabase.retentionLimitPerCollection + 50) {
+            try log(db, collectionId: "busy", relPath: "doc-\(index).md")
+        }
+        let quietHistory = try db.records(collectionId: "quiet")
+        #expect(quietHistory.map(\.id) == [quiet])
+    }
+
+    /// Deleting a collection discards its history: nothing can be reverted
+    /// into a collection that no longer exists.
+    @Test func deletingACollectionDropsItsHistory() throws {
+        guard let db = makeDB() else { return }
+        try log(db, collectionId: "gone", relPath: "a.md")
+        let keep = try log(db, collectionId: "stays", relPath: "b.md")
+
+        try db.deleteRecords(collectionId: "gone")
+        #expect(try db.records(collectionId: "gone").isEmpty)
+        #expect(try db.records(collectionId: "stays").map(\.id) == [keep])
     }
 
     // MARK: - Path confinement

@@ -84,10 +84,33 @@ struct KnowledgeSchemaForwardCompatTests {
             let db = KnowledgeDatabase()
             try db.open()
             defer { db.close() }
-            #expect(diskUserVersion() == 4)
-            // v4 is the write log; prove the table actually exists rather
-            // than trusting the version stamp.
-            #expect(try db.listWriteRecords(collectionId: "c1").isEmpty)
+            #expect(diskUserVersion() == 3)
+        }
+    }
+
+    /// The write log is a SEPARATE file, and must be, because
+    /// `knowledge.sqlite` is a derived index whose supported recovery is
+    /// deleting it. Undo history is not rebuildable from the markdown, so
+    /// folding it in would make the standard fix for an indexing problem
+    /// destroy the safety net behind agent writes.
+    @Test func writeLogLivesOutsideTheDerivedIndex() async throws {
+        try await withTempRoot {
+            let index = KnowledgeDatabase()
+            try index.open()
+            defer { index.close() }
+
+            let log = KnowledgeWriteLogDatabase()
+            try log.openInMemory()
+            defer { log.close() }
+
+            #expect(
+                OsaurusPaths.knowledgeWriteLogDatabaseFile().path
+                    != OsaurusPaths.knowledgeDatabaseFile().path
+            )
+            // The index must NOT carry the write log's table: if a future
+            // change moves it back, deleting a corrupt index silently
+            // discards every pending undo.
+            #expect(!diskTableNames().contains("knowledge_writes"))
         }
     }
 
@@ -99,7 +122,7 @@ struct KnowledgeSchemaForwardCompatTests {
             let db = KnowledgeDatabase()
             try db.open()
             defer { db.close() }
-            #expect(diskUserVersion() == 4)
+            #expect(diskUserVersion() == 3)
         }
     }
 
@@ -143,6 +166,30 @@ struct KnowledgeSchemaForwardCompatTests {
                 )
             }
         }
+    }
+
+    /// Table names present in the on-disk knowledge index.
+    private func diskTableNames() -> Set<String> {
+        guard
+            let conn = try? EncryptedSQLiteOpener.open(
+                path: OsaurusPaths.knowledgeDatabaseFile().path,
+                key: nil,
+                applyPerfPragmas: false
+            )
+        else { return [] }
+        defer { sqlite3_close(conn) }
+        var stmt: OpaquePointer?
+        guard
+            sqlite3_prepare_v2(
+                conn, "SELECT name FROM sqlite_master WHERE type='table'", -1, &stmt, nil
+            ) == SQLITE_OK
+        else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        var names: Set<String> = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let c = sqlite3_column_text(stmt, 0) { names.insert(String(cString: c)) }
+        }
+        return names
     }
 
     private func diskUserVersion() -> Int {

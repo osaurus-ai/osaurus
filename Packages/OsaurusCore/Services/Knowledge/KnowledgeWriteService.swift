@@ -68,6 +68,14 @@ public actor KnowledgeWriteService {
 
     private init() {}
 
+    /// Open the write log on first use, mirroring how the knowledge tools
+    /// open the index lazily rather than at app start. Called before every
+    /// operation; `open()` is a no-op once the handle exists.
+    private func ensureLogOpen() throws {
+        guard !KnowledgeWriteLogDatabase.shared.isOpen else { return }
+        try KnowledgeWriteLogDatabase.shared.open()
+    }
+
     // MARK: - Apply
 
     /// Create or replace one document, logging what it replaced.
@@ -82,6 +90,7 @@ public actor KnowledgeWriteService {
         createdBy: String,
         rationale: String
     ) async throws -> KnowledgeWriteOutcome {
+        try ensureLogOpen()
         let fileURL = try Self.resolvedURL(collection: collection, relPath: relPath)
 
         let priorData = FileManager.default.contents(atPath: fileURL.path)
@@ -92,7 +101,7 @@ public actor KnowledgeWriteService {
         // Log BEFORE mutating: a crash between the log and the write leaves a
         // recoverable record, whereas the reverse order loses the prior
         // content permanently.
-        let recordId = try KnowledgeDatabase.shared.insertWriteRecord(
+        let recordId = try KnowledgeWriteLogDatabase.shared.insert(
             collectionId: collection.id.uuidString,
             relPath: relPath,
             operation: operation,
@@ -130,13 +139,14 @@ public actor KnowledgeWriteService {
         createdBy: String,
         rationale: String
     ) async throws -> KnowledgeWriteOutcome {
+        try ensureLogOpen()
         let fileURL = try Self.resolvedURL(collection: collection, relPath: relPath)
         guard let priorData = FileManager.default.contents(atPath: fileURL.path) else {
             throw KnowledgeWriteError.documentNotFound(relPath)
         }
         let priorContent = String(data: priorData, encoding: .utf8) ?? ""
 
-        let recordId = try KnowledgeDatabase.shared.insertWriteRecord(
+        let recordId = try KnowledgeWriteLogDatabase.shared.insert(
             collectionId: collection.id.uuidString,
             relPath: relPath,
             operation: .delete,
@@ -178,14 +188,15 @@ public actor KnowledgeWriteService {
     /// refuses to discard content that arrived after the agent's change,
     /// whether from the user, another agent, or a folder sync.
     public func revert(recordId: Int, force: Bool = false) async throws {
-        guard let record = try KnowledgeDatabase.shared.getWriteRecord(id: recordId) else {
+        try ensureLogOpen()
+        guard let record = try KnowledgeWriteLogDatabase.shared.record(id: recordId) else {
             throw KnowledgeWriteError.recordNotFound(recordId)
         }
         guard !record.isReverted else {
             throw KnowledgeWriteError.alreadyReverted(recordId)
         }
         try await apply(revertOf: record, force: force)
-        try KnowledgeDatabase.shared.markWriteRecordReverted(
+        try KnowledgeWriteLogDatabase.shared.markReverted(
             id: recordId,
             revertedAt: Self.iso8601Now()
         )
@@ -204,17 +215,18 @@ public actor KnowledgeWriteService {
     public func revertRun(runId: String, force: Bool = false) async -> [(
         record: KnowledgeWriteRecord, error: Error
     )] {
+        try? ensureLogOpen()
         // Newest first (the query's order): reverting in reverse application
         // order is the only sequence that restores correctly when one run
         // wrote the same path more than once.
-        let records = (try? KnowledgeDatabase.shared.listWriteRecords(runId: runId)) ?? []
+        let records = (try? KnowledgeWriteLogDatabase.shared.records(runId: runId)) ?? []
         var failures: [(record: KnowledgeWriteRecord, error: Error)] = []
         var touched: [String: KnowledgeCollection] = [:]
 
         for record in records {
             do {
                 try await apply(revertOf: record, force: force)
-                try KnowledgeDatabase.shared.markWriteRecordReverted(
+                try KnowledgeWriteLogDatabase.shared.markReverted(
                     id: record.id,
                     revertedAt: Self.iso8601Now()
                 )

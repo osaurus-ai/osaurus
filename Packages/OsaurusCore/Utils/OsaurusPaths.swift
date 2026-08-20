@@ -322,6 +322,20 @@ public enum OsaurusPaths {
         knowledge().appendingPathComponent("knowledge.sqlite")
     }
 
+    /// Knowledge write log: `~/.osaurus/knowledge/write_log.sqlite`.
+    ///
+    /// Deliberately NOT in `knowledge.sqlite`. That file is a derived index —
+    /// deleting it is the supported recovery for a corrupt or stale index,
+    /// and it rebuilds from the markdown source of truth losing nothing. The
+    /// write log breaks that invariant: it holds the prior content of every
+    /// agent-made change, which exists nowhere else once the file is
+    /// overwritten. Keeping it here would mean the standard fix for an
+    /// unrelated index problem silently destroys the undo history that makes
+    /// call-time write approval safe.
+    public static func knowledgeWriteLogDatabaseFile() -> URL {
+        knowledge().appendingPathComponent("write_log.sqlite")
+    }
+
     /// Per-collection VecturaKit vector index directory. Like the memory
     /// vectors, always a derivable artifact of the indexed corpus.
     public static func knowledgeVecturaDirectory(for id: UUID) -> URL {
