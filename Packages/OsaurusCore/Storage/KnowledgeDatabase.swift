@@ -44,7 +44,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
     public static let shared = KnowledgeDatabase()
 
     /// Highest schema version this build knows how to produce.
-    private static let latestSchemaVersion = 3
+    private static let latestSchemaVersion = 4
 
     nonisolated(unsafe) private static let iso8601Formatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -170,6 +170,9 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         }
         if currentVersion < 3 {
             try runMigrationStep(3, migrateToV3)
+        }
+        if currentVersion < 4 {
+            try runMigrationStep(4, migrateToV4)
         }
     }
 
@@ -338,6 +341,49 @@ public final class KnowledgeDatabase: @unchecked Sendable {
             "ALTER TABLE documents ADD COLUMN inferred_type TEXT NOT NULL DEFAULT ''"
         )
         KnowledgeLogger.database.info("v3 migration completed")
+    }
+
+    /// V4: the knowledge write log. Every agent-made change to a collection
+    /// folder records what it replaced, so it can be reverted later.
+    ///
+    /// `prior_content` holds the entire previous document rather than a diff:
+    /// a revert must not depend on the current file still being what the agent
+    /// left behind. `run_id` groups one agent run's writes so a bad bulk
+    /// import reverts as a unit, which is the affordance that actually matters
+    /// after an import goes wrong.
+    ///
+    /// Rows are kept after reverting (`reverted_at` stamped) so the history
+    /// stays readable instead of silently shrinking.
+    private func migrateToV4() throws {
+        KnowledgeLogger.database.info("Running v4 migration (knowledge write log)")
+        try executeRaw(
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_writes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                collection_id TEXT NOT NULL,
+                rel_path TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                prior_content TEXT NOT NULL DEFAULT '',
+                prior_content_hash TEXT NOT NULL DEFAULT '',
+                result_content_hash TEXT NOT NULL DEFAULT '',
+                run_id TEXT NOT NULL DEFAULT '',
+                created_by TEXT NOT NULL DEFAULT '',
+                rationale TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                reverted_at TEXT
+            )
+            """
+        )
+        // The two access patterns: the collection's history view, and
+        // "revert everything this run did".
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_writes_collection "
+                + "ON knowledge_writes(collection_id, id DESC)"
+        )
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_writes_run ON knowledge_writes(run_id)"
+        )
+        KnowledgeLogger.database.info("v4 migration completed")
     }
 
     /// SQL expression resolving a document's effective category:
@@ -1079,6 +1125,149 @@ public final class KnowledgeDatabase: @unchecked Sendable {
             createdBy: columnText(stmt, 7),
             createdAt: columnText(stmt, 8),
             updatedAt: columnText(stmt, 9)
+        )
+    }
+
+    // MARK: - Knowledge write log
+
+    private static let writeRecordColumns =
+        "id, collection_id, rel_path, operation, prior_content, prior_content_hash, "
+        + "result_content_hash, run_id, created_by, rationale, created_at, reverted_at"
+
+    private static func readWriteRecord(_ stmt: OpaquePointer) -> KnowledgeWriteRecord {
+        KnowledgeWriteRecord(
+            id: Int(sqlite3_column_int64(stmt, 0)),
+            collectionId: columnText(stmt, 1),
+            relPath: columnText(stmt, 2),
+            operation: KnowledgeWriteOperation(rawValue: columnText(stmt, 3)) ?? .replace,
+            priorContent: columnText(stmt, 4),
+            priorContentHash: columnText(stmt, 5),
+            resultContentHash: columnText(stmt, 6),
+            runId: columnText(stmt, 7),
+            createdBy: columnText(stmt, 8),
+            rationale: columnText(stmt, 9),
+            createdAt: columnText(stmt, 10),
+            revertedAt: sqlite3_column_type(stmt, 11) == SQLITE_NULL ? nil : columnText(stmt, 11)
+        )
+    }
+
+    /// Record one applied mutation, returning its row id.
+    @discardableResult
+    public func insertWriteRecord(
+        collectionId: String,
+        relPath: String,
+        operation: KnowledgeWriteOperation,
+        priorContent: String,
+        priorContentHash: String,
+        resultContentHash: String,
+        runId: String,
+        createdBy: String,
+        rationale: String,
+        createdAt: String
+    ) throws -> Int {
+        var rowId = 0
+        try prepareAndExecute(
+            """
+            INSERT INTO knowledge_writes
+                (collection_id, rel_path, operation, prior_content, prior_content_hash,
+                 result_content_hash, run_id, created_by, rationale, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            RETURNING id
+            """,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: collectionId)
+                Self.bindText(stmt, index: 2, value: relPath)
+                Self.bindText(stmt, index: 3, value: operation.rawValue)
+                Self.bindText(stmt, index: 4, value: priorContent)
+                Self.bindText(stmt, index: 5, value: priorContentHash)
+                Self.bindText(stmt, index: 6, value: resultContentHash)
+                Self.bindText(stmt, index: 7, value: runId)
+                Self.bindText(stmt, index: 8, value: createdBy)
+                Self.bindText(stmt, index: 9, value: rationale)
+                Self.bindText(stmt, index: 10, value: createdAt)
+            },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    rowId = Int(sqlite3_column_int64(stmt, 0))
+                }
+            }
+        )
+        guard rowId != 0 else {
+            throw KnowledgeDatabaseError.failedToExecute("insertWriteRecord returned no id")
+        }
+        return rowId
+    }
+
+    public func getWriteRecord(id: Int) throws -> KnowledgeWriteRecord? {
+        var record: KnowledgeWriteRecord?
+        try prepareAndExecute(
+            "SELECT \(Self.writeRecordColumns) FROM knowledge_writes WHERE id = ?1 LIMIT 1",
+            readOnly: true,
+            bind: { stmt in sqlite3_bind_int64(stmt, 1, Int64(id)) },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    record = Self.readWriteRecord(stmt)
+                }
+            }
+        )
+        return record
+    }
+
+    /// One collection's write history, newest first.
+    public func listWriteRecords(
+        collectionId: String,
+        includeReverted: Bool = true,
+        limit: Int = 200
+    ) throws -> [KnowledgeWriteRecord] {
+        var records: [KnowledgeWriteRecord] = []
+        var sql = "SELECT \(Self.writeRecordColumns) FROM knowledge_writes WHERE collection_id = ?1"
+        if !includeReverted { sql += " AND reverted_at IS NULL" }
+        sql += " ORDER BY id DESC LIMIT ?2"
+        try prepareAndExecute(
+            sql,
+            readOnly: true,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: collectionId)
+                sqlite3_bind_int(stmt, 2, Int32(limit))
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    records.append(Self.readWriteRecord(stmt))
+                }
+            }
+        )
+        return records
+    }
+
+    /// Every not-yet-reverted write from one agent run. Ordered NEWEST FIRST
+    /// so a caller reverting the batch undoes it in reverse application order,
+    /// which is the only order that restores correctly when one run touched
+    /// the same path more than once.
+    public func listWriteRecords(runId: String) throws -> [KnowledgeWriteRecord] {
+        var records: [KnowledgeWriteRecord] = []
+        try prepareAndExecute(
+            "SELECT \(Self.writeRecordColumns) FROM knowledge_writes "
+                + "WHERE run_id = ?1 AND reverted_at IS NULL ORDER BY id DESC",
+            readOnly: true,
+            bind: { stmt in Self.bindText(stmt, index: 1, value: runId) },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    records.append(Self.readWriteRecord(stmt))
+                }
+            }
+        )
+        return records
+    }
+
+    /// Stamp a record reverted. Keeps the row for history.
+    public func markWriteRecordReverted(id: Int, revertedAt: String) throws {
+        try prepareAndExecute(
+            "UPDATE knowledge_writes SET reverted_at = ?2 WHERE id = ?1",
+            bind: { stmt in
+                sqlite3_bind_int64(stmt, 1, Int64(id))
+                Self.bindText(stmt, index: 2, value: revertedAt)
+            },
+            process: { stmt in _ = sqlite3_step(stmt) }
         )
     }
 
