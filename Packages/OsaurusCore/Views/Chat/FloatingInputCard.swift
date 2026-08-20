@@ -4241,19 +4241,32 @@ extension FloatingInputCard {
                 return
             }
             let sizeLimit = maxImageSize
+            let filename = url.lastPathComponent
             Task { @MainActor in
-                // The image decode and PNG re-encode block for seconds on a
+                // The image decode and re-encode block for seconds on a
                 // large file, so they run off the main actor and only the
                 // finished bytes are attached here.
-                let pngData = await Task.detached(priority: .userInitiated) {
+                let encoded = await Task.detached(priority: .userInitiated) {
                     () -> Data? in
-                    guard let data = try? Data(contentsOf: url), data.count <= sizeLimit,
-                        let nsImage = NSImage(data: data)
-                    else { return nil }
-                    return nsImage.pngData()
+                    guard let data = try? Data(contentsOf: url) else { return nil }
+                    if data.count <= sizeLimit {
+                        guard let nsImage = NSImage(data: data) else { return nil }
+                        return nsImage.pngData()
+                    }
+                    // Over the inline cap: downscale to the wire budget
+                    // instead of vanishing without a word — the old
+                    // `data.count <= sizeLimit else return nil` silently
+                    // dropped a big photo while the picker looked like it
+                    // accepted it.
+                    return RemoteImagePayloadPolicy.downsizedJPEGData(from: data)
                 }.value
-                if let pngData {
-                    appendAttachment(.image(pngData))
+                if let encoded {
+                    appendAttachment(.image(encoded))
+                } else {
+                    ToastManager.shared.error(
+                        L("Could not attach \(filename)"),
+                        message: L("The image could not be read or re-encoded.")
+                    )
                 }
             }
             return
@@ -4374,14 +4387,20 @@ extension FloatingInputCard {
             {
                 handled = true
                 provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, error in
-                    guard let data = data, error == nil, data.count <= maxImageSize else { return }
+                    guard let data = data, error == nil else { return }
                     // Decode and re-encode on the provider's background queue;
-                    // only the finished bytes hop to the main thread.
-                    guard let nsImage = NSImage(data: data),
-                        let pngData = nsImage.pngData()
-                    else { return }
+                    // only the finished bytes hop to the main thread. Oversized
+                    // drops downscale to the wire budget instead of silently
+                    // vanishing (the old `count <= maxImageSize else return`).
+                    let encoded: Data?
+                    if data.count <= maxImageSize {
+                        encoded = NSImage(data: data)?.pngData()
+                    } else {
+                        encoded = RemoteImagePayloadPolicy.downsizedJPEGData(from: data)
+                    }
+                    guard let encoded else { return }
                     DispatchQueue.main.async {
-                        appendAttachment(.image(pngData))
+                        appendAttachment(.image(encoded))
                     }
                 }
             } else if cap.supportsAudio,

@@ -91,6 +91,14 @@ enum RemoteImagePayloadPolicy {
         return url
     }
 
+    /// Downscale arbitrary encoded image bytes to the wire budget as JPEG.
+    /// Used by the composer's attach path for files over its inline cap —
+    /// attach a usable rendition instead of silently dropping the file.
+    static func downsizedJPEGData(from data: Data) -> Data? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return downsizedJPEG(from: source)
+    }
+
     // MARK: - ImageIO helpers
 
     private static func mime(of source: CGImageSource) -> String? {
