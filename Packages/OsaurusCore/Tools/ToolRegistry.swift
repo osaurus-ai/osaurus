@@ -245,11 +245,9 @@ public final class ToolRegistry: ObservableObject {
             // now; that is an async signal to a human, not a consent gate.
             FlagKnowledgeStaleTool(),
             ListKnowledgeTicketsTool(),
-            // Curator-only draft path (`.ask` policy, external-surface
-            // denied). Creates pending proposals; the user approves them
-            // in the Knowledge tab before anything lands in the corpus.
-            ProposeKnowledgeUpdateTool(),
-            // Curator queue coordination (claim/release tickets).
+            // Ticket queue coordination (claim/release). Bookkeeping over
+            // annotations, so it follows the ordinary knowledge grant now that
+            // the curator role is gone.
             UpdateKnowledgeTicketTool(),
             // Native web search (Settings → Search providers). Always loaded;
             // the composer strips it per-agent via `webSearchEnabled`. Its
@@ -534,8 +532,6 @@ public final class ToolRegistry: ObservableObject {
     /// tool family.
     nonisolated static let externallyDeniedHostToolNames: Set<String> = [
         "file_write", "file_edit", "file_copy", "shell_run", "git_commit", "file_undo",
-        // Curator draft path: never invocable from external surfaces.
-        "propose_knowledge_update",
         // Direct corpus mutation. Their ONLY gate is the interactive approval
         // modal, which an external caller cannot be shown, so there is no
         // safe way to honor these off-surface.
@@ -570,21 +566,15 @@ public final class ToolRegistry: ObservableObject {
     /// `.ask` tools that may run without an approval card on an UNATTENDED,
     /// app-authored background dispatch (`ChatExecutionContext.isUnattendedDispatch`
     /// — schedule / self-schedule / watcher, never external). Membership is
-    /// justified per tool by a SEPARATE human gate downstream: the curator's
-    /// `propose_knowledge_update` only queues an inert draft that the user must
-    /// still review and approve (with a diff) in the Knowledge tab before any
-    /// document is written. Without this, a scheduled Knowledge/Curator agent
-    /// stalls forever on an approval card nobody is present to click. The
-    /// interactive chat surface is unaffected — it still shows the card.
+    /// justified per tool by a SEPARATE human gate downstream.
     ///
-    /// `write_knowledge` is deliberately NOT here. The justification above is
-    /// a separate human gate DOWNSTREAM of the tool, and direct write has
-    /// none: approving the card is the only review, so auto-approving it on an
-    /// unattended run would let a scheduled agent rewrite a collection with
-    /// nobody ever seeing a diff. An unattended write stays denied.
-    nonisolated static let unattendedAutoApprovableToolNames: Set<String> = [
-        "propose_knowledge_update"
-    ]
+    /// Currently EMPTY. Its only member was `propose_knowledge_update`, which
+    /// qualified because a human still reviewed the draft in the Knowledge tab
+    /// afterwards. Direct write has no such downstream gate — approving the
+    /// card is the only review — so neither `write_knowledge` nor
+    /// `delete_knowledge` may join this list. An unattended run stalls rather
+    /// than mutating a collection nobody ever saw a diff of.
+    nonisolated static let unattendedAutoApprovableToolNames: Set<String> = []
 
     /// Whether `name` is blocked for the current execution because an
     /// external surface (`ChatExecutionContext.isExternalSurface`) is

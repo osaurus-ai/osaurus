@@ -885,6 +885,12 @@ final class TextSubagentKind:
     ///   user surface — the question would strand the run until its deadline.
     static func isExcludedChildTool(_ name: String) -> Bool {
         if SubagentCapabilityRegistry.capability(forToolName: name) != nil { return true }
+        // Knowledge MUTATION stays with the parent. A spawned child runs
+        // inside a subagent feed, and a corpus write whose only gate is an
+        // approval card should not fire from a nested context the user is not
+        // watching as directly. Retrieval and ticket tools are unaffected, so
+        // a child can still read and flag.
+        if name == "write_knowledge" || name == "delete_knowledge" { return true }
         return name == "clarify"
     }
 

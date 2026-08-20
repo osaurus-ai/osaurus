@@ -456,11 +456,12 @@ struct KnowledgeView: View {
 
     /// A curator agent that can act on `collectionId`: knowledge on, curator
     /// on, and this collection granted. `nil` when the user hasn't set one up.
+    /// Any agent granted this collection can now fix a ticket: write access
+    /// follows the grant, not a separate curator role.
     private func curatorAgent(forCollectionId collectionId: String) -> Agent? {
         guard let uuid = UUID(uuidString: collectionId) else { return nil }
         return AgentManager.shared.agents.first { agent in
             agent.settings.knowledgeEnabled
-                && agent.settings.knowledgeCuratorEnabled
                 && agent.settings.knowledgeCollectionIds.contains(uuid)
         }
     }
@@ -473,14 +474,14 @@ struct KnowledgeView: View {
     private func startCurator(for ticket: KnowledgeTicket) {
         guard let agent = curatorAgent(forCollectionId: ticket.collectionId) else {
             showSuccess(
-                L("No curator yet — turn on Features → Knowledge → Curator for an agent that can use this collection.")
+                L("No agent has this collection yet. Grant it to one in Features → Knowledge.")
             )
             return
         }
         let windowId = ChatWindowManager.shared.createWindow(agentId: agent.id)
         // Seed the composer so the window isn't a blank prompt. The reviewer
-        // can edit or send as-is; the curator uses propose_knowledge_update,
-        // which lands back here as a pending proposal for approval.
+        // can edit or send as-is; the agent fixes the document with
+        // `write_knowledge`, which shows a diff for approval at call time.
         let collectionName =
             (UUID(uuidString: ticket.collectionId)
             .flatMap { KnowledgeManager.shared.collection(for: $0)?.name }) ?? ""
@@ -489,9 +490,8 @@ struct KnowledgeView: View {
             "Please work knowledge ticket #\(ticket.id) for `\(ticket.relPath)`\(collectionClause).\n"
             + "Reported issue: \(ticket.reason)\n\n"
             + "Read the current document, and if it is out of date, use "
-            + "propose_knowledge_update to draft a corrected version for my "
-            + "approval. Keep the existing frontmatter. Do not change anything "
-            + "until I approve the proposal."
+            + "write_knowledge to correct it. Keep the existing frontmatter. "
+            + "I will review the diff before it is saved."
         ChatWindowManager.shared.windowState(id: windowId)?.session.input = briefing
         showSuccess(L("Opened \(agent.name) with a briefing for ticket #\(ticket.id). Review it and hit send."))
     }

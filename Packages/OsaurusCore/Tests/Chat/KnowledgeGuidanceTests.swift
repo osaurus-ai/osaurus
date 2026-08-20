@@ -52,36 +52,78 @@ struct KnowledgeGuidanceTests {
     /// self-discovered rot — a small model holding an "update the doc"
     /// request and no edit tool otherwise punts instead of filing the
     /// ticket (live-observed with Ornith-1.0-9B, 2026-07-15).
-    @Test func updateRequestsRouteToStaleFlag() {
-        let text = SystemPromptTemplates.knowledgeGuidance(collections: [
-            KnowledgeGrantDescriptor(name: "Docs", summary: "Product docs.")
-        ])
-        #expect(text.contains("asks you to update"))
-        #expect(text.contains("cannot edit collection documents"))
+    @Test func updateRequestsRouteToWriteKnowledge() {
+        let text = Self.guidance()
+        #expect(text.contains("`write_knowledge`"))
+        #expect(text.contains("`delete_knowledge`"))
+        // Both of these were true of the old architecture and are false now.
+        #expect(!text.contains("cannot edit collection documents"))
+        #expect(!text.contains("propose_knowledge_update"))
     }
 
-    @Test func curatorLineOnlyForCurators() {
-        let grants = [KnowledgeGrantDescriptor(name: "Docs", summary: "Product docs.")]
-        let plain = SystemPromptTemplates.knowledgeGuidance(collections: grants)
-        let curator = SystemPromptTemplates.knowledgeGuidance(
-            collections: grants, curator: true)
-        #expect(!plain.contains("`propose_knowledge_update`"))
-        #expect(curator.contains("`propose_knowledge_update`"))
-        #expect(curator.contains("`flag_knowledge_stale`"))
+    /// Tickets survive, for the case they were always right for: drift the
+    /// agent NOTICES but is not being asked to fix. That is a note to a
+    /// human, not the route for an update request.
+    @Test func staleFlagIsScopedToUnaskedDrift() {
+        let text = Self.guidance()
+        #expect(text.contains("`flag_knowledge_stale`"))
+        #expect(text.contains("not the current task"))
+    }
+
+    /// One batched call per task, not one call per document. The 62-document
+    /// import is the shape that has to survive.
+    @Test func guidanceInsistsOnOneBatchedCall() {
+        #expect(Self.guidance().contains("one call is one approval"))
+    }
+
+    /// A write lands immediately, so the model must verify instead of
+    /// assuming. Reporting unverified work is what made osaurus#2439 take a
+    /// day.
+    @Test func guidanceRequiresVerifyingAWrite() {
+        let text = Self.guidance()
+        #expect(text.contains("Confirm with `search_knowledge`"))
+        #expect(text.contains("never report work you have not verified"))
+    }
+
+    /// Still true, and still load-bearing: having a real write path does not
+    /// make a sandbox file a knowledge document. This is the line that stops
+    /// the model improvising a destination when something goes wrong.
+    @Test func sandboxWritesAreStillNeverKnowledgeDocuments() {
+        let text = Self.guidance()
+        #expect(text.contains("NEVER creates a knowledge document"))
+        #expect(text.contains("it is not an indexing delay"))
+    }
+
+    private static func guidance() -> String {
+        SystemPromptTemplates.knowledgeGuidance(collections: [
+            KnowledgeGrantDescriptor(name: "Docs", summary: "Product docs.")
+        ])
     }
 
     /// Compact-prompt models only ever see the FIRST sentence of a tool
-    /// description (`oneLineToolDescription`, ≤180 chars). The stale-flag
-    /// tool's routing rule — update request ⇒ file a ticket — must
-    /// therefore fit inside that first sentence, or small models lose it
-    /// entirely (live-observed with Ornith-1.0-9B, 2026-07-15).
+    /// description (`oneLineToolDescription`, ≤180 chars), so the routing
+    /// rule has to fit inside it or small models lose it entirely
+    /// (live-observed with Ornith-1.0-9B, 2026-07-15).
+    ///
+    /// The rule INVERTED when the corpus became writable: it used to be
+    /// "update request ⇒ file a ticket" because nothing could edit a
+    /// document. Now a ticket is only for drift nobody asked about, and the
+    /// first sentence has to say so, or every update request goes back
+    /// through a queue that no longer leads anywhere.
     @Test func staleFlagRoutingSurvivesFirstSentenceTruncation() {
         let description = FlagKnowledgeStaleTool().description
         let firstSentence = String(
             description[..<(description.range(of: ". ")?.lowerBound ?? description.endIndex)])
         #expect(firstSentence.count <= 180)
-        #expect(firstSentence.contains("update request"))
-        #expect(firstSentence.contains("cannot be edited"))
+        #expect(firstSentence.contains("NOT the current task"))
+        #expect(!firstSentence.contains("cannot be edited"))
+    }
+
+    /// The redirect to the real write path has to be in the description too,
+    /// since a model reaching for this tool on an update request needs to be
+    /// sent somewhere.
+    @Test func staleFlagPointsAtTheWritePath() {
+        #expect(FlagKnowledgeStaleTool().description.contains("`write_knowledge`"))
     }
 
     @Test func grantDescriptorSlicesCollection() {

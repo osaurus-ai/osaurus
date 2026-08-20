@@ -972,8 +972,7 @@ public enum SystemPromptTemplates {
     /// name/summary re-renders the block (a one-time cached-prefix bust),
     /// matching the other config-driven sections.
     public static func knowledgeGuidance(
-        collections: [KnowledgeGrantDescriptor],
-        curator: Bool = false
+        collections: [KnowledgeGrantDescriptor]
     ) -> String {
         var lines: [String] = ["## Knowledge", ""]
         lines.append("Knowledge collections granted to this agent:")
@@ -995,20 +994,38 @@ public enum SystemPromptTemplates {
                 + "`list_knowledge` browses a collection's documents."
         )
         lines.append(
-            "- You cannot edit collection documents. When the user reports a change or "
-                + "asks you to update one — or you find outdated content yourself — file it "
-                + "with `flag_knowledge_stale`; the ticket starts the human-reviewed update "
-                + "and IS the correct way to fulfil an update request. Tell the user the "
-                + "report was filed for review."
+            "- To add or update documents, call `write_knowledge` with the full markdown. "
+                + "Send EVERY document for a task in one call: `documents` is an array, and one "
+                + "call is one approval. `delete_knowledge` removes documents. The user reviews "
+                + "the paths and a diff before anything is written, so a rejected call is a "
+                + "normal outcome, not an error."
         )
-        if curator {
-            lines.append(
-                "- You are a curator: after filing the ticket, draft the corrected document "
-                    + "with `propose_knowledge_update`. The proposal stays pending until the "
-                    + "user approves it in the Knowledge tab — nothing changes on disk before "
-                    + "then."
-            )
-        }
+        lines.append(
+            "- A write lands immediately once approved. Confirm with `search_knowledge` before "
+                + "telling the user a document is in place; never report work you have not "
+                + "verified."
+        )
+        // The single most damaging gap in the old block was silence about
+        // where a collection actually lives. Told only that it could not
+        // edit, a model asked to build a knowledge base invented a
+        // destination: in osaurus#2439 it wrote markdown into
+        // `<agent home>/knowledge/`, a plain sandbox directory the indexer
+        // never reads, then spent an hour reporting the successful writes as
+        // failures because `search_knowledge` stayed empty. This stays true
+        // even now that a real write path exists, and is the line that stops
+        // the model improvising one.
+        lines.append(
+            "- Writing a file with `file_write` or `shell_run` NEVER creates a knowledge "
+                + "document, whatever the path is named. Collections live outside your sandbox; "
+                + "only the tools above reach them. If `search_knowledge` cannot find what you "
+                + "just wrote, the file is not in a collection — it is not an indexing delay, "
+                + "and retrying the write will not change that."
+        )
+        lines.append(
+            "- When you notice a document is outdated but fixing it is not the current task, "
+                + "file `flag_knowledge_stale` instead. The ticket is a note to the user; it "
+                + "changes nothing on disk."
+        )
         return lines.joined(separator: "\n")
     }
 

@@ -1414,12 +1414,7 @@ public struct SystemPromptComposer: Sendable {
                     id: "knowledge",
                     label: L("Knowledge"),
                     content: SystemPromptTemplates.knowledgeGuidance(
-                        collections: snapshot.knowledgeCollections,
-                        // Curator line only when the proposal tool actually
-                        // resolved — mirrors the section's own schema gate.
-                        curator: !resolvedNames.isDisjoint(
-                            with: Self.knowledgeCuratorToolNames
-                        )
+                        collections: snapshot.knowledgeCollections
                     )
                 )
             )
@@ -2142,15 +2137,18 @@ public struct SystemPromptComposer: Sendable {
         // gate. Gating it behind an extra opt-in is what left an agent with
         // knowledge grants unable to write and unable to say why (#2439).
         "write_knowledge", "delete_knowledge",
+        "update_knowledge_ticket",
     ]
 
-    /// Curator-only knowledge tools, gated on
-    /// `AgentConfigSnapshot.knowledgeCuratorEnabled` in `resolveTools`.
-    /// The tool re-checks the role at execution time, so this strip is a
-    /// token-cost optimization, not the boundary.
-    static let knowledgeCuratorToolNames: Set<String> = [
-        "propose_knowledge_update", "update_knowledge_ticket",
-    ]
+    /// Formerly curator-only knowledge tools.
+    ///
+    /// Now EMPTY. `propose_knowledge_update` was removed with the proposal
+    /// architecture, and `update_knowledge_ticket` moved to the ordinary
+    /// knowledge set: claiming or releasing a ticket is bookkeeping over an
+    /// annotation, never a corpus mutation, so it does not need a role of its
+    /// own. Kept as an empty set rather than deleted so the composer's
+    /// gate/strip pair keeps its shape for a future privileged group.
+    static let knowledgeCuratorToolNames: Set<String> = []
 
     /// Render the schema snapshot block injected after the onboarding
     /// prompt when `dbEnabled` is true. Best-effort: a failure to open

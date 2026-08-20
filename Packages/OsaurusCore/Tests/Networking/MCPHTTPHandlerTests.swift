@@ -264,9 +264,17 @@ struct MCPHTTPHandlerTests {
     }
 
     @Test func unattended_curation_auto_approval_is_scoped_and_still_externally_denied() {
-        // The curator draft tool is the only member today.
+        // EMPTY today. `propose_knowledge_update` was the only member, and it
+        // qualified because a human still reviewed the draft in the Knowledge
+        // tab afterwards. The write tools that replaced it have no such
+        // downstream gate — approving the card IS the review — so an
+        // unattended run must stall rather than mutate a collection nobody
+        // ever saw a diff of.
+        #expect(ToolRegistry.unattendedAutoApprovableToolNames.isEmpty)
         #expect(
-            ToolRegistry.unattendedAutoApprovableToolNames.contains("propose_knowledge_update"))
+            !ToolRegistry.unattendedAutoApprovableToolNames.contains("write_knowledge"))
+        #expect(
+            !ToolRegistry.unattendedAutoApprovableToolNames.contains("delete_knowledge"))
 
         // Defense in depth: unattended auto-approval never relaxes the external
         // deny. Every auto-approvable tool must still be blocked for external
