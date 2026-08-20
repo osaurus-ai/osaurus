@@ -6992,7 +6992,13 @@ final class ChatSession: ObservableObject {
                                         // so `requiresVisibleFinalResponse` is
                                         // false and a reasoning-only stop would
                                         // otherwise count as a finished answer.
-                                        toolsWereOffered: !iterationToolSpecs.isEmpty
+                                        toolsWereOffered: !iterationToolSpecs.isEmpty,
+                                        // Lets the classifier tell a real
+                                        // answer from a bare "Let me write
+                                        // the first batch:" preamble whose
+                                        // tool call never arrived.
+                                        content: assistantTurn.contentIsBlank
+                                            ? nil : assistantTurn.content
                                     )
                                 }
                                 hasStructuredToolWorkThisRun = true

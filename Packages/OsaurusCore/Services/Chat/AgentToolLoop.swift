@@ -154,6 +154,15 @@ enum AgentLoopModelStep {
     /// content, so transparently replaying would concatenate two attempts.
     /// End honestly without an automatic retry.
     case incompleteVisibleResponse
+    /// The model emitted visible text that ANNOUNCES an imminent tool call
+    /// ("Let me write the first batch:") and then stopped without emitting
+    /// one, while tools were on the table. Ending here is what makes a small
+    /// model look like its tools are silently failing: the user reads a
+    /// promise to act, no call runs, and the next turn the model reports the
+    /// tool "isn't executing". Recoverable — the driver nudges and retries,
+    /// and because the announcement is a preamble rather than an answer, the
+    /// retry's tool call reads as the natural continuation of it.
+    case announcedToolCall
 
     /// Classify a naturally completed model step from its rendered channels
     /// and authoritative terminal stop reason.
@@ -174,13 +183,18 @@ enum AgentLoopModelStep {
     ///   `requiresVisibleFinalResponse` cannot cover that case: it is
     ///   `hasStructuredToolWork || isRemoteAgentTarget`, both false on the very
     ///   first turn, which is exactly when this happens.
+    /// - Parameter content: the rendered visible content, used only to tell an
+    ///   answer apart from a bare announcement of an un-made tool call. Pass
+    ///   `nil` from surfaces that cannot cheaply materialise it; the
+    ///   announce-only recovery is then skipped and behaviour is unchanged.
     static func classifyTerminal(
         contentIsBlank: Bool,
         thinkingIsBlank: Bool,
         stopReason: String?,
         unclosedReasoning: Bool = false,
         requiresVisibleFinalResponse: Bool,
-        toolsWereOffered: Bool = false
+        toolsWereOffered: Bool = false,
+        content: String? = nil
     ) -> Self {
         if stopReason == "length" {
             return .lengthExhausted
@@ -204,8 +218,58 @@ enum AgentLoopModelStep {
         if contentIsBlank, toolsWereOffered {
             return .incompleteReasoning
         }
+        // Visible text, no call, tools available — check whether that text is
+        // an answer or only a preamble to a call the model never emitted.
+        if toolsWereOffered, let content, isAnnounceOnly(content) {
+            return .announcedToolCall
+        }
         return .finalResponse
     }
+
+    /// Whether visible content reads as a preamble to a tool call rather than
+    /// an answer to the user.
+    ///
+    /// Deliberately narrow, because a false positive suppresses a legitimate
+    /// final answer and spends a retry. The signal is the LAST non-empty line:
+    /// a finished answer does not end on a colon (a colon promises something
+    /// follows, and when something does follow the colon is no longer last),
+    /// and does not end on a bare first-person statement of what the model is
+    /// about to do. Both shapes dominate the announce-only turns in
+    /// osaurus#2439, where every "Let me write the first batch:" ended the run.
+    static func isAnnounceOnly(_ content: String) -> Bool {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        // An unbalanced fence means the visible tail is inside a code block,
+        // where a trailing colon carries no discourse meaning.
+        guard trimmed.components(separatedBy: "```").count % 2 == 1 else { return false }
+
+        let lines = trimmed.split(whereSeparator: \.isNewline)
+        guard
+            let last = lines.last?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !last.isEmpty
+        else { return false }
+        // Structural tails (list items, tables, fences, quotes) are answer
+        // content even when they happen to end in a colon.
+        guard let first = last.first,
+            !"-*>|#`+".contains(first)
+        else { return false }
+
+        if last.hasSuffix(":") { return true }
+
+        // "Let me check the result" / "I'll write these now" as the whole
+        // closing line, with no answer after it. Bounded length keeps this
+        // from matching a long sentence that merely opens with "I'll".
+        guard last.count <= 120 else { return false }
+        let lowered = last.lowercased()
+        return Self.announcementPrefixes.contains { lowered.hasPrefix($0) }
+    }
+
+    /// Openers of a first-person "about to act" line. Lowercased, matched as
+    /// prefixes of the final line only.
+    private static let announcementPrefixes: [String] = [
+        "let me ", "let's ", "now let me ", "i'll ", "i will ", "i am going to ",
+        "i'm going to ", "next, i'll ", "next i'll ", "first, let me ", "first let me ",
+    ]
 
     /// Preserve visible partial output, remove only terminal whitespace, and
     /// append the truthful output-cap notice. A whitespace-only completion
@@ -905,6 +969,21 @@ enum AgentToolLoop {
     /// an empty turn never surfaces as a silent "No visible text was produced".
     static let emptyTurnFallback =
         "I wasn't able to generate a response to that. Please try rephrasing your request."
+
+    /// Max consecutive announce-only turns to nudge-and-retry. Lower than the
+    /// empty-turn budget: each retry leaves the announcement visible in the
+    /// transcript, so repeated attempts read as the model talking to itself.
+    /// If two nudges don't produce a call, the model is not going to make one
+    /// and the announcement is accepted as the (poor) final answer.
+    static let maxAnnouncedToolCallRetries = 2
+
+    /// Staged before an announce-only retry. Names the specific failure — the
+    /// model believes it already issued the call — because the generic
+    /// "produced no output" nudge does not fit a turn that produced text.
+    static let announcedToolCallNotice =
+        "[System Notice] Your previous turn described a tool call but did not actually emit one, so nothing ran. "
+        + "No file was written and no command executed. Emit the tool call itself now, as a real call — "
+        + "do not describe it, narrate it, or claim it already ran."
 
     static let emptyToolTaskFallback =
         "The model returned empty output after tool execution. The agent task may be incomplete; retry with less context or continue from the latest tool result."
@@ -1713,6 +1792,9 @@ enum AgentToolLoop {
         // productive turn; bounds the nudge-and-retry recovery so the loop
         // can never spin on a deterministically-empty model.
         var consecutiveEmptyTurns = 0
+        // Consecutive announce-only turns (visible "let me…" preamble, no
+        // call). Reset by any productive turn, for the same reason.
+        var consecutiveAnnouncedToolCalls = 0
         // Total (not merely consecutive) reasoning-only recovery attempts.
         // A tool call between attempts must not re-arm another potentially
         // huge reasoning cycle in the same logical run.
@@ -1876,6 +1958,22 @@ enum AgentToolLoop {
                 await hooks.emitFallbackText?(Self.emptyTurnFallback)
                 return RunResult(exit: .finalResponse, iterations: iteration)
 
+            case .announcedToolCall:
+                // The model announced a call and stopped. Treating that as a
+                // final answer is what makes tools look silently broken, so
+                // nudge-and-retry instead. On exhaustion, accept the text as
+                // the final answer rather than emitting a fallback: unlike an
+                // empty turn, the user already has something on screen, and
+                // replacing it would retract visible content.
+                consecutiveAnnouncedToolCalls += 1
+                if consecutiveAnnouncedToolCalls <= Self.maxAnnouncedToolCallRetries {
+                    pendingStateNotice = Self.announcedToolCallNotice
+                    // Not charged against the tool-iteration budget.
+                    iteration -= 1
+                    continue
+                }
+                return RunResult(exit: .finalResponse, iterations: iteration)
+
             case .lengthExhausted:
                 // `stop=length` is authoritative. Do not mislabel a
                 // reasoning-only capped turn as successful task completion,
@@ -1916,9 +2014,11 @@ enum AgentToolLoop {
                 )
 
             case .toolCalls(let invocations):
-                // A productive turn — reset the empty-turn recovery budget so
-                // a later unrelated empty turn gets its own fresh allowance.
+                // A productive turn — reset the empty-turn and announce-only
+                // recovery budgets so a later unrelated stall gets its own
+                // fresh allowance.
                 consecutiveEmptyTurns = 0
+                consecutiveAnnouncedToolCalls = 0
 
                 // A desktop subagent already completed successfully, and the
                 // very next model step emitted only a malformed repeat of that
