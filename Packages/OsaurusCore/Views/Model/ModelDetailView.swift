@@ -154,7 +154,10 @@ struct ModelDetailView: View, Identifiable {
             // Action Footer
             actionFooter
         }
-        .frame(width: 720, height: 720)
+        // Clamped to the screen: a hard 720pt height clipped `actionFooter`
+        // off-screen on small displays, taking the Download/Delete buttons
+        // with it. The ScrollView above absorbs whatever height is lost.
+        .fittedSheetFrame(width: 720, height: 720)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
