@@ -36,6 +36,9 @@ public actor ImageGenerationService {
     /// Exact bundle directory name currently resident in the engine, for
     /// load-if-different.
     private var loadedDirectoryName: String?
+    /// Bundle directory backing `loadedDirectoryName`, kept so the loaded-models
+    /// UI can report a footprint without re-resolving through the store.
+    private var loadedDirectoryURL: URL?
     /// One-time registry population (decentralized self-registration).
     private var registered = false
     /// Job ids that have been asked to cancel. Checked per event in the drain
@@ -55,9 +58,32 @@ public actor ImageGenerationService {
     /// Release the resident image model after agent-triggered jobs or memory
     /// pressure handoffs. Manual image-panel flows may choose to keep the
     /// engine warm and skip this through `SubagentImageLoadPolicy`.
+    /// What the loaded-models popover shows for the resident image model.
+    /// Bytes are the bundle's on-disk size — for weight bundles that tracks the
+    /// resident footprint closely enough for a memory-management affordance.
+    public struct LoadedModelSummary: Sendable {
+        public let name: String
+        public let bytes: Int64
+    }
+
+    /// The resident image model, or nil when nothing is loaded.
+    public func loadedModelSummary() -> LoadedModelSummary? {
+        guard let name = loadedDirectoryName, let dir = loadedDirectoryURL else { return nil }
+        var bytes: Int64 = 0
+        if let enumerator = FileManager.default.enumerator(
+            at: dir, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsHiddenFiles])
+        {
+            for case let file as URL in enumerator {
+                bytes += Int64((try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+            }
+        }
+        return LoadedModelSummary(name: name, bytes: bytes)
+    }
+
     public func unload() async {
         guard let engine else {
             loadedDirectoryName = nil
+            loadedDirectoryURL = nil
             return
         }
         // Image-model teardown is a GPU producer (freeing the FLUX weights
@@ -77,10 +103,15 @@ public actor ImageGenerationService {
         await MetalGate.shared.enterModelTeardown(model: "image-unload")
         await engine.unload()
         loadedDirectoryName = nil
+        loadedDirectoryURL = nil
         MLXCacheIOLock.withSerializedMLXCacheIO {
             Memory.clearCache()
         }
         await MetalGate.shared.exitModelTeardown(model: "image-unload")
+        // Same channel the LLM runtime uses; observers either guard-cast the
+        // snapshot object (and skip this post) or refresh unconditionally —
+        // the loaded-models popover is the latter.
+        NotificationCenter.default.post(name: .modelRuntimeResidencyChanged, object: nil)
     }
 
     // MARK: - Model store root
@@ -446,12 +477,15 @@ public actor ImageGenerationService {
         // unload between switches per the integration spec).
         await engine.unload()
         loadedDirectoryName = nil
+        loadedDirectoryURL = nil
         try await engine.load(
             name: canonical,
             modelPath: local.directory,
             quantize: local.quantizationBits
         )
         loadedDirectoryName = local.directoryName
+        loadedDirectoryURL = local.directory
+        NotificationCenter.default.post(name: .modelRuntimeResidencyChanged, object: nil)
     }
 
     // MARK: - Defaults + helpers

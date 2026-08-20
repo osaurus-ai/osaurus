@@ -697,7 +697,9 @@ struct SystemResourceMonitor: View {
     }
 
     private func refreshModelCount() async {
-        cachedModelCount = await MLXService.shared.cachedRuntimeSummaries().count
+        let llmCount = await MLXService.shared.cachedRuntimeSummaries().count
+        let imageLoaded = await ImageGenerationService.shared.loadedModelSummary() != nil
+        cachedModelCount = llmCount + (imageLoaded ? 1 : 0)
     }
 
     private func colorForUsage(_ usage: Double) -> Color {
