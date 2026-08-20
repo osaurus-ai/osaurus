@@ -72,6 +72,44 @@ public final class KnowledgeDatabase: @unchecked Sendable {
     /// all reads on the single writer connection.
     private var isInMemory = false
 
+    /// Writer-connection state, readable WITHOUT entering `queue`.
+    ///
+    /// `ensureReadConnectionLocked` needs two facts before it can open the
+    /// reader — is the file open, and is it in-memory — and it used to get
+    /// them with `queue.sync`. That is a priority inversion in the one place
+    /// that must not have one: a read-only tool query hops onto the writer
+    /// queue and waits behind the indexer's entire write backlog, which is
+    /// exactly the starvation the read connection exists to avoid. The hop
+    /// ran on every read until the reader was successfully cached, so a
+    /// `list_knowledge` issued during a large initial index paid it in full
+    /// (osaurus#2439: a 5m56s `list_knowledge`). These mirror `db`/
+    /// `isInMemory` under a plain lock so the read path never touches
+    /// `queue`.
+    private let writerStateLock = NSLock()
+    private var writerStateIsOpen = false
+    private var writerStateIsInMemory = false
+
+    /// Publish writer-connection state for the lock-free read path. Called
+    /// from inside `queue` whenever `db` / `isInMemory` change.
+    private func publishWriterState(isOpen: Bool, isInMemory: Bool) {
+        writerStateLock.lock()
+        writerStateIsOpen = isOpen
+        writerStateIsInMemory = isInMemory
+        writerStateLock.unlock()
+    }
+
+    private var writerSnapshot: (isOpen: Bool, isInMemory: Bool) {
+        writerStateLock.lock()
+        defer { writerStateLock.unlock() }
+        return (writerStateIsOpen, writerStateIsInMemory)
+    }
+
+    /// Test hooks for the read-path mirror. Silently falling back to the
+    /// write connection restores the exact starvation this replaced, so the
+    /// mirror needs assertions rather than trust.
+    var writerStateSnapshotForTesting: (isOpen: Bool, isInMemory: Bool) { writerSnapshot }
+    var hasOpenReadConnectionForTesting: Bool { readQueue.sync { readDB != nil } }
+
     public var isOpen: Bool {
         queue.sync { db != nil }
     }
@@ -105,6 +143,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
                 }
                 throw error
             }
+            publishWriterState(isOpen: true, isInMemory: false)
         }
         OsaurusDatabaseHandle.register(maintenanceHandle)
     }
@@ -132,6 +171,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
                 applyPerfPragmas: false
             )
             try runMigrations()
+            publishWriterState(isOpen: true, isInMemory: true)
         }
     }
 
@@ -149,6 +189,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
             sqlite3_close(connection)
             db = nil
             isInMemory = false
+            publishWriterState(isOpen: false, isInMemory: false)
         }
     }
 
@@ -1181,11 +1222,15 @@ public final class KnowledgeDatabase: @unchecked Sendable {
     /// file isn't open yet or the read connection can't be opened.
     private func ensureReadConnectionLocked() -> OpaquePointer? {
         if let readConnection = readDB { return readConnection }
+        // Both facts come from the lock-free mirror, never from `queue`:
+        // entering the writer queue here would park this read behind the
+        // indexer's write backlog (see `writerStateLock`).
+        let writer = writerSnapshot
         // In-memory DBs are per-connection; a reader would see nothing.
-        guard !isInMemory else { return nil }
+        guard !writer.isInMemory else { return nil }
         // Only open a reader once the primary (writer) connection exists, so
         // the file is present and migrated.
-        guard queue.sync(execute: { db != nil }) else { return nil }
+        guard writer.isOpen else { return nil }
         // Don't open a reader against a half-rekeyed file.
         StorageMutationGate.blockingAwaitNotMutating()
         do {
