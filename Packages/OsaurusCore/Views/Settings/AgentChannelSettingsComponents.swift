@@ -275,7 +275,7 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
 
             footerBar
         }
-        .frame(width: 800, height: 640)
+        .fittedSheetFrame(width: 800, height: 640)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(

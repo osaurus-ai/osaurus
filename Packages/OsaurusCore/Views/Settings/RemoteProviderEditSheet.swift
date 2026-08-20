@@ -242,7 +242,7 @@ private struct AddProviderFlow: View {
             .animation(.spring(response: 0.35, dampingFraction: 0.85), value: selectedPreset)
             .animation(.spring(response: 0.35, dampingFraction: 0.85), value: showingAPIKeyPicker)
         }
-        .frame(width: 540, height: 620)
+        .fittedSheetFrame(width: 540, height: 620)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(

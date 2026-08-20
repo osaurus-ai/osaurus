@@ -820,7 +820,7 @@ struct AgentChannelDestinationEditorSheet: View {
             }
             footer
         }
-        .frame(width: 560, height: 680)
+        .fittedSheetFrame(width: 560, height: 680)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
@@ -2050,7 +2050,7 @@ struct AgentChannelOutboundReviewSheet: View {
             Divider()
             footer
         }
-        .frame(width: 560, height: 520)
+        .fittedSheetFrame(width: 560, height: 520)
         .background(theme.primaryBackground)
     }
 
