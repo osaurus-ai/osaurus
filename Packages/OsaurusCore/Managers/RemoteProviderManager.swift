@@ -766,16 +766,23 @@ public final class RemoteProviderManager: ObservableObject {
     /// identity / auth / other 4xx / config, plus anything unrecognized
     /// (e.g. a biometric/Keychain failure, which a tight retry loop must not
     /// hammer — the app-activation observer recovers those instead).
+    /// Transport-level `URLError` codes that mean "try again later" rather than
+    /// "this is misconfigured": network loss / timeout / DNS / TLS / a garbled
+    /// response. Shared by the raw-error and diagnostics-unwrapping paths.
+    static func isTransientURLErrorCode(_ code: URLError.Code) -> Bool {
+        switch code {
+        case .notConnectedToInternet, .timedOut, .networkConnectionLost,
+            .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed,
+            .secureConnectionFailed, .resourceUnavailable, .badServerResponse:
+            return true
+        default:
+            return false
+        }
+    }
+
     static func isTransientConnectError(_ error: Error) -> Bool {
         if let urlError = error as? URLError {
-            switch urlError.code {
-            case .notConnectedToInternet, .timedOut, .networkConnectionLost,
-                .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed,
-                .secureConnectionFailed, .resourceUnavailable, .badServerResponse:
-                return true
-            default:
-                return false
-            }
+            return isTransientURLErrorCode(urlError.code)
         }
         if let routerError = error as? OsaurusRouterAPIError {
             switch routerError {
@@ -793,7 +800,18 @@ public final class RemoteProviderManager: ObservableObject {
             switch serviceError {
             case .invalidResponse, .rateLimited:
                 return true
-            case .invalidURL, .notConnected, .requestFailed, .requestFailedWithDiagnostics,
+            case .requestFailedWithDiagnostics(_, let diagnostics):
+                // The discovery path wraps a raw transport `URLError` into this
+                // case (e.g. `notConnectedToInternet` when the network stack
+                // isn't up yet right after a relaunch). Recover the underlying
+                // code so an offline-at-launch failure is still classified
+                // transient and the recovery sweeps reconnect it — otherwise it
+                // stays down until a manual refresh.
+                if let code = diagnostics.transportURLErrorCode {
+                    return isTransientURLErrorCode(URLError.Code(rawValue: code))
+                }
+                return false
+            case .invalidURL, .notConnected, .requestFailed,
                 .streamingError, .noModelsAvailable, .unsupportedParameter, .mcpEndpointDetected:
                 return false
             }

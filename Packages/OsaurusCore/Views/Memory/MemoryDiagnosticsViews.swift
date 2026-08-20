@@ -474,6 +474,25 @@ extension MemoryView {
             statusColor: pendingSignalsStatusColor,
             detail: pendingSignalsStatusDetail
         )
+        // Inline drain: the banner used to point at a button on a
+        // different tab (Identity). Offer the action right where the
+        // backlog is reported.
+        if pendingSignals.totalSignals > 0 {
+            HStack {
+                Spacer()
+                Button(action: runDistillPending) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "wand.and.stars")
+                            .font(.system(size: 11))
+                        Text(isDistilling ? L("Distilling...") : L("Distill pending"))
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                }
+                .buttonStyle(SettingsButtonStyle())
+                .disabled(isDistilling || !config.enabled)
+                .localizedHelp("Distill buffered turns now, loading the core model if needed")
+            }
+        }
         diagnosticRow(
             label: "Distillation results",
             value:
@@ -579,7 +598,14 @@ extension MemoryView {
                     """
                 )
         }
-        return nil
+        return
+            L(
+                """
+                Buffered turns are waiting to be distilled. They drain \
+                automatically the next time the core model is loaded, or \
+                you can distill them now.
+                """
+            )
     }
 
     private var processingResultsStatusColor: Color {

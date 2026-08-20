@@ -201,6 +201,7 @@ enum ModelProfileRegistry {
         OpenAIGPT52PlusReasoningProfile.self,
         OpenAIReasoningProfile.self,
         MistralReasoningProfile.self,
+        ZaiGlmReasoningProfile.self,
         QwenThinkingProfile.self,
         NemotronThinkingProfile.self,
         LagunaThinkingProfile.self,
@@ -209,6 +210,7 @@ enum ModelProfileRegistry {
         LingRuntimeProfile.self,
         ZayaThinkingProfile.self,
         Gemma4RuntimeProfile.self,
+        MuseGlimmerReasoningProfile.self,
         Gemini31FlashImageProfile.self,
         GeminiProImageProfile.self,
         GeminiFlashImageProfile.self,
@@ -224,9 +226,18 @@ enum ModelProfileRegistry {
     }
 
     /// Catalog-driven reasoning capabilities for a (full, provider-prefixed)
-    /// model id, when a connected provider published them.
+    /// model id, when a connected provider published them. Local bundles get
+    /// the same treatment from their stamped effort contract
+    /// (`jang_config.reasoning.supported_reasoning_efforts`, with a
+    /// template-derived fallback for raw HF bundles): Qwen3.8 accepts ONLY
+    /// low/medium/xhigh and its template raises on anything else, so the
+    /// picker must offer exactly the declared set rather than the generic
+    /// ladder.
     static func reasoningCapabilities(for modelId: String) -> ModelReasoningCapabilities? {
-        RemoteReasoningCapabilityCatalog.capabilities(for: modelId)
+        if let remote = RemoteReasoningCapabilityCatalog.capabilities(for: modelId) {
+            return remote
+        }
+        return DeclaredReasoningEffort.capabilities(forModelId: modelId)
     }
 
     /// The effort id the UI should display as active: the explicit persisted
@@ -402,6 +413,39 @@ struct DSV4ReasoningProfile: ModelProfile {
             return nil
         }
     }
+}
+
+/// Muse Glimmer: reasoning is a system-prompt sentence
+/// (`Reasoning strength: <value>`), not a thinking toggle, and the model's
+/// level set is four — low / medium / high / xhigh — with `xhigh` the tier
+/// intended for coding and agentic work. There is no "off": the template
+/// always renders a strength line, so the lowest the UI can honestly offer
+/// is `low`. Default mirrors the template's own fallback (`high`) so the
+/// chip shows what actually happens when the user has chosen nothing.
+struct MuseGlimmerReasoningProfile: ModelProfile {
+    static let displayName = "Muse Glimmer Reasoning"
+
+    static func matches(modelId: String) -> Bool {
+        ModelFamilyNames.isMuseGlimmerFamily(modelId)
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "reasoningEffort",
+            label: L("Reasoning Strength"),
+            icon: "brain.head.profile",
+            kind: .segmented([
+                ModelOptionSegment(id: "low", label: L("Low")),
+                ModelOptionSegment(id: "medium", label: L("Medium")),
+                ModelOptionSegment(id: "high", label: L("High")),
+                ModelOptionSegment(id: "xhigh", label: L("Extra High")),
+            ])
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "reasoningEffort": .string("high")
+    ]
 }
 
 // MARK: - OpenAI Reasoning Profiles
@@ -592,6 +636,49 @@ struct MistralReasoningProfile: ModelProfile {
             kind: .segmented([
                 ModelOptionSegment(id: "none", label: L("None")),
                 ModelOptionSegment(id: "high", label: L("High")),
+            ])
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "reasoningEffort": .string("high")
+    ]
+}
+
+// MARK: - Z.ai GLM Reasoning Profile
+
+/// Z.ai GLM models hosted by Mistral (e.g. `zai-glm-5-2`). Mistral serves these
+/// third-party open models unmodified behind its own chat-completions API, so
+/// they inherit Mistral's platform-level adjustable-reasoning contract rather
+/// than any GLM-native thinking switch. `reasoning_effort` on these models
+/// accepts `none`, `high`, and `max`. Mistral's reasoning docs only document
+/// `none`/`high` (with `high` recommended for agentic/code use); `max` is not
+/// in the docs but is accepted in practice (verified empirically, 2026-08:
+/// the model's effort ladder collapses low/medium into `high` and keeps `max`
+/// as a distinct top tier). `low`/`medium` are therefore not offered as their
+/// own levels, and sending an unaccepted value returns HTTP 400. The match is
+/// on the bare `zai-glm` prefix
+/// so future GLM revisions hosted the same way are covered without a registry
+/// edit.
+struct ZaiGlmReasoningProfile: ModelProfile {
+    static let displayName = "Reasoning Effort"
+
+    static func matches(modelId: String) -> Bool {
+        let bare =
+            modelId.lowercased().split(separator: "/").last.map(String.init)
+            ?? modelId.lowercased()
+        return bare.hasPrefix("zai-glm")
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "reasoningEffort",
+            label: L("Reasoning Effort"),
+            icon: "brain",
+            kind: .segmented([
+                ModelOptionSegment(id: "none", label: L("None")),
+                ModelOptionSegment(id: "high", label: L("High")),
+                ModelOptionSegment(id: "max", label: L("Max")),
             ])
         )
     ]

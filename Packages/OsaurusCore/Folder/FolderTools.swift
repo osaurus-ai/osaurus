@@ -753,8 +753,9 @@ struct FileReadTool: OsaurusTool {
     let description =
         "Read a file's contents, or list a directory's contents — the path decides. Files return text "
         + "with `N|` line-number prefixes (UTF-8 source files, including HTML/RTF/SVG, are returned raw; "
-        + "binary text-extractable documents — PDF, Word, PowerPoint — "
-        + "and a bounded XLSX preview are supported; binaries are not); bound large reads with "
+        + "trusted-folder paths also extract PDF, Word, and PowerPoint text and provide a bounded XLSX "
+        + "preview; VM sandbox paths are raw-text only, so process binary documents there with shell/code); "
+        + "bound large reads with "
         + "start_line/end_line, tail_lines, or max_chars. Directories return a listing; bound with "
         + "max_depth. Example: {\"path\": \"src/app.py\", \"start_line\": 1, \"end_line\": 120}"
     let parameters: JSONValue? = .object([
@@ -944,7 +945,8 @@ struct FileReadTool: OsaurusTool {
         // Document packages such as RTFD are directories on macOS, but remain
         // files at the workspace contract boundary and must use extraction.
         if isDirectory.boolValue,
-            !WorkspaceFileFormatPolicy.prefersDocumentExtraction(ext) {
+            !WorkspaceFileFormatPolicy.prefersDocumentExtraction(ext)
+        {
             let maxDepth = coerceInt(args["max_depth"]) ?? 3
             let listing = FileTreeTool(rootPath: rootPath).entries(for: fileURL, maxDepth: maxDepth)
             return ToolEnvelope.listing(
@@ -1755,7 +1757,9 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         // surface. Inert in plain folder mode (no host scope bound).
         if FolderToolHelpers.shouldRefuseSecret(fileURL: fileURL) {
             return FolderToolHelpers.secretWriteRefusalEnvelope(
-                relativePath: relativePath, tool: name)
+                relativePath: relativePath,
+                tool: name
+            )
         }
         if let rejected = WorkspaceWriteSafety.structuredTextWriteRejection(
             path: relativePath,
@@ -1972,7 +1976,9 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         // bypassable by switching to the edit tool.
         if FolderToolHelpers.shouldRefuseSecret(fileURL: fileURL) {
             return FolderToolHelpers.secretWriteRefusalEnvelope(
-                relativePath: relativePath, tool: name)
+                relativePath: relativePath,
+                tool: name
+            )
         }
         if let rejected = WorkspaceWriteSafety.structuredTextWriteRejection(
             path: relativePath,

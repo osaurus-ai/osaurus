@@ -139,6 +139,14 @@ public final class OsaurusStatusTool: OsaurusTool, @unchecked Sendable {
         let knowledgeEnabledCount = knowledgeCollections.filter { $0.isEnabled }.count
         let knowledgeTotalCount = knowledgeCollections.count
 
+        // The agent-facing reads below take `PluginRepositoryService.plugins`
+        // as-is, but every caller of its `refresh()` is a view and the
+        // auto-refresh timer follows that view's lifecycle. In a session where
+        // nobody opened the Plugins tab the array is empty or stale, so
+        // installed plugins were reported as missing and the model could not
+        // invoke them (#2039). Local disk only; no repository/network I/O.
+        await PluginRepositoryService.shared.ensureInstalledPluginsLoaded()
+
         // Build the envelope on MainActor — `[String: Any]` isn't
         // Sendable, so we serialize before returning.
         let envelope: String = await MainActor.run {
@@ -409,6 +417,16 @@ public final class OsaurusListTool: OsaurusTool, @unchecked Sendable {
             )
         default:
             break
+        }
+
+        // The agent-facing reads below take `PluginRepositoryService.plugins`
+        // as-is, but every caller of its `refresh()` is a view and the
+        // auto-refresh timer follows that view's lifecycle. In a session where
+        // nobody opened the Plugins tab the array is empty or stale, so
+        // installed plugins were reported as missing and the model could not
+        // invoke them (#2039). Local disk only; no repository/network I/O.
+        if scope == "plugins" {
+            await PluginRepositoryService.shared.ensureInstalledPluginsLoaded()
         }
 
         let envelope: String = await MainActor.run {
@@ -810,6 +828,16 @@ public final class OsaurusDescribeTool: OsaurusTool, @unchecked Sendable {
             )
         default:
             break
+        }
+
+        // The agent-facing reads below take `PluginRepositoryService.plugins`
+        // as-is, but every caller of its `refresh()` is a view and the
+        // auto-refresh timer follows that view's lifecycle. In a session where
+        // nobody opened the Plugins tab the array is empty or stale, so
+        // installed plugins were reported as missing and the model could not
+        // invoke them (#2039). Local disk only; no repository/network I/O.
+        if scope == "plugins" {
+            await PluginRepositoryService.shared.ensureInstalledPluginsLoaded()
         }
 
         let envelope: String = await MainActor.run {

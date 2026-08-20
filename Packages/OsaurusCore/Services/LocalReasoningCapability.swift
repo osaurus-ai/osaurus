@@ -102,10 +102,13 @@ enum LocalReasoningCapability {
     }
 
     /// Call when models are added/removed so the next lookup re-reads templates.
+    /// Also drops the declared effort-contract cache — both read the same
+    /// bundles and every current call site wants them refreshed together.
     static func invalidate() {
         lock.lock()
         cache.removeAll()
         lock.unlock()
+        DeclaredReasoningEffort.invalidate()
     }
 
     // MARK: - Detection
@@ -219,7 +222,10 @@ enum LocalReasoningCapability {
         return false
     }
 
-    private static func localDirectory(forModelId modelId: String) -> URL? {
+    /// Internal (not private): `DeclaredReasoningEffort` resolves bundles
+    /// through the same lookup so the two caches can never disagree about
+    /// which directory a model id maps to.
+    static func localDirectory(forModelId modelId: String) -> URL? {
         // Delegate to the single source of truth: `findInstalledModel` already
         // accepts both the short repo name (picker/display form) and the full
         // `ORG/REPO` id, case-insensitive. Re-implementing the match here was
@@ -414,7 +420,9 @@ enum LocalReasoningCapability {
         return nil
     }
 
-    private static func readSmallConfigFile(_ url: URL, maxBytes: Int = 1_048_576) -> Data? {
+    /// Internal (not private): shared with `DeclaredReasoningEffort` for the
+    /// same non-blocking bounded-read discipline on sidecar configs.
+    static func readSmallConfigFile(_ url: URL, maxBytes: Int = 1_048_576) -> Data? {
         let path = url.path
         return path.withCString { rawPath in
             let fd = Darwin.open(rawPath, O_RDONLY | O_CLOEXEC)

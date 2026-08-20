@@ -349,7 +349,9 @@ public final class MCPProviderManager: ObservableObject {
                 authFailure == nil && Self.isTransientConnectError(error)
             providerStates[providerId] = state
 
-            // Unregister any tools that were registered before the failure
+            // Unregister any tools that were registered before the failure.
+            // A failed initial/reconnect attempt leaves no executable client,
+            // so active sessions must also discard any frozen schemas.
             if let tools = registeredTools[providerId] {
                 ToolRegistry.shared.unregister(names: tools.map { $0.name })
             }
@@ -366,6 +368,7 @@ public final class MCPProviderManager: ObservableObject {
             }
             discoveredTools.removeValue(forKey: providerId)
             registeredTools.removeValue(forKey: providerId)
+            await publishToolCatalogChanged()
             // Stdio subprocesses might have been spawned successfully even
             // though the MCP handshake failed — make sure we don't leak them.
             stopStdioRunners(for: providerId)
@@ -414,6 +417,7 @@ public final class MCPProviderManager: ObservableObject {
             print("[Osaurus] MCP Provider '\(provider.name)': Disconnected")
         }
 
+        scheduleToolCatalogChanged()
         notifyStatusChanged()
     }
 
@@ -1191,7 +1195,7 @@ public final class MCPProviderManager: ObservableObject {
             }
             providerStates[providerId] = state
         }
-        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
+        scheduleToolCatalogChanged()
         notifyStatusChanged()
     }
 
@@ -1209,9 +1213,6 @@ public final class MCPProviderManager: ObservableObject {
         else { return }
 
         do {
-            if let oldTools = registeredTools[providerId] {
-                ToolRegistry.shared.unregister(names: oldTools.map { $0.name })
-            }
             try await discoverTools(for: providerId, client: client, provider: provider)
         } catch {
             if var state = providerStates[providerId] {
@@ -1273,27 +1274,56 @@ public final class MCPProviderManager: ObservableObject {
     }
 
     private func discoverTools(for providerId: UUID, client: MCP.Client, provider: MCPProvider) async throws {
-        // List tools with timeout, following pagination cursors so servers
-        // that split tools/list across pages (e.g. Baserow, #1999) aren't
-        // truncated to their first page.
-        let mcpTools = try await withTimeout(seconds: provider.discoveryTimeout) {
-            try await client.listAllTools()
+        try await refreshDiscoveredTools(for: providerId, provider: provider) {
+            // List tools with timeout, following pagination cursors so servers
+            // that split tools/list across pages (e.g. Baserow, #1999) aren't
+            // truncated to their first page.
+            try await self.withTimeout(seconds: provider.discoveryTimeout) {
+                try await client.listAllTools()
+            }
+        }
+    }
+
+    /// Fetch and install a complete provider catalog. Keeping the fetch
+    /// outside the replacement operation makes refresh failure atomic from
+    /// the registry's perspective and provides a deterministic test seam.
+    internal func refreshDiscoveredTools(
+        for providerId: UUID,
+        provider: MCPProvider,
+        fetch: () async throws -> [MCP.Tool]
+    ) async throws {
+        let mcpTools = try await fetch()
+        // Only replace the live catalog after the complete paginated fetch
+        // succeeds. A failed tools/list refresh therefore leaves the last
+        // executable catalog intact instead of erasing it first.
+        replaceDiscoveredTools(mcpTools, for: providerId, provider: provider)
+        await publishToolCatalogChanged()
+    }
+
+    /// Replace one provider's complete registered catalog. Removing all prior
+    /// wrappers first is required even when names are unchanged: schemas are
+    /// immutable on `MCPProviderTool`, and a reconnect may return a new JSON
+    /// contract or omit tools that existed in the previous session.
+    @discardableResult
+    internal func replaceDiscoveredTools(
+        _ mcpTools: [MCP.Tool],
+        for providerId: UUID,
+        provider: MCPProvider
+    ) -> [MCPProviderTool] {
+        if let oldTools = registeredTools[providerId] {
+            ToolRegistry.shared.unregister(names: oldTools.map(\.name))
         }
 
-        // Store discovered tools
         discoveredTools[providerId] = mcpTools
-
         let tools = registerDiscoveredTools(mcpTools, for: providerId, provider: provider)
         registeredTools[providerId] = tools
 
-        // Update state
         if var state = providerStates[providerId] {
             state.discoveredToolCount = tools.count
-            state.discoveredToolNames = tools.map { $0.mcpToolName }
+            state.discoveredToolNames = tools.map(\.mcpToolName)
             providerStates[providerId] = state
         }
-
-        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
+        return tools
     }
 
     /// Wrap each discovered MCP tool and register it with the shared
@@ -1342,6 +1372,21 @@ public final class MCPProviderManager: ObservableObject {
 
     private func notifyStatusChanged() {
         NotificationCenter.default.post(name: Foundation.Notification.Name.mcpProviderStatusChanged, object: nil)
+    }
+
+    /// Publish catalog changes only after frozen per-session tool snapshots
+    /// have been cleared, so notification consumers cannot immediately
+    /// recompose against the old names or schemas.
+    private func publishToolCatalogChanged() async {
+        await SessionToolStateStore.shared.invalidateToolCatalog()
+        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
+    }
+
+    /// Synchronous lifecycle entry points (disable, disconnect, process exit)
+    /// cannot await the session-state actor. Preserve ordering inside the task:
+    /// invalidate first, then notify observers.
+    private func scheduleToolCatalogChanged() {
+        Task { await publishToolCatalogChanged() }
     }
 }
 

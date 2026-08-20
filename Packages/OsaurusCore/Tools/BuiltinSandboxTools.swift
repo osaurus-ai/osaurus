@@ -71,7 +71,8 @@ enum BuiltinSandboxTools {
             runtimeManaged: true
         )
 
-        let maxCmdsPerTurn = config?.maxCommandsPerTurn
+        let maxCmdsPerTurn =
+            config?.maxCommandsPerTurn
             ?? AutonomousExecConfig.default.maxCommandsPerTurn
 
         registry.registerSandboxTool(
@@ -314,7 +315,7 @@ internal func sandboxDirectoryReadHint(stderr: String) -> String? {
     guard stderr.lowercased().contains("is a directory") else { return nil }
     var hint =
         "That path is a directory, not a file. To list a directory inside the "
-        + "sandbox, use `sandbox_search_files` with `target=\"files\"`."
+        + "sandbox, use `file_read` or `file_search` with `target=\"files\"`."
     if ChatExecutionContext.hostReadOnlyScope != nil {
         hint +=
             " To list your read-only host workspace instead, use `file_read` — "
@@ -641,7 +642,8 @@ internal func diagnosticWarnings(
     exitCode: Int32,
     stdout: String,
     stderr: String,
-    workingDirectory: String? = nil
+    workingDirectory: String? = nil,
+    sandboxInstallAvailable: Bool? = nil
 ) -> [String] {
     var warnings: [String] = []
     let suspiciousEmpty =
@@ -665,7 +667,16 @@ internal func diagnosticWarnings(
                 + "captured stdout is still trustworthy."
         )
     }
-    if let hint = shellCommandFailureHint(command: command, exitCode: exitCode, stderr: stderr) {
+    let canInstall =
+        sandboxInstallAvailable
+        ?? ChatExecutionContext.toolExecutionScope?.authorizedNames.contains("sandbox_install")
+        ?? false
+    if let hint = shellCommandFailureHint(
+        command: command,
+        exitCode: exitCode,
+        stderr: stderr,
+        sandboxInstallAvailable: canInstall
+    ) {
         warnings.append(hint)
     }
     if let hint = sandboxExecHostPathHint(command: command, exitCode: exitCode, stderr: stderr) {
@@ -697,7 +708,7 @@ internal func shellWorkingDirectoryHint(
         )
     else { return nil }
 
-    let target = (1...3).compactMap { index -> String? in
+    let target = (1 ... 3).compactMap { index -> String? in
         let range = match.range(at: index)
         guard range.location != NSNotFound, let swiftRange = Range(range, in: command) else {
             return nil
@@ -714,6 +725,12 @@ internal func shellWorkingDirectoryHint(
             + "Omit the leading `cd` and run the command directly."
     }
     guard !destination.hasPrefix(cwd + "/") else { return nil }
+    let temporaryRoots = ["/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp"]
+    if temporaryRoots.contains(where: {
+        destination == $0 || destination.hasPrefix($0 + "/")
+    }) {
+        return nil
+    }
     return
         "`shell_run` started in `\(cwd)`, but the command changed to `\(destination)`. "
         + "That leaves the selected workspace and can make builds or tests inspect the wrong files. "
@@ -746,7 +763,7 @@ internal func sandboxExecHostPathHint(
     return
         "That path looks like a host path outside the sandbox, which it can't "
         + "see. To read your read-only host workspace, use `file_read` "
-        + "(reads files, lists directories) / `file_search` — not `sandbox_exec`."
+        + "(reads files, lists directories) / `file_search` — not `shell_run`."
 }
 
 /// Lowercased stderr fragments that mark a shell-parse failure (as
@@ -774,15 +791,20 @@ private let interpreterInlineCodePattern = #"\b(python3?|node|bash|sh|perl|ruby)
 public func shellCommandFailureHint(
     command: String,
     exitCode: Int32,
-    stderr: String
+    stderr: String,
+    sandboxInstallAvailable: Bool = false
 ) -> String? {
     guard exitCode != 0 else { return nil }
     let loweredStderr = stderr.lowercased()
 
-    // Checked first: a failed bare package-manager install is a strong,
-    // unambiguous signal regardless of the stderr shape, and the redirect
-    // (use `sandbox_install`) is more valuable than any generic parse hint.
-    if let hint = installRedirectHint(command: command) {
+    // Checked first: failed package-manager commands have a mode-aware
+    // recovery path. In VM mode the dedicated installer is safer; in trusted
+    // folder mode that tool is not callable, so only correct self-truncated
+    // diagnostics instead of naming an unavailable function.
+    if let hint = installFailureHint(
+        command: command,
+        sandboxInstallAvailable: sandboxInstallAvailable
+    ) {
         return hint
     }
     if let hint = inlineCodeHint(command: command, stderr: loweredStderr) {
@@ -813,8 +835,8 @@ private func inlineCodeHint(command: String, stderr loweredStderr: String) -> St
         "This looks like multi-line code embedded in a shell `-c` / `-e` "
         + "string whose escaping broke — the shell tried to parse your code "
         + "as commands (hence the syntax error). Don't re-escape it. "
-        + "`sandbox_write_file` the script to a file (no shell escaping), "
-        + "then `sandbox_exec` runs that file (e.g. `python3 script.py`)."
+        + "Use `file_write` to save the script (no shell escaping), "
+        + "then `shell_run` to run that file (e.g. `python3 script.py`)."
 }
 
 /// Unterminated heredoc: the `<<DELIM` body was never closed, so the
@@ -829,7 +851,7 @@ private func heredocHint(stderr loweredStderr: String) -> String? {
     return
         "This looks like an unterminated heredoc — the `<<` delimiter was "
         + "never closed, so the shell read to end-of-input. For multi-line "
-        + "file content, prefer `sandbox_write_file` to create the file "
+        + "file content, prefer `file_write` to create the file "
         + "directly instead of a shell heredoc."
 }
 
@@ -849,7 +871,7 @@ private func unbalancedQuoteHint(stderr loweredStderr: String) -> String? {
         + "stray or unclosed quote (a common slip is wrapping the WHOLE "
         + "command in quotes; pass it verbatim and quote only the arguments "
         + "that need it). For code or data with awkward quoting, "
-        + "`sandbox_write_file` avoids shell quoting entirely."
+        + "`file_write` avoids shell quoting entirely."
 }
 
 /// A bare package-manager install run directly through `sandbox_exec`
@@ -864,7 +886,10 @@ private func unbalancedQuoteHint(stderr loweredStderr: String) -> String? {
 /// so an install string buried in an argument doesn't false-fire, and only
 /// on failure (`shellCommandFailureHint` already gates on a non-zero exit)
 /// so a working install is never nagged.
-private func installRedirectHint(command: String) -> String? {
+private func installFailureHint(
+    command: String,
+    sandboxInstallAvailable: Bool
+) -> String? {
     func matches(_ pattern: String) -> Bool {
         guard
             let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
@@ -883,12 +908,24 @@ private func installRedirectHint(command: String) -> String? {
         return nil
     }
 
+    if sandboxInstallAvailable {
+        return
+            "This is a bare `\(manager)` install run through `shell_run`, which skips the "
+            + "index refresh / venv / workspace bootstrap, retry harness, and per-agent "
+            + "serialization (and `apk` needs root). Use `sandbox_install` with "
+            + "`manager: \"\(manager)\"` and a `packages` array instead — e.g. "
+            + "`{\"manager\": \"\(manager)\", \"packages\": [\"…\"]}`."
+    }
+
+    let truncated =
+        matches(#"\|\s*(?:head|tail)\b"#)
+        || matches(#"\|\s*sed\s+-n\b"#)
+    guard truncated else { return nil }
     return
-        "This is a bare `\(manager)` install run through `sandbox_exec`, which skips the "
-        + "index refresh / venv / workspace bootstrap, retry harness, and per-agent "
-        + "serialization (and `apk` needs root). Use `sandbox_install` with "
-        + "`manager: \"\(manager)\"` and a `packages` array instead — e.g. "
-        + "`{\"manager\": \"\(manager)\", \"packages\": [\"…\"]}`."
+        "This failed `\(manager)` install truncated its own output with `head`, `tail`, or "
+        + "`sed -n`, hiding the root error. Re-run the same host/project install without "
+        + "that truncation and inspect the complete stdout/stderr. `sandbox_install` is not "
+        + "callable in this request."
 }
 
 /// Statement-boundary prefix shared by the install detectors: start of
@@ -1164,15 +1201,16 @@ actor SandboxToolCommandRunnerRegistry {
     }
 }
 
-/// Build the standard envelope for an install-style tool. Success and
-/// failure both carry the requested package list and the truncated combined
-/// output — only the envelope kind differs so the model can branch cleanly.
+/// Build the standard envelope for an install-style tool. Success carries the
+/// installed names without verbose logs; failure carries requested names,
+/// classification, correction guidance, and truncated combined output.
 /// `retried` is `true` when the recovery harness ran a cleanup + second
 /// attempt; surfaced on BOTH the success and failure paths so the model
 /// (or downstream tooling) can branch on retry status without parsing
 /// prose. On the failure path it also rides the `metadata` bag.
 private func installResultEnvelope(
     tool: String,
+    manager: String,
     packages: [String],
     result: ContainerExecResult,
     retried: Bool = false
@@ -1184,6 +1222,7 @@ private func installResultEnvelope(
         // failures below still carry full output for debugging.
         var payload: [String: Any] = [
             "installed": packages,
+            "manager": manager,
             "exit_code": Int(result.exitCode),
             "summary": "Installed \(packages.count) package(s): \(packages.joined(separator: ", ")).",
         ]
@@ -1191,9 +1230,10 @@ private func installResultEnvelope(
         return ToolEnvelope.success(tool: tool, result: payload)
     }
     let combined = truncateForModel(
-        result.stdout + result.stderr,
+        installCombinedOutput(result),
         maxChars: ToolOutputCaps.execRetryCombined
     )
+    let classification = InstallFailureClassifier.classify(manager: manager, result: result)
     let stage = retried ? "after retry" : ""
     let header =
         stage.isEmpty
@@ -1203,10 +1243,17 @@ private func installResultEnvelope(
         kind: .executionError,
         message:
             "\(header). Combined output: "
-            + combined.trimmingCharacters(in: .whitespacesAndNewlines),
+            + combined.trimmingCharacters(in: .whitespacesAndNewlines)
+            + " Recovery: \(classification.hint)",
         tool: tool,
-        retryable: true,
-        metadata: retried ? ["retried": true] : nil
+        retryable: classification.retryable,
+        metadata: [
+            "manager": manager,
+            "requested": packages,
+            "retried": retried,
+            "failure_class": classification.kind,
+            "exit_code": Int(result.exitCode),
+        ]
     )
 }
 
@@ -1217,12 +1264,13 @@ private func installResultEnvelope(
 /// instead of a generic `execution_error` from `ToolEnvelope.fromError`.
 private func installCleanupFailureEnvelope(
     tool: String,
+    manager: String,
     packages: [String],
     firstAttempt: ContainerExecResult,
     cleanupError: Error
 ) -> String {
     let firstCombined = truncateForModel(
-        firstAttempt.stdout + firstAttempt.stderr,
+        installCombinedOutput(firstAttempt),
         maxChars: ToolOutputCaps.execFirstAttemptCombined
     )
     return ToolEnvelope.failure(
@@ -1233,7 +1281,14 @@ private func installCleanupFailureEnvelope(
             + firstCombined.trimmingCharacters(in: .whitespacesAndNewlines),
         tool: tool,
         retryable: true,
-        metadata: ["retried": false, "cleanup_failed": true, "packages": packages]
+        metadata: [
+            "manager": manager,
+            "requested": packages,
+            "retried": false,
+            "cleanup_failed": true,
+            "failure_class": "cleanup_failed",
+            "exit_code": Int(firstAttempt.exitCode),
+        ]
     )
 }
 
@@ -1258,6 +1313,7 @@ private func installCleanupFailureEnvelope(
 /// do when wrapping themselves in `SandboxInstallLock.serialize`).
 private func runInstallWithRecovery(
     tool: String,
+    manager: String,
     packages: [String],
     attempt: @Sendable () async throws -> ContainerExecResult,
     isRecoverable: @Sendable (ContainerExecResult) -> Bool,
@@ -1267,13 +1323,20 @@ private func runInstallWithRecovery(
     let first = try await attempt()
     if first.succeeded || !isRecoverable(first) {
         if first.succeeded { onSuccess?(packages) }
-        return installResultEnvelope(tool: tool, packages: packages, result: first, retried: false)
+        return installResultEnvelope(
+            tool: tool,
+            manager: manager,
+            packages: packages,
+            result: first,
+            retried: false
+        )
     }
     do {
         try await cleanup()
     } catch {
         return installCleanupFailureEnvelope(
             tool: tool,
+            manager: manager,
             packages: packages,
             firstAttempt: first,
             cleanupError: error
@@ -1281,7 +1344,13 @@ private func runInstallWithRecovery(
     }
     let second = try await attempt()
     if second.succeeded { onSuccess?(packages) }
-    return installResultEnvelope(tool: tool, packages: packages, result: second, retried: true)
+    return installResultEnvelope(
+        tool: tool,
+        manager: manager,
+        packages: packages,
+        result: second,
+        retried: true
+    )
 }
 
 /// Substring matchers for each installer's well-known stale-state errors.
@@ -1300,8 +1369,10 @@ private enum InstallRecoverableErrors {
     ]
 
     static let pip: [String] = [
-        "Could not install packages due to an OSError",
         "ReadTimeoutError",
+        "Temporary failure in name resolution",
+        "Network is unreachable",
+        "RemoteDisconnected",
         // distutils-shaped legacy installs that pip refuses to remove
         // without `--ignore-installed`. Cleanup just clears cache so a
         // fresh download retries. Pinned to the full distutils marker
@@ -1321,6 +1392,107 @@ private enum InstallRecoverableErrors {
     static func contains(_ result: ContainerExecResult, anyOf needles: [String]) -> Bool {
         let haystack = result.stdout + result.stderr
         return needles.contains { haystack.contains($0) }
+    }
+}
+
+private func installCombinedOutput(_ result: ContainerExecResult) -> String {
+    guard !result.stdout.isEmpty else { return result.stderr }
+    guard !result.stderr.isEmpty else { return result.stdout }
+    return result.stdout + (result.stdout.hasSuffix("\n") ? "" : "\n") + result.stderr
+}
+
+/// Classifies the final package-manager output, after the bounded internal
+/// recovery attempt. `retryable` means an unchanged call may succeed later;
+/// deterministic package/specifier errors therefore fail closed.
+private enum InstallFailureClassifier {
+    struct Classification {
+        let kind: String
+        let retryable: Bool
+        let hint: String
+    }
+
+    private static let pipResolutionErrors = [
+        "no matching distribution found for",
+        "could not find a version that satisfies the requirement",
+        "invalid requirement:",
+        "is not a valid wheel filename",
+        "not a valid editable requirement",
+    ]
+    private static let npmResolutionErrors = [
+        "e404",
+        "etarget",
+        "einvalidpackagename",
+        "no matching version found for",
+        "invalid package name",
+        "is not in this registry",
+    ]
+    private static let apkResolutionErrors = [
+        "no such package",
+        "unable to select packages",
+        "breaks: world[",
+    ]
+    private static let transientErrors = [
+        "timed out",
+        "timeout",
+        "temporary failure",
+        "temporary error",
+        "network is unreachable",
+        "connection reset",
+        "connection refused",
+        "eai_again",
+        "enetwork",
+        "econnreset",
+        "too many requests",
+        "service unavailable",
+        "unable to lock database",
+        "readtimeouterror",
+    ]
+
+    static func classify(manager: String, result: ContainerExecResult) -> Classification {
+        let output = installCombinedOutput(result).lowercased()
+        let resolutionErrors: [String]
+        switch manager {
+        case "pip": resolutionErrors = pipResolutionErrors
+        case "npm": resolutionErrors = npmResolutionErrors
+        case "apk": resolutionErrors = apkResolutionErrors
+        default: resolutionErrors = []
+        }
+
+        if resolutionErrors.contains(where: output.contains) {
+            return Classification(
+                kind: "package_resolution",
+                retryable: false,
+                hint:
+                    "At least one requested package or version does not exist. "
+                    + "Do not retry this request unchanged; correct or remove the invalid "
+                    + "specifier, and try guessed alternatives separately."
+            )
+        }
+        let managerRecoveryErrors: [String]
+        switch manager {
+        case "pip": managerRecoveryErrors = InstallRecoverableErrors.pip
+        case "npm": managerRecoveryErrors = InstallRecoverableErrors.npm
+        case "apk": managerRecoveryErrors = InstallRecoverableErrors.apk
+        default: managerRecoveryErrors = []
+        }
+        if transientErrors.contains(where: output.contains)
+            || managerRecoveryErrors.map({ $0.lowercased() }).contains(where: output.contains)
+        {
+            return Classification(
+                kind: "transient",
+                retryable: true,
+                hint:
+                    "The package manager reported a transient network or lock failure. "
+                    + "Retry later if the sandbox network and package index are healthy."
+            )
+        }
+        return Classification(
+            kind: "execution",
+            retryable: false,
+            hint:
+                "Inspect the output and change the package request or sandbox environment "
+                + "before retrying; repeating the same call is not expected to help."
+        )
     }
 }
 
@@ -2173,7 +2345,7 @@ internal struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
                 kind: .rejected,
                 message:
                     "Per-turn command limit reached (\(maxCommandsPerTurn) commands). "
-                    + "Wait until the next turn or chain steps inside one `sandbox_exec` call.",
+                    + "Wait until the next turn or chain steps inside one `shell_run` call.",
                 tool: name,
                 retryable: false
             )
@@ -2467,7 +2639,9 @@ private func registerBackgroundLiveExec(
                 // Fold the finished job's workspace mutations into the
                 // owning chat's tracked change set.
                 await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
-                    agentName: agentName, pid: pid)
+                    agentName: agentName,
+                    pid: pid
+                )
                 // Pid is gone — release the registry entry (after its grace
                 // tail) so it doesn't leak for the lifetime of the process.
                 // The grace window keeps the terminal status observable for a
@@ -2584,10 +2758,10 @@ internal enum BackgroundExecLiveness {
 private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_process"
     let description =
-        "Manage background jobs started by `sandbox_exec(background:true)`. `action=\"poll\"` "
+        "Manage background jobs started by `shell_run(background:true)`. `action=\"poll\"` "
         + "returns whether the pid is still alive plus a tail of the log; `\"wait\"` blocks "
         + "until exit (or `timeout` seconds); `\"kill\"` sends SIGTERM (`force:true` for SIGKILL). "
-        + "Pass the `pid` returned by the launching `sandbox_exec` call."
+        + "Pass the `pid` returned by the launching `shell_run` call."
     let agentId: String
     let agentName: String
     let home: String
@@ -2608,7 +2782,7 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
                 ]),
                 "pid": .object([
                     "type": .string("string"),
-                    "description": .string("Process id returned by `sandbox_exec(background:true)`."),
+                    "description": .string("Process id returned by `shell_run(background:true)`."),
                 ]),
                 "timeout": .object([
                     "type": .string("integer"),
@@ -2656,7 +2830,7 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
         let pidReq = requireString(
             args,
             "pid",
-            expected: "process id returned by `sandbox_exec(background:true)`",
+            expected: "process id returned by `shell_run(background:true)`",
             tool: name
         )
         guard case .value(let pid) = pidReq else { return pidReq.failureEnvelope ?? "" }
@@ -2667,7 +2841,7 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message:
-                    "`pid` must be the numeric pid string returned by `sandbox_exec(background:true)`. Got `\(pid)`.",
+                    "`pid` must be the numeric pid string returned by `shell_run(background:true)`. Got `\(pid)`.",
                 field: "pid",
                 expected: "numeric pid string",
                 tool: name
@@ -2689,7 +2863,9 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             if !alive {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
                 await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
-                    agentName: agentName, pid: pid)
+                    agentName: agentName,
+                    pid: pid
+                )
             }
             return sandboxSuccess(
                 tool: name,
@@ -2722,7 +2898,9 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             if exited {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
                 await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
-                    agentName: agentName, pid: pid)
+                    agentName: agentName,
+                    pid: pid
+                )
             }
             return sandboxSuccess(
                 tool: name,
@@ -2747,7 +2925,9 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             if dead {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
                 await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
-                    agentName: agentName, pid: pid)
+                    agentName: agentName,
+                    pid: pid
+                )
             }
             return sandboxSuccess(
                 tool: name,
@@ -2901,19 +3081,19 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
     private static var hasApk: Bool { SandboxBackend.current == .virtualMachine }
     var description: String {
         Self.hasApk
-            ? "Install packages into the sandbox. Pass `manager`: `apk` for system packages "
+            ? "Install exact package specifiers into the sandbox; try guessed alternative names separately instead of batching aliases. Pass `manager`: `apk` for system packages "
                 + "(runs as root, e.g. `ffmpeg`), `pip` for Python packages (into the agent venv at "
                 + "`~/.venv/`), or `npm` for Node packages (into a per-agent workspace). "
-                + "**Use this instead of `sandbox_exec(\"apk add …\" / \"pip install …\" / \"npm install …\")`** "
+                + "**Use this instead of `shell_run` with `apk add …` / `pip install …` / `npm install …`** "
                 + "so the index refresh, venv/workspace bootstrap, retry harness, and per-agent "
                 + "serialization apply. Installed Python/Node libraries and CLI binaries are usable "
-                + "from any `sandbox_exec` cwd. Example: `{\"manager\": \"pip\", \"packages\": [\"numpy\", \"flask\"]}`."
-            : "Install packages into the sandbox. Pass `manager`: `pip` for Python packages "
+                + "from any `shell_run` cwd. Example: `{\"manager\": \"pip\", \"packages\": [\"numpy\", \"flask\"]}`."
+            : "Install exact package specifiers into the sandbox; try guessed alternative names separately instead of batching aliases. Pass `manager`: `pip` for Python packages "
                 + "(into the agent venv at `~/.venv/`) or `npm` for Node packages (into a per-agent "
-                + "workspace). **Use this instead of `sandbox_exec(\"pip install …\" / \"npm install …\")`** "
+                + "workspace). **Use this instead of `shell_run` with `pip install …` / `npm install …`** "
                 + "so the venv/workspace bootstrap, retry harness, and per-agent serialization apply. "
                 + "Installed Python/Node libraries and CLI binaries are usable from any "
-                + "`sandbox_exec` cwd. Example: `{\"manager\": \"pip\", \"packages\": [\"numpy\", \"flask\"]}`."
+                + "`shell_run` cwd. Example: `{\"manager\": \"pip\", \"packages\": [\"numpy\", \"flask\"]}`."
     }
     let agentId: String
     let agentName: String
@@ -2991,7 +3171,13 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
                     "Unknown `manager` \"\(managerRaw)\". Use one of "
                     + (Self.hasApk ? "`apk`, `pip`, `npm`." : "`pip`, `npm`."),
                 tool: name,
-                retryable: false
+                retryable: false,
+                metadata: [
+                    "manager": manager,
+                    "requested": packages,
+                    "retried": false,
+                    "failure_class": "invalid_manager",
+                ]
             )
         }
         if manager == "apk", !Self.hasApk {
@@ -3001,7 +3187,13 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
                     "`apk` is only available in the Linux VM sandbox (macOS 26+). "
                     + "This sandbox runs directly on macOS — use `pip` or `npm` instead.",
                 tool: name,
-                retryable: false
+                retryable: false,
+                metadata: [
+                    "manager": manager,
+                    "requested": packages,
+                    "retried": false,
+                    "failure_class": "unsupported_manager",
+                ]
             )
         }
 
@@ -3018,7 +3210,13 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
                     + "at most \(SandboxPackageRequest.maximumSpecifierLength) characters and "
                     + "not beginning with a package-manager option",
                 tool: name,
-                retryable: false
+                retryable: false,
+                metadata: [
+                    "manager": manager,
+                    "requested": packages,
+                    "retried": false,
+                    "failure_class": "invalid_specifier",
+                ]
             )
         }
 
@@ -3030,7 +3228,13 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
                     + "is disabled for the current agent. Enable Sandbox Network and restart "
                     + "the sandbox before retrying.",
                 tool: name,
-                retryable: false
+                retryable: false,
+                metadata: [
+                    "manager": manager,
+                    "requested": packageRequest.packages,
+                    "retried": false,
+                    "failure_class": "network_disabled",
+                ]
             )
         }
         if context.config != nil,
@@ -3043,7 +3247,13 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
                     "Sandbox network egress is configured but unavailable. Check the sandbox "
                     + "network/allowlist settings and restart the sandbox before retrying.",
                 tool: name,
-                retryable: true
+                retryable: true,
+                metadata: [
+                    "manager": manager,
+                    "requested": packageRequest.packages,
+                    "retried": false,
+                    "failure_class": "network_unavailable",
+                ]
             )
         }
 
@@ -3052,15 +3262,35 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
             agentName: context.agentName,
             home: context.home
         )
-        switch manager {
-        case "apk":
-            return try await requestTool.installApk(request: packageRequest)
-        case "pip":
-            return try await requestTool.installPip(request: packageRequest)
-        case "npm":
-            return try await requestTool.installNpm(request: packageRequest)
-        default:
-            preconditionFailure("validated sandbox package manager")
+        do {
+            switch manager {
+            case "apk":
+                return try await requestTool.installApk(request: packageRequest)
+            case "pip":
+                return try await requestTool.installPip(request: packageRequest)
+            case "npm":
+                return try await requestTool.installNpm(request: packageRequest)
+            default:
+                preconditionFailure("validated sandbox package manager")
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message:
+                    "Package installation could not start or complete: \(error.localizedDescription). "
+                    + "Check sandbox readiness and retry once; if it repeats, change the environment "
+                    + "rather than the package aliases.",
+                tool: name,
+                retryable: true,
+                metadata: [
+                    "manager": manager,
+                    "requested": packageRequest.packages,
+                    "retried": false,
+                    "failure_class": "runtime_error",
+                ]
+            )
         }
     }
 
@@ -3098,6 +3328,7 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
 
             return try await runInstallWithRecovery(
                 tool: toolName,
+                manager: "apk",
                 packages: packages,
                 attempt: { try await runAsRoot(installCmd, timeout: 120) },
                 isRecoverable: { result in
@@ -3133,7 +3364,13 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
                 kind: .unavailable,
                 message: "python3 is not installed in the sandbox image",
                 tool: name,
-                retryable: false
+                retryable: false,
+                metadata: [
+                    "manager": "pip",
+                    "requested": request.packages,
+                    "retried": false,
+                    "failure_class": "runtime_unavailable",
+                ]
             )
         }
 
@@ -3165,6 +3402,7 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
 
             return try await runInstallWithRecovery(
                 tool: name,
+                manager: "pip",
                 packages: packages,
                 // 240s covers cold-cache installs of large packages (torch,
                 // pandas, transformers) that routinely cross 60s on first install.
@@ -3208,7 +3446,13 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
                 kind: .unavailable,
                 message: "node/npm is not installed in the sandbox image",
                 tool: name,
-                retryable: false
+                retryable: false,
+                metadata: [
+                    "manager": "npm",
+                    "requested": request.packages,
+                    "retried": false,
+                    "failure_class": "runtime_unavailable",
+                ]
             )
         }
 
@@ -3256,6 +3500,7 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
 
             return try await runInstallWithRecovery(
                 tool: name,
+                manager: "npm",
                 packages: packages,
                 attempt: { try await runAsAgent(installCmd, timeout: 240) },
                 isRecoverable: { result in

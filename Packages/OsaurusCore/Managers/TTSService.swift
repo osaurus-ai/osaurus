@@ -464,15 +464,60 @@ public final class TTSService: ObservableObject {
             }
             guard !Task.isCancelled else { return }
             do {
-                let stream = try await manager.synthesizeStreaming(
-                    text: text,
-                    voice: voice,
-                    temperature: temperature
-                )
-                for try await frame in stream {
+                // Synthesize one utterance at a time instead of handing the
+                // whole paste to a single streaming call. PocketTTS keeps a
+                // continuous Mimi decoder state for the length of a call, and
+                // that state drifts on long runs — the voice slurs, slows, and
+                // drops pitch after ~30 s ("quaaludes"). A fresh call per chunk
+                // resets the decoder, so each sentence group starts clean. The
+                // player node still plays the chunks back-to-back, so prosody
+                // stays continuous as long as synthesis keeps up.
+                let chunks = TTSTextChunker.split(text)
+                TTSDebugLog.log(
+                    "playback start id=\(messageId) voice=\(voice) temp=\(temperature) "
+                        + "textChars=\(text.count) chunks=\(chunks.count)")
+                let playbackStart = Date()
+                for (index, chunk) in chunks.enumerated() {
                     if Task.isCancelled { break }
-                    self?.schedule(samples: frame.samples)
+                    let chunkStart = Date()
+                    var firstFrameAt: TimeInterval?
+                    var frameCount = 0
+                    var sampleCount = 0
+                    TTSDebugLog.log(
+                        "  chunk \(index + 1)/\(chunks.count) begin chars=\(chunk.count) "
+                            + "text=\(TTSDebugLog.preview(chunk))")
+                    let stream = try await manager.synthesizeStreaming(
+                        text: chunk,
+                        voice: voice,
+                        temperature: temperature
+                    )
+                    for try await frame in stream {
+                        if Task.isCancelled { break }
+                        if firstFrameAt == nil {
+                            firstFrameAt = Date().timeIntervalSince(chunkStart)
+                        }
+                        frameCount += 1
+                        sampleCount += frame.samples.count
+                        self?.schedule(samples: frame.samples)
+                    }
+                    // audioSec: playable duration this chunk produced (24 kHz mono).
+                    // synthSec: wall-clock to generate it. rtf < 1 means synthesis
+                    // is faster than real time (headroom); rtf > 1 means it can't
+                    // keep up and the player node will starve between chunks.
+                    let synthSec = Date().timeIntervalSince(chunkStart)
+                    let audioSec = Double(sampleCount) / 24_000.0
+                    let rtf = audioSec > 0 ? synthSec / audioSec : 0
+                    TTSDebugLog.log(
+                        "  chunk \(index + 1)/\(chunks.count) done frames=\(frameCount) "
+                            + String(
+                                format:
+                                    "audioSec=%.2f synthSec=%.2f rtf=%.2f firstFrameSec=%.2f",
+                                audioSec, synthSec, rtf, firstFrameAt ?? -1))
                 }
+                TTSDebugLog.log(
+                    String(
+                        format: "playback synthesis complete id=%@ totalWallSec=%.2f",
+                        messageId.uuidString, Date().timeIntervalSince(playbackStart)))
                 self?.markStreamFinished(for: messageId)
             } catch is CancellationError {
                 // stop() already cleared state
@@ -578,6 +623,7 @@ public final class TTSService: ObservableObject {
         TTSLogger.service.error(
             "TTS synthesis failed: \(error.localizedDescription, privacy: .public)")
         modelState = .failed(error.localizedDescription)
+        TTSDebugLog.log("playback error id=\(messageId) error=\(error.localizedDescription)")
         if playingMessageId == messageId {
             stop()
         }
@@ -599,6 +645,175 @@ public enum PocketTTSVoiceCatalog {
         voice.split(separator: "_")
             .map { $0.prefix(1).uppercased() + $0.dropFirst() }
             .joined(separator: " ")
+    }
+}
+
+/// Appends TTS diagnostics to a plain-text log file so the sentence-chunking
+/// prototype can be inspected after the fact (per-chunk timing, frame counts,
+/// real-time factor). This is a debugging aid for the prototype, not shipping
+/// telemetry — writes are best-effort and happen off the caller's thread.
+///
+/// Logging is **off unless `OSAURUS_TTS_LOG` is set** to a destination in the
+/// scheme's environment. Two forms are accepted:
+///   - a full file path (e.g. `/tmp/tts.log`) → writes there.
+///   - `1` / `true` / `yes` → writes to `<repo>/tmp/tts-debug.log`, derived
+///     from this file's compile-time path so it lands in the checkout you
+///     built from.
+/// When the variable is unset, `fileURL` is nil and every `log` call is a
+/// cheap no-op. The resolved path is emitted once via the unified log
+/// (`ai.osaurus` / `tts.service`) so it's easy to find.
+enum TTSDebugLog {
+    private static let queue = DispatchQueue(label: "ai.osaurus.tts.debuglog")
+
+    private static let fileURL: URL? = {
+        guard let value = ProcessInfo.processInfo.environment["OSAURUS_TTS_LOG"],
+            !value.isEmpty
+        else {
+            return nil  // disabled by default
+        }
+        // A path-like value is used verbatim; a boolean-ish opt-in uses the
+        // default location in the repo the build came from.
+        if ["1", "true", "yes"].contains(value.lowercased()) {
+            // #filePath → <repo>/Packages/OsaurusCore/Managers/TTSService.swift
+            let source = URL(fileURLWithPath: #filePath)
+            let repoRoot = source
+                .deletingLastPathComponent()  // Managers
+                .deletingLastPathComponent()  // OsaurusCore
+                .deletingLastPathComponent()  // Packages
+                .deletingLastPathComponent()  // <repo>
+            return repoRoot
+                .appendingPathComponent("tmp", isDirectory: true)
+                .appendingPathComponent("tts-debug.log")
+        }
+        return URL(fileURLWithPath: value)
+    }()
+
+    /// Emitted once so the resolved path shows up in Console.app.
+    private static let announced: Void = {
+        if let url = fileURL {
+            TTSLogger.service.info("TTS debug log → \(url.path, privacy: .public)")
+        }
+        return ()
+    }()
+
+    static func log(_ message: String) {
+        _ = announced
+        guard let url = fileURL else { return }
+        queue.async {
+            let stamp = ISO8601DateFormatter().string(from: Date())
+            guard let data = "\(stamp) \(message)\n".data(using: .utf8) else { return }
+            let fm = FileManager.default
+            try? fm.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if let handle = try? FileHandle(forWritingTo: url) {
+                defer { try? handle.close() }
+                _ = try? handle.seekToEnd()
+                try? handle.write(contentsOf: data)
+            } else {
+                try? data.write(to: url, options: .atomic)
+            }
+        }
+    }
+
+    /// A single-line, length-capped preview of chunk text for the log.
+    static func preview(_ text: String, limit: Int = 60) -> String {
+        let flat = text.replacingOccurrences(of: "\n", with: " ")
+        return flat.count <= limit ? flat : String(flat.prefix(limit)) + "…"
+    }
+}
+
+/// Splits text into utterance-sized chunks for PocketTTS.
+///
+/// PocketTTS carries a continuous decoder state for the length of a single
+/// `synthesizeStreaming` call, and that state drifts audibly on long runs.
+/// Synthesizing one chunk per call resets the decoder between chunks, which
+/// keeps a long paste from degrading into slurred, slowed speech. Chunks are
+/// built from sentence boundaries and packed up to `maxChars` so we reset
+/// often enough to stay ahead of the drift without chopping prosody every few
+/// words. FluidAudio still splits each chunk to its own token budget
+/// internally; this only controls where the decoder state resets.
+///
+/// Newlines are handled deliberately: hard-wrapped prose (a paste whose lines
+/// break every ~80 chars) must NOT split at each wrap, or the voice resets
+/// mid-sentence. Only a blank line — a real paragraph break — is treated as a
+/// boundary; single newlines inside a paragraph are folded to spaces so
+/// sentence detection sees the reflowed text.
+enum TTSTextChunker {
+    /// Roughly a few seconds of speech per chunk — comfortably under the
+    /// window where PocketTTS starts to drift, while long enough that sentence
+    /// prosody is preserved.
+    static let maxChars = 240
+
+    static func split(_ text: String, maxChars: Int = TTSTextChunker.maxChars) -> [String] {
+        var chunks: [String] = []
+        var current = ""
+
+        func flush() {
+            let piece = current.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !piece.isEmpty { chunks.append(piece) }
+            current = ""
+        }
+
+        for paragraph in paragraphs(in: text) {
+            for sentence in sentences(in: paragraph) {
+                if current.isEmpty {
+                    current = sentence
+                } else if current.count + 1 + sentence.count <= maxChars {
+                    current += " " + sentence
+                } else {
+                    flush()
+                    current = sentence
+                }
+                // A single sentence longer than the budget becomes its own
+                // chunk; FluidAudio's internal chunker still splits it to fit.
+                if current.count >= maxChars { flush() }
+            }
+            // A paragraph break is a natural reset point; never pack sentences
+            // from two paragraphs into one chunk.
+            flush()
+        }
+        return chunks
+    }
+
+    /// Split text into paragraphs on blank lines, folding the soft newlines
+    /// inside each paragraph into spaces so wrapped prose reads as one flow.
+    private static func paragraphs(in text: String) -> [String] {
+        var result: [String] = []
+        var lines: [String] = []
+        func closeParagraph() {
+            if !lines.isEmpty {
+                result.append(lines.joined(separator: " "))
+                lines = []
+            }
+        }
+        for rawLine in text.components(separatedBy: "\n") {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty {
+                closeParagraph()  // blank line = paragraph boundary
+            } else {
+                lines.append(line)
+            }
+        }
+        closeParagraph()
+        return result
+    }
+
+    /// Break a single paragraph into sentence-ish spans on `.`, `!`, and `?`,
+    /// keeping the terminating punctuation with its sentence.
+    private static func sentences(in paragraph: String) -> [String] {
+        var result: [String] = []
+        var current = ""
+        for character in paragraph {
+            current.append(character)
+            if character == "." || character == "!" || character == "?" {
+                let piece = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !piece.isEmpty { result.append(piece) }
+                current = ""
+            }
+        }
+        let tail = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !tail.isEmpty { result.append(tail) }
+        return result
     }
 }
 

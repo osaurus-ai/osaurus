@@ -23,6 +23,20 @@ public struct MCPProviderDraft: Equatable, Sendable {
     }
 }
 
+/// Deep-link payload for the Knowledge tab's "Add Collection" sheet.
+public struct PendingKnowledgeCreateRequest: Equatable, Sendable {
+    /// Prefill for the sheet's Name field (may be empty).
+    public let prefillName: String
+    /// Project to grant the created collection to, when the request came
+    /// from a project page's Add Collection shortcut.
+    public let grantProjectId: UUID?
+
+    public init(prefillName: String, grantProjectId: UUID? = nil) {
+        self.prefillName = prefillName
+        self.grantProjectId = grantProjectId
+    }
+}
+
 /// Manages the session state for the management interface.
 @MainActor
 public final class ManagementStateManager: ObservableObject {
@@ -60,10 +74,27 @@ public final class ManagementStateManager: ObservableObject {
     /// `PluginsView` observes this and resets it to nil after applying.
     @Published public var pendingPluginDetailId: String?
 
+    /// One-shot request to pop the "Add Collection" sheet on the Knowledge
+    /// tab — e.g. from the project page's Add Collection shortcut, so the
+    /// user isn't dropped on the tab just to click the same button again.
+    /// `KnowledgeView` observes this and resets it to nil after applying.
+    @Published public var pendingKnowledgeCreate: PendingKnowledgeCreateRequest?
+
+    /// One-shot request to open a specific collection's detail sheet on the
+    /// Knowledge tab — e.g. from a project page's knowledge row chevron.
+    /// `KnowledgeView` observes this and resets it to nil after applying.
+    @Published public var pendingKnowledgeDetailId: UUID?
+
     /// One-shot request to open the detail page for a specific paired remote
     /// agent (`RemoteAgent.id`) — e.g. from the chat empty-state gear button.
     /// `AgentsView` observes this and resets it to nil after applying.
     @Published public var pendingRemoteAgentDetailId: UUID?
+
+    /// One-shot request to reveal a project's shared memory — the namespace
+    /// key (`project-<uuid>`). `MemoryView` observes this, switches to its
+    /// Agents subtab, opens the project's context preview, and resets it to
+    /// nil. Set from a project page's memory section "Open in Memory" button.
+    @Published public var pendingMemoryProjectPreview: String?
 
     /// One-shot request to open the schedule editor for a specific schedule id.
     /// `SchedulesView` observes this and resets it to nil after applying. Used

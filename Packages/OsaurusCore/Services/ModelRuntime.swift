@@ -2755,11 +2755,12 @@ public actor ModelRuntime {
         let softLimit = Int64(Double(physical) * thresholds.soft)
         let hardLimit = Int64(Double(physical) * thresholds.hard)
 
-        // `available` counts only immediately reclaimable pages; macOS also
-        // frees compressor and file-cache memory on demand, so a strict
-        // `required > available` comparison flags loads that succeed without
-        // pressure on any busy machine. Allow a slack of 10% of physical for
-        // that on-demand reclaim before calling free pages short.
+        // `available` is physical minus unreclaimable memory (wired,
+        // compressor, non-purgeable anonymous). Anonymous pages of idle
+        // processes still compress on demand and load-time transients spike,
+        // so a strict `required > available` comparison flags loads that
+        // succeed without pressure on any busy machine. Allow a slack of 10%
+        // of physical before calling free pages short.
         let reclaimSlack = physical / 10
         let lowAvailable = available > 0 && requiredAvailable > available + reclaimSlack
         let verdict: RAMFeasibility.Verdict
@@ -3166,12 +3167,18 @@ public actor ModelRuntime {
         var rawPageSize: vm_size_t = 0
         host_page_size(host, &rawPageSize)
         let pageSize = Int64(rawPageSize)
-        let pages =
-            Int64(stats.free_count)
-            + Int64(stats.inactive_count)
-            + Int64(stats.speculative_count)
-            + Int64(stats.purgeable_count)
-        return max(0, pages * pageSize)
+        // Count what macOS can NOT reclaim (wired, compressor-resident, and
+        // non-purgeable anonymous pages) and report the rest as available.
+        // Summing free+inactive+speculative queues instead misses the file
+        // cache sitting in the ACTIVE queue — after materializing a ~90 GB
+        // weight pack that is most of physical memory, and the shortfall
+        // guard then refuses a reload on an otherwise idle machine.
+        let unreclaimablePages =
+            Int64(stats.wire_count)
+            + Int64(stats.compressor_page_count)
+            + max(0, Int64(stats.internal_page_count) - Int64(stats.purgeable_count))
+        let physical = Int64(ProcessInfo.processInfo.physicalMemory)
+        return max(0, physical - unreclaimablePages * pageSize)
     }
 
     private func residentWeightBytes(excluding excludedName: String? = nil) -> Int64 {
@@ -4180,6 +4187,20 @@ public actor ModelRuntime {
         freeFraction: Double = 0.25,
         minUsefulGB: Double = 1.0
     ) {
+        // A non-positive cap is savable through the settings UI and the admin
+        // API (Save is not gated on validation errors). Zero reaches
+        // `DiskCache(maxSizeGB: 0)`, whose quota pass then evicts EVERY entry
+        // at insert — the disk tier reports stores and hits nothing, with no
+        // eviction trace. Normalize here, on the engine-effective path, so
+        // both entry points are covered; the guard below must not run before
+        // this or a 0 cap on an unknown-free-space volume slips through.
+        let rawConfiguredCapGB = Double(config.diskCacheMaxGB)
+        if rawConfiguredCapGB <= 0 {
+            genLog.error(
+                "buildCacheCoordinatorConfig: configured disk-L2 cap \(String(format: "%.1f", rawConfiguredCapGB), privacy: .public) GB is non-positive — a zero cap self-evicts every entry at insert; using engine default 10 GB"
+            )
+            config.diskCacheMaxGB = 10.0
+        }
         guard config.enableDiskCache, let diskCacheDir,
             let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: diskCacheDir.path),
             freeBytes > 0

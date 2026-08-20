@@ -142,4 +142,49 @@ struct EvalCatalogManifestTests {
             )
         )
     }
+
+    @Test func sandboxFrontierPositiveContractsUsePublicWorkspaceVocabulary() throws {
+        let privateAdapters: Set<String> = [
+            "sandbox_read_file", "sandbox_search_files", "sandbox_write_file", "sandbox_exec",
+        ]
+        let root = Self.suitesRoot.appendingPathComponent("SandboxFrontier")
+        let files = try FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: nil
+        ).filter { $0.pathExtension == "json" }
+
+        var violations: [String] = []
+        for file in files {
+            let data = try Data(contentsOf: file)
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                continue
+            }
+            for key in ["query", "notes"] {
+                guard let text = object[key] as? String else { continue }
+                for name in privateAdapters where text.contains(name) {
+                    violations.append("\(file.lastPathComponent) \(key) names \(name)")
+                }
+            }
+            guard let expect = object["expect"] as? [String: Any],
+                let loop = expect["agentLoop"] as? [String: Any]
+            else { continue }
+            for key in ["mustCallTools", "mustCallToolsInOrder"] {
+                let names = Set(loop[key] as? [String] ?? [])
+                for name in names.intersection(privateAdapters) {
+                    violations.append("\(file.lastPathComponent) \(key) requires \(name)")
+                }
+            }
+            for audit in loop["toolUsageAudit"] as? [[String: Any]] ?? [] {
+                guard let name = audit["tool"] as? String, privateAdapters.contains(name) else {
+                    continue
+                }
+                violations.append("\(file.lastPathComponent) toolUsageAudit requires \(name)")
+            }
+        }
+
+        #expect(
+            violations.isEmpty,
+            "SandboxFrontier positive contracts expose private adapters:\n\(violations.sorted().joined(separator: "\n"))"
+        )
+    }
 }

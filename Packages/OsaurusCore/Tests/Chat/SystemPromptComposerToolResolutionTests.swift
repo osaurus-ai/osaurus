@@ -365,11 +365,19 @@ struct SystemPromptComposerToolResolutionTests {
                 let manifest = context.enabledManifest ?? ""
 
                 #expect(schemaNames.contains("capabilities"))
-                #expect(!schemaNames.contains("plugin/\(fixture.plugin.id)"))
-                #expect(manifest.contains("plugin/\(fixture.plugin.id)"))
-                #expect(manifest.contains("capability ids, not callable function names"))
-                #expect(manifest.contains("with its `ids` array"))
-                #expect(manifest.contains("Never call an id as a function"))
+                #expect(!schemaNames.contains(fixture.name))
+                #expect(
+                    manifest.contains("plugin/\(fixture.plugin.id)")
+                        || manifest.contains("tool/\(fixture.name)")
+                )
+                #expect(
+                    manifest.contains("capability ids, not callable function names")
+                        || manifest.contains("capability id, not a callable function name")
+                )
+                #expect(
+                    manifest.contains("with its `ids` array")
+                        || manifest.contains("with its id exactly as shown")
+                )
             }
         }
     }
@@ -407,7 +415,9 @@ struct SystemPromptComposerToolResolutionTests {
                 if let manifestIndex, let firstDynamicIndex {
                     #expect(manifestIndex < firstDynamicIndex)
                 }
-                #expect(context.prompt.contains("bring it into your schema with `capabilities`"))
+                #expect(context.prompt.contains("only with an exact capability id"))
+                #expect(context.prompt.contains("libraries are not capabilities"))
+                #expect(context.prompt.contains("install exact missing package names with sandbox_install"))
                 #expect(!context.prompt.contains("capabilities_load"))
                 #expect(!context.prompt.contains("capabilities_discover"))
             }
@@ -656,7 +666,7 @@ struct SystemPromptComposerToolResolutionTests {
                 Issue.record("missing compact shell schema")
                 return
             }
-            #expect(Set(properties.keys) == ["command"])
+            #expect(Set(properties.keys) == ["command", "timeout"])
         }
     }
 
@@ -1150,6 +1160,9 @@ struct SystemPromptComposerToolResolutionTests {
                             with: ToolRegistry.sandboxBackendAdapterToolNames
                         )
                     )
+                    #expect(sandboxNames.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+                    #expect(sandboxNames.contains("capabilities"))
+                    #expect(sandboxNames.contains("share_artifact"))
                     if autonomousEnabled {
                         #expect(sandboxNames.contains("sandbox_install"))
                         #expect(sandboxNames.contains("sandbox_secret_check"))
@@ -1223,7 +1236,7 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test
-    func vmBackgroundModeAlwaysIncludesProcessControlWithoutExpandingShell() async {
+    func vmBackgroundModeIncludesProcessControlAndBackgroundArgument() async {
         await withSandboxAgent(autonomous: true, backgroundProcesses: true) { agentId in
             withRegisteredSandboxBuiltins(backgroundProcesses: true) {
                 withRegisteredFolderTools { _ in
@@ -1243,15 +1256,19 @@ struct SystemPromptComposerToolResolutionTests {
                         tools.map { $0.canonicalHashPayload() }
                             == unrelated.map { $0.canonicalHashPayload() }
                     )
-                    let shell = tools.first { $0.function.name == "shell_run" }
-                    guard let parameters = shell?.function.parameters,
-                        case .object(let schema) = parameters,
+                    let byName = Dictionary(
+                        uniqueKeysWithValues: tools.map { ($0.function.name, $0) }
+                    )
+                    guard let shell = byName["shell_run"],
+                        case .object(let schema)? = shell.function.parameters,
                         case .object(let properties)? = schema["properties"]
                     else {
-                        Issue.record("shell_run should expose an object schema")
+                        Issue.record(
+                            "shell_run should expose an object schema; names=\(tools.map(\.function.name))"
+                        )
                         return
                     }
-                    #expect(Set(properties.keys) == ["command"])
+                    #expect(Set(properties.keys) == ["command", "timeout", "background"])
                 }
             }
         }
@@ -1267,7 +1284,87 @@ struct SystemPromptComposerToolResolutionTests {
                         executionMode: .sandbox
                     )
                     #expect(!tools.contains { $0.function.name == "sandbox_process" })
+                    let byName = Dictionary(
+                        uniqueKeysWithValues: tools.map { ($0.function.name, $0) }
+                    )
+                    guard let shell = byName["shell_run"],
+                        case .object(let schema)? = shell.function.parameters,
+                        case .object(let properties)? = schema["properties"]
+                    else {
+                        Issue.record(
+                            "shell_run should expose an object schema; names=\(tools.map(\.function.name))"
+                        )
+                        return
+                    }
+                    #expect(Set(properties.keys) == ["command", "timeout"])
                 }
+            }
+        }
+    }
+
+    @Test
+    func compactWorkspaceSchemasKeepEveryPublicArgumentAndDocumentContract() async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            withRegisteredFolderTools { folder in
+                let tools = SystemPromptComposer.resolveTools(
+                    agentId: agentId,
+                    executionMode: .hostFolder(folder)
+                )
+                let byName = Dictionary(
+                    uniqueKeysWithValues: tools.map { ($0.function.name, $0) }
+                )
+
+                func propertyNames(_ name: String) -> Set<String> {
+                    guard let parameters = byName[name]?.function.parameters,
+                        case .object(let schema) = parameters,
+                        case .object(let properties)? = schema["properties"]
+                    else {
+                        Issue.record("\(name) should expose an object schema")
+                        return []
+                    }
+                    return Set(properties.keys)
+                }
+
+                #expect(
+                    propertyNames("file_read") == [
+                        "path", "max_depth", "sheet_name", "start_line", "end_line",
+                        "tail_lines", "max_chars", "max_rows", "max_columns",
+                    ]
+                )
+                let readDescription = byName["file_read"]?.function.description ?? ""
+                #expect(readDescription.contains("PowerPoint"))
+                #expect(readDescription.contains("do not unzip"))
+                #expect(
+                    propertyNames("file_search") == [
+                        "pattern", "path", "target", "file_pattern", "max_results",
+                    ]
+                )
+                #expect(
+                    propertyNames("file_write") == ["path", "content", "mode", "dry_run"]
+                )
+                #expect(
+                    propertyNames("file_edit") == [
+                        "path", "old_string", "new_string", "dry_run",
+                    ]
+                )
+                #expect(propertyNames("shell_run") == ["command", "timeout"])
+            }
+        }
+    }
+
+    @Test
+    func compactVMSchemaIsHonestAboutRawDocumentReads() async {
+        await withSandboxAgent(autonomous: true) { agentId in
+            withRegisteredSandboxBuiltins {
+                let tools = SystemPromptComposer.resolveTools(
+                    agentId: agentId,
+                    executionMode: .sandbox
+                )
+                let readDescription =
+                    tools.first { $0.function.name == "file_read" }?.function.description ?? ""
+                #expect(readDescription.contains("VM"))
+                #expect(readDescription.contains("shell/code extraction"))
+                #expect(!readDescription.contains("do not unzip"))
             }
         }
     }
@@ -1784,7 +1881,17 @@ struct SystemPromptComposerToolResolutionTests {
                 executionMode: .none
             )
             #expect(spawnModelEnum(frozen) == ["local/old-model"])
-            #expect(spawnBatchTargetEnum(frozen) == [oldAgent.id.uuidString, "local/old-model"])
+            // The batch target enum unions agent UUIDs, agent display names
+            // (issue #2408), and model ids, then sorts. Uppercase UUID/name
+            // sort ahead of the lowercase model id.
+            #expect(
+                spawnBatchTargetEnum(frozen)
+                    == [
+                        oldAgent.id.uuidString,
+                        "Stale delegation target",
+                        "local/old-model",
+                    ]
+            )
             #expect(spawnBatchMaxItems(frozen) == 2)
 
             let updated = SubagentConfiguration(
@@ -1813,6 +1920,7 @@ struct SystemPromptComposerToolResolutionTests {
                 spawnBatchTargetEnum(refreshed)
                     == [
                         newAgent.id.uuidString,
+                        "Fresh delegation target",
                         "anthropic/claude-opus-4-8",
                         "local/new-model",
                     ]
@@ -1820,6 +1928,7 @@ struct SystemPromptComposerToolResolutionTests {
             #expect(spawnBatchMaxItems(refreshed) == 6)
             #expect(!spawnBatchTargetEnum(refreshed).contains(oldAgent.id.uuidString))
             #expect(!spawnBatchTargetEnum(refreshed).contains("local/old-model"))
+            #expect(!spawnBatchTargetEnum(refreshed).contains("Stale delegation target"))
             #expect(
                 PromptPrefixHasher.hash(systemContent: "prefix", tools: refreshed)
                     != PromptPrefixHasher.hash(systemContent: "prefix", tools: frozen)

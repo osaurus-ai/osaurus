@@ -160,6 +160,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // fatally on `kqueue(): Too many open files` (APPLE-MACOS-19T).
         FileDescriptorLimit.raiseToMaximum()
 
+        // Attribute the PREVIOUS instance's end before anything else can
+        // fail: a clean quit left a marker, a crash/SIGKILL/watchdog did not.
+        // The verdict lands in `last-exit-verdict.json` + a breadcrumb, so
+        // the next "app restarts silently with no crash report" report is
+        // attributable instead of unfalsifiable.
+        TerminationForensics.evaluateAtLaunch()
+
         // sequoia fallback. Tahoe already ran this in
         // `applicationWillFinishLaunching`.
         if #unavailable(macOS 26.0) {
@@ -532,6 +539,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 // loop escalated past the distillation threshold.
                 if !LaunchGuard.shouldSkip(.distillation) {
                     await MemoryConsolidator.shared.start()
+                    // Large local core models fail the launch drain's
+                    // residency gate; re-drain whenever the model
+                    // actually gets loaded (see MemoryService).
+                    await MemoryService.shared.armResidencyDrainOnModelLoad()
                 }
             }
         }
@@ -1237,6 +1248,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             return .terminateLater
         }
         isTerminating = true
+        // First choke point every intentional quit passes through (Cmd-Q,
+        // status-panel Quit, onboarding quit, Sparkle relaunch). Later
+        // markers on the same shutdown overwrite with a more specific reason.
+        TerminationForensics.recordIntentionalExit(reason: "app-terminate")
 
         // Global watchdog: hard ceiling on the entire quit. Independent of
         // the ordered chain below, so it fires even if a step blocks the
@@ -1269,6 +1284,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             log.error(
                 "Exit backstop fired 45s after termination began — main thread presumed stuck; forcing exit"
             )
+            TerminationForensics.recordIntentionalExit(reason: "exit-backstop-45s")
             Darwin._exit(0)
         }
 
@@ -1452,6 +1468,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // SIGSEGV that macOS reports as a crash on quit. `_exit` skips all of
         // that: the kernel reclaims the address space and GPU resources
         // atomically, so no in-flight thread can lose its objects mid-call.
+        TerminationForensics.recordIntentionalExit(reason: "quit-complete")
         Darwin._exit(0)
     }
 

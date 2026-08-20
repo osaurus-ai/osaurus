@@ -135,6 +135,40 @@ final class ChatSessionsManager: ObservableObject {
         Task { await SandboxWorkspaceChangeTracker.shared.purgeSession(id.uuidString) }
     }
 
+    /// Delete every session owned by an agent. Strict ownership match, unlike
+    /// `sessions(for:)`: the Default agent's "show everything" view must not
+    /// turn a per-agent wipe into an all-agents wipe, so only sessions whose
+    /// `agentId` matches (or is nil, for the Default agent's own chats) are
+    /// removed.
+    ///
+    /// The in-memory list and selection update synchronously (the UI must
+    /// reflect the wipe immediately); the database rows, artifact
+    /// directories, and sandbox change records are removed on background
+    /// queues — a large history deleted through per-session `delete(id:)`
+    /// calls would park the main thread behind N synchronous transactions.
+    /// Returns once the database batch has finished.
+    func deleteAll(for agentId: UUID) async {
+        let owned = sessions.filter { session in
+            session.agentId == agentId
+                || (agentId == Agent.defaultId && session.agentId == nil)
+        }
+        guard !owned.isEmpty else { return }
+        let ids = owned.map(\.id)
+        let idSet = Set(ids)
+        if let current = currentSessionId, idSet.contains(current) {
+            currentSessionId = nil
+        }
+        sessions.removeAll { idSet.contains($0.id) }
+        for id in ids {
+            Task { await SandboxWorkspaceChangeTracker.shared.purgeSession(id.uuidString) }
+        }
+        await withCheckedContinuation { continuation in
+            ChatSessionStore.deleteBatch(ids: ids) {
+                continuation.resume()
+            }
+        }
+    }
+
     /// Rename a session.
     ///
     /// Pulls from the in-memory list first because new sessions are only
@@ -205,6 +239,59 @@ final class ChatSessionsManager: ObservableObject {
         // Flag-only update; see `setArchived`.
         ChatSessionStore.setPinnedAsync(id: id, pinned: pinned)
         upsertInMemory(session)
+    }
+
+    /// Move a session into a project (or out, with nil). Same
+    /// in-memory-first lookup as `rename`; persists via a targeted async
+    /// column update so a metadata-only copy can never clobber turn rows
+    /// and the main actor never blocks on the DB transaction. Does not
+    /// touch `updatedAt`: grouping is a display concern.
+    func setProject(id: UUID, projectId: UUID?) {
+        guard
+            var session = sessions.first(where: { $0.id == id })
+                ?? ChatSessionStore.load(id: id)
+        else { return }
+        guard session.projectId != projectId else { return }
+        session.projectId = projectId
+        ChatSessionStore.setProjectAsync(id: id, projectId: projectId)
+        upsertInMemory(session)
+        // A live ChatSession for this id (an open chat window) holds its own
+        // projectId copy that the NEXT compose reads — without this it keeps
+        // injecting the old project's instructions/knowledge.
+        NotificationCenter.default.post(
+            name: .chatSessionProjectDidChange,
+            object: nil,
+            userInfo: ["sessionId": id, "projectId": projectId as Any]
+        )
+    }
+
+    /// Detach all sessions from a deleted project and drop the project
+    /// record. Call this instead of `ProjectManager.delete` directly.
+    func deleteProject(id: UUID) {
+        ChatSessionStore.clearProjectAsync(projectId: id)
+        var updated = sessions
+        for index in updated.indices where updated[index].projectId == id {
+            updated[index].projectId = nil
+        }
+        sessions = updated
+        ProjectManager.shared.delete(id: id)
+        // Drop the project's shared memory namespace: DB rows, vector
+        // index (memory + disk), and any cached assembler block. Off the
+        // main actor and best-effort — a failure leaves orphan rows that
+        // the namespace simply never reads again.
+        let namespaceKey = MemoryNamespace.project(id).key
+        Task.detached(priority: .utility) {
+            try? MemoryDatabase.shared.deleteNamespaceData(agentId: namespaceKey)
+            await MemorySearchService.shared.purgeNamespaceStorage(agentId: namespaceKey)
+            await MemoryContextAssembler.shared.invalidateCache(agentId: namespaceKey)
+        }
+        // Live ChatSessions in other windows may still point at the dead
+        // project; tell them to drop it (see setProject).
+        NotificationCenter.default.post(
+            name: .chatSessionProjectDidChange,
+            object: nil,
+            userInfo: ["clearedProjectId": id]
+        )
     }
 
     /// Get a session by ID

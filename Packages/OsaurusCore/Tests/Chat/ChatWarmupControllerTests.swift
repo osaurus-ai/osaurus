@@ -2035,3 +2035,58 @@ private struct WarmupTestEngine: ChatEngineProtocol {
         )
     }
 }
+
+// MARK: - Warm-up committed-turn composition (triple-prefill regression)
+
+@MainActor
+@Suite("Warm-up committed-turn composition")
+struct WarmupCommittedTurnsTests {
+
+    /// `ChatSession.send` pre-appends the user turn BEFORE dispatch; the
+    /// frozen injected prefix (`[Current Time]` block etc.) is only stamped
+    /// at dispatch time. If the DSV4 pre-send handshake warms that pending
+    /// turn it composes bytes the real request never sends — the visible
+    /// third full prefill per Send.
+    @Test("a pending (undispatched) trailing user turn is not warmed")
+    func pendingTrailingUserTurnExcluded() {
+        let session = ChatSession()
+        let committed = ChatTurn(role: .user, content: "committed question")
+        committed.injectedContextPrefix = "[Current Time]\nfrozen"
+        let answer = ChatTurn(role: .assistant, content: "committed answer")
+        let pending = ChatTurn(role: .user, content: "pending question")
+        session.turns = [committed, answer, pending]
+
+        #expect(session.warmupCommittedTurns.map(\.id) == [committed.id, answer.id])
+
+        let msgs = session.buildWarmupMessages(systemPrompt: "sys")
+        #expect(!msgs.contains { $0.content?.contains("pending question") == true })
+        #expect(msgs.contains { $0.content?.contains("committed question") == true })
+        #expect(msgs.contains { $0.content?.contains("committed answer") == true })
+    }
+
+    @Test("a dispatched trailing user turn (frozen prefix) is warmed")
+    func dispatchedTrailingUserTurnIncluded() {
+        let session = ChatSession()
+        let dispatched = ChatTurn(role: .user, content: "dispatched question")
+        dispatched.injectedContextPrefix = "[Current Time]\nfrozen"
+        session.turns = [dispatched]
+
+        #expect(session.warmupCommittedTurns.map(\.id) == [dispatched.id])
+        let msgs = session.buildWarmupMessages(systemPrompt: "sys")
+        #expect(msgs.contains { $0.content?.contains("dispatched question") == true })
+    }
+
+    @Test("only TRAILING pending user turns are stripped, never mid-transcript ones")
+    func midTranscriptUserTurnsSurvive() {
+        let session = ChatSession()
+        // Historic user turn without a frozen prefix (e.g. restored from an
+        // old session format) followed by its answer: committed by position.
+        let historic = ChatTurn(role: .user, content: "historic question")
+        let answer = ChatTurn(role: .assistant, content: "historic answer")
+        let pendingA = ChatTurn(role: .user, content: "pending A")
+        let pendingB = ChatTurn(role: .user, content: "pending B")
+        session.turns = [historic, answer, pendingA, pendingB]
+
+        #expect(session.warmupCommittedTurns.map(\.id) == [historic.id, answer.id])
+    }
+}

@@ -41,6 +41,11 @@ struct ChatSettingsView: View {
     /// off while the feature bakes across releases (see
     /// `ChatConfiguration.autoGenerateChatTitles`).
     @State private var tempAutoGenerateChatTitles: Bool = false
+    /// Master switch for AI-generated follow-up questions after a completed
+    /// turn. Default off while the feature bakes across releases (see
+    /// `ChatConfiguration.generateFollowUpSuggestions`). Per-agent prompt /
+    /// rules / model tweaks live in each agent's settings.
+    @State private var tempGenerateFollowUpSuggestions: Bool = false
     /// Smooth streaming: pace the visible reveal at ~180 tok/s regardless
     /// of how fast / bursty the network delivers tokens. Default on.
     /// Bound to `UserDefaults` key `chatSmoothStreamingEnabled` which
@@ -379,6 +384,8 @@ struct ChatSettingsView: View {
 
                 autoTitleToggleRow
 
+                followUpToggleRow
+
                 SettingsToggle(
                     title: L("Show Notch Overlay on Menu Bar"),
                     description:
@@ -495,6 +502,61 @@ struct ChatSettingsView: View {
                 )
         )
         .settingsLandingAnchor("settings.chat.autoGenerateTitles")
+    }
+
+    /// Follow-up suggestions master switch, styled as the auto-title twin so
+    /// the "core model" deep link into the General tab reads the same way.
+    private var followUpToggleRow: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Suggest Follow-Up Questions", bundle: .module)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(theme.primaryText)
+                Text(followUpDescription)
+                    .font(.system(size: 11))
+                    .tint(theme.accentColor)
+                    .environment(
+                        \.openURL,
+                        OpenURLAction { _ in
+                            navigateToCoreModelSetting()
+                            return .handled
+                        }
+                    )
+            }
+
+            Spacer()
+
+            Toggle("", isOn: $tempGenerateFollowUpSuggestions)
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .labelsHidden()
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.inputBorder, lineWidth: 1)
+                )
+        )
+        .settingsLandingAnchor("settings.chat.generateFollowUps")
+    }
+
+    /// Description for the follow-up toggle, with "core model" rendered as an
+    /// underlined accent link, matching `autoTitleDescription`.
+    private var followUpDescription: AttributedString {
+        var text = AttributedString(
+            L(
+                "Use the core model to suggest a few next questions after each response, shown as clickable rows the user can tap to continue. Runs in the background and never interrupts the conversation. Each agent can tailor the prompt, rules, and model in its own settings."
+            )
+        )
+        text.foregroundColor = theme.tertiaryText
+        if let range = text.range(of: L("core model")) {
+            text[range].foregroundColor = theme.accentColor
+            text[range].underlineStyle = .single
+            text[range].link = URL(string: "osaurus-settings://core-model")
+        }
+        return text
     }
 
     /// Description for the auto-title toggle, with "core model" rendered as
@@ -673,6 +735,7 @@ struct ChatSettingsView: View {
         tempEnableClipboardMonitoring = chat.enableClipboardMonitoring
         tempWarmModelsOnLoad = chat.warmModelsOnLoad
         tempAutoGenerateChatTitles = chat.autoGenerateChatTitles
+        tempGenerateFollowUpSuggestions = chat.generateFollowUpSuggestions
         tempCompactionModelProvider = chat.compactionModelProvider ?? ""
         tempCompactionModelName = chat.compactionModelName ?? ""
 
@@ -694,6 +757,7 @@ struct ChatSettingsView: View {
         tempEnableClipboardMonitoring = chatDefaults.enableClipboardMonitoring
         tempWarmModelsOnLoad = chatDefaults.warmModelsOnLoad
         tempAutoGenerateChatTitles = chatDefaults.autoGenerateChatTitles
+        tempGenerateFollowUpSuggestions = chatDefaults.generateFollowUpSuggestions
         tempCompactionModelProvider = chatDefaults.compactionModelProvider ?? ""
         tempCompactionModelName = chatDefaults.compactionModelName ?? ""
 
@@ -712,6 +776,7 @@ struct ChatSettingsView: View {
         var enableClipboardMonitoring: Bool
         var warmModelsOnLoad: Bool
         var autoGenerateChatTitles: Bool
+        var generateFollowUpSuggestions: Bool
         var compactionModelProvider: String
         var compactionModelName: String
     }
@@ -726,6 +791,7 @@ struct ChatSettingsView: View {
             enableClipboardMonitoring: tempEnableClipboardMonitoring,
             warmModelsOnLoad: tempWarmModelsOnLoad,
             autoGenerateChatTitles: tempAutoGenerateChatTitles,
+            generateFollowUpSuggestions: tempGenerateFollowUpSuggestions,
             compactionModelProvider: tempCompactionModelProvider,
             compactionModelName: tempCompactionModelName
         )
@@ -798,6 +864,7 @@ struct ChatSettingsView: View {
         chatCfg.enableClipboardMonitoring = tempEnableClipboardMonitoring
         chatCfg.warmModelsOnLoad = tempWarmModelsOnLoad
         chatCfg.autoGenerateChatTitles = tempAutoGenerateChatTitles
+        chatCfg.generateFollowUpSuggestions = tempGenerateFollowUpSuggestions
         chatCfg.compactionModelProvider =
             tempCompactionModelProvider.isEmpty ? nil : tempCompactionModelProvider
         chatCfg.compactionModelName =

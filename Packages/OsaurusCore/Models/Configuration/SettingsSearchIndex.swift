@@ -152,6 +152,13 @@ public enum SettingsSearchIndex {
             keywords: ["title", "auto title", "rename", "chat name", "summary"]
         ),
         .init(
+            id: "settings.chat.generateFollowUps",
+            tab: .chat,
+            section: "Chat",
+            title: "Suggest Follow-Up Questions",
+            keywords: ["follow up", "followup", "suggestions", "next question", "prompts", "suggested"]
+        ),
+        .init(
             id: "settings.chat.cmdNNewChat",
             tab: .chat,
             section: "Chat",

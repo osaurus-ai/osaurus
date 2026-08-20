@@ -76,6 +76,66 @@ enum AppleScriptToolDispatch {
         return text
     }
 
+    /// Promote a `contents` that arrived as a plain string into the single-entry
+    /// map the schema declares.
+    ///
+    /// `content` (one verbatim string) and `contents` (a `{name: text}` map of
+    /// several) sit side by side with near-identical names, and a model that
+    /// reaches for the plural with one block gets a hard
+    /// `invalid_args: Property 'contents' must be an object`. Observed live on
+    /// Raptor: two consecutive rejections of that shape and the turn collapsed
+    /// into a verbatim repetition loop that spent the whole token budget.
+    ///
+    /// Promotion is lossless rather than a reinterpretation — the value is
+    /// passed through verbatim to a `{{content}}` placeholder either way, so
+    /// this accepts exactly what the model meant by the singular field. It
+    /// yields to an explicit `content` rather than clobbering it, and a
+    /// `contents` that is already an object is untouched.
+    ///
+    /// Read path only. `normalizeAutomationArguments` deliberately returns an
+    /// unrecognized `contents` string untouched so arbitrary text is never
+    /// reinterpreted as user data before a WRITE; promotion must not weaken
+    /// that. A read compares against the value either way, so there is no
+    /// equivalent risk here.
+    /// - Parameter requiredField: the tool's own natural-language field
+    ///   (`question` for a read). When that field is absent, a lone string is
+    ///   read as the request itself rather than as a verbatim literal.
+    static func promotingStringContents(
+        _ argumentsJSON: String, requiredField: String? = nil
+    ) -> String {
+        guard let data = argumentsJSON.data(using: .utf8),
+            var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let encoded = object["contents"] as? String
+        else { return argumentsJSON }
+        guard !encoded.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return argumentsJSON
+        }
+
+        // Observed live on Raptor: `{"contents":"what is the frontmost
+        // application's name"}` — the request itself, under the literals field,
+        // with no `question` at all. Promoting that to `content` only trades
+        // "must be an object" for "missing required property", so when the
+        // required field is absent the string is the request.
+        let destination: String
+        if let requiredField, object[requiredField] == nil {
+            destination = requiredField
+        } else if object["content"] == nil {
+            destination = "content"
+        } else {
+            return argumentsJSON
+        }
+
+        object.removeValue(forKey: "contents")
+        object[destination] = encoded
+        guard let cleaned = try? JSONSerialization.data(
+            withJSONObject: object,
+            options: [.sortedKeys]
+        ), let text = String(data: cleaned, encoding: .utf8)
+        else { return argumentsJSON }
+        debugLog("[AppleScript] promoted string `contents` to `\(destination)`")
+        return text
+    }
+
     /// Parse the single natural-language argument (`field`) + optional
     /// `max_steps` + optional verbatim literals (`content` and/or `contents`),
     /// then run a configured `AppleScriptKind` on the subagent host. Returns the
@@ -616,17 +676,6 @@ enum AppleScriptToolDispatch {
             || names.contains(where: { normalizedTask.contains($0.lowercased()) })
             || referencesLiteralValue
 
-        if !referencesLiteral {
-            let field = names == ["content"] ? "content" : "contents"
-            return LiteralContractViolation(
-                field: field,
-                message:
-                    "`\(field)` was supplied, but `task` does not tell the AppleScript subagent to use "
-                    + "the provided literal value. Keep `task` as the desired outcome and put only exact "
-                    + "user-supplied text in literal fields; do not place generated AppleScript there."
-            )
-        }
-
         let explicitlyInsertingSource =
             normalizedTask.contains("applescript source")
             || normalizedTask.contains("applescript code")
@@ -647,6 +696,26 @@ enum AppleScriptToolDispatch {
                     + "only exact user-supplied data. Describe the desired outcome in `task` and let the "
                     + "AppleScript subagent write the script. If the user really asked to insert source "
                     + "code as text, say that explicitly in `task`."
+            )
+        }
+
+        // Deliberately AFTER the generated-source check. When `content` holds a
+        // script, both checks fire, but only one names the required repair.
+        // This one says `task` does not reference the literal, whose obvious
+        // "fix" is to mention `content` in the task — which keeps the script in
+        // a literal field and passes validation, exactly backwards. Reported
+        // live as an unbreakable retry loop, because the rejection is marked
+        // retryable and the model kept applying that reading.
+        if !referencesLiteral {
+            let field = names == ["content"] ? "content" : "contents"
+            return LiteralContractViolation(
+                field: field,
+                message:
+                    "`\(field)` was supplied, but `task` does not tell the AppleScript subagent to use "
+                    + "the provided literal value. Keep `task` as the desired outcome and put only exact "
+                    + "user-supplied text in literal fields; do not place generated AppleScript there. "
+                    + "If nothing in this request is verbatim user-supplied text, omit `\(field)` "
+                    + "entirely and describe the outcome in `task` alone."
             )
         }
 
@@ -712,7 +781,29 @@ enum AppleScriptToolDispatch {
             source.contains("keystroke ")
             || source.contains("do shell script")
             || source.contains("using command down")
-        return hasBlock || (source.contains("tell application") && hasAutomationCommand)
+        if hasBlock || (source.contains("tell application") && hasAutomationCommand) {
+            return true
+        }
+
+        // Single-statement AppleScript has neither a `tell` block nor an
+        // automation verb, so the checks above miss it entirely. Reported live:
+        // `{"task":"Say hello world using AppleScript","content":"display
+        // dialog \"Hello, World!\" with icon note"}` fell through to the
+        // reference check, whose message asks the caller to make `task`
+        // mention the literal — the opposite of the required repair, which is
+        // to drop `content` and let the subagent write the script. The model
+        // then retries forever (`retryable: true`).
+        //
+        // Match on the leading verb only. Searching anywhere would flag
+        // genuine user text that merely discusses automation ("add a note
+        // saying display dialog is deprecated"), and that text is exactly what
+        // literal fields exist to carry.
+        let statementVerbs = [
+            "display dialog", "display notification", "display alert",
+            "activate", "open location", "do shell script", "say ",
+            "set the clipboard", "beep", "delay ", "choose file", "choose folder",
+        ]
+        return statementVerbs.contains { source.hasPrefix($0) }
     }
 
     /// Build the literal store from the optional `content` string and/or the

@@ -37,6 +37,7 @@ struct BuiltinSandboxToolsTests {
         let payload = try successPayload(output)
         let installed = try #require(payload["installed"] as? [String])
         #expect(installed == ["flask", "pytest"])
+        #expect(payload["manager"] as? String == "pip")
         #expect(payload["requested"] == nil)
         #expect(payload["exit_code"] as? Int == 0)
         // First-attempt success — no recovery retry happened.
@@ -64,6 +65,62 @@ struct BuiltinSandboxToolsTests {
     }
 
     @Test @MainActor
+    func sandboxInstall_compactDescriptionSeparatesGuessedAliases() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+        try await withRegisteredSandboxTools(runner: runner) {
+            let full = try #require(
+                ToolRegistry.shared.specs(forTools: ["sandbox_install"]).first
+            )
+            let compact = SystemPromptComposer.compactBootstrapSpec(full)
+            let description = compact.function.description ?? ""
+
+            #expect(description.contains("exact package specifiers"))
+            #expect(description.contains("guessed alternative names separately"))
+            #expect(!description.contains("sandbox_exec"))
+        }
+    }
+
+    @Test @MainActor
+    func sandboxPipInstall_packageResolutionFailureIsNonRetryableAndComplete() async throws {
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [.init(stdout: "", stderr: "", exitCode: 0)],
+            agentResults: [
+                .init(
+                    stdout: "Collecting youtube-dl\n",
+                    stderr:
+                        "ERROR: Could not find a version that satisfies the requirement yt-dl\n"
+                        + "ERROR: No matching distribution found for yt-dl\n",
+                    exitCode: 1
+                )
+            ]
+        )
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_install",
+                argumentsJSON:
+                    #"{"manager":"pip","packages":["youtube-dl","yt-dl"]}"#
+            )
+        }
+
+        let payload = try failurePayload(output)
+        #expect(payload["kind"] as? String == "execution_error")
+        #expect(payload["retryable"] as? Bool == false)
+        #expect(payload["manager"] as? String == "pip")
+        #expect(payload["requested"] as? [String] == ["youtube-dl", "yt-dl"])
+        #expect(payload["retried"] as? Bool == false)
+        #expect(payload["failure_class"] as? String == "package_resolution")
+        #expect(payload["exit_code"] as? Int == 1)
+        let message = payload["message"] as? String ?? ""
+        #expect(message.contains("Collecting youtube-dl\nERROR:"))
+        #expect(message.contains("Do not retry this request unchanged"))
+        #expect(message.contains("try guessed alternatives separately"))
+
+        let calls = await runner.calls
+        #expect(calls.count == 2, "root runtime probe + one install; deterministic failures do not retry")
+    }
+
+    @Test @MainActor
     func sandboxInstall_rejectsOptionInjectionBeforeExec() async throws {
         let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
         let output = try await withRegisteredSandboxTools(runner: runner) {
@@ -78,6 +135,13 @@ struct BuiltinSandboxToolsTests {
         #expect(payload["kind"] as? String == "invalid_args")
         #expect(payload["field"] as? String == "packages")
         #expect((payload["message"] as? String ?? "").contains("starts with `-`"))
+        #expect(payload["manager"] as? String == "pip")
+        #expect(
+            payload["requested"] as? [String]
+                == ["--index-url=https://evil.example", "flask"]
+        )
+        #expect(payload["retried"] as? Bool == false)
+        #expect(payload["failure_class"] as? String == "invalid_specifier")
         #expect(await runner.calls.isEmpty)
     }
 
@@ -111,6 +175,10 @@ struct BuiltinSandboxToolsTests {
         let payload = try failurePayload(output)
         #expect(payload["kind"] as? String == "rejected")
         #expect((payload["message"] as? String ?? "").contains("network access is disabled"))
+        #expect(payload["manager"] as? String == "pip")
+        #expect(payload["requested"] as? [String] == ["flask"])
+        #expect(payload["retried"] as? Bool == false)
+        #expect(payload["failure_class"] as? String == "network_disabled")
         #expect(await runner.calls.isEmpty)
     }
 
@@ -168,17 +236,17 @@ struct BuiltinSandboxToolsTests {
     }
 
     @Test @MainActor
-    func sandboxPipInstall_recoversFromOSError() async throws {
-        // First attempt fails with an OSError (recoverable). The harness
+    func sandboxPipInstall_recoversFromReadTimeout() async throws {
+        // First attempt fails with a transient read timeout. The harness
         // runs `pip cache purge` and retries. Second attempt succeeds.
         // Result envelope carries `retried: true`.
         let runner = MockSandboxToolCommandRunner(
             rootResults: [.init(stdout: "", stderr: "", exitCode: 0)],
             agentResults: [
-                // Attempt 1 — fails with the recoverable OSError signature.
+                // Attempt 1 — fails with the recoverable timeout signature.
                 .init(
                     stdout: "",
-                    stderr: "ERROR: Could not install packages due to an OSError: [Errno 28] No space left on device",
+                    stderr: "urllib3.exceptions.ReadTimeoutError: HTTPSConnectionPool timed out",
                     exitCode: 1
                 ),
                 // Cleanup — pip cache purge returns success.
@@ -223,7 +291,7 @@ struct BuiltinSandboxToolsTests {
                 // Attempt 1 — recoverable failure.
                 .init(
                     stdout: "",
-                    stderr: "ERROR: Could not install packages due to an OSError",
+                    stderr: "urllib3.exceptions.ReadTimeoutError: HTTPSConnectionPool timed out",
                     exitCode: 1
                 )
                 // (No second result needed — cleanup throws before
@@ -248,6 +316,9 @@ struct BuiltinSandboxToolsTests {
         // the failure envelope so callers can branch on it.
         #expect(payload["cleanup_failed"] as? Bool == true)
         #expect(payload["retried"] as? Bool == false)
+        #expect(payload["manager"] as? String == "pip")
+        #expect(payload["requested"] as? [String] == ["flask"])
+        #expect(payload["failure_class"] as? String == "cleanup_failed")
 
         let message = payload["message"] as? String ?? ""
         #expect(message.contains("recovery cleanup also failed"))
@@ -306,6 +377,10 @@ struct BuiltinSandboxToolsTests {
         #expect(ToolEnvelope.isError(output))
         let payload = try failurePayload(output)
         #expect(payload["kind"] as? String == "execution_error")
+        #expect(payload["retryable"] as? Bool == false)
+        #expect(payload["failure_class"] as? String == "execution")
+        #expect(payload["manager"] as? String == "npm")
+        #expect(payload["requested"] as? [String] == ["vite"])
         let message = payload["message"] as? String ?? ""
         #expect(message.contains("exit 127"))
         #expect(message.contains("npm: not found"))
@@ -450,6 +525,8 @@ struct BuiltinSandboxToolsTests {
         // too (not just the success envelope) so a programmatic caller
         // can branch on retry status without parsing prose.
         #expect(payload["retried"] as? Bool == true)
+        #expect(payload["retryable"] as? Bool == true)
+        #expect(payload["failure_class"] as? String == "transient")
 
         let calls = await runner.calls
         // root probe + attempt 1 + cleanup + attempt 2 = 4 (no third attempt).

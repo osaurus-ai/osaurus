@@ -230,6 +230,13 @@ struct ServerSettingsTabContent: View {
             || draftLegacy.modelEvictionPolicy != server.configuration.modelEvictionPolicy
             || draftLegacy.maxRequestBodyBytes != server.configuration.maxRequestBodyBytes
             || draftLegacy.maxPairingBodyBytes != server.configuration.maxPairingBodyBytes
+            // Compiled decode is exported to vmlx via `setenv` at model load
+            // and latched into a process-lifetime constant on first read —
+            // a mid-session flip saves cleanly but cannot take effect until
+            // the app restarts. Without the chip the toggle reads ON while
+            // the engine still runs the old policy.
+            || (draft.performance?.compiledDecode ?? false)
+                != (server.runtimeSettings.performance?.compiledDecode ?? false)
     }
 
     private var hasUnsavedChanges: Bool {
@@ -258,6 +265,13 @@ struct ServerSettingsTabContent: View {
     /// "Restart required" chip in `ServerSettingsActionBar`.
     private var requiresRestart: Bool { pendingRestart && server.isRunning }
 
+    /// `.error`-severity issues block Save. Until now the banner showed the
+    /// error while Save proceeded anyway — which is how a 0 GB disk-cache
+    /// cap (silent self-eviction of every entry) could reach the engine.
+    private var hasBlockingIssues: Bool {
+        validationIssues.contains { $0.severity == .error }
+    }
+
     /// A saved change to settings captured by the loaded container cannot be
     /// applied in place. Surface the exact lifecycle before the user saves:
     /// resident models are unloaded, then lazily reloaded on the next request.
@@ -281,6 +295,7 @@ struct ServerSettingsTabContent: View {
 
                 ServerSettingsActionBar(
                     hasUnsavedChanges: hasUnsavedChanges,
+                    hasBlockingIssues: hasBlockingIssues,
                     requiresRestart: requiresRestart,
                     requiresModelReload: requiresModelReload,
                     saving: saving,

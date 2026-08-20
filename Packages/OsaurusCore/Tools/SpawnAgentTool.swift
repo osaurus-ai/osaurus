@@ -34,7 +34,8 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
             "agent": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "UUID of a spawnable agent. Copy the exact UUID from the configured target list."
+                    "The target spawnable agent: its exact display name OR its UUID, "
+                        + "as shown in the configured target list."
                 ),
             ]),
         ]),
@@ -48,16 +49,33 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
     /// Narrow the request-local schema to the launching agent's currently
     /// runnable agent pool. Execution still enforces the durable allow-list;
     /// this enum is exact identity guidance and provider-side validation.
-    static func constrainedSpec(_ tool: Tool, allowedAgentIDs: [UUID]) -> Tool {
-        let normalized = SpawnableAgentIdentity.normalizedIDs(allowedAgentIDs)
+    ///
+    /// The enum carries BOTH each allow-listed agent's UUID and its display name
+    /// so a strict, enum-enforcing provider accepts either form — small models
+    /// emit the name, not the UUID (issue #2408). `execute` resolves a name back
+    /// to its UUID. Names are appended after the UUIDs and de-duplicated so the
+    /// enum stays byte-stable for the frozen-prefix cache.
+    static func constrainedSpec(
+        _ tool: Tool,
+        allowedAgentIDs: [UUID],
+        allowedAgentNames: [String] = []
+    ) -> Tool {
+        let uuids = SpawnableAgentIdentity.normalizedIDs(allowedAgentIDs)
             .map(\.uuidString)
-        guard !normalized.isEmpty,
+        let uuidSet = Set(uuids)
+        var seenNames = Set<String>()
+        let names = allowedAgentNames.filter { name in
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !uuidSet.contains(trimmed) else { return false }
+            return seenNames.insert(trimmed).inserted
+        }
+        guard !uuids.isEmpty,
             case .object(var root)? = tool.function.parameters,
             case .object(var properties)? = root["properties"],
             case .object(var agent)? = properties["agent"]
         else { return tool }
 
-        agent["enum"] = .array(normalized.map(JSONValue.string))
+        agent["enum"] = .array((uuids + names).map(JSONValue.string))
         properties["agent"] = .object(agent)
         root["properties"] = .object(properties)
         return Tool(
@@ -78,19 +96,40 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
         if let failure = SpawnInputContract.validationFailure(input: input, tool: name) {
             return failure
         }
-        let agentReq = requireString(args, "agent", expected: "a spawnable agent UUID", tool: name)
+        let agentReq = requireString(
+            args, "agent", expected: "a spawnable agent name or UUID", tool: name)
         guard case .value(let rawAgentID) = agentReq else {
             return agentReq.failureEnvelope ?? ""
         }
-        guard let agentID = UUID(uuidString: rawAgentID) else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "`agent` must be an exact UUID from the configured spawnable-agent list.",
-                field: "agent",
-                expected: "UUID",
-                tool: name,
-                retryable: true
+        let agentID: UUID
+        if let parsed = UUID(uuidString: rawAgentID) {
+            agentID = parsed
+        } else {
+            // Small local models reliably echo a spawnable agent's display name
+            // but not its opaque UUID (issue #2408), so `agent` accepts either.
+            // Resolve the name against the launching agent's own allow-list;
+            // authorization stays UUID-exact in the spawn kind downstream.
+            let resolution = await SubagentToolVisibility.resolveSpawnableAgentName(
+                rawAgentID,
+                scope: SubagentScope.current()
             )
+            guard let resolved = resolution.id else {
+                let names = resolution.allowedNames
+                let hint =
+                    names.isEmpty
+                    ? "This agent has no spawnable agents configured."
+                    : "Pass one of these exact agent names (or its UUID): "
+                        + names.map { "\"\($0)\"" }.joined(separator: ", ") + "."
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`agent` did not match a spawnable agent. " + hint,
+                    field: "agent",
+                    expected: "a spawnable agent name or UUID",
+                    tool: name,
+                    retryable: true
+                )
+            }
+            agentID = resolved
         }
 
         // The shared host owns the recursion guard, live feed, permission

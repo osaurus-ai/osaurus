@@ -38,7 +38,9 @@ actor SessionToolStateStore {
     /// counterpart of the static-prefix `cacheHint` match.
     private var lastConversationSend: [String: ConversationFingerprint] = [:]
 
-    private init() {}
+    /// Internal so tests can exercise process-wide invalidation semantics on
+    /// an isolated store without racing unrelated suites using `shared`.
+    init() {}
 
     // MARK: - Conversation reuse accounting (pure helpers)
 
@@ -311,6 +313,27 @@ actor SessionToolStateStore {
         states.removeValue(forKey: sessionId)
         lastSendCacheHint.removeValue(forKey: sessionId)
         lastConversationSend.removeValue(forKey: sessionId)
+    }
+
+    /// Refresh every session's process-wide tool-catalog snapshot without
+    /// discarding state that is independent of the catalog. MCP connections
+    /// can add, remove, or replace schemas while a chat remains open; keeping
+    /// the first-compose tool fields in that case would expose stale contracts
+    /// until the session (or app) is recreated.
+    ///
+    /// Explicit `capabilities_load` selections survive so the next compose can
+    /// resolve their current live schemas. SOUL and frozen user-message memory
+    /// prefixes are unrelated to the tool catalog and remain byte-stable.
+    func invalidateToolCatalog() {
+        for sessionId in Array(states.keys) {
+            guard var entry = states[sessionId] else { continue }
+            entry.initialAlwaysLoadedNames = nil
+            entry.initialToolSpecs = nil
+            entry.frozenManifest = nil
+            states[sessionId] = entry
+        }
+        lastSendCacheHint.removeAll()
+        lastConversationSend.removeAll()
     }
 
     /// Drop every cached session entry. Used when a process-wide signal

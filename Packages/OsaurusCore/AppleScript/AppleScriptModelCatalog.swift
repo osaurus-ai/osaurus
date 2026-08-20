@@ -177,29 +177,63 @@ enum AppleScriptModelCatalog {
     /// installed → the kind denies before any load). Trimmed so a blank
     /// preference is ignored.
     static func resolveInstalledModelId(preferred: String?) -> String? {
+        switch resolveAssignment(preferred: preferred) {
+        case .resolved(let id):
+            return id
+        case .assignedButNotInstalled, .noneInstalled:
+            return nil
+        }
+    }
+
+    /// Outcome of resolving an AppleScript model assignment.
+    ///
+    /// The distinction matters because the three cases need three different
+    /// user-visible answers, and collapsing them to `String?` produced the
+    /// "model assignment doesn't take" report: an explicit assignment that
+    /// could not be honored was silently replaced by the first installed
+    /// curated model, so the run proceeded on a model the user never chose,
+    /// with no error and nothing in the transcript to say so.
+    enum Assignment: Equatable {
+        /// A model to run: either the honored assignment or, when nothing was
+        /// assigned, the curated automatic pick.
+        case resolved(String)
+        /// A model WAS assigned but is not installed. Never substitute here —
+        /// the caller reports the missing id so the user can install it or
+        /// pick another.
+        case assignedButNotInstalled(String)
+        /// Nothing assigned and no curated model installed.
+        case noneInstalled
+    }
+
+    static func resolveAssignment(preferred: String?) -> Assignment {
         let trimmed = preferred?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let trimmed, !trimmed.isEmpty {
             if let match = installedModels().first(where: {
                 $0.id.caseInsensitiveCompare(trimmed) == .orderedSame
             }) {
-                return match.id
+                return .resolved(match.id)
             }
-            // A non-catalog AppleScript bundle (matching the dedicated bundle
-            // naming contract) that is installed on disk also resolves — but
-            // only via an explicit preference, never as the implicit default.
-            if isAppleScriptModel(id: trimmed) {
-                let adHoc = MLXModel(
-                    id: trimmed,
-                    name: trimmed,
-                    description: "",
-                    downloadURL: "https://huggingface.co/\(trimmed)"
-                )
-                if isInstalled(adHoc) { return trimmed }
-            }
+            // Any installed bundle named by an EXPLICIT assignment resolves.
+            // The dedicated naming contract (`isAppleScriptModel`) governs
+            // picker visibility and automatic selection, not what the user is
+            // allowed to assign deliberately — gating explicit assignment on
+            // it silently dropped valid installed models whose repo id simply
+            // did not carry the prefix.
+            let adHoc = MLXModel(
+                id: trimmed,
+                name: trimmed,
+                description: "",
+                downloadURL: "https://huggingface.co/\(trimmed)"
+            )
+            if isInstalled(adHoc) { return .resolved(trimmed) }
+            return .assignedButNotInstalled(trimmed)
         }
         // Automatic selection remains curated-only. Upstream/ad-hoc bundles
         // are available in the visible picker but are never silently selected
         // just because they happen to exist in an external folder.
-        return models.first(where: isInstalled)?.id
+        guard let automatic = models.first(where: isInstalled)?.id else {
+            return .noneInstalled
+        }
+        return .resolved(automatic)
     }
 }

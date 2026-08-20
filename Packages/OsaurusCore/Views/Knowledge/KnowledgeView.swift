@@ -19,6 +19,13 @@ struct KnowledgeView: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var isCreating = false
+    /// Name prefilled into the create sheet by a deep link (e.g. the project
+    /// page's Add Collection shortcut). Cleared when the sheet closes.
+    @State private var creationPrefillName = ""
+    /// Project the created collection should be granted to, from the same
+    /// deep link. Captured into the save closure, so clearing on dismiss
+    /// can't race the async create.
+    @State private var creationGrantProjectId: UUID?
     @State private var editingCollection: KnowledgeCollection?
     @State private var hasAppeared = false
     @State private var successMessage: String?
@@ -141,10 +148,19 @@ struct KnowledgeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
-        .sheet(isPresented: $isCreating) {
+        .sheet(
+            isPresented: $isCreating,
+            onDismiss: {
+                creationPrefillName = ""
+                creationGrantProjectId = nil
+            }
+        ) {
             KnowledgeCollectionEditorSheet(
                 collection: nil,
-                onSave: { name, summary, folderPath, remoteURL in
+                initialName: creationPrefillName,
+                onSave: {
+                    [grantProjectId = creationGrantProjectId]
+                    name, summary, folderPath, remoteURL, includeGlobs, excludeGlobs in
                     isCreating = false
                     if let remoteURL, !remoteURL.isEmpty {
                         showSuccess("Cloning \"\(name)\"…")
@@ -155,6 +171,7 @@ struct KnowledgeView: View {
                                     summary: summary,
                                     remoteURL: remoteURL
                                 )
+                                grantToRequestingProject(created, projectId: grantProjectId)
                                 showSuccess("Cloned \"\(created.name)\", indexing in the background")
                                 grantingCollection = created
                             } catch {
@@ -166,8 +183,11 @@ struct KnowledgeView: View {
                             let created = await knowledgeManager.create(
                                 name: name,
                                 summary: summary,
-                                folderPath: folderPath
+                                folderPath: folderPath,
+                                includeGlobs: includeGlobs,
+                                excludeGlobs: excludeGlobs
                             )
+                            grantToRequestingProject(created, projectId: grantProjectId)
                             showSuccess("Added \"\(created.name)\", indexing in the background")
                             grantingCollection = created
                         }
@@ -179,11 +199,13 @@ struct KnowledgeView: View {
         .sheet(item: $editingCollection) { collection in
             KnowledgeCollectionEditorSheet(
                 collection: collection,
-                onSave: { name, summary, folderPath, _ in
+                onSave: { name, summary, folderPath, _, includeGlobs, excludeGlobs in
                     var updated = collection
                     updated.name = name
                     updated.summary = summary
                     updated.folderPath = folderPath
+                    updated.includeGlobs = includeGlobs
+                    updated.excludeGlobs = excludeGlobs
                     knowledgeManager.update(updated)
                     editingCollection = nil
                     showSuccess("Updated \"\(name)\"")
@@ -284,6 +306,23 @@ struct KnowledgeView: View {
                 hasAppeared = true
             }
             reloadCuration()
+            applyPendingCreateRequest()
+            applyPendingDetailRequest()
+        }
+        // Deep link from the project page's Add Collection shortcut: pop the
+        // create sheet directly instead of landing the user on the tab to
+        // click the same button again. One-shot; also handled in `.onAppear`
+        // for the case where the request is set before this view mounts.
+        .onReceive(ManagementStateManager.shared.$pendingKnowledgeCreate) { pending in
+            if pending != nil { applyPendingCreateRequest() }
+        }
+        .onReceive(ManagementStateManager.shared.$pendingKnowledgeDetailId) { pending in
+            if pending != nil { applyPendingDetailRequest() }
+        }
+        // The deep link can land before the lazily loaded registry has the
+        // collection; retry when collections settle.
+        .onReceive(knowledgeManager.$collections) { _ in
+            applyPendingDetailRequest()
         }
         // Self-healing refresh. The curation list is otherwise driven by
         // notifications + appear/window-key hooks, all of which are unreliable
@@ -299,6 +338,34 @@ struct KnowledgeView: View {
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
             }
         }
+    }
+
+    private func applyPendingDetailRequest() {
+        guard let id = ManagementStateManager.shared.pendingKnowledgeDetailId,
+            let collection = knowledgeManager.collections.first(where: { $0.id == id })
+        else { return }
+        ManagementStateManager.shared.pendingKnowledgeDetailId = nil
+        detailCollection = collection
+    }
+
+    private func applyPendingCreateRequest() {
+        guard let request = ManagementStateManager.shared.pendingKnowledgeCreate else { return }
+        ManagementStateManager.shared.pendingKnowledgeCreate = nil
+        creationPrefillName = request.prefillName
+        creationGrantProjectId = request.grantProjectId
+        isCreating = true
+    }
+
+    /// Grant a freshly created collection to the deep link's project, so the
+    /// user returns to the project page with the new collection already
+    /// checked instead of having to toggle it on themselves.
+    private func grantToRequestingProject(_ collection: KnowledgeCollection, projectId: UUID?) {
+        guard let projectId, var project = ProjectManager.shared.project(for: projectId) else {
+            return
+        }
+        guard !project.knowledgeCollectionIds.contains(collection.id) else { return }
+        project.knowledgeCollectionIds.append(collection.id)
+        ProjectManager.shared.update(project)
     }
 
     // MARK: - Curation
@@ -482,6 +549,7 @@ struct KnowledgeView: View {
 private struct KnowledgeCollectionCard: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var projectManager = ProjectManager.shared
 
     let collection: KnowledgeCollection
     let animationDelay: Double
@@ -589,6 +657,35 @@ private struct KnowledgeCollectionCard: View {
         )
     }
 
+    /// Projects granting this collection to their chats. Purely informational
+    /// — grants are edited on each project's page; the card just surfaces the
+    /// blast radius of disabling or deleting the collection.
+    private var grantingProjects: [Project] {
+        projectManager.projects.filter { $0.knowledgeCollectionIds.contains(collection.id) }
+    }
+
+    @ViewBuilder
+    private var grantingProjectsRow: some View {
+        let projects = grantingProjects
+        if !projects.isEmpty {
+            HStack(spacing: 6) {
+                Image(systemName: "folder")
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.secondaryText)
+                Text(
+                    projects.count == 1
+                        ? String(format: L("Used by project %@"), projects[0].name)
+                        : String(format: L("Used by %lld projects"), projects.count)
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            }
+            .help(L("Projects using this collection: \(projects.map(\.name).joined(separator: ", "))"))
+        }
+    }
+
     private var okfHelp: String {
         switch okfStatus {
         case .conformant:
@@ -662,6 +759,7 @@ private struct KnowledgeCollectionCard: View {
             // Folder path and git remote intentionally omitted — they
             // crowd the card and live in the detail sheet (tap the card).
             grantedAgentsRow
+            grantingProjectsRow
             Button(action: {
                 Task {
                     await refreshOKFStatus()
@@ -793,25 +891,45 @@ private struct KnowledgeCollectionEditorSheet: View {
     let collection: KnowledgeCollection?
     /// `remoteURL` is non-nil only in create mode when the user chose to
     /// clone from a git URL instead of picking a local folder.
-    let onSave: (_ name: String, _ summary: String, _ folderPath: String, _ remoteURL: String?) -> Void
+    let onSave:
+        (
+            _ name: String, _ summary: String, _ folderPath: String, _ remoteURL: String?,
+            _ includeGlobs: [String], _ excludeGlobs: [String]
+        ) -> Void
     let onCancel: () -> Void
 
     @State private var name: String
     @State private var summary: String
     @State private var folderPath: String
     @State private var remoteURL: String = ""
+    @State private var includeGlobs: String
+    @State private var excludeGlobs: String
 
     init(
         collection: KnowledgeCollection?,
-        onSave: @escaping (_ name: String, _ summary: String, _ folderPath: String, _ remoteURL: String?) -> Void,
+        initialName: String = "",
+        onSave: @escaping (
+            _ name: String, _ summary: String, _ folderPath: String, _ remoteURL: String?,
+            _ includeGlobs: [String], _ excludeGlobs: [String]
+        ) -> Void,
         onCancel: @escaping () -> Void
     ) {
         self.collection = collection
         self.onSave = onSave
         self.onCancel = onCancel
-        _name = State(initialValue: collection?.name ?? "")
+        _name = State(initialValue: collection?.name ?? initialName)
         _summary = State(initialValue: collection?.summary ?? "")
         _folderPath = State(initialValue: collection?.folderPath ?? "")
+        _includeGlobs = State(initialValue: (collection?.includeGlobs ?? []).joined(separator: ", "))
+        _excludeGlobs = State(initialValue: (collection?.excludeGlobs ?? []).joined(separator: ", "))
+    }
+
+    /// Split a comma-or-newline separated pattern field into trimmed,
+    /// non-empty patterns.
+    private static func parseGlobs(_ raw: String) -> [String] {
+        raw.split(whereSeparator: { $0 == "," || $0.isNewline })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
     }
 
     private var trimmedRemote: String {
@@ -840,7 +958,7 @@ private struct KnowledgeCollectionEditorSheet: View {
             )
 
             StyledSettingsTextField(
-                label: "Summary",
+                label: "Summary (optional)",
                 text: $summary,
                 placeholder: "What this corpus contains, shown to agents",
                 help: ""
@@ -889,6 +1007,37 @@ private struct KnowledgeCollectionEditorSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
 
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Index filters (optional)", bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                StyledSettingsTextField(
+                    label: "Include",
+                    text: $includeGlobs,
+                    placeholder: "docs/**, *.md",
+                    help: ""
+                )
+                StyledSettingsTextField(
+                    label: "Exclude",
+                    text: $excludeGlobs,
+                    placeholder: "src/**, test/**",
+                    help: ""
+                )
+                Text(
+                    "Junk and .gitignore files are skipped automatically. Most folders need nothing here.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 3) {
+                    globHintRow("Include: index only matching files, e.g. docs/**")
+                    globHintRow("Exclude: skip matching files. Wins over Include.")
+                    globHintRow("* matches inside a folder, ** across folders.")
+                    globHintRow("Editing re-indexes the collection.")
+                }
+            }
+
             // Git sync is temporarily disabled for the initial Knowledge
             // Collections ship — the clone-from-URL entry point is hidden so no
             // remote-backed collection can be created. `onSave` already passes a
@@ -928,7 +1077,9 @@ private struct KnowledgeCollectionEditorSheet: View {
                         name.trimmingCharacters(in: .whitespacesAndNewlines),
                         summary.trimmingCharacters(in: .whitespacesAndNewlines),
                         folderPath.trimmingCharacters(in: .whitespacesAndNewlines),
-                        (collection == nil && !trimmedRemote.isEmpty) ? trimmedRemote : nil
+                        (collection == nil && !trimmedRemote.isEmpty) ? trimmedRemote : nil,
+                        Self.parseGlobs(includeGlobs),
+                        Self.parseGlobs(excludeGlobs)
                     )
                 } label: {
                     Text(collection == nil ? "Add" : "Save", bundle: .module)
@@ -942,6 +1093,17 @@ private struct KnowledgeCollectionEditorSheet: View {
         .frame(width: 460)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
+    }
+
+    /// One bulleted hint line under the index-filter fields.
+    private func globHintRow(_ text: LocalizedStringKey) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("•")
+            Text(text, bundle: .module)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.system(size: 11))
+        .foregroundColor(theme.tertiaryText)
     }
 
     private func chooseFolder() {

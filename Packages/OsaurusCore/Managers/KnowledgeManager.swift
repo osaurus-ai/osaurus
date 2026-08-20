@@ -106,9 +106,21 @@ public final class KnowledgeManager: ObservableObject {
     }
 
     @discardableResult
-    public func create(name: String, summary: String = "", folderPath: String) async -> KnowledgeCollection {
+    public func create(
+        name: String,
+        summary: String = "",
+        folderPath: String,
+        includeGlobs: [String] = [],
+        excludeGlobs: [String] = []
+    ) async -> KnowledgeCollection {
         await ensureLoaded()
-        var collection = KnowledgeCollection(name: name, summary: summary, folderPath: folderPath)
+        var collection = KnowledgeCollection(
+            name: name,
+            summary: summary,
+            folderPath: folderPath,
+            includeGlobs: includeGlobs,
+            excludeGlobs: excludeGlobs
+        )
         // Adopting a folder that is already a git repo: remember its
         // `origin` so the card shows the link and Sync can pull/push.
         // A repo without a remote stays local-only (gitRemoteURL nil).

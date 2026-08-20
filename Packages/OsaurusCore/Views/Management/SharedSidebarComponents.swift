@@ -47,13 +47,22 @@ struct SidebarContainer<Content: View>: View {
     let attachedEdge: Edge?
     /// Top padding for the content (useful for window control clearance)
     let topPadding: CGFloat
+    /// Fixed width of the container. Defaults to the shared constant; callers
+    /// that support a user-resizable rail pass a live width instead.
+    let width: CGFloat
 
     @ViewBuilder let content: () -> Content
     @Environment(\.theme) private var theme
 
-    init(attachedEdge: Edge? = nil, topPadding: CGFloat = 0, @ViewBuilder content: @escaping () -> Content) {
+    init(
+        attachedEdge: Edge? = nil,
+        topPadding: CGFloat = 0,
+        width: CGFloat = SidebarStyle.width,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
         self.attachedEdge = attachedEdge
         self.topPadding = topPadding
+        self.width = width
         self.content = content
     }
 
@@ -62,7 +71,7 @@ struct SidebarContainer<Content: View>: View {
             content()
         }
         .padding(.top, topPadding)
-        .frame(width: SidebarStyle.width, alignment: .top)
+        .frame(width: width, alignment: .top)
         .frame(maxHeight: .infinity, alignment: .top)
         .background { SidebarBackground() }
         .clipShape(containerShape)
@@ -231,6 +240,9 @@ struct SidebarSearchField: View {
     /// Shows a small trailing spinner while an asynchronous search pass
     /// (e.g. the chat sidebar's full-text conversation lookup) is in flight.
     var isSearching: Bool = false
+    /// Draw a subtle border while unfocused too (the project page uses this
+    /// to match its dropdown chrome); the sidebar keeps the borderless look.
+    var showsRestingBorder: Bool = false
 
     @Environment(\.theme) private var theme
 
@@ -300,7 +312,11 @@ struct SidebarSearchField: View {
 
     private var focusBorder: some View {
         RoundedRectangle(cornerRadius: SidebarStyle.searchFieldCornerRadius, style: .continuous)
-            .stroke(isFocused.wrappedValue ? theme.accentColor.opacity(0.3) : .clear, lineWidth: 1)
+            .stroke(
+                isFocused.wrappedValue
+                    ? theme.accentColor.opacity(0.3)
+                    : (showsRestingBorder ? theme.secondaryText.opacity(0.15) : .clear),
+                lineWidth: 1)
     }
 }
 

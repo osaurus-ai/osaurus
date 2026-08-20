@@ -161,6 +161,26 @@ final class PluginRepositoryService: ObservableObject {
         }
     }
 
+    /// Make `plugins` reflect what is installed on disk without requiring the
+    /// Plugins UI to have been opened.
+    ///
+    /// `refresh()` is only ever called from a view (`PluginsView`, onboarding),
+    /// and the auto-refresh timer is tied to that view's lifecycle — so this
+    /// array is populated as a side effect of a human opening a window. The
+    /// agent-facing config tools read it directly, which meant a session where
+    /// nobody visited the Plugins tab reported installed plugins as missing and
+    /// the model could not invoke them.
+    ///
+    /// Local disk only — no repository or network I/O — so it is safe to call
+    /// on every tool read.
+    func ensureInstalledPluginsLoaded() async {
+        if plugins.isEmpty {
+            await loadInstalledPluginsFromDisk()
+        } else {
+            await updateInstalledState()
+        }
+    }
+
     /// Install a plugin by ID
     func install(pluginId: String) async throws {
         try await performInstall(pluginId: pluginId)

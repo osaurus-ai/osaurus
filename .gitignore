@@ -183,3 +183,8 @@ tmp/
 # wa-helper`, but a bare `go build ./...` drops the binary next to its
 # sources).
 helpers/osaurus-wa/osaurus-wa
+.dd-*/
+
+# Copied next to the package so MLX can find it under `swift test`, where
+# Bundle.main is Xcode's xctest rather than the built app.
+**/default.metallib

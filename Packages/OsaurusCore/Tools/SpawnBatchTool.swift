@@ -63,7 +63,8 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                         "target": .object([
                             "type": .string("string"),
                             "description": .string(
-                                "Exact allowed agent UUID or model id for target_type."
+                                "For target_type `agent`: the agent's exact display name or its "
+                                    + "UUID. For `model`: the exact allowed model id."
                             ),
                         ]),
                         "input": .object([
@@ -455,8 +456,22 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
 
     public func execute(argumentsJSON: String) async throws -> String {
         let parsed = Self.parseJobs(argumentsJSON, tool: name)
-        guard case .success(let jobs) = parsed else {
+        guard case .success(let parsedJobs) = parsed else {
             return parsed.failureEnvelope ?? ""
+        }
+        // Map any agent job whose `target` is a display name (not a UUID) onto
+        // the launching agent's allow-listed id before downstream consumers key
+        // on the UUID. Small local models emit the name, not the UUID (#2408).
+        let jobs: [Job]
+        switch await Self.resolveAgentJobNames(
+            parsedJobs,
+            scope: SubagentScope.current(),
+            tool: name
+        ) {
+        case .success(let resolved):
+            jobs = resolved
+        case .failure(let error):
+            return error.envelope
         }
         for job in jobs {
             if let failure = SpawnInputContract.validationFailure(
@@ -1045,6 +1060,64 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         return "No batch jobs were started because target validation failed. \(details)"
     }
 
+    /// Resolve every agent job whose `target` is a display NAME (not a UUID)
+    /// to the launching agent's uniquely-matching spawnable id, so the rest of
+    /// the batch pipeline keeps keying on the UUID. Authorization is unchanged:
+    /// only the launching agent's already-allow-listed agents are matched. A
+    /// name that maps to zero or many targets fails the whole batch with a
+    /// corrective envelope. See issue #2408.
+    static func resolveAgentJobNames(
+        _ jobs: [Job],
+        scope: SubagentScope,
+        tool: String
+    ) async -> Result<[Job], SpawnBatchParseError> {
+        var resolved: [Job] = []
+        resolved.reserveCapacity(jobs.count)
+        for job in jobs {
+            guard job.targetType == .agent, UUID(uuidString: job.target) == nil
+            else {
+                resolved.append(job)
+                continue
+            }
+            let resolution = await SubagentToolVisibility.resolveSpawnableAgentName(
+                job.target,
+                scope: scope
+            )
+            guard let id = resolution.id else {
+                let names = resolution.allowedNames
+                let hint =
+                    names.isEmpty
+                    ? "This agent has no spawnable agents configured."
+                    : "Use one of these exact agent names (or its UUID): "
+                        + names.map { "\"\($0)\"" }.joined(separator: ", ") + "."
+                return .failure(
+                    SpawnBatchParseError(
+                        envelope: ToolEnvelope.failure(
+                            kind: .invalidArgs,
+                            message:
+                                "Agent job '\(job.id)' target '\(job.target)' did not match a "
+                                + "spawnable agent. " + hint,
+                            field: "jobs[\(job.index)].target",
+                            expected: "a spawnable agent name or UUID",
+                            tool: tool,
+                            retryable: true
+                        )
+                    )
+                )
+            }
+            resolved.append(
+                Job(
+                    index: job.index,
+                    id: job.id,
+                    targetType: job.targetType,
+                    target: id.uuidString,
+                    input: job.input
+                )
+            )
+        }
+        return .success(resolved)
+    }
+
     static func parseJobs(
         _ argumentsJSON: String,
         tool: String
@@ -1216,15 +1289,10 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                     )
                 )
             }
-            if targetType == .agent, UUID(uuidString: target) == nil {
-                return .failure(
-                    SpawnBatchParseError.invalidJob(
-                        index: index,
-                        message: "needs an exact agent UUID in `target`",
-                        tool: tool
-                    )
-                )
-            }
+            // A non-UUID agent target is allowed through here: `resolveAgentJobNames`
+            // (run in `execute` with the launching scope) maps a display name to
+            // its allow-listed UUID before any authority/prepare consumer reads it.
+            // See issue #2408.
             jobs.append(
                 Job(
                     index: index,
@@ -2924,6 +2992,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
     static func constrainedSpec(
         _ tool: Tool,
         allowedAgentIDs: [UUID],
+        allowedAgentNames: [String] = [],
         allowedModelIds: [String],
         maxParallel: Int
     ) -> Tool {
@@ -2933,7 +3002,14 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         let models = SubagentConfiguration.normalizedSpawnableModelNames(
             allowedModelIds
         )
-        let targets = Array(Set(agents + models)).sorted()
+        // Agent display names join the union so a strict, enum-enforcing
+        // provider accepts a name for an agent job as well as a UUID (issue
+        // #2408). `resolveAgentJobNames` maps a name back before execution.
+        let agentNames =
+            allowedAgentNames
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let targets = Array(Set(agents + agentNames + models)).sorted()
         guard !targets.isEmpty,
             case .object(var root)? = tool.function.parameters,
             case .object(var properties)? = root["properties"],
@@ -2945,7 +3021,8 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
 
         target["enum"] = .array(targets.map(JSONValue.string))
         target["description"] = .string(
-            "Exact allowed target. Agent UUIDs: \(agents.joined(separator: ", ")). "
+            "Exact allowed target. For an agent, pass its display name or one of these "
+                + "UUIDs: \(agents.joined(separator: ", ")). "
                 + "Models: \(models.joined(separator: ", "))."
         )
         jobProperties["target"] = .object(target)

@@ -474,6 +474,12 @@ public enum ModelMediaCapabilities {
         "smolvlm",
         "nemotron_h_omni",
         "NemotronH_Nano_Omni_Reasoning_V3".lowercased(),
+        // Muse Glimmer's vision tower carries `patch_temporal: 2`, i.e. it
+        // consumes frames in temporal pairs, and the chat template has a
+        // dedicated `<|video|>` placeholder alongside `<|patch|>`. Without this
+        // entry the bundle's own `has_video: true` is overruled here and video
+        // requests are rejected as unsupported.
+        "muse_glimmer",
     ]
 
     private static func buildDescriptor(

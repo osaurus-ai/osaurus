@@ -27,7 +27,7 @@ struct ModelFamilyGuidanceObedienceTests {
         // action half, so the imperative must stay in the family block even
         // though the anti-invention rule itself was deduped into
         // `groundingDirective` (see toolGroundingRuleIsOwnedByGroundingDirective).
-        #expect(guidance?.contains("fetch it yourself") == true)
+        #expect(guidance?.contains("use a listed shell/network tool") == true)
         #expect(guidance?.contains("do not decline") == true)
     }
 
@@ -207,6 +207,15 @@ struct ModelFamilyGuidanceObedienceTests {
             ("default", ModelFamilyGuidance.defaultGuidance),
         ]
         for (label, block) in allBlocks {
+            for privateName in [
+                "sandbox_read_file", "sandbox_search_files", "sandbox_write_file",
+                "sandbox_exec",
+            ] {
+                #expect(
+                    !block.contains(privateName),
+                    "\(label) names private adapter \(privateName)"
+                )
+            }
             #expect(
                 !block.contains("Only call tools that exist in your schema"),
                 "\(label) restates the deduped tool-grounding rule"

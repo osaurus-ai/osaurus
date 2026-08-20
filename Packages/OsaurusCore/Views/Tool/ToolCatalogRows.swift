@@ -198,6 +198,56 @@ struct ToolSectionHeader: View {
     }
 }
 
+/// A source header that keeps large inventories out of the default scan while
+/// preserving a one-click path to every tool.
+struct ToolSectionDisclosureHeader: View {
+    @Environment(\.theme) private var theme
+    let title: String
+    let icon: String
+    let count: Int
+    let isExpanded: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+                    .frame(width: 16)
+
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundColor(theme.primaryText)
+
+                Text("\(count)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(theme.tertiaryBackground))
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            }
+            .contentShape(Rectangle())
+            .padding(.horizontal, 10)
+            .frame(height: 36)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.tertiaryBackground.opacity(0.45))
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel(Text("\(title), \(count) tools", bundle: .module))
+        .accessibilityValue(Text(isExpanded ? "Expanded" : "Collapsed", bundle: .module))
+    }
+}
+
 // MARK: - Show All Tools Button
 
 /// Disclosure control that toggles a capped tool group between its first
@@ -346,47 +396,47 @@ struct RuntimeManagedToolEntryRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            ToolRowIcon(systemName: "terminal", showsWarning: hasMissingSystemPermissions)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    Text(entry.name)
-                        .font(.system(size: 13, weight: .medium, design: .rounded))
-                        .foregroundColor(theme.primaryText)
-
-                    ToolCatalogStatusPill(status: status, detail: availability.displayDetail)
-                }
-
-                Text(entry.description)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(1)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                ToolRowIcon(systemName: "terminal", showsWarning: hasMissingSystemPermissions)
+                toolInfo
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                policyMenu
             }
-            // Expand the info column instead of a trailing Spacer so the row has
-            // one fewer flexible layout child to negotiate per pass.
-            .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(badge)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Capsule().fill(theme.tertiaryBackground))
-                .help(Text("Where this tool comes from", bundle: .module))
-
-            if let info = policyInfo {
-                ToolPolicyMenu(
-                    toolName: entry.name,
-                    info: info,
-                    onChange: onChange
-                )
+            HStack(spacing: 8) {
+                ToolSourceBadge(title: badge)
+                Spacer(minLength: 8)
             }
+            .padding(.leading, 38)
         }
-        .padding(10)
+        .padding(9)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(theme.tertiaryBackground.opacity(0.5))
         )
+    }
+
+    private var toolInfo: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 4) {
+                Text(entry.name)
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                ToolCatalogStatusPill(status: status, detail: availability.displayDetail)
+            }
+            Text(entry.description)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(1)
+        }
+    }
+
+    @ViewBuilder private var policyMenu: some View {
+        if let info = policyInfo {
+            ToolPolicyMenu(toolName: entry.name, info: info, onChange: onChange)
+        }
     }
 }
 
@@ -395,6 +445,7 @@ struct RuntimeManagedToolEntryRow: View {
 struct ToolEntryRow: View {
     @Environment(\.theme) private var theme
     let entry: ToolRegistry.ToolEntry
+    var sourceLabel: String? = nil
     let policyInfo: ToolRegistry.ToolPolicyInfo?
     let availability: ToolAvailability
     var status: ToolCatalogStatus = .ready
@@ -406,24 +457,24 @@ struct ToolEntryRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            ToolRowIcon(systemName: "function", showsWarning: hasMissingSystemPermissions)
-            // Expand the info column instead of a trailing Spacer to drop one
-            // flexible layout child from the row.
-            toolInfo
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            if let info = policyInfo {
-                ToolPolicyMenu(
-                    toolName: entry.name,
-                    info: info,
-                    onChange: onChange
-                )
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                ToolRowIcon(systemName: "function", showsWarning: hasMissingSystemPermissions)
+                toolInfo
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                policyMenu
             }
 
-            ToolEnableToggle(entry: entry, onChange: onChange)
+            HStack(spacing: 8) {
+                if let sourceLabel {
+                    ToolSourceBadge(title: sourceLabel)
+                }
+                Spacer(minLength: 8)
+                ToolEnableToggle(entry: entry, onChange: onChange)
+            }
+            .padding(.leading, 38)
         }
-        .padding(10)
+        .padding(9)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(theme.tertiaryBackground.opacity(0.5))
@@ -443,6 +494,12 @@ struct ToolEntryRow: View {
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
                 .lineLimit(1)
+        }
+    }
+
+    @ViewBuilder private var policyMenu: some View {
+        if let info = policyInfo {
+            ToolPolicyMenu(toolName: entry.name, info: info, onChange: onChange)
         }
     }
 }
@@ -475,41 +532,65 @@ struct RemoteToolRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            ToolRowIcon(systemName: "function", showsWarning: false)
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    Text(displayName)
-                        .font(.system(size: 13, weight: .medium, design: .rounded))
-                        .foregroundColor(theme.primaryText)
-
-                    ToolCatalogStatusPill(status: status, detail: availability.displayDetail)
-                }
-                Text(entry.description)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
-            }
-            // Expand the info column instead of a trailing Spacer to drop one
-            // flexible layout child from the row.
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            if let info = policyInfo {
-                ToolPolicyMenu(
-                    toolName: entry.name,
-                    info: info,
-                    onChange: onChange
-                )
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                ToolRowIcon(systemName: "function", showsWarning: false)
+                toolInfo
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                policyMenu
             }
 
-            ToolEnableToggle(entry: entry, onChange: onChange)
+            HStack(spacing: 8) {
+                ToolSourceBadge(title: providerName)
+                Spacer(minLength: 8)
+                ToolEnableToggle(entry: entry, onChange: onChange)
+            }
+            .padding(.leading, 38)
         }
-        .padding(10)
+        .padding(9)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(theme.tertiaryBackground.opacity(0.5))
         )
+    }
+
+    private var toolInfo: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 4) {
+                Text(displayName)
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                ToolCatalogStatusPill(status: status, detail: availability.displayDetail)
+            }
+            Text(entry.description)
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .lineLimit(1)
+        }
+    }
+
+    @ViewBuilder private var policyMenu: some View {
+        if let info = policyInfo {
+            ToolPolicyMenu(toolName: entry.name, info: info, onChange: onChange)
+        }
+    }
+}
+
+struct ToolSourceBadge: View {
+    @Environment(\.theme) private var theme
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(theme.secondaryText)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(theme.tertiaryBackground))
+            .help(Text("Where this tool comes from", bundle: .module))
     }
 }
 

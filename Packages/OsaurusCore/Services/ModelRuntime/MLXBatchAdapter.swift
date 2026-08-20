@@ -986,6 +986,46 @@ struct MLXBatchAdapter {
         let hasPositiveReasoningEffort =
             normalizedReasoningEffort != nil && !directRailReasoningEffort
 
+        // The effort value the template-kwarg branches below are allowed to
+        // send. Bundles stamp their accepted set
+        // (`jang_config.reasoning.supported_reasoning_efforts`; Qwen3.8 =
+        // low/medium/xhigh and its template raise_exceptions on anything
+        // else, so forwarding the app ladder verbatim hard-fails the render):
+        //   • declared levels → the request snapped onto them (high→xhigh,
+        //     max→xhigh, minimal→low; ties round up)
+        //   • declared block without a level set → nil, the kwarg is omitted
+        //     (the model has no effort control; enable_thinking still applies)
+        //   • no declaration → the request unchanged (legacy behavior)
+        // Unknown strings pass through un-snapped so the template's own
+        // typed raise (which names the valid set) surfaces instead of a
+        // silent coerce. DSV4/Hy3 keep their dedicated normalizers above
+        // this mechanism and never consult it.
+        let dispatchReasoningEffort: String? = {
+            guard hasPositiveReasoningEffort, let requested = normalizedReasoningEffort else {
+                return nil
+            }
+            switch DeclaredReasoningEffort.control(forModelId: modelName) {
+            case .levels(let levels, let defaultLevel):
+                return DeclaredReasoningEffort.snapped(
+                    requested, ontoLevels: levels, defaultLevel: defaultLevel) ?? requested
+            case .noEffortControl:
+                return nil
+            case nil:
+                return requested
+            }
+        }()
+
+        // `preserve_thinking` (Qwen3.8+): whether historical `<think>` blocks
+        // stay in the rendered prompt. Sent only on an explicit option AND a
+        // bundle that declares the kwarg — the template default (true) stays
+        // authoritative otherwise. Note for cache work: flipping this changes
+        // every historical assistant message, so it re-keys the entire prefix.
+        if let preserveThinking = generation.modelOptions["preserveThinking"]?.boolValue,
+            DeclaredReasoningEffort.preserveThinking(forModelId: modelName) != nil
+        {
+            context["preserve_thinking"] = preserveThinking
+        }
+
         if DSV4ReasoningProfile.matches(modelId: modelName) {
             guard normalizedReasoningEffort != nil || disableThinking != nil else {
                 return context
@@ -1039,10 +1079,40 @@ struct MLXBatchAdapter {
             return context
         }
 
+        // Muse Glimmer reads `reasoning_strength`, not `reasoning_effort`, and
+        // has no thinking tags at all — so `enable_thinking` has nothing to
+        // switch and `reasoning_effort` is never looked at. Sending either one
+        // leaves the template on its own `high` default, which is why the
+        // reasoning card appeared to do nothing: every turn reasoned at high
+        // regardless of the setting.
+        //
+        // The model's level set is low / medium / high / **xhigh** — four, not
+        // three — and `xhigh` is the one intended for coding and agentic work.
+        // "Off" maps to `low` rather than dropping the line, because there is
+        // no way to disable reasoning on this family; omitting it would silently
+        // restore `high`, i.e. the opposite of what the user asked for.
+        if ModelFamilyNames.isMuseGlimmerFamily(modelName) {
+            let strength: String
+            if disableThinking == true {
+                strength = "low"
+            } else {
+                switch normalizedReasoningEffort?.lowercased() {
+                case "none", "off", "minimal", "no_think", "low": strength = "low"
+                case "medium": strength = "medium"
+                case "xhigh", "max", "highest": strength = "xhigh"
+                case "high": strength = "high"
+                case .some(let other) where !other.isEmpty: strength = other
+                default: strength = "high"
+                }
+            }
+            context["reasoning_strength"] = strength
+            return context
+        }
+
         if let disableThinking {
             context["enable_thinking"] = !disableThinking
-            if !disableThinking, let normalizedReasoningEffort {
-                context["reasoning_effort"] = normalizedReasoningEffort
+            if !disableThinking, let dispatchReasoningEffort {
+                context["reasoning_effort"] = dispatchReasoningEffort
             }
             return context
         }
@@ -1051,9 +1121,11 @@ struct MLXBatchAdapter {
                 context["enable_thinking"] = false
                 return context
             }
-            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            if hasPositiveReasoningEffort {
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = normalizedReasoningEffort
+                if let dispatchReasoningEffort {
+                    context["reasoning_effort"] = dispatchReasoningEffort
+                }
             } else {
                 context["enable_thinking"] = false
             }
@@ -1064,9 +1136,11 @@ struct MLXBatchAdapter {
                 context["enable_thinking"] = false
                 return context
             }
-            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            if hasPositiveReasoningEffort {
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = normalizedReasoningEffort
+                if let dispatchReasoningEffort {
+                    context["reasoning_effort"] = dispatchReasoningEffort
+                }
             } else {
                 context["enable_thinking"] = false
             }
@@ -1077,9 +1151,11 @@ struct MLXBatchAdapter {
                 context["enable_thinking"] = false
                 return context
             }
-            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            if hasPositiveReasoningEffort {
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = normalizedReasoningEffort
+                if let dispatchReasoningEffort {
+                    context["reasoning_effort"] = dispatchReasoningEffort
+                }
             } else {
                 context["enable_thinking"] = false
             }
@@ -1090,9 +1166,11 @@ struct MLXBatchAdapter {
                 context["enable_thinking"] = false
                 return context
             }
-            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            if hasPositiveReasoningEffort {
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = normalizedReasoningEffort
+                if let dispatchReasoningEffort {
+                    context["reasoning_effort"] = dispatchReasoningEffort
+                }
             } else {
                 context["enable_thinking"] = false
             }
@@ -1130,9 +1208,11 @@ struct MLXBatchAdapter {
             }
             if let disableThinking {
                 context["enable_thinking"] = !disableThinking
-            } else if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            } else if hasPositiveReasoningEffort {
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = normalizedReasoningEffort
+                if let dispatchReasoningEffort {
+                    context["reasoning_effort"] = dispatchReasoningEffort
+                }
             } else if normalizedReasoningEffort != nil {
                 context["enable_thinking"] = false
             }
@@ -1143,17 +1223,21 @@ struct MLXBatchAdapter {
                 context["enable_thinking"] = false
                 return context
             }
-            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            if hasPositiveReasoningEffort {
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = normalizedReasoningEffort
+                if let dispatchReasoningEffort {
+                    context["reasoning_effort"] = dispatchReasoningEffort
+                }
             } else {
                 context["enable_thinking"] = false
             }
             return context
         }
 
-        if let normalizedReasoningEffort, !directRailReasoningEffort {
-            context["reasoning_effort"] = normalizedReasoningEffort
+        if hasPositiveReasoningEffort {
+            if let dispatchReasoningEffort {
+                context["reasoning_effort"] = dispatchReasoningEffort
+            }
             context["enable_thinking"] = true
         }
         if directRailReasoningEffort {
@@ -1189,6 +1273,29 @@ struct MLXBatchAdapter {
         case .auto, .none:
             return nil
         }
+    }
+
+    /// Reasoning-token ceiling for wire-API requests, sized so the visible
+    /// answer always gets a share of `max_tokens`. Applies only to
+    /// `.httpAPI` (the reported failure surface): the chat UI renders
+    /// reasoning itself and owns its own limits, plugins/P2P/autonomous runs
+    /// keep today's behavior until they opt in. Nil below 129 tokens — a cap
+    /// that small can't be meaningfully split, and forcing an instant think
+    /// close there would rewrite the model's output more than it helps.
+    /// The reserve grows with the cap (a third, clamped to 160…2048) so tiny
+    /// caps still answer and huge caps still bound the runaway-think failure
+    /// without cramping deep reasoning.
+    static func apiReasoningAnswerBudget(
+        requestSource: RequestSource,
+        maxTokens: Int
+    ) -> Int? {
+        guard requestSource == .httpAPI else { return nil }
+        let answerReserve = min(max(maxTokens / 3, 160), 2048)
+        let budget = maxTokens - answerReserve
+        // Below this the ceiling would fire almost immediately and rewrite
+        // the output more than it rescues; tiny caps keep today's behavior.
+        guard budget >= 64 else { return nil }
+        return budget
     }
 
     private static func isDirectRailReasoningEffort(_ value: String?) -> Bool {
@@ -1439,6 +1546,21 @@ struct MLXBatchAdapter {
                 ?? runtime.concurrency.prefillStepSize,
             modelName: modelName
         )
+        // OpenAI-compatible API clients read `content` only —
+        // `reasoning_content` is invisible to them — so a think block that
+        // spends the whole finite max_tokens returns an empty answer ("AI
+        // generation did not return any text", the live Anarlog report).
+        // Reserve answer room by asking vmlx for a per-request reasoning
+        // ceiling; the engine resolves it through the same
+        // `ReasoningBudget.arm` path as the env override (primed vs
+        // self-opening, round-tripped close token) and stays inert for
+        // non-reasoning bundles whose vocab has no think tags.
+        if let budget = Self.apiReasoningAnswerBudget(
+            requestSource: generation.requestSource,
+            maxTokens: effective.maxTokens
+        ) {
+            mlxParams.requestedReasoningBudgetTokens = budget
+        }
         // Block-diffusion speed/quality budget (DiffusionGemma): server
         // setting, default 16 (seeded by ServerRuntimeSettingsStore).
         // nil = bundle's generation_config.json value. Ignored by
@@ -1663,6 +1785,7 @@ struct MLXBatchAdapter {
         guard !hasMedia else { return nil }
 
         var probeStableBoundaries: [[Int]] = []
+        var probeScopeSalt: String?
         let prefix = await warmupSendInvariantPrefixTokens(chat: chat) { probeText in
             var probeChat = chat
             probeChat.append(.user(probeText))
@@ -1677,6 +1800,7 @@ struct MLXBatchAdapter {
                 !prepared.hasMediaContent
             else { return nil }
             probeStableBoundaries.append(prepared.cacheStablePrefixTokenCounts)
+            probeScopeSalt = prepared.cacheScopeSalt
             return prepared.text.tokenIds
                 ?? MLXCacheIOLock.withSerializedMLXCacheIO {
                     prepared.text.tokens.asArray(Int.self)
@@ -1690,9 +1814,17 @@ struct MLXBatchAdapter {
             return nil
         }
 
-        // The scope salt is derived from additionalContext alone, so the
-        // probe render's salt matches the real send's.
-        let scopeSalt = MLXLMCommon.cacheScopeSalt(from: additionalContext)
+        // The scope salt must come from the PREPARED probe render, not from
+        // the raw request context: `prepare()` merges the bundle-declared
+        // reasoning defaults (generation_config / chat-config, e.g. DSV4-0731's
+        // enable_thinking=true + effort=low) into additionalContext BEFORE
+        // salting. Recomputing from the raw context here salted the warm-up
+        // as scope=nil while every real send salted as its merged scope —
+        // a different disk content hash over identical token bytes, so the
+        // send could never restore what the warm-up stored and re-prefilled
+        // the same prefix again (the "first turn prefills 2-3x" symptom,
+        // every model family with a declared reasoning default).
+        let scopeSalt = probeScopeSalt ?? MLXLMCommon.cacheScopeSalt(from: additionalContext)
         let stableBoundaries =
             probeStableBoundaries.count == 2
             ? agreedWarmupStableBoundaries(
@@ -2103,7 +2235,7 @@ struct MLXBatchAdapter {
         context.keys.sorted().compactMap { key in
             guard
                 key == "enable_thinking" || key == "reasoning_effort" || key == "tool_choice"
-                    || key == "tool_choice_name"
+                    || key == "tool_choice_name" || key == "preserve_thinking"
             else {
                 return nil
             }

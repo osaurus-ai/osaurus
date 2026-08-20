@@ -34,6 +34,7 @@ struct HeaderActionButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovered = hovering
@@ -50,6 +51,17 @@ extension View {
     func liquidGlassCircle() -> some View {
         if #available(macOS 26.0, *) {
             self.glassEffect(.regular.interactive(), in: .circle)
+        } else {
+            self
+        }
+    }
+
+    /// Capsule variant of `liquidGlassCircle` for pill-shaped toolbar
+    /// buttons that carry a text label next to their icon.
+    @ViewBuilder
+    func liquidGlassCapsule() -> some View {
+        if #available(macOS 26.0, *) {
+            self.glassEffect(.regular.interactive(), in: .capsule)
         } else {
             self
         }
@@ -117,6 +129,7 @@ struct PinButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovered = hovering
@@ -520,6 +533,7 @@ struct AgentPill: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .localizedHelp(isRemoteActive ? "Remote agent settings" : "Edit agent settings")
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
@@ -549,6 +563,7 @@ struct AgentPill: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovered = hovering

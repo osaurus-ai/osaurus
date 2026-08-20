@@ -345,11 +345,23 @@ public final class BackgroundTaskManager: ObservableObject {
     /// attached to a window are excluded (the window-scan side of the check
     /// already counts those).
     func isAnyDetachedTaskStreamingLocalModel(excludingSession excluded: ChatSession? = nil) -> Bool {
-        backgroundTasks.values.contains { state in
+        detachedTaskStreamingLocalModel(excludingSession: excluded) != nil
+    }
+
+    /// The detached task currently holding the single local-model slot, if any.
+    ///
+    /// Same predicate as ``isAnyDetachedTaskStreamingLocalModel(excludingSession:)``,
+    /// but returning the id instead of a bool, because a caller that has just
+    /// refused the user's send needs to be able to *act* on that run — stop it,
+    /// or reopen its window. Answering only "yes, something is running" is what
+    /// left the busy alert telling people to wait for a window that no longer
+    /// exists.
+    func detachedTaskStreamingLocalModel(excludingSession excluded: ChatSession? = nil) -> UUID? {
+        backgroundTasks.values.first { state in
             guard let session = state.chatSession, session !== excluded else { return false }
             guard !isTaskAttachedToWindow(state.id) else { return false }
             return session.isStreamingLocalModel
-        }
+        }?.id
     }
 
     /// Adopt a live in-flight `ChatSession` into the registry so its
@@ -671,7 +683,9 @@ public final class BackgroundTaskManager: ObservableObject {
             // it as part of the conversation history.
             state.chatSession?.appendInterruptMessage(trimmed)
         }
-        state.chatSession?.stop()
+        // Programmatic redirect, not the user's Stop button: the interrupt
+        // turn itself is the transcript record, so no cancelled marker.
+        state.chatSession?.stop(preservesCancelledMarker: false)
     }
 
     /// Emit a draft event to the originating plugin.

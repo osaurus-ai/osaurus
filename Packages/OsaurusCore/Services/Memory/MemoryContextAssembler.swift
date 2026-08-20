@@ -38,29 +38,41 @@ public actor MemoryContextAssembler {
     public static func assembleContext(
         agentId: String,
         config: MemoryConfiguration,
-        query: String = ""
+        query: String = "",
+        budgetTokensOverride: Int? = nil,
+        includeGlobalBlocks: Bool = true
     ) async -> String {
-        await shared.assemble(agentId: agentId, config: config, query: query)
+        await shared.assemble(
+            agentId: agentId, config: config, query: query,
+            budgetTokensOverride: budgetTokensOverride, includeGlobalBlocks: includeGlobalBlocks)
     }
 
     private func assemble(
         agentId: String,
         config: MemoryConfiguration,
-        query: String
+        query: String,
+        budgetTokensOverride: Int? = nil,
+        includeGlobalBlocks: Bool = true
     ) async -> String {
         guard config.enabled else { return "" }
         guard await MemoryDatabase.waitForSharedOpen(timeoutSeconds: 0.5) else { return "" }
 
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cacheKey = "\(agentId)|\(trimmedQuery.prefix(120))"
+        // The override lands in the key so a different remaining budget (the
+        // project lane sizes itself to the agent lane's leftovers) can't
+        // serve a stale differently-sized block.
+        let budgetKeyPart = budgetTokensOverride.map { "|b\($0)" } ?? ""
+        let cacheKey = "\(agentId)|\(trimmedQuery.prefix(120))\(budgetKeyPart)"
         if let cached = cache[cacheKey], Date().timeIntervalSince(cached.timestamp) < Self.cacheTTL {
             return cached.context
         }
 
         let identity = (try? MemoryDatabase.shared.loadIdentity()) ?? Identity()
 
-        // Identity overrides are always included (and tiny).
-        let overridesBlock = MemoryPlanner.assembleIdentityOverridesOnly()
+        // Identity overrides are always included (and tiny). They are
+        // global, so the secondary project lane (which suppresses the date
+        // line) skips them rather than repeating the agent lane's copy.
+        let overridesBlock = includeGlobalBlocks ? MemoryPlanner.assembleIdentityOverridesOnly() : ""
 
         // Pull a small entity list for the gate from recent episodes AND
         // pinned facts. Facts are the store's densest entity source ("The
@@ -96,12 +108,14 @@ public actor MemoryContextAssembler {
                 section: section,
                 agentId: agentId,
                 query: trimmedQuery,
-                budgetTokens: config.memoryBudgetTokens
+                budgetTokens: budgetTokensOverride ?? config.memoryBudgetTokens
             )
 
         var blocks: [String] = []
-        let today = Self.naturalOutputFormatter.string(from: Date())
-        blocks.append("Current date: \(today)")
+        if includeGlobalBlocks {
+            let today = Self.naturalOutputFormatter.string(from: Date())
+            blocks.append("Current date: \(today)")
+        }
         if !overridesBlock.isEmpty { blocks.append(overridesBlock) }
         if !dynamic.isEmpty { blocks.append(dynamic) }
 

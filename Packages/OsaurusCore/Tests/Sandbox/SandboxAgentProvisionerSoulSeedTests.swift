@@ -45,12 +45,35 @@ struct SandboxAgentProvisionerSoulSeedTests {
     /// are sanctioned — without that signal the agent has no reason to
     /// touch the file. Pin the tool names so a future "trim everything"
     /// refactor cannot silently strip the editing affordance.
-    @Test("seed body sanctions edits via sandbox_write_file")
+    @Test("seed body sanctions edits via public workspace tools")
     func seedBody_sanctionsEdits() {
         let body = SandboxAgentProvisioner.soulSeedBody
-        #expect(body.contains("sandbox_write_file"))
-        // `sandbox_edit_file` was folded into `sandbox_write_file`.
-        #expect(!body.contains("sandbox_edit_file"))
+        #expect(body.contains("file_write"))
+        #expect(body.contains("file_edit"))
+        #expect(!body.contains("sandbox_write_file"))
+    }
+
+    @Test("legacy generated edit instructions normalize without rewriting arbitrary notes")
+    func legacySeedVocabulary_normalizesAtRenderTime() {
+        let legacy = """
+            # SOUL
+
+            This file is your space to record stable preferences and patterns you
+            learn about working with the user. It persists across sessions. You
+            can edit it freely with sandbox_write_file (it writes whole files and
+            edits in place).
+            """
+        let rendered = SystemPromptTemplates.soulSection(legacy)
+
+        #expect(rendered.contains("file_write"))
+        #expect(rendered.contains("file_edit"))
+        #expect(!rendered.contains("sandbox_write_file"))
+        #expect(rendered.contains("Shell programs and Python/Node libraries are not capabilities"))
+
+        let userAuthored = SystemPromptTemplates.soulSection(
+            "- Archived note: sandbox_write_file was the old internal adapter."
+        )
+        #expect(userAuthored.contains("sandbox_write_file"))
     }
 
     /// The seed stays identity-only: the detailed what-goes / what-does-not-go

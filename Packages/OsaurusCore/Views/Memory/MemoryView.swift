@@ -65,6 +65,10 @@ struct MemoryView: View {
     @State var processingStats = ProcessingStats()
     @State private var dbSizeBytes: Int64 = 0
     @State private var agentMemoryCounts: [(agent: Agent, count: Int)] = []
+    /// Shared project-memory namespaces with content. `name` is nil for an
+    /// orphan (project deleted but its purge never completed) so the row
+    /// can offer cleanup instead of hiding rows the user can't account for.
+    @State private var projectMemoryCounts: [(namespaceKey: String, name: String?, count: Int)] = []
     @State private var defaultAgentPinned: [PinnedFact] = []
     @State private var defaultAgentEpisodes: [Episode] = []
     @State var pendingSignals = PendingSignalsSummary()
@@ -118,7 +122,9 @@ struct MemoryView: View {
     @State private var isLoading = true
     @State private var isRefreshing = false
     @State private var isSyncing = false
-    @State private var isDistilling = false
+    // Internal (not private) so the MemoryView+Diagnostics extension can
+    // drive the same "Distill pending" action from the pending-signals row.
+    @State var isDistilling = false
     @State private var isConsolidating = false
     @State private var showIdentityEditor = false
     @State private var showAddOverride = false
@@ -218,6 +224,7 @@ struct MemoryView: View {
                 managementState.memorySubTabRequest = nil
             }
             loadData(staleAfter: Self.memoryDataFreshWindow)
+            applyPendingProjectPreview()
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
@@ -226,6 +233,11 @@ struct MemoryView: View {
             guard let requested = newValue, let tab = MemoryTab(rawValue: requested) else { return }
             selectedTab = tab
             managementState.memorySubTabRequest = nil
+        }
+        // Deep link from a project page's memory section: jump to the Agents
+        // subtab and open that project's shared-memory preview.
+        .onChange(of: managementState.pendingMemoryProjectPreview) { _, _ in
+            applyPendingProjectPreview()
         }
         .sheet(isPresented: $showIdentityEditor) {
             IdentityEditSheet(
@@ -280,7 +292,10 @@ struct MemoryView: View {
                 selection: $selectedTab,
                 counts: [
                     .memories: totalPinned + totalEpisodes,
-                    .agents: agentMemoryCounts.count,
+                    // The tab hosts both the agent and project memory cards,
+                    // so its count covers every row shown inside it — a lone
+                    // project namespace must not read as "Agents (0)".
+                    .agents: agentMemoryCounts.count + projectMemoryCounts.count,
                 ],
                 badges: [.diagnostics: pendingSignals.totalSignals]
             )
@@ -337,6 +352,9 @@ struct MemoryView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 agentsSection
+                if !projectMemoryCounts.isEmpty {
+                    projectsSection
+                }
             }
             .padding(24)
         }
@@ -415,20 +433,7 @@ struct MemoryView: View {
                 isDistilling ? L("Distilling...") : L("Distill pending"),
                 icon: "wand.and.stars"
             ) {
-                guard !isDistilling else { return }
-                isDistilling = true
-                Task.detached {
-                    // `force: true` — user explicitly asked, so the
-                    // coordinator's residency gate is bypassed. Chat-
-                    // idle wait still applies per-distill so a live
-                    // chat doesn't get its tok/sec halved.
-                    await MemoryService.shared.syncNow(force: true)
-                    await MainActor.run {
-                        isDistilling = false
-                        loadData()
-                        showToast(L("Pending distillation complete"))
-                    }
-                }
+                runDistillPending()
             }
             .disabled(isDistilling || !config.enabled)
 
@@ -699,6 +704,133 @@ struct MemoryView: View {
                         )
                     }
                 }
+            }
+        }
+    }
+
+    // MARK: - Projects Section
+
+    /// Shared project memory: what each project's chats have contributed to
+    /// its `project-<uuid>` namespace. Read-only apart from Forget — grants
+    /// and membership are managed on the project pages; this surface exists
+    /// so project memory stays inspectable and deletable like agent memory.
+    private var projectsSection: some View {
+        MemorySectionCard(title: L("Projects"), icon: "folder") {
+            VStack(spacing: 0) {
+                ForEach(Array(projectMemoryCounts.enumerated()), id: \.element.namespaceKey) {
+                    index, entry in
+                    if index > 0 {
+                        Divider().opacity(0.5)
+                    }
+                    MemoryProjectRow(
+                        name: entry.name,
+                        count: entry.count,
+                        onPreviewContext: {
+                            // Read stored rows directly instead of going through
+                            // `assembleContext`: the assembler's relevance gate
+                            // returns `.none` for an empty query, which made this
+                            // preview always come back blank even with memories
+                            // present. Chat injection is unaffected (it passes the
+                            // user's message as the query).
+                            Task.detached {
+                                let text = Self.projectNamespacePreview(entry.namespaceKey)
+                                await MainActor.run {
+                                    contextPreviewItem = ContextPreviewItem(text: text)
+                                }
+                            }
+                        },
+                        onForget: {
+                            forgetProjectNamespace(entry.namespaceKey)
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    /// Force-drain every pending signal. Shared by the Identity tab's
+    /// "Distill pending" button and the Diagnostics pending-signals row.
+    /// Internal so the MemoryView+Diagnostics extension can call it.
+    func runDistillPending() {
+        guard !isDistilling else { return }
+        isDistilling = true
+        Task.detached {
+            // `force: true` — user explicitly asked, so the
+            // coordinator's residency gate is bypassed. Chat-
+            // idle wait still applies per-distill so a live
+            // chat doesn't get its tok/sec halved.
+            await MemoryService.shared.syncNow(force: true)
+            await MainActor.run {
+                isDistilling = false
+                loadData()
+                showToast(L("Pending distillation complete"))
+            }
+        }
+    }
+
+    /// Everything stored under a project namespace, formatted like the
+    /// "## Shared project memory" block the composer injects. Reads the
+    /// rows directly (no relevance gate, no vector search) so the preview
+    /// always reflects what's on disk. Blocking DB reads — call off main.
+    /// Consume a one-shot deep link to a project's shared memory: switch to
+    /// the Agents subtab (where the project rows live) and open its preview.
+    private func applyPendingProjectPreview() {
+        guard let key = managementState.pendingMemoryProjectPreview else { return }
+        managementState.pendingMemoryProjectPreview = nil
+        selectedTab = .agents
+        Task.detached {
+            let text = Self.projectNamespacePreview(key)
+            await MainActor.run { contextPreviewItem = ContextPreviewItem(text: text) }
+        }
+    }
+
+    private nonisolated static func projectNamespacePreview(_ namespaceKey: String) -> String {
+        let facts = (try? MemoryDatabase.shared.loadPinnedFacts(agentId: namespaceKey, limit: 50)) ?? []
+        let episodes =
+            (try? MemoryDatabase.shared.loadEpisodes(agentId: namespaceKey, days: 3650, limit: 50)) ?? []
+
+        var blocks: [String] = []
+        if !facts.isEmpty {
+            blocks.append(
+                "## Things I remember\n" + facts.map { "- \($0.content)" }.joined(separator: "\n"))
+        }
+        if !episodes.isEmpty {
+            let lines = episodes.map { ep in
+                "- [\(String(ep.conversationAt.prefix(10)))] \(ep.summary)"
+            }
+            blocks.append("## What we discussed before\n" + lines.joined(separator: "\n"))
+        }
+        // Raw turns mirrored on write (immediate memory) — shown so the
+        // project's shared memory is inspectable before distillation runs.
+        let transcripts =
+            (try? MemoryDatabase.shared.loadTranscript(agentId: namespaceKey, days: 3650, limit: 30))
+            ?? []
+        if !transcripts.isEmpty {
+            let lines = transcripts.prefix(30).map { turn -> String in
+                let text = turn.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                let clipped = text.count > 200 ? String(text.prefix(200)) + "…" : text
+                return "- [\(turn.role)] \(clipped)"
+            }
+            blocks.append("## Recent project notes\n" + lines.joined(separator: "\n"))
+        }
+        guard !blocks.isEmpty else {
+            return L("(No memory context assembled — memory may be empty or disabled)")
+        }
+        return "## Shared project memory\n\n" + blocks.joined(separator: "\n\n")
+    }
+
+    /// Purge one project namespace (rows + vector index + cache) and
+    /// refresh. Same path project deletion uses, so no second way to be
+    /// wrong.
+    private func forgetProjectNamespace(_ namespaceKey: String) {
+        Task {
+            try? MemoryDatabase.shared.deleteNamespaceData(agentId: namespaceKey)
+            await MemorySearchService.shared.purgeNamespaceStorage(agentId: namespaceKey)
+            await MemoryContextAssembler.shared.invalidateCache(agentId: namespaceKey)
+            await MainActor.run {
+                projectMemoryCounts.removeAll { $0.namespaceKey == namespaceKey }
+                showToast(L("Project memory cleared"))
+                refreshData()
             }
         }
     }
@@ -1004,7 +1136,9 @@ struct MemoryView: View {
             }
             loadedSize = db.databaseSizeBytes()
 
-            let agentEntries = (try? db.agentIdsWithPinnedFacts()) ?? []
+            // Episodes + pinned facts, so episode-only agents (nothing
+            // pinned yet) still get a row in the Agents card.
+            let agentEntries = (try? db.agentNamespaceCounts()) ?? []
 
             let agents = await MainActor.run { agentManager.agents }
             // Duplicate-tolerant: two agent files can share an id, and
@@ -1020,6 +1154,18 @@ struct MemoryView: View {
                 else { return nil }
                 return (agent: agent, count: pair.count)
             }
+
+            let projectEntries = (try? db.projectNamespaceCounts()) ?? []
+            let resolvedProjectCounts: [(namespaceKey: String, name: String?, count: Int)] =
+                await MainActor.run {
+                    projectEntries.map { pair in
+                        let name = MemoryNamespace(key: pair.namespaceKey).flatMap { ns -> String? in
+                            guard case .project(let id) = ns else { return nil }
+                            return ProjectManager.shared.project(for: id)?.name
+                        }
+                        return (pair.namespaceKey, name, pair.count)
+                    }
+                }
 
             let defaultId = Agent.defaultId.uuidString
             let loadedDefaultPinned = (try? db.loadPinnedFacts(agentId: defaultId, limit: 100)) ?? []
@@ -1042,6 +1188,7 @@ struct MemoryView: View {
                 processingStats = loadedStats
                 dbSizeBytes = loadedSize
                 agentMemoryCounts = resolvedCounts
+                projectMemoryCounts = resolvedProjectCounts
                 defaultAgentPinned = loadedDefaultPinned
                 defaultAgentEpisodes = loadedDefaultEpisodes
                 pendingSignals = loadedPending

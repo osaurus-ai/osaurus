@@ -166,6 +166,10 @@ final class NativeMarkdownView: NSView {
     /// Called after the attributed string is set and height can be measured.
     var onHeightChanged: (() -> Void)?
 
+    /// Fired when an inline image (e.g. a generated image) is clicked, carrying
+    /// its decoded bitmap so the owner can open the full-screen preview.
+    var onImagePreview: ((NSImage) -> Void)?
+
     // MARK: Init
 
     override init(frame: NSRect) {
@@ -1058,7 +1062,9 @@ final class NativeMarkdownView: NSView {
                 if let existing = existingEntry?.view as? NSImageView {
                     iv = existing
                 } else {
-                    iv = MarkdownSegmentImageView()
+                    let segImageView = MarkdownSegmentImageView()
+                    segImageView.onPreview = { [weak self] img in self?.onImagePreview?(img) }
+                    iv = segImageView
                     iv.translatesAutoresizingMaskIntoConstraints = false
                     iv.imageScaling = .scaleProportionallyUpOrDown
                     iv.imageAlignment = .alignLeft

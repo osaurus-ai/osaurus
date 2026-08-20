@@ -101,6 +101,11 @@ public enum OsaurusPaths {
         root().appendingPathComponent("remote-agents", isDirectory: true)
     }
 
+    /// Projects directory (one JSON file per project)
+    public static func projects() -> URL {
+        root().appendingPathComponent("projects", isDirectory: true)
+    }
+
     /// Themes directory
     public static func themes() -> URL {
         root().appendingPathComponent("themes", isDirectory: true)

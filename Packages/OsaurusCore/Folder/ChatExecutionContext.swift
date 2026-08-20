@@ -296,6 +296,13 @@ public enum ChatExecutionContext {
     /// Module-internal so out-of-module callers cannot rebind the boundary.
     @TaskLocal static var knowledgeGrantAgentIdOverride: UUID? = nil
 
+    /// The project the active chat session belongs to, when any. Bound for
+    /// the whole turn by `ChatView`. Knowledge tools union the project's
+    /// collections into the agent's grant scope so project knowledge is
+    /// reachable from every chat in the project regardless of which agent
+    /// runs it.
+    @TaskLocal public static var currentProjectId: UUID? = nil
+
     /// The agent identity knowledge tools use for grant / curator-role
     /// resolution: the subagent override when a spawned worker is running, else
     /// the normal `currentAgentId`.

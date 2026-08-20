@@ -103,7 +103,8 @@ public struct SystemPromptComposer: Sendable {
         frozenToolSpecs: [Tool]? = nil,
         frozenManifest: String? = nil,
         frozenSoul: String? = nil,
-        trace: TTFTTrace? = nil
+        trace: TTFTTrace? = nil,
+        projectId: UUID? = nil
     ) async -> ComposedContext {
         await composeChatContext(
             ComposeRequest(
@@ -119,7 +120,8 @@ public struct SystemPromptComposer: Sendable {
                 frozenToolSpecs: frozenToolSpecs,
                 frozenManifest: frozenManifest,
                 frozenSoul: frozenSoul,
-                trace: trace
+                trace: trace,
+                projectId: projectId
             )
         )
     }
@@ -144,7 +146,8 @@ public struct SystemPromptComposer: Sendable {
             agentId: request.agentId,
             requestToolsDisabled: request.toolsDisabled,
             modelOverride: request.model,
-            modelTypeOverride: request.modelType
+            modelTypeOverride: request.modelType,
+            projectId: request.projectId
         )
         let composer = forChat(
             snapshot: snapshot,
@@ -329,12 +332,126 @@ public struct SystemPromptComposer: Sendable {
         trace: TTFTTrace?
     ) async -> String? {
         let window = ContextSizeResolver.resolve(modelId: snapshot.model)
-        let memoryOff = snapshot.memoryDisabled || window.sizeClass.disablesMemory
-        guard !memoryOff else { return nil }
+        // Tiny-context models can't spare room for memory at all — hard skip
+        // for both lanes, regardless of project sharing.
+        guard !window.sizeClass.disablesMemory else { return nil }
         trace?.mark("memory_start")
-        let section = await assembleMemorySection(agentId: agentId.uuidString, query: query)
+        // The agent's own memory lane still honors the agent's toggle. The
+        // project lane (below) is assembled even when the agent has memory
+        // off: every chat in a project recalls the project's shared memory.
+        // `appendProjectMemory` enforces the global memory switch.
+        let section =
+            snapshot.memoryDisabled
+            ? nil
+            : await assembleMemorySection(agentId: agentId.uuidString, query: query)
+        let merged = await appendProjectMemory(
+            to: section, projectId: snapshot.projectId, query: query)
         trace?.mark("memory_done")
-        return section
+        return merged
+    }
+
+    /// Second recall lane for project chats: assemble the `project:<id>`
+    /// namespace and append it under its own header. Non-project chats
+    /// (`projectId == nil`) return `agentSection` untouched — the agent
+    /// memory pipeline is byte-identical with or without this feature.
+    ///
+    /// Budgeting is agent-first: the project lane gets whatever the agent
+    /// lane left of the per-message budget, floored at a quarter of it so
+    /// a memory-heavy agent can't starve project recall entirely. Combined
+    /// output therefore never exceeds ~1.25x the configured budget.
+    private static func appendProjectMemory(
+        to agentSection: String?,
+        projectId: UUID?,
+        query: String
+    ) async -> String? {
+        guard let projectId else { return agentSection }
+        let config = MemoryConfigurationStore.load()
+        guard config.enabled else { return agentSection }
+
+        let namespaceKey = MemoryNamespace.project(projectId).key
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let budget = config.memoryBudgetTokens
+        let agentTokens = (agentSection?.count ?? 0) / MemoryConfiguration.charsPerToken
+        let projectBudget = max(budget / 4, budget - agentTokens)
+
+        // Curated lane: distilled episodes / pinned facts (may be empty
+        // until the background distillation has run).
+        let curated = await MemoryContextAssembler.assembleContext(
+            agentId: namespaceKey,
+            config: config,
+            query: trimmedQuery,
+            budgetTokensOverride: projectBudget,
+            includeGlobalBlocks: false
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Immediate lane: raw transcript turns mirrored on write, so a fact
+        // stated seconds ago is recallable before any distillation. Only
+        // meaningful with a query to retrieve against. Deduped against the
+        // curated lane so a fact that's already been distilled isn't echoed.
+        let curatedTokens = curated.split(separator: "\n").map {
+            TextSimilarity.tokenize(String($0).trimmingCharacters(in: .whitespaces))
+        }
+        var transcriptLines: [String] = []
+        if !trimmedQuery.isEmpty {
+            let hits = await MemorySearchService.shared.searchTranscript(
+                query: trimmedQuery, agentId: namespaceKey, topK: 4
+            )
+            for hit in hits {
+                let text = hit.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard text.count > 3 else { continue }
+                let clipped = text.count > 220 ? String(text.prefix(220)) + "…" : text
+                let tokens = TextSimilarity.tokenize(clipped)
+                let alreadyCurated = curatedTokens.contains {
+                    TextSimilarity.jaccardTokenized($0, tokens) > 0.85
+                }
+                if !alreadyCurated { transcriptLines.append("- \(clipped)") }
+            }
+        }
+
+        var parts: [String] = []
+        if !curated.isEmpty { parts.append(curated) }
+        if !transcriptLines.isEmpty {
+            parts.append("## Recent project notes\n" + transcriptLines.joined(separator: "\n"))
+        }
+        let trimmed = parts.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return agentSection }
+
+        // Dedupe against the agent lane. Exact match catches the same
+        // agent's dual-written distillates (literal copies); the Jaccard
+        // pass additionally drops near-identical phrasings of the same
+        // fact distilled from different sessions. The 0.85 threshold is
+        // deliberately much stricter than the 0.6 the pinned-fact store
+        // uses: a fact from ANOTHER agent that merely resembles one of
+        // this agent's lines is real information and must survive —
+        // only virtually-verbatim repeats are suppressed.
+        let agentLineTexts = (agentSection ?? "").split(separator: "\n").map {
+            $0.trimmingCharacters(in: .whitespaces)
+        }.filter { !$0.isEmpty }
+        let agentLines = Set(agentLineTexts)
+        let agentLineTokens = agentLineTexts.map { TextSimilarity.tokenize($0) }
+        let freshLines = trimmed.split(separator: "\n").filter { line in
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.isEmpty || t.hasPrefix("#") { return true }
+            if agentLines.contains(t) { return false }
+            let tokens = TextSimilarity.tokenize(t)
+            return !agentLineTokens.contains {
+                TextSimilarity.jaccardTokenized($0, tokens) > 0.85
+            }
+        }
+        // Headers survive the filter unconditionally, so require at least
+        // one real content line before paying for the block at all.
+        let hasContent = freshLines.contains { line in
+            let t = line.trimmingCharacters(in: .whitespaces)
+            return !t.isEmpty && !t.hasPrefix("#")
+        }
+        guard hasContent else { return agentSection }
+        let fresh = freshLines.joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fresh.isEmpty else { return agentSection }
+
+        let projectBlock = "## Shared project memory\n\n\(fresh)"
+        guard let agentSection, !agentSection.isEmpty else { return projectBlock }
+        return agentSection + "\n\n" + projectBlock
     }
 
     // MARK: - SOUL Assembly
@@ -871,6 +988,9 @@ public struct SystemPromptComposer: Sendable {
                             "## Working directory\n**Path:** \(home)\n"
                             + "This run is isolated in the VM. Host folders are unavailable. "
                             + "Use paths relative to this directory. "
+                            + "Osaurus capability ids are separate from sandbox programs and libraries: "
+                            + "check programs/libraries with shell_run, and install exact missing package "
+                            + "names with sandbox_install. "
                             + "Use the workspace tools to complete requested work now; "
                             + "do not only describe or promise it. "
                             + "After creating or changing runnable code, run an available "
@@ -1059,7 +1179,9 @@ public struct SystemPromptComposer: Sendable {
                 )
             )
             let snapshotText = Self.renderSchemaSnapshot(
-                agentId: agentId, allowOpen: allowBlockingDBOpen)
+                agentId: agentId,
+                allowOpen: allowBlockingDBOpen
+            )
             if !snapshotText.isEmpty {
                 agentDBSchemaSection = snapshotText
             }
@@ -1296,7 +1418,8 @@ public struct SystemPromptComposer: Sendable {
                         // Curator line only when the proposal tool actually
                         // resolved — mirrors the section's own schema gate.
                         curator: !resolvedNames.isDisjoint(
-                            with: Self.knowledgeCuratorToolNames)
+                            with: Self.knowledgeCuratorToolNames
+                        )
                     )
                 )
             )
@@ -2875,6 +2998,13 @@ public struct SystemPromptComposer: Sendable {
             .filter { $0 != snapshot.agentId }
         let allowedModelIds =
             spawnTargets?.runnableModelIds ?? configuredModelIds
+        // Display names for the allow-listed agents, in `allowedAgentIDs` order.
+        // Threaded into the schema enums so a strict, enum-enforcing provider
+        // accepts a name as well as a UUID (issue #2408). `constrainedSpec`
+        // sorts/normalizes, so the resolved order here need not be canonical.
+        let allowedAgentNames = allowedAgentIDs.compactMap {
+            AgentManager.shared.agent(for: $0)?.name
+        }
 
         if let spawnAgent = byName[SubagentCapabilityRegistry.spawnAgentToolName] {
             if spawnTargets != nil, allowedAgentIDs.isEmpty {
@@ -2883,7 +3013,8 @@ public struct SystemPromptComposer: Sendable {
                 byName[SubagentCapabilityRegistry.spawnAgentToolName] =
                     SpawnAgentTool.constrainedSpec(
                         spawnAgent,
-                        allowedAgentIDs: allowedAgentIDs
+                        allowedAgentIDs: allowedAgentIDs,
+                        allowedAgentNames: allowedAgentNames
                     )
             }
         }
@@ -2916,6 +3047,7 @@ public struct SystemPromptComposer: Sendable {
                     SpawnBatchTool.constrainedSpec(
                         spawnBatch,
                         allowedAgentIDs: allowedAgentIDs,
+                        allowedAgentNames: allowedAgentNames,
                         allowedModelIds: allowedModelIds,
                         maxParallel: maxParallel
                     )
@@ -2929,7 +3061,8 @@ public struct SystemPromptComposer: Sendable {
         let hasExecutionWorkspace =
             executionMode.usesHostFolderTools || executionMode.usesSandboxTools
         if snapshot.agentId != Agent.defaultId || hasExecutionWorkspace {
-            var allowed = additionalToolNames
+            var allowed =
+                additionalToolNames
                 .union(visibleSandboxControlPlane)
             if hasExecutionWorkspace {
                 add(
@@ -2981,15 +3114,6 @@ public struct SystemPromptComposer: Sendable {
             allowed.insert("get_current_time")
             byName = byName.filter { allowed.contains($0.key) }
 
-            // The implementation keeps its full argument compatibility, while
-            // ordinary chat publishes only the common five-tool contract.
-            // Explicit manual/session loads retain the full schema.
-            let explicitlyFull = additionalToolNames.union(snapshot.manualToolNames ?? [])
-            for name in ToolRegistry.coreWorkspaceToolNames
-            where !explicitlyFull.contains(name) {
-                guard let full = byName[name] else { continue }
-                byName[name] = compactWorkspaceSpec(full)
-            }
         }
 
         // Request-scoped sandbox authorization is fail-closed. Direct manual
@@ -3017,6 +3141,21 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
+        // Workspace tools always use the stable public compact contract.
+        // Apply this after every request gate and ablation so a legacy/manual
+        // selection or a schema-less backend alias cannot erase supported
+        // public arguments from the final model request.
+        for name in ToolRegistry.coreWorkspaceToolNames {
+            guard let full = byName[name] else { continue }
+            byName[name] = compactWorkspaceSpec(
+                full,
+                executionMode: executionMode,
+                backgroundProcessesEnabled:
+                    executionMode.usesSandboxTools
+                    && snapshot.autonomousConfig?.backgroundProcessEnabled == true
+            )
+        }
+
         let resolved = canonicalToolOrder(Array(byName.values))
 
         // Debug aid for the delegation tool surfacing: confirms whether the
@@ -3032,30 +3171,72 @@ public struct SystemPromptComposer: Sendable {
         return resolved
     }
 
-    private static func compactWorkspaceSpec(_ tool: Tool) -> Tool {
+    private static func compactWorkspaceSpec(
+        _ tool: Tool,
+        executionMode: ExecutionMode,
+        backgroundProcessesEnabled: Bool
+    ) -> Tool {
         let description: String
-        let properties: [String: JSONValue]
+        var properties: [String: JSONValue]
         let required: [String]
         switch tool.function.name {
         case "file_read":
-            description = "Read a file or list a directory in the working folder. Text lines use `N|` display prefixes."
+            if executionMode.usesSandboxTools, executionMode.hostReadContext == nil {
+                description =
+                    "Read UTF-8 text or list a directory in the VM working folder. "
+                    + "For binary PDF/Word/PowerPoint/XLSX files, use sandbox shell/code extraction."
+            } else if executionMode.usesSandboxTools {
+                description =
+                    "Read/list by path: trusted-folder documents extract PDF/Word/PowerPoint text "
+                    + "and preview XLSX; `/workspace/...` VM paths are raw text only."
+            } else {
+                description =
+                    "Read a file or list a directory. Directly extracts text from PDF, Word, and "
+                    + "PowerPoint and previews XLSX—call this on the document; do not unzip it manually."
+            }
             properties = [
                 "path": .object([
                     "type": .string("string"),
                     "description": .string("Relative file or directory path"),
                 ]),
+                "max_depth": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional directory listing depth (default 3)"),
+                ]),
+                "sheet_name": .object([
+                    "type": .string("string"),
+                    "description": .string("Optional XLSX worksheet name"),
+                ]),
                 "start_line": .object([
                     "type": .string("integer"),
-                    "description": .string("Optional first line, 1-indexed"),
+                    "description": .string("Optional first line or XLSX row, 1-indexed"),
                 ]),
                 "end_line": .object([
                     "type": .string("integer"),
-                    "description": .string("Optional last line, inclusive"),
+                    "description": .string("Optional last line or XLSX row, inclusive"),
+                ]),
+                "tail_lines": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional last N lines instead of a range"),
+                ]),
+                "max_chars": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional returned-character cap"),
+                ]),
+                "max_rows": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional XLSX rows per sheet (max 50)"),
+                ]),
+                "max_columns": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional XLSX columns per row (max 30)"),
                 ]),
             ]
             required = ["path"]
         case "file_write":
-            description = "Create, replace, or append a UTF-8 file. To preserve existing bytes, choose append and send only new content."
+            description =
+                "Create, replace, append, or dry-run a UTF-8 file. To preserve existing bytes, "
+                + "choose append and send only new content."
             properties = [
                 "path": .object([
                     "type": .string("string"),
@@ -3073,10 +3254,16 @@ public struct SystemPromptComposer: Sendable {
                     "enum": .array([.string("overwrite"), .string("append")]),
                     "description": .string("Default overwrite; append adds content without replacing the file"),
                 ]),
+                "dry_run": .object([
+                    "type": .string("boolean"),
+                    "description": .string("Preview without writing (host paths only)"),
+                ]),
             ]
             required = ["path", "content"]
         case "file_edit":
-            description = "Replace one exact, unique text occurrence. For additive changes, use file_write append."
+            description =
+                "Replace one exact, unique text occurrence, optionally as a dry run. "
+                + "For additive changes, use file_write append."
             properties = [
                 "path": .object([
                     "type": .string("string"),
@@ -3090,10 +3277,14 @@ public struct SystemPromptComposer: Sendable {
                     "type": .string("string"),
                     "description": .string("Replacement text"),
                 ]),
+                "dry_run": .object([
+                    "type": .string("boolean"),
+                    "description": .string("Preview without editing (host paths only)"),
+                ]),
             ]
             required = ["path", "old_string", "new_string"]
         case "file_search":
-            description = "Search file contents or names in the working folder."
+            description = "Search file contents or names with optional path, file filter, and result limit."
             properties = [
                 "pattern": .object([
                     "type": .string("string"),
@@ -3108,16 +3299,38 @@ public struct SystemPromptComposer: Sendable {
                     "enum": .array([.string("content"), .string("files")]),
                     "description": .string("Default content; files searches names"),
                 ]),
+                "file_pattern": .object([
+                    "type": .string("string"),
+                    "description": .string("Optional filename glob for content search"),
+                ]),
+                "max_results": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional result cap (default 50)"),
+                ]),
             ]
             required = ["pattern"]
         case "shell_run":
-            description = "Run a build, test, git, process, network, or filesystem-mutation command in the working folder. Requires approval."
+            description =
+                "Run a build, test, git, process, network, package-manager, or filesystem command "
+                + "in the working folder. Requires approval; omit timeout to run until completion."
             properties = [
                 "command": .object([
                     "type": .string("string"),
                     "description": .string("Shell command; do not `cd` to the working folder first"),
-                ])
+                ]),
+                "timeout": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional idle-output timeout in seconds (1-3600)"),
+                ]),
             ]
+            if backgroundProcessesEnabled {
+                properties["background"] = .object([
+                    "type": .string("boolean"),
+                    "description": .string(
+                        "VM only: run a server/watcher as a tracked background job"
+                    ),
+                ])
+            }
             required = ["command"]
         default:
             return tool
@@ -3311,7 +3524,8 @@ public struct SystemPromptComposer: Sendable {
     /// when `applescript` is actually exposed in the frozen tool schema.
     static func appleScriptWorkingAppContext(appName: String?) -> String? {
         guard let appName else { return nil }
-        let app = appName
+        let app =
+            appName
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !app.isEmpty else { return nil }

@@ -57,6 +57,18 @@ final class ChatWindowState: ObservableObject {
 
     @Published var showSidebar: Bool = false
 
+    /// True while the content area shows a project detail page instead of
+    /// the chat surface. Set by `ChatView`; read by the toolbar item views
+    /// so chat-specific chrome (agent pill, window pin) hides with it.
+    @Published var isProjectPageVisible: Bool = false
+
+    /// True when the current chat was entered FROM its project's detail page
+    /// (as opposed to the sidebar's Chats tab). The toolbar's back-to-project
+    /// button uses this only to pick its icon: a back chevron when returning
+    /// retraces the user's path, a folder when the project page would be new
+    /// navigation. Set alongside `loadSession`/`startNewChat` by `ChatView`.
+    @Published var enteredChatFromProjectPage: Bool = false
+
     /// Drives the "a local model is already running in another window" alert
     /// raised when the user tries to start a second local generation. Only one
     /// local generation can run at a time across windows; the alert is
@@ -249,6 +261,16 @@ final class ChatWindowState: ObservableObject {
         selectedDiscoveredAgent = nil
         selectedDiscoveredAgentProviderId = nil
         selectedRelayAgent = nil
+        // Persist BEFORE stop(), exactly like switchAgent/startNewChat do:
+        // stop() on a mid-prepare cancel takes the draft-restore rollback,
+        // which REMOVES the just-sent user turn to put its text back in the
+        // composer — but this window is being destroyed, so the restored
+        // draft dies with it and the close callback's later save() finds
+        // empty turns and bails. Verified live: closing during model load
+        // silently lost the user's message with no persisted trace. Saving
+        // first keeps the message; for a mid-stream close the post-cleanup
+        // save then overwrites this snapshot with the cancel-stamped turns.
+        if !session.turns.isEmpty { session.save() }
         // Shut the warm-up controller BEFORE stop(): stop() on an idle session
         // runs completeRunCleanup(), whose run-completed hook would otherwise
         // schedule a fresh warm-up for a session that is being torn down.
@@ -268,12 +290,20 @@ final class ChatWindowState: ObservableObject {
     func switchAgent(to newAgentId: UUID) {
         TTSService.shared.stop()
         if !session.turns.isEmpty { session.save() }
+        // Switching agents starts a fresh chat, and `reset`/`installFreshSession`
+        // both clear `projectId`. Preserve project membership across the switch:
+        // cross-agent work *inside* a project is the point, so switching agents
+        // from a project chat must keep the new chat in that project rather than
+        // silently dropping it (the project pill would vanish and the chat would
+        // stop sharing the project's instructions, knowledge, and memory).
+        let inheritedProjectId = session.projectId
         adoptAgent(newAgentId)
         if detachRunningSessionIfNeeded() {
             installFreshSession(agentId: newAgentId)
         } else {
             session.reset(for: newAgentId)
         }
+        session.projectId = inheritedProjectId
         refreshSessions()
         refreshSandboxChanges()
     }
@@ -463,8 +493,13 @@ final class ChatWindowState: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
     }
 
-    func refreshTheme() {
-        let newTheme = Self.loadTheme(for: agentId)
+    /// `freshAgent` lets callers that already hold the up-to-date agent (e.g.
+    /// the `applyAgentsUpdate` sink, which runs during `@Published`'s `willSet`
+    /// while `AgentManager.shared.agents` still holds the OLD array) resolve the
+    /// theme from that fresh value instead of re-reading the stale singleton —
+    /// otherwise the window's theme trails a per-agent theme change by one.
+    func refreshTheme(freshAgent: Agent? = nil) {
+        let newTheme = Self.loadTheme(for: agentId, freshAgent: freshAgent)
         let oldConfig = theme.customThemeConfig
         let newConfig = newTheme.customThemeConfig
         // Skip only if the full config is identical (not just the ID) and the
@@ -641,7 +676,10 @@ final class ChatWindowState: ObservableObject {
         session.invalidateTokenCache(preservingPromptShapeBaseline: true)
 
         if newActive.themeId != oldActive.themeId {
-            refreshTheme()
+            // Resolve from `newActive`: the singleton's `agents` is still the old
+            // array during this `willSet` sink, so re-reading it would apply the
+            // previous theme (a one-change lag).
+            refreshTheme(freshAgent: newActive)
         }
     }
 
@@ -673,8 +711,13 @@ final class ChatWindowState: ObservableObject {
         RemoteProviderManager.shared.removeProvider(id: providerId)
     }
 
-    private static func loadTheme(for agentId: UUID) -> ThemeProtocol {
-        if let themeId = AgentManager.shared.themeId(for: agentId),
+    private static func loadTheme(for agentId: UUID, freshAgent: Agent? = nil) -> ThemeProtocol {
+        // Prefer an explicitly-supplied fresh agent over the singleton, which can
+        // still be mid-update (see `refreshTheme(freshAgent:)`). The Default agent
+        // always uses the global theme, matching `AgentManager.themeId(for:)`.
+        let agent = freshAgent ?? AgentManager.shared.agent(for: agentId)
+        if let agent, agent.id != Agent.defaultId,
+            let themeId = agent.themeId,
             let custom = ThemeManager.shared.installedThemes.first(where: { $0.metadata.id == themeId })
         {
             return CustomizableTheme(config: custom)

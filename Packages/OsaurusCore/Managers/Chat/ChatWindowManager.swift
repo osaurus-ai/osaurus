@@ -911,9 +911,12 @@ private struct ChatFullScreenHeaderView: View {
         ZStack {
             HStack(spacing: 8) {
                 ChatToolbarSidebarView(windowState: windowState)
+                // Full-screen header has no traffic lights, so only the toggle
+                // precedes this item.
+                ChatToolbarBackView(windowState: windowState, leadingChromeWidth: 76)
                 Spacer()
                 ChatToolbarActionView(windowState: windowState)
-                ChatToolbarPinView(windowState: windowState)
+                ChatToolbarTrailingView(windowState: windowState)
             }
             ChatToolbarAgentView(windowState: windowState)
         }
@@ -941,8 +944,11 @@ private final class ChatPanel: NSPanel {
 @MainActor
 private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     fileprivate static let sidebarItem = NSToolbarItem.Identifier("ChatToolbar.sidebar")
+    fileprivate static let backItem = NSToolbarItem.Identifier("ChatToolbar.back")
     fileprivate static let agentItem = NSToolbarItem.Identifier("ChatToolbar.agent")
     fileprivate static let actionItem = NSToolbarItem.Identifier("ChatToolbar.action")
+    // The trailing item; hosts the pin (chat) or the settings gear
+    // (project page). Named `pin` for backward identity continuity.
     fileprivate static let pinItem = NSToolbarItem.Identifier("ChatToolbar.pin")
 
     /// Layout: sidebar on the leading edge, agent pill centered (via the
@@ -951,8 +957,13 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     /// Any stale identifiers AppKit may have persisted in user defaults
     /// fall through to `default: nil` in `itemForItemIdentifier`, which
     /// renders them as no-ops rather than crashing.
+    // The trailing slot is a SINGLE item that shows the pin (chat) or the
+    // settings gear (project page) — they're mutually exclusive. Keeping
+    // them as two items left whichever one was hidden as an empty toolbar
+    // item that AppKit still reserved spacing for, so every chat had a dead
+    // gap at the toolbar's right edge.
     private static let itemIdentifiers: [NSToolbarItem.Identifier] = [
-        sidebarItem, .flexibleSpace, agentItem, .flexibleSpace, actionItem, pinItem,
+        sidebarItem, backItem, .flexibleSpace, agentItem, .flexibleSpace, actionItem, pinItem,
     ]
 
     private weak var windowState: ChatWindowState?
@@ -985,6 +996,13 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
                     ChatToolbarSidebarView(windowState: windowState)
             )
 
+        case Self.backItem:
+            return makeHostingItem(
+                identifier: itemIdentifier,
+                rootView:
+                    ChatToolbarBackView(windowState: windowState)
+            )
+
         case Self.agentItem:
             return makeHostingItem(
                 identifier: itemIdentifier,
@@ -1003,7 +1021,7 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
             return makeHostingItem(
                 identifier: itemIdentifier,
                 rootView:
-                    ChatToolbarPinView(windowState: windowState)
+                    ChatToolbarTrailingView(windowState: windowState)
             )
 
         default:
@@ -1055,6 +1073,16 @@ private struct ChatToolbarAgentView: View {
     @State private var openPickerTrigger: Int = 0
 
     var body: some View {
+        // The agent pill switches the CHAT's agent; on the project page it
+        // is meaningless (projects group chats across agents) and hides.
+        if windowState.isProjectPageVisible {
+            EmptyView()
+        } else {
+            agentPill
+        }
+    }
+
+    private var agentPill: some View {
         AgentPill(
             agents: windowState.agents,
             activeAgentId: windowState.agentId,
@@ -1121,10 +1149,129 @@ private struct ChatToolbarAgentView: View {
 
 extension Notification.Name {
     static let chatToolbarSelectDiscoveredAgent = Notification.Name("chatToolbarSelectDiscoveredAgent")
+    /// Posted by the toolbar's back button to reopen the current chat's
+    /// project page in the window identified by `userInfo["windowId"]`.
+    static let chatToolbarBackToProject = Notification.Name("chatToolbarBackToProject")
     static let chatToolbarSelectRelayAgent = Notification.Name("chatToolbarSelectRelayAgent")
     /// Posted by the `/agent` slash command to pop open the toolbar's agent
     /// picker for the window identified in `userInfo["windowId"]`.
     static let chatToolbarOpenAgentPicker = Notification.Name("chatToolbarOpenAgentPicker")
+    /// Posted by `ChatSessionsManager` when a session's project membership
+    /// changes (or a whole project is deleted), so open chat windows update
+    /// their live `ChatSession.projectId` — the value each turn's compose
+    /// reads for project instructions and knowledge grants. userInfo carries
+    /// either `sessionId` + `projectId` (single move) or `clearedProjectId`
+    /// (project deleted).
+    static let chatSessionProjectDidChange = Notification.Name("chatSessionProjectDidChange")
+}
+
+/// Back button beside the sidebar toggle: shown while the current chat
+/// belongs to a project (and the project page itself is not up); returns to
+/// that project's detail page. Split into outer/inner views for the same
+/// session-replacement reason as `ChatToolbarActionView` below.
+private struct ChatToolbarBackView: View {
+    @ObservedObject var windowState: ChatWindowState
+    /// Width of the chrome that precedes this item on the leading edge
+    /// (traffic lights + sidebar toggle in the NSToolbar; just the toggle in
+    /// the full-screen header). Subtracted from the live sidebar width to land
+    /// the button at the CONTENT area's top-left, whatever the sidebar's
+    /// user-chosen width.
+    var leadingChromeWidth: CGFloat = 136
+
+    var body: some View {
+        ChatToolbarBackContent(
+            windowState: windowState, session: windowState.session,
+            leadingChromeWidth: leadingChromeWidth)
+    }
+}
+
+private struct ChatToolbarBackContent: View {
+    @ObservedObject var windowState: ChatWindowState
+    @ObservedObject var session: ChatSession
+    var leadingChromeWidth: CGFloat = 136
+    @ObservedObject private var projectManager = ProjectManager.shared
+    /// The sidebar's user-chosen width, shared with the resizable sidebar via
+    /// the same defaults key so the pill tracks the content edge as it moves.
+    @AppStorage("chatSidebarWidth") private var storedSidebarWidth: Double = 240
+
+    @State private var isHovered = false
+
+    /// Leading inset that keeps the pill at the content area's left edge:
+    /// the (clamped) sidebar width minus the chrome that precedes this item.
+    private var sidebarOpenInset: CGFloat {
+        let clamped = min(max(storedSidebarWidth, 260), 460)
+        return max(0, CGFloat(clamped) - leadingChromeWidth)
+    }
+
+    var body: some View {
+        if !windowState.isProjectPageVisible,
+            let projectId = session.projectId,
+            let project = projectManager.project(for: projectId)
+        {
+            Button(action: {
+                NotificationCenter.default.post(
+                    name: .chatToolbarBackToProject,
+                    object: nil,
+                    userInfo: ["windowId": windowState.windowId]
+                )
+            }) {
+                HStack(spacing: 5) {
+                    // A chevron retraces the user's path when they came from
+                    // the project page; a folder signals new navigation when
+                    // the chat was opened straight from the Chats tab.
+                    Image(systemName: windowState.enteredChatFromProjectPage ? "chevron.left" : "folder")
+                        .font(.system(size: 12, weight: .medium))
+                    Text(project.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        // Hug the name. A `.frame(maxWidth:180, alignment:.leading)`
+                        // expanded to the full 180 whenever there was room,
+                        // leaving a dead gap between a short name and the
+                        // capsule's trailing edge. `fixedSize` sizes the pill to
+                        // the text; `lineLimit(1)` keeps a very long name on one
+                        // line.
+                        .fixedSize(horizontal: true, vertical: false)
+                    // Folder mode has no back chevron, so a trailing
+                    // chevron.right signals the pill navigates somewhere.
+                    if !windowState.enteredChatFromProjectPage {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .opacity(0.7)
+                    }
+                }
+                .foregroundColor(isHovered ? windowState.theme.accentColor : windowState.theme.secondaryText)
+                .padding(.horizontal, 10)
+                .frame(height: 28)
+                .liquidGlassCapsule()
+                .padding(.horizontal, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            // The push/pop cursor helper loses to the title bar's cursor-rect
+            // updates over this wide an item; register a real AppKit cursor
+            // rect instead, which the title bar machinery respects.
+            .background(PointingHandCursorRect())
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.15)) {
+                    isHovered = hovering
+                }
+            }
+            .help(
+                Text(
+                    LocalizedStringKey(
+                        windowState.enteredChatFromProjectPage ? "Back to project" : "Open project"),
+                    bundle: .module))
+            // Anchor to the CONTENT area's top-left, not the window's:
+            // with the sidebar open, the un-padded item would sit over the
+            // sidebar beside its toggle. The inset is the live sidebar width
+            // minus what precedes this item on the leading edge, so the pill
+            // follows the content edge as the sidebar is resized.
+            .padding(.leading, windowState.showSidebar ? sidebarOpenInset : 0)
+            .animation(windowState.theme.animationQuick(), value: windowState.showSidebar)
+            .environment(\.theme, windowState.theme)
+        }
+    }
 }
 
 /// Contextual action button: new-chat plus once a conversation exists.
@@ -1136,7 +1283,11 @@ private struct ChatToolbarActionView: View {
     @ObservedObject var windowState: ChatWindowState
 
     var body: some View {
-        ChatToolbarActionContent(windowState: windowState, session: windowState.session)
+        // New-chat/plus is chat chrome; the project page has its own
+        // New Chat entry point.
+        if !windowState.isProjectPageVisible {
+            ChatToolbarActionContent(windowState: windowState, session: windowState.session)
+        }
     }
 }
 
@@ -1219,13 +1370,29 @@ private struct ChatToolbarChangesButton: View {
     }
 }
 
-/// Pin button. Observes windowState for reactive theme updates.
-private struct ChatToolbarPinView: View {
+/// The single trailing toolbar item. Window pinning is chat chrome; the
+/// settings gear only makes sense on the project detail page (the chat
+/// surface reaches settings through the agent pill's gear, which hides with
+/// the rest of the chat chrome while a project is open). The two are
+/// mutually exclusive, so they share one toolbar item — otherwise the
+/// hidden one leaves an empty item that reserves a dead gap at the toolbar's
+/// right edge. Both are `HeaderActionButton`-sized, so the item's footprint
+/// is stable as it swaps.
+private struct ChatToolbarTrailingView: View {
     @ObservedObject var windowState: ChatWindowState
 
     var body: some View {
-        PinButton(windowId: windowState.windowId)
+        if windowState.isProjectPageVisible {
+            HeaderActionButton(
+                icon: "gearshape",
+                help: "Settings",
+                action: { AppDelegate.shared?.showManagementWindow(initialTab: nil) }
+            )
             .environment(\.theme, windowState.theme)
+        } else {
+            PinButton(windowId: windowState.windowId)
+                .environment(\.theme, windowState.theme)
+        }
     }
 }
 
