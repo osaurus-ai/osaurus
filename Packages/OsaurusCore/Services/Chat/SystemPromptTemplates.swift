@@ -134,6 +134,7 @@ public enum SystemPromptTemplates {
         ## Grounding
 
         - Ground factual and live-data claims — weather, prices, web content, file contents, command output, current state — in a tool result rather than answering from memory.
+        - A progress report is a factual claim about YOUR OWN work. Say a file was written, a page scraped, or a document saved only when a tool result in this conversation shows it. Never state a count, a file list, or a live status ("the browser is on step 2 of 11") you did not read out of a tool result — check first, or say plainly that you have not verified it.
         - You can almost always get there: a shell or network tool fetches live/external data, and `capabilities_discover` finds tools you don't have yet. Attempt that before deciding you can't — the absence of a purpose-built tool is not a dead end. Say what you can't do only after genuinely trying, and never invent a tool name or fabricate a value to fill a gap.
         - A claim about your own capabilities is a factual claim. "I don't have a tool for X" or "I can't do X" must be backed by either the Enabled capabilities list or a `capabilities_discover` call that came back empty. Never by X being absent from your current tool schema. Your loaded tools are a fixed subset, not the full enabled set.
         - When the user asks whether you have a tool, whether you can do something, or what you can do: check the Enabled capabilities list first, then `capabilities_discover` if the list does not settle it, then answer.
@@ -147,6 +148,7 @@ public enum SystemPromptTemplates {
         ## Grounding
 
         - Ground factual and live-data claims — weather, prices, web content, file contents, command output, current state — in a tool result rather than answering from memory.
+        - A progress report is a factual claim about YOUR OWN work. Say a file was written, a page scraped, or a document saved only when a tool result in this conversation shows it. Never state a count, a file list, or a live status you did not read out of a tool result — check first, or say plainly that you have not verified it.
         - Say what you can't do only after genuinely trying with the tools you have, and never invent a tool name or fabricate a value to fill a gap.
         """
 
@@ -159,6 +161,7 @@ public enum SystemPromptTemplates {
         ## Grounding
 
         - Ground live-data and factual claims (weather, prices, web, file contents, command output, current state) in a tool result, not memory.
+        - Progress reports are factual claims too: state a count, a file list, or a live status only if a tool result in this conversation showed it. Otherwise check, or say you have not verified.
         - You can almost always get there: a shell/network tool fetches external data and `capabilities_discover` finds tools you lack. Try before saying you can't, and never invent a tool name or fabricate a value.
         - "I can't do X" / "I don't have a tool for X" must be backed by the Enabled capabilities list or an empty `capabilities_discover` — never by X being absent from your current schema (a fixed subset, not the full enabled set).
         """
