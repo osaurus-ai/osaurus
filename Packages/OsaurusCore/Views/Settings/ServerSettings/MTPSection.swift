@@ -49,7 +49,7 @@ struct MTPSection: View {
             SettingsField(
                 label: "Mode",
                 hint:
-                    "Off disables speculation. Auto uses it only when the model ships a verified native MTP head. Force-On requires that head."
+                    "Off disables the model's native MTP head. Auto uses it only when the model ships a verified head; Force-On requires it. A selected DFlash 2 drafter drafts regardless of Mode — remove it below to stop."
             ) {
                 Picker("", selection: $draft.mtp.mode) {
                     ForEach(VMLXMTPServerMode.allCases, id: \.self) { mode in

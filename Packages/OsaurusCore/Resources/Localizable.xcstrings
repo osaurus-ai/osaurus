@@ -132307,40 +132307,6 @@
         }
       }
     },
-    "Off disables speculation. Auto uses it only when the model ships a verified native MTP head. Force-On requires that head.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Off disables speculation. Auto uses it only when the model ships a verified native MTP head. Force-On requires that head."
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "끄면 추측이 비활성화됩니다. 자동은 모델이 검증된 기본 MTP 헤드를 제공할 때만 사용합니다. 강제 켬은 해당 헤드가 필요합니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Выкл. отключает спекуляции. Auto использует его только тогда, когда модель поставляется с проверенной головкой MTP. Force-On требует этой головы."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Off 会禁用推测解码。Auto 仅在模型自带经验证的原生 MTP 头时使用。Force-On 要求该头存在。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Off 會禁用推測解碼。Auto 僅在模型自帶經驗證的原生 MTP 頭時使用。Force-On 要求該頭存在。"
-          }
-        }
-      }
-    },
     "Off means premium search stops at your remaining credits; everything else uses the built-in sources.": {
       "localizations": {
         "de": {
@@ -232840,6 +232806,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Zip 捆綁包"
+          }
+        }
+      }
+    },
+    "Off disables the model's native MTP head. Auto uses it only when the model ships a verified head; Force-On requires it. A selected DFlash 2 drafter drafts regardless of Mode — remove it below to stop.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Off disables the model's native MTP head. Auto uses it only when the model ships a verified head; Force-On requires it. A selected DFlash 2 drafter drafts regardless of Mode — remove it below to stop."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "끄기는 모델의 기본 MTP 헤드를 비활성화합니다. 자동은 모델이 검증된 헤드를 제공할 때만 사용하며, 강제 켬은 해당 헤드가 필요합니다. 선택된 DFlash 2 드래프터는 모드와 관계없이 초안을 생성합니다 — 중지하려면 아래에서 제거하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выкл. отключает родную голову MTP модели. Auto использует её только тогда, когда модель поставляется с проверенной головой; Force-On требует её. Выбранный драфтер DFlash 2 работает независимо от режима — удалите его ниже, чтобы остановить."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off 会禁用模型的原生 MTP 头。Auto 仅在模型自带经验证的头时使用；Force-On 要求该头存在。已选择的 DFlash 2 草稿器无论模式如何都会起草——在下方移除即可停止。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off 會禁用模型的原生 MTP 頭。Auto 僅在模型自帶經驗證的頭時使用；Force-On 要求該頭存在。已選擇的 DFlash 2 草稿器無論模式如何都會起草——在下方移除即可停止。"
           }
         }
       }
