@@ -26,7 +26,7 @@ struct MTPSection: View {
     /// selected, so the first-run path is "download, then choose folder"
     /// rather than "go find this yourself".
     static let drafterDownloadURL = URL(
-        string: "https://huggingface.co/JANGQ-AI/Qwen3.8-27B-DFlash2")!
+        string: "https://huggingface.co/incoai/Qwen3.8-27B-DFlash2")!
 
     private var drafterProblem: String? {
         guard let path = draft.mtp.dflash2DrafterPath, !path.isEmpty else { return nil }
