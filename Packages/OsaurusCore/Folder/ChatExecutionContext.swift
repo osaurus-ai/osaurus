@@ -20,6 +20,21 @@ import Foundation
 final class AgentTodoRunScope: @unchecked Sendable {
     private let lock = NSLock()
     private var wroteTodo = false
+    /// Tools other than the loop-control ones that have actually STARTED this
+    /// run. The Todo tool reads this to tell real progress apart from a model
+    /// simply asserting it: in osaurus#2439 a model went from 2/7 to 7/7
+    /// checked with nothing but `todo` calls in between, and the tool echoed
+    /// "Todo updated: 7/7 complete" back into context, where the model then
+    /// cited it as evidence the writes had happened.
+    private var substantiveToolCalls = 0
+    /// `substantiveToolCalls` as of the previous accepted `todo` write.
+    private var toolCallsAtLastTodo = 0
+
+    /// Loop-control tools. Calling these is bookkeeping, never task progress,
+    /// so they must not count as work toward a newly checked item.
+    static let loopControlToolNames: Set<String> = [
+        "todo", "complete", "clarify", "share_artifact",
+    ]
 
     var hasCurrentRunTodo: Bool {
         lock.lock()
@@ -31,6 +46,24 @@ final class AgentTodoRunScope: @unchecked Sendable {
         lock.lock()
         wroteTodo = true
         lock.unlock()
+    }
+
+    func recordToolExecution(name: String) {
+        guard !Self.loopControlToolNames.contains(name) else { return }
+        lock.lock()
+        substantiveToolCalls += 1
+        lock.unlock()
+    }
+
+    /// Whether any non-loop-control tool has run since the previous `todo`
+    /// write, snapshotting the counter for the next comparison. Called once
+    /// per accepted `todo` write.
+    func consumeToolWorkSinceLastTodo() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let didWork = substantiveToolCalls > toolCallsAtLastTodo
+        toolCallsAtLastTodo = substantiveToolCalls
+        return didWork
     }
 }
 

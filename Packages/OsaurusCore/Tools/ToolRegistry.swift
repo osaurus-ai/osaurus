@@ -1127,6 +1127,13 @@ public final class ToolRegistry: ObservableObject {
                     }
                 }
             }
+            // Count real tool work for the run, so `todo` can tell progress
+            // from assertion. Recorded at dispatch rather than on success: a
+            // tool that ran and failed is still an attempt the model can
+            // honestly report on, and only "nothing ran at all" is the signal
+            // the Todo tool acts on.
+            ChatExecutionContext.agentTodoRunScope?.recordToolExecution(name: name)
+
             let result: String
             do {
                 result = try await ChatExecutionContext.$hostReadOnlyScope.withValue(policy.scope) {

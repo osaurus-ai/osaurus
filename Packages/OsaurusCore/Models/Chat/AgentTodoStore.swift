@@ -50,16 +50,17 @@ public actor AgentTodoStore {
     public func setTodoIfChanged(
         markdown: String,
         for sessionId: String
-    ) -> (todo: AgentTodo, changed: Bool) {
+    ) -> (todo: AgentTodo, changed: Bool, previousDoneCount: Int?) {
         let candidate = AgentTodo.parse(markdown)
+        let previousDoneCount = todosBySession[sessionId]?.doneCount
         if let existing = todosBySession[sessionId],
             Self.hasSameChecklist(existing, candidate)
         {
-            return (existing, false)
+            return (existing, false, previousDoneCount)
         }
         todosBySession[sessionId] = candidate
         Self.postChanged(sessionId: sessionId)
-        return (candidate, true)
+        return (candidate, true, previousDoneCount)
     }
 
     /// Drop the todo for `sessionId` (called when a chat is reset).
