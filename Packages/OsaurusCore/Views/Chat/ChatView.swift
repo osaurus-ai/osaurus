@@ -1444,13 +1444,28 @@ final class ChatSession: ObservableObject {
     }
 
     var selectedModelSupportsAudio: Bool {
-        guard let model = selectedModel else { return false }
-        return ModelMediaCapabilities.from(modelId: model).supportsAudio
+        selectedModelSendCapabilities.supportsAudio
     }
 
     var selectedModelSupportsVideo: Bool {
-        guard let model = selectedModel else { return false }
-        return ModelMediaCapabilities.from(modelId: model).supportsVideo
+        selectedModelSendCapabilities.supportsVideo
+    }
+
+    /// Media capabilities the SEND path gates on. Must resolve exactly like
+    /// the composer's attach gate (`FloatingInputCard.mediaCapabilityDescriptor`)
+    /// — the name-only matcher requires a "-vl" suffix that community bundles
+    /// like "Qwen3.6-35B-A3B-6bit" don't carry, so gating the send on it
+    /// silently dropped a video the composer had happily accepted: the model
+    /// then answers "I don't see any video". Same failure class as the remote
+    /// image drop documented on `modelSupportsImages`.
+    private var selectedModelSendCapabilities: ModelMediaCapabilities.Capabilities {
+        guard let model = selectedModel else { return .textOnly }
+        let localModelType = ModelManager.findInstalledMLXModelFromCache(named: model)?.modelType
+        return ModelMediaCapabilities.composerCapabilities(
+            modelId: model,
+            fallbackSupportsImages: selectedModelSupportsImages,
+            localModelType: localModelType
+        )
     }
 
     /// Get the currently selected ModelPickerItem
