@@ -208,8 +208,14 @@ struct DeleteKnowledgeToolTests {
     /// WRITE must not silently authorize removal later in the same run.
     @Test func approvalCanNeverBePreGranted() {
         #expect(DeleteKnowledgeTool().requiresApprovalEveryCall)
-        // Writing may be leased; deleting may not. The asymmetry is the point.
-        #expect((WriteKnowledgeTool() as Any) is PerCallApprovalTool == false)
+
+        // Writing may be leased; deleting may not. The asymmetry is the point:
+        // "Allow for This Task" on a 62-document import must not also hand
+        // over the ability to delete.
+        let writeTool: Any = WriteKnowledgeTool()
+        #expect(!(writeTool is PerCallApprovalTool))
+        let deleteTool: Any = DeleteKnowledgeTool()
+        #expect(deleteTool is PerCallApprovalTool)
     }
 
     @Test func asksForApprovalByDefault() {
