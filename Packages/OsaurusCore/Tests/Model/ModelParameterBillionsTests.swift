@@ -55,11 +55,11 @@ struct ModelParameterBillionsTests {
 
     /// 🚨 A cold memo must not change PROMPT SHAPE.
     ///
-    /// `resolveUnadjusted` returns `.unknown` when `loadCachedOrWarm` misses,
-    /// and `.unknown` defaults `prefersCompactPrompt` to false. But the warm
-    /// branch of the SAME function says the opposite for the same situation —
+    /// `resolveUnadjusted` used to return `.unknown` when `loadCachedOrWarm`
+    /// missed, defaulting `prefersCompactPrompt` to false, while the warm
+    /// branch of the SAME function said the opposite for the same situation —
     /// "Unknown size on a local model also compacts" — returning true when the
-    /// parameter count is unparseable.
+    /// parameter count is unparseable. Both paths now share one resolver.
     ///
     /// So an Ornith 9B conversation composed a VERBOSE system prompt on the
     /// first render and a COMPACT one once the memo warmed. Different prompt =
@@ -76,8 +76,18 @@ struct ModelParameterBillionsTests {
         #expect(ContextSizeResolver.resolve(modelId: "Qwen3.5-9B-MXFP8").prefersCompactPrompt == true)
         // Above the ceiling stays verbose cold, matching the warm answer.
         #expect(ContextSizeResolver.resolve(modelId: "OsaurusAI/Ornith-1.0-35B-A3B-JANG_4").prefersCompactPrompt == false)
-        // Unparseable size on a local model compacts, per the warm branch's rule.
-        #expect(ContextSizeResolver.resolve(modelId: "SomeVendor/mystery-bundle").prefersCompactPrompt == true)
+        // An UNPARSEABLE size stays verbose in BOTH paths.
+        //
+        // This assertion originally expected `true`, copying the warm branch's
+        // `?? true`. That was wrong, and CI caught it: compaction is not merely
+        // cosmetic — the compact prompt swaps the expanded management tools for
+        // an ids-only `capabilities_load` manifest, so defaulting an unsizeable
+        // model to compact silently narrowed the tool schema the API
+        // advertises and broke HTTPHandlerChatStreamingTests' default-agent
+        // tool set. Consistency between the cold and warm paths is the goal;
+        // resolving the disagreement toward VERBOSE is the safe direction,
+        // because it never removes a capability on a guess.
+        #expect(ContextSizeResolver.resolve(modelId: "SomeVendor/mystery-bundle").prefersCompactPrompt == false)
     }
 
     /// The compact param ceiling is the documented 20B (guards against an
