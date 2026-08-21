@@ -3285,7 +3285,7 @@ struct AgentDetailView: View {
             AgentAbilityCard(
                 title: "Knowledge",
                 subtitle:
-                    "Let the agent search and read the knowledge collections granted below: curated guides, templates, and standards. Separate from memory, knowledge is yours to edit and never written by the agent.",
+                    "Let the agent search, read and update the knowledge collections granted below: curated guides, templates, and standards. The agent shows you every change and waits for your approval before saving, and you can undo anything it writes from the Knowledge section.",
                 icon: "books.vertical",
                 isOn: toolBackedSaveBinding($knowledgeEnabled),
                 pausedNote: knowledgeReadinessNote,
