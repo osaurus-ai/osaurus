@@ -376,6 +376,60 @@ sampler state; `frequency_penalty` is no longer mis-mapped to
 whether 3 should 400 or stay permissive, and whether 4 is intended product
 behaviour or an accident. Do not "fix" 4 without deciding the contract first.
 
+## M. Native MTP — two findings VERIFIED IN SOURCE (still need live proof)
+
+Both claims below I read myself at the cited lines, not taken on trust.
+
+**M1. A user's explicit MTP "Off" does not survive a cold load.**
+`normalizeLoadedSettings` rewrites `.off` -> `.auto` whenever the MTP settings
+are otherwise default-shaped
+(ServerRuntimeSettingsStore.swift:342), and both `load()` and the cold
+`snapshot()` path run it and **resave** (lines 80, 152). A test enshrines it:
+`load_repairsOldPersistedMTPDefaultOffToAuto` (Tests:443). `Off` survives only
+when some other MTP field is non-default, e.g. `draftTokenLimit = 2`
+(Tests:465).
+
+This is **intentional migration code, not an accident** — the comment explains
+vmlx-swift `e095d0f` changed the engine default from off to auto, so installs
+that persisted the old default need repairing or tuned bundles never reach
+autodetect. The problem is that the migration **cannot distinguish "stale old
+default" from "the user just chose Off"**. Net effect for a user today: turn MTP
+off, relaunch, it is Auto again, silently.
+
+Fix shape (do NOT just delete the migration — genuinely old installs still need
+it): a settings **schema version**, or an explicit `userSelectedMode` marker, so
+the repair runs once for pre-`e095d0f` data and never again. Update the two
+tests together with it.
+
+**M2. Native MTP is disqualified on the DEFAULT API path.**
+Eligibility requires `requestedReasoningBudgetTokens == nil`
+(Evaluate.swift:497, with the comment explaining a drafted token could sail past
+the budget ceiling before it arms). Osaurus derives that field from `max_tokens`
+(MLXBatchAdapter.swift:1288/1558), and the API's default is
+`request.resolvedMaxTokens ?? 16384` (ChatEngine.swift:135) — **non-nil**.
+
+So an ordinary `/v1/chat/completions` request does not use the native MTP
+iterator at all, regardless of the Auto default. "Auto" means "prepare a
+qualifying bundle", not "ordinary requests use MTP".
+→ Live proof needed: confirm AR-vs-MTP on the API path, and check whether the
+visual harness sends a max_tokens that disqualifies it too. If the harness also
+sends one, native MTP is effectively off for real users everywhere.
+→ This also reframes the MTP-slowdown hypothesis: if MTP never runs on a path,
+it cannot be that path's slowdown.
+
+**Ruled out by the same audit** (recorded so they are not re-chased): MTP
+autodetection by bundle-path/model-ID substring; bundle autodetect overriding a
+live `.off`; a warmup memo surviving the model unload a saved toggle causes
+(a settings change calls `clearAll()`, ServerController.swift:514, so the new
+model object cannot inherit the old weak-keyed memo).
+
+**Still open — the hypothesis that MTP caching degrades with context:** verify
+is already known to be ~84% of MTP wall time. If verify carries full attention
+over the context, its per-step cost grows with depth while the accepted-token
+payoff stays fixed, so the net win shrinks and can go negative. Measure accept
+rate AND verify cost at 2k/8k/16k/32k, and confirm byte-identical output at
+temperature 0 at every depth.
+
 ---
 
 ## Method
