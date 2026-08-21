@@ -112,6 +112,14 @@ struct VoiceSetupTab: View {
                     .animation(.easeOut(duration: 0.25).delay(0.05), value: hasAppeared)
                     .padding(.horizontal, 24)
 
+                // Full-duplex speech-to-speech, hosted separately from the
+                // transcription pipeline above: a duplex model never produces
+                // an intermediate transcript to route.
+                VoiceChatDuplexSection()
+                    .opacity(hasAppeared ? 1 : 0)
+                    .animation(.easeOut(duration: 0.25).delay(0.05), value: hasAppeared)
+                    .padding(.horizontal, 24)
+
                 Spacer()
             }
         }
