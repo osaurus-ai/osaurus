@@ -629,7 +629,23 @@ public final class ToolRegistry: ObservableObject {
             )
         }
         guard let tool = toolsByName[name] else { return }
-        try await runPermissionGate(tool: tool, name: name, argumentsJSON: argumentsJSON)
+        // Preflight first, mirroring `execute`: a batch member that cannot
+        // pass schema validation must not raise an approval card, and the
+        // card must show the coerced arguments the body will receive.
+        // A rejection is not thrown here — `execute` re-runs preflight and
+        // returns the structured envelope — so this only decides what the
+        // user is shown.
+        let normalized = tool.normalizeArgumentsBeforeValidation(argumentsJSON)
+        guard case .ready(let effectiveArgumentsJSON) = Self.preflight(
+            argumentsJSON: normalized,
+            schema: tool.parameters,
+            toolName: name
+        ) else { return }
+        try await runPermissionGate(
+            tool: tool,
+            name: name,
+            argumentsJSON: effectiveArgumentsJSON
+        )
     }
 
     /// Parse the capability-manifest alias syntax shared by permission
@@ -1010,16 +1026,21 @@ public final class ToolRegistry: ObservableObject {
                 retryable: false
             )
         }
-        // Permission gating. Skipped when the caller already resolved the
-        // gate via `resolvePermissionGate` (parallel batches resolve every
-        // approval serially in model order BEFORE executing concurrently,
-        // so approval prompts never stack or race).
-        if !permissionGateResolved {
-            try await runPermissionGate(tool: tool, name: name, argumentsJSON: argumentsJSON)
-        }
-        // Coerce + preflight against the tool's schema. Returns either
-        // a (possibly rewritten) `argumentsJSON` ready for dispatch, or
-        // a structured failure envelope to short-circuit with.
+        // Coerce + preflight against the tool's schema BEFORE the permission
+        // gate. Returns either a (possibly rewritten) `argumentsJSON` ready
+        // for dispatch, or a structured failure envelope to short-circuit
+        // with.
+        //
+        // Order matters, and it used to be the other way round. Gating first
+        // meant a call that could never execute still raised an approval card:
+        // observed live, a `write_knowledge` whose `documents` was a string
+        // instead of an array sat in front of the user for 2m26s before schema
+        // validation rejected it in milliseconds. Never ask a person to
+        // approve something already known to be invalid.
+        //
+        // It also closes a consent gap: the gate now sees the SAME coerced
+        // arguments the tool body will receive, so an approval card cannot
+        // preview one thing while execution does another.
         let normalizedArguments = tool.normalizeArgumentsBeforeValidation(argumentsJSON)
         switch Self.preflight(
             argumentsJSON: normalizedArguments,
@@ -1029,6 +1050,17 @@ public final class ToolRegistry: ObservableObject {
         case .rejected(let envelopeJSON):
             return envelopeJSON
         case .ready(let effectiveArgumentsJSON):
+            // Skipped when the caller already resolved the gate via
+            // `resolvePermissionGate` (parallel batches resolve every approval
+            // serially in model order BEFORE executing concurrently, so
+            // approval prompts never stack or race).
+            if !permissionGateResolved {
+                try await runPermissionGate(
+                    tool: tool,
+                    name: name,
+                    argumentsJSON: effectiveArgumentsJSON
+                )
+            }
             // Prefill diagnostics: time the actual tool body (sandbox boot,
             // embedding search, shell, network) so the /tmp log can separate
             // tool-execution latency from model decode between agent-loop steps.

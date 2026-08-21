@@ -1946,8 +1946,19 @@ public struct SystemPromptComposer: Sendable {
     /// full parameter schema, so small models see the constraints on turn 1
     /// without paying for the full prose (which the `.small` budget
     /// guardrail can't afford).
+    ///
+    /// The knowledge write tools qualify on the same grounds, and the cost of
+    /// leaving them out was measured rather than guessed. With their property
+    /// descriptions stripped, a live model sent `documents` as a prose STRING
+    /// instead of an array, and — because the rule "when replacing a
+    /// document, carry its `---` frontmatter across, `read_knowledge` returns
+    /// the body without it" lives in the `content` description — replaced
+    /// documents kept losing their title, type and tags. Both are argument
+    /// contracts, both were invisible, and neither tool is ever reached via a
+    /// `capabilities_load` that would have restored the full spec.
     private static let constraintPreservingBootstrapToolNames: Set<String> = [
         "complete", "clarify", "share_artifact",
+        "write_knowledge", "delete_knowledge",
     ]
 
     /// Compress first-turn always-loaded specs by keeping the callable name,
