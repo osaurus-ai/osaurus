@@ -130,6 +130,7 @@ struct KnowledgeWriteHistoryView: View {
             Text("Showing \(visibleRuns.count) of \(runs.count)", bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
+                .padding(.vertical, 4)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
