@@ -997,11 +997,16 @@ public enum SystemPromptTemplates {
                 + "`list_knowledge` browses a collection's documents."
         )
         lines.append(
-            "- To add or update documents, call `write_knowledge` with the full markdown. "
-                + "Send EVERY document for a task in one call: `documents` is an array, and one "
-                + "call is one approval. `delete_knowledge` removes documents. The user reviews "
-                + "the paths and a diff before anything is written, so a rejected call is a "
-                + "normal outcome, not an error."
+            "- To CHANGE an existing document, call `edit_knowledge` with find/replace. Do not "
+                + "restate the document: a long one will not fit in one reply and the truncated "
+                + "version would replace the original."
+        )
+        lines.append(
+            "- To ADD documents, call `write_knowledge` with the full markdown. Send EVERY "
+                + "document for a task in one call: `documents` is an array, and one call is one "
+                + "approval. `delete_knowledge` removes documents. The user reviews the paths and "
+                + "a diff before anything is written, so a rejected call is a normal outcome, not "
+                + "an error."
         )
         lines.append(
             "- A write lands immediately once approved. Confirm with `search_knowledge` before "

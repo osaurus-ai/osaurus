@@ -239,6 +239,10 @@ public final class ToolRegistry: ObservableObject {
             // `PerCallApprovalTool`: a lease taken for a bulk import must never
             // end up covering removal later in the same run.
             DeleteKnowledgeTool(),
+            // Find/replace on one document. Preferred over `write_knowledge` for
+            // editing: restating a long document is slow and truncates, and a
+            // truncated restatement replaces the original.
+            EditKnowledgeTool(),
             // Knowledge curation loop: staleness tickets (annotation only,
             // same gate as the retrieval tools). Tickets remain the right
             // shape for drift the agent NOTICES but is not being asked to fix
@@ -535,7 +539,7 @@ public final class ToolRegistry: ObservableObject {
         // Direct corpus mutation. Their ONLY gate is the interactive approval
         // modal, which an external caller cannot be shown, so there is no
         // safe way to honor these off-surface.
-        "write_knowledge", "delete_knowledge",
+        "write_knowledge", "delete_knowledge", "edit_knowledge",
     ]
 
     /// Tool classes that must never be invocable from EXTERNAL surfaces

@@ -27,7 +27,9 @@ final class WriteKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePre
     let name = "write_knowledge"
 
     let description =
-        "Create or replace documents in one of this agent's knowledge collections. "
+        "Create NEW documents, or replace one outright, in this agent's knowledge collections. "
+        + "To change part of an existing document use `edit_knowledge` instead: restating a long "
+        + "document is slow and risks truncating it. "
         + "Pass every document for a task in ONE call: `documents` is an array, and one call is "
         + "one approval. The user reviews the paths and a diff of each change before anything is "
         + "written, then the documents are saved and indexed immediately. Content is whole markdown "
@@ -631,5 +633,320 @@ final class DeleteKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePr
             "\n\nThese are gone from the collection now, and restorable from the Knowledge tab. "
             + "Confirm with `search_knowledge` before reporting them as removed."
         return ToolEnvelope.success(tool: tool, text: text)
+    }
+}
+
+// MARK: - edit_knowledge
+
+/// Change part of a knowledge document by find/replace, without restating it.
+///
+/// `write_knowledge` replaces a whole document, which cannot work once the
+/// document approaches the model's output token limit: a 14.5KB file is
+/// already around 4K output tokens on a small local model. Asking for a
+/// restatement there does not just run slowly, it TRUNCATES, and the truncated
+/// text then replaces the original. Observed live on a 120 section catalogue:
+/// the model returned 6 sections and the other 114 were destroyed, with the
+/// tool reporting a routine "1 replaced".
+///
+/// Sending the substitution instead of the document removes the cost and the
+/// failure mode together, and makes the approval diff small enough to actually
+/// read. Underneath it is still a replace, so the write log, the diff card,
+/// and revert all behave identically.
+final class EditKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePreviewingTool,
+    @unchecked Sendable
+{
+    let name = "edit_knowledge"
+
+    let description =
+        "Change part of a document in one of this agent's knowledge collections by find and "
+        + "replace, without rewriting the whole thing. PREFER THIS over `write_knowledge` for any "
+        + "edit to an existing document: restating a long document is slow and risks truncating "
+        + "it. Each `find` must match exactly once unless you set `all`. The user reviews a diff "
+        + "before anything is saved."
+
+    var requirements: [String] { [] }
+    var defaultPermissionPolicy: ToolPermissionPolicy { .ask }
+
+    /// Bounds one call. An edit list longer than this is a rewrite wearing a
+    /// disguise, and should go through `write_knowledge` where the whole
+    /// document is reviewed.
+    static let maxEditsPerCall = 50
+
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "collection": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Collection name. Required only when more than one collection is granted."
+                ),
+            ]),
+            "path": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Collection-relative markdown path, e.g. `reference/alerts.md`."
+                ),
+            ]),
+            "edits": .object([
+                "type": .string("array"),
+                "description": .string(
+                    "Substitutions applied in order. Send every edit for one document in a "
+                        + "single call."
+                ),
+                "items": .object([
+                    "type": .string("object"),
+                    "additionalProperties": .bool(false),
+                    "properties": .object([
+                        "find": .object([
+                            "type": .string("string"),
+                            "description": .string(
+                                "Exact text to look for, including whitespace. Must appear once "
+                                    + "unless `all` is true."
+                            ),
+                        ]),
+                        "replace": .object([
+                            "type": .string("string"),
+                            "description": .string("Text to put in its place. May be empty to delete."),
+                        ]),
+                        "all": .object([
+                            "type": .string("boolean"),
+                            "description": .string(
+                                "Replace every occurrence instead of requiring a unique match."
+                            ),
+                        ]),
+                    ]),
+                    "required": .array([.string("find"), .string("replace")]),
+                ]),
+            ]),
+            "rationale": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "One line on why this document is changing. Shown to the user in the "
+                        + "approval card."
+                ),
+            ]),
+        ]),
+        "required": .array([.string("path"), .string("edits")]),
+    ])
+
+    init() {}
+
+    // MARK: - Approval preview
+
+    func approvalPreview(argumentsJSON: String) async -> KnowledgeWritePreview? {
+        guard let args = WriteKnowledgeTool.parsedArguments(argumentsJSON),
+            let path = (args["path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !path.isEmpty
+        else { return nil }
+        guard case .granted(let collections) = await KnowledgeToolScope.resolve(
+            tool: name,
+            collectionName: args["collection"] as? String
+        ),
+            let collection = collections.first, collections.count == 1
+        else { return nil }
+        guard case .success(let edits) = Self.edits(from: args, tool: name),
+            let resolved = try? KnowledgeWriteService.resolvedURL(
+                collection: collection, relPath: path),
+            let data = FileManager.default.contents(atPath: resolved.path),
+            let current = String(data: data, encoding: .utf8)
+        else { return nil }
+
+        // Preview the RESULT of the edits, so the card shows the same diff the
+        // write will produce rather than the substitutions in the abstract.
+        guard case .success(let edited) = KnowledgeWriteService.applyEdits(edits, to: current)
+        else { return nil }
+
+        return KnowledgeWritePreviewBuilder.build(
+            collection: collection,
+            documents: [(path, edited)],
+            isDelete: false,
+            rationale: (args["rationale"] as? String) ?? ""
+        )
+    }
+
+    // MARK: - Execute
+
+    func execute(argumentsJSON: String) async throws -> String {
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        let pathReq = requireString(
+            args, "path", expected: "collection-relative markdown path", tool: name)
+        guard case .value(let rawPath) = pathReq else { return pathReq.failureEnvelope ?? "" }
+        let path = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let editsResult = Self.edits(from: args, tool: name)
+        guard case .success(let edits) = editsResult else {
+            return editsResult.failureEnvelope ?? ""
+        }
+
+        let scope = await KnowledgeToolScope.resolve(
+            tool: name, collectionName: args["collection"] as? String)
+        guard case .granted(let collections) = scope else {
+            if case .failure(let envelope) = scope { return envelope }
+            return ""
+        }
+        guard collections.count == 1, let collection = collections.first else {
+            let names = collections.map(\.name).joined(separator: ", ")
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "More than one collection is granted, so `collection` is required for an edit. "
+                    + "Granted collections: \(names).",
+                field: "collection",
+                expected: "one of the agent's granted collection names",
+                tool: name
+            )
+        }
+
+        let fileURL: URL
+        do {
+            fileURL = try KnowledgeWriteService.resolvedURL(collection: collection, relPath: path)
+        } catch {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: (error as? KnowledgeWriteError)?.errorDescription
+                    ?? error.localizedDescription,
+                field: "path",
+                tool: name
+            )
+        }
+        guard let data = FileManager.default.contents(atPath: fileURL.path),
+            let current = String(data: data, encoding: .utf8)
+        else {
+            return ToolEnvelope.failure(
+                kind: .notFound,
+                message:
+                    "No document at \(path) in [\(collection.name)]. `edit_knowledge` changes an "
+                    + "existing document; use `write_knowledge` to create one.",
+                field: "path",
+                tool: name,
+                retryable: false
+            )
+        }
+
+        switch KnowledgeWriteService.applyEdits(edits, to: current) {
+        case .failure(let failure):
+            // Retryable: the model can widen the `find` and try again without
+            // the user re-approving anything, because nothing was written.
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: failure.message,
+                field: "edits",
+                tool: name,
+                retryable: true
+            )
+        case .success(let edited):
+            guard edited != current else {
+                return ToolEnvelope.success(
+                    tool: name,
+                    text:
+                        "No change: the edits produced the document that is already at \(path). "
+                        + "Nothing was written."
+                )
+            }
+            do {
+                let outcome = try await KnowledgeWriteService.shared.write(
+                    collection: collection,
+                    relPath: path,
+                    content: edited,
+                    runId: (ChatExecutionContext.currentRunId ?? UUID()).uuidString,
+                    createdBy: ChatExecutionContext.currentAgentId?.uuidString ?? "",
+                    rationale: (args["rationale"] as? String) ?? ""
+                )
+                let applied = edits.count == 1 ? "1 edit" : "\(edits.count) edits"
+                return ToolEnvelope.success(
+                    tool: name,
+                    text:
+                        "Applied \(applied) to [\(collection.name)] \(outcome.relPath). "
+                        + "This is live in the collection now. Confirm with `search_knowledge` "
+                        + "before reporting it as done."
+                )
+            } catch {
+                return ToolEnvelope.failure(
+                    kind: .executionError,
+                    message: (error as? KnowledgeWriteError)?.errorDescription
+                        ?? error.localizedDescription,
+                    tool: name,
+                    retryable: false
+                )
+            }
+        }
+    }
+
+    // MARK: - Arguments
+
+    enum EditsResult {
+        case success([KnowledgeWriteService.KnowledgeEdit])
+        case failure(String)
+
+        var failureEnvelope: String? {
+            if case .failure(let envelope) = self { return envelope }
+            return nil
+        }
+    }
+
+    static func edits(from args: [String: Any], tool: String) -> EditsResult {
+        var parsed: [KnowledgeWriteService.KnowledgeEdit] = []
+
+        if let raw = args["edits"] as? [[String: Any]] {
+            for entry in raw {
+                guard let find = entry["find"] as? String, !find.isEmpty else {
+                    return .failure(
+                        ToolEnvelope.failure(
+                            kind: .invalidArgs,
+                            message: "Every entry in `edits` needs a non-empty `find`.",
+                            field: "edits",
+                            expected: "array of {find, replace}",
+                            tool: tool
+                        )
+                    )
+                }
+                parsed.append(
+                    .init(
+                        find: find,
+                        replace: (entry["replace"] as? String) ?? "",
+                        all: (entry["all"] as? Bool) ?? false
+                    )
+                )
+            }
+        } else if let find = args["find"] as? String, !find.isEmpty {
+            // A model handed an array parameter reliably sends one of each.
+            parsed.append(
+                .init(
+                    find: find,
+                    replace: (args["replace"] as? String) ?? "",
+                    all: (args["all"] as? Bool) ?? false
+                )
+            )
+        }
+
+        guard !parsed.isEmpty else {
+            return .failure(
+                ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "No edits to apply. Pass `edits` as an array of {find, replace}.",
+                    field: "edits",
+                    expected: "non-empty array of {find, replace}",
+                    tool: tool
+                )
+            )
+        }
+        guard parsed.count <= maxEditsPerCall else {
+            return .failure(
+                ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "\(parsed.count) edits exceeds the limit of \(maxEditsPerCall). That many "
+                        + "changes is a rewrite; use `write_knowledge` so the whole document is "
+                        + "reviewed.",
+                    field: "edits",
+                    expected: "at most \(maxEditsPerCall) edits",
+                    tool: tool
+                )
+            )
+        }
+        return .success(parsed)
     }
 }

@@ -470,6 +470,85 @@ public actor KnowledgeWriteService {
         return keepsSomething ? nil : facets
     }
 
+    /// One find/replace against a document's text.
+    public struct KnowledgeEdit: Sendable, Equatable {
+        public var find: String
+        public var replace: String
+        /// Replace every occurrence. Default false, which requires the match
+        /// to be unique.
+        public var all: Bool
+
+        public init(find: String, replace: String, all: Bool = false) {
+            self.find = find
+            self.replace = replace
+            self.all = all
+        }
+    }
+
+    public enum KnowledgeEditFailure: Error, Equatable {
+        case notFound(find: String)
+        case ambiguous(find: String, matches: Int)
+        case emptyFind
+
+        public var message: String {
+            switch self {
+            case .emptyFind:
+                return "`find` cannot be empty."
+            case .notFound(let find):
+                return
+                    "No match for \"\(Self.excerpt(find))\". The text must appear in the document "
+                    + "exactly as written, including whitespace."
+            case .ambiguous(let find, let matches):
+                return
+                    "\"\(Self.excerpt(find))\" appears \(matches) times. Include more surrounding "
+                    + "text to make it unique, or set `all` to true to replace every occurrence."
+            }
+        }
+
+        private static func excerpt(_ text: String) -> String {
+            let flat = text.replacingOccurrences(of: "\n", with: " ")
+            return flat.count <= 60 ? flat : String(flat.prefix(60)) + "…"
+        }
+    }
+
+    /// Apply edits in order, returning the resulting document.
+    ///
+    /// Exists because whole-document replacement cannot edit a large document
+    /// at all. A 14.5KB file is already around a small local model's output
+    /// token cap, so asking it to restate the document to change one repeated
+    /// phrase does not merely run slowly, it truncates — and the truncation
+    /// then REPLACES the original. Observed live: a 120 section catalogue came
+    /// back with 6 sections and the other 114 were destroyed. Sending the
+    /// substitution instead of the document removes both the cost and the
+    /// failure mode.
+    ///
+    /// A non-unique match is an error rather than a guess. Editing the wrong
+    /// occurrence of an ambiguous string is exactly the silent corruption this
+    /// is meant to prevent, and `all` makes the sweeping case explicit.
+    ///
+    /// Applied by BOTH the approval preview and the tool body, so the diff the
+    /// user approves is the document that gets written.
+    static func applyEdits(
+        _ edits: [KnowledgeEdit],
+        to content: String
+    ) -> Result<String, KnowledgeEditFailure> {
+        var result = content
+        for edit in edits {
+            guard !edit.find.isEmpty else { return .failure(.emptyFind) }
+            let matches = result.components(separatedBy: edit.find).count - 1
+            guard matches > 0 else { return .failure(.notFound(find: edit.find)) }
+            if edit.all {
+                result = result.replacingOccurrences(of: edit.find, with: edit.replace)
+            } else {
+                guard matches == 1 else {
+                    return .failure(.ambiguous(find: edit.find, matches: matches))
+                }
+                result = result.replacingOccurrences(of: edit.find, with: edit.replace)
+            }
+        }
+        return .success(result)
+    }
+
     static func sha256Hex(_ content: String) -> String {
         SHA256.hash(data: Data(content.utf8)).map { String(format: "%02x", $0) }.joined()
     }

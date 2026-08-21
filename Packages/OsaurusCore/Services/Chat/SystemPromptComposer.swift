@@ -1958,7 +1958,7 @@ public struct SystemPromptComposer: Sendable {
     /// `capabilities_load` that would have restored the full spec.
     private static let constraintPreservingBootstrapToolNames: Set<String> = [
         "complete", "clarify", "share_artifact",
-        "write_knowledge", "delete_knowledge",
+        "write_knowledge", "delete_knowledge", "edit_knowledge",
     ]
 
     /// Compress first-turn always-loaded specs by keeping the callable name,
@@ -2147,7 +2147,7 @@ public struct SystemPromptComposer: Sendable {
         // grant is the access boundary and the approval modal is the consent
         // gate. Gating it behind an extra opt-in is what left an agent with
         // knowledge grants unable to write and unable to say why (#2439).
-        "write_knowledge", "delete_knowledge",
+        "write_knowledge", "delete_knowledge", "edit_knowledge",
         "update_knowledge_ticket",
     ]
 
