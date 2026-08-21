@@ -398,6 +398,62 @@ struct KnowledgeWritePreviewTests {
         }
     }
 
+    /// The loss the live test actually produced. `read_knowledge` returns the
+    /// BODY with the `---` block already stripped, so a model that reads a
+    /// document and writes it back drops its frontmatter entirely and the
+    /// document stops matching type and tag filters. Warned about, not merged
+    /// in silently, so the approved diff stays the truth about what lands.
+    @Test func replacingAwayExistingFrontmatterIsFlagged() throws {
+        try withCollection { collection, root in
+            try seed(
+                root, "a.md",
+                "---\ntitle: How to Deploy\ntype: guide\ndescription: d\ntags: packaging\n---\n\n# How to Deploy\n\nv3.\n"
+            )
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [("a.md", "# How to Deploy\n\nv4.1.\n")],
+                isDelete: false,
+                rationale: ""
+            )
+            let entry = try #require(preview.entries.first)
+            let warning = try #require(entry.warning)
+            #expect(warning.contains("loses its"))
+            for facet in ["title", "type", "description", "tags"] {
+                #expect(warning.contains(facet))
+            }
+            // Still a valid write: the user may genuinely mean it.
+            #expect(entry.isValid)
+        }
+    }
+
+    /// Carrying the frontmatter across is the correct rewrite and must be
+    /// silent.
+    @Test func replacementThatKeepsFrontmatterIsNotFlagged() throws {
+        try withCollection { collection, root in
+            try seed(root, "a.md", "---\ntitle: T\ntype: guide\n---\n\n# T\n\nv3.\n")
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [("a.md", "---\ntitle: T\ntype: guide\n---\n\n# T\n\nv4.1.\n")],
+                isDelete: false,
+                rationale: ""
+            )
+            #expect(preview.entries.first?.warning == nil)
+        }
+    }
+
+    /// A brand-new document has nothing to lose, so no frontmatter warning.
+    @Test func createWithoutFrontmatterIsNotFlaggedForLoss() throws {
+        try withCollection { collection, _ in
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [("new.md", "# New\n\nBody.\n")],
+                isDelete: false,
+                rationale: ""
+            )
+            #expect(preview.entries.first?.warning == nil)
+        }
+    }
+
     @Test func properlyFencedFrontmatterIsNotFlagged() throws {
         try withCollection { collection, _ in
             let fenced = "---\ntitle: Fine\ntype: guide\n---\n\n# Fine\n\nBody."

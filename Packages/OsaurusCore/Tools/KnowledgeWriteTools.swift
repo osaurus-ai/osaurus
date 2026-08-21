@@ -30,8 +30,9 @@ final class WriteKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePre
         "Create or replace documents in one of this agent's knowledge collections. "
         + "Pass every document for a task in ONE call: `documents` is an array, and one call is "
         + "one approval. The user reviews the paths and a diff of each change before anything is "
-        + "written, then the documents are saved and indexed immediately. Content is markdown, "
-        + "including any frontmatter. Use `search_knowledge` afterwards to confirm what landed. "
+        + "written, then the documents are saved and indexed immediately. Content is whole markdown "
+        + "documents; when replacing one, carry its existing `---` frontmatter across. Use "
+        + "`search_knowledge` afterwards to confirm what landed. "
         + "To remove documents use `delete_knowledge`."
 
     /// The user reviews and approves each call in the permission modal, which
@@ -74,8 +75,11 @@ final class WriteKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePre
                         "content": .object([
                             "type": .string("string"),
                             "description": .string(
-                                "The complete markdown document, including frontmatter if any. "
-                                    + "Not a diff."
+                                "The complete markdown document. Not a diff. When replacing an "
+                                    + "existing document, KEEP its `---` frontmatter block: "
+                                    + "`read_knowledge` shows the body without it, so you must "
+                                    + "write it back yourself or the document loses its title, "
+                                    + "type and tags."
                             ),
                         ]),
                     ]),

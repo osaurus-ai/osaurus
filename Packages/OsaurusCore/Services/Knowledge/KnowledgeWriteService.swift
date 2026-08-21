@@ -440,6 +440,36 @@ public actor KnowledgeWriteService {
         return found.isEmpty ? nil : found
     }
 
+    /// Facets a replace would drop, when the document on disk has frontmatter
+    /// and the replacement has none.
+    ///
+    /// Read-then-rewrite cannot round-trip frontmatter on its own:
+    /// `read_knowledge` hands back the BODY with the `---` block already
+    /// stripped, plus a framing header that carries `title`/`type`/`tags` but
+    /// not `description`, and not in frontmatter form. A model that reads a
+    /// document and writes it back therefore produces content with no
+    /// frontmatter at all, and the document silently loses its type and tags
+    /// and stops answering filtered searches.
+    ///
+    /// Observed live: replacing `how-to-deploy.md` left it with no `---` block
+    /// and no facets. Reported on the approval card rather than merged in
+    /// behind the user's back, so the diff stays the truth about what lands.
+    static func droppedFrontmatterFacets(prior: String, replacement: String) -> [String]? {
+        let before = KnowledgeDocumentParser.parse(markdown: prior).frontmatter
+        var facets: [String] = []
+        if !before.title.isEmpty { facets.append("title") }
+        if !before.docType.isEmpty { facets.append("type") }
+        if !before.summary.isEmpty { facets.append("description") }
+        if !before.tags.isEmpty { facets.append("tags") }
+        guard !facets.isEmpty else { return nil }
+
+        let after = KnowledgeDocumentParser.parse(markdown: replacement).frontmatter
+        let keepsSomething =
+            !after.title.isEmpty || !after.docType.isEmpty || !after.summary.isEmpty
+            || !after.tags.isEmpty
+        return keepsSomething ? nil : facets
+    }
+
     static func sha256Hex(_ content: String) -> String {
         SHA256.hash(data: Data(content.utf8)).map { String(format: "%02x", $0) }.joined()
     }

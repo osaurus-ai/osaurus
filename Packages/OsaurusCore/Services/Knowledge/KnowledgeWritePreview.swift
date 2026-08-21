@@ -176,9 +176,10 @@ public enum KnowledgeWritePreviewBuilder {
                     diff: diff.text,
                     diffTruncated: diff.truncated,
                     deletedContent: "",
-                    warning: KnowledgeWriteService.unfencedFrontmatterKeys(content).map {
-                        "Frontmatter (\($0.joined(separator: ", "))) is missing its --- fences, so it will be indexed as body text and the document will have no type or tags."
-                    },
+                    // Losing facets the document already HAS outranks a
+                    // malformed block in new content: one destroys existing
+                    // metadata, the other merely fails to add any.
+                    warning: Self.warning(prior: priorContent, replacement: content),
                     addedLines: countPrefixed(diff.text, "+"),
                     removedLines: countPrefixed(diff.text, "-"),
                     problem: nil
@@ -279,6 +280,23 @@ public enum KnowledgeWritePreviewBuilder {
     }
 
     // MARK: - Helpers
+
+    /// The single non-blocking caution for an entry, most consequential first.
+    private static func warning(prior: String, replacement: String) -> String? {
+        if let dropped = KnowledgeWriteService.droppedFrontmatterFacets(
+            prior: prior, replacement: replacement)
+        {
+            return
+                "This replacement has no frontmatter, so the document loses its "
+                + "\(dropped.joined(separator: ", ")). It will stop matching type and tag filters."
+        }
+        if let keys = KnowledgeWriteService.unfencedFrontmatterKeys(replacement) {
+            return
+                "Frontmatter (\(keys.joined(separator: ", "))) is missing its --- fences, so it "
+                + "will be indexed as body text and the document will have no type or tags."
+        }
+        return nil
+    }
 
     private static func capDeletePreview(_ text: String) -> String {
         guard text.count > maxDeletePreviewCharacters else { return text }
