@@ -40,10 +40,18 @@ public struct KnowledgeWritePreviewEntry: Sendable, Equatable, Identifiable {
     /// 2MB documents, and neither is rendered for a create or replace because
     /// the diff already is.
     public var deletedContent: String
-    /// Non-blocking caution shown beside the entry: the write can proceed,
-    /// but something about the content will not behave as the agent expects
-    /// (currently, frontmatter written without its `---` fences).
-    public var warning: String?
+    /// Non-blocking cautions shown beside the entry: the write can proceed,
+    /// but something about it deserves a second look before approving.
+    /// An array because a single replacement can trip more than one (gutting
+    /// a document AND dropping its frontmatter), and hiding either behind the
+    /// other is how a destructive write gets waved through.
+    public var warnings: [String] = []
+    /// Lines in the document as it stands, and as the replacement would leave
+    /// it. Exact, unlike the +/- counts, which come from a diff capped at 80
+    /// lines: a replacement that deletes 480 lines shows only the first 80 of
+    /// them, so the counts alone materially understate the change.
+    public var priorLineCount: Int = 0
+    public var newLineCount: Int = 0
     public var addedLines: Int
     public var removedLines: Int
     /// Populated when the entry cannot be applied at all (path escapes the
@@ -179,7 +187,9 @@ public enum KnowledgeWritePreviewBuilder {
                     // Losing facets the document already HAS outranks a
                     // malformed block in new content: one destroys existing
                     // metadata, the other merely fails to add any.
-                    warning: Self.warning(prior: priorContent, replacement: content),
+                    warnings: Self.warnings(prior: priorContent, replacement: content),
+                    priorLineCount: lineCount(priorContent),
+                    newLineCount: lineCount(content),
                     addedLines: countPrefixed(diff.text, "+"),
                     removedLines: countPrefixed(diff.text, "-"),
                     problem: nil
@@ -281,21 +291,51 @@ public enum KnowledgeWritePreviewBuilder {
 
     // MARK: - Helpers
 
-    /// The single non-blocking caution for an entry, most consequential first.
-    private static func warning(prior: String, replacement: String) -> String? {
+    /// A replacement that keeps this fraction of the document or less is
+    /// treated as a rewrite that guts it. Live-observed: a model asked to
+    /// change one sentence in every section of a 120-section catalogue
+    /// returned two sections, and the write was accepted as a routine
+    /// "1 replaced" because the diff was capped long before the damage
+    /// showed.
+    static let gutsDocumentBelowRatio = 0.5
+    /// Below this the document is too small for a ratio to mean anything.
+    static let gutsDocumentMinimumPriorLines = 20
+
+    /// Non-blocking cautions for an entry, most consequential first.
+    ///
+    /// All that apply, not just the first: a replacement can gut a document
+    /// AND drop its frontmatter, and showing only one lets the other through.
+    private static func warnings(prior: String, replacement: String) -> [String] {
+        var out: [String] = []
+
+        let priorLines = lineCount(prior)
+        let newLines = lineCount(replacement)
+        if priorLines >= gutsDocumentMinimumPriorLines,
+            Double(newLines) <= Double(priorLines) * gutsDocumentBelowRatio
+        {
+            let removed = Int((1 - Double(newLines) / Double(priorLines)) * 100)
+            out.append(
+                "This replaces a \(priorLines) line document with \(newLines) lines, removing "
+                    + "about \(removed)% of it. The diff below is shortened, so it does not show "
+                    + "everything being deleted."
+            )
+        }
+
         if let dropped = KnowledgeWriteService.droppedFrontmatterFacets(
             prior: prior, replacement: replacement)
         {
-            return
+            out.append(
                 "This replacement has no frontmatter, so the document loses its "
-                + "\(dropped.joined(separator: ", ")). It will stop matching type and tag filters."
+                    + "\(dropped.joined(separator: ", ")). It will stop matching type and tag filters."
+            )
         }
         if let keys = KnowledgeWriteService.unfencedFrontmatterKeys(replacement) {
-            return
+            out.append(
                 "Frontmatter (\(keys.joined(separator: ", "))) is missing its --- fences, so it "
-                + "will be indexed as body text and the document will have no type or tags."
+                    + "will be indexed as body text and the document will have no type or tags."
+            )
         }
-        return nil
+        return out
     }
 
     private static func capDeletePreview(_ text: String) -> String {

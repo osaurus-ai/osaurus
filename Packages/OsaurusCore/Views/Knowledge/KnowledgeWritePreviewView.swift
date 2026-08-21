@@ -95,9 +95,17 @@ struct KnowledgeWritePreviewView: View {
                     Spacer(minLength: 6)
 
                     if entry.isValid, entry.operation != .delete {
-                        Text("+\(entry.addedLines) -\(entry.removedLines)")
-                            .font(theme.monoFont(size: 10))
-                            .foregroundColor(theme.secondaryText)
+                        // When the diff is capped the +/- counts come from the
+                        // shown fragment, not the whole change, so a large
+                        // deletion reads as a small one. Fall back to exact
+                        // before/after line counts, which cannot mislead.
+                        Text(
+                            entry.diffTruncated
+                                ? "\(entry.priorLineCount) → \(entry.newLineCount) lines"
+                                : "+\(entry.addedLines) -\(entry.removedLines)"
+                        )
+                        .font(theme.monoFont(size: 10))
+                        .foregroundColor(theme.secondaryText)
                     }
 
                     Image(systemName: isExpanded(entry) ? "chevron.down" : "chevron.right")
@@ -119,7 +127,7 @@ struct KnowledgeWritePreviewView: View {
             // behave as the agent intended. Always shown, never hidden behind
             // the expander, because it is the kind of thing a reader would
             // want to catch before approving rather than after searching.
-            if let warning = entry.warning {
+            ForEach(entry.warnings, id: \.self) { warning in
                 problemRow(warning)
                     .padding(.horizontal, 10)
             }

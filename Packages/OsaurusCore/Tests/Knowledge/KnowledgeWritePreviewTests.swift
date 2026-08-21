@@ -323,6 +323,85 @@ struct KnowledgeWritePreviewTests {
         }
     }
 
+    // MARK: - Destructive rewrites
+
+    /// The data loss this caught in live testing. Asked to change one sentence
+    /// in every section of a 120-section catalogue, the model returned two
+    /// sections. The write was accepted as a routine "1 replaced" and 118
+    /// sections were destroyed, because the diff is capped at 80 lines long
+    /// before the scale of the deletion becomes visible.
+    @Test func aReplacementThatGutsTheDocumentIsFlagged() throws {
+        try withCollection { collection, root in
+            let catalogue = (1 ... 120)
+                .map { "## ALERT-\($0)\n\nFires when subsystem \($0) trips.\n" }
+                .joined(separator: "\n")
+            try seed(root, "alerts.md", "# Alert Catalogue\n\n" + catalogue)
+
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [("alerts.md", "# Alert Catalogue\n\n## ALERT-1\n\nFires.\n")],
+                isDelete: false,
+                rationale: ""
+            )
+            let entry = try #require(preview.entries.first)
+            let warning = try #require(entry.warnings.first { $0.contains("removing about") })
+            #expect(warning.contains("lines"))
+            // And it must say the diff is not showing the whole deletion,
+            // because that is precisely why this slipped through.
+            #expect(warning.contains("does not show everything being deleted"))
+        }
+    }
+
+    /// Exact before/after counts, so a capped diff cannot understate the
+    /// change. The +/- pair is derived from the SHOWN fragment.
+    @Test func lineCountsReflectTheWholeDocumentNotTheShownDiff() throws {
+        try withCollection { collection, root in
+            try seed(root, "big.md", String(repeating: "old line\n", count: 500))
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [("big.md", "just one line\n")],
+                isDelete: false,
+                rationale: ""
+            )
+            let entry = try #require(preview.entries.first)
+            #expect(entry.priorLineCount == 500)
+            #expect(entry.newLineCount == 1)
+            // The capped diff cannot have carried 500 removals.
+            #expect(entry.removedLines < entry.priorLineCount)
+        }
+    }
+
+    /// An ordinary edit is not a gutting, and must stay quiet.
+    @Test func aNormalEditIsNotFlaggedAsGutting() throws {
+        try withCollection { collection, root in
+            let body = (1 ... 40).map { "Line \($0)" }.joined(separator: "\n")
+            try seed(root, "a.md", body + "\n")
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [("a.md", body.replacingOccurrences(of: "Line 7", with: "Line SEVEN") + "\n")],
+                isDelete: false,
+                rationale: ""
+            )
+            #expect(preview.entries.first?.warnings.isEmpty == true)
+        }
+    }
+
+    /// A short document has no meaningful ratio, so trimming it is not
+    /// treated as destruction.
+    @Test func shrinkingATinyDocumentIsNotFlagged() throws {
+        try withCollection { collection, root in
+            try seed(root, "tiny.md", "one\ntwo\nthree\nfour\n")
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [("tiny.md", "one\n")],
+                isDelete: false,
+                rationale: ""
+            )
+            let gutted = preview.entries.first?.warnings.contains { $0.contains("removing about") }
+            #expect(gutted != true)
+        }
+    }
+
     // MARK: - Content normalization
     //
     // Read-then-rewrite is the primary use of `write_knowledge`, and both of
@@ -389,7 +468,7 @@ struct KnowledgeWritePreviewTests {
                 rationale: ""
             )
             let entry = try #require(preview.entries.first)
-            let warning = try #require(entry.warning)
+            let warning = try #require(entry.warnings.first)
             #expect(warning.contains("type"))
             #expect(warning.contains("tags"))
             #expect(warning.contains("--- fences"))
@@ -416,8 +495,7 @@ struct KnowledgeWritePreviewTests {
                 rationale: ""
             )
             let entry = try #require(preview.entries.first)
-            let warning = try #require(entry.warning)
-            #expect(warning.contains("loses its"))
+            let warning = try #require(entry.warnings.first { $0.contains("loses its") })
             for facet in ["title", "type", "description", "tags"] {
                 #expect(warning.contains(facet))
             }
@@ -437,7 +515,7 @@ struct KnowledgeWritePreviewTests {
                 isDelete: false,
                 rationale: ""
             )
-            #expect(preview.entries.first?.warning == nil)
+            #expect(preview.entries.first?.warnings.isEmpty == true)
         }
     }
 
@@ -450,7 +528,7 @@ struct KnowledgeWritePreviewTests {
                 isDelete: false,
                 rationale: ""
             )
-            #expect(preview.entries.first?.warning == nil)
+            #expect(preview.entries.first?.warnings.isEmpty == true)
         }
     }
 
@@ -463,7 +541,7 @@ struct KnowledgeWritePreviewTests {
                 isDelete: false,
                 rationale: ""
             )
-            #expect(preview.entries.first?.warning == nil)
+            #expect(preview.entries.first?.warnings.isEmpty == true)
         }
     }
 
