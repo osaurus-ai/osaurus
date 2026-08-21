@@ -109,12 +109,24 @@ struct KnowledgeWriteHistoryView: View {
                     .font(.system(size: 13))
                     .foregroundColor(run.isFullyReverted ? theme.tertiaryText : theme.accentColor)
 
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(headline(for: run))
-                        .font(.system(size: 12, weight: .medium))
+                        .font(
+                            run.records.count == 1
+                                ? theme.monoFont(size: 11.5) : .system(size: 12, weight: .medium)
+                        )
                         .foregroundColor(
                             run.isFullyReverted ? theme.tertiaryText : theme.primaryText
                         )
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    // Collection, operation and time: what actually tells two
+                    // otherwise identical rows apart.
+                    Text(subtitle(for: run))
+                        .font(.system(size: 10.5))
+                        .foregroundColor(theme.tertiaryText)
+
                     if !run.rationale.isEmpty {
                         Text(run.rationale)
                             .font(.system(size: 11))
@@ -125,20 +137,16 @@ struct KnowledgeWriteHistoryView: View {
 
                 Spacer(minLength: 8)
 
-                if run.records.count > 1 {
-                    Button {
-                        toggle(run.id)
-                    } label: {
-                        Text(
-                            expanded.contains(run.id)
-                                ? "Hide documents" : "Show documents",
-                            bundle: .module
-                        )
-                        .font(.system(size: 11))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundColor(theme.secondaryText)
+                // Expandable regardless of size. A single-document run still
+                // has a path and an operation worth seeing before deciding.
+                Button {
+                    toggle(run.id)
+                } label: {
+                    Image(systemName: expanded.contains(run.id) ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
                 }
+                .buttonStyle(.plain)
+                .foregroundColor(theme.secondaryText)
 
                 if !run.isFullyReverted {
                     Button {
@@ -202,14 +210,48 @@ struct KnowledgeWriteHistoryView: View {
 
     // MARK: - Helpers
 
+    /// Name the DOCUMENT when a run touched exactly one.
+    ///
+    /// "1 document in kb-ops: 1 replaced" is what five consecutive rows looked
+    /// like in testing, with no way to tell them apart or decide which to put
+    /// back. The path is the thing a reader is actually looking for, and it is
+    /// already on the record.
     private func headline(for run: KnowledgeWriteRun) -> String {
-        let scope = run.collectionName.isEmpty ? "" : " in \(run.collectionName)"
-        let count = run.records.count
-        let noun = count == 1 ? "document" : "documents"
-        if run.isFullyReverted {
-            return "\(count) \(noun)\(scope), reverted"
+        if run.records.count == 1, let record = run.records.first {
+            return record.relPath
         }
-        return "\(count) \(noun)\(scope): \(run.summary)"
+        let scope = run.collectionName.isEmpty ? "" : " in \(run.collectionName)"
+        return "\(run.records.count) documents\(scope): \(run.summary)"
+    }
+
+    /// Collection, what happened, and when — the three facts that separate one
+    /// row from the next.
+    private func subtitle(for run: KnowledgeWriteRun) -> String {
+        var parts: [String] = []
+        if !run.collectionName.isEmpty { parts.append(run.collectionName) }
+        if run.records.count == 1, let record = run.records.first {
+            parts.append(pastTense(record.operation))
+        }
+        if run.isFullyReverted { parts.append("reverted") }
+        if let when = Self.relativeTime(run.createdAt) { parts.append(when) }
+        return parts.joined(separator: " · ")
+    }
+
+    private func pastTense(_ operation: KnowledgeWriteOperation) -> String {
+        switch operation {
+        case .create: return "added"
+        case .replace: return "replaced"
+        case .delete: return "deleted"
+        }
+    }
+
+    /// "3 min ago" from the stored ISO8601 stamp. Nil when it cannot be
+    /// parsed, so a row degrades to no timestamp rather than a wrong one.
+    static func relativeTime(_ iso8601: String) -> String? {
+        guard let date = ISO8601DateFormatter().date(from: iso8601) else { return nil }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 
     private func label(for operation: KnowledgeWriteOperation) -> String {
