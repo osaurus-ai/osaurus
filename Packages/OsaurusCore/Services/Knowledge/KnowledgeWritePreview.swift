@@ -181,7 +181,11 @@ public enum KnowledgeWritePreviewBuilder {
                 KnowledgeWritePreviewEntry(
                     relPath: document.relPath,
                     operation: existed ? .replace : .create,
-                    diff: diff.text,
+                    diff: honestDiff(
+                        diff.text,
+                        priorLines: lineCount(priorContent),
+                        newLines: lineCount(content)
+                    ),
                     diffTruncated: diff.truncated,
                     deletedContent: "",
                     // Losing facets the document already HAS outranks a
@@ -336,6 +340,26 @@ public enum KnowledgeWritePreviewBuilder {
             )
         }
         return out
+    }
+
+    /// Marker `WorkspaceWriteSafety` emits when the documents are too large to
+    /// diff line by line and it falls back to dumping leading lines.
+    static let boundedPrefixMarker = "large diff preview uses bounded prefixes"
+
+    /// Replace an uncomputable diff with an honest statement of that fact.
+    ///
+    /// The fallback lists the first 40 OLD lines prefixed `-` and the first 40
+    /// NEW lines prefixed `+`. On a 490 line document — past the 200,000 cell
+    /// matrix bound — a one phrase substitution therefore renders as the entire
+    /// document being deleted. Observed live on exactly that document, on the
+    /// one surface whose whole job is telling the truth about a change. Better
+    /// to say the diff could not be computed than to show a false one.
+    static func honestDiff(_ diff: String, priorLines: Int, newLines: Int) -> String {
+        guard diff.contains(boundedPrefixMarker) else { return diff }
+        return
+            "This document is too large to compare line by line, so no diff is shown.\n"
+            + "\(priorLines) lines before, \(newLines) lines after.\n"
+            + "Expand the document in the collection to review it in full before approving."
     }
 
     private static func capDeletePreview(_ text: String) -> String {

@@ -245,3 +245,80 @@ struct EditKnowledgeToolTests {
         #expect(SystemPromptComposer.knowledgeToolNames.contains("edit_knowledge"))
     }
 }
+
+/// The approval diff for an edit.
+///
+/// Live-observed on a 490 line catalogue: past 200,000 LCS matrix cells the
+/// line-by-line diff gives up and dumps the first 40 old lines prefixed `-`,
+/// so a one phrase substitution rendered as the ENTIRE document being deleted
+/// on the one surface whose job is telling the truth about a change.
+@Suite
+struct EditKnowledgeDiffTests {
+
+    private typealias Edit = KnowledgeWriteService.KnowledgeEdit
+
+    @Test func aSweepingEditShowsTheSubstitutionAndItsReach() {
+        let content = (1 ... 120)
+            .map { "## ALERT-\($0)\n\nFires. First response: check the dashboard.\n" }
+            .joined(separator: "\n")
+
+        let diff = EditKnowledgeTool.substitutionDiff(
+            [Edit(find: "check the dashboard", replace: "check the runbook first", all: true)],
+            in: content,
+            path: "reference/alerts.md"
+        )
+
+        #expect(diff.contains("@@ 120 occurrences @@"))
+        #expect(diff.contains("-check the dashboard"))
+        #expect(diff.contains("+check the runbook first"))
+        // Nothing else is presented as changing.
+        #expect(!diff.contains("ALERT-"))
+        #expect(diff.components(separatedBy: "\n").count < 10)
+    }
+
+    @Test func aUniqueEditReportsOneOccurrence() {
+        let diff = EditKnowledgeTool.substitutionDiff(
+            [Edit(find: "v3", replace: "v4.1")],
+            in: "Applies to v3.\n",
+            path: "a.md"
+        )
+        #expect(diff.contains("@@ 1 occurrence @@"))
+    }
+
+    /// A later edit's count must reflect what an earlier one already did.
+    @Test func sequentialEditsCountAgainstTheRunningDocument() {
+        let diff = EditKnowledgeTool.substitutionDiff(
+            [
+                Edit(find: "alpha", replace: "beta", all: true),
+                Edit(find: "beta", replace: "gamma", all: true),
+            ],
+            in: "alpha alpha\n",
+            path: "a.md"
+        )
+        // Two alphas become two betas, so the second edit sees two, not zero.
+        #expect(diff.contains("@@ 2 occurrences @@"))
+        #expect(!diff.contains("@@ 0 occurrences @@"))
+    }
+
+    /// When a whole-document diff genuinely cannot be computed, say so rather
+    /// than showing pseudo-removals that read as total destruction.
+    @Test func anUncomputableDiffSaysSoInsteadOfLying() {
+        let bounded =
+            "--- a.md (before)\n+++ a.md (after)\n"
+            + "... \(KnowledgeWritePreviewBuilder.boundedPrefixMarker)\n-old line\n+new line"
+        let honest = KnowledgeWritePreviewBuilder.honestDiff(
+            bounded, priorLines: 490, newLines: 490)
+
+        #expect(honest.contains("too large to compare line by line"))
+        #expect(honest.contains("490 lines before, 490 lines after"))
+        // The misleading pseudo-removal is gone.
+        #expect(!honest.contains("-old line"))
+    }
+
+    /// A diff that WAS computed passes through untouched.
+    @Test func aRealDiffIsLeftAlone() {
+        let real = "--- a.md (before)\n+++ a.md (after)\n-one\n+two"
+        #expect(
+            KnowledgeWritePreviewBuilder.honestDiff(real, priorLines: 2, newLines: 2) == real)
+    }
+}

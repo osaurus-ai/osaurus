@@ -763,12 +763,52 @@ final class EditKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePrev
         guard case .success(let edited) = KnowledgeWriteService.applyEdits(edits, to: current)
         else { return nil }
 
-        return KnowledgeWritePreviewBuilder.build(
+        var preview = KnowledgeWritePreviewBuilder.build(
             collection: collection,
             documents: [(path, edited)],
             isDelete: false,
             rationale: (args["rationale"] as? String) ?? ""
         )
+
+        // Show the SUBSTITUTIONS, not a whole-document diff.
+        //
+        // We know exactly what changed, so there is nothing to infer. Diffing
+        // is also actively worse here: past 200,000 matrix cells (a ~450 line
+        // document) the line-by-line comparison gives up and dumps leading
+        // lines, which renders a one phrase substitution as the entire
+        // document being deleted. Observed live on a 490 line catalogue.
+        if var entry = preview.entries.first, entry.isValid {
+            entry.diff = Self.substitutionDiff(edits, in: current, path: path)
+            entry.diffTruncated = false
+            preview.entries = [entry]
+        }
+        return preview
+    }
+
+    /// Render the edits as a compact diff of what is being substituted, with
+    /// the occurrence count so a sweeping `all` edit states its own reach.
+    static func substitutionDiff(
+        _ edits: [KnowledgeWriteService.KnowledgeEdit],
+        in content: String,
+        path: String
+    ) -> String {
+        var lines = ["--- \(path) (before)", "+++ \(path) (after)"]
+        var running = content
+        for edit in edits {
+            let occurrences = running.components(separatedBy: edit.find).count - 1
+            let applied = edit.all ? occurrences : min(occurrences, 1)
+            let noun = applied == 1 ? "occurrence" : "occurrences"
+            lines.append("@@ \(applied) \(noun) @@")
+            for line in edit.find.components(separatedBy: "\n") { lines.append("-\(line)") }
+            for line in edit.replace.components(separatedBy: "\n") { lines.append("+\(line)") }
+            // Track the intermediate document so a later edit's count reflects
+            // what an earlier one already changed.
+            running = edit.all
+                ? running.replacingOccurrences(of: edit.find, with: edit.replace)
+                : running.replacingOccurrences(
+                    of: edit.find, with: edit.replace, options: [], range: running.range(of: edit.find))
+        }
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Execute
