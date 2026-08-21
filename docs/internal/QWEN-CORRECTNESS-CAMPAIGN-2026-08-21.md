@@ -754,6 +754,52 @@ interrupt the completed read. Low severity, unproven live.
 No interprocess lock exists (`OSAllocatedUnfairLock` is process-local), so two
 processes sharing one cache directory are not covered.
 
+### LIVE PROOF of the decode-path instrumentation (2026-08-21)
+
+Rebuilt the proof app with the change, ran it against `~/models/OsaurusAI` on a
+fresh test root, and drove the GUI. Three generation steps, each emitting the
+new line paired 1:1 with the pre-existing ones:
+
+    STEP-MTP   decodePath=plain mtp=off
+    STEP-STATS promptTokens=3295 promptMs=1865 promptTps=1766.3 genTokens=1  genTps=3215.3 stop=length
+    STEP-END   cacheAfter{prefixHits=0 prefixMisses=0 diskL2Hits=0 diskL2Misses=5 diskL2Stores=2}
+    STEP-MTP   decodePath=plain mtp=off
+    STEP-STATS promptTokens=3401 promptMs=278  promptTps=12228.4 genTokens=13 genTps=77.9   stop=stop
+    STEP-END   cacheAfter{prefixHits=0 prefixMisses=0 diskL2Hits=1 diskL2Misses=6 diskL2Stores=7}
+    STEP-MTP   decodePath=plain mtp=off
+    STEP-STATS promptTokens=3415 promptMs=270  promptTps=12615.5 genTokens=1  genTps=2915.7 stop=length
+    STEP-END   cacheAfter{prefixHits=0 prefixMisses=0 diskL2Hits=2 diskL2Misses=7 diskL2Stores=9}
+
+**Honest scope:** the model in this run was not MTP-capable, so `mtp=off` is the
+CORRECT answer and this proves only that the nil branch renders and pairs
+correctly. The `decodePath=nativeMTP` branch with the accept-rate fields has NOT
+been rendered live yet — that needs an MTP-capable bundle loaded and is the next
+step.
+
+Requires `OSAURUS_PREFILL_DEBUG=1` for the file trace (the os_log line is
+`.info` level, which `log show` drops unless passed `--info`). Both were
+initially read as "the line never fired" — it had.
+
+### Two things the trace showed that were not the point of the run
+
+Neither is a fix yet; both are now observable per turn and both bear on Eric's
+long-context worry.
+
+1. **`prefixHits=0` on every step while `diskL2Hits` climbs 0 → 1 → 2.** Reuse
+   is coming entirely from the SSD tier; the in-RAM prefix tier never hit once
+   in this conversation. That is the shape predicted by exact-boundary-only
+   reuse, now visible live rather than inferred. It is also exactly the case
+   where the resident-KV-reuse item (P0.4) would pay — the round trip to disk is
+   being taken for state the process may still hold.
+
+2. **Stores outrun hits badly: 2 → 7 → 9 stores against 0 → 1 → 2 hits.** Nine
+   stores for three steps of one short conversation. Consistent with the
+   already-verified defect that each boundary is written as a FULL payload
+   rather than a delta (P0.3), and it means the write amplification is paid on
+   every turn, growing with depth — the mechanism most likely to make SSD
+   caching cost more than it saves as context grows. Worth measuring directly
+   before any block-addressed redesign.
+
 ### Still not measured
 
 The cache ON vs OFF depth curve remains the one measurement that answers Eric's
