@@ -70,6 +70,37 @@ as live hazards.
 route to? Is there a single authoritative family resolver, or does every
 subsystem re-derive family from the id string?
 
+**A3. VERIFIED CORRECT — max SSD cache size IS wired and IS displayed.**
+Checked because it was suspected broken; it is not, and the near-miss is worth
+recording. An osaurus-only grep shows `cache.blockDisk.maxSizeGB` with three
+consumers — the UI binding, two `== nil` default checks, and an HTTP field that
+reports it — which reads as "the setting does nothing". **It is not.** The
+mapping lives in the vmlx-swift package, which that grep excluded along with
+`.build`:
+
+    cache.blockDisk.maxSizeGB           (UI, ServerRuntimeSettingsStore)
+      -> diskMaxSizeGB                  (VMLXServerRuntimeSettings)
+      -> diskMaxGB = Float(... ?? 10.0)
+      -> CacheCoordinatorConfig.diskCacheMaxGB
+      -> DiskCache(maxSizeGB:)          (CacheCoordinator.swift:178)
+
+`ModelRuntime.buildCacheCoordinatorConfig` then normalises a non-positive cap
+(0 would self-evict every entry at insert) and applies a host-aware free-space
+clamp, logging a notice when it lowers the value.
+
+Parity is also already right: `CacheSection.swift:189` displays
+`active.diskL2MaxGB` — the **post-clamp effective** cap, not the typed one —
+and `/health` reports the same field. So a user whose 200 GB request was
+clamped sees the real number.
+
+→ Still open, and only answerable live: does the typed value survive a restart,
+and does the janitor actually evict at the cap (starve it with a tiny cap and
+watch)? Wiring being present is not the same as eviction being enforced.
+→ **Method note for this campaign:** grepping osaurus alone is not sufficient
+for anything cache- or runtime-related — the implementation is split across the
+vmlx-swift package. This nearly produced a false bug report and an unnecessary
+"fix".
+
 ---
 
 ## B. Cache reuse (SSD-only lane) — the questions

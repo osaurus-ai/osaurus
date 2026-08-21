@@ -226,11 +226,33 @@ public enum ContextSizeResolver {
 
         // Cache-only: `resolve` runs synchronously inside chat view getters
         // during layout, where `ModelInfo.load`'s cold-miss disk probe has hung
-        // the UI. A cold miss warms the memo off-main and reads as `.unknown`
-        // for this pass; a later render resolves the real window.
+        // the UI. A cold miss warms the memo off-main and reads the window as
+        // unknown for this pass; a later render resolves the real one.
+        //
+        // 🚨 But the cold pass must NOT change the compact preference, because
+        // that changes PROMPT SHAPE and therefore the KV prefix.
+        //
+        // Returning bare `.unknown` here did exactly that: `.unknown` defaults
+        // `prefersCompactPrompt` to false, while the warm branch below says the
+        // opposite for the same situation ("Unknown size on a local model also
+        // compacts"). An Ornith 9B conversation composed a VERBOSE system
+        // prompt on the first render and a COMPACT one once the memo warmed —
+        // different prefix, missed cache — on the very read sites this
+        // resolver's chokepoint exists to keep mutually consistent. A 35B model
+        // is non-compact either way, which is why it hid on the big models.
+        //
+        // The parameter count comes from the model ID, which needs no memo, so
+        // both paths can and now do agree.
         guard let info = ModelInfo.loadCachedOrWarm(modelId: modelId),
             let ctx = info.model.contextLength
-        else { return .unknown }
+        else {
+            let billions = ModelMetadataParser.parameterCountBillions(from: trimmed)
+            return ContextWindowInfo(
+                sizeClass: .normal,
+                contextLength: nil,
+                prefersCompactPrompt: billions.map { $0 <= compactParamCeilingBillions } ?? true
+            )
+        }
 
         let bucket = sizeClass(forContextLength: ctx)
         if bucket != .normal {

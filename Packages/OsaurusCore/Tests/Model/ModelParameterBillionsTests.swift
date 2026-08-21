@@ -53,6 +53,33 @@ struct ModelParameterBillionsTests {
         #expect(ContextSizeResolver.resolve(modelId: "default").prefersCompactPrompt == true)
     }
 
+    /// 🚨 A cold memo must not change PROMPT SHAPE.
+    ///
+    /// `resolveUnadjusted` returns `.unknown` when `loadCachedOrWarm` misses,
+    /// and `.unknown` defaults `prefersCompactPrompt` to false. But the warm
+    /// branch of the SAME function says the opposite for the same situation —
+    /// "Unknown size on a local model also compacts" — returning true when the
+    /// parameter count is unparseable.
+    ///
+    /// So an Ornith 9B conversation composed a VERBOSE system prompt on the
+    /// first render and a COMPACT one once the memo warmed. Different prompt =
+    /// different prefix = missed KV cache, on the read sites whose own comment
+    /// calls mutual consistency "a KV-cache requirement". A 35B model is
+    /// non-compact in both states, which is why this hid on the big models.
+    ///
+    /// The parameter count is parsed from the model ID, which is available with
+    /// or without the memo, so both paths can and must agree.
+    @Test func coldMemoDoesNotFlipCompactPreference() {
+        // Sub-ceiling local models compact. Neither of these has an on-disk
+        // bundle here, so this exercises the cold path specifically.
+        #expect(ContextSizeResolver.resolve(modelId: "OsaurusAI/Ornith-1.0-9B-JANG_4").prefersCompactPrompt == true)
+        #expect(ContextSizeResolver.resolve(modelId: "Qwen3.5-9B-MXFP8").prefersCompactPrompt == true)
+        // Above the ceiling stays verbose cold, matching the warm answer.
+        #expect(ContextSizeResolver.resolve(modelId: "OsaurusAI/Ornith-1.0-35B-A3B-JANG_4").prefersCompactPrompt == false)
+        // Unparseable size on a local model compacts, per the warm branch's rule.
+        #expect(ContextSizeResolver.resolve(modelId: "SomeVendor/mystery-bundle").prefersCompactPrompt == true)
+    }
+
     /// The compact param ceiling is the documented 20B (guards against an
     /// accidental edit that would silently re-scope which local models compact).
     @Test func compactParamCeilingIsTwentyBillion() {
