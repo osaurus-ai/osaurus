@@ -401,21 +401,40 @@ it): a settings **schema version**, or an explicit `userSelectedMode` marker, so
 the repair runs once for pre-`e095d0f` data and never again. Update the two
 tests together with it.
 
-**M2. Native MTP is disqualified on the DEFAULT API path.**
-Eligibility requires `requestedReasoningBudgetTokens == nil`
-(Evaluate.swift:497, with the comment explaining a drafted token could sail past
-the budget ceiling before it arms). Osaurus derives that field from `max_tokens`
-(MLXBatchAdapter.swift:1288/1558), and the API's default is
-`request.resolvedMaxTokens ?? 16384` (ChatEngine.swift:135) — **non-nil**.
+**M2. Native MTP is disqualified on the HTTP API path — and ONLY that path.**
+(Corrected: an earlier draft of this entry implied it might apply everywhere.
+It does not, and the scoping matters.)
 
-So an ordinary `/v1/chat/completions` request does not use the native MTP
-iterator at all, regardless of the Auto default. "Auto" means "prepare a
-qualifying bundle", not "ordinary requests use MTP".
-→ Live proof needed: confirm AR-vs-MTP on the API path, and check whether the
-visual harness sends a max_tokens that disqualifies it too. If the harness also
-sends one, native MTP is effectively off for real users everywhere.
-→ This also reframes the MTP-slowdown hypothesis: if MTP never runs on a path,
-it cannot be that path's slowdown.
+Eligibility requires `requestedReasoningBudgetTokens == nil`
+(Evaluate.swift:497 — the comment explains a drafted token could sail past the
+budget ceiling before it arms). That field is set from
+`apiReasoningAnswerBudget` (MLXBatchAdapter.swift:1288, assigned 1558), whose
+FIRST line is `guard requestSource == .httpAPI else { return nil }`.
+
+`RequestSource` is `chatUI | httpAPI | plugin | p2p | autonomous`
+(RequestLog.swift:78-90). So:
+
+| surface | reasoning budget set? | native MTP eligible? |
+|---|---|---|
+| **HTTP API** | yes (when maxTokens >= ~129 and budget >= 64) | **NO** |
+| **visual chat UI** | no | **yes** |
+| plugin / P2P / autonomous | no | yes |
+
+This is deliberate and documented in situ: the API surface cannot see
+`reasoning_content`, so a think block that spends the whole `max_tokens`
+returns an empty answer (the live Anarlog report). The chat UI renders
+reasoning itself and owns its own limits.
+
+The real consequence, which is NOT documented anywhere user-facing: **API
+callers never get native MTP speedups.** That is a genuine
+harness-vs-API divergence of exactly the kind section I is about — same
+model, same prompt, different decode path, no way for the caller to know.
+→ Live proof needed: confirm AR on the API path and MTP on the harness path
+for the same bundle, and measure the speed difference so the tradeoff is a
+number rather than a guess.
+→ For the MTP-slowdown hypothesis this narrows the search: MTP cannot be
+causing slowdowns on the API path, because it never runs there. Any
+MTP-related decay must be reproduced in the visual harness.
 
 **Ruled out by the same audit** (recorded so they are not re-chased): MTP
 autodetection by bundle-path/model-ID substring; bundle autodetect overriding a
