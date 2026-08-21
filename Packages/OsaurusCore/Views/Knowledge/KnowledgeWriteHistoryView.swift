@@ -2,8 +2,8 @@
 //  KnowledgeWriteHistoryView.swift
 //  OsaurusCore — Knowledge
 //
-//  "Recent agent changes" in the Knowledge tab: what agents wrote to your
-//  collections, and the button that puts it back.
+//  The History tab under Knowledge: what agents wrote to your collections,
+//  and the button that puts it back.
 //
 //  This is the half of the direct-write design that makes call-time approval
 //  defensible. Nobody reliably catches fabricated reference material by
@@ -78,26 +78,11 @@ extension KnowledgeWriteRun {
 }
 
 struct KnowledgeWriteHistoryView: View {
-    /// Where this list is being rendered, which is the only thing that differs
-    /// between the two surfaces.
-    ///
-    /// `inline` is the strip in the Collections tab: the three most recent
-    /// runs, no filters, and a way through to the full tab. It exists so an
-    /// unexpected write is still noticeable where people already look, without
-    /// letting an unbounded log push the collections themselves off screen.
-    enum Mode: Equatable {
-        case inline(limit: Int)
-        case full
-    }
-
     let runs: [KnowledgeWriteRun]
-    var mode: Mode = .full
     /// Revert one whole run. The affordance that matters after a bad import.
     let onRevertRun: (KnowledgeWriteRun) -> Void
     /// Revert a single document.
     let onRevertRecord: (KnowledgeWriteRecord) -> Void
-    /// Jump to the History tab. Only meaningful inline.
-    var onSeeAll: (() -> Void)?
 
     @Environment(\.theme) private var theme
     @State private var expanded: Set<String> = []
@@ -111,12 +96,7 @@ struct KnowledgeWriteHistoryView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            switch mode {
-            case .inline:
-                inlineHeader
-            case .full:
-                filterBar
-            }
+            filterBar
 
             if visibleRuns.isEmpty {
                 emptyState
@@ -128,35 +108,7 @@ struct KnowledgeWriteHistoryView: View {
         }
     }
 
-    // MARK: - Headers
-
-    private var inlineHeader: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Recent agent changes", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text(
-                    "Documents agents have written to your collections. You approved each of these when it ran; if something looks wrong, put it back here.",
-                    bundle: .module
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 12)
-
-            // Only offered when something is actually hidden, so it never
-            // promises a fuller list than exists.
-            if let onSeeAll, runs.count > visibleRuns.count {
-                Button(action: onSeeAll) {
-                    Text("See all", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                }
-            }
-        }
-    }
+    // MARK: - Filter bar
 
     private var filterBar: some View {
         HStack(spacing: 12) {
@@ -190,8 +142,8 @@ struct KnowledgeWriteHistoryView: View {
     }
 
     private var emptyState: some View {
-        // Reachable only in the full tab, and only by filtering everything
-        // out: the tab itself is hidden until an agent has written something.
+        // Reachable only by filtering everything out: the tab itself is
+        // hidden until an agent has written something.
         Text("No changes match these filters.", bundle: .module)
             .font(.system(size: 11))
             .foregroundColor(theme.tertiaryText)
@@ -221,19 +173,11 @@ struct KnowledgeWriteHistoryView: View {
 
     private var visibleRuns: [KnowledgeWriteRun] {
         var filtered = runs
-        if case .full = mode {
-            if !collectionFilter.isEmpty {
-                filtered = filtered.filter { $0.collectionId == collectionFilter }
-            }
-            if !showsReverted {
-                filtered = filtered.filter { !$0.isFullyReverted }
-            }
+        if !collectionFilter.isEmpty {
+            filtered = filtered.filter { $0.collectionId == collectionFilter }
         }
-        if case .inline(let limit) = mode {
-            // Inline shows what is still standing. A reverted run is a
-            // resolved problem, and this strip is for spotting live ones.
+        if !showsReverted {
             filtered = filtered.filter { !$0.isFullyReverted }
-            filtered = Array(filtered.prefix(limit))
         }
         return filtered
     }

@@ -72,20 +72,6 @@ struct KnowledgeView: View {
                 .offset(y: hasAppeared ? 0 : -10)
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
-            // Hidden until there is history to show, so the common case is
-            // exactly the single-surface view it has always been.
-            if !knowledgeManager.collections.isEmpty, !writeRuns.isEmpty {
-                HeaderTabsRow(
-                    selection: $selectedTab,
-                    counts: [
-                        .collections: knowledgeManager.collections.count,
-                        .history: writeRuns.count,
-                    ]
-                )
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 12)
-            }
-
             ZStack {
                 if knowledgeManager.collections.isEmpty {
                     SettingsEmptyState(
@@ -130,7 +116,6 @@ struct KnowledgeView: View {
                 } else {
                     ScrollView {
                         curationSection
-                        writeHistorySection
                         LazyVGrid(
                             columns: [
                                 GridItem(.flexible(minimum: 300), spacing: 20),
@@ -556,19 +541,11 @@ struct KnowledgeView: View {
         showSuccess(L("Opened \(agent.name) with a briefing for ticket #\(ticket.id). Review it and hit send."))
     }
 
-    /// Recent agent writes with revert. Hidden until an agent has actually
-    /// written something, so a collection nobody's agent touches carries no
-    /// extra chrome.
-    @ViewBuilder
-    private var writeHistorySection: some View {
-        if !writeRuns.isEmpty {
-            historyList(mode: .inline(limit: 3), onSeeAll: { selectedTab = .history })
-                .padding(.horizontal, 24)
-                .padding(.top, 20)
-        }
-    }
-
     /// The History tab: every run, with collection and reverted filters.
+    ///
+    /// The only surface for agent writes. The Collections tab used to carry a
+    /// duplicate strip of the same rows; with a tab of its own, that was the
+    /// same list rendered twice on one screen.
     private var fullHistorySection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(
@@ -579,7 +556,7 @@ struct KnowledgeView: View {
             .foregroundColor(theme.tertiaryText)
             .fixedSize(horizontal: false, vertical: true)
 
-            historyList(mode: .full, onSeeAll: nil)
+            historyList
         }
         .padding(.horizontal, 24)
         .padding(.top, 20)
@@ -587,15 +564,9 @@ struct KnowledgeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// One set of revert handlers behind both surfaces, so the inline strip
-    /// and the tab can never drift on what reverting actually does.
-    private func historyList(
-        mode: KnowledgeWriteHistoryView.Mode,
-        onSeeAll: (() -> Void)?
-    ) -> some View {
+    private var historyList: some View {
         KnowledgeWriteHistoryView(
             runs: writeRuns,
-            mode: mode,
             onRevertRun: { run in
                 showSuccess(L("Reverting \(run.records.count) document(s)…"))
                 Task {
@@ -626,8 +597,7 @@ struct KnowledgeView: View {
                     }
                     reloadCuration()
                 }
-            },
-            onSeeAll: onSeeAll
+            }
         )
     }
 
@@ -672,19 +642,52 @@ struct KnowledgeView: View {
         }
     }
 
+    /// Tabs live inside the header container, not under it.
+    ///
+    /// `ManagerHeaderWithTabs` is what paints the header band and owns the
+    /// row's insets; a selector placed in the body below it sits on the page
+    /// background with nothing to anchor to, and reads as floating.
+    ///
+    /// Still only rendered once an agent has written something, so the common
+    /// case keeps the plain header it has always had.
+    @ViewBuilder
     private var headerView: some View {
-        ManagerHeaderWithActions(
-            title: L("Knowledge"),
-            subtitle: L("Folders of documents your agents can search and read on demand"),
-            count: knowledgeManager.collections.isEmpty ? nil : knowledgeManager.collections.count
-        ) {
-            HeaderIconButton("arrow.clockwise", help: "Re-index all collections") {
-                knowledgeManager.scheduleIndexAll()
-                showSuccess("Incremental re-index started")
-            }
-            HeaderPrimaryButton("Add Collection", icon: "plus") {
-                isCreating = true
-            }
+        if writeRuns.isEmpty {
+            ManagerHeaderWithActions(
+                title: L("Knowledge"),
+                subtitle: L("Folders of documents your agents can search and read on demand"),
+                count: knowledgeManager.collections.isEmpty
+                    ? nil : knowledgeManager.collections.count,
+                actions: { headerActions }
+            )
+        } else {
+            ManagerHeaderWithTabs(
+                title: L("Knowledge"),
+                subtitle: L("Folders of documents your agents can search and read on demand"),
+                count: knowledgeManager.collections.isEmpty
+                    ? nil : knowledgeManager.collections.count,
+                actions: { headerActions },
+                tabsRow: {
+                    HeaderTabsRow(
+                        selection: $selectedTab,
+                        counts: [
+                            .collections: knowledgeManager.collections.count,
+                            .history: writeRuns.count,
+                        ]
+                    )
+                }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var headerActions: some View {
+        HeaderIconButton("arrow.clockwise", help: "Re-index all collections") {
+            knowledgeManager.scheduleIndexAll()
+            showSuccess("Incremental re-index started")
+        }
+        HeaderPrimaryButton("Add Collection", icon: "plus") {
+            isCreating = true
         }
     }
 
