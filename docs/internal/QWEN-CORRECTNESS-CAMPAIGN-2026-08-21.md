@@ -25,6 +25,72 @@ wrong verdict — read these before filing anything:
 
 ---
 
+## PRIORITY ORDER — work top-down
+
+Ordered by: does it BLOCK other work, is it PROVEN broken, how big is the win.
+Applies to Qwen 27B, Ornith 9B/35B and the SSM/hybrid families alike.
+
+### P0 — blocking or proven broken (do these first)
+
+| # | item | why first | state |
+|---|---|---|---|
+| P0.1 | **Assert + LOG native MTP eligibility per turn** (§N) | Every MTP measurement is invalid until this exists — the gate excludes SILENTLY and has already caused one misdiagnosis ("MTP barely does anything"). Blocks P1.2 and P1.3. | to build |
+| P0.2 | **Harness must show which decode path ran** (MTP / dFlash / AR) | Same reason, plus a user cannot tell today. Visual-harness wiring. | to build |
+| P0.3 | **Cache store writes each boundary as a FULL payload** — verified at BatchEngine.swift:3457-3494 | Direct storage + per-turn store cost. Mean payload here is 174 MB, max 358 MB; a conversation storing a system/tool boundary plus up to 3 history rungs writes overlapping copies of the same early KV. | VERIFIED, needs fix design |
+| P0.4 | **Reuse RESIDENT KV instead of a disk round-trip** when the model and conversation are already live | Removes the entire serialize→write→read→deserialize path for the common multiturn case. Likely the single biggest overhead win. | to investigate |
+| P0.5 | **Explicit MTP "Off" does not survive a cold load** (§M1) | Verified user-visible defect: `.off → .auto` migration cannot tell stale default from user choice. | VERIFIED, fix = schema version / user-selected marker |
+
+### P1 — the measurements that answer the speed question
+
+| # | item | notes |
+|---|---|---|
+| P1.1 | **Cache ON vs OFF depth curve** — 2k/8k/16k/32k, hot ABAB, PhysMem per leg | Finds the crossover where reuse stops paying. Two candidate causes already RULED OUT by measurement (§K): probe hashing 24.5 ms, payload read 13-29 ms warm. |
+| P1.2 | **Qwen 27B per quant (2D/4D/6D/MXFP8): MTP accept rate at depth** | Requires P0.1. A collapsing accept rate makes MTP pure overhead at long context. |
+| P1.3 | **MTP byte-identical vs AR at temperature 0, every depth** | The only acceptance criterion. Temp 0 helps most — a speedup that changes text is a bug. |
+| P1.4 | **Chunked prefill coverage per path** (§O) + `phys_footprint` | Text paths already chunk; find what still one-shots. If chunking dodges the paging cliff it is worth more at depth than any per-token win. |
+| P1.5 | **Max-context enforcement + WHEN compaction fires** (§H) | Late = a turn overflows first; early = context discarded that still fit. Push to the ceiling, not near it. |
+
+### P2 — parity and correctness
+
+| # | item |
+|---|---|
+| P2.1 | API vs harness absent-field defaults diverge (temperature, max_tokens, top_p) (§L) |
+| P2.2 | `max_tokens <= 0` still emits one token; `repetition_penalty` silently ignored (§L) |
+| P2.3 | SSD cap: wiring VERIFIED (§A3), but eviction-at-cap still unproven — starve it and watch |
+| P2.4 | TQ/SSM encoding is default OFF — prove q4 correctness when a user turns it ON |
+| P2.5 | Tool calling JSON vs XML, suffix/prefix matching, tools+media+effort at max context |
+| P2.6 | Two context resolvers disagree on fallback chain (§A1) |
+
+---
+
+## P. Making cache storage cheaper (P0.3 / P0.4 detail)
+
+66. **Deduplicate overlapping boundaries.** Each stored boundary is an
+    independent full safetensors payload, so a system/tool boundary plus three
+    history rungs writes the same early KV four times. Options: content-address
+    the shared prefix once and store rungs as references, or store only the
+    LONGEST boundary and slice shorter prefixes out of it on restore (a KV
+    prefix IS a slice — this may be nearly free).
+67. **Store deltas, not whole prefixes.** Turn N+1's KV is turn N's plus the new
+    tail. Persisting only the tail turns an O(context) write per turn into
+    O(new tokens).
+68. **Is the post-answer store synchronous or on the user's next turn?** A store
+    that grows every turn (33 MB → 358 MB here) is a cost the user pays later.
+    Measure it; make it async/incremental if it is not already.
+69. **Resident-KV first.** If the model is loaded and the conversation is the
+    same one, extend the in-memory cache and skip disk entirely. Confirm whether
+    a memory tier already survives between turns, and if so why disk is still
+    consulted. (Searched `CacheCoordinator` for `memoryCache`/`residentCache`/
+    `inMemory` and found none by those names — needs a proper trace, not a
+    grep.)
+70. **Quantized/compressed KV on disk.** TQ encoding is default off; if enabling
+    it shrinks payloads materially, it changes the storage economics — but prove
+    q4 correctness first (P2.4).
+71. **Do not write what will never be read.** Are rungs stored that no later
+    request can match? Instrument store→hit ratio per boundary label.
+
+---
+
 ## A. Findings already confirmed by reading the code (not yet fixed)
 
 **A1. Two independent context-window resolvers, nothing reconciles them.**
