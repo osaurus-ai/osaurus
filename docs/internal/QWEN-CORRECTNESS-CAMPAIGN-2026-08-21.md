@@ -800,6 +800,42 @@ long-context worry.
    caching cost more than it saves as context grows. Worth measuring directly
    before any block-addressed redesign.
 
+### BLOCKED: rendering the nativeMTP branch (harness issue, not a product issue)
+
+Attempted immediately after the proof above. Relaunched against
+`~/models/JANGQ-AI` (Ornith and Qwen3.8-27B live there, NOT in `OsaurusAI` —
+searching the picker for "Ornith" in the OsaurusAI instance returns "No models
+found", which is correct behaviour and cost a cycle to notice).
+
+Ornith 1.0 9B was selected in the picker, but **the turn never sent**. Text
+pastes into the composer fine (clipboard + Cmd-V works), but neither Return nor
+clicking the send arrow dispatches it. The app sat at 0% CPU and 1.28 GB RSS —
+i.e. the model was never loaded either; the green dot in the picker indicates
+SELECTION, not residency.
+
+So `decodePath=nativeMTP` with the accept-rate fields is still unrendered. This
+is a GUI-driving problem, not evidence about MTP.
+
+GUI-driving notes worth keeping, all learned this session:
+
+- `osascript`/System Events returns **-1743 (not authorized)** against a freshly
+  signed proof build. `cliclick` works instead — it posts CGEvents and does not
+  need the Apple Events grant.
+- A click on a newly-focused window registers as **hover only**; the second
+  click acts. Every button press needs two.
+- The onboarding window **moves between launches** (it appeared centre-screen
+  once and right-aligned the next). Fixed coordinates from a previous run miss.
+  Re-screenshot before every click.
+- The launcher takes `(app, bundle-id, models-dir, fresh-test-root)` and
+  **refuses a test root that already exists**, so each run needs a new one.
+- `launchctl setenv OSAURUS_PREFILL_DEBUG 1` before launching is what turns on
+  the file trace; the launcher's cleanup trap does not unset it, so unset it
+  afterwards.
+
+Next attempt should drive the send via a path that does not depend on the
+composer's key handling, or find why the composer ignores Return under
+synthetic events.
+
 ### Still not measured
 
 The cache ON vs OFF depth curve remains the one measurement that answers Eric's
