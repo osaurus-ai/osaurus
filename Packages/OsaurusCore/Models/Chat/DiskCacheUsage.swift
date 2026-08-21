@@ -50,6 +50,13 @@ public struct DiskCacheUsage: Equatable, Sendable {
         return Double(usedBytes) / Double(maxBytes)
     }
 
+    /// Right-hand readout. With a known cap it is "used / cap"; without one
+    /// the cap is being resolved by the runtime and this process cannot name
+    /// it, so it says "used · Auto" rather than inventing a limit.
+    public var headlineLabel: String {
+        maxBytes > 0 ? "\(usedLabel) / \(maxLabel)" : "\(usedLabel) · Auto"
+    }
+
     public var usedLabel: String { Self.format(bytes: usedBytes) }
     public var maxLabel: String { Self.format(bytes: maxBytes) }
 

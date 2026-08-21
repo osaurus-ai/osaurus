@@ -5990,7 +5990,7 @@ private struct ContextBreakdownPopover: View {
                 messagesSection
             }
 
-            if let diskCache, diskCache.maxBytes > 0 {
+            if let diskCache, diskCache.usedBytes > 0 || diskCache.maxBytes > 0 {
                 divider
                 diskCacheSection(diskCache)
             }
@@ -6020,20 +6020,22 @@ private struct ContextBreakdownPopover: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 sectionEyebrow("Disk Cache")
                 Spacer(minLength: 0)
-                Text(verbatim: usage.usedLabel + " / " + usage.maxLabel)
+                Text(verbatim: usage.headlineLabel)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundColor(warn ? tint : theme.secondaryText)
             }
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(theme.tertiaryText.opacity(0.15))
-                    Capsule()
-                        .fill(tint)
-                        .frame(width: max(0, min(1, fraction)) * geo.size.width)
+            if usage.maxBytes > 0 {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(theme.tertiaryText.opacity(0.15))
+                        Capsule()
+                            .fill(tint)
+                            .frame(width: max(0, min(1, fraction)) * geo.size.width)
+                    }
                 }
+                .frame(height: 4)
             }
-            .frame(height: 4)
-            if warn {
+            if warn, usage.maxBytes > 0 {
                 Text(verbatim: usage.warningText)
                     .font(.system(size: 9))
                     .foregroundColor(tint)
@@ -7699,13 +7701,36 @@ private struct FloatingContextChip: View {
     /// configured (disk cache off), so the popover hides the section rather
     /// than showing a meaningless 0 GB.
     static func readDiskCacheUsage() async -> DiskCacheUsage? {
-        guard let snapshot = await MLXBatchAdapter.snapshotDiagnostics(),
+        // Preferred source: a resident model's coordinator, which reports both
+        // the live payload bytes and the cap it is actually enforcing.
+        if let snapshot = await MLXBatchAdapter.snapshotDiagnostics(),
             snapshot.diskL2MaxBytes > 0
+        {
+            return DiskCacheUsage(
+                usedBytes: snapshot.diskL2PayloadBytes,
+                maxBytes: snapshot.diskL2MaxBytes,
+                evictions: snapshot.diskL2Evictions)
+        }
+        // Fallback: nothing resident. The coordinator-backed figures only
+        // exist while a model is loaded, so gating the whole row on them made
+        // the cache readout VANISH on an idle chat — which reads as the
+        // feature being missing rather than merely unmeasured. The cache is
+        // still on disk and still capped, so report it from disk and settings.
+        guard let settings = ServerRuntimeSettingsStore.load(),
+            settings.cache.blockDisk.enabled
         else { return nil }
+        // Only an EXPLICIT cap is reported here. When the size is unset the cap
+        // is resolved by the runtime, and this process cannot know that number
+        // without a resident coordinator — printing a guess would show a limit
+        // nothing is enforcing. maxBytes 0 renders as "used · Auto" with no
+        // percentage, which is the honest reading.
+        let capBytes = settings.cache.blockDisk.maxSizeGB.map {
+            Int($0 * 1_073_741_824)
+        }
         return DiskCacheUsage(
-            usedBytes: snapshot.diskL2PayloadBytes,
-            maxBytes: snapshot.diskL2MaxBytes,
-            evictions: snapshot.diskL2Evictions)
+            usedBytes: OsaurusPaths.diskKVCacheUsageBytes(),
+            maxBytes: capBytes ?? 0,
+            evictions: 0)
     }
 
     let displayTokens: Int

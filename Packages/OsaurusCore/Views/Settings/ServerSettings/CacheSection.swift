@@ -18,6 +18,8 @@ struct CacheSection: View {
     let savedMetadataFallbackTokens: Int?
 
     @State private var loadedModels: [ModelRuntime.ModelCacheSummary] = []
+    @State private var isClearingDiskCache = false
+    @State private var clearedCacheSummary: String?
 
     var body: some View {
         ServerSettingsCard(
@@ -215,6 +217,41 @@ struct CacheSection: View {
                 value: $draft.cache.blockDisk.maxSizeGB,
                 format: "%.1f"
             )
+            HStack(spacing: 10) {
+                Button {
+                    Task {
+                        isClearingDiskCache = true
+                        let result = await ModelRuntime.shared.clearDiskCaches()
+                        clearedCacheSummary =
+                            result.reclaimedBytes > 0
+                            ? String(
+                                format: L("Cleared %@"),
+                                DiskCacheUsage.format(bytes: result.reclaimedBytes))
+                            : L("Cache was already empty")
+                        isClearingDiskCache = false
+                    }
+                } label: {
+                    if isClearingDiskCache {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Clear SSD Cache", bundle: .module)
+                    }
+                }
+                .disabled(isClearingDiskCache)
+                if let clearedCacheSummary {
+                    Text(verbatim: clearedCacheSummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Text(
+                "Deletes every stored prompt checkpoint, including orphaned files left by an interrupted write. Chats keep working; the next turn re-prefills instead of resuming.",
+                bundle: .module
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
             OptionalStringField(
                 label: "Disk Cache Directory",
                 placeholder: "Blank = Osaurus default cache directory",

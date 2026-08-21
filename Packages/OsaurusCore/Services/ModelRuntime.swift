@@ -1255,6 +1255,72 @@ public actor ModelRuntime {
         }
     }
 
+    /// Result of a user-initiated SSD cache purge.
+    struct DiskCacheClearResult: Sendable {
+        /// Bytes that were counted against the quota before clearing.
+        let reclaimedBytes: Int
+        /// How many resident models had their coordinator cleared.
+        let clearedModelCount: Int
+        /// True when nothing was resident, so only the on-disk sweep ran.
+        let clearedWithoutResidentModel: Bool
+    }
+
+    /// Purge the on-SSD prompt cache.
+    ///
+    /// Routes through `CacheCoordinator.clear()` for every resident model,
+    /// which takes `MLXDiskCacheIOLock` before deleting — so a purge cannot
+    /// unlink a payload that an in-flight restore is mid-read. It also removes
+    /// every `.safetensors` in the cache directory, not just indexed rows,
+    /// which is the one path that reclaims orphans left by a crash between the
+    /// file write and the index insert.
+    ///
+    /// With no model resident there is no coordinator to route through, so the
+    /// directory sweep runs directly. That case is reported back to the caller
+    /// rather than silently doing less than the user asked for.
+    @discardableResult
+    func clearDiskCaches() async -> DiskCacheClearResult {
+        var reclaimed = 0
+        var cleared = 0
+        for holder in modelCache.values {
+            guard let coordinator = holder.container.cacheCoordinator else { continue }
+            reclaimed = max(
+                reclaimed,
+                coordinator.snapshotStats().diskStats?.currentPayloadBytes ?? 0)
+            coordinator.clear()
+            cleared += 1
+        }
+        if cleared > 0 {
+            return DiskCacheClearResult(
+                reclaimedBytes: reclaimed,
+                clearedModelCount: cleared,
+                clearedWithoutResidentModel: false)
+        }
+        // No resident model: sweep the configured directory ourselves.
+        let dir =
+            ServerRuntimeSettingsStore.load()
+            .flatMap { Self.cacheDiskDirectoryOverride(for: $0.cache) }
+            ?? OsaurusPaths.diskKVCache()
+        var swept = 0
+        if
+            let items = try? FileManager.default.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: [.fileSizeKey])
+        {
+            for url in items where url.pathExtension == "safetensors" {
+                let size =
+                    (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                if (try? FileManager.default.removeItem(at: url)) != nil { swept += size }
+            }
+            // Drop the index rows too, otherwise the next quota pass accounts
+            // for files that are already gone.
+            let index = dir.appendingPathComponent("cache_index.db")
+            try? FileManager.default.removeItem(at: index)
+        }
+        return DiskCacheClearResult(
+            reclaimedBytes: swept,
+            clearedModelCount: 0,
+            clearedWithoutResidentModel: true)
+    }
+
     /// Final monotonic cache counters for one resident holder. The caller
     /// captures this only after its BatchEngine is shut down, then publishes
     /// it to the registry only after removing the holder from `modelCache`.
