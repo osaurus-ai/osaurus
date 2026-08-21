@@ -16,6 +16,12 @@ wrong verdict — read these before filing anything:
   only on the *next* turn.
 - A/B needs a NOVEL seed per run and a ≥2 s settle. **A latency win is not
   proof** — A/B the answer TEXT at temperature 0.
+- 🚨 **Sustained decode is ALWAYS measured over a MULTITURN conversation**, never
+  a single turn. A one-turn number is peak decode on a clean cache and hides
+  everything this campaign is about: store cost growing per turn, restore cost
+  growing with depth, accept rate decaying, compaction firing. Report the
+  per-turn series (turn 1..N), not one figure — and say which turn the decay
+  starts.
 - A chat you have been toggling settings in is a CONTAMINATED fixture. Open a
   new conversation before judging degenerate output.
 - Store/fetch must use the SAME tier. Healthy stores + 100 % misses is a tier or
@@ -88,6 +94,31 @@ Applies to Qwen 27B, Ornith 9B/35B and the SSM/hybrid families alike.
     q4 correctness first (P2.4).
 71. **Do not write what will never be read.** Are rungs stored that no later
     request can match? Instrument store→hit ratio per boundary label.
+
+### Block-level best-match reuse on SSD (today it is whole-prefix only)
+
+Established in §K: `CacheCoordinator` does a genuine longest-STORED-prefix
+search, but every SSD candidate is `tokens.prefix(boundary)` — a whole-prompt
+payload. **Per-block chain hashes exist only in the paged RAM tier**
+(CacheBlock.swift:110/132, walked by PagedCacheManager, which can also reuse a
+partial leaf). SSD has no block-level equivalent.
+
+72. Consequence: a conversation that diverges mid-history can only reuse up to a
+    boundary that HAPPENED to be stored. Two conversations sharing a long
+    system+tools+early-history prefix but differing later take whole-file misses
+    where a block tier would reuse the shared run. Measure how often that
+    happens in real multiturn use before building anything.
+73. Would block-addressed SSD storage — chain-hashed blocks, the scheme the
+    paged tier already uses — give better reuse AND cheaper storage at once? It
+    dedupes P0.3's overlapping payloads by construction, since shared blocks are
+    stored once, and makes reuse granular instead of boundary-gated.
+74. Cost to weigh: many small files instead of few large ones, more index rows,
+    more per-block probes. §K measured probe hashing at 24.5 ms for 256
+    candidates so there is headroom, but block counts are far larger than
+    boundary counts.
+75. Middle option worth pricing first: store the LONGEST prefix once and slice
+    shorter reuses out of it. A KV prefix is a slice, so this may be nearly free
+    and captures much of the win without a new on-disk format.
 
 ---
 
