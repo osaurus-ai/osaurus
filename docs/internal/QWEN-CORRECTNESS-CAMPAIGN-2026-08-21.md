@@ -449,6 +449,55 @@ payoff stays fixed, so the net win shrinks and can go negative. Measure accept
 rate AND verify cost at 2k/8k/16k/32k, and confirm byte-identical output at
 temperature 0 at every depth.
 
+## N. 🚨 MTP eligibility is a MATRIX — and it fails SILENTLY
+
+Reasoning budgets and enforcement are **per family**. DSV4 0731 in particular
+does it differently from Qwen/Ornith, and that changes whether MTP runs at all.
+
+The governing rule, stated in the gate itself (`isNativeMTPPenaltyFree`,
+Evaluate.swift:483-498): **anything whose logits depend on the SAMPLED HISTORY
+disqualifies MTP**, because a drafted token bypasses the per-token processor.
+Floors, suppress lists, budgets and penalties all qualify.
+
+| condition | native MTP eligible |
+|---|---|
+| HTTP API (budget derived from `max_tokens`) | **no** |
+| **minimum-thinking floor armed** (DSV4 enforced-low rail) | **no — visual harness included** |
+| repetition / presence / frequency penalty non-zero | **no** |
+| `reasoningBudgetTokens` set (env `VMLX_REASONING_BUDGET` or per-request) | **no** |
+| chat UI, no floor, no penalties | yes |
+
+`MinimumReasoningFloor.armIfNeeded` runs on **every** `BatchEngine.submit`
+(BatchEngine.swift:477-481, and again at 609); when it arms it sets
+`initialSuppressTokens = [floor.closeTokenID]`. The source names the family:
+"the DSV4 enforced-low thinking rail" (Evaluate.swift:209, 1003).
+`DFlash2TokenIterator.swift:276` carries the parallel check, so dFlash-2 is
+gated the same way.
+
+**This gate has already shipped a silent-exclusion bug once.** Its own comment:
+
+> "This is the gate that used to silently exclude every real chat session:
+> bundles default to temperature 1.0, so 'MTP on' produced plain AR decode with
+> no error and no log line — the exact shape of the 'MTP barely does anything'
+> reports."
+
+**Consequence for every MTP measurement in this campaign:** confirm MTP is
+actually RUNNING for that bundle, on that surface, with those parameters, before
+timing anything. Otherwise you A/B autoregressive against autoregressive, get a
+null result, and report "MTP does not help at long context" — a false pass of
+exactly the kind the testing methodology warns about. There is no log line when
+the gate excludes, so the assertion has to be explicit.
+
+Open questions this raises:
+53. Should the gate LOG when it excludes? A silent fallback to AR is
+    indistinguishable from MTP being slow, and has already cost this project one
+    misdiagnosis.
+54. Does the harness surface which decode path a turn actually used? If not, a
+    user (and this campaign) cannot tell MTP from AR without instrumentation.
+55. Per family: which of Ornith 9B / Ornith 35B / Qwen 27B arm a minimum
+    reasoning floor by default, and at which effort settings? That determines
+    which of them can benefit from MTP at all.
+
 ---
 
 ## Method
