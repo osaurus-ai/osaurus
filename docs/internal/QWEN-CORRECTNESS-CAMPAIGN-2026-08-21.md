@@ -336,6 +336,46 @@ Treat as hypotheses to disprove, not findings:
 - **Do NOT blindly enable whole JANGTQ SwitchGLU compile** — the source records
   real regressions and deliberately keeps it experimental.
 
+## L. Sampling-kwarg parity (API vs visual harness) — UNVERIFIED, source-only
+
+From the parallel audit, cross-checked only where noted. Each needs live proof
+before it is treated as real.
+
+**Previously-fixed bugs that HELD** (good news, recorded so they are not
+re-chased): `seed` is no longer a global-RNG no-op — it reaches per-request
+sampler state; `frequency_penalty` is no longer mis-mapped to
+`repetitionPenalty`; `presence_penalty` is no longer dropped locally.
+
+**Candidate defects, highest value first:**
+
+1. **`max_tokens <= 0` can still emit one token.** There is no positive-range
+   validation, and batched generation checks the cap *after* yielding its first
+   token (BatchEngine.swift:2515-2527). Cheap to prove with a focused test.
+2. **`repetition_penalty` is silently ignored per request.** It is not a
+   property or coding key (OpenAIAPI.swift:691-719, 822-830), and `ChatEngine`
+   always sets the per-request value to nil (ChatEngine.swift:136-145). A caller
+   sending it gets no error and no effect — only bundle/server defaults apply.
+3. **Out-of-range sampling values silently disable their filter instead of
+   erroring**: `top_p` outside (0,1), `top_k <= 0`, non-positive `min_p`
+   (Evaluate.swift:366-379). Silent no-op is the same failure shape as an
+   ignored setting.
+4. **Absent-field defaults DIVERGE between the API and the visual harness** —
+   this is the parity concern directly:
+
+   | field absent | strict API | visual chat UI |
+   |---|---|---|
+   | `temperature` | nil -> bundle -> server -> vmlx `0.6` | sends the active agent's temperature if configured |
+   | `max_tokens` | implicit `16384` -> bundle -> server | sends the active agent's cap if configured |
+   | `top_p` | bundle -> server -> `1.0` | sends `ChatConfiguration.topPOverride` if configured |
+
+   Same prompt, different answer, depending on which surface sent it.
+5. **`seed` negative values are lost on the remote path** — `Int(exactly:)` on a
+   bit-pattern-preserved `UInt64` yields nil (RemoteProviderService.swift:2943).
+
+→ Next: prove 1 and 2 with focused tests (cheap, deterministic), then decide
+whether 3 should 400 or stay permissive, and whether 4 is intended product
+behaviour or an accident. Do not "fix" 4 without deciding the contract first.
+
 ---
 
 ## Method
