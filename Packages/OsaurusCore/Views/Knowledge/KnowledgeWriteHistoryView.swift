@@ -111,34 +111,77 @@ struct KnowledgeWriteHistoryView: View {
     // MARK: - Filter bar
 
     private var filterBar: some View {
-        HStack(spacing: 12) {
-            if collectionOptions.count > 1 {
-                Picker(selection: $collectionFilter) {
-                    Text("All collections", bundle: .module).tag("")
-                    ForEach(collectionOptions, id: \.id) { option in
-                        Text(option.name).tag(option.id)
-                    }
-                } label: {
-                    Text("Collection", bundle: .module)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                if collectionOptions.count > 1 {
+                    collectionMenu
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .frame(width: 200)
+
+                Spacer(minLength: 8)
+
+                Toggle(isOn: $showsReverted) {
+                    Text("Show reverted", bundle: .module)
+                        .font(.system(size: 11))
+                }
+                .toggleStyle(.switch)
+                .controlSize(.mini)
             }
 
-            Toggle(isOn: $showsReverted) {
-                Text("Show reverted", bundle: .module)
-                    .font(.system(size: 11))
-            }
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-
-            Spacer(minLength: 8)
-
-            Text("\(visibleRuns.count) of \(runs.count)", bundle: .module)
+            Text("Showing \(visibleRuns.count) of \(runs.count)", bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// A `Menu`, not a `Picker`: a menu-style picker reserves a leading label
+    /// column even under `.labelsHidden()`, which indented the control out of
+    /// alignment with the rows below it.
+    private var collectionMenu: some View {
+        Menu {
+            Button {
+                collectionFilter = ""
+            } label: {
+                Text("All collections", bundle: .module)
+            }
+            Divider()
+            ForEach(collectionOptions, id: \.id) { option in
+                Button {
+                    collectionFilter = option.id
+                } label: {
+                    Text(option.name)
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(selectedCollectionName)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(theme.tertiaryBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(theme.primaryBorder.opacity(0.6), lineWidth: 1)
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    /// Falls back to "All collections" when the selected id is no longer in
+    /// the log, so the control can never show a stale name.
+    private var selectedCollectionName: String {
+        collectionOptions.first { $0.id == collectionFilter }?.name ?? L("All collections")
     }
 
     private var emptyState: some View {
