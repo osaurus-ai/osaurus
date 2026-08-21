@@ -193,6 +193,40 @@ vmlx-swift package. This nearly produced a false bug report and an unnecessary
 31. Does a failed/partial load leave a usable-looking model that produces
     degraded output? (The truncated-bundle class.)
 
+## H. Max-context enforcement and WHEN compaction fires
+
+Push each of these to the limit rather than near it — the interesting behaviour
+is at and past the boundary, and a conversation that merely gets long proves
+nothing.
+
+32. What is the enforced ceiling for a Qwen/Ornith bundle, and is it the
+    resolver's number, the bundle's `contextLength`, or a settings override?
+    (Two resolvers disagree on the fallback chain — see A1.)
+33. **When** does compaction trigger — at what fraction of the window, measured?
+    Is the trigger on prompt tokens, prompt+generation, or a budget estimate
+    that can be wrong?
+34. Grow one conversation continuously to the ceiling and record, per turn:
+    prompt_tokens, cached_tokens, TTFT, decode tok/s, whether compaction fired.
+    The failure to look for is compaction firing LATE (a turn that overflows
+    first) or EARLY (throwing away context that still fit).
+35. Does compaction preserve the tool-call/tool-result pairing? Dropping a tool
+    result while keeping its call produces a model that re-calls or hallucinates
+    the result.
+36. Does compaction preserve media references, or does an image silently vanish
+    from history while the text still refers to it?
+37. After compaction, is the KV prefix still reusable, or does every compaction
+    force a full re-prefill? (This is the long-context speed question in
+    disguise — if compaction invalidates the cache, cost spikes exactly when the
+    conversation is most expensive.)
+38. With tools declared AND media attached AND reasoning effort changing, how
+    close to the ceiling can the harness actually get before it breaks? That
+    combination is the real user workload and the one least likely to be tested.
+39. What happens at the ceiling with the SSD cap ALSO starved — do the two
+    limits interact, or does one mask the other?
+40. Is the ceiling enforced identically on the chat path and the exposed API
+    server path? They build messages in separate functions; a fix in one is
+    inert in the other.
+
 ---
 
 ## Method
