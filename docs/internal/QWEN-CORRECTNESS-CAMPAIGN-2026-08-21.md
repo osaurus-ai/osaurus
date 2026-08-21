@@ -276,6 +276,68 @@ judged by strangers.
 
 ---
 
+## K. Measured so far (2026-08-21) — and what is still NOT proven
+
+**Two candidate causes of "SSD reuse gets slower as context grows" — both
+MEASURED AND RULED OUT.** Recording them so nobody spends a day on either:
+
+| candidate | measurement | verdict |
+|---|---|---|
+| probe-loop hashing | 64k tokens x 256 candidates = **24.5 ms** total (SHA-256 + prefix copy, `-O`) | not the cause |
+| payload read | 358 MB in **13-29 ms** warm (page-cache speed) | not the cause |
+
+Cache profile on this box: 22 payloads, 3.7 GB, mean 174 MB, **max 358 MB**.
+Payload size scales with context, so a long-context restore reads ~10x what a
+short one does — but warm I/O is far too fast to explain the symptom.
+
+Still unmeasured in the restore path, in rough order of suspicion:
+deserialization into MLXArrays (`TQDiskSerializer.deserializeIndexed`), the
+**process-wide `MLXDiskCacheIOLock` held across the whole restore**
+(DiskCache.swift:381), the SQLite recency touch, the re-hash on hit, and GPU
+upload/dtype conversion.
+
+🚨 **The only measurement that answers the question is a live A/B**: cache ON vs
+OFF, same prompts, at 2k/8k/16k/32k, hot ABAB, PhysMem before each leg, looking
+for the **crossover depth** where reuse stops paying for itself. Component
+timings cannot produce that number and must not be reported as if they did.
+
+### Confirmed by reading (verified against source myself, file:line checked)
+
+- SSD reuse **is** a genuine longest-stored-prefix search, not exact-key only:
+  `CacheCoordinator.fetch` probes N and N-1, then walks SQLite for distinct
+  stored boundaries <= N in 128-length pages, merges processor-proven
+  boundaries, sorts descending and exact-probes each
+  (CacheCoordinator.swift:604/615/640/653). It is **not** a longest-common-prefix
+  scan inside payloads, and there is no suffix matching — every candidate is
+  `tokens.prefix(boundary)`.
+- The cache key covers system prompt and tool schemas **indirectly** (they are in
+  the rendered token sequence) and reasoning effort + media **explicitly** via
+  the salt (MediaSalt.swift:135/141/151). No wrong-cache identity omission found.
+- `Tool.toTokenizerToolSpec` canonicalises JSON because non-deterministic key
+  order "silently invalidates the MLX paged KV cache prefix" — tool schema bytes
+  are already treated as cache-key-critical.
+
+### Leads from parallel Codex audits — UNVERIFIED, source-only
+
+Every one of these came with "no A/B was run" / "a Metal trace is needed".
+Treat as hypotheses to disprove, not findings:
+
+- **API parity gap (highest value if true):** no exact-token admission check
+  found between MLX tokenization and `engine.generate`; the strict OpenAI path
+  may not share typed context admission with the chat path
+  (MLXBatchAdapter.swift:2188 / 1662). Matches section I directly.
+- **Compaction drops media:** summaries retain prose but "the original media
+  payload definitely is not retained" — question 36, likely confirmed.
+- **MoE/SwiGLU:** ranked opportunities include inactive/nested SwiGLU compile
+  wrappers and replacing per-layer GDN conv-state concatenation with a rolling
+  decode kernel (flagged high payoff). Explicitly RULED OUT: a Swift loop over
+  experts (gatherMM / gatherQuantizedMM / JANGTQ kernels), missing decode QMV
+  routing, RMSNorm decomposition, per-token gate/up splitting.
+- **Do NOT blindly enable whole JANGTQ SwitchGLU compile** — the source records
+  real regressions and deliberately keeps it experimental.
+
+---
+
 ## Method
 
 Every claim proven live in the running dev app GUI, never by curl and never by
