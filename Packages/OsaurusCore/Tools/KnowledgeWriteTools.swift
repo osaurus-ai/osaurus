@@ -246,14 +246,24 @@ final class WriteKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePre
                     )
                 }
                 pending.append(
-                    PendingDocument(path: path, content: (entry["content"] as? String) ?? "")
+                    PendingDocument(
+                        path: path,
+                        // Same normalization the approval preview applied, so
+                        // the diff the user approved is what lands.
+                        content: KnowledgeWriteService.strippingReadPreamble(
+                            (entry["content"] as? String) ?? "")
+                    )
                 )
             }
         } else if let path = (args["path"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty
         {
             pending.append(
-                PendingDocument(path: path, content: (args["content"] as? String) ?? "")
+                PendingDocument(
+                    path: path,
+                    content: KnowledgeWriteService.strippingReadPreamble(
+                        (args["content"] as? String) ?? "")
+                )
             )
         }
 

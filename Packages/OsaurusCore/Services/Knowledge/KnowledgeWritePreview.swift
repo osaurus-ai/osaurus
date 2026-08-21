@@ -40,6 +40,10 @@ public struct KnowledgeWritePreviewEntry: Sendable, Equatable, Identifiable {
     /// 2MB documents, and neither is rendered for a create or replace because
     /// the diff already is.
     public var deletedContent: String
+    /// Non-blocking caution shown beside the entry: the write can proceed,
+    /// but something about the content will not behave as the agent expects
+    /// (currently, frontmatter written without its `---` fences).
+    public var warning: String?
     public var addedLines: Int
     public var removedLines: Int
     /// Populated when the entry cannot be applied at all (path escapes the
@@ -156,9 +160,12 @@ public enum KnowledgeWritePreviewBuilder {
                 continue
             }
 
+            // Normalize exactly as the tool will, so the diff shown is the
+            // content that lands.
+            let content = KnowledgeWriteService.strippingReadPreamble(document.content)
             let diff = WorkspaceWriteSafety.unifiedDiffText(
                 old: priorContent,
-                new: document.content,
+                new: content,
                 path: document.relPath,
                 existed: existed
             )
@@ -169,6 +176,9 @@ public enum KnowledgeWritePreviewBuilder {
                     diff: diff.text,
                     diffTruncated: diff.truncated,
                     deletedContent: "",
+                    warning: KnowledgeWriteService.unfencedFrontmatterKeys(content).map {
+                        "Frontmatter (\($0.joined(separator: ", "))) is missing its --- fences, so it will be indexed as body text and the document will have no type or tags."
+                    },
                     addedLines: countPrefixed(diff.text, "+"),
                     removedLines: countPrefixed(diff.text, "-"),
                     problem: nil

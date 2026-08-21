@@ -115,6 +115,15 @@ struct KnowledgeWritePreviewView: View {
                     .padding(.horizontal, 10)
             }
 
+            // Non-blocking: the write is fine, the content will just not
+            // behave as the agent intended. Always shown, never hidden behind
+            // the expander, because it is the kind of thing a reader would
+            // want to catch before approving rather than after searching.
+            if let warning = entry.warning {
+                problemRow(warning)
+                    .padding(.horizontal, 10)
+            }
+
             if isExpanded(entry) {
                 detail(entry)
                     .padding(.horizontal, 10)

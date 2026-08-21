@@ -323,6 +323,101 @@ struct KnowledgeWritePreviewTests {
         }
     }
 
+    // MARK: - Content normalization
+    //
+    // Read-then-rewrite is the primary use of `write_knowledge`, and both of
+    // these were observed live during end-to-end testing on Ornith-1.0-9B.
+
+    /// `read_knowledge` frames a document with a `[Collection] path` header
+    /// plus `title:`/`type:`/`tags:` lines. Models copy it verbatim into the
+    /// replacement, which would land above the real body.
+    @Test func leakedReadFramingIsStrippedBeforeItReachesTheDiff() throws {
+        try withCollection { collection, root in
+            try seed(root, "a.md", "old\n")
+            let leaked = """
+                [kb-test] a.md
+                title: How to Deploy
+                type: guide
+                tags: packaging,psadt
+
+                # How to Deploy
+
+                Real body.
+                """
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [("a.md", leaked)],
+                isDelete: false,
+                rationale: ""
+            )
+            let entry = try #require(preview.entries.first)
+            #expect(!entry.diff.contains("[kb-test] a.md"))
+            #expect(entry.diff.contains("+# How to Deploy"))
+        }
+    }
+
+    /// A document body that legitimately opens with a bracket link must not be
+    /// mistaken for the framing header.
+    @Test func ordinaryContentIsNotMistakenForFraming() {
+        let refDef = "[docs]: https://example.com\n\nSee the docs."
+        #expect(KnowledgeWriteService.strippingReadPreamble(refDef) == refDef)
+        let heading = "# Title\n\nBody."
+        #expect(KnowledgeWriteService.strippingReadPreamble(heading) == heading)
+        let frontmatter = "---\ntype: guide\n---\n\n# Title"
+        #expect(KnowledgeWriteService.strippingReadPreamble(frontmatter) == frontmatter)
+    }
+
+    /// The variant the stripper cannot catch: frontmatter keys written with no
+    /// `---` fences at all. The parser treats them as body text, so the
+    /// document silently loses its type and tags and stops answering filtered
+    /// searches. Reported on the card rather than auto-corrected, because
+    /// rewriting content behind the approved diff would break the promise that
+    /// the card shows what lands.
+    @Test func unfencedFrontmatterIsFlaggedOnTheEntry() throws {
+        try withCollection { collection, _ in
+            let unfenced = """
+                # PSAppDeployToolkit v2 Notes
+                type: guide
+                tags: packaging,psadt
+
+                Body text.
+                """
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [("intro.md", unfenced)],
+                isDelete: false,
+                rationale: ""
+            )
+            let entry = try #require(preview.entries.first)
+            let warning = try #require(entry.warning)
+            #expect(warning.contains("type"))
+            #expect(warning.contains("tags"))
+            #expect(warning.contains("--- fences"))
+            // A caution, not a blocker: the write is still valid.
+            #expect(entry.isValid)
+        }
+    }
+
+    @Test func properlyFencedFrontmatterIsNotFlagged() throws {
+        try withCollection { collection, _ in
+            let fenced = "---\ntitle: Fine\ntype: guide\n---\n\n# Fine\n\nBody."
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                documents: [("ok.md", fenced)],
+                isDelete: false,
+                rationale: ""
+            )
+            #expect(preview.entries.first?.warning == nil)
+        }
+    }
+
+    /// Prose that happens to contain a colon key, or a fenced code example,
+    /// must not trip the warning.
+    @Test func frontmatterKeysDeepInProseAreNotFlagged() {
+        let prose = "# Guide\n\nSet the field as follows.\n\n```yaml\ntype: guide\n```\n"
+        #expect(KnowledgeWriteService.unfencedFrontmatterKeys(prose) == nil)
+    }
+
     // MARK: - Consent integrity
 
     /// The card must show what the tool will RECEIVE, not what the model

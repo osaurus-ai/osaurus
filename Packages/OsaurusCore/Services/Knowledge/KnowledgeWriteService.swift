@@ -362,6 +362,84 @@ public actor KnowledgeWriteService {
         }
     }
 
+    /// Strip a leaked `read_knowledge` framing header from document content.
+    ///
+    /// `read_knowledge` returns a document wrapped in a `[Collection] path`
+    /// line followed by optional `title:` / `type:` / `tags:` lines and a
+    /// blank separator. The read-then-rewrite flow is the PRIMARY use of
+    /// `write_knowledge`, and weaker models copy that header verbatim into the
+    /// replacement content, which then lands on disk above the real body.
+    ///
+    /// Carried over from the curator tool this replaced, where it was added
+    /// after observing exactly that. Conservative: only fires when the first
+    /// non-blank line is a bracketed name followed by a space, because real
+    /// document bodies open with `#`, `---`, or prose, never `[name] …`.
+    ///
+    /// Applied by BOTH the approval preview and the tool body, so the diff the
+    /// user approves is the content that gets written.
+    static func strippingReadPreamble(_ content: String) -> String {
+        var lines = content.components(separatedBy: "\n")
+        var start = 0
+        while start < lines.count, lines[start].trimmingCharacters(in: .whitespaces).isEmpty {
+            start += 1
+        }
+        guard start < lines.count else { return content }
+        let header = lines[start]
+        guard header.hasPrefix("["), let close = header.firstIndex(of: "]") else { return content }
+        let inside = header[header.index(after: header.startIndex) ..< close]
+        let afterClose = header.index(after: close)
+        guard !inside.trimmingCharacters(in: .whitespaces).isEmpty,
+            afterClose < header.endIndex, header[afterClose] == " "
+        else { return content }
+        var index = start + 1
+        while index < lines.count,
+            lines[index].hasPrefix("title: ") || lines[index].hasPrefix("type: ")
+                || lines[index].hasPrefix("tags: ")
+        {
+            index += 1
+        }
+        if index < lines.count, lines[index].trimmingCharacters(in: .whitespaces).isEmpty {
+            index += 1
+        }
+        lines.removeSubrange(0 ..< index)
+        return lines.joined(separator: "\n")
+    }
+
+    /// Frontmatter keys written WITHOUT the `---` fences that make them
+    /// frontmatter, near the top of a document.
+    ///
+    /// The parser treats an unfenced block as ordinary body text, so the
+    /// document silently loses its type and tags and stops answering filtered
+    /// searches. Observed live: a model rewriting a document turned the read
+    /// framing's `title:` into a heading and left `type:`/`tags:` as bare
+    /// lines, producing a document with no facets at all.
+    ///
+    /// Reported, never auto-corrected: rewriting an agent's content behind the
+    /// diff the user approved would break the promise that the card shows what
+    /// lands. Returns the offending keys, or nil when the content is fine.
+    static func unfencedFrontmatterKeys(_ content: String) -> [String]? {
+        let lines = content.components(separatedBy: "\n")
+        var index = 0
+        while index < lines.count, lines[index].trimmingCharacters(in: .whitespaces).isEmpty {
+            index += 1
+        }
+        // Properly fenced frontmatter is the correct shape; nothing to report.
+        guard index < lines.count,
+            lines[index].trimmingCharacters(in: .whitespaces) != "---"
+        else { return nil }
+
+        // Only the head of the document. A `type: guide` deep in prose or
+        // inside a fenced example is not a misplaced frontmatter block.
+        let reserved = ["title: ", "type: ", "tags: ", "description: "]
+        var found: [String] = []
+        for line in lines.prefix(12) {
+            if line.hasPrefix("```") { break }
+            guard let key = reserved.first(where: { line.hasPrefix($0) }) else { continue }
+            found.append(String(key.dropLast(2)))
+        }
+        return found.isEmpty ? nil : found
+    }
+
     static func sha256Hex(_ content: String) -> String {
         SHA256.hash(data: Data(content.utf8)).map { String(format: "%02x", $0) }.joined()
     }
