@@ -652,6 +652,116 @@ single call when `prefillStepSize <= 0` or the sequence already fits.
 
 ---
 
+## Session 2026-08-21 — verified findings
+
+### FIXED: decode path is now observable (P0.1 + P0.2 were one fix)
+
+`GenerateCompletionInfo` already carried `nativeMTPStats:
+NativeMTPGenerationStats?`, populated **only** when the native-MTP iterator
+produced the tokens. A grep of the whole app returned **zero** uses of that
+field — osaurus received the entire MTP diagnostic payload every turn and threw
+it away.
+
+That is why every MTP measurement so far has been unfalsifiable: a turn that
+requested MTP and was silently excluded by `canUseNativeMTP` looked exactly like
+a turn where MTP ran and did not help. Both produced a tok/s number and nothing
+else.
+
+Fixed in `GenerationEventMapper.logCompletionInfo` — the one function that
+already logs completion stats — by emitting `decodePath=nativeMTP` with
+`acceptedByDepth`, `avgCommittedPerVerify`, `avgAcceptProbability`,
+`arFallbackTokens`, `adaptiveDownshifts`, `adaptiveFallbackReason`,
+`verifierMode`, `cacheMode`, or `decodePath=plain mtp=off` when the field is
+nil. Also mirrored into `PrefillDebugLog` as `STEP-MTP` so it sits alongside the
+existing `STEP-STATS` / `STEP-END` cache counters in the same trace.
+
+Purely additive instrumentation — no behavioural change, no vmlx repin.
+
+**Honest scope:** this makes the EFFECT observable, not the REASON.
+`mtp=off` covers both "the gate rejected this turn" and "MTP was never
+requested". Distinguishing them requires the gate itself to report why, and the
+gate (`GenerateParameters.canUseNativeMTP`, Evaluate.swift:500) lives in vmlx.
+That remains open.
+
+### The MTP gate has FIVE dispatch sites — a parity surface in itself
+
+`canUseNativeMTP` is consulted at ChatSession.swift:458, Evaluate.swift:3745,
+Evaluate.swift:4199, BatchEngine.swift:1249, and
+NativeMTPTokenIterator.swift:398. **The visual harness dispatches through
+BatchEngine**, so BatchEngine.swift:1249 is the site that governs everything
+Eric actually sees. Any MTP change verified only through Evaluate is verified on
+a path the app does not take.
+
+Every one of these falls through to plain autoregressive in an unconditional
+`else` — no error, no log. That is the silent-exclusion shape, now at least
+visible after the fact.
+
+### SwiGLU / MoE compile gating — a Codex claim CORRECTED
+
+A parallel Codex audit implied `Qwen35.swift` compiles unconditionally while
+`Gemma4.swift` is hardware-gated. **That is wrong.** Direct reading shows every
+site — `safeGeluApproximate`, `compiledSwiGLU`, `compiledGeGLU`
+(SwitchLayers.swift:16/46/58), `compiledSigmoidMultiply`, `compiledSigmoidGate`
+(Qwen35.swift:22/35) — is preceded by `guard
+HardwareInfo.isCompiledDecodeSupported else { return body }`. Codex's grep dump
+showed the `compile(` line without the `guard` directly above it. Verified by
+reading, not by grep.
+
+**The real open question found instead:** all of these deliberately bypass the
+compiled path when the OUTER trace is active —
+`return { x in CompiledDecodeTrace.isActive ? body(x) : compiled(x) }` — because
+a nested compile is illegal. The in-code justification is that "its ops are
+captured into the outer graph and fused there, so there is no throughput loss."
+That equivalence is **asserted, never measured**. Since compiled decode is off
+by default in osaurus, the inner compiled path is the one normally taken; the
+claim only matters when a user enables compiled decode, and it has never been
+A/B'd.
+
+### L2 SSD eviction janitor — audited, mostly sound, three real gaps
+
+Confirmed by Codex and consistent with the earlier correction that the
+settings→runtime mapping lives in vmlx's `cacheCoordinatorConfig`, NOT in
+osaurus (grepping osaurus alone previously produced a FALSE bug report here):
+
+- Eviction is **access-recency LRU**, not FIFO, not size-sorted, not directory
+  order. Ruled out as a suspect.
+- Size accounting uses **real payload file lengths** from the `cache_entries`
+  table, not a shape estimate. Ruled out.
+- Same-process eviction **cannot** unlink a file mid-read: `DiskCache.fetch`
+  holds `MLXDiskCacheIOLock.shared` across the existence check and
+  `loadArraysAndMetadata` (DiskCache.swift:372/401), and quota deletion takes
+  the same lock (DiskCache.swift:596). Ruled out as a corruption source.
+
+Real gaps, all documented rather than "fixed" — none is proven to bite live:
+
+1. **No timer janitor exists.** Eviction runs only at init and after a store. A
+   cap SHRUNK while the app is idle does not take effect until the next store.
+2. **Orphan files are never reconciled.** Quota enumeration reads only
+   `cache_entries` (DiskCache.swift:534) and init does not reconcile the
+   directory against it (DiskCache.swift:162). A crash between the file write
+   and `_insertEntryLocked` leaves an unindexed payload that counts against
+   `du` forever but is invisible to the cap.
+3. **The cap is a soft cap by construction** — it excludes the SQLite db, WAL,
+   and directory metadata. The UI already says "Soft cap"
+   (CacheSection.swift:207), so the label is accurate and this is NOT a bug.
+   Noted so it is not re-reported as one.
+
+Post-read window: `fetch` releases the IO lock before `CacheCoordinator`
+validates companion state and touches recency (CacheCoordinator.swift:557), so a
+concurrent quota pass could unlink that pathname during validation. It cannot
+interrupt the completed read. Low severity, unproven live.
+
+No interprocess lock exists (`OSAllocatedUnfairLock` is process-local), so two
+processes sharing one cache directory are not covered.
+
+### Still not measured
+
+The cache ON vs OFF depth curve remains the one measurement that answers Eric's
+actual question, and nothing above substitutes for it. Component timings cannot
+produce a crossover depth.
+
+---
+
 ## Method
 
 Every claim proven live in the running dev app GUI, never by curl and never by
