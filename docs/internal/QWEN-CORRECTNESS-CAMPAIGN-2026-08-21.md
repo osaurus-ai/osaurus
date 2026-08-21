@@ -227,6 +227,53 @@ nothing.
     server path? They build messages in separate functions; a fix in one is
     inert in the other.
 
+## I. Three surfaces that must not diverge
+
+The visual harness, the **exposed HTTP API server** users hit, and the
+CLI/RunBench harness are NOT the same thing. They build messages and apply
+settings in separate code, so a fix in one is inert in the others. **The visual
+harness is the one that matters most** — but the API is user-facing and gets
+judged by strangers.
+
+41. **Sampling kwargs actually enforced?** For every parameter the API accepts —
+    temperature, top_p, top_k, min_p, repetition/frequency/presence penalty,
+    seed, max_tokens, stop — does the caller's value reach `GenerateParameters`,
+    or is it accepted by the schema and then dropped, overridden or clamped?
+    There is history here: seed was a no-op, stop returned 400, penalties were
+    mis-mapped. Build the table: parameter → reaches the sampler? → where it is
+    lost.
+42. When a field is ABSENT, does the API default match what the chat UI would
+    have used? Every divergence is a support ticket where "same prompt, different
+    answer" is the report.
+43. **Tool wiring**: does the API build tool schemas through the same code as the
+    chat path? Do `tool_choice` (auto/none/required/named) and
+    `parallel_tool_calls` behave identically on both?
+44. Does the API path enforce the context window and compaction at all, or only
+    the chat path?
+45. Is `reasoning_effort` honoured on the API path, and does a per-bundle
+    declared constraint apply there too?
+
+## J. Native MTP on/off, and effort → generation config
+
+46. Is native MTP **ON by default**? Trace the default at every layer: settings
+    store → runtime config → the iterator that decides. Name the field and value
+    at each.
+47. If the user turns MTP **off**, does that reach the decode path, or does an
+    autodetect/heuristic override it? Prove which wins — a toggle the runtime
+    ignores is worse than no toggle.
+48. How is MTP autodetected (weights present, config flag, id substring), and
+    what happens when detection is wrong in each direction?
+49. Is there a warmup/memo that latches an MTP decision for the whole model
+    residency and ignores a later toggle? (A memo doing exactly this was fixed
+    for the hybrid warmup once already.)
+50. **Effort → what actually changes?** Does `reasoning_effort` alter the
+    template, the sampling params, a thinking budget, or nothing? These have
+    different cache consequences and must not be conflated.
+51. What happens when a user requests an effort the bundle declares unsupported?
+52. dFlash-2 and native MTP: document that **temperature 0 helps most**, and
+    that any speedup must be byte-identical to the non-MTP path at temp 0 —
+    a speedup that changes text is a bug, not a tradeoff.
+
 ---
 
 ## Method
