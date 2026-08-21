@@ -330,6 +330,7 @@ public struct StorageSettingsView: View {
         case .locked: return "LOCKED"
         case .corrupt: return "CORRUPT"
         case .migration: return "MIGRATION"
+        case .forwardVersion: return "NEWER VERSION"
         case .unknown: return "ERROR"
         }
     }
@@ -339,6 +340,8 @@ public struct StorageSettingsView: View {
         case .locked: return theme.warningColor
         case .corrupt: return theme.errorColor
         case .migration: return theme.errorColor
+        // Warning, not error: nothing is broken, this build is just older.
+        case .forwardVersion: return theme.warningColor
         case .unknown: return theme.secondaryText
         }
     }
@@ -353,6 +356,12 @@ public struct StorageSettingsView: View {
                 "The file isn't a readable database (corruption or a key mismatch). Reset to recreate it; the original is quarantined."
         case .migration:
             return "A schema migration failed. Retry after updating, or Reset to recreate the store."
+        case .forwardVersion:
+            // Never suggest Reset here: the file is intact and holds the
+            // user's data, it was just written by a newer build. Resetting on
+            // this advice is the data loss, not the refusal.
+            return
+                "This store was written by a newer version of Osaurus, so this build won't open it. Update Osaurus to read it again. Do not Reset, your data is intact."
         case .unknown:
             return "The store failed to open for an unrecognized reason. Retry, or Reset if it persists."
         }
