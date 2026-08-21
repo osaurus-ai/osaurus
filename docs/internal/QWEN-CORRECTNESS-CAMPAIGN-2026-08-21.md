@@ -462,17 +462,34 @@ Floors, suppress lists, budgets and penalties all qualify.
 | condition | native MTP eligible |
 |---|---|
 | HTTP API (budget derived from `max_tokens`) | **no** |
-| **minimum-thinking floor armed** (DSV4 enforced-low rail) | **no — visual harness included** |
+| `VMLX_REASONING_BUDGET` env set (process-global) | **no — every surface** |
 | repetition / presence / frequency penalty non-zero | **no** |
-| `reasoningBudgetTokens` set (env `VMLX_REASONING_BUDGET` or per-request) | **no** |
-| chat UI, no floor, no penalties | yes |
+| chat UI, no env budget, no penalties | **yes** |
 
-`MinimumReasoningFloor.armIfNeeded` runs on **every** `BatchEngine.submit`
-(BatchEngine.swift:477-481, and again at 609); when it arms it sets
-`initialSuppressTokens = [floor.closeTokenID]`. The source names the family:
-"the DSV4 enforced-low thinking rail" (Evaluate.swift:209, 1003).
-`DFlash2TokenIterator.swift:276` carries the parallel check, so dFlash-2 is
-gated the same way.
+**CORRECTED** — an earlier draft of this table claimed the minimum-thinking
+floor arms per family and killed MTP in the harness for DSV4. It does not.
+`MinimumReasoningFloor.armIfNeeded` runs on every `BatchEngine.submit`
+(BatchEngine.swift:477-481, 609), but its first line is
+`guard let budget = configuredTokenCount else { return nil }`, and
+`configuredTokenCount` reads **only** `VMLX_REASONING_BUDGET`
+(ReasoningBudget.swift:99-106). Its own doc is explicit: "nothing arms by
+default". So the floor is opt-in via env, or via the per-request `arm(...)`
+form that the HTTP API uses — not automatic for any family.
+
+The DSV4 references (Evaluate.swift:209, 1003) describe that model's own
+enforced-low thinking behaviour, which is a separate mechanism from this gate.
+**Per-family reasoning enforcement still differs — that part stands — but it is
+not what disqualifies MTP in the harness.**
+
+`DFlash2TokenIterator.swift:276` carries the parallel suppress-token check, so
+dFlash-2 is gated the same way when the env IS set.
+
+**Consequence for Qwen 27B (the current focus): in the visual harness, with no
+`VMLX_REASONING_BUDGET` set and default penalties, native MTP IS eligible.**
+Sampled requests are eligible too — `SpeculativeSamplingController` applies the
+verifier's own temperature/top-p/top-k/min-p chain and accepts with min(1, p/q),
+so the output distribution is the target sampler's token for token. Temperature
+1.0 no longer excludes (that was the old silent-exclusion bug, now fixed).
 
 **This gate has already shipped a silent-exclusion bug once.** Its own comment:
 
@@ -497,6 +514,44 @@ Open questions this raises:
 55. Per family: which of Ornith 9B / Ornith 35B / Qwen 27B arm a minimum
     reasoning floor by default, and at which effort settings? That determines
     which of them can benefit from MTP at all.
+
+## O. Qwen3.8-27B + MTP (current focus) and chunked prefill
+
+Bundles present: `Qwen3.8-27B-JANG_2D`, `-JANG_4D`, `-JANG_6D`, `-MXFP8` — the
+2D/4D JANG variants named in the campaign scope.
+
+56. Per quant (2D / 4D / 6D / MXFP8): is native MTP actually SELECTED in the
+    harness? Assert eligibility first (section N), then confirm the iterator ran
+    — there is no log line when the gate excludes.
+57. Accept rate per quant at 2k / 8k / 16k / 32k. Does it hold with depth or
+    collapse? A collapsing accept rate turns MTP into pure overhead.
+58. Byte-identical output vs AR at temperature 0, at EVERY depth — the only
+    acceptance criterion. A speedup that changes text is a bug.
+59. Does a lower-bit draft (2D) accept worse than 4D/6D? That trades model size
+    against MTP benefit and the answer decides which quant to recommend.
+60. MTP + tools + reasoning effort together — the gate excludes on penalties, so
+    check what the harness actually sends for a tool turn.
+
+### Chunked prefill — apply everywhere it is safe
+
+`chunkedPrefillEmbedding` (ChunkedPrefillVLM.swift) walks the sequence in
+`prefillStepSize` chunks; the header notes `prepare` **already chunks
+text-only paths**, and this covers the VLM embedding path. Falls back to a
+single call when `prefillStepSize <= 0` or the sequence already fits.
+
+61. Which model paths actually chunk today, and which still prefill in one
+    shot? Enumerate per family (Ornith 9B/35B, Qwen 27B, VLM paths) rather than
+    assuming the helper is wired everywhere.
+62. What is `prefillStepSize` per path, and is it tuned or inherited? A step
+    that is too small wastes dispatch overhead; too large defeats the purpose.
+63. Does chunking change peak memory enough to avoid the paging cliff at long
+    context? That is the sustained-speed argument for it — measure
+    `phys_footprint`, not just wall time.
+64. Does chunked prefill interact correctly with cache restore — i.e. when a
+    prefix is restored and only the tail needs prefilling, is the tail chunked
+    too?
+65. Any correctness risk: does chunking change numerics vs one-shot prefill?
+    Prove byte-identical output at temp 0 before recommending it be widened.
 
 ---
 
