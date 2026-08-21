@@ -973,6 +973,64 @@ Measured on this machine, so there is something to compare against:
 The 6-25x gap between cold and warm prefill is the entire value of the cache.
 That is the number a too-small cap destroys at depth.
 
+### OPEN NEEDS from 2026-08-21 (cache pool), with status
+
+**N1. Existing users must also get the 10% default — NOT just fresh installs.**
+STATUS: NOT DONE. The auto resolver only fills in for a nil setting. Any install
+whose `server-runtime.json` already persists an explicit `maxSizeGB: 10.0` keeps
+10 GB forever after upgrading, which is most of the existing fleet if the value
+was ever written out.
+
+There is no persisted schema version to migrate against:
+`VMLXServerRuntimeSettings.contractVersion = 1` exists at
+ServerRuntimeSettings.swift:12 and is **referenced nowhere else in the package** —
+a dead constant, never encoded, never compared.
+
+Required work: persist a settings schema version, and on load, when the stored
+version predates the auto change AND `maxSizeGB` is exactly the old 10.0
+default, reset it to nil so it resolves to auto. Must be a versioned one-shot,
+not "rewrite any 10.0 we see" — a user who deliberately picks 10 GB after the
+migration must keep it. Same shape as the MTP-Off migration defect: the fix is a
+schema version plus a user-selected marker, never deleting the migration.
+
+**N2. Eviction must also drop the oldest OTHER model's cache.**
+STATUS: ALREADY TRUE — verified, not assumed. `DiskCache.quotaEntries()` is
+`SELECT hash, file_size, created_at FROM cache_entries` with **no model_key
+predicate** (DiskCache.swift:544), so the quota pass enumerates every model's
+entries in the shared root. `enforceCombinedDiskQuotaLocked` then sorts all
+groups by `priority`, then `createdAt` ascending (CacheCoordinator.swift ~1197)
+and evicts from the oldest end. So a stale bundle's checkpoints are reclaimed
+before a hot bundle's. No change needed; recorded so it is not re-investigated.
+
+**N3. Drive the harness via AppleScript, in the background, not the foreground.**
+STATUS: BLOCKED on a permission only the user can grant. `System Events` returns
+`-1743 Not authorized` for the `claude` process, so there is no AX path and no
+background driving. The only working input is `cliclick`, which posts to the
+frontmost window and therefore steals focus and collides with the user's own
+typing. Grant needed: System Settings → Privacy & Security → Automation → allow
+the terminal running `claude` to control System Events.
+
+Partial mitigation already applied: screen captures are now scoped to the app's
+own window via `screencapture -l <windowID>` instead of full-screen. Window IDs
+come from a small CoreGraphics helper (`/tmp/winid.swift`) since PyObjC is not
+installed. Full-screen capture had been photographing unrelated work, including
+a page with API tokens on it — do not go back to it.
+
+**N4. Live proof of the whole cache story.** STATUS: NOT DONE. Needed: multiturn
+Qwen 27B, cache growing toward the cap, the footer bar climbing, the 75% warning
+appearing, the janitor evicting at the limit, changing the size limit in
+Settings and seeing the new limit enforced, and no Qwen regressions across the
+run. Blocked behind N3 for background driving, and behind the repin below for
+the auto value.
+
+**N5. The auto default cannot reach the app yet.** osaurus pins vmlx by revision
+from `github.com/osaurus-ai/vmlx-swift`, and the local clone's push URL is
+deliberately `DO_NOT_PUSH_vmlx_local_only_fork_do_not_push_anywhere`. The auto
+commit therefore has to land on the vmlx remote before osaurus can repin. Until
+then the app runs the old flat 10 GB and the new footer bar will faithfully
+display that 10 GB — the UI is correct, the value behind it is stale. This is
+why Settings still reads 10 GB.
+
 ### Still not measured
 
 The cache ON vs OFF depth curve remains the one measurement that answers Eric's
