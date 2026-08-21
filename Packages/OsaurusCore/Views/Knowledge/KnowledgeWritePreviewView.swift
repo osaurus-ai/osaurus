@@ -95,12 +95,13 @@ struct KnowledgeWritePreviewView: View {
                     Spacer(minLength: 6)
 
                     if entry.isValid, entry.operation != .delete {
-                        // When the diff is capped the +/- counts come from the
-                        // shown fragment, not the whole change, so a large
-                        // deletion reads as a small one. Fall back to exact
-                        // before/after line counts, which cannot mislead.
+                        // The +/- pair describes the DISPLAYED diff. When that is
+                        // capped, or a substitution summary, it does not describe
+                        // the document: a large deletion reads as a small one, and
+                        // a 120 occurrence edit read as `+40 -38`. Exact before/
+                        // after line counts cannot mislead either way.
                         Text(
-                            entry.diffTruncated
+                            (entry.diffTruncated || !entry.countsDescribeDocument)
                                 ? "\(entry.priorLineCount) → \(entry.newLineCount) lines"
                                 : "+\(entry.addedLines) -\(entry.removedLines)"
                         )

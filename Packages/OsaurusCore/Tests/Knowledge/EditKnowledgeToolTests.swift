@@ -322,3 +322,47 @@ struct EditKnowledgeDiffTests {
             KnowledgeWritePreviewBuilder.honestDiff(real, priorLines: 2, newLines: 2) == real)
     }
 }
+git add Packages/OsaurusCore/Services/Knowledge/KnowledgeWritePreview.swift Packages/OsaurusCore/Views/Knowledge/KnowledgeWritePreviewView.swift Packages/OsaurusCore/Tools/KnowledgeWriteTools.swift Packages/OsaurusCore/Tests/Knowledge/EditKnowledgeToolTests.swift && git commit -q -m "stop showing plus minus counts left over from a replaced diff" 2>&1 | grep -v LFS; git log --oneline main..HEAD | wc -l
+
+/// The header's change indicator.
+///
+/// Live-observed as `+40 −38` on a 120 occurrence edit: counts left over from
+/// a whole-document diff that had already been replaced by a substitution
+/// summary. They described neither the summary nor the document.
+@Suite
+struct EditKnowledgeChangeIndicatorTests {
+
+    @Test func aSubstitutionSummaryShowsLineCountsNotPlusMinus() {
+        var entry = KnowledgeWritePreviewEntry(
+            relPath: "reference/alerts.md",
+            operation: .replace,
+            diff: "@@ 120 occurrences @@\n-old\n+new",
+            diffTruncated: false,
+            deletedContent: "",
+            addedLines: 40,
+            removedLines: 38
+        )
+        entry.priorLineCount = 489
+        entry.newLineCount = 489
+        entry.countsDescribeDocument = false
+
+        // The view picks exact line counts whenever the pair cannot be trusted.
+        #expect(entry.diffTruncated || !entry.countsDescribeDocument)
+    }
+
+    /// An ordinary computed diff keeps the +/- pair, which is the useful
+    /// reading there.
+    @Test func aComputedDiffKeepsPlusMinus() {
+        let entry = KnowledgeWritePreviewEntry(
+            relPath: "a.md",
+            operation: .replace,
+            diff: "-one\n+two",
+            diffTruncated: false,
+            deletedContent: "",
+            addedLines: 1,
+            removedLines: 1
+        )
+        #expect(entry.countsDescribeDocument)
+        #expect(!(entry.diffTruncated || !entry.countsDescribeDocument))
+    }
+}

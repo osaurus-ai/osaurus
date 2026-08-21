@@ -52,6 +52,14 @@ public struct KnowledgeWritePreviewEntry: Sendable, Equatable, Identifiable {
     /// them, so the counts alone materially understate the change.
     public var priorLineCount: Int = 0
     public var newLineCount: Int = 0
+    /// Whether `addedLines`/`removedLines` describe the DOCUMENT's change.
+    ///
+    /// False when the rendered diff is a substitution summary: those counts
+    /// then describe the summary itself, which says nothing about the
+    /// document. Live-observed as `+40 −38` on a 120 occurrence edit, numbers
+    /// left over from a whole-document diff that had already been discarded.
+    /// The exact line counts are shown instead.
+    public var countsDescribeDocument: Bool = true
     public var addedLines: Int
     public var removedLines: Int
     /// Populated when the entry cannot be applied at all (path escapes the

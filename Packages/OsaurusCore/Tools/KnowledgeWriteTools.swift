@@ -780,6 +780,9 @@ final class EditKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePrev
         if var entry = preview.entries.first, entry.isValid {
             entry.diff = Self.substitutionDiff(edits, in: current, path: path)
             entry.diffTruncated = false
+            // The +/- pair would now count the SUMMARY lines, not the
+            // document. Exact line counts are shown instead.
+            entry.countsDescribeDocument = false
             preview.entries = [entry]
         }
         return preview
