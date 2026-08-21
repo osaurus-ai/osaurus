@@ -12,6 +12,25 @@ import SwiftUI
 
 // MARK: - Knowledge View
 
+/// Sub-navigation for the Knowledge tab.
+///
+/// History earns its own tab because it is unbounded and the collections are
+/// not: the write log keeps up to 2000 records per collection, and a single
+/// afternoon of agent work produced enough rows in testing to push the
+/// collection grid off screen. It stays hidden until an agent has actually
+/// written something.
+enum KnowledgeTab: String, CaseIterable, AnimatedTabItem {
+    case collections
+    case history
+
+    var title: String {
+        switch self {
+        case .collections: return L("Collections")
+        case .history: return L("History")
+        }
+    }
+}
+
 struct KnowledgeView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var knowledgeManager = KnowledgeManager.shared
@@ -44,6 +63,7 @@ struct KnowledgeView: View {
     /// Recent agent writes, grouped by run, for the history + revert section.
     @State private var writeRuns: [KnowledgeWriteRun] = []
     @State private var reviewingProposal: KnowledgeProposal?
+    @State private var selectedTab: KnowledgeTab = .collections
 
     var body: some View {
         VStack(spacing: 0) {
@@ -51,6 +71,20 @@ struct KnowledgeView: View {
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : -10)
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+
+            // Hidden until there is history to show, so the common case is
+            // exactly the single-surface view it has always been.
+            if !knowledgeManager.collections.isEmpty, !writeRuns.isEmpty {
+                HeaderTabsRow(
+                    selection: $selectedTab,
+                    counts: [
+                        .collections: knowledgeManager.collections.count,
+                        .history: writeRuns.count,
+                    ]
+                )
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 12)
+            }
 
             ZStack {
                 if knowledgeManager.collections.isEmpty {
@@ -85,6 +119,14 @@ struct KnowledgeView: View {
                         hasAppeared: hasAppeared
                     )
                     .padding(.horizontal, 32)
+                    // Falls back to Collections rather than showing an empty
+                    // tab: the selector is gone once the log is, and a
+                    // selection left pointing at it would strand the view.
+                } else if selectedTab == .history, !writeRuns.isEmpty {
+                    ScrollView {
+                        fullHistorySection
+                    }
+                    .opacity(hasAppeared ? 1 : 0)
                 } else {
                     ScrollView {
                         curationSection
@@ -520,43 +562,73 @@ struct KnowledgeView: View {
     @ViewBuilder
     private var writeHistorySection: some View {
         if !writeRuns.isEmpty {
-            KnowledgeWriteHistoryView(
-                runs: writeRuns,
-                onRevertRun: { run in
-                    showSuccess(L("Reverting \(run.records.count) document(s)…"))
-                    Task {
-                        let failures = await KnowledgeWriteService.shared.revertRun(
-                            runId: run.runId
-                        )
-                        if failures.isEmpty {
-                            showSuccess(L("Reverted \(run.records.count) document(s)"))
-                        } else {
-                            // Best-effort per record: say what could not be put
-                            // back rather than implying the whole run undid.
-                            showSuccess(
-                                L(
-                                    "Reverted \(run.records.count - failures.count) of \(run.records.count). \(failures.count) could not be restored, most likely changed since."
-                                )
-                            )
-                        }
-                        reloadCuration()
-                    }
-                },
-                onRevertRecord: { record in
-                    Task {
-                        do {
-                            try await KnowledgeWriteService.shared.revert(recordId: record.id)
-                            showSuccess(L("Reverted \(record.relPath)"))
-                        } catch {
-                            showSuccess(L("Could not revert: \(error.localizedDescription)"))
-                        }
-                        reloadCuration()
-                    }
-                }
-            )
-            .padding(.horizontal, 24)
-            .padding(.top, 20)
+            historyList(mode: .inline(limit: 3), onSeeAll: { selectedTab = .history })
+                .padding(.horizontal, 24)
+                .padding(.top, 20)
         }
+    }
+
+    /// The History tab: every run, with collection and reverted filters.
+    private var fullHistorySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(
+                "Everything agents have written to your collections, newest first. Reverting puts the document back the way it was before that run.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+
+            historyList(mode: .full, onSeeAll: nil)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 20)
+        .padding(.bottom, 24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// One set of revert handlers behind both surfaces, so the inline strip
+    /// and the tab can never drift on what reverting actually does.
+    private func historyList(
+        mode: KnowledgeWriteHistoryView.Mode,
+        onSeeAll: (() -> Void)?
+    ) -> some View {
+        KnowledgeWriteHistoryView(
+            runs: writeRuns,
+            mode: mode,
+            onRevertRun: { run in
+                showSuccess(L("Reverting \(run.records.count) document(s)…"))
+                Task {
+                    let failures = await KnowledgeWriteService.shared.revertRun(
+                        runId: run.runId
+                    )
+                    if failures.isEmpty {
+                        showSuccess(L("Reverted \(run.records.count) document(s)"))
+                    } else {
+                        // Best-effort per record: say what could not be put
+                        // back rather than implying the whole run undid.
+                        showSuccess(
+                            L(
+                                "Reverted \(run.records.count - failures.count) of \(run.records.count). \(failures.count) could not be restored, most likely changed since."
+                            )
+                        )
+                    }
+                    reloadCuration()
+                }
+            },
+            onRevertRecord: { record in
+                Task {
+                    do {
+                        try await KnowledgeWriteService.shared.revert(recordId: record.id)
+                        showSuccess(L("Reverted \(record.relPath)"))
+                    } catch {
+                        showSuccess(L("Could not revert: \(error.localizedDescription)"))
+                    }
+                    reloadCuration()
+                }
+            },
+            onSeeAll: onSeeAll
+        )
     }
 
     /// Load open tickets + pending proposals off the main thread (the
