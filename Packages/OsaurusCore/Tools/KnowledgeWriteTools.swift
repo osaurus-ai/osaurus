@@ -27,9 +27,13 @@ final class WriteKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePre
     let name = "write_knowledge"
 
     let description =
-        "Create NEW documents, or replace one outright, in this agent's knowledge collections. "
-        + "To change part of an existing document use `edit_knowledge` instead: restating a long "
-        + "document is slow and risks truncating it. "
+        // The routing rule lives in the FIRST sentence deliberately. Compact
+        // prompts show only that much (`oneLineToolDescription`), and a model
+        // that never learns to prefer `edit_knowledge` restates long documents
+        // and truncates them. Pinned by a test.
+        "Create NEW documents in this agent's knowledge collections, or replace one outright, "
+        + "but to change PART of an existing document use `edit_knowledge` instead, since "
+        + "restating a long document is slow and risks truncating it. "
         + "Pass every document for a task in ONE call: `documents` is an array, and one call is "
         + "one approval. The user reviews the paths and a diff of each change before anything is "
         + "written, then the documents are saved and indexed immediately. Content is whole markdown "
@@ -658,11 +662,13 @@ final class EditKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePrev
     let name = "edit_knowledge"
 
     let description =
-        "Change part of a document in one of this agent's knowledge collections by find and "
-        + "replace, without rewriting the whole thing. PREFER THIS over `write_knowledge` for any "
-        + "edit to an existing document: restating a long document is slow and risks truncating "
-        + "it. Each `find` must match exactly once unless you set `all`. The user reviews a diff "
-        + "before anything is saved."
+        // Same reason as `write_knowledge`: the preference has to survive
+        // first-sentence truncation or it may as well not exist.
+        "Change part of a document in this agent's knowledge collections by find and replace, "
+        + "and PREFER this over `write_knowledge` for any edit to an existing document, since "
+        + "restating a long document is slow and risks truncating it. "
+        + "Each `find` must match exactly once unless you set `all`. "
+        + "The user reviews a diff before anything is saved."
 
     var requirements: [String] { [] }
     var defaultPermissionPolicy: ToolPermissionPolicy { .ask }

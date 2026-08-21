@@ -209,6 +209,32 @@ struct EditKnowledgeToolTests {
         #expect(!ToolRegistry.unattendedAutoApprovableToolNames.contains("edit_knowledge"))
     }
 
+    /// Compact prompts show only the FIRST SENTENCE of a tool description
+    /// (`oneLineToolDescription`). The write/edit routing rule must live
+    /// inside it on BOTH tools, or it may as well not exist.
+    ///
+    /// Live-observed twice: with the rule sitting in sentence two, a model
+    /// restated a 120 section catalogue through `write_knowledge`, truncated
+    /// it, and destroyed the rest. `edit_knowledge` was registered and visible
+    /// the whole time and never got called, because nothing told it to prefer
+    /// one over the other.
+    @Test func routingRuleSurvivesFirstSentenceTruncation() {
+        func firstSentence(_ description: String) -> String {
+            guard let range = description.range(of: ". ") else { return description }
+            return String(description[..<range.lowerBound])
+        }
+
+        let edit = firstSentence(EditKnowledgeTool().description)
+        #expect(edit.contains("`write_knowledge`"))
+        #expect(edit.lowercased().contains("prefer"))
+
+        let write = firstSentence(WriteKnowledgeTool().description)
+        #expect(write.contains("`edit_knowledge`"))
+        // And it must say WHY, so the model can generalize to documents it has
+        // not been told the size of.
+        #expect(write.lowercased().contains("truncat"))
+    }
+
     /// Its argument contract lives in property descriptions, which first-turn
     /// compaction strips unless the tool is exempt.
     @Test func argumentContractSurvivesBootstrapCompaction() {
