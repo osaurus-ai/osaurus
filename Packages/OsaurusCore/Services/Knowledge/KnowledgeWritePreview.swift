@@ -194,11 +194,37 @@ public enum KnowledgeWritePreviewBuilder {
     public static func build(
         collection: KnowledgeCollection,
         argumentsJSON: String,
-        isDelete: Bool
+        isDelete: Bool,
+        schema: JSONValue? = nil
     ) -> KnowledgeWritePreview {
         guard let data = argumentsJSON.data(using: .utf8),
-            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let parsed = try? JSONSerialization.jsonObject(with: data)
         else {
+            return KnowledgeWritePreview(
+                collectionName: collection.name,
+                entries: [],
+                rationale: "",
+                parseError: "Arguments are not a JSON object."
+            )
+        }
+
+        // Preview exactly what the tool will RECEIVE, not what the model
+        // literally sent.
+        //
+        // The permission gate runs before `ToolRegistry`'s schema coercion, so
+        // without this the two see different arguments. A model that sends
+        // `documents` as a stringified array — a routine small-model slip —
+        // produces a card reading "This call could not be read", while
+        // coercion later turns that same string into a real array and the
+        // documents are written. The user would have approved a manifest of
+        // nothing and got a batch of files. Coercing here with the tool's own
+        // schema makes the card and the execution agree.
+        let coerced: Any = {
+            guard let schema else { return parsed }
+            return SchemaValidator.coerceArguments(parsed, against: schema)
+        }()
+
+        guard let root = coerced as? [String: Any] else {
             return KnowledgeWritePreview(
                 collectionName: collection.name,
                 entries: [],

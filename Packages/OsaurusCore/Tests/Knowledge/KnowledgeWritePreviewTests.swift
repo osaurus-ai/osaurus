@@ -323,6 +323,87 @@ struct KnowledgeWritePreviewTests {
         }
     }
 
+    // MARK: - Consent integrity
+
+    /// The card must show what the tool will RECEIVE, not what the model
+    /// literally typed.
+    ///
+    /// `ToolRegistry` runs the permission gate BEFORE schema coercion, and
+    /// coercion upgrades a stringified array into a real one. Without
+    /// coercing here too, a model sending `documents` as a JSON string (a
+    /// routine small-model slip) produced a card reading "This call could not
+    /// be read" while the very same call went on to write every document.
+    /// Approving a manifest of nothing and getting a batch of files defeats
+    /// the entire point of moving consent to call time.
+    @Test func stringifiedArgumentsAreCoercedForThePreview() throws {
+        try withCollection { collection, _ in
+            let json = #"{"documents":"[{\"path\":\"a.md\",\"content\":\"A\"}]"}"#
+
+            // What the old build showed: unreadable.
+            let uncoerced = KnowledgeWritePreviewBuilder.build(
+                collection: collection, argumentsJSON: json, isDelete: false
+            )
+            #expect(uncoerced.parseError != nil)
+
+            // What the tool actually receives, and so what the card must show.
+            let coerced = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                argumentsJSON: json,
+                isDelete: false,
+                schema: WriteKnowledgeTool().parameters
+            )
+            #expect(coerced.parseError == nil)
+            #expect(coerced.entries.map(\.relPath) == ["a.md"])
+        }
+    }
+
+    /// Same hole on the destructive side: a stringified `paths` array would
+    /// have deleted documents the card never listed.
+    @Test func stringifiedDeletePathsAreCoercedForThePreview() throws {
+        try withCollection { collection, root in
+            try seed(root, "doomed.md", "bye\n")
+            let json = #"{"paths":"[\"doomed.md\"]","rationale":"stale"}"#
+
+            let coerced = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                argumentsJSON: json,
+                isDelete: true,
+                schema: DeleteKnowledgeTool().parameters
+            )
+            #expect(coerced.parseError == nil)
+            #expect(coerced.entries.map(\.relPath) == ["doomed.md"])
+            #expect(coerced.deleteCount == 1)
+        }
+    }
+
+    /// Whatever the card renders, the tool's own parser must agree with it,
+    /// or the two can drift apart again as either side changes.
+    @Test func previewAndToolAgreeOnTheSameCoercedArguments() throws {
+        try withCollection { collection, _ in
+            let json = #"{"documents":"[{\"path\":\"a.md\",\"content\":\"A\"},{\"path\":\"b.md\",\"content\":\"B\"}]"}"#
+            let preview = KnowledgeWritePreviewBuilder.build(
+                collection: collection,
+                argumentsJSON: json,
+                isDelete: false,
+                schema: WriteKnowledgeTool().parameters
+            )
+
+            // The tool sees arguments already coerced by the registry.
+            let coerced = SchemaValidator.coerceArguments(
+                try #require(
+                    JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]),
+                against: try #require(WriteKnowledgeTool().parameters)
+            )
+            let parsed = WriteKnowledgeTool.documents(
+                from: try #require(coerced as? [String: Any]), tool: "write_knowledge")
+            guard case .success(let documents) = parsed else {
+                Issue.record("tool rejected arguments the card accepted")
+                return
+            }
+            #expect(preview.entries.map(\.relPath) == documents.map(\.path))
+        }
+    }
+
     /// The modal must render something for every call. "This could not be
     /// read" is itself a reason to deny, so a parse failure is a preview
     /// state rather than a thrown error.

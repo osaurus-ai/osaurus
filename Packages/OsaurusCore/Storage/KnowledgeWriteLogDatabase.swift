@@ -56,10 +56,16 @@ public final class KnowledgeWriteLogDatabase: @unchecked Sendable {
     /// log exists to prevent.
     static let migrationsAreAdditiveOnly = true
 
-    /// Newest N records kept per collection. Whole prior documents are stored,
-    /// so history has to be bounded; 500 is far more than any plausible
-    /// review-and-revert window while staying small on disk.
-    static let retentionLimitPerCollection = 500
+    /// Newest N records kept per collection. Whole prior documents are
+    /// stored, so history has to be bounded.
+    ///
+    /// Sized against the batch limit, not picked round: one `write_knowledge`
+    /// call can carry 200 documents, so a 500-row cap is barely two and a half
+    /// imports before the oldest import silently loses its undo. 2000 keeps
+    /// roughly ten full-size imports revertable, and pruning discards
+    /// already-reverted rows first, so a live undo is only ever dropped once
+    /// live rows alone exceed the cap.
+    static let retentionLimitPerCollection = 2000
 
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "ai.osaurus.knowledge.writelog")

@@ -113,7 +113,8 @@ final class WriteKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePre
         return KnowledgeWritePreviewBuilder.build(
             collection: collection,
             argumentsJSON: argumentsJSON,
-            isDelete: false
+            isDelete: false,
+            schema: parameters
         )
     }
 
@@ -439,7 +440,8 @@ final class DeleteKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePr
         return KnowledgeWritePreviewBuilder.build(
             collection: collection,
             argumentsJSON: argumentsJSON,
-            isDelete: true
+            isDelete: true,
+            schema: parameters
         )
     }
 
