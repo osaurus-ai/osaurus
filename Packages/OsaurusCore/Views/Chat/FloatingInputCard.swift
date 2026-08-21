@@ -7727,8 +7727,17 @@ private struct FloatingContextChip: View {
         let capBytes = settings.cache.blockDisk.maxSizeGB.map {
             Int($0 * 1_073_741_824)
         }
+        // Measure the directory the RUNTIME caps, not the default one.
+        // `OsaurusPaths.diskKVCacheUsageBytes()` hardcodes the default path, so
+        // with a custom Disk Cache Directory configured it would report the size
+        // of a directory that is not the one being evicted — a plausible-looking
+        // number about the wrong thing. Resolve the override the same way
+        // `ModelRuntime` does.
+        let dir =
+            ModelRuntime.cacheDiskDirectoryOverride(for: settings.cache)
+            ?? OsaurusPaths.diskKVCache()
         return DiskCacheUsage(
-            usedBytes: OsaurusPaths.diskKVCacheUsageBytes(),
+            usedBytes: OsaurusPaths.directorySizeIfExists(at: dir),
             maxBytes: capBytes ?? 0,
             evictions: 0)
     }
