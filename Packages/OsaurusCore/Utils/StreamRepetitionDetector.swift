@@ -36,6 +36,10 @@ struct StreamRepetitionDetector {
     static let prefixRepeatThreshold = 8
     /// Words compared when grouping lines into an opening-phrase family.
     static let prefixWordCount = 3
+    /// Cap on an un-terminated line. Prose this long without a newline is
+    /// never the short repeated phrase this looks for.
+    static let maxPendingLineLength = 4096
+
     /// Shorter normalized lines are ignored. Repeated punctuation, closing
     /// braces, and table rules are ordinary content, not degeneration.
     static let minimumSignificantLength = 12
@@ -70,6 +74,13 @@ struct StreamRepetitionDetector {
                 if hasDetectedLoop { return }
             } else {
                 partialLine.append(character)
+                // A "line" this long is not a repeated announcement, and
+                // holding it duplicates content the turn already stores. A
+                // newline-free response would otherwise grow this buffer to
+                // the size of the whole answer.
+                if partialLine.count > Self.maxPendingLineLength {
+                    partialLine.removeAll(keepingCapacity: true)
+                }
             }
         }
         // A model looping without newlines still separates its repeats with a

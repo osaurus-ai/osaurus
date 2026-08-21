@@ -191,4 +191,14 @@ struct StreamRepetitionDetectorTests {
         )
         #expect(StreamRepetitionDetector.openingPhrase(of: "let me") == "let me")
     }
+    /// A response with no newlines must not grow the pending-line buffer to
+    /// the size of the whole answer. Prose that long is never the short
+    /// repeated phrase this detector looks for.
+    @Test func newlineFreeStreamDoesNotGrowUnbounded() {
+        var detector = StreamRepetitionDetector()
+        for _ in 0 ..< 200 {
+            detector.feed(String(repeating: "a", count: 1000))
+        }
+        #expect(!detector.hasDetectedLoop)
+    }
 }
