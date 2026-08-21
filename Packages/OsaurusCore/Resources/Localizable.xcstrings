@@ -229,9 +229,13 @@
         }
       }
     },
+    "Agents leave a note here when a document looks out of date but fixing it was not the task at hand. Open one in a chat to have an agent correct it; you review the change before it is saved.": {},
     "Documents agents have written to your collections. You approved each of these when it ran; if something looks wrong, put it back here.": {},
+    "Fix in a chat": {},
     "Hide documents": {},
+    "Left over from the old review flow. Approve or dismiss these; agents now write documents directly, with your approval at the time.": {},
     "NEWER VERSION": {},
+    "Open this in a chat to have it fixed": {},
     "Recent agent changes": {},
     "Revert": {},
     "Revert all": {},

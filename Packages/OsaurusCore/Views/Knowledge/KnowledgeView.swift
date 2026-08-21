@@ -381,12 +381,27 @@ struct KnowledgeView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                 Text(
-                    "Agents flag documents that look out of date. A Curator agent proposes a fix here for you to approve — nothing changes until you do.",
+                    "Agents leave a note here when a document looks out of date but fixing it was not the task at hand. Open one in a chat to have an agent correct it; you review the change before it is saved.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
                 .fixedSize(horizontal: false, vertical: true)
+
+                // Drain-only. Nothing creates proposals any more — the tool
+                // and the curator role are gone — but drafts already queued
+                // are the user's, so they get reviewed rather than discarded
+                // on upgrade. This block and the `proposals` table go once
+                // these can reasonably be assumed drained.
+                if !pendingProposals.isEmpty {
+                    Text(
+                        "Left over from the old review flow. Approve or dismiss these; agents now write documents directly, with your approval at the time.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
 
                 ForEach(pendingProposals) { proposal in
                     HStack(spacing: 10) {
@@ -427,15 +442,15 @@ struct KnowledgeView: View {
                                 .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
                                 .lineLimit(2)
-                            Text("Waiting for a curator to propose a fix", bundle: .module)
+                            Text("Open this in a chat to have it fixed", bundle: .module)
                                 .font(.system(size: 10))
                                 .foregroundColor(.orange)
                         }
                         Spacer(minLength: 8)
                         Button {
-                            startCurator(for: ticket)
+                            startTicketFix(for: ticket)
                         } label: {
-                            Text("Update with a curator", bundle: .module)
+                            Text("Fix in a chat", bundle: .module)
                                 .font(.system(size: 11, weight: .medium))
                         }
                         Button {
@@ -457,11 +472,11 @@ struct KnowledgeView: View {
         }
     }
 
-    /// A curator agent that can act on `collectionId`: knowledge on, curator
+    /// An agent that can act on `collectionId`.
     /// on, and this collection granted. `nil` when the user hasn't set one up.
     /// Any agent granted this collection can now fix a ticket: write access
     /// follows the grant, not a separate curator role.
-    private func curatorAgent(forCollectionId collectionId: String) -> Agent? {
+    private func agentGranted(forCollectionId collectionId: String) -> Agent? {
         guard let uuid = UUID(uuidString: collectionId) else { return nil }
         return AgentManager.shared.agents.first { agent in
             agent.settings.knowledgeEnabled
@@ -470,12 +485,12 @@ struct KnowledgeView: View {
     }
 
     /// Give the user a forward action beyond Dismiss: open a chat with a
-    /// curator agent whose composer is pre-filled with a briefing for this
+    /// granted agent whose composer is pre-filled with a briefing for this
     /// ticket, so the user lands with the request ready to send instead of a
-    /// blank window. The curator does the proposing through the normal chat +
-    /// tool path; the proposal then returns here for approval.
-    private func startCurator(for ticket: KnowledgeTicket) {
-        guard let agent = curatorAgent(forCollectionId: ticket.collectionId) else {
+    /// blank window. The agent corrects the document with `write_knowledge`
+    /// through the normal chat + tool path, showing a diff for approval.
+    private func startTicketFix(for ticket: KnowledgeTicket) {
+        guard let agent = agentGranted(forCollectionId: ticket.collectionId) else {
             showSuccess(
                 L("No agent has this collection yet. Grant it to one in Features → Knowledge.")
             )
