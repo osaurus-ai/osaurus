@@ -45,6 +45,32 @@ public struct BatchDiagnosticsSnapshot: Equatable, Sendable {
     public let ssmCompanionMisses: Int
     public let ssmCompanionReDerives: Int
 
+    /// Bytes currently on disk counted against the disk-cache quota.
+    ///
+    /// 🚨 This is a ROOT TOTAL, not a per-model figure, and must never be summed
+    /// across models. Every model's `DiskCache` opens the SAME
+    /// `cacheDir/cache_index.db` (DiskCache.swift:171) and
+    /// `currentPayloadBytes` runs `SELECT SUM(file_size) FROM cache_entries`
+    /// with no modelKey predicate — so each loaded model reports the identical
+    /// whole-root number. Adding them up multiplies the displayed size by the
+    /// number of loaded models. The aggregation takes `max`.
+    public let diskL2PayloadBytes: Int
+
+    /// The configured quota the payload bytes are measured against, in bytes.
+    /// Also root-wide and also taken as `max`, for the same reason.
+    public let diskL2MaxBytes: Int
+
+    /// Cache boundaries dropped by quota enforcement. Unlike the byte figures
+    /// this IS a per-instance counter, so summing is correct.
+    public let diskL2Evictions: Int
+
+    /// Fraction of the configured quota currently in use, or nil when no quota
+    /// is configured. Drives the chat footer's cache readout and its warning.
+    public var diskL2UsedFraction: Double? {
+        guard diskL2MaxBytes > 0 else { return nil }
+        return Double(diskL2PayloadBytes) / Double(diskL2MaxBytes)
+    }
+
     public init(
         pendingCount: Int,
         activeCount: Int,
@@ -69,8 +95,14 @@ public struct BatchDiagnosticsSnapshot: Equatable, Sendable {
         diskL2Stores: Int = 0,
         ssmCompanionHits: Int = 0,
         ssmCompanionMisses: Int = 0,
-        ssmCompanionReDerives: Int = 0
+        ssmCompanionReDerives: Int = 0,
+        diskL2PayloadBytes: Int = 0,
+        diskL2MaxBytes: Int = 0,
+        diskL2Evictions: Int = 0
     ) {
+        self.diskL2PayloadBytes = max(0, diskL2PayloadBytes)
+        self.diskL2MaxBytes = max(0, diskL2MaxBytes)
+        self.diskL2Evictions = max(0, diskL2Evictions)
         self.pendingCount = pendingCount
         self.activeCount = activeCount
         self.activeHighWatermark = activeHighWatermark
@@ -119,6 +151,10 @@ struct ProcessLifetimeBatchCounters: Equatable, Sendable {
     var ssmCompanionHits: Int = 0
     var ssmCompanionMisses: Int = 0
     var ssmCompanionReDerives: Int = 0
+    /// Per-instance eviction counter, so it accumulates like the other counters
+    /// and survives a model unload. The byte gauges deliberately do NOT live
+    /// here: they are an instantaneous root-wide reading, not something to add up.
+    var diskL2Evictions: Int = 0
 
     init(
         activeHighWatermark: Int = 0,
@@ -132,8 +168,10 @@ struct ProcessLifetimeBatchCounters: Equatable, Sendable {
         diskL2Stores: Int = 0,
         ssmCompanionHits: Int = 0,
         ssmCompanionMisses: Int = 0,
-        ssmCompanionReDerives: Int = 0
+        ssmCompanionReDerives: Int = 0,
+        diskL2Evictions: Int = 0
     ) {
+        self.diskL2Evictions = max(0, diskL2Evictions)
         self.activeHighWatermark = max(0, activeHighWatermark)
         self.decodeSplitCount = max(0, decodeSplitCount)
         self.turboQuantCompressions = max(0, turboQuantCompressions)
@@ -161,7 +199,8 @@ struct ProcessLifetimeBatchCounters: Equatable, Sendable {
             diskL2Stores: snapshot.diskL2Stores,
             ssmCompanionHits: snapshot.ssmCompanionHits,
             ssmCompanionMisses: snapshot.ssmCompanionMisses,
-            ssmCompanionReDerives: snapshot.ssmCompanionReDerives
+            ssmCompanionReDerives: snapshot.ssmCompanionReDerives,
+            diskL2Evictions: snapshot.diskL2Evictions
         )
     }
 
@@ -190,6 +229,7 @@ struct ProcessLifetimeBatchCounters: Equatable, Sendable {
             ssmCompanionReDerives,
             other.ssmCompanionReDerives
         )
+        diskL2Evictions = Self.saturatingAdd(diskL2Evictions, other.diskL2Evictions)
     }
 
     func mergingCounters(into live: BatchDiagnosticsSnapshot) -> BatchDiagnosticsSnapshot {
@@ -219,7 +259,13 @@ struct ProcessLifetimeBatchCounters: Equatable, Sendable {
             diskL2Stores: merged.diskL2Stores,
             ssmCompanionHits: merged.ssmCompanionHits,
             ssmCompanionMisses: merged.ssmCompanionMisses,
-            ssmCompanionReDerives: merged.ssmCompanionReDerives
+            ssmCompanionReDerives: merged.ssmCompanionReDerives,
+            // Byte figures are an instantaneous root-wide gauge, so they come
+            // from the LIVE snapshot rather than the accumulated counters --
+            // adding successive readings together would be meaningless.
+            diskL2PayloadBytes: live.diskL2PayloadBytes,
+            diskL2MaxBytes: live.diskL2MaxBytes,
+            diskL2Evictions: merged.diskL2Evictions
         )
     }
 

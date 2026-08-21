@@ -206,8 +206,12 @@ struct CacheSection: View {
             )
             OptionalDoubleField(
                 label: "Disk Cache Size (GB)",
-                placeholder: "Blank = engine default (10 GB)",
-                help: "Soft cap before older entries are evicted.",
+                placeholder: "Blank = Auto (10% of disk)",
+                help:
+                    "Soft cap before older entries are evicted, shared across all models. "
+                    + "Auto scales with your disk because KV size scales with the model: a "
+                    + "27B stores ~256 KiB per token, so a fixed cap that suits one machine "
+                    + "starves another and long chats re-prefill instead of resuming.",
                 value: $draft.cache.blockDisk.maxSizeGB,
                 format: "%.1f"
             )

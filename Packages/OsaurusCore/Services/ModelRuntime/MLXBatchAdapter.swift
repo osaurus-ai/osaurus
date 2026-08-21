@@ -585,6 +585,14 @@ struct MLXBatchAdapter {
             var diskL2Hits = 0
             var diskL2Misses = 0
             var diskL2Stores = 0
+            // Root-wide gauges: every model's DiskCache reads the SAME
+            // cacheDir/cache_index.db with no modelKey predicate, so each
+            // reports the identical whole-root figure. MAX, never sum --
+            // summing would multiply the reported size by the model count.
+            var diskL2PayloadBytes = 0
+            var diskL2MaxBytes = 0
+            // Per-instance counter, so this one genuinely accumulates.
+            var diskL2Evictions = 0
             var ssmHits = 0
             var ssmMisses = 0
             var ssmReDerives = 0
@@ -605,6 +613,10 @@ struct MLXBatchAdapter {
                     diskL2Hits += diskStats.hits
                     diskL2Misses += diskStats.misses
                     diskL2Stores += diskStats.stores
+                    diskL2PayloadBytes = max(
+                        diskL2PayloadBytes, diskStats.currentPayloadBytes)
+                    diskL2MaxBytes = max(diskL2MaxBytes, diskStats.maxSizeBytes)
+                    diskL2Evictions += diskStats.evictions
                 }
                 ssmHits += stats.ssmStats.hits
                 ssmMisses += stats.ssmStats.misses
@@ -651,7 +663,10 @@ struct MLXBatchAdapter {
                 diskL2Stores: diskL2Stores,
                 ssmCompanionHits: ssmHits,
                 ssmCompanionMisses: ssmMisses,
-                ssmCompanionReDerives: ssmReDerives
+                ssmCompanionReDerives: ssmReDerives,
+                diskL2PayloadBytes: diskL2PayloadBytes,
+                diskL2MaxBytes: diskL2MaxBytes,
+                diskL2Evictions: diskL2Evictions
             )
             return processLifetimeCounters.mergingCounters(into: live)
         }

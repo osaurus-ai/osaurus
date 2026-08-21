@@ -5804,6 +5804,13 @@ private struct ContextBreakdownPopover: View {
     /// turn is streaming).
     var canCompact: Bool = false
     var onCompact: (() -> Void)? = nil
+    /// Live disk-cache usage for the footer readout. nil when the disk cache is
+    /// off or no quota is configured, in which case the section is hidden
+    /// entirely rather than rendering a meaningless 0 GB.
+    var diskCache: DiskCacheUsage? = nil
+
+    /// Fraction of the configured quota at which the footer starts warning.
+    static let diskCacheWarnFraction: Double = 0.75
 
     @Environment(\.theme) private var theme
 
@@ -5983,11 +5990,58 @@ private struct ContextBreakdownPopover: View {
                 messagesSection
             }
 
+            if let diskCache, diskCache.maxBytes > 0 {
+                divider
+                diskCacheSection(diskCache)
+            }
+
             if showsCompactionSection {
                 divider
                 compactionSection
             }
         }
+    }
+
+    // MARK: - Disk cache
+
+    /// Footer readout for the on-SSD prompt cache: how much it holds, against
+    /// what cap, warning once it nears that cap.
+    ///
+    /// This exists because the cap used to be a flat 10 GB that could not hold
+    /// one full-context conversation of a 27B, and nothing surfaced that. The
+    /// cache silently thrashed and the only symptom was decode slowing down as
+    /// the conversation grew. Showing the number makes eviction observable
+    /// instead of inferred.
+    private func diskCacheSection(_ usage: DiskCacheUsage) -> some View {
+        let fraction = usage.usedFraction
+        let warn = fraction >= Self.diskCacheWarnFraction
+        let tint = warn ? theme.warningColor : theme.accentColor
+        return VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                sectionEyebrow("Disk Cache")
+                Spacer(minLength: 0)
+                Text(verbatim: usage.usedLabel + " / " + usage.maxLabel)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(warn ? tint : theme.secondaryText)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(theme.tertiaryText.opacity(0.15))
+                    Capsule()
+                        .fill(tint)
+                        .frame(width: max(0, min(1, fraction)) * geo.size.width)
+                }
+            }
+            .frame(height: 4)
+            if warn {
+                Text(verbatim: usage.warningText)
+                    .font(.system(size: 9))
+                    .foregroundColor(tint)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
     }
 
     // MARK: - Compaction
@@ -7641,6 +7695,19 @@ private struct FloatingCreditsChip: View {
 /// popover's content is computed only when it actually opens, matching the
 /// lazy evaluation the inline `.popover` closure had before extraction.
 private struct FloatingContextChip: View {
+    /// Read the shared disk-cache gauge. Returns nil when no quota is
+    /// configured (disk cache off), so the popover hides the section rather
+    /// than showing a meaningless 0 GB.
+    static func readDiskCacheUsage() async -> DiskCacheUsage? {
+        guard let snapshot = await MLXBatchAdapter.snapshotDiagnostics(),
+            snapshot.diskL2MaxBytes > 0
+        else { return nil }
+        return DiskCacheUsage(
+            usedBytes: snapshot.diskL2PayloadBytes,
+            maxBytes: snapshot.diskL2MaxBytes,
+            evictions: snapshot.diskL2Evictions)
+    }
+
     let displayTokens: Int
     let usableTokens: Int?
     let modelMaxTokens: Int?
@@ -7668,6 +7735,9 @@ private struct FloatingContextChip: View {
     /// period to travel from the trigger into the popover (which lives in its
     /// own window, so hovering it doesn't keep the trigger "hovered").
     @State private var contextDismissTask: Task<Void, Never>?
+    /// Live disk-cache reading, refreshed only while the popover is open so an
+    /// idle chat does not poll the cache index on a timer.
+    @State private var diskCacheUsage: DiskCacheUsage?
 
     var body: some View {
         let warningColor: Color? =
@@ -7748,8 +7818,19 @@ private struct FloatingContextChip: View {
                 formatTokenCount: formatTokenCount,
                 compactionState: compactionState,
                 canCompact: canCompact,
-                onCompact: onCompact
+                onCompact: onCompact,
+                diskCache: diskCacheUsage
             )
+            .task(id: showContextBreakdown) {
+                // Poll while open. The cache index is a small SQLite read, but
+                // it is still I/O, so it runs off the main actor and stops as
+                // soon as the popover closes.
+                guard showContextBreakdown else { return }
+                while !Task.isCancelled {
+                    diskCacheUsage = await Self.readDiskCacheUsage()
+                    try? await Task.sleep(for: .seconds(2))
+                }
+            }
             // Keep the popover alive while the cursor is over it, so the user
             // can travel from the trigger and click the disclosure headers.
             .onPopoverHover { hovering in
