@@ -836,6 +836,70 @@ Next attempt should drive the send via a path that does not depend on the
 composer's key handling, or find why the composer ignores Return under
 synthetic events.
 
+### Chunked prefill: VERIFIED SOUND for 27B (three hypotheses killed)
+
+Checked because "chunked prefill for all models" was on the list. It is already
+there for the 27B path, and the three defects I suspected are all NOT defects:
+
+- **Does qwen3_5 text-only prefill chunk?** Yes. `Qwen35.swift:2238-2266` loops
+  in `prefillStepSize` slices, gated on `inputEmbeddings == nil, pixelValues ==
+  nil` — pure-text causal path only. Image/video keep one-shot deliberately,
+  because mrope position ids derive from the full image grid.
+- **Does the generic text path chunk?** Yes, `LLMModel.swift:59-79`, with
+  "Critical for MoE models" in its own comment.
+- **Is the user's `prefillStepSize` setting dead?** NO — and this was my
+  hypothesis, which was wrong. `prepare(windowSize:)`'s `windowSize` parameter
+  IS `parameters.prefillStepSize` (Evaluate.swift:1505, 1944, 3146;
+  BatchEngine.swift:2335+; NativeMTPTokenIterator.swift:604). `windowSize ?? 512`
+  therefore reads "the user's prefill step, else 512". The name is misleading —
+  it is NOT the KV window — but the wiring is correct end to end.
+- **Is Qwen35 inconsistent with the generic path?** No. Both use the identical
+  `windowSize ?? 512` expression (`Qwen35.swift:2238`, `LLMModel.swift:25`).
+
+So there is no chunked-prefill fix to make for 27B. What remains is a TUNING
+question, not a correctness one, and it must be measured before it is touched:
+
+**`MLX.Memory.clearCache()` runs once per chunk** (`Qwen35.swift:2264`,
+`Gemma4.swift:1338`, `NemotronHOmni.swift:246`, `LLMModel.swift:79`). At a
+32k prompt with the 512 default that is ~64 pool flushes, each forcing
+reallocation on the next chunk. It bounds peak memory — which is the thing that
+decides whether a 27B at long context stays inside the Metal working set or
+falls off the paging cliff — so removing it could easily be a large net LOSS.
+Do not touch it without a hot ABAB at a FIXED prompt length with `phys_footprint`
+logged per leg. Added as a measurement item, not a fix.
+
+### 27B is genuinely MTP-capable — all four quants ship the weights
+
+Checked because "27B + MTP" is a stated priority and a declared-config-without-
+weights bundle is a known trap. All four of `Qwen3.8-27B-{JANG_2D, JANG_4D,
+JANG_6D, MXFP8}` declare `mtp_num_hidden_layers = 1` and
+`mtp_use_dedicated_embeddings = False`, and each ships **31 MTP weight tensors**
+(`mtp.fc.{weight,scales,biases}`, `mtp.layers.0.*`) in its safetensors index.
+model_type `qwen3_5` / `qwen3_5_text`, 64 layers, dense (not MoE — `num_experts`
+is null; the MoE 256/8 config belongs to the 35B `qwen3_5_moe`).
+
+So depth-1 native MTP is available on every 27B quant, and the accept-rate
+fields the new `decodePath=nativeMTP` line carries will have something to report
+as soon as the harness can be driven.
+
+### BLOCKER for the extreme-multiturn growing-context run
+
+The requested test — drive context up as far as it goes while watching store /
+eviction / rotation — can only be done through the GUI harness. Right now it
+cannot be driven **in the background**:
+
+- `System Events` returns **-1743 (not authorized)**, so no AX-based background
+  driving. The calling process is `claude`.
+- The only working input path is `cliclick`, which posts to whatever is
+  frontmost — it steals focus and collides with the user's own typing. Observed
+  directly: the composer picked up text the user was typing, and sends became
+  unreliable because focus was being traded back and forth.
+- The API/curl and RunBench routes are both explicitly out of bounds.
+
+Unblock is a one-time grant: System Settings → Privacy & Security → Automation →
+allow the terminal running `claude` to control **System Events**. Until then,
+harness-dependent items stay open and only source-level work can proceed.
+
 ### Still not measured
 
 The cache ON vs OFF depth curve remains the one measurement that answers Eric's
