@@ -232859,6 +232859,10 @@
     "Deletes every stored prompt checkpoint, including orphaned files left by an interrupted write. Chats keep working; the next turn re-prefills instead of resuming.": {
       "extractionState": "manual",
       "localizations": {}
+    },
+    "Deletes all saved conversation data from disk, including leftover files from an interrupted write. Your chats are not affected — the next reply just takes a little longer to start.": {
+      "extractionState": "manual",
+      "localizations": {}
     }
   },
   "version": "1.1"

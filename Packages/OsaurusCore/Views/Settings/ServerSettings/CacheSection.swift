@@ -245,7 +245,7 @@ struct CacheSection: View {
                 }
             }
             Text(
-                "Deletes every stored prompt checkpoint, including orphaned files left by an interrupted write. Chats keep working; the next turn re-prefills instead of resuming.",
+                "Deletes all saved conversation data from disk, including leftover files from an interrupted write. Your chats are not affected — the next reply just takes a little longer to start.",
                 bundle: .module
             )
             .font(.caption)

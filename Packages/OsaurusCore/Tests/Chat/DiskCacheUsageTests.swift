@@ -81,9 +81,15 @@ final class DiskCacheUsageTests: XCTestCase {
         let usage = DiskCacheUsage(usedBytes: Int(Double(cap) * 0.8), maxBytes: cap)
         let text = usage.warningText
         XCTAssertTrue(text.contains("80%"), text)
-        XCTAssertTrue(text.contains("evicted"), text)
-        XCTAssertTrue(text.contains("re-prefill"), text)
+        XCTAssertTrue(text.contains("removed"), text)
+        XCTAssertTrue(text.contains("slower to start"), text)
         XCTAssertTrue(text.contains("Disk Cache Size"), text)
+        // Engine vocabulary must not leak back into user-facing copy.
+        for jargon in ["prompt checkpoint", "evicted", "re-prefill", "KV"] {
+            XCTAssertFalse(
+                text.localizedCaseInsensitiveContains(jargon),
+                "engine jargon '\(jargon)' leaked into the warning: \(text)")
+        }
     }
 
     // MARK: - Degenerate inputs

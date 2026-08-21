@@ -60,15 +60,18 @@ public struct DiskCacheUsage: Equatable, Sendable {
     public var usedLabel: String { Self.format(bytes: usedBytes) }
     public var maxLabel: String { Self.format(bytes: maxBytes) }
 
-    /// Shown once usage crosses the warn threshold. Names the consequence
-    /// (re-prefill) and the remedy (raise the size), because "cache is full" on
-    /// its own tells the user nothing actionable.
+    /// Shown once usage crosses the warn threshold.
+    ///
+    /// Deliberately free of engine vocabulary. "Prompt checkpoints", "evicted"
+    /// and "re-prefill" are precise for us and meaningless to the person
+    /// reading a chat window; the sentence has to say what they will notice
+    /// (long chats get slower to start) and what they can do about it.
     public var warningText: String {
         let pct = Int((usedFraction * 100).rounded())
         return
-            "Cache is \(pct)% full — older prompt checkpoints are being evicted, "
-            + "so long conversations may re-prefill instead of resuming. "
-            + "Raise Disk Cache Size in Settings."
+            "Cache is \(pct)% full — older conversation data is being removed, "
+            + "so long chats may need to re-read from the beginning and will be "
+            + "slower to start. Increase Disk Cache Size in Settings."
     }
 
     /// GB with one decimal above 1 GB, MB below it. Keeps the footer readable
