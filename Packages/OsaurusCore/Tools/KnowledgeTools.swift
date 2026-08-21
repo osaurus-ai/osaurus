@@ -610,8 +610,12 @@ final class ListKnowledgeTool: OsaurusTool, @unchecked Sendable {
                 ? "Collection '\(collections[0].name)' is empty" : "These collections are empty"
             return ToolEnvelope.success(
                 tool: name,
-                text: "\(subject) — no documents at all. This is not an indexing delay; "
-                    + "documents are added by the user in the Knowledge tab, not by writing files."
+                // Naming the real write path matters as much as denying the
+                // indexing excuse: an agent told only "this is empty" with no
+                // route forward is what invented `<agent home>/knowledge/`.
+                text: "\(subject) — no documents at all. This is not an indexing delay, so "
+                    + "waiting will not change it. Add documents with `write_knowledge`; writing "
+                    + "files to a path never puts them in a collection."
             )
         }
 
