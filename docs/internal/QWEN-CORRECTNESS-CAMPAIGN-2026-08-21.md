@@ -900,6 +900,79 @@ Unblock is a one-time grant: System Settings → Privacy & Security → Automati
 allow the terminal running `claude` to control **System Events**. Until then,
 harness-dependent items stay open and only source-level work can proceed.
 
+### PINPOINTED: the 10 GB disk-cache default cannot hold one 27B conversation
+
+Question asked: is SSD-cache slowness at depth just bad user hardware, is the GB
+cap too small, or is it a RAM safety rule?
+
+**It is not a RAM safety rule.** The default is a flat literal:
+`let diskMaxGB = Float(diskMaxSizeGB ?? 10.0)`
+(ServerRuntimeSettings.swift:21 and :840). Nothing derives it from RAM, from
+disk capacity, or from the model. The osaurus UI ships it blank and its own
+placeholder says so: "Blank = engine default (10 GB)"
+(CacheSection.swift:208-210). And the cap is enforced across the WHOLE
+persistent cache root, not per model (CacheCoordinator.swift:1088), so every
+model the user has ever run shares the same 10 GB.
+
+**The arithmetic, for Qwen3.8-27B** (config: 64 layers, 4 KV heads, head_dim
+256):
+
+    per token = 64 * 4 * 256 * 2 (K and V)
+              = 256 KiB/token at bf16
+              = 128 KiB/token at fp8
+
+    10 GB cap holds  ~41k tokens (bf16)  /  ~82k tokens (fp8)  -- TOTAL, all models
+    27B context window                    222k tokens
+    one FULL-context conversation needs  ~54 GB (bf16) / ~27 GB (fp8)
+
+So the shipped cap cannot hold a single full-context conversation of the 27B.
+It tops out around 18% of one window at bf16. Past that point every store must
+evict earlier boundaries of the SAME conversation, so reuse collapses precisely
+as context grows — which is the reported symptom.
+
+For comparison, oMLX (installed at /Applications/oMLX.app, sources readable
+under Contents/Resources/omlx) defaults `ssd_cache_max_size = "auto"`, defined
+as **10% of SSD capacity** (settings.py:246, :274); its non-auto default is
+`"100GB"` (config.py:110). On this machine 10% of a 3721 GB volume is ~372 GB —
+roughly 37x our default.
+
+**What this does NOT explain — stated so it is not over-claimed.** The live
+trace earlier in this document showed 9 stores against 2 hits on a conversation
+of a few thousand tokens, nowhere near 10 GB. The cap cannot be the cause of
+those misses. Two distinct mechanisms are in play and they must not be
+conflated:
+
+1. **Early misses at shallow depth** — not a capacity problem. Candidates remain
+   the exact-boundary-only matching and the full-payload-per-boundary store.
+2. **Collapse at depth** — this is where the 10 GB cap bites, and the arithmetic
+   above says it must bite well before the model's own context limit.
+
+**Status: strongly-supported hypothesis, NOT yet measured.** It rests on config
+arithmetic and source reading. The confirming test is a growing-context multiturn
+run with `du` on the cache dir and the evicted-boundary counter sampled per turn,
+watching for the turn where evictions begin and hits fall off. That run is
+currently blocked on background GUI driving.
+
+**Recommended change, deliberately not made unilaterally:** the default should
+scale with available disk rather than being a flat 10 GB, because a cache that
+cannot hold one conversation of the flagship model is a feature that mostly does
+not work. This is a disk-consumption policy for other people's machines, so the
+ceiling is the user's call, not mine. It is a one-line default.
+
+### Reference points for "is this fast or slow"
+
+Measured on this machine, so there is something to compare against:
+
+- Gemma-class 26B, cold prompt: **1766 pp/s** prefill, first token ~1.9s at 3.3k
+  tokens.
+- Same model, warm/partially reused: **12228 pp/s** prefill (270-514 ms for
+  ~3.4k tokens), decode **77.9 tok/s**.
+- DSV4-Flash (recorded earlier, settled machine): 443 pp/s at 8K, 332 at 16K,
+  231 at 32K; decode ~29 tok/s and depth-invariant.
+
+The 6-25x gap between cold and warm prefill is the entire value of the cache.
+That is the number a too-small cap destroys at depth.
+
 ### Still not measured
 
 The cache ON vs OFF depth curve remains the one measurement that answers Eric's
