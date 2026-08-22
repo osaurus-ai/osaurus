@@ -931,3 +931,69 @@ Worth noting for the C9 work: this gate sat in FRONT of the media cache path,
 so on this host no externally-discovered VL bundle could reach the reuse logic
 at all. Any earlier "0 disk hits" for such a bundle says nothing about the
 cache — the request never got there.
+
+---
+
+## Model-derived generation config, live
+
+Asked directly: does chat derive and use the MODEL's own generation params?
+Read the bundle on disk and the app's own readout of what it actually ran.
+
+`/Users/eric/models/JANGQ-AI/LFM2.5-VL-3B-JANG_4M/generation_config.json`:
+
+```json
+{"temperature": 0.2, "top_k": 50, "top_p": 1.0, "repetition_penalty": 1.0, ...}
+```
+
+Settings → Server → Live Activity → **Sampler last used**:
+
+```
+temp 0.2 · top-p 1 · top-k 50 · min-p 0 · max 16384 · rep 1
+```
+
+Exact match on every shipped field. These are not app defaults — the Sampling
+Defaults path was proven separately in D1 to override with `temp 0.23 · top-k 7`
+when the user sets them — so the value shown is the bundle's, reaching the
+sampler, and visible.
+
+## Cache tier is reported per model
+
+Same session, LFM2.5-VL-3B-JANG_4M resident, Live Activity → Cache:
+
+```
+Cache-enabled models        1
+Hybrid caches               0
+Paged-incompatible caches   0
+```
+
+The topology counters are per resident model, so a hybrid-SSM bundle reports
+`Hybrid caches 1` and this one correctly reports the standard tier. Combined
+with the disk figures below, the tier in force is observable rather than
+assumed.
+
+Disk tier during the VL session: **3027 MB across 18 entries**, and the
+eviction test earlier drove 116 MB / 5 entries → 1 MB / 4 entries when the cap
+was lowered to 76 MB. Storage and enforcement are both live.
+
+## What is NOT proven, and why
+
+**VL follow-up cache REUSE is not re-proven on this host today.** A three-turn
+VL conversation ran — image turn answered correctly, then two text follow-ups
+answered correctly and fast — but by the time the follow-ups ran the model chip
+read `Qwen3 0.6B 8bit`, not the VL bundle. Those follow-ups cannot be
+attributed to the VL model resuming a media cache; a text model reading the
+visible transcript produces the same answers and the same fast TTFT. The
+numbers are discarded rather than reported.
+
+So the C9 headline (Qwen VL follow-up TTFT 3.40s → 0.59s) still rests on this
+morning's A/B, whose free-RAM condition was never recorded — see the C9
+caveat. That measurement belongs to **vmlx #292** and is not a claim this
+osaurus PR makes.
+
+**Confound noted on the capability fix.** Its before-state was observed on a
+build pinned to the old vmlx revision and its after-state on a rebuild that
+also carried the newer pin, so two variables moved. The attribution still
+holds on inspection rather than on the A/B alone: `Image input is not
+advertised for …` is emitted by `ModelMediaCapabilities` in OsaurusCore, and
+the vmlx pin cannot reach that string. Recorded this way rather than presented
+as a clean single-variable result.
