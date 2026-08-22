@@ -67,6 +67,44 @@ Status key: **FIXED+PROVEN** / **FIXED, unproven live** / **OPEN** /
 | D4 | Displayed live stats match what the model actually ran | **FIXED+PROVEN LIVE** — the effective sampler had NO GUI surface at all; added "Sampler last used" to Live Activity, read back off the running app |
 | D5 | The row is discoverable from Settings search | **FIXED+PROVEN LIVE** — `0 settings match "sampler"` → `2 settings match "sampler"`, and the result navigates to Sampling Defaults (below) |
 
+## H. Tool permissions — "enabled" is not "allowed"
+
+| # | item | status |
+|---|---|---|
+| H1 | Every shipped tool is enabled | PROVEN — 83/83 `enabled: true` |
+| H2 | An enabled tool runs without prompting | **NO — and this is the popup** |
+| H3 | A bulk control exists to allow everything | **NO — none anywhere** |
+| H4 | A headless test process cannot hang on the prompt | FIXED — `ToolPermissionPromptService` returns `.denied` under `RuntimeEnvironment.isUnderTests` at all three entry points |
+
+`ToolConfiguration.policy(for:)` returns **`.ask`** when a tool has no explicit
+policy, and `enabled` is a separate map. So a config with all 83 tools enabled
+and `"policy": {}` — which is the shipped starting state — prompts on first use
+of every one of them. That is the modal reported as *"dude what the fuck is
+this close this shit i cant even click or quit it"*: not a stuck window so much
+as 83 of them waiting in line.
+
+The controls that do exist are per-tool Auto / Ask / Deny pickers
+(`ToolCatalogRows`, `ChatSettingsView`). The only bulk action is
+`resetAllToDefault()`, which iterates `Self.folderTools` — a subset — and
+resets them to `.ask`, i.e. it moves *toward* prompting, never away. There is
+no "allow all", so clearing the prompts means 83 individual picker changes or
+83 trips through the modal.
+
+Not fixed here: a one-click "allow everything" is a security-posture control,
+and adding one to a shipped app is a product decision rather than an audit
+finding. Recorded so it can be decided deliberately. For proof runs the
+equivalent is written directly into the isolated root:
+
+    python3 - <<'EOF'
+    import json; p = "<root>/config/tools.json"
+    d = json.load(open(p))
+    d["policy"] = {n: "auto" for n in d.get("enabled", {})}
+    json.dump(d, open(p, "w"), indent=2, sort_keys=True)
+    EOF
+
+Related and separate: a *keychain* prompt can also block the UI, and denying it
+does not help — see the SecurityAgent note under D5.
+
 ## E. MTP / speculative decoding
 
 | # | item | status |
