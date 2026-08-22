@@ -62,7 +62,7 @@ Status key: **FIXED+PROVEN** / **FIXED, unproven live** / **OPEN** /
 |---|---|---|
 | D1 | Merge order puts the user's Sampling Defaults ahead of bundle defaults | **FIXED — defect confirmed on three independent signals** (below) |
 | D2 | Reasoning-effort enforcement reaches the engine | PROVEN — `request.reasoning_effort` → `modelOptions["reasoningEffort"]` → `context["reasoning_effort"]` → the bundle's chat template, and the same context feeds `cacheScopeSalt` |
-| D2b | Cost of changing reasoning effort mid-conversation | ANSWERED — a full re-prefill, and **unavoidable by cache work** (below) |
+| D2b | Cost of changing reasoning effort mid-conversation | **CORRECTED — my first answer was wrong and backwards.** Only 2 of 97 templates render `reasoning_effort`; for the rest the tokens are identical and the `effort=` salt discards reuse for nothing (below) |
 | D3 | Settings changes reach the API-server path, not just chat | FIXED with D1 — one shared call site; save invalidates the cached `RuntimeConfig` |
 | D4 | Displayed live stats match what the model actually ran | **FIXED** — the effective sampler had NO GUI surface at all; added "Sampler last used" to Live Activity |
 
@@ -171,34 +171,56 @@ passing). What #293 closes is the public `store(tokens:arrays:mediaSalt:)`
 surface, which enforces `DiskCache`'s own quota and had no such protection.
 Real and measured, but defense in depth.
 
-## D2b — Changing reasoning effort mid-conversation costs a full re-prefill
+## D2b — RETRACTED, and the truth is the opposite
 
-Asked because a mid-conversation effort change looked like it might be
-throwing away the cached prefix unnecessarily. **It is a full re-prefill, and
-no cache change can avoid it** — the prompt itself diverges at the front.
+**What I wrote first was wrong.** I inspected 4 template files, wrote "all 8",
+and generalised that to the model library: *"changing reasoning effort
+mid-conversation costs a full re-prefill, and no cache change can avoid it …
+the `effort=` salt component is not costing reuse; leave it alone."*
 
-Checked against the real bundles rather than reasoned about: 8 templates in
-`~/models` consume `reasoning_effort`, and every one renders it into the
-**system message, before anything else**.
+Measured properly:
 
-- `dealign.ai/Step-3.7-Flash-JANG_K-CRACK`: `<|im_start|>system\n` then
-  immediately `"Reasoning: " + reasoning_effort` — the first tokens after BOS.
-- `JANGQ-AI/Qwen3.8-27B-JANG_{2D,4D,6D}`: `reasoning_instructions` resolves
-  from `resolved_reasoning_effort` and is emitted as the first content of the
-  system block, ahead of the tools block.
+| fact | count |
+|---|---|
+| chat templates in `~/models` | **97** |
+| files consuming `reasoning_effort` | 8 |
+| **distinct template bodies** among those 8 | **2** (6 + 2 copies across quants) |
+| templates using `enable_thinking` | 75 |
+| templates using `reasoning_strength` (Muse Glimmer) | 3 |
 
-So a new effort changes tokens at roughly position 5–30. **No shared prefix
-exists at the token level**, and the cache is content-addressed by tokens — the
-re-prefill is caused by prompt construction, not by cache policy.
+The "8 templates" were 2 in-house bodies duplicated across quant/CRACK
+variants. Two templates out of 97 is not a property of the library.
 
-This also settles whether `cacheScopeSalt`'s `effort=<value>` component is
-costing reuse: it is not. The tokens have already diverged everywhere it
-applies, and the salt still earns its keep for any template that consumes
-`reasoning_effort` **without** rendering it, where tokens would be identical
-but KV semantics differ. Leave it alone.
+**For the other ~89 the conclusion inverts.** Their template never references
+`reasoning_effort`, so the rendered prompt is byte-identical across effort
+levels — output cannot depend on a variable the template never reads. But
+`MLXBatchAdapter.chatTemplateContext` still injects
+`context["reasoning_effort"]` on the Qwen, Nemotron-thinking, Zaya and generic
+`disableThinking` branches, so `cacheScopeSalt` emits `effort=<v>`, the key
+changes, and the fetch misses.
 
-Practical consequence to tell users: switching effort mid-chat re-prefills the
-whole conversation once. Switching it between conversations costs nothing.
+**Identical tokens, different key, guaranteed full re-prefill that buys
+nothing.** Concrete instance:
+`dealign.ai/Qwen3.6-35B-A3B-MXFP4-CRACK-MTP` — Qwen family, template contains
+no `reasoning_effort` reference, and `isQwenFamily` sets it whenever the effort
+is positive.
+
+So the salt **is** discarding reuse across most of the library — the opposite
+of "leave it alone".
+
+What remains true from the original pass: for the 2 bodies that *do* render it
+(Step-3.7-Flash emits `"Reasoning: " + reasoning_effort` as the first tokens
+after BOS; Qwen3.8-27B-JANG_* emits `reasoning_instructions` as the first
+content of the system block), the tokens genuinely diverge at the front and the
+re-prefill there is unavoidable. That narrow claim was the only one the
+evidence supported.
+
+**Not fixed in this pass, deliberately.** Narrowing the salt has to key off
+what the template actually consumes, which means getting the template source to
+the point where the salt is computed. Shipping that on the strength of a claim
+I already got wrong once would be the same mistake twice. Pinned by
+`ReasoningEffortSaltScopeTests` so the cost is visible and any narrowing shows
+up as a deliberate behaviour change.
 
 ## D4 — Nothing in the GUI showed the sampler that actually ran
 

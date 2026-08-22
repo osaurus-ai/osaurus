@@ -23,6 +23,34 @@ enum ToolPermissionPromptService {
     private static var pendingPolicyPrompt: (id: UUID, cancel: () -> Void)?
     private static var pendingApprovalPrompt: (id: UUID, cancel: () -> Void)?
 
+    /// A test process has nobody to press the button.
+    ///
+    /// All three approval entry points below block on a
+    /// `withCheckedContinuation` that is only ever resumed by a panel button,
+    /// so a test that reaches one hangs — and because the bundle runs in a
+    /// single process, every test behind it hangs too. Observed 2026-08-22:
+    /// the whole OsaurusCore suite sat for 40+ minutes with a 0-byte log while
+    /// a live `swiftpm-testing-helper` held a 460x478 "Tool Permission" panel
+    /// on screen (`CGWindowListCopyWindowInfo` showed it at layer 8). A 0-byte
+    /// log plus a live process is blocked, not slow.
+    ///
+    /// `RuntimeEnvironment.isUnderTests` already names *"creates an `NSPanel`
+    /// without a display server"* as exactly what it is for, and already
+    /// matches `processName == "swiftpm-testing-helper"`. The guard existed;
+    /// this service simply never consulted it — correct code that was never
+    /// reached.
+    ///
+    /// Denying is the deterministic answer and matches the registry's existing
+    /// "external-surface / headless denials" semantics. It cannot regress a
+    /// green test: today, any test reaching here hangs rather than passes, so
+    /// no passing test can depend on approval succeeding.
+    private static var isHeadlessTestProcess: Bool { RuntimeEnvironment.isUnderTests }
+
+    /// Whether a permission panel is currently on screen. Exists so a test can
+    /// assert that no window outlives an approval call — the window left
+    /// behind is the thing that could neither be clicked nor quit.
+    static var hasOpenPermissionWindowForTesting: Bool { permissionWindow != nil }
+
     enum PolicyApprovalOutcome: Sendable, Equatable {
         case denied
         case allowOnce
@@ -56,6 +84,7 @@ enum ToolPermissionPromptService {
         description: String,
         argumentsJSON: String
     ) async -> ApprovalOutcome {
+        if isHeadlessTestProcess { return .denied }
         if Task.isCancelled { return .denied }
 
         let requestID = UUID()
@@ -121,6 +150,7 @@ enum ToolPermissionPromptService {
         description: String,
         argumentsJSON: String
     ) async -> PolicyApprovalOutcome {
+        if isHeadlessTestProcess { return .denied }
         if Task.isCancelled { return .denied }
 
         let requestID = UUID()
@@ -195,7 +225,8 @@ enum ToolPermissionPromptService {
         modelOptions: [SpawnModelChoice],
         currentModel: String?
     ) async -> SpawnApprovalOutcome {
-        await withCheckedContinuation { continuation in
+        if isHeadlessTestProcess { return .denied }
+        return await withCheckedContinuation { continuation in
             var hasResumed = false
             var chosenModel: String? = currentModel ?? modelOptions.first?.id
 
