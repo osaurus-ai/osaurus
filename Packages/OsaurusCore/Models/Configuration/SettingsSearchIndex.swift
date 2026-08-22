@@ -372,7 +372,9 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Sampling Defaults",
             title: "Generation Defaults",
-            keywords: ["top p", "temperature", "sampling", "defaults"],
+            keywords: [
+                "top p", "temperature", "sampling", "sampler", "top k", "min p", "defaults",
+            ],
             subTab: "sampling"
         ),
         .init(
@@ -445,7 +447,9 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Live Activity",
             title: "Live Activity",
-            keywords: ["live activity", "dynamic island", "status"],
+            keywords: [
+                "live activity", "dynamic island", "status", "sampler", "sampler last used",
+            ],
             subTab: "liveActivity"
         ),
         .init(
