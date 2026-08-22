@@ -205,3 +205,30 @@ from acceptance — is NOT attempted here. Earlier in this same session a
 plausible controller change ("cold cache under-reads acceptance") was written,
 measured, found to make users *slower*, and reverted. Any change to this
 controller has to arrive with a context sweep attached.
+
+## Depth-1 stamps verified at long context, and a model-choice inversion
+
+The Qwen3.8-27B depths were also chosen on short prompts, so they were re-checked
+at ~13k rather than assumed safe because they are shallow:
+
+`Qwen3.8-27B-JANG_4D`, ~13k context, cache=none: baseline **5.70**, d1 **5.87**
+(1.030×, byte-identical 1361/1361). Depth 1 stays above break-even, so the
+depth-1 stamps stand.
+
+But the baselines are the headline:
+
+| bundle | short baseline | ~13k baseline | degradation |
+|---|---|---|---|
+| Qwen3.8-27B-JANG_4D (dense 27B) | 17.46 | **5.70** | **3.06×** |
+| Qwen3.6-35B-A3B-MXFP4 (MoE 35B) | 24.40 | **15.20** | 1.61× |
+
+**The bigger model is 2.6× faster at long context.** With MTP applied, 20.91
+tok/s (35B, d2) versus 5.87 (27B, d1) — a **3.6× gap** in favour of the model
+that has more parameters. The dense 27B's decode degrades with context far
+faster than the 35B MoE's, so the intuitive "smaller = faster for long chats"
+is inverted here.
+
+Practical read: for short prompts either family is fine and the 27B quants are
+competitive; for long conversations Qwen3.6-35B-A3B-MXFP4-CRACK-MTP at depth 2
+is the bundle to reach for, and MTP contributes little on the 27B at depth
+(1.03×) regardless of which depth is stamped.
