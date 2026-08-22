@@ -1184,3 +1184,40 @@ fail without it, naming all four queries). Live: `auto allow` now resolves to
 
 Fourth section found unreachable by its own words, after sampler, disk cache
 and reasoning.
+
+---
+
+## Tool usage per turn — PROVEN LIVE
+
+With `Auto-Allow All Tool Calls` enabled (checkbox `value 1`, and
+`chatAutoAllowAllTools = 1` in the app's own defaults domain), one turn on
+`Qwen3 0.6B 8bit`:
+
+```
+Use your tools to tell me the current date and time. Call the appropriate tool.
+
+  ⚙ Get current time · 118ms
+  The current date and time is Saturday, August 22, 2026 at 4:03 PM PDT.
+  TTFT 0.22s • 350.7 tok/s • 27 tokens
+```
+
+The tool card is rendered in the transcript with its own latency, the call ran
+with no approval card in the way, and the result reached the answer. A 0.6B
+cannot produce today's date from weights, and the card is visible rather than
+inferred — both halves matter.
+
+The auto-allow toggle sits behind a confirmation that names the risk in
+plain terms ("tools that can execute code, modify files, or send data"). That
+is the right shape: an informed confirmation, not a silent refusal, and it can
+be turned off again from the same place.
+
+## Multimodal gating controls
+
+Live in Settings → Multimodal: `Vision-Language Mode`, `Allow Video`,
+`Allow Audio`, described as "Auto follows the loaded model; Force-Off rejects
+media regardless of model capability; Force-On requires model support."
+
+Image input is proven end to end above (LFM2.5-VL answering "the digit shown is
+7 and the background is blue"). **Video and audio are NOT proven here** — only
+the gating controls were observed, no video or audio turn was run. Recorded as
+untested rather than folded into the image result.
