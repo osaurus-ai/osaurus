@@ -5809,6 +5809,12 @@ private struct ContextBreakdownPopover: View {
     /// entirely rather than rendering a meaningless 0 GB.
     var diskCache: DiskCacheUsage? = nil
 
+    /// Non-nil only while the HOST is out of memory badly enough to be the
+    /// reason generation is slow. Advisory only — nothing here gates a load or
+    /// caps anything; it exists so a user is not left concluding the model is
+    /// broken when their Mac is thrashing.
+    var memoryPressure: MemoryPressureAdvisory? = nil
+
     /// Fraction of the configured quota at which the footer starts warning.
     static let diskCacheWarnFraction: Double = 0.75
 
@@ -5995,6 +6001,13 @@ private struct ContextBreakdownPopover: View {
                 diskCacheSection(diskCache)
             }
 
+            // Only present when the machine is genuinely struggling, so this
+            // adds nothing to the panel on a healthy Mac.
+            if let memoryPressure {
+                divider
+                memoryPressureSection(memoryPressure)
+            }
+
             if showsCompactionSection {
                 divider
                 compactionSection
@@ -6041,6 +6054,38 @@ private struct ContextBreakdownPopover: View {
                     .foregroundColor(tint)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    // MARK: - Host memory pressure
+
+    /// Shown when the Mac itself is out of memory badly enough to be the
+    /// reason generation is crawling.
+    ///
+    /// Built from a real report: a 64 GB M3 Max running a 35B-A3B bundle sat
+    /// at 9.3 tok/s with 254 MB of free RAM, 13 of the model's own 27 GB
+    /// living in the compressor, and ~300k page decompressions every two
+    /// seconds. The app reported the slow number and said nothing about why,
+    /// so the reasonable conclusion was that the model or the runtime was
+    /// broken. Neither was.
+    ///
+    /// Advisory only. It never blocks a load, never caps a size, never
+    /// refuses generation — the user decides what to quit.
+    private func memoryPressureSection(_ advisory: MemoryPressureAdvisory) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                sectionEyebrow("Memory")
+                Spacer(minLength: 0)
+                Text(verbatim: advisory.shortLabel)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(theme.warningColor)
+            }
+            Text(verbatim: advisory.warningText)
+                .font(.system(size: 9))
+                .foregroundColor(theme.warningColor)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -7772,6 +7817,12 @@ private struct FloatingContextChip: View {
     /// Live disk-cache reading, refreshed only while the popover is open so an
     /// idle chat does not poll the cache index on a timer.
     @State private var diskCacheUsage: DiskCacheUsage?
+    /// Previous host-memory reading. The signal is a RATE, so the first poll
+    /// can only establish a baseline — there is nothing to compare it against
+    /// yet, and inventing a rate from one sample would be fiction.
+    @State private var previousMemorySample: HostMemorySample?
+    /// Non-nil only while the machine is actually struggling.
+    @State private var memoryAdvisory: MemoryPressureAdvisory?
 
     var body: some View {
         let warningColor: Color? =
@@ -7853,15 +7904,26 @@ private struct FloatingContextChip: View {
                 compactionState: compactionState,
                 canCompact: canCompact,
                 onCompact: onCompact,
-                diskCache: diskCacheUsage
+                diskCache: diskCacheUsage,
+                memoryPressure: memoryAdvisory
             )
             .task(id: showContextBreakdown) {
                 // Poll while open. The cache index is a small SQLite read, but
                 // it is still I/O, so it runs off the main actor and stops as
                 // soon as the popover closes.
                 guard showContextBreakdown else { return }
+                // A stale baseline from a previous opening would produce a
+                // rate averaged over however long the popover was shut.
+                previousMemorySample = nil
                 while !Task.isCancelled {
                     diskCacheUsage = await Self.readDiskCacheUsage()
+                    if let current = HostMemoryPressureProbe.sample() {
+                        if let previous = previousMemorySample {
+                            memoryAdvisory = MemoryPressureAdvisory.evaluate(
+                                previous: previous, current: current)
+                        }
+                        previousMemorySample = current
+                    }
                     try? await Task.sleep(for: .seconds(2))
                 }
             }

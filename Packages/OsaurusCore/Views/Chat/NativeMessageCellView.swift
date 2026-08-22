@@ -1497,6 +1497,7 @@ final class NativeStatsView: NSView {
         tokensPerSecond: Double?,
         tokenCount: Int?,
         unclosedReasoning: Bool = false,
+        modelLoad: TimeInterval? = nil,
         theme: any ThemeProtocol
     ) {
         var parts: [String] = []
@@ -1506,6 +1507,13 @@ final class NativeStatsView: NSView {
             } else {
                 parts.append(String(format: L("TTFT %.2fs"), ttft))
             }
+        }
+        // A cold container load is time the user waited but it is NOT the
+        // engine being slow, so it gets its own chip instead of being folded
+        // into TTFT. Suppressed entirely when the model was already resident,
+        // which is the common case — this must not add noise to every turn.
+        if let modelLoad, modelLoad >= 0.05 {
+            parts.append(String(format: L("+%@ model load"), Self.formatLoad(modelLoad)))
         }
         if let tps = tokensPerSecond {
             parts.append(String(format: L("%.1f tok/s"), tps))
@@ -1536,6 +1544,16 @@ final class NativeStatsView: NSView {
             weight: .regular
         )
         label.textColor = NSColor(theme.tertiaryText)
+    }
+
+    /// Seconds below a minute, m/s above it. A cold 27 GB bundle can take
+    /// minutes on a machine under memory pressure, and "212.0s" is harder to
+    /// read at a glance than "3m32s" — which is exactly the number a user
+    /// needs to recognise as a load rather than a stall.
+    static func formatLoad(_ seconds: TimeInterval) -> String {
+        if seconds < 60 { return String(format: "%.1fs", seconds) }
+        let whole = Int(seconds.rounded())
+        return "\(whole / 60)m\(whole % 60)s"
     }
 }
 
@@ -1879,12 +1897,13 @@ final class NativeMessageCellView: NSTableCellView {
         case let .fileDiff(diff):
             configureAsFileDiff(block: block, diff: diff, context: context, sameKind: sameKind)
 
-        case let .generationStats(ttft, tokensPerSecond, tokenCount, unclosedReasoning):
+        case let .generationStats(ttft, tokensPerSecond, tokenCount, unclosedReasoning, modelLoad):
             configureAsStats(
                 ttft: ttft,
                 tokensPerSecond: tokensPerSecond,
                 tokenCount: tokenCount,
                 unclosedReasoning: unclosedReasoning,
+                modelLoad: modelLoad,
                 context: context,
                 sameKind: sameKind
             )
@@ -2755,6 +2774,7 @@ final class NativeMessageCellView: NSTableCellView {
         tokensPerSecond: Double?,
         tokenCount: Int?,
         unclosedReasoning: Bool,
+        modelLoad: TimeInterval?,
         context: CellRenderingContext,
         sameKind: Bool
     ) {
@@ -2777,6 +2797,7 @@ final class NativeMessageCellView: NSTableCellView {
             tokensPerSecond: tokensPerSecond,
             tokenCount: tokenCount,
             unclosedReasoning: unclosedReasoning,
+            modelLoad: modelLoad,
             theme: context.theme
         )
     }

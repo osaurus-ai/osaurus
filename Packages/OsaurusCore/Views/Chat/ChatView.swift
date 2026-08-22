@@ -4703,7 +4703,24 @@ final class ChatSession: ObservableObject {
         }
 
         if let first = firstDeltaTime {
-            currentTurn.timeToFirstToken = first.timeIntervalSince(streamStartTime)
+            // Split cold model load out of TTFT.
+            //
+            // `streamStartTime` is stamped immediately before `streamChat`, and
+            // no delta can arrive until the weights are resident — so a cold
+            // container load lands inside this window and used to be reported
+            // as time-to-first-token. A 64 GB M3 Max showed "TTFT 215.61s" on a
+            // ~1.8k-token prompt: no machine prefills 1.8k tokens in 215s, so
+            // the number was measuring a 27 GB load and reading as an engine
+            // fault. Both halves are kept; neither is hidden.
+            //
+            // `modelLoadSeconds` is clamped to the window by the manager, so
+            // the subtraction cannot go negative and cannot turn an honest
+            // slow turn into a reassuring fast one.
+            let wallClock = first.timeIntervalSince(streamStartTime)
+            let loadSeconds = InferenceProgressManager.shared.modelLoadSeconds(
+                from: streamStartTime, to: first)
+            currentTurn.modelLoadSeconds = loadSeconds > 0 ? loadSeconds : nil
+            currentTurn.timeToFirstToken = max(0, wallClock - loadSeconds)
             // Stamp the steady-state tok/s. Single source of truth across
             // local-MLX, remote-API, with-tools, and thinking-on/off paths.
             //
