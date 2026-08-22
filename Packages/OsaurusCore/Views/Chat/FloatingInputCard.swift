@@ -6241,6 +6241,10 @@ private struct ContextBreakdownPopover: View {
             return L("Provider model maximum")
         case .metadataFallback:
             return L("Metadata fallback")
+        case .userCap:
+            // Named so a window smaller than the bundle advertises reads as a
+            // setting the user chose, not as the model being mis-detected.
+            return L("Your context limit")
         case nil:
             return L("Model maximum")
         }

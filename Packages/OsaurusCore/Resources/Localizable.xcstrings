@@ -231364,6 +231364,40 @@
         }
       }
     },
+    "Your context limit": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ihr Kontextlimit"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "\ub0b4 \ucee8\ud14d\uc2a4\ud2b8 \uc81c\ud55c"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "\u0412\u0430\u0448 \u043b\u0438\u043c\u0438\u0442 \u043a\u043e\u043d\u0442\u0435\u043a\u0441\u0442\u0430"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "\u60a8\u7684\u4e0a\u4e0b\u6587\u4e0a\u9650"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "\u60a8\u7684\u4e0a\u4e0b\u6587\u4e0a\u9650"
+          }
+        }
+      }
+    },
     "Your agents can now browse the web for you — navigating pages, reading content, and filling forms, with every step shown in a live feed. Each agent gets its own persistent browser session, so cookies and sign-ins carry over between chats but are never shared with other agents or your regular browser. If you used the browser plugin before, your sessions were migrated automatically.": {
       "comment": "What's New (0.22.9) page body — Browser Use feature.",
       "localizations": {

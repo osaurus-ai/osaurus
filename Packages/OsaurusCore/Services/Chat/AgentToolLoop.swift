@@ -444,6 +444,29 @@ enum AgentLoopBudget {
         case bundleMetadata
         case providerMetadata
         case metadataFallback
+        /// The user's cap was lower than the model's window, so it decided the
+        /// number. Distinct from the metadata sources so the chip and logs can
+        /// say WHY the window is smaller than the bundle advertises.
+        case userCap
+    }
+
+    /// Applies the user's context cap to a resolved window.
+    ///
+    /// One helper, called by both resolver twins, because the sync and async
+    /// paths feed different surfaces — the send gate and context chip use the
+    /// sync one, the agent loop and subagent runner the async one — and a cap
+    /// honoured by only one of them would mean the number a user sees and the
+    /// number their agents actually run under disagree.
+    ///
+    /// Only ever lowers. A cap above the model's window is ignored rather than
+    /// obeyed: the weights cannot honour it, so raising it produces incoherent
+    /// output instead of more context.
+    static func applyingUserCap(
+        _ resolution: ContextWindowResolution,
+        cap: Int?
+    ) -> ContextWindowResolution {
+        guard let cap, cap > 0, cap < resolution.tokens else { return resolution }
+        return ContextWindowResolution(tokens: cap, source: .userCap)
     }
 
     struct ContextWindowResolution: Equatable, Sendable {
@@ -485,24 +508,28 @@ enum AgentLoopBudget {
                 source: .foundationFixed
             )
         }
+        let cap = await MainActor.run { ChatConfigurationStore.load().contextLengthCap }
         if let info = ModelInfo.load(modelId: modelId), let ctx = info.model.contextLength {
-            return ContextWindowResolution(tokens: ctx, source: .bundleMetadata)
+            return applyingUserCap(
+                ContextWindowResolution(tokens: ctx, source: .bundleMetadata), cap: cap)
         }
         if let providerContext = await MainActor.run(body: {
             providerContextWindow(modelId: modelId)
         }) {
-            return ContextWindowResolution(
-                tokens: providerContext,
-                source: .providerMetadata
-            )
+            return applyingUserCap(
+                ContextWindowResolution(
+                    tokens: providerContext,
+                    source: .providerMetadata
+                ), cap: cap)
         }
         return await MainActor.run {
-            ContextWindowResolution(
-                tokens:
-                    ChatConfigurationStore.load().contextLength
-                    ?? fallbackContextWindow,
-                source: .metadataFallback
-            )
+            applyingUserCap(
+                ContextWindowResolution(
+                    tokens:
+                        ChatConfigurationStore.load().contextLength
+                        ?? fallbackContextWindow,
+                    source: .metadataFallback
+                ), cap: cap)
         }
     }
 
@@ -529,21 +556,25 @@ enum AgentLoopBudget {
         // cold path (`findModelDirectory` + `config.json` read) blocks the main
         // thread long enough to trip the app-hang detector. A transient nil on a
         // cold cache falls through to the conservative store/fallback value.
+        let cap = ChatConfigurationStore.load().contextLengthCap
         if let info = ModelInfo.loadCachedOrWarm(modelId: modelId), let ctx = info.model.contextLength {
-            return ContextWindowResolution(tokens: ctx, source: .bundleMetadata)
+            return applyingUserCap(
+                ContextWindowResolution(tokens: ctx, source: .bundleMetadata), cap: cap)
         }
         if let providerContext = providerContextWindow(modelId: modelId) {
-            return ContextWindowResolution(
-                tokens: providerContext,
-                source: .providerMetadata
-            )
+            return applyingUserCap(
+                ContextWindowResolution(
+                    tokens: providerContext,
+                    source: .providerMetadata
+                ), cap: cap)
         }
-        return ContextWindowResolution(
-            tokens:
-                ChatConfigurationStore.load().contextLength
-                ?? fallbackContextWindow,
-            source: .metadataFallback
-        )
+        return applyingUserCap(
+            ContextWindowResolution(
+                tokens:
+                    ChatConfigurationStore.load().contextLength
+                    ?? fallbackContextWindow,
+                source: .metadataFallback
+            ), cap: cap)
     }
 
     /// Synchronous cache-only provider lookup used by both the async runtime
