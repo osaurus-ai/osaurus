@@ -1431,3 +1431,49 @@ Model output is evidence about the MODEL, never about the plumbing that fed it.
 
 The carry-over finding above still stands on its own controls (image→image
 passes, video→image fails) — those are observed behaviours, not self-reports.
+
+---
+
+## Carry-over: a candidate mechanism, deliberately not patched here
+
+The video→image carry-over above has a concrete suspect in vMLX.
+`QwenVL.mergeInputIdsWithImageFeatures` gathers BOTH placeholder kinds into a
+single index list and then scatters one feature tensor across all of them:
+
+```swift
+for (i, v) in inputIds.asArray(Int.self).enumerated() {
+    if v == imageTokenId || v == videoTokenId {   // <-- both kinds, one list
+        imageIndices.append(i)
+    }
+}
+...
+result[0..., MLXArray(imageIndices), 0...] = imageFeatures
+```
+
+If a prompt carries `<|video_pad|>` positions from an earlier turn AND
+`<|image_pad|>` positions from the new one, every position is filled from
+whichever feature tensor was prepared. That is a mechanism by which a new image
+turn could be answered from the earlier video's features — which is exactly
+what was observed.
+
+**Not patched in this PR, on purpose.** Three reasons, in order of weight:
+
+1. **One reproduction.** The image→image control passed and the video→image
+   case failed once. That is enough to report and enough to rule out the
+   broader "any prior media" framing, and nowhere near enough to justify
+   editing a merge path shared by every Qwen VL model.
+2. **A required link is unverified.** The mechanism only bites if prior-turn
+   media placeholders actually survive into the new prompt. That was not
+   confirmed — and asserting a cause without it is precisely the habit this
+   document keeps catching. Two claims in this session were already withdrawn
+   for exactly that.
+3. **Wrong repo, wrong PR.** This is vMLX, not OsaurusCore, and #2442 is an
+   osaurus change that is finished and green. Speculative surgery on the
+   shared VL merge path does not belong in it.
+
+**What would settle it**, in order: dump the token ids of the second prompt and
+check whether `<|video_pad|>` positions are present alongside `<|image_pad|>`;
+if they are, count them against `imageFeatures.dim(0)`; then re-run
+video→image several times to establish whether the failure is deterministic.
+Only then is a fix warranted, and it should be a vMLX change with its own
+proof.
