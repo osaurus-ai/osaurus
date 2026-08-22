@@ -1270,3 +1270,43 @@ agrees with the checkpoint-fact-driven `from(directory:)` for a model that
 DOES ship audio tensors. On this host the two cannot disagree, because every
 installed bundle is genuinely audio-less. That question needs an audio-bearing
 checkpoint to answer, and must not be asserted either way until one exists.
+
+---
+
+## Video — PROVEN LIVE (C6 was OPEN)
+
+Probe built so it cannot be guessed: a 4-second H.264 clip whose digit AND
+colour change every frame (7-blue, 3-red, 5-green, 9-orange). A model reading
+one frame names one digit; a blind model names none; only a model that sees the
+sequence can list all four in order.
+
+`Qwen3.8 27B JANG_4D` (`qwen3_5`, Vision, Extra High), video attached through
+the composer's own attachment picker:
+
+```
+The digits shown, in order, are: 7, 3, 5, 9.
+  1. A "7" on a blue background
+  2. A "3" on a red background
+  3. A "5" on a green background
+  4. A "9" on a yellow background
+TTFT 9.19s • 33.3 tok/s • 96 tokens
+```
+
+All four digits correct and in order. Three of four colours correct — orange
+read as "yellow", which is colour naming, not a failure to see the frame.
+
+**Gating is correct in BOTH directions**, which is the part worth keeping:
+
+| model | attach panel title |
+|---|---|
+| `Qwen3.8 27B JANG_4D` (qwen3_5, video-capable) | `Select files to attach (image + video supported)` |
+| `Gemma-4-26B-A4B` (no audio/video tensors) | `Select files to attach (image supported)` |
+
+So the picker is not simply permissive: it offers video exactly where the
+checkpoint supports it and withholds it where it does not. Together with the
+image proof (LFM2.5-VL) this closes C6 for video; audio remains untestable on
+this host for want of an audio-bearing checkpoint (see the corrected audio
+section).
+
+Free RAM through the run: 60.3 GB before the 27B load, 26.7 GB after — one
+model in one process, per the rule added after the morning panic.
