@@ -199,7 +199,7 @@ Free RAM before this run: **84.3 GB**. Recorded per the rule added under C9.
 | C3 | **Every** VLM `LMInput` carries `cacheScopeSalt` | **FIXED** — `DeepseekOCRProcessor` was the sole omission; unsalted image path = fluent answer about the WRONG picture |
 | C4 | Qwen / Gemma / Zaya / Audex / GLM / FastVLM salted | PROVEN — none appeared in the coverage failure |
 | C5 | VL multiturn: image reuse across turns | CHARACTERIZED — resumes for text follow-ups; a media-INTRODUCING turn re-prefills (below) |
-| C6 | Live VIDEO passthrough + cache | **CONTENT read correctly, MECHANISM not established** — an attached clip yields `7, 3, 5, 9` in order (twice), but the model reports receiving "a still image showing four digits stacked vertically", not video. Delivery shape unresolved; video *cache* reuse untouched (below) |
+| C6 | Live VIDEO passthrough + cache | **PASSTHROUGH PROVEN LIVE** — clip read as `7, 3, 5, 9` in order (twice), and vMLX genuinely frame-samples it (`AVAssetImageGenerator`, zero tolerance) into a temporal patch grid. The model's "I can't watch video" was confabulation, not evidence (below). Video *cache* reuse still untouched |
 | C7 | Live AUDIO passthrough + cache (gemma E2B) | **UNTESTABLE ON THIS HOST** — no installed bundle contains `embed_audio.embedding_projection`; `~/models`, `~/models/JANGQ-AI` and the whole HF cache return zero matches, so no audio turn can be run. Needs an E2B/E4B fetched first. An earlier "defect" claim here was withdrawn (below) |
 | C8 | Media + tools in the same turn | **PROVEN LIVE in a clean conversation** — image + tool answered correctly in one turn. But a NEW image after a PRIOR media turn was ignored and the model described the OLD media (below) |
 | C9 | Best prefix/suffix match block for multimodal | **FIXED+PROVEN LIVE for the Qwen VL families** — follow-up TTFT 3.40s → 0.59s median, A/B against the baseline vmlx pin (below). Other families still unreached |
@@ -1399,3 +1399,35 @@ video specifically, not merely "prior media".
 
 Two runs, one each way. Enough to rule OUT the broad "any prior media" framing
 I first wrote, not enough to call the video-specific mechanism understood.
+
+---
+
+## Video, settled: I believed the model about its own plumbing
+
+The section above walked back "video passthrough proven" because the model
+said *"I can't watch video — what came through as a still image showing four
+digits stacked vertically."* **That walk-back was wrong, and the reason it was
+wrong matters more than the conclusion.**
+
+vMLX extracts real frames. `MediaProcessing.asCIImageSequence` drives
+`AVAssetImageGenerator` with `requestedTimeToleranceBefore/After = .zero`,
+samples `duration × samplesPerSecond` timestamps via `MLXArray.linspace`, and
+returns a `[CIImage]` sequence. `QwenVL.patchify` then folds that sequence into
+a temporal patch grid — `gridT = patches.dim(0) / temporalPatchSize`, i.e. time
+is a real axis, not a collage.
+
+So the pipeline does exactly what C6 asks. The model's description of its own
+input was **confabulation** — an entirely ordinary VLM behaviour, and worthless
+as evidence about the runtime.
+
+**The mistake:** I treated a model's self-report as a fact about the pipeline
+and rewrote a status row on it. A model saying "I received X" is a token
+sequence, not instrumentation. The source was checked out on the same machine
+the whole time — vMLX is a sibling repo, not an external dependency — and one
+grep settled what two rewrites had guessed at.
+
+Rule for this document: pipeline claims are settled by reading the pipeline.
+Model output is evidence about the MODEL, never about the plumbing that fed it.
+
+The carry-over finding above still stands on its own controls (image→image
+passes, video→image fails) — those are observed behaviours, not self-reports.
