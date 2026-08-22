@@ -23,8 +23,9 @@ verify, temp 0, 256 tokens, code prompt. Every arm byte-identical to baseline.
 | dealign.ai/…JANG_4D-CRACK | 17.39 | **23.54** | 1.354× | 0 |
 | dealign.ai/…JANG_6D-CRACK | 14.38 | **20.31** | 1.412× | 0 |
 
-**Best sustained: 27.36 tok/s.** The 39 tok/s target is NOT met — the gap is
-~30%, and 39 has never been measured on this family.
+**Best sustained on Qwen3.8-27B: 27.36 tok/s** — the 39 target is not reachable
+on this family. It IS reachable on Qwen3.6-35B-A3B-MXFP4-CRACK-MTP: **44.27
+tok/s at depth 3** (below).
 
 ## Why nothing was launching
 
@@ -67,12 +68,41 @@ Prose is the conservative floor. A single-prompt-class measurement would
 misstate this by ~25 points of speedup, which is how a 1.83× MTP figure once
 got published off a counting prompt.
 
+## Qwen3.6-35B-A3B-MXFP4-CRACK-MTP — the 39 tok/s target IS met here
+
+Same method, same box. All arms byte-identical (952/952):
+
+| depth | tok/s | speedup | active |
+|---|---|---|---|
+| baseline | 24.40 | — | — |
+| 1 | 35.84 | 1.459× | 1/1 |
+| 2 | 40.61 | 1.664× | 2/2 |
+| **3** | **44.27** | **1.814×** | 2/3, commit 2.51 |
+| 4 | 44.14 | 1.809× | 2/3 — converges to d3 |
+
+**44.27 tok/s, comfortably above 39.** Note d3 settles at active depth 2 yet
+beats *requesting* 2 directly (40.61, commit 2.21): the higher request drafts
+more before settling. d4 converges to the same active depth, so 3 is the
+ceiling.
+
+**This bundle's depth profile is the OPPOSITE of Qwen3.8-27B's.** There, depth
+1 is the only depth that pays and true depth 3 measured 0.951× — slower than
+plain decode. Here depth 3 is worth 1.814×. **Depth is per-bundle and must not
+be generalised across families**, which is the same over-generalisation trap as
+inferring library-wide template behaviour from four files.
+
+One stamping detail that cost a cycle: the first stamp declared
+`model_types: ["qwen3_5"]` while the bundle's `config.json` says
+`qwen3_5_moe`. `tuningMatchesBundleModelTypes` rejected it, and the probe
+reported `usableBestDepth=Optional(3)` alongside `NO MTP` — usable tuning, still
+refused. Worth knowing: a usable depth is not sufficient; model type and
+quantization must match the bundle too.
+
 ## Not covered
 
-Nine bundles still ship MTP off because they carry **no** tuning file at all —
-4× Ornith-1.5-35B-A3B, 3× Nemotron-3.5-Lightning-30B-A3B,
-`Qwen3.6-35B-A3B-MXFP4-CRACK-MTP`, `ornith15-src`. Each needs its own sweep;
-none can inherit a number from a sibling.
+Eight bundles still ship MTP off because they carry **no** tuning file at all —
+4× Ornith-1.5-35B-A3B, 3× Nemotron-3.5-Lightning-30B-A3B, `ornith15-src`. None
+are Qwen. Each needs its own sweep; none can inherit a number from a sibling.
 
 ## Reproducing
 
