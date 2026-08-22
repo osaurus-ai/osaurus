@@ -82,6 +82,46 @@ final class CacheSectionWiringTests: XCTestCase {
             "footer reverted to the hardcoded default cache path")
     }
 
+    /// The size control must edit the PERCENT, not the legacy GB field.
+    ///
+    /// The cap auto-sized to 10% of the disk while the control still asked for
+    /// gigabytes — two units for one idea, which is the confusion this change
+    /// exists to remove. Binding back to `maxSizeGB` would restore it, and the
+    /// field is now nil on every migrated install so the box would also read
+    /// empty while a real cap was in force.
+    func testSizeControlEditsThePercentNotGigabytes() throws {
+        let src = try source("Views/Settings/ServerSettings/CacheSection.swift")
+        XCTAssertTrue(
+            src.contains("$draft.cache.blockDisk.maxSizePercent"),
+            "the size control is not bound to the percent")
+        XCTAssertFalse(
+            src.contains("$draft.cache.blockDisk.maxSizeGB"),
+            "the control reverted to editing gigabytes")
+        XCTAssertTrue(src.contains("Disk Cache Size (% of disk)"), "label still says GB")
+    }
+
+    /// The "≈ X GB" readout must come from the engine's own resolver. A second
+    /// estimate in the UI can disagree with the cap actually enforced, and the
+    /// user has no way to tell which one is real.
+    func testResolvedSizeLabelUsesTheEngineResolver() throws {
+        let src = try source("Views/Settings/ServerSettings/CacheSection.swift")
+        XCTAssertTrue(
+            src.contains("VMLXServerRuntimeSettings.resolveDiskCacheMaxGB("),
+            "the readout does not use the resolver the coordinator uses")
+        XCTAssertTrue(src.contains("VMLXServerRuntimeSettings.cacheVolumeCapacityGB("))
+    }
+
+    /// Diagnostics must not report `null` for a cache that has a real cap.
+    /// `maxSizeGB` is nil on every migrated install, so reporting it raw would
+    /// say "no limit" while a limit was being enforced.
+    func testDiagnosticsReportTheResolvedCapNotTheStaleField() throws {
+        let src = try source("Networking/HTTPHandler.swift")
+        XCTAssertTrue(src.contains("\"block_disk_max_size_percent\""))
+        XCTAssertTrue(
+            src.contains("\"block_disk_max_size_gb\": VMLXServerRuntimeSettings.resolveDiskCacheMaxGB("),
+            "diagnostics still report the raw stored field")
+    }
+
     /// The row must survive an idle chat. Gating it on a resident model's cap
     /// made the whole readout vanish with nothing loaded.
     func testFooterFallsBackWhenNoModelIsResident() throws {

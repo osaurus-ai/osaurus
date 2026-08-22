@@ -1596,7 +1596,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "paged_kv_block_size": cache.pagedKV.blockSize as Any? ?? NSNull(),
             "paged_kv_max_blocks": cache.pagedKV.maxBlocks as Any? ?? NSNull(),
             "block_disk_enabled": cache.blockDisk.enabled,
-            "block_disk_max_size_gb": cache.blockDisk.maxSizeGB as Any? ?? NSNull(),
+            // The cap is a percent of the disk now, so the stored GB field is
+            // nil on every migrated install. Reporting it raw would show
+            // `null` for a cache that in fact has a real cap. Report the share
+            // the user set AND the gigabytes it resolves to on this machine —
+            // the same figure the coordinator enforces.
+            "block_disk_max_size_percent": cache.blockDisk.maxSizePercent as Any? ?? NSNull(),
+            "block_disk_max_size_gb": VMLXServerRuntimeSettings.resolveDiskCacheMaxGB(
+                percent: cache.blockDisk.maxSizePercent,
+                legacyGB: cache.blockDisk.maxSizeGB,
+                directory: ModelRuntime.cacheDiskDirectoryOverride(for: cache)
+                    ?? OsaurusPaths.diskKVCache()),
             "block_disk_directory": cache.blockDisk.directory as Any? ?? NSNull(),
             "legacy_disk_enabled": cache.legacyDisk.enabled,
             "live_kv_codec": cache.liveKVCodec.rawValue,

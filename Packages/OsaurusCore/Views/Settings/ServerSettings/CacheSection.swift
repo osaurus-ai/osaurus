@@ -198,6 +198,33 @@ struct CacheSection: View {
         }
     }
 
+    /// "10% of 3.7 TB ≈ 372 GB" — what the chosen share comes out to here.
+    ///
+    /// Resolved through `VMLXServerRuntimeSettings.resolveDiskCacheMaxGB`, the
+    /// same function the engine uses to build `CacheCoordinatorConfig`. A
+    /// second, independent estimate in the UI could disagree with the cap
+    /// actually enforced, and the user would have no way to tell which was
+    /// real. Nil when the volume cannot be measured — better to show nothing
+    /// than a fabricated number.
+    private var resolvedDiskCacheLabel: String? {
+        let dir = ModelRuntime.cacheDiskDirectoryOverride(for: draft.cache)
+            ?? OsaurusPaths.diskKVCache()
+        guard let capacity = VMLXServerRuntimeSettings.cacheVolumeCapacityGB(for: dir) else {
+            return nil
+        }
+        let resolved = VMLXServerRuntimeSettings.resolveDiskCacheMaxGB(
+            percent: draft.cache.blockDisk.maxSizePercent,
+            legacyGB: draft.cache.blockDisk.maxSizeGB,
+            directory: dir)
+        let share = draft.cache.blockDisk.maxSizePercent
+            ?? (VMLXServerRuntimeSettings.autoDiskCacheFraction * 100)
+        return String(
+            format: L("%@%% of %@ ≈ %@"),
+            String(format: "%g", share),
+            DiskCacheUsage.format(bytes: Int(capacity * 1_073_741_824)),
+            DiskCacheUsage.format(bytes: Int(resolved * 1_073_741_824)))
+    }
+
     private var diskCacheControls: some View {
         VStack(alignment: .leading, spacing: 12) {
             SettingsToggle(
@@ -206,17 +233,31 @@ struct CacheSection: View {
                     "Persist content-addressed prompt checkpoints on SSD. Works with paged RAM cache off and restores the longest matching prefix after restart; turn off to disable disk reuse.",
                 isOn: $draft.cache.blockDisk.enabled
             )
+            // A PERCENT of the disk, not a byte count. KV size scales with the
+            // model — a 27B stores ~256 KiB per token, so a 222k window needs
+            // ~54 GB — which means one GB figure is simultaneously too small on
+            // a 4 TB machine and too large on a 256 GB one. Shipping both units
+            // just asked the user to reconcile them.
             OptionalDoubleField(
-                label: "Disk Cache Size (GB)",
-                placeholder: "Blank = Auto (10% of disk)",
+                label: "Disk Cache Size (% of disk)",
+                placeholder: "Blank = 10%",
                 help:
                     "Soft cap before older entries are evicted, shared across all models. "
-                    + "Auto scales with your disk because KV size scales with the model: a "
-                    + "27B stores ~256 KiB per token, so a fixed cap that suits one machine "
-                    + "starves another and long chats re-prefill instead of resuming.",
-                value: $draft.cache.blockDisk.maxSizeGB,
+                    + "A share of your disk rather than a fixed size, because cache size "
+                    + "scales with the model: a 27B stores ~256 KiB per token, so a fixed "
+                    + "cap that suits one machine starves another and long chats re-prefill "
+                    + "instead of resuming.",
+                value: $draft.cache.blockDisk.maxSizePercent,
                 format: "%.1f"
             )
+            // What that share actually comes out to on THIS machine, using the
+            // same resolver the engine enforces rather than a second estimate
+            // that could disagree with it.
+            if let resolved = resolvedDiskCacheLabel {
+                Text(verbatim: resolved)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
             HStack(spacing: 10) {
                 Button {
                     Task {

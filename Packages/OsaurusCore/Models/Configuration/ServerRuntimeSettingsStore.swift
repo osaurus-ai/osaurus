@@ -427,6 +427,14 @@ public enum ServerRuntimeSettingsStore {
             && cache.legacyDisk.maxSizeGB == nil
             && cache.blockDisk.enabled
             && cache.blockDisk.maxSizeGB == nil
+            // The cap is a share of the disk now, and schema v3 stamps the
+            // shipped 10% onto every install. Testing only `maxSizeGB == nil`
+            // would call a deliberate 40% "untouched" — because that field is
+            // nil for everyone after migration — and let a later defaults
+            // migration overwrite a choice the user made.
+            && (cache.blockDisk.maxSizePercent == nil
+                || cache.blockDisk.maxSizePercent
+                    == VMLXServerRuntimeSettings.autoDiskCacheFraction * 100)
             && cache.blockDisk.directory == nil
             && cache.enableSSMReDerive == false
     }
@@ -461,6 +469,14 @@ public enum ServerRuntimeSettingsStore {
             && cache.legacyDisk.maxSizeGB == nil
             && cache.blockDisk.enabled
             && cache.blockDisk.maxSizeGB == nil
+            // The cap is a share of the disk now, and schema v3 stamps the
+            // shipped 10% onto every install. Testing only `maxSizeGB == nil`
+            // would call a deliberate 40% "untouched" — because that field is
+            // nil for everyone after migration — and let a later defaults
+            // migration overwrite a choice the user made.
+            && (cache.blockDisk.maxSizePercent == nil
+                || cache.blockDisk.maxSizePercent
+                    == VMLXServerRuntimeSettings.autoDiskCacheFraction * 100)
             && cache.blockDisk.directory == nil
             && cache.enableSSMReDerive
     }
