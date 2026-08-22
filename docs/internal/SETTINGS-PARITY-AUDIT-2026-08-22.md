@@ -1224,51 +1224,49 @@ untested rather than folded into the image result.
 
 ---
 
-## Audio input: the composer decides by NAME, so a bundle with audio weights is refused
+## Audio input — CORRECTED: no defect demonstrated, and untestable on this host
 
-Chased directly, with a self-made probe (`say` → 3.0s 16 kHz mono WAV saying
-"the secret word is umbrella", so a model that cannot hear scores wrong rather
-than passing by luck).
+**This section previously claimed a defect. That claim was wrong and is
+withdrawn.** Recording the whole path because the mistake is instructive.
 
-`Gemma-4-26B-A4B-it-JANG_4M-dynA-osaurus` declares `audio_config` in its
-config.json. Selected it, opened the attachment picker, and the panel's own
-title read:
+The probe was a self-made WAV (`say` → 3.0s 16 kHz mono, "the secret word is
+umbrella") so a model that cannot hear would score wrong rather than pass by
+luck. Selected `Gemma-4-26B-A4B-it-JANG_4M-dynA-osaurus`, which **does** declare
+`audio_config` in config.json, opened the attachment picker, and the panel read:
 
 ```
 Select files to attach (image supported)
 ```
 
-No audio types offered, so the WAV cannot be attached at all.
+I concluded the composer was gating audio by model NAME and refusing a bundle
+with audio weights. Both halves of that were wrong:
 
-**Why.** `pickerAllowedTypes` adds `.audio/.wav/.mp3/.mpeg4Audio` only when
-`cap.supportsAudio`. That comes from `mediaCapabilities` →
-`composerDescriptor(modelId:fallbackSupportsImages:localModelType:)` →
-`composerCapabilities`, and **every branch of that function takes
-`supportsAudio` from `detected`** — i.e. `from(modelId:)`, which infers
-capability from the model NAME. Image gets the bundle's real bit via
-`fallbackSupportsImages`, and video gets it via `localModelType` +
-`videoCapableModelTypes`. Audio gets neither.
+1. **26B-A4B has no audio weights.** `from(directory:modelId:)` is explicit
+   that Gemma4 audio is "checkpoint-fact-driven, not name-driven", and lists
+   three different audio realities in one family: 12B `gemma4_unified` has an
+   encoder-free `embed_audio` raw-frame projection; E2B/E4B have mel +
+   conformer `audio_tower` plus `embed_audio`; and **26B-A4B / 31B have NO
+   audio tensors — "audio is impossible there, not 'unwired'"**. So refusing
+   audio for that bundle is the CORRECT answer, reached by
+   `gemma4BundleSupportsAudio` scanning the safetensors index for
+   `embed_audio.embedding_projection` rather than trusting `audio_config`
+   (which Gemma4 configs carry regardless). The design is better than the check
+   I was about to "fix" it with.
 
-Same `name-is-not-the-bits` class as the runtime capability fix earlier in this
-document — that one was fixed; this one is the composer half, still open.
+2. **`audio_config` presence is not evidence of audio.** That is precisely the
+   trap the index scan exists to avoid, and I walked into it by grepping
+   configs for `audio_config` when picking a test model.
 
-**The correct detector already exists and is better than a config check:**
-`gemma4BundleSupportsAudio(directory:)` scans
-`model.safetensors.index.json` for `embed_audio.embedding_projection`, i.e. it
-proves the audio tensor is actually present rather than trusting
-`audio_config` (whose comment notes Gemma4 configs "always carry
-audio_token_id", so config presence alone would over-report).
+**Audio remains untested here, for a concrete reason.** Scanning every bundle
+on this machine — `~/models`, `~/models/JANGQ-AI`, and the whole HF cache — for
+`embed_audio.embedding_projection` returns **zero matches**. There is no
+audio-capable Gemma checkpoint installed, so no audio turn can be run at all.
+Testing it needs an E2B/E4B (or audio-bearing 12B) bundle fetched first.
 
-**Why it is not fixed in this PR.** `mediaCapabilityDescriptor` is evaluated
-from SwiftUI body/layout and its comment forbids disk work there ("must never
-trigger a disk scan or synchronously parse a model bundle"), so it cannot call
-that detector directly. The audio bit has to be recorded during the off-main
-model scan and carried on the scan record, exactly as `modelType` already is —
-`MLXModel` has no such field today. That is a scanner + capability-plumbing
-change across several files, and this PR is finished and ready to merge; adding
-it here would widen a merge-ready change. Scoped deliberately, not forgotten.
-
-**Consequence to be aware of meanwhile:** audio-capable local bundles cannot
-receive an audio file through the chat composer regardless of their weights.
-Voice input (dictation) and the VoiceChat duplex runtime are separate paths and
-are unaffected.
+**What genuinely remains unverified** (as opposed to broken): whether the
+composer's `composerCapabilities`, which takes `supportsAudio` from the
+name-based `from(modelId:)` while image and video get bundle-derived bits,
+agrees with the checkpoint-fact-driven `from(directory:)` for a model that
+DOES ship audio tensors. On this host the two cannot disagree, because every
+installed bundle is genuinely audio-less. That question needs an audio-bearing
+checkpoint to answer, and must not be asserted either way until one exists.
