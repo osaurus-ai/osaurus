@@ -5998,7 +5998,13 @@ private struct ContextBreakdownPopover: View {
                 messagesSection
             }
 
-            if let diskCache, diskCache.usedBytes > 0 || diskCache.maxBytes > 0 {
+            // `isDisabled` has to pass this gate on its own: a switched-off
+            // tier reports maxBytes 0, and an empty cache directory reports
+            // usedBytes 0, so the size test alone would hide the "Off" row it
+            // exists to show.
+            if let diskCache,
+                diskCache.isDisabled || diskCache.usedBytes > 0 || diskCache.maxBytes > 0
+            {
                 divider
                 diskCacheSection(diskCache)
             }
@@ -7767,9 +7773,7 @@ private struct FloatingContextChip: View {
         // the cache readout VANISH on an idle chat — which reads as the
         // feature being missing rather than merely unmeasured. The cache is
         // still on disk and still capped, so report it from disk and settings.
-        guard let settings = ServerRuntimeSettingsStore.load(),
-            settings.cache.blockDisk.enabled
-        else { return nil }
+        guard let settings = ServerRuntimeSettingsStore.load() else { return nil }
         // Measure the directory the RUNTIME caps, not the default one.
         // `OsaurusPaths.diskKVCacheUsageBytes()` hardcodes the default path, so
         // with a custom Disk Cache Directory configured it would report the size
@@ -7779,6 +7783,19 @@ private struct FloatingContextChip: View {
         let dir =
             ModelRuntime.cacheDiskDirectoryOverride(for: settings.cache)
             ?? OsaurusPaths.diskKVCache()
+        // A tier the USER switched off still gets a row, reading "· Off".
+        // Returning nil here instead made the readout vanish the moment
+        // someone unticked Disk Cache — the exact failure the comment above
+        // describes for an idle chat ("reads as the feature being missing"),
+        // and it left `isDisabled` reachable only from the host-aware
+        // free-disk decision. The state was built and then never rendered.
+        guard settings.cache.blockDisk.enabled else {
+            return DiskCacheUsage(
+                usedBytes: OsaurusPaths.directorySizeIfExists(at: dir),
+                maxBytes: 0,
+                evictions: 0,
+                isDisabled: true)
+        }
         // Resolve the cap the same way the coordinator does.
         //
         // This used to report ONLY an explicit `maxSizeGB`, on the reasoning

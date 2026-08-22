@@ -408,7 +408,17 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Cache",
             title: "Prompt Cache",
-            keywords: ["cache", "kv cache", "prefix"],
+            // The controls in this section are labelled "Disk Cache", "SSD
+            // Cache (L2)", "Disk Cache Size (% of disk)" and "Clear SSD
+            // Cache". None of those phrases resolved, so the section could
+            // not be found by any name it shows the user — the same defect
+            // D5 fixed for the sampler row.
+            keywords: [
+                "cache", "kv cache", "prefix",
+                "disk cache", "ssd cache", "l2 cache", "disk cache size",
+                "clear cache", "clear ssd cache", "disk cache directory",
+                "eviction", "evict", "paged kv", "gpu cache",
+            ],
             subTab: "cache"
         ),
         .init(

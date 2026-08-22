@@ -20,7 +20,7 @@ Status key: **FIXED+PROVEN** / **FIXED, unproven live** / **OPEN** /
 | A4 | Percent reaches `CacheCoordinatorConfig` | FIXED+PROVEN — live `SSD 242.2 GB` |
 | A5 | Readout shows the cap the ENGINE enforces | FIXED+PROVEN — host-aware ceiling was over-promised by 130 GB |
 | A6 | Chat cache bar shows a real cap, not "Auto" | FIXED+PROVEN — live `DISK CACHE 2.2 GB / 242.1 GB` |
-| A7 | Disabled tier renders "Off", never "Auto" | FIXED, unproven live |
+| A7 | Disabled tier renders "Off", never "Auto" | **WAS UNREACHABLE — now FIXED+PROVEN LIVE**; a user-disabled tier made the whole row VANISH rather than render "Off" (below). Live: `DISK CACHE  0 MB · Off` |
 | A8 | Small share honoured, not clamped to the 10 GB floor | FIXED+PROVEN — floor now guards auto only |
 | A9 | Small share does not silently DISABLE the tier | FIXED, unproven live |
 | A10 | Share field keeps precision (`%g`, not `%.1f`) | FIXED+PROVEN — 0.005 was saved as 0 |
@@ -41,6 +41,59 @@ Status key: **FIXED+PROVEN** / **FIXED, unproven live** / **OPEN** /
 | B4 | Cap only lowers, never raises past the model | FIXED+tested |
 | B5 | Old `contextLength` stays a fallback (128k default must not clamp a 222k model) | FIXED+tested |
 | B6 | Agents / subagents / plugin host resolve through the capped path | FIXED, source-asserted |
+
+### A7 — the "Off" state was built and then never rendered
+
+`DiskCacheUsage.headlineLabel` has a dedicated branch returning `"<used> · Off"`,
+and `isDisabled` exists specifically so a switched-off tier is not mislabelled
+"Auto". Both were correct. Neither ran when the USER switched the tier off.
+
+Two things stood between them:
+
+```swift
+guard let settings = ServerRuntimeSettingsStore.load(),
+    settings.cache.blockDisk.enabled          // <-- user's toggle
+else { return nil }                            //     -> no row at all
+```
+
+and the section gate `if let diskCache, diskCache.usedBytes > 0 || maxBytes > 0`,
+which a disabled tier fails anyway because its cap is 0. `isDisabled` was only
+ever set from `hostAwareDiskCacheDecision` — the disk-nearly-full path — so the
+"Off" label was reachable only when the HOST disabled the tier, never when the
+person did.
+
+Observed live before the fix: unticking Disk Cache made the DISK CACHE row
+disappear from the Context Budget popover entirely (popover 442px → 397px).
+Never "Auto", so the letter of A7 held — but the row said nothing at all, which
+is the failure the comment directly above that guard already warns about for an
+idle chat ("reads as the feature being missing rather than merely unmeasured").
+
+Fixed by returning a `DiskCacheUsage(isDisabled: true)` instead of nil, and
+letting `isDisabled` pass the section gate on its own.
+
+**Live proof**, tier unticked in Settings → Save → `server-runtime.json` reads
+`blockDisk.enabled = false` → Context Budget popover renders:
+
+```
+DISK CACHE                    0 MB · Off
+```
+
+### Settings search could not find the cache section by any name it displays
+
+Same class as D5, found while proving A7: `0 settings match "disk cache"`. The
+`server.cache` entry is titled "Prompt Cache" with keywords
+`["cache", "kv cache", "prefix"]`, while every control inside it reads "Disk
+Cache", "SSD Cache (L2)", "Disk Cache Size (% of disk)" or "Clear SSD Cache".
+None resolved.
+
+The existing self-find probe could not catch this: it sweeps each entry's own
+`title` and `section`, and "Prompt Cache" resolves fine. An entry can be
+self-findable and still unreachable by every word actually on screen. Added
+`controlsFindableByOnScreenLabel`, which pins the control labels the sweeps
+structurally cannot see — verified to FAIL without the keyword fix, naming all
+five missing labels, and pass with it.
+
+Live: `0 settings match "disk cache"` → **`1 setting matches "disk cache"`**.
 
 ### B2 — the cap existed, was read, and had no way to be set
 
