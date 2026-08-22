@@ -232,3 +232,58 @@ Practical read: for short prompts either family is fine and the 27B quants are
 competitive; for long conversations Qwen3.6-35B-A3B-MXFP4-CRACK-MTP at depth 2
 is the bundle to reach for, and MTP contributes little on the 27B at depth
 (1.03×) regardless of which depth is stamped.
+
+## Ornith-1.5-35B: the head could not load at all, and now all four ship
+
+Every Ornith-1.5-35B bundle carried MTP weights the runtime could not map. The
+quantizer fuses the MAIN layers' experts but not the MTP block's, and
+`Qwen35SparseMoeBlock` has only a `switch_mlp` slot, so the load died with
+`unhandledKeys(path: [... "mtp","layers","0","mlp"], keys: ["experts"])`.
+
+Self-sealing: the head could not load → could not be measured → no tuning file
+→ never enabled. A shipped family had been silently speculation-less for that
+reason alone.
+
+Fixed by stacking the per-expert weights onto the expert axis in `sanitize`.
+Shape counts differ by quant and both are handled: JANG_2L/4M/6M carry 2304
+unfused MTP expert keys (256 × 3 projections × weight/scales/biases), MXFP8
+carries 1536 (no `biases`).
+
+Measured after the fix — cache=none, ABAB, round 1 discarded, code prompt:
+
+| bundle | bits | baseline | depth 1 | speedup |
+|---|---|---|---|---|
+| Ornith-1.5-35B-A3B-MXFP8 | 8 | 32.29 | **43.62** | 1.351× |
+| Ornith-1.5-35B-A3B-JANG_6M | 6 | 30.52 | 38.02 | 1.246× |
+| Ornith-1.5-35B-A3B-JANG_4M | 4 | 31.15 | 38.58 | 1.239× |
+| Ornith-1.5-35B-A3B-JANG_2L | **3** | 30.78 | 35.79 | 1.163× |
+
+`JANG_2L` is quantized to **3 bits, not 2** — a first stamp said 2 and
+`tuningMatchesBundleQuantization` correctly refused it. The name is not the
+bits. Similarly `model_types` must be `qwen3_5_moe`, not `qwen3_5`.
+
+**11 of 11 bundles with real MTP weights now launch, up from 1.**
+
+## Correction: the MLX cache finding does NOT apply to the app
+
+While measuring Ornith the harness produced numbers ~40% low — baseline 23.02
+vs 30.78 for the same bundle minutes apart — because an uncapped MLX buffer
+cache made a 16 GB model consume ~29 GB resident and drove free memory to
+0.7–1.8 GB.
+
+I flagged that as a possible live-app concern. **It is not.** `ModelRuntime`
+already sets `Memory.cacheLimit = mlxCacheLimit()` at three call sites:
+
+    byModel  = max(totalWeights / 4, 1 GiB)
+    bySystem = min(systemRAM / 8, 8 GiB)
+    dynamicLimit = min(byModel, bySystem)
+
+For a 16 GB model on 128 GB that is 4 GB, near the 2 GB the sweep now uses, and
+it additionally respects Safe Auto's 128 MiB cap and an explicit uncapped
+escape for models that need one. The unbounded growth existed only in the sweep
+harness, which bypasses `ModelRuntime`.
+
+The transferable lesson is about measurement, not the product: **round-to-round
+spread, not the free-memory number, is what identifies a corrupted timing.** The
+run I rejected showed a 10% spread across identical rounds; the run I accepted
+at 0.1–0.3 GB free showed 0.6% (40.25 / 40.35 / 40.50).
