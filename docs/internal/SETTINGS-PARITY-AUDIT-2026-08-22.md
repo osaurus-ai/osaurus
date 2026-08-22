@@ -1434,46 +1434,51 @@ passes, video→image fails) — those are observed behaviours, not self-reports
 
 ---
 
-## Carry-over: a candidate mechanism, deliberately not patched here
+## Carry-over root cause: video pads and image pads share one feature scatter
 
-The video→image carry-over above has a concrete suspect in vMLX.
-`QwenVL.mergeInputIdsWithImageFeatures` gathers BOTH placeholder kinds into a
-single index list and then scatters one feature tensor across all of them:
+Upgraded from "candidate" — the evidence chain now closes, and tools are out.
 
-```swift
-for (i, v) in inputIds.asArray(Int.self).enumerated() {
-    if v == imageTokenId || v == videoTokenId {   // <-- both kinds, one list
-        imageIndices.append(i)
-    }
-}
-...
-result[0..., MLXArray(imageIndices), 0...] = imageFeatures
-```
+**Reproductions (Qwen3.8 27B JANG_4D, red-3 image attached each time):**
 
-If a prompt carries `<|video_pad|>` positions from an earlier turn AND
-`<|image_pad|>` positions from the new one, every position is filled from
-whichever feature tensor was prepared. That is a mechanism by which a new image
-turn could be answered from the earlier video's features — which is exactly
-what was observed.
+| prior turn | tools in turn | answer | correct? |
+|---|---|---|---|
+| image (blue 7) | no | "5 on a green background" | ✅ |
+| video (4 frames) | yes | "9 ... yellow background" | ❌ |
+| video (4 frames) | **no** | "9 on a yellow/gold background" | ❌ |
 
-**Not patched in this PR, on purpose.** Three reasons, in order of weight:
+2/2 deterministic with a video prior, 1/1 correct with an image prior. **Tools
+are irrelevant** — the second failure had none. The wrong answer is not random:
+both times it is the video's LAST frame (9 on orange, which this model calls
+yellow/gold).
 
-1. **One reproduction.** The image→image control passed and the video→image
-   case failed once. That is enough to report and enough to rule out the
-   broader "any prior media" framing, and nowhere near enough to justify
-   editing a merge path shared by every Qwen VL model.
-2. **A required link is unverified.** The mechanism only bites if prior-turn
-   media placeholders actually survive into the new prompt. That was not
-   confirmed — and asserting a cause without it is precisely the habit this
-   document keeps catching. Two claims in this session were already withdrawn
-   for exactly that.
-3. **Wrong repo, wrong PR.** This is vMLX, not OsaurusCore, and #2442 is an
-   osaurus change that is finished and green. Speculative surgery on the
-   shared VL merge path does not belong in it.
+**The mechanism, both halves now checked in source:**
 
-**What would settle it**, in order: dump the token ids of the second prompt and
-check whether `<|video_pad|>` positions are present alongside `<|image_pad|>`;
-if they are, count them against `imageFeatures.dim(0)`; then re-run
-video→image several times to establish whether the failure is deterministic.
-Only then is a fix warranted, and it should be a vMLX change with its own
-proof.
+1. *Prior media stays in the payload.* Chat messages carry `contentParts`, and
+   the enum includes `.videoUrl` alongside `.imageUrl` — history messages keep
+   their media parts, so turn 2's request still contains turn 1's video.
+
+2. *The merge pools both placeholder kinds.*
+   `QwenVL.mergeInputIdsWithImageFeatures` collects positions for
+   `imageTokenId` **or** `videoTokenId` into ONE list and scatters a single
+   feature tensor across all of them:
+
+   ```swift
+   if v == imageTokenId || v == videoTokenId { imageIndices.append(i) }
+   ...
+   result[0..., MLXArray(imageIndices), 0...] = imageFeatures
+   ```
+
+With video pads and image pads both present, every position is filled from one
+tensor — so the new image's positions receive video features, and the tail of
+that tensor (the last frames) lands on the last pads. That predicts the exact
+symptom observed, including *which* frame comes back.
+
+**Still not patched here, and the reasons narrowed to one.** The "single
+observation" objection is gone and the missing link is closed. What remains:
+this is a vMLX change to the merge path shared by every Qwen VL model, while
+#2442 is a finished, green osaurus PR. A correct fix has to split the two pad
+kinds and route each to its own feature tensor — which needs its own tests for
+image-only, video-only, and mixed prompts, because getting the split wrong
+silently corrupts every VL prompt rather than failing loudly. That belongs in
+vMLX with its own proof, not bolted onto this one.
+
