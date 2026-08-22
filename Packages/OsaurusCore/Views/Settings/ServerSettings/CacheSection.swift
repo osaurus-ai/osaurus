@@ -216,8 +216,15 @@ struct CacheSection: View {
             percent: draft.cache.blockDisk.maxSizePercent,
             legacyGB: draft.cache.blockDisk.maxSizeGB,
             directory: dir)
-        let share = draft.cache.blockDisk.maxSizePercent
-            ?? (VMLXServerRuntimeSettings.autoDiskCacheFraction * 100)
+        // The share the resolver will ACTUALLY use. A stored value of 0 (or
+        // negative) is not honoured — `resolveDiskCacheMaxGB` requires
+        // `percent > 0` and falls back to the default share — so echoing the
+        // raw field would print "0% ... ≈ 372.2 GB", a label that contradicts
+        // itself and hides which number is real.
+        let stored = draft.cache.blockDisk.maxSizePercent
+        let share =
+            (stored.map { $0 > 0 } ?? false)
+            ? stored! : (VMLXServerRuntimeSettings.autoDiskCacheFraction * 100)
 
         // Report what the engine will ACTUALLY enforce, not what the share
         // resolves to in isolation.
@@ -277,7 +284,15 @@ struct CacheSection: View {
                     + "cap that suits one machine starves another and long chats re-prefill "
                     + "instead of resuming.",
                 value: $draft.cache.blockDisk.maxSizePercent,
-                format: "%.1f"
+                // NOT "%.1f". A share is meaningful far below a tenth of a
+                // percent — 0.005% of a 3.7 TB disk is ~190 MB, a perfectly
+                // reasonable cap for someone who wants the cache small — and
+                // one decimal place silently rewrote it to 0.0 before saving.
+                // The stored 0 then failed the resolver's `percent > 0` check
+                // and fell back to the 10% auto share, so typing 0.005 handed
+                // the user 372 GB while the label read "0%". Found by typing
+                // it into the running app.
+                format: "%g"
             )
             // What that share actually comes out to on THIS machine, using the
             // same resolver the engine enforces rather than a second estimate

@@ -162,4 +162,30 @@ final class CacheSectionWiringTests: XCTestCase {
         let src = try source("Views/Settings/ServerSettings/CacheSection.swift")
         XCTAssertTrue(src.contains("disk is nearly full"), "the lower cap is unexplained")
     }
+
+    /// The share field must not be formatted to one decimal place.
+    ///
+    /// Found by typing into the running app: with `%.1f`, 0.005 was rewritten
+    /// to 0.0 before saving. The stored 0 then failed the resolver's
+    /// `percent > 0` check and fell back to the 10% auto share — so asking for
+    /// ~190 MB silently produced 372 GB while the label read "0%". A share is
+    /// meaningful well below a tenth of a percent on a multi-terabyte disk.
+    func testShareFieldPreservesSmallValues() throws {
+        let src = try source("Views/Settings/ServerSettings/CacheSection.swift")
+        XCTAssertFalse(
+            src.contains("value: $draft.cache.blockDisk.maxSizePercent,\n                format: \"%.1f\""),
+            "the share field truncates small values to one decimal place")
+        XCTAssertTrue(src.contains("format: \"%g\""), "share field lost its precision-preserving format")
+    }
+
+    /// A non-positive stored share is not honoured by the resolver, so the
+    /// label must show the share actually in effect rather than echoing the
+    /// field. Otherwise it prints "0% ... = 372.2 GB", which contradicts
+    /// itself and hides which number is real.
+    func testLabelShowsTheShareActuallyInEffect() throws {
+        let src = try source("Views/Settings/ServerSettings/CacheSection.swift")
+        XCTAssertTrue(
+            src.contains("stored.map { $0 > 0 }"),
+            "the label echoes the raw field and can print a share nothing enforces")
+    }
 }
