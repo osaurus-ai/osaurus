@@ -54,7 +54,7 @@ Status key: **FIXED+PROVEN** / **FIXED, unproven live** / **OPEN** /
 | C6 | Live VIDEO passthrough + cache | **OPEN** (video EVS additionally needs a post-prepare cache key) |
 | C7 | Live AUDIO passthrough + cache (gemma E2B) | CHARACTERIZED with C5 — audio rides the same two mechanisms |
 | C8 | Media + tools in the same turn | **OPEN** |
-| C9 | Best prefix/suffix match block for multimodal | **DIAGNOSED — and the earlier diagnosis was too optimistic.** Nothing reuses today: the mechanism is unreached (below) |
+| C9 | Best prefix/suffix match block for multimodal | **FIXED+PROVEN LIVE for the Qwen VL families** — follow-up TTFT 3.40s → 0.59s median, A/B against the baseline vmlx pin (below). Other families still unreached |
 
 ## D. Generation config parity
 
@@ -452,6 +452,46 @@ Pinned by `Tests/MLXLMCommonFocusedTests/VLMediaTokenDeclarationReachabilityTest
 (5 tests: the unconditional-rollback branch, the declaring set, the mainstream
 families named individually so a failure says which one moved, and the
 Qwen3-VL boundary asymmetry).
+
+### The fix, and the A/B that makes it causal
+
+`QwenVL.mediaTokenIds` resolves `<|image_pad|>` / `<|video_pad|>` through the
+tokenizer and Qwen3-VL / Qwen2.5-VL / Qwen2-VL now pass them. Nothing else
+changed: the engine's resume branch already built its suffix input as
+`LMInput(text: remainingArray, image: nil, video: nil)`, so no media reaches
+the merge and `featureTokenMismatch` cannot fire; entries are stored at the
+full prompt length by `storeAfterGeneration`; and candidates come from
+`SELECT DISTINCT token_count FROM cache_entries`, so no boundary arithmetic is
+involved. Declaring the ids is the whole fix.
+
+Two osaurus builds differing **only** in the vmlx pin, same machine, same
+model (`Qwen3.8 27B JANG_2D`), same agent, same images, same prompts:
+
+| turn | baseline pin `2fbd1c49` | with the declaration |
+|---|---|---|
+| 1 — image + "what digit / what colour" | 4.19s, 3.27s | 4.10s (cold), 0.60s (warm root) |
+| 2 — "spell that digit as an English word" | 3.45s, 3.37s | 0.59s, 0.74s |
+| 3 — "and what colour was it again?" | 3.30s, 3.42s | 0.48s |
+
+Follow-up turns: baseline **3.30 / 3.37 / 3.42 / 3.45** (median 3.40s), fixed
+**0.48 / 0.59 / 0.74** (median 0.59s). **5.8× on the median, no overlap between
+the legs**, and the spread inside each leg is a few percent. Cold turn 1
+matched at 4.19 vs 4.10 (2%), which is the noise indicator: the legs are
+identical where the change should do nothing.
+
+Correctness held on both legs and is scored against opposite images rather
+than a word list — the test images are a blue 7 and a red 3, so a constant
+answer fails. Both builds answered "7 … blue", then "seven", then "Blue". A
+control run in a *fresh chat with no history* answered "zero", confirming the
+follow-up genuinely depends on the retained image context rather than guessing.
+
+Disk L2 counters moved with it: 2/11/6 → 5/20/11 across the two VL turns
+(+3 hits), SSM 1 → 4.
+
+Still unreached: Gemma 4, Gemma 3, Muse Glimmer, LFM2-VL, Mistral 3, GLM-4V,
+Zaya1-VL, Idefics3, Pixtral, SmolVLM2, FastVLM. Each needs its own placeholder
+ids; the Qwen change is the pattern. `VLMediaTokenDeclarationReachabilityTests`
+names them individually so the list cannot silently drift.
 
 **Finding that prevents wasted work:** mechanism 2 is the binding constraint.
 Prefix-scoped salting on its own buys **nothing** — every case it would unlock
