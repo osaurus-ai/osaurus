@@ -7275,8 +7275,19 @@ final class ChatSession: ObservableObject {
                         // window — the driver ended the run before sending a
                         // doomed request. Surface the distinct failure on the
                         // assistant bubble instead of a generic stream error.
-                        assistantTurn.content = AgentToolLoop.overBudgetMessage
-                        lastStreamError = AgentToolLoop.overBudgetMessage
+                        // Name the user's cap when that is the ceiling, so the
+                        // advice points at the setting that decided the number
+                        // rather than at a model window that had room.
+                        var overBudgetWindowSource: AgentLoopBudget.ContextWindowSource?
+                        if let overBudgetModel = selectedModel {
+                            overBudgetWindowSource = AgentLoopBudget
+                                .resolveContextWindowResolutionSync(modelId: overBudgetModel)
+                                .source
+                        }
+                        let overBudgetText = AgentToolLoop.overBudgetMessage(
+                            windowSource: overBudgetWindowSource)
+                        assistantTurn.content = overBudgetText
+                        lastStreamError = overBudgetText
                         rebuildVisibleBlocks()
                     }
 

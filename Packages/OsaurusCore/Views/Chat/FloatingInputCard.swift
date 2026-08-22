@@ -518,7 +518,19 @@ struct FloatingInputCard: View {
         // chip explain, instead of letting the model error mid-stream.
         // History-driven growth is deliberately NOT gated — compaction
         // handles that.
-        guard !isContextHardOverflow else { return false }
+        //
+        // But ONLY when the model is the ceiling. `contextLengthCap` is a
+        // preference — a smaller window for faster prefill — and the weights
+        // can still take more, so letting it kill the send turns a preference
+        // into a wall. Worse, it is a SILENT wall: the button simply stops
+        // working, with nothing naming the setting responsible. Measured
+        // live at cap 2048 against a 2.5k prefix — the send did nothing, and
+        // clearing the cap sent the identical text immediately.
+        //
+        // The chip still goes red, which is the advisory. A ceiling the user
+        // chose must never refuse; if the request really cannot run, the
+        // engine fails loudly and that is strictly better than a dead button.
+        guard !isContextHardOverflow || contextWindowIsUserCapped else { return false }
 
         // Configuration gate: the Default agent needs the configure tool
         // schema to do its job, but a too-small context window (e.g.
@@ -626,6 +638,15 @@ struct FloatingInputCard: View {
     /// is blocked with a clear signal instead of a guaranteed model failure.
     private var isContextHardOverflow: Bool {
         budgetAssessment.hardOverflow
+    }
+
+    /// Whether the window in force came from the user's `contextLengthCap`
+    /// rather than from the model. The resolver already records this as
+    /// `.userCap` precisely so surfaces can say WHY the window is smaller
+    /// than the bundle advertises; the send gate reads it to keep a
+    /// preference from behaving like a hardware limit.
+    private var contextWindowIsUserCapped: Bool {
+        contextWindowResolution?.source == .userCap
     }
 
     private var isVoiceConfigured: Bool {

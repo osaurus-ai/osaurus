@@ -1181,6 +1181,21 @@ enum AgentToolLoop {
     static let overBudgetMessage =
         "Context window cannot fit this request even after compaction. Shorten the input, reduce tool output, or start a new conversation."
 
+    /// The same message, but naming the user's own cap when that — rather
+    /// than the model — is what the request failed to fit.
+    ///
+    /// Telling someone to "shorten the input" when the model has a 108k
+    /// window and their Context Window Cap is 2048 sends them to fix the
+    /// wrong thing. The resolver already records `.userCap`, so the surface
+    /// can point at the setting that actually decided the number.
+    static func overBudgetMessage(windowSource: AgentLoopBudget.ContextWindowSource?) -> String {
+        guard windowSource == .userCap else { return overBudgetMessage }
+        return
+            "Context window cannot fit this request. The limit in force is your "
+            + "Context Window Cap (Settings → Server → Cache → Context & KV Policy), "
+            + "not the model's own window — raise or clear it, or shorten the input."
+    }
+
     // MARK: - Default parallel batch executor
 
     /// Default batch executor: run every call concurrently via a TaskGroup,

@@ -37,7 +37,7 @@ Status key: **FIXED+PROVEN** / **FIXED, unproven live** / **OPEN** /
 |---|---|---|
 | B1 | Derived per-model from bundle metadata | PROVEN — live `Bundle model maximum 262k · usable budget 85%` → 222k |
 | B2 | User cap that actually constrains (`contextLengthCap`) | **WAS UNREACHABLE — now wired**; the field existed and both resolvers read it, but NO Settings control ever wrote it, so the user could not set it. Added "Context Window Cap (tokens)" to Server → Cache → Context & KV Policy (below) |
-| B3 | Both resolver twins apply it (chip/send-gate AND agent loop) | FIXED, source-asserted |
+| B3 | Both resolver twins apply it (chip/send-gate AND agent loop) | **chip/send-gate twin PROVEN LIVE** — the 108k ↔ 7.0k transition in B2 came through `resolveContextWindowResolutionSync`, which is that twin; the agent-loop twin (`resolveContextWindow`) stays source-asserted |
 | B4 | Cap only lowers, never raises past the model | FIXED+tested |
 | B5 | Old `contextLength` stays a fallback (128k default must not clamp a 222k model) | FIXED+tested |
 | B6 | Agents / subagents / plugin host resolve through the capped path | FIXED, source-asserted |
@@ -816,3 +816,60 @@ Definitive probe for any slow host:
 
     OSAURUS_TTFT_TRACE=1 open -a "Osaurus Beta"
     cat /tmp/osaurus_ttft_trace.log
+
+---
+
+## The context cap turned a preference into a silent wall
+
+Found by testing B2 at its hard shape rather than a comfortable one: set the
+cap BELOW what the non-compactable prefix already costs.
+
+With `contextLengthCap = 2048` against a ~2.5k prefix (system prompt 1.1k +
+tools 1.4k), **the send button stopped working.** No error, no notice, no
+disabled styling — pressing it did nothing at all. The chip went red
+(`⚠ ~2.5k / 1.7k`), which is the only hint, and it does not name the setting.
+
+Controlled A/B, same text, model, session and window, only the cap varying:
+
+| cap | pressing send |
+|---|---|
+| 2048 | nothing happens; text stays in the composer |
+| cleared | sends immediately, model replies `ok` |
+
+The gate is `canSend`'s `guard !isContextHardOverflow`. Its reasoning is sound
+when the MODEL's window is the ceiling — the request would fail whatever
+compaction did. But `contextLengthCap` is a **preference**: the weights here
+have a 108k window and can take the prompt fine. Letting a preference kill the
+send makes it a wall, and a silent one.
+
+That is the rule this repo already has about invented limits: an estimate or a
+preference may ADVISE, never REFUSE. A ceiling the user chose must not behave
+like a hardware limit. And this was reachable only *because* B2 shipped the
+control for it — the fix created the exposure, so it belongs in the same PR.
+
+Fixed two ways:
+
+1. `canSend` no longer blocks when `contextWindowResolution.source == .userCap`.
+   The chip still turns red — the advisory stays, the refusal goes.
+2. The over-budget message now names the cap when the cap is the ceiling.
+   Telling someone to "shorten the input" while their model has 108k free and
+   their own cap is 2048 sends them to fix the wrong thing.
+
+**Live proof after the fix**, identical scenario:
+
+```
+Say the single word: ok
+->  Context window cannot fit this request. The limit in force is your Context
+    Window Cap (Settings -> Server -> Cache -> Context & KV Policy), not the
+    model's own window — raise or clear it, or shorten the input.
+```
+
+The turn now sends and fails loudly and specifically, instead of a dead button.
+
+**Still open, recorded rather than papered over.** The request does not
+complete. The honest end state is that a cap smaller than the non-compactable
+prefix is simply unsatisfiable, and the engine should relax it to what the
+prefix needs (bounded by the model window) and say it did — so the cap governs
+the conversation budget and never makes a request impossible. That needs the
+prefix size at resolver time, which `applyingUserCap` does not have, so it is a
+follow-up rather than a same-PR change.
