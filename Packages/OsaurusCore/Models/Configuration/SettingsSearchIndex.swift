@@ -226,6 +226,24 @@ public enum SettingsSearchIndex {
             title: "Max Tool Attempts",
             keywords: ["tool calls", "agent loop", "attempts"]
         ),
+        // Had NO index entry at all. Worse than merely missing: searching
+        // "tool calls" matched `Max Tool Attempts` above, so the one query
+        // that did return something routed the user to a different setting.
+        // This is the control that answers "make every tool always allowed" —
+        // 83 tools ship `enabled: true` with an EMPTY policy map, and
+        // `ToolConfiguration.policy(for:)` defaults to `.ask`, so without this
+        // toggle every one of them prompts.
+        .init(
+            id: "settings.chat.autoAllowAllTools",
+            tab: .chat,
+            section: "Chat",
+            title: "Auto-Allow All Tool Calls",
+            keywords: [
+                "auto allow", "auto-allow", "allow all tools", "allow tools",
+                "tool permission", "tool permissions", "approve tools",
+                "approval", "always allow", "never ask", "tool prompt",
+            ]
+        ),
 
         // MARK: Settings (Notifications / Legal)
         // Usage-analytics + crash-reporting consent now live at the top of the

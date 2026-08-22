@@ -1141,3 +1141,46 @@ deep into a long conversation.
 Noted honestly: turn B answered "yellow" again rather than a different colour.
 That is model quality on a 0.6B, not a harness or settings fault — the point
 under test was whether the effort change took, and it plainly did.
+
+---
+
+## "All tools always allowed" — the control existed but search hid it
+
+`enabled` is not `allowed`. In the proof root, `config/tools.json` reads:
+
+```
+enabled: 83 entries, all true
+policy:  0 entries          <-- empty
+```
+
+and `ToolConfiguration.policy(for:)` is `policy[name] ?? .ask`. So all 83
+shipped tools are enabled and every one of them would prompt.
+
+The control that resolves this is `Auto-Allow All Tool Calls` (Chat), stored at
+`ToolApprovalSettings.autoAllowAllDefaultsKey`, read by `ToolRegistry` at each
+`.ask`-policy decision, default `false`. It works — it simply could not be
+found:
+
+| query | before | after |
+|---|---|---|
+| `auto allow` | **0** | 1 |
+| `allow all tools` | **0** | 1 |
+| `always allow` | **0** | 2 |
+| `approve tools` | **0** | 1 |
+
+`auto allow` is literally the first two words of the setting's own name.
+
+**This one was worse than unfindable.** The toggle had NO index entry at all,
+and the single query that did return something — `tool calls` — matched
+`Max Tool Attempts`, a different setting in a different section. A user
+searching for tool permissions was routed confidently to the wrong control.
+A wrong destination is more harmful than an empty result, because it looks
+like an answer.
+
+Fixed with a `settings.chat.autoAllowAllTools` entry and the vocabulary people
+actually type, and pinned in `controlsFindableByOnScreenLabel` (verified to
+fail without it, naming all four queries). Live: `auto allow` now resolves to
+**Auto-Allow All Tool Calls · Chat**.
+
+Fourth section found unreachable by its own words, after sampler, disk cache
+and reasoning.

@@ -67,6 +67,13 @@ struct SettingsSearchSelfFindProbe {
             ("effort", "server.tools"),
             ("preserve thinking", "server.tools"),
             ("thinking", "settings.chat.thinkingDisplay"),
+            // The control that makes every tool always allowed. It had no
+            // entry at all, and "tool calls" matched Max Tool Attempts —
+            // a wrong-destination hit, which is worse than no hit.
+            ("auto allow", "settings.chat.autoAllowAllTools"),
+            ("allow all tools", "settings.chat.autoAllowAllTools"),
+            ("always allow", "settings.chat.autoAllowAllTools"),
+            ("approve tools", "settings.chat.autoAllowAllTools"),
         ]
 
         let missed = labels.filter { label in
