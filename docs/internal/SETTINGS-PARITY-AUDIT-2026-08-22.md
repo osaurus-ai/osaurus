@@ -1221,3 +1221,54 @@ Image input is proven end to end above (LFM2.5-VL answering "the digit shown is
 7 and the background is blue"). **Video and audio are NOT proven here** — only
 the gating controls were observed, no video or audio turn was run. Recorded as
 untested rather than folded into the image result.
+
+---
+
+## Audio input: the composer decides by NAME, so a bundle with audio weights is refused
+
+Chased directly, with a self-made probe (`say` → 3.0s 16 kHz mono WAV saying
+"the secret word is umbrella", so a model that cannot hear scores wrong rather
+than passing by luck).
+
+`Gemma-4-26B-A4B-it-JANG_4M-dynA-osaurus` declares `audio_config` in its
+config.json. Selected it, opened the attachment picker, and the panel's own
+title read:
+
+```
+Select files to attach (image supported)
+```
+
+No audio types offered, so the WAV cannot be attached at all.
+
+**Why.** `pickerAllowedTypes` adds `.audio/.wav/.mp3/.mpeg4Audio` only when
+`cap.supportsAudio`. That comes from `mediaCapabilities` →
+`composerDescriptor(modelId:fallbackSupportsImages:localModelType:)` →
+`composerCapabilities`, and **every branch of that function takes
+`supportsAudio` from `detected`** — i.e. `from(modelId:)`, which infers
+capability from the model NAME. Image gets the bundle's real bit via
+`fallbackSupportsImages`, and video gets it via `localModelType` +
+`videoCapableModelTypes`. Audio gets neither.
+
+Same `name-is-not-the-bits` class as the runtime capability fix earlier in this
+document — that one was fixed; this one is the composer half, still open.
+
+**The correct detector already exists and is better than a config check:**
+`gemma4BundleSupportsAudio(directory:)` scans
+`model.safetensors.index.json` for `embed_audio.embedding_projection`, i.e. it
+proves the audio tensor is actually present rather than trusting
+`audio_config` (whose comment notes Gemma4 configs "always carry
+audio_token_id", so config presence alone would over-report).
+
+**Why it is not fixed in this PR.** `mediaCapabilityDescriptor` is evaluated
+from SwiftUI body/layout and its comment forbids disk work there ("must never
+trigger a disk scan or synchronously parse a model bundle"), so it cannot call
+that detector directly. The audio bit has to be recorded during the off-main
+model scan and carried on the scan record, exactly as `modelType` already is —
+`MLXModel` has no such field today. That is a scanner + capability-plumbing
+change across several files, and this PR is finished and ready to merge; adding
+it here would widen a merge-ready change. Scoped deliberately, not forgotten.
+
+**Consequence to be aware of meanwhile:** audio-capable local bundles cannot
+receive an audio file through the chat composer regardless of their weights.
+Voice input (dictation) and the VoiceChat duplex runtime are separate paths and
+are unaffected.
