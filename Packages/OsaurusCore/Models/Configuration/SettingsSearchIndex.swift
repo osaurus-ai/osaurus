@@ -197,6 +197,8 @@ public enum SettingsSearchIndex {
             keywords: [
                 "context window", "context", "model maximum",
                 "metadata fallback", "kv retention", "cache window",
+                "context window cap", "context cap", "max context",
+                "limit context",
             ],
             subTab: "cache"
         ),

@@ -14,8 +14,10 @@ import SwiftUI
 struct CacheSection: View {
     @Binding var draft: VMLXServerRuntimeSettings
     @Binding var metadataFallbackTokens: Int?
+    @Binding var contextLengthCap: Int?
     let savedSettings: VMLXServerRuntimeSettings
     let savedMetadataFallbackTokens: Int?
+    let savedContextLengthCap: Int?
 
     @State private var loadedModels: [ModelRuntime.ModelCacheSummary] = []
     @State private var isClearingDiskCache = false
@@ -130,6 +132,18 @@ struct CacheSection: View {
                 clamp: 2_048 ... 4_194_304
             )
 
+            // The fallback above cannot constrain a local bundle — metadata
+            // wins. This is the field that actually lowers the window, so it
+            // needs its own control or the user has no way to reach it.
+            OptionalIntField(
+                label: "Context Window Cap (tokens)",
+                placeholder: "Blank = follow the model",
+                help:
+                    "Applied as min(cap, model maximum), so it can only ever LOWER the window — a smaller window prefills faster and costs less KV per turn. Unlike the fallback above, this DOES constrain local bundles.",
+                value: $contextLengthCap,
+                clamp: 2_048 ... 4_194_304
+            )
+
             OptionalIntField(
                 label: "KV Retention Override (tokens)",
                 placeholder: "Blank = Memory Safety profile",
@@ -154,6 +168,13 @@ struct CacheSection: View {
                 label: "Saved metadata fallback",
                 value: tokenSummary(savedMetadataFallbackTokens, defaultValue: 128_000),
                 detail: "Currently persisted for unknown-metadata models."
+            )
+            policyRow(
+                label: "Saved context window cap",
+                value: savedContextLengthCap.map { "\($0) tokens" } ?? "Follow the model",
+                detail: savedContextLengthCap == nil
+                    ? "No cap saved — each model uses its own declared maximum."
+                    : "Lowers every model whose maximum exceeds it."
             )
             policyRow(
                 label: "Saved resolved KV cap",

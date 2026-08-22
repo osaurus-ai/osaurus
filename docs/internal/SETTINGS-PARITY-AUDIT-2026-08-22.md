@@ -36,11 +36,65 @@ Status key: **FIXED+PROVEN** / **FIXED, unproven live** / **OPEN** /
 | # | item | status |
 |---|---|---|
 | B1 | Derived per-model from bundle metadata | PROVEN — live `Bundle model maximum 262k · usable budget 85%` → 222k |
-| B2 | User cap that actually constrains (`contextLengthCap`) | FIXED, unproven live |
+| B2 | User cap that actually constrains (`contextLengthCap`) | **WAS UNREACHABLE — now wired**; the field existed and both resolvers read it, but NO Settings control ever wrote it, so the user could not set it. Added "Context Window Cap (tokens)" to Server → Cache → Context & KV Policy (below) |
 | B3 | Both resolver twins apply it (chip/send-gate AND agent loop) | FIXED, source-asserted |
 | B4 | Cap only lowers, never raises past the model | FIXED+tested |
 | B5 | Old `contextLength` stays a fallback (128k default must not clamp a 222k model) | FIXED+tested |
 | B6 | Agents / subagents / plugin host resolve through the capped path | FIXED, source-asserted |
+
+### B2 — the cap existed, was read, and had no way to be set
+
+`contextLengthCap` was already correct on the runtime side: both resolver twins
+in `AgentToolLoop` apply it — the async `resolveContextWindow` and the
+`@MainActor resolveContextWindowResolutionSync` that the doc comment names as
+"the context chip and send gate" — each through `applyingUserCap(_:cap:)`. B3
+and B6 were right.
+
+What was missing is that **nothing in Settings ever wrote the field.** The only
+context control in Server → Cache bound `contextLength`, and that one is a
+FALLBACK whose own doc comment says it "cannot constrain anything: a user who
+lowered it saw no change on any local model, since bundle metadata is consulted
+first and wins." So a user who wanted a smaller window had no way to ask for
+one. Same class as the two migrations with zero call sites: correct code that
+is never reached.
+
+Added `Context Window Cap (tokens)` to Server → Cache → Context & KV Policy,
+threaded through `ServerSettingsTabContent` exactly like the fallback twin
+(draft/saved state, `hasUnsavedChanges`, load, save, `resetToDefaults`), plus a
+`Saved context window cap` readout and search keywords.
+
+**Live proof — driven through the running app, one model, one session, only the
+cap varying.** Model `Qwen3 0.6B 8bit`:
+
+| cap set in Settings | chat chip | Context Budget popover | `chat.json` on disk |
+|---|---|---|---|
+| blank | `~2.5k / 108k` | — | `contextLengthCap: null` |
+| **8192** | `~2.5k / 7.0k` | **`Your context limit 8.2k · usable budget 85%`** | `contextLengthCap: 8192` |
+| blank again | `~2.5k / 108k` | — | `contextLengthCap: null` |
+| **8192 again** | `~2.5k / 7.0k` | | `contextLengthCap: 8192` |
+
+7.0k is 8192 × 0.85, the declared safety margin. It reverts and re-applies, so
+it tracks the setting rather than having landed there once by accident.
+
+Discoverability, same query on two builds differing only in the search-index
+entry: `0 settings match "max context"` → **`1 setting matches "max context"`**,
+resolving to Server → Cache → Context & KV Policy.
+
+Three varying turns under the cap, all correct, cap held at 7.0k throughout:
+
+| turn | shape | answer | TTFT | tok/s |
+|---|---|---|---|---|
+| 1 | list | `red, blue, yellow` | 0.42s | 366.1 |
+| 2 | arithmetic | `144` | 0.13s | 398.8 |
+| 3 | recall turn 1 | `red, blue, yellow` | 0.14s | 377.6 |
+
+Turn 3 recovers turn 1's answer, so conversation carryover survives the cap
+rather than the cap silently truncating history. TTFT falling 0.42 → 0.13 after
+the first turn is prefix reuse engaging, and the disk tier grew live during the
+run (`DISK CACHE 3.7 GB / 262.3 GB` in the same popover — which also re-proves
+A6's real-cap readout).
+
+Free RAM before this run: **84.3 GB**. Recorded per the rule added under C9.
 
 ## C. Multimodal — HIGHEST PRIORITY
 
@@ -534,6 +588,28 @@ out topology (`Cache-enabled models 1`, `Hybrid caches 0`,
 `Paged-incompatible caches 0`) and rules out "Gemma never caches". The
 remaining block is **media-specific and still unidentified**. Explicitly NOT
 claimed as fixed; only the Qwen VL families are proven end-to-end.
+
+**Condition caveat on the Gemma numbers — free RAM was never recorded.** The
+host kernel-panicked later the same morning (09:31, `watchdog timeout: no
+checkins from watchdogd in 93 seconds`) with **914 free pages (~15 MB)** and
+**~64 GB in the VM compressor**; `pagesWanted 3086 / pagesReclaimed 0`. Cause
+was a VL family matrix that loaded three models in sequence in ONE app process
+without verifying each unload actually freed.
+
+The two tables above were captured at 08:19 and 08:54, i.e. 35–70 minutes
+before that, so they are **not** known to be degraded — but no free-RAM reading
+was logged alongside them, so their condition is *unknown* rather than clean.
+Treat the Gemma rows as provisional and re-measure with `vm_stat` free pages
+and compressor size logged per leg.
+
+Separately: a later, uncommitted matrix run in which Gemma answered "I cannot
+see the image you are referring to" (attachment confirmed present) sat directly
+against the panic and is **discarded outright** — that is a dying host, not a
+Gemma media-delivery defect, and it must not be cited as one.
+
+Standing rule for every future run here: one model per app process, and verify
+free RAM actually returned between loads rather than trusting the app's own
+"Unloaded" label.
 
 **A wrong lead, recorded because it was convincing.** Setting
 `multimodal.requireMediaSaltForCache = false` and re-running produced 2 hits
