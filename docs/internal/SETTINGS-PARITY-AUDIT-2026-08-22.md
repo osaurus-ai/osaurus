@@ -60,11 +60,12 @@ Status key: **FIXED+PROVEN** / **FIXED, unproven live** / **OPEN** /
 
 | # | item | status |
 |---|---|---|
-| D1 | Merge order puts the user's Sampling Defaults ahead of bundle defaults | **FIXED — defect confirmed on three independent signals** (below) |
+| D1 | Merge order puts the user's Sampling Defaults ahead of bundle defaults | **FIXED+PROVEN LIVE** — drove the real app, two turns; readout went `temp 0.6 · top-k 0` → `temp 0.23 · top-k 7` (below) |
 | D2 | Reasoning-effort enforcement reaches the engine | PROVEN — `request.reasoning_effort` → `modelOptions["reasoningEffort"]` → `context["reasoning_effort"]` → the bundle's chat template, and the same context feeds `cacheScopeSalt` |
 | D2b | Cost of changing reasoning effort mid-conversation | **CORRECTED — my first answer was wrong and backwards.** Only 2 of 97 templates render `reasoning_effort`; for the rest the tokens are identical and the `effort=` salt discards reuse for nothing (below) |
 | D3 | Settings changes reach the API-server path, not just chat | FIXED with D1 — one shared call site; save invalidates the cached `RuntimeConfig` |
-| D4 | Displayed live stats match what the model actually ran | **FIXED** — the effective sampler had NO GUI surface at all; added "Sampler last used" to Live Activity |
+| D4 | Displayed live stats match what the model actually ran | **FIXED+PROVEN LIVE** — the effective sampler had NO GUI surface at all; added "Sampler last used" to Live Activity, read back off the running app |
+| D5 | The row is discoverable from Settings search | **FIXED** — `sampler`, `top k` and `min p` each returned *"0 settings match"* live; no stemming reaches the indexed `sampling` (below) |
 
 ## E. MTP / speculative decoding
 
@@ -247,6 +248,52 @@ Two details that are load-bearing rather than cosmetic:
 - Temperature 0 appends `(greedy — top-p/top-k/min-p inert)`. An agent stored
   with `temperature: 0` otherwise reads as correctly configured while decoding
   argmax — the mechanism behind the DSV4 verbatim reasoning loop.
+
+### Live proof of D1 + D4 (the readout is what closed it)
+
+Driven against the dev-built app in an isolated root, two real turns, model
+`qwen3-0.6b-8bit`:
+
+| turn | prompt | result | Sampler last used |
+|---|---|---|---|
+| 1 | "Name three colors." | "The three colors are red, blue, and green." — TTFT 0.29s, 375.6 tok/s | `temp 0.23 · top-p 1 · top-k 7 · min-p 0 · max 16384` |
+| 2 | "Name two fruits." | "Fruits include apples and oranges." — TTFT 0.11s, 359.5 tok/s | same |
+
+`config/server-runtime.json` carried only `generation.temperature = 0.23` and
+`generation.topK = 7`. Both reached the sampler. `top-p 1` and `min-p 0` stayed
+at engine defaults, which is the point: untouched keys fall through instead of
+being stamped. Before the D1 fix the identical readout showed `temp 0.6 ·
+top-k 0` — the model/engine defaults, with the user's values discarded.
+
+**The first attempt at this proof was a harness error, not a product defect,
+and it is worth recording because it read exactly like one.** I hand-wrote the
+two keys at the JSON *top level* rather than under `generation`. The app parsed
+the file, ignored the unknown top-level keys, and ran on defaults — so the row
+said `temp 0.6` and I logged it as UNEXPLAINED. On the next launch the schema-3
+migration re-homed both keys into `generation`, and the same turn produced
+`0.23`. Nothing in the product changed between those two readings. Suspect the
+measurement first.
+
+### D5 — the row could not be found by its own name
+
+While reading the row back, Settings search for **`sampler`** returned
+*"0 settings match"* in the live app. `SettingsSearchIndex.search` matches by
+substring/token with `allowFuzzy: false`, so nothing bridges `sampler` to the
+indexed `sampling`. Three terms printed on screen — `sampler`, `top k`,
+`min p` — reached no entry at all.
+
+Fixed by adding those tokens to the `server.generation` and
+`server.liveActivity` entries. `searchFindsSamplerByTheWordShownOnScreen`
+fails with 4 expectations against the old keyword lists, so it pins the
+behaviour instead of restating it.
+
+One caveat on the same probe: after that first search I tried four more terms
+by clicking the field and retyping, and reported them as also returning zero.
+That was wrong — the clicks never reached the settings window, the field still
+read `sampler`, and I was re-reading a stale result string. Those four results
+are discarded. Only the `sampler` observation was made with the field verified
+to hold what I typed; `top k` and `min p` were then established from the index
+source and pinned by the test.
 
 Warm-up prefills are excluded upstream by
 `shouldRecordAsLastEffectiveGeneration`, so the row always describes a real
