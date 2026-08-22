@@ -1094,45 +1094,50 @@ why the control-label sweep is the one that matters.
 
 ---
 
-## Reasoning-effort change mid-conversation — NOT proven, and why
+## Reasoning-effort change mid-conversation — PROVEN LIVE
 
-Recorded as an open item rather than claimed, because the control could not be
-driven and I will not assert behaviour I did not observe.
+**Correction.** An earlier revision of this section claimed the thinking
+control had "no separately addressable AX element". That was wrong, and it was
+wrong for an avoidable reason: the model popover was not reliably open when the
+tree was dumped, so the row was simply absent from what was inspected. Pressing
+the chip toggles the popover, and an odd number of presses closes it again.
 
-The chat exposes reasoning as part of the model chip:
+The control exists and is properly exposed:
 
 ```
-AXButton desc="Qwen3 0.6B 8bit, Thinking, 0.6B" value="Off"
+AXHeading  desc="MODEL OPTIONS"
+AXCheckBox desc="Thinking" value="0"
 ```
 
-Every route tried on the running app:
+The `brain` glyph on the chip is a read-only status indicator — its own comment
+says so ("the interactive control remains directly available in both the footer
+and picker"). Driving the glyph was the mistake; the checkbox under MODEL
+OPTIONS is the control.
 
-| route | result |
-|---|---|
-| `AXPress` on the chip | opens the **model picker**, not the toggle |
-| synthesized click at the chip's AX frame (app frontmost) | no effect |
-| `AXValue` set to "On" | accepted (`err=0`) but reads back `"Off"` |
-| inspecting picker rows | model rows carry `Vision` / size badges, no thinking toggle |
+Toggling it updates both places at once — checkbox `value 0 → 1` and the chip's
+own `value "Off" → "On"` — so the display-lie defect fixed earlier has not
+returned.
 
-So the thinking/effort state is *reported* through AX but has **no separately
-addressable AX element or action**. That blocks automation, and it equally
-blocks assistive technology — a VoiceOver user has the same problem. Worth
-treating as an accessibility gap independent of this audit.
+**Live A/B, one conversation, effort changed BETWEEN the two turns**
+(`Qwen3 0.6B 8bit`):
 
-**What is established, and by what means:**
+| turn | Thinking | reasoning block | answer | tokens | TTFT | tok/s |
+|---|---|---|---|---|---|---|
+| A | **On** | `Thought for 612ms`, 876 chars | yellow | **212** | 0.16s | 379.5 |
+| B | **Off** | none | yellow | **1** | 0.13s | 451.5 |
 
-- Reasoning effort reaches the engine — D2, source-traced:
-  `request.reasoning_effort` → `modelOptions["reasoningEffort"]` →
-  `context["reasoning_effort"]` → the bundle's chat template.
-- The same context feeds `cacheScopeSalt`, so changing effort mid-conversation
-  necessarily opens a NEW cache scope rather than reusing the previous prefix.
-  That is the correct behaviour — a prefix built while thinking was preserved
-  is not a valid prefix once it is not — and it is also exactly the re-prefill
-  cost to expect when effort is changed deep into a long conversation.
-- Per-model enforcement is declared, not uniform: `DeclaredReasoningEffort`
-  reads `preserve_thinking_supported` / `_default` / `_transport`.
+The change takes effect on the very next turn inside the same conversation —
+212 generated tokens collapse to 1, and the reasoning block disappears
+entirely. That is the setting reaching the engine mid-conversation, observed
+rather than inferred.
 
-**What is NOT established:** the live cost of an effort change mid-conversation
-— TTFT before vs after the switch, and whether the new scope re-prefills the
-whole prompt or resumes at a boundary. That needs the toggle to be drivable, or
-a build that exposes it to AX.
+Disk tier across the pair: 29 → 33 entries (turn A) → 38 (turn B). Each leg
+wrote new entries rather than reusing the previous prefix, which is what
+`cacheScopeSalt` carrying `reasoning_effort` predicts: a prefix built while
+thinking was on is not a valid prefix once it is off. That is the correct
+behaviour and it is also the re-prefill cost to expect when effort is changed
+deep into a long conversation.
+
+Noted honestly: turn B answered "yellow" again rather than a different colour.
+That is model quality on a 0.6B, not a harness or settings fault — the point
+under test was whether the effort change took, and it plainly did.
