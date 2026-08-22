@@ -117,3 +117,39 @@ are Qwen. Each needs its own sweep; none can inherit a number from a sibling.
 without usable tuning, and tuning can only come from running the head.
 
 Every previous artifact is preserved alongside as `vmlx_mtp_tuning.json.bak`.
+
+
+## The 44.27 figure is SHORT-CONTEXT, and SSD caching is not the overhead
+
+Eric's read was that no-SSD-caching sustains 40+ and therefore the disk cache
+costs the difference. Measured with cache as an explicit control — same bundle,
+same depth, quiet box (85% idle, 69 GB free):
+
+| context | cache | baseline | d3 | speedup |
+|---|---|---|---|---|
+| short (~56 tok) | none | 24.61 | 44.58 | 1.811× |
+| short | paged | 24.41 | 44.24 | 1.812× |
+| short | disk | 24.43 | 44.23 | 1.811× |
+| **long (~3k tok)** | none | 22.40 | **23.22** | **1.036×** |
+| **long** | disk | 22.30 | **23.35** | **1.047×** |
+
+**Caching is free.** None vs disk is within noise at both depths, and the
+post-answer store is 27 ms for 124 MB at 56 tokens and 31 ms for 190 MB at
+2995 tokens (~6 GB/s), `SKIP validated` on every store after the first. That
+also retires the worry raised by DiskCache's own note about a ~357 MB boundary
+taking ~25 s — not reproducible here.
+
+**Context depth is the real variable.** MTP's speedup falls from 1.81× to
+1.04× between a short prompt and 3k tokens. Notably depth 3 *holds* at long
+context (`active=3/3, downshifts=0, commit=2.38`) where it demoted at short
+context — so this is not the adaptive controller giving up. Verify cost grows
+with context faster than acceptance pays for it.
+
+**Consequence for what gets shipped:** `best_tok_s` in a tuning artifact is a
+short-prompt figure by construction, and must not be read as sustained
+throughput. The artifacts now say so in their own `note`.
+
+One condition that had been unstated until now: a bare `ModelContext` has no
+cache coordinator at all (`enableDiskCache` defaults false; the coordinator
+lives on `ModelContainer`), so every number measured before the cache axis
+existed was a no-cache number.
