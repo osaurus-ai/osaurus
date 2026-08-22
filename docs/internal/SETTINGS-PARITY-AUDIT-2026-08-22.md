@@ -29,6 +29,7 @@ Status key: **FIXED+PROVEN** / **FIXED, unproven live** / **OPEN** /
 | A13 | Diagnostics report resolved cap, not the stale field | FIXED, unproven live |
 | A14 | Eval harness cap not overridden by the share | FIXED, unproven live — every eval would have run at 10% |
 | A15 | "Is at defaults" check accounts for the share | FIXED, unproven live |
+| A16 | A store too big for the cap does not wipe the cache | FIXED in vmlx (#293) — MEASURED 2 entries → 0; **not on the shipping path**, see below |
 
 ## B. Context window
 
@@ -141,6 +142,34 @@ cache and the next request re-reads it. That single shared call site is also
 why **D3** (settings reach the API-server path) resolves with D1.
 
 ---
+
+## A16 — A store too big for the cap took the whole cache with it
+
+Chasing "proper SSD cache write usage at a ridiculously low percent". Measured
+on the real `DiskCache`: two 70 KB entries under a 300 KB cap, then one 430 KB
+store — `currentEntryCount` went **2 → 0**.
+
+The store writes the payload, indexes it, then runs the quota pass, which
+evicts oldest-first until the total is back under the cap. For one entry `E`
+larger than the cap `C` with `others` resident, `excess = others + E - C`.
+Evicting every other entry accumulates only `others`, and `others < excess`
+exactly when `E > C` — so the loop continued and evicted `E` too. The oversized
+file was written to the SSD and immediately deleted, **and** every previously
+cached boundary went with it.
+
+Fixed in vmlx #293 by deciding on the **measured** file size (not an `nbytes`
+estimate, which could drop a store that would have fit after quantization) and
+dropping only that file.
+
+**Reachability — this is NOT on the shipping path, and saying otherwise would
+be an overclaim.** `CacheCoordinator` passes `enforceQuota:
+!usesCombinedQuota`, and `usesCombinedQuota = config.enableDiskCache`, so
+whenever the disk cache is on the *combined* pass owns the quota — and that
+path already refuses an oversized newest boundary while keeping the prior
+fitting prefix (`combinedQuotaRejectsOversizedNewestBoundaryButPreservesPriorFittingPrefix`,
+passing). What #293 closes is the public `store(tokens:arrays:mediaSalt:)`
+surface, which enforces `DiskCache`'s own quota and had no such protection.
+Real and measured, but defense in depth.
 
 ## D2b — Changing reasoning effort mid-conversation costs a full re-prefill
 
