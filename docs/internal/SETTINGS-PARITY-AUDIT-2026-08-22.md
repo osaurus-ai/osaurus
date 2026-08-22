@@ -201,7 +201,7 @@ Free RAM before this run: **84.3 GB**. Recorded per the rule added under C9.
 | C5 | VL multiturn: image reuse across turns | CHARACTERIZED — resumes for text follow-ups; a media-INTRODUCING turn re-prefills (below) |
 | C6 | Live VIDEO passthrough + cache | **PASSTHROUGH PROVEN LIVE** — Qwen3.8 27B JANG_4D read a 4-frame clip as `7, 3, 5, 9` in order (below). Video *cache* reuse still OPEN: the EVS post-prepare cache key is unchanged and was not exercised |
 | C7 | Live AUDIO passthrough + cache (gemma E2B) | **UNTESTABLE ON THIS HOST** — no installed bundle contains `embed_audio.embedding_projection`; `~/models`, `~/models/JANGQ-AI` and the whole HF cache return zero matches, so no audio turn can be run. Needs an E2B/E4B fetched first. An earlier "defect" claim here was withdrawn (below) |
-| C8 | Media + tools in the same turn | **OPEN** |
+| C8 | Media + tools in the same turn | **PROVEN LIVE in a clean conversation** — image + tool answered correctly in one turn. But a NEW image after a PRIOR media turn was ignored and the model described the OLD media (below) |
 | C9 | Best prefix/suffix match block for multimodal | **FIXED+PROVEN LIVE for the Qwen VL families** — follow-up TTFT 3.40s → 0.59s median, A/B against the baseline vmlx pin (below). Other families still unreached |
 
 ## D. Generation config parity
@@ -1310,3 +1310,50 @@ section).
 
 Free RAM through the run: 60.3 GB before the 27B load, 26.7 GB after — one
 model in one process, per the rule added after the morning panic.
+
+---
+
+## C8 media + tools — passes clean, and a wrong-media carry-over next to it
+
+`Qwen3.8 27B JANG_4D`, auto-allow tools on, one turn asking for BOTH an image
+reading and a tool call.
+
+**Clean conversation (no prior media) — correct:**
+
+```
+(image: white 3 on red)
+"Two things in one reply: (1) what digit and background colour is in this
+ image, and (2) use your tool to get the current time."
+
+  The image shows a white digit 3 on a red background.
+  ⚙ Get current time · 232ms
+  (2) Current time: Saturday, August 22, 2026 at 4:42 PM PDT
+  TTFT 5.75s • 42.7 tok/s • 36 tokens
+```
+
+Both halves right in a single turn: the vision tower read the new image and the
+tool fired and its result was used. C8's mechanism works.
+
+**Same question, same model, same build, in a conversation that already
+contained a VIDEO turn — WRONG media:**
+
+The identical red-3 image was attached and the answer was
+`Digit in the image: 9 (a white "9" on a yellow background)`. There is no 9 and
+no yellow in that image — that is the **last frame of the previous turn's
+video** (9 on orange, which this model calls yellow). The tool half was still
+correct (`Get current time · 226ms`, 4:40 PM PDT).
+
+So the failing variable is isolated: **prior media in the conversation**, not
+media+tools together. The new attachment was ignored and the model answered
+about the earlier media — the "fluent answer about the WRONG picture" failure
+that C3's cache-scope salt exists to prevent, here reached through conversation
+history rather than a cache hit.
+
+**Honest limits of this observation.** One reproduction of the failure and one
+of the pass. What is NOT yet established: whether it needs video specifically
+(vs any prior media), whether the new image reaches the model at all or is
+merely out-ranked by the older frames, and whether it depends on the two media
+being different kinds. Naming the property rather than the shape I happened to
+run: *a media-introducing turn that follows earlier media in the same
+conversation.* That is the case to re-run before anyone calls it understood —
+and it deserves its own investigation rather than a line in this PR.
