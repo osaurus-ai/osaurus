@@ -49,34 +49,37 @@ Status key: **FIXED+PROVEN** / **FIXED, unproven live** / **OPEN** /
 | C2 | Salt covers image, video AND audio (+ sample rate) | PROVEN (pre-existing) |
 | C3 | **Every** VLM `LMInput` carries `cacheScopeSalt` | **FIXED** — `DeepseekOCRProcessor` was the sole omission; unsalted image path = fluent answer about the WRONG picture |
 | C4 | Qwen / Gemma / Zaya / Audex / GLM / FastVLM salted | PROVEN — none appeared in the coverage failure |
-| C5 | Live VL multiturn: qwen, muse, gemma — image reuse across turns | **OPEN** |
-| C6 | Live VIDEO passthrough + cache | **OPEN** |
-| C7 | Live AUDIO passthrough + cache (gemma E2B) | **OPEN** |
+| C5 | VL multiturn: image reuse across turns | CHARACTERIZED — resumes for text follow-ups; a media-INTRODUCING turn re-prefills (below) |
+| C6 | Live VIDEO passthrough + cache | **OPEN** (video EVS additionally needs a post-prepare cache key) |
+| C7 | Live AUDIO passthrough + cache (gemma E2B) | CHARACTERIZED with C5 — audio rides the same two mechanisms |
 | C8 | Media + tools in the same turn | **OPEN** |
+| C9 | Best prefix/suffix match block for multimodal | **DIAGNOSED, NOT FIXED** — the suffix rollback is the binding constraint, not the salt |
 
 ## D. Generation config parity
 
 | # | item | status |
 |---|---|---|
 | D1 | Merge order puts the user's Sampling Defaults ahead of bundle defaults | **FIXED — defect confirmed on three independent signals** (below) |
-| D2 | Reasoning-effort enforcement reaches the engine | **OPEN** |
+| D2 | Reasoning-effort enforcement reaches the engine | PROVEN — `request.reasoning_effort` → `modelOptions["reasoningEffort"]` → `context["reasoning_effort"]` → the bundle's chat template, and the same context feeds `cacheScopeSalt` |
+| D2b | Cost of changing reasoning effort mid-conversation | ANSWERED — a full re-prefill, and **unavoidable by cache work** (below) |
 | D3 | Settings changes reach the API-server path, not just chat | FIXED with D1 — one shared call site; save invalidates the cached `RuntimeConfig` |
-| D4 | Displayed live stats match what the model actually ran | **OPEN** |
+| D4 | Displayed live stats match what the model actually ran | **FIXED** — the effective sampler had NO GUI surface at all; added "Sampler last used" to Live Activity |
 
 ## E. MTP / speculative decoding
 
 | # | item | status |
 |---|---|---|
-| E1 | Native MTP on/off toggle enforced from Settings | **OPEN** |
-| E2 | `canUseNativeMTP` gate agrees with the toggle at all 5 dispatch sites | **OPEN** |
-| E3 | dFlash-2 block size + drafter path honoured | **OPEN** |
+| E1 | Native MTP on/off toggle enforced from Settings | PROVEN — `resolvedMTPLaunch` returns `.off` on `mtp.mode == .off`; the toggle is REACHED because `loadedModelRuntimeInputsRequireRefresh` sees `previous.mtp != next.mtp` and unloads, so the next load re-plans (test: `loadedModelRefreshInputs_coverCacheMemorySafetyMultimodalMTPAndLoadPerformance`) |
+| E2 | The MTP gate agrees with the toggle at every dispatch site | PROVEN — no `canUseNativeMTP` symbol survives; one planner (`resolveNativeMTPLaunchPlan`) writes `holder.draftStrategy` at load, and both readers take it from the holder. `DFlash2DispatchReachabilityTests` asserts the dispatch sites and their ORDER at source level |
+| E3 | dFlash-2 block size + drafter path honoured | PROVEN — `resolvedMTPDraftStrategy` passes `mtp.dflash2BlockSize`; `DFlash2DrafterSelectionTests` covers selection, mismatch rejection, and round-trip |
+| E4 | A selected dFlash-2 drafter drafts even with Mode = Off | BY DESIGN, disclosed at the control: *"A selected DFlash 2 drafter drafts regardless of Mode — remove it below to stop."* Pinned by `DFlash2DrafterSelectionTests` (mode `.off` + drafter → `.dflash2`) |
 
 ## F. Prefill
 
 | # | item | status |
 |---|---|---|
 | F1 | Spawned agents reuse the prefill cache | PROVEN — content-addressed key, no session in it |
-| F2 | Chunked prefill GROWS from existing KV, not full rebuild | **OPEN** — the expensive failure mode is a silent full re-prefill |
+| F2 | Chunked prefill GROWS from existing KV, not full rebuild | PROVEN for text — longest-boundary probe returns `remainingTokens`, prefill resumes from there. Media-introducing turns are the exception (C9) |
 | F3 | Cold-load time reported separately from TTFT | FIXED; **chip never observed live** — `load_container` measured **0.0 ms** for a 17 GB model (MLX mmaps), so on a healthy host no load overlaps the turn |
 
 ## G. Host memory
@@ -138,6 +141,121 @@ cache and the next request re-reads it. That single shared call site is also
 why **D3** (settings reach the API-server path) resolves with D1.
 
 ---
+
+## D2b — Changing reasoning effort mid-conversation costs a full re-prefill
+
+Asked because a mid-conversation effort change looked like it might be
+throwing away the cached prefix unnecessarily. **It is a full re-prefill, and
+no cache change can avoid it** — the prompt itself diverges at the front.
+
+Checked against the real bundles rather than reasoned about: 8 templates in
+`~/models` consume `reasoning_effort`, and every one renders it into the
+**system message, before anything else**.
+
+- `dealign.ai/Step-3.7-Flash-JANG_K-CRACK`: `<|im_start|>system\n` then
+  immediately `"Reasoning: " + reasoning_effort` — the first tokens after BOS.
+- `JANGQ-AI/Qwen3.8-27B-JANG_{2D,4D,6D}`: `reasoning_instructions` resolves
+  from `resolved_reasoning_effort` and is emitted as the first content of the
+  system block, ahead of the tools block.
+
+So a new effort changes tokens at roughly position 5–30. **No shared prefix
+exists at the token level**, and the cache is content-addressed by tokens — the
+re-prefill is caused by prompt construction, not by cache policy.
+
+This also settles whether `cacheScopeSalt`'s `effort=<value>` component is
+costing reuse: it is not. The tokens have already diverged everywhere it
+applies, and the salt still earns its keep for any template that consumes
+`reasoning_effort` **without** rendering it, where tokens would be identical
+but KV semantics differ. Leave it alone.
+
+Practical consequence to tell users: switching effort mid-chat re-prefills the
+whole conversation once. Switching it between conversations costs nothing.
+
+## D4 — Nothing in the GUI showed the sampler that actually ran
+
+`MLXBatchAdapter.effectiveGenerationSettings` resolves per-request over the
+user's Sampling Defaults over the bundle's shipped defaults, and the result was
+recorded — but the only reader was the **HTTP admin endpoint**
+(`last_effective_generation`). No GUI surface existed. The Settings panel
+showed what had been *requested*; nothing showed what *ran*.
+
+That is exactly how D1 stayed invisible: the field was editable, saved, and
+inert, and there was no readout that would have disagreed with it.
+
+Added **"Sampler last used"** to the Live Activity card, refreshed on the same
+2-second timer, sourced from `lastEffectiveGenerationSettingsSnapshot()` —
+per model, no HTTP involved:
+
+    JANGQ-AI/Qwen3.8-27B-JANG_2D
+    temp 0.7 · top-p 0.95 · top-k 20 · min-p 0.01 · max 4096 · rep 1.05
+
+Two details that are load-bearing rather than cosmetic:
+
+- Formatted with `%g`, not `%.1f`. A `%.1f` share field already rewrote 0.005
+  to 0 once this session; a readout that rounds is a readout that lies.
+- Temperature 0 appends `(greedy — top-p/top-k/min-p inert)`. An agent stored
+  with `temperature: 0` otherwise reads as correctly configured while decoding
+  argmax — the mechanism behind the DSV4 verbatim reasoning loop.
+
+Warm-up prefills are excluded upstream by
+`shouldRecordAsLastEffectiveGeneration`, so the row always describes a real
+turn rather than the `temperature: 0, maxTokens: 1` housekeeping request that
+follows one. Tests: `EffectiveSamplerReadoutTests` (5).
+
+## C9 — What a growing VL conversation can actually reuse
+
+**Diagnosed, deliberately NOT fixed this pass.** Stating the property, because
+"multimodal caching is broken" and "multimodal caching is fine" are both wrong.
+
+Two independent mechanisms decide reuse, and they have to be read together:
+
+1. **`computeMediaSalt` fingerprints the whole concatenated pixel tensor.**
+   `ProcessedImage.pixels` is documented as *"Concatenated pixels from one or
+   more images"*, so appending an image changes the salt for the **entire**
+   prompt. `CacheCoordinator` passes that salt to `DiskCache.fetch` on every
+   candidate boundary probe, so no boundary stored by an earlier turn can
+   match.
+2. **A hit whose remaining SUFFIX still holds media placeholders is rolled
+   back to a full prefill** — `cacheHitSuffixContainsMediaPlaceholder`, applied
+   in all four decode paths (`Evaluate`, `BatchEngine`,
+   `DFlash2TokenIterator`, `NativeMTPTokenIterator`). This is a real
+   correctness requirement, not caution: media embeddings are substituted onto
+   placeholder positions **by order across the whole prompt**, so prefilling
+   only a suffix would map the wrong image onto them.
+
+Per-turn consequence:
+
+| turn shape | reuses? | why |
+|---|---|---|
+| text follow-up after an image turn | **yes** | same tensor → same salt; suffix is text-only |
+| turn that ADDS an image / video / audio | **no** | salt changed AND the suffix carries the new placeholders |
+| text turn after a media-introducing turn | **yes** | tensor matches the previous turn again |
+
+So the cost is **per media-introducing turn**, not cumulative — but a chat that
+varies modality every turn introduces media every turn and therefore never
+resumes, re-running the vision tower over all prior images each time. That is
+the long-context degradation to expect, and it is the shape worth optimizing.
+
+**Finding that prevents wasted work:** mechanism 2 is the binding constraint.
+Prefix-scoped salting on its own buys **nothing** — every case it would unlock
+is still rejected by the suffix rollback, including the "text-only prefix
+stored before any media existed" case, because the suffix from that boundary
+still contains the new placeholders. Any real fix has to thread a
+*media-consumed offset* into each VLM's `prepare` so the suffix substitutes
+starting at image K, and only then is prefix-scoped salting worth adding. That
+touches every VLM model file and cannot be proven without live VL turns, so it
+is not being half-shipped here.
+
+Pinned as characterization — assertions about today's behaviour, which SHOULD
+change deliberately when the above lands:
+`Tests/MLXLMCommonFocusedTests/VLGrowingConversationReuseTests.swift` (5 tests,
+including a boundary landing *inside* a placeholder run, which is the media
+analogue of the non-aligned-size rule).
+
+Live confirmation without driving turns — the rollback announces itself:
+
+    Slot N: cache hit — rolling back to full prefill
+            (media placeholder tokens remain in cache-hit suffix)
 
 ## RESOLVED
 
