@@ -218,6 +218,35 @@ struct CacheSection: View {
             directory: dir)
         let share = draft.cache.blockDisk.maxSizePercent
             ?? (VMLXServerRuntimeSettings.autoDiskCacheFraction * 100)
+
+        // Report what the engine will ACTUALLY enforce, not what the share
+        // resolves to in isolation.
+        //
+        // `applyHostAwareDiskCacheCeiling` additionally bounds the cap to a
+        // quarter of the free bytes at load, so a share is not the last word:
+        // measured live, 10% of a 3.7 TB volume resolved to 372 GB but the
+        // coordinator enforced 242 GB, because only 969 GB was free. A label
+        // showing the unbounded number would over-promise by 130 GB and
+        // disagree with the "Active" row a few lines below it.
+        let effective: Double
+        if let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: dir.path), freeBytes > 0 {
+            let decision = ModelRuntime.hostAwareDiskCacheDecision(
+                configuredCapGB: resolved, freeBytes: freeBytes)
+            effective = decision.enabled ? decision.capGB : 0
+        } else {
+            effective = resolved
+        }
+
+        if effective < resolved {
+            // Say WHY it is lower, or a user who set 10% and sees a smaller
+            // number reads it as the setting being ignored.
+            return String(
+                format: L("%@%% of %@ ≈ %@ (limited to %@ — disk is nearly full)"),
+                String(format: "%g", share),
+                DiskCacheUsage.format(bytes: Int(capacity * 1_073_741_824)),
+                DiskCacheUsage.format(bytes: Int(resolved * 1_073_741_824)),
+                DiskCacheUsage.format(bytes: Int(effective * 1_073_741_824)))
+        }
         return String(
             format: L("%@%% of %@ ≈ %@"),
             String(format: "%g", share),

@@ -7744,10 +7744,21 @@ private struct FloatingContextChip: View {
         // is a worse lie than the guess it was avoiding. A share of a volume we
         // can measure IS the number, computed by the same function that builds
         // CacheCoordinatorConfig.
-        let resolvedGB = VMLXServerRuntimeSettings.resolveDiskCacheMaxGB(
+        var resolvedGB = VMLXServerRuntimeSettings.resolveDiskCacheMaxGB(
             percent: settings.cache.blockDisk.maxSizePercent,
             legacyGB: settings.cache.blockDisk.maxSizeGB,
             directory: dir)
+        // The share is not the last word: `applyHostAwareDiskCacheCeiling`
+        // additionally bounds the cap to a quarter of the free bytes. Measured
+        // live, 10% of a 3.7 TB volume resolved to 372 GB while the coordinator
+        // enforced 242 GB, because only 969 GB was free. Reporting the
+        // unbounded number would make the bar's denominator disagree with the
+        // cap that is actually evicting.
+        if let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: dir.path), freeBytes > 0 {
+            let decision = ModelRuntime.hostAwareDiskCacheDecision(
+                configuredCapGB: resolvedGB, freeBytes: freeBytes)
+            resolvedGB = decision.enabled ? decision.capGB : 0
+        }
         // Still honest when the volume cannot be measured: the resolver falls
         // back to the floor, which is a real enforced cap, not a guess.
         return DiskCacheUsage(

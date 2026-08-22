@@ -131,4 +131,35 @@ final class CacheSectionWiringTests: XCTestCase {
             src.contains("diskCache.usedBytes > 0 || diskCache.maxBytes > 0"),
             "the section is gated such that it disappears without a cap")
     }
+
+    /// The readout must show the cap the ENGINE enforces, not the share in
+    /// isolation.
+    ///
+    /// Caught live: with 10% of a 3.7 TB volume the share resolved to 372 GB,
+    /// but `applyHostAwareDiskCacheCeiling` additionally bounds the cap to a
+    /// quarter of free bytes, and only 969 GB was free — so the coordinator
+    /// enforced 242 GB. A label showing 372 would over-promise by 130 GB and
+    /// contradict the "Active" row a few lines below it in the same panel.
+    func testReadoutsApplyTheHostAwareCeiling() throws {
+        for path in [
+            "Views/Settings/ServerSettings/CacheSection.swift",
+            "Views/Chat/FloatingInputCard.swift",
+        ] {
+            let src = try source(path)
+            XCTAssertTrue(
+                src.contains("ModelRuntime.hostAwareDiskCacheDecision("),
+                "\(path) reports the raw share and would over-promise on a full disk")
+            XCTAssertTrue(
+                src.contains("OsaurusPaths.volumeFreeBytes("),
+                "\(path) never measures free space, so it cannot apply the ceiling")
+        }
+    }
+
+    /// When the ceiling bites, the label has to say WHY. A user who set 10%
+    /// and sees a smaller number otherwise reads it as the setting being
+    /// ignored.
+    func testLimitedLabelNamesTheReason() throws {
+        let src = try source("Views/Settings/ServerSettings/CacheSection.swift")
+        XCTAssertTrue(src.contains("disk is nearly full"), "the lower cap is unexplained")
+    }
 }
