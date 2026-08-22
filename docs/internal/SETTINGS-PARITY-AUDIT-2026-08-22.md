@@ -873,3 +873,61 @@ prefix needs (bounded by the model window) and say it did — so the cap governs
 the conversation budget and never makes a request impossible. That needs the
 prefix size at resolver time, which `applyingUserCap` does not have, so it is a
 follow-up rather than a same-PR change.
+
+---
+
+## The picker says "Vision", the runtime says "not advertised"
+
+Hit while setting up the C9 re-proof: a locally-installed VL bundle selected
+from the model picker — badged **Vision**, attachment accepted, thumbnail
+shown — was refused the moment it was sent:
+
+```
+Error: Request is blocked by local MLX runtime policy for lfm2.5-vl-3b-jang_4m:
+Image input is not advertised for LFM2.5-VL-3B-JANG_4M.
+```
+
+Two different capability resolvers disagreeing:
+
+- **Composer** (badge + attach) uses
+  `ModelMediaCapabilities.composerCapabilities(modelId:fallbackSupportsImages:localModelType:)`,
+  which combines the scan record's `model_type` with the bundle's actual
+  vision bit — the real facts.
+- **Runtime policy** ends up in `descriptor(modelId:)`, which calls
+  `from(modelId:)` — capability inferred from the model NAME.
+
+There IS a config-aware `descriptor(directory:modelId:)`, and `MLXService`
+tries to use it — but it rebuilds the bundle path as
+`effectiveModelsDirectory() + modelId components`. A model discovered in the
+HF cache, LM Studio, or a **custom model folder** does not live there, the
+`fileExists` check fails, and it silently falls back to the name-only
+descriptor. So every externally-discovered VL bundle whose name the regex
+does not recognise is offered as Vision and then refused.
+
+Same `name-is-not-the-bits` class as the JANG quant work: the ID is not the
+manifest.
+
+Fixed by asking the locator where the bundle actually is before falling back:
+
+```swift
+let localDirectory =
+    modelDirectory
+    ?? ExternalModelLocator.path(forId: modelId)   // <-- added
+    ?? modelId.split(separator: "/")...
+```
+
+**Live proof, same model, same session, before/after the rebuild:**
+
+| build | sending the image |
+|---|---|
+| before | `Error: ... Image input is not advertised for LFM2.5-VL-3B-JANG_4M.` |
+| after | `The digit shown is 7 and the background is blue.` — TTFT 2.15s, 223.9 tok/s, 12 tokens |
+
+The probe image is a white `7` on blue, paired with a red `3` so a blind model
+answering one constant scores wrong on at least one probe rather than passing
+by luck.
+
+Worth noting for the C9 work: this gate sat in FRONT of the media cache path,
+so on this host no externally-discovered VL bundle could reach the reuse logic
+at all. Any earlier "0 disk hits" for such a bundle says nothing about the
+cache — the request never got there.
