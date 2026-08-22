@@ -26,9 +26,9 @@ Status key: **FIXED+PROVEN** / **FIXED, unproven live** / **OPEN** /
 | A10 | Share field keeps precision (`%g`, not `%.1f`) | FIXED+PROVEN — 0.005 was saved as 0 |
 | A11 | Eviction enforced at a low share | FIXED+PROVEN — **1638 MB → 408 MB under a 762 MB cap, one store** |
 | A12 | Oldest-first eviction ACROSS models | PROVEN (pre-existing test) |
-| A13 | Diagnostics report resolved cap, not the stale field | FIXED, unproven live |
+| A13 | Diagnostics report resolved cap, not the stale field | FIXED; **NOT visually provable** — the payload is HTTP-only (`HTTPHandler` `block_disk_max_size_gb`) with no GUI surface, and curl is banned. It calls the same `resolveDiskCacheMaxGB` proven live at two shares below, so the figure is verified; the endpoint itself is not |
 | A14 | Eval harness cap not overridden by the share | FIXED, unproven live — every eval would have run at 10% |
-| A15 | "Is at defaults" check accounts for the share | FIXED, unproven live |
+| A15 | "Is at defaults" check accounts for the share | **FIXED+PROVEN LIVE** — 0.002% survived a full quit/relaunch (shipped default is 10%), field reads back `0.002` → `≈ 76 MB`; the defaults migration did not overwrite a deliberate share |
 | A16 | A store too big for the cap does not wipe the cache | FIXED in vmlx (#293) — MEASURED 2 entries → 0; **not on the shipping path**, see below |
 
 ## B. Context window
@@ -274,7 +274,7 @@ does not help — see the SecurityAgent note under D5.
 
 | # | item | status |
 |---|---|---|
-| G1 | Advisory when the machine, not the model, is the bottleneck | FIXED, unproven live |
+| G1 | Advisory when the machine, not the model, is the bottleneck | FIXED; **deliberately NOT exercised today** — it only renders once the host is genuinely thrashing, and this host kernel-panicked from memory exhaustion at 09:31 (see C9). Manufacturing that state to photograph a banner is not worth a second panic. Needs a box that is not this one, or a fault-injected `memoryPressure` value |
 | G2 | Advises, never refuses | asserted — no throw/gate in the path |
 | G3 | Trigger is decompression rate + low free, NOT swap % | FIXED+tested — a healthy Mac reads 78% swap |
 
