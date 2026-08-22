@@ -287,3 +287,41 @@ The transferable lesson is about measurement, not the product: **round-to-round
 spread, not the free-memory number, is what identifies a corrupted timing.** The
 run I rejected showed a 10% spread across identical rounds; the run I accepted
 at 0.1–0.3 GB free showed 0.6% (40.25 / 40.35 / 40.50).
+
+## dFlash2: it IS present, 45 tok/s is not reachable on this target, and the default block size is the worst one
+
+**Correction first.** I reported three times that no dFlash2 drafter existed on
+this machine. It does — `~/models/Qwen3.8-27B-DFlash2`, and `USABLE` by
+`DFlash2Loader.looksLikeDFlash2Drafter` (block_size 8, selector_top_k 16,
+selector_rank 256, conv 2/16). My check was `ls ~/models/*DFlash2* ~/models/*/*DFlash2*`,
+and zsh aborts the whole command on the *second* pattern matching nothing, so
+the first pattern's hit was never printed. A shell artifact became a reported
+blocker — the same class of error as reading a bundle's bit-width off its name.
+
+Measured on Qwen3.8-27B-JANG_4D, 2 interleaved rounds, ~57 GB free:
+
+| arm | tok/s | speedup |
+|---|---|---|
+| baseline | 17.59 | — |
+| dflash2-b8 (**the checkpoint's own block_size**) | 17.73 | **1.01×** |
+| dflash2-b6 | 20.31 | 1.15× |
+| dflash2-b4 | **22.86** | **1.30×** |
+
+Two conclusions.
+
+**45 tok/s is not reachable via dFlash2 on this target.** The drafter is trained
+against Qwen3.8's hidden states and is ignored on any other bundle, and
+Qwen3.8-27B's plain baseline is only ~17.6 tok/s. The best arm reaches 22.9.
+Native MTP on the faster bundles is where 40+ actually lives
+(Ornith-1.5-35B-MXFP8 43.62, Qwen3.6-35B-A3B 40.61).
+
+**The shipped default block size is worth nothing.** `dflash2BlockSize` defaults
+to `nil`, meaning "use the checkpoint's trained `block_size`" — which is 8, and
+8 measures 1.01×. A user who selects a drafter and changes nothing else gets no
+speedup at all, while `4` gives 1.30×. This reproduces the earlier finding that
+b8 was worst in 6 of 6 measurements; it is now 7 of 7.
+
+Not changing the default here: it is one target on one prompt class, and a
+default that ships to every user needs the same context sweep the MTP depths
+got. The measurement and the reproducer are recorded so that sweep can be run
+against something.
