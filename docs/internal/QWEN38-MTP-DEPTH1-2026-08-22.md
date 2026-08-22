@@ -153,3 +153,55 @@ One condition that had been unstated until now: a bare `ModelContext` has no
 cache coordinator at all (`enableDiskCache` defaults false; the coordinator
 lives on `ModelContainer`), so every number measured before the cache axis
 existed was a no-cache number.
+
+## The adaptive controller does not protect against long context
+
+Context sweep on Qwen3.6-35B-A3B-MXFP4-CRACK-MTP, cache=none, ABAB, round 1
+discarded, quiet box. Baseline is the control at every size:
+
+| context | baseline | d3 | speedup | downshifts | commit/verify |
+|---|---|---|---|---|---|
+| ~56 tok | 24.61 | 44.58 | 1.811× | 2 | 2.51 |
+| ~3k | 22.30 | 23.22 | 1.041× | 0 | 2.38 |
+| ~7k | 19.64 | 19.50 | **0.993×** | 0 | 2.56 |
+| ~13k | 15.37 | 14.24 | **0.927×** | 0 | 2.56 |
+
+**Depth 3 crosses below break-even between ~3k and ~7k and keeps losing —
+7.3% slower than plain decode at 13k — and the controller never demotes.**
+
+The reason it never demotes is the important part: `downshifts=0` because
+**acceptance stays high**. Committed tokens per verify actually *rises*
+(2.38 → 2.56) as throughput falls. The controller gates on acceptance, but
+break-even acceptance is not constant: a verify forward's attention cost scales
+with context length while it still commits a bounded number of tokens. The
+floors in `NativeMTPTokenIterator` were derived from short-context step costs —
+the comment cites "d1 82ms, d2 92ms, d3 110ms vs 59ms plain step" — and those
+ratios do not hold at depth.
+
+At the same ~13k context, shallower depths are unaffected:
+
+| depth | tok/s | speedup |
+|---|---|---|
+| baseline | 15.20 | — |
+| 1 | 20.78 | 1.367× |
+| 2 | 20.91 | 1.376× |
+| 3 | 14.24 | 0.927× |
+
+A 46-point swing between d2 and d3. So the exposure is specific to deep
+speculation at long context, not to speculation generally.
+
+**Consequence, and a correction to this document's earlier conclusion:** the
+first stamp of this bundle used depth 3 on the strength of a short-prompt
+measurement (1.814×). That was wrong and would have shipped long conversations
+7% slower than no MTP at all. Re-stamped at **depth 2**, which is best or
+near-best at both ends (1.664× short, 1.376× at 13k).
+
+This is the "raising a limit isn't done until the newly-allowed territory
+works" rule: a depth chosen on a short prompt has not been shown safe at the
+context users actually reach.
+
+A controller fix — gating on measured wall throughput rather than inferring it
+from acceptance — is NOT attempted here. Earlier in this same session a
+plausible controller change ("cold cache under-reads acceptance") was written,
+measured, found to make users *slower*, and reverted. Any change to this
+controller has to arrive with a context sweep attached.
