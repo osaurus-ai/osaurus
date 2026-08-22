@@ -166,6 +166,16 @@ public enum SettingsSearchIndex {
             keywords: ["cmd n", "new chat", "shortcut", "keyboard", "new window", "hotkey"]
         ),
         .init(
+            id: "settings.chat.thinkingDisplay",
+            tab: .chat,
+            section: "Chat",
+            title: "Expand Thinking While Streaming",
+            keywords: [
+                "thinking", "reasoning", "expand thinking", "show thinking",
+                "group thinking", "tool activity", "chain of thought",
+            ]
+        ),
+        .init(
             id: "settings.chat.compactionModel",
             tab: .chat,
             section: "Chat",
@@ -477,7 +487,16 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Tools & Templates",
             title: "Tools & Templates",
-            keywords: ["tool calling", "templates", "chat template"],
+            // "Reasoning Parser Override" lives in this section, and reasoning
+            // was unfindable by ANY of its own words — `reasoning`, `thinking`,
+            // `effort` and `preserve thinking` all returned 0 matches while
+            // three real controls existed. Same defect D5 fixed for the
+            // sampler row.
+            keywords: [
+                "tool calling", "templates", "chat template",
+                "reasoning", "reasoning parser", "reasoning effort", "effort",
+                "thinking", "preserve thinking", "think tags",
+            ],
             subTab: "tools"
         ),
         .init(

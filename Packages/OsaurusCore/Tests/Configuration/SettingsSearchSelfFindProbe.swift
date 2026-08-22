@@ -59,6 +59,14 @@ struct SettingsSearchSelfFindProbe {
             ("max context", "settings.chat.contextLength"),
             ("kv retention", "settings.chat.contextLength"),
             ("metadata fallback", "settings.chat.contextLength"),
+            // Reasoning was unfindable by every one of its own words while
+            // three real controls existed: Reasoning Parser Override, Expand
+            // Thinking While Streaming, Group Thinking & Tool Activity.
+            ("reasoning", "server.tools"),
+            ("reasoning parser", "server.tools"),
+            ("effort", "server.tools"),
+            ("preserve thinking", "server.tools"),
+            ("thinking", "settings.chat.thinkingDisplay"),
         ]
 
         let missed = labels.filter { label in

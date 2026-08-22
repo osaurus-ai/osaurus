@@ -1053,3 +1053,41 @@ uniformly. This matters for the SSD tier: reasoning effort feeds
 `cacheScopeSalt` (D2), so a prefix built at one effort cannot be reused at
 another — which is the correct behaviour, since preserved thinking changes the
 prompt prefix itself.
+
+---
+
+## Reasoning was unfindable by every word it uses
+
+Third instance of the D5 class, and the worst of the three because reasoning
+is a feature people go looking for. Probed on the running app:
+
+```
+0 settings match "reasoning"
+0 settings match "thinking"
+0 settings match "effort"
+0 settings match "preserve thinking"
+```
+
+Three real controls existed the whole time — `Reasoning Parser Override`
+(Server → Tools & Templates), `Expand Thinking While Streaming` and
+`Group Thinking & Tool Activity` (Chat). None was reachable by any of its own
+words. `Expand Thinking While Streaming` had no index entry at all.
+
+Fixed by indexing the Tools & Templates entry for reasoning vocabulary and
+adding a `settings.chat.thinkingDisplay` entry, and by extending
+`controlsFindableByOnScreenLabel` so the class cannot come back. The probe was
+verified to FAIL without the keywords, naming all five queries.
+
+**Live, same build, before → after:**
+
+| query | before | after |
+|---|---|---|
+| `reasoning` | 0 | **2** |
+| `thinking` | 0 | **2** |
+| `effort` | 0 | **1** |
+| `preserve thinking` | 0 | **1** |
+
+Three separate sections have now been found unreachable by their own on-screen
+words (sampler, disk cache, reasoning). The title/section sweeps cannot see
+this — an entry passes them while every label a user reads misses — which is
+why the control-label sweep is the one that matters.
