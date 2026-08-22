@@ -488,10 +488,44 @@ follow-up genuinely depends on the retained image context rather than guessing.
 Disk L2 counters moved with it: 2/11/6 → 5/20/11 across the two VL turns
 (+3 hits), SSM 1 → 4.
 
-Still unreached: Gemma 4, Gemma 3, Muse Glimmer, LFM2-VL, Mistral 3, GLM-4V,
-Zaya1-VL, Idefics3, Pixtral, SmolVLM2, FastVLM. Each needs its own placeholder
-ids; the Qwen change is the pattern. `VLMediaTokenDeclarationReachabilityTests`
-names them individually so the list cannot silently drift.
+### The other families: declared, and it is not enough
+
+Every processor whose placeholder tokens could be established now declares
+them through one shared `MediaTokenIds.resolve` — Gemma 4 (`<|image|>`,
+`<|audio|>`), Muse Glimmer (`<|patch|>`, `<|video|>`), LFM2-VL, Zaya1-VL,
+FastVLM, SmolVLM2 (`<image>`), Mistral 3 and Pixtral (`[IMG]`, `[IMG_BREAK]`,
+`[IMG_END]`). A family emitting more than one KIND declares all of them:
+declaring only some is the dangerous direction, because a suffix carrying the
+undeclared kind matches nothing, reads as media-free, and resumes onto the
+wrong media.
+
+Gemma 3, GLM-4V and Idefics3 are deliberately left undeclared — they carry the
+placeholder only as a numeric config id the processor cannot see, and a WRONG
+id is worse than none for the same reason. The test states that as a decision
+rather than leaving it looking like an oversight.
+
+**Gemma 4 live result — declared correctly, and reuse still does not engage.**
+Same three-turn harness, `Gemma 4 26B A4B it JANG_4M CRACK`:
+
+| turn | TTFT | answer |
+|---|---|---|
+| 1 — image | 1.70s | "The image shows the digit 7 and the background is blue." |
+| 2 — text | 1.52s | "Seven" |
+| 3 — text | 1.58s | "Blue" |
+
+Answers are correct across all three, which is the safety result that matters
+for a newly-declared family: the ids are right and nothing is mis-mapped. But
+Disk L2 read **0 hits / 55 misses / 12 stores** — no reuse at all, and TTFT is
+flat because this model prefills cheaply either way.
+
+So for Gemma the declaration is **necessary but not sufficient**: something
+further down still blocks the hit. It is not cache topology — Live Activity
+showed `Cache-enabled models 1`, `Hybrid caches 0`,
+`Paged-incompatible caches 0`. Not chased further, and explicitly NOT claimed
+as fixed. Only the Qwen VL families are proven end-to-end.
+
+`VLMediaTokenDeclarationReachabilityTests` names every family individually so
+the declared set cannot silently drift.
 
 **Finding that prevents wasted work:** mechanism 2 is the binding constraint.
 Prefix-scoped salting on its own buys **nothing** — every case it would unlock
