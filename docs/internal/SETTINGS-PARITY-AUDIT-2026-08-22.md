@@ -22,7 +22,7 @@ Status key: **FIXED+PROVEN** / **FIXED, unproven live** / **OPEN** /
 | A6 | Chat cache bar shows a real cap, not "Auto" | FIXED+PROVEN — live `DISK CACHE 2.2 GB / 242.1 GB` |
 | A7 | Disabled tier renders "Off", never "Auto" | **WAS UNREACHABLE — now FIXED+PROVEN LIVE**; a user-disabled tier made the whole row VANISH rather than render "Off" (below). Live: `DISK CACHE  0 MB · Off` |
 | A8 | Small share honoured, not clamped to the 10 GB floor | FIXED+PROVEN — floor now guards auto only |
-| A9 | Small share does not silently DISABLE the tier | FIXED, unproven live |
+| A9 | Small share does not silently DISABLE the tier | **FIXED+PROVEN LIVE** — 0.005% → `0.005% of 3721.8 GB ≈ 191 MB`, chat reads `DISK CACHE 0 MB / 191 MB` (a real cap, not "Off", not "Auto") |
 | A10 | Share field keeps precision (`%g`, not `%.1f`) | FIXED+PROVEN — 0.005 was saved as 0 |
 | A11 | Eviction enforced at a low share | FIXED+PROVEN — **1638 MB → 408 MB under a 762 MB cap, one store** |
 | A12 | Oldest-first eviction ACROSS models | PROVEN (pre-existing test) |
@@ -77,6 +77,47 @@ letting `isDisabled` pass the section gate on its own.
 ```
 DISK CACHE                    0 MB · Off
 ```
+
+### A9 / A11 — small share, and eviction actually enforced at it
+
+Same session, `Qwen3 0.6B 8bit`, share driven from the Settings field:
+
+| share | Settings resolves | chat readout |
+|---|---|---|
+| 0.005% | `0.005% of 3721.8 GB ≈ 191 MB` | `DISK CACHE 0 MB / 191 MB` |
+| 0.002% | `0.002% of 3721.8 GB ≈ 76 MB` | `DISK CACHE 0 MB / 76 MB` |
+
+A9 holds: a share three orders of magnitude below the default resolves to a
+real cap and the tier stays live. It is not clamped up to the old 10 GB floor
+(A8) and `0.005` survives round-tripping rather than rendering as `0.0` (A10).
+
+**Eviction (A11), re-measured today rather than inherited.** Eight turns grew
+the tier to only 116 MB in 5 files — nowhere near the 191 MB cap, so that run
+did NOT exercise eviction and is not evidence about it. Instead of loading a
+larger model on a host that kernel-panicked this morning, the cap was lowered
+*below* the existing cache and one ordinary turn was sent to trigger a store:
+
+```
+before:  116 MB in 5 files      cap 191 MB
+cap ->   76 MB
+after:     1 MB in 4 files      cap  76 MB
+```
+
+The tier is genuinely bounded by the share — it does not ignore the cap. Note
+the overshoot: getting under 76 MB needed roughly two of the five entries
+dropped, and it fell to 1 MB. Enforcement is the safe direction, so this is
+recorded as measured rather than called a defect; whether oldest-first evicts
+more than necessary needs its own run with entry-level accounting.
+
+**Harness note, because it nearly produced a false result.** A first eviction
+attempt reported the cache flat at 114 MB across four turns, which looked like
+"writes are being suppressed". The transcript was empty — `key code 36` had
+gone to whichever window was key, not the chat. A second attempt then reported
+"turn did not send" on turns that HAD sent, because sent bubbles and model
+replies are also `AXTextArea`s and the probe grabbed a transcript bubble rather
+than the composer. Both directions of lie, from the same harness, within
+minutes. `sendturn.sh` now presses the send button, picks the bottom-most text
+area, and fails loudly unless the composer actually clears.
 
 ### Settings search could not find the cache section by any name it displays
 
