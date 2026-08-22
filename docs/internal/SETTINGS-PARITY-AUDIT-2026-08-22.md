@@ -65,7 +65,7 @@ Status key: **FIXED+PROVEN** / **FIXED, unproven live** / **OPEN** /
 | D2b | Cost of changing reasoning effort mid-conversation | **CORRECTED — my first answer was wrong and backwards.** Only 2 of 97 templates render `reasoning_effort`; for the rest the tokens are identical and the `effort=` salt discards reuse for nothing (below) |
 | D3 | Settings changes reach the API-server path, not just chat | FIXED with D1 — one shared call site; save invalidates the cached `RuntimeConfig` |
 | D4 | Displayed live stats match what the model actually ran | **FIXED+PROVEN LIVE** — the effective sampler had NO GUI surface at all; added "Sampler last used" to Live Activity, read back off the running app |
-| D5 | The row is discoverable from Settings search | **FIXED** — `sampler`, `top k` and `min p` each returned *"0 settings match"* live; no stemming reaches the indexed `sampling` (below) |
+| D5 | The row is discoverable from Settings search | **FIXED+PROVEN LIVE** — `0 settings match "sampler"` → `2 settings match "sampler"`, and the result navigates to Sampling Defaults (below) |
 
 ## E. MTP / speculative decoding
 
@@ -289,11 +289,43 @@ behaviour instead of restating it.
 
 One caveat on the same probe: after that first search I tried four more terms
 by clicking the field and retyping, and reported them as also returning zero.
-That was wrong — the clicks never reached the settings window, the field still
-read `sampler`, and I was re-reading a stale result string. Those four results
-are discarded. Only the `sampler` observation was made with the field verified
-to hold what I typed; `top k` and `min p` were then established from the index
-source and pinned by the test.
+That was wrong — the field still read `sampler` and I was re-reading a stale
+result string. Those four results are discarded. Only the `sampler` observation
+was made with the field verified to hold what I typed; `top k` and `min p` were
+then established from the index source and pinned by the test.
+
+**Live proof after the fix.** Rebuilt the app with the new keyword lists and
+drove the real Settings window:
+
+    Search Results
+    2 settings match "sampler"
+      SERVER
+      Generation Defaults   / Sampling Defaults
+      Live Activity         / Live Activity
+
+Pressing the first result navigates to the Sampling Defaults panel with
+`Temperature` on screen, so the entry is findable *and* reachable, not just
+indexed.
+
+Two harness facts worth keeping, because both cost time here:
+
+- **Synthesized keystrokes never reached that search field by any method** —
+  CGEvent unicode, CGEvent virtual keycodes, with and without `AXFocused`, with
+  the app confirmed frontmost, launched via LaunchServices and directly. Mouse
+  clicks reached the same window fine (clicking a nav item changed the pane),
+  and `AXIsProcessTrusted` was true with `IsSecureEventInputEnabled` false, so
+  neither trust nor secure input explains it. What worked was setting
+  `AXValue` on the field, which SwiftUI wrote straight through to the binding.
+  Note this is field-specific: the same `AXValue` write did NOT fire the
+  binding on the Sampling Defaults temperature field earlier in this audit.
+- **A leftover proof app held a keychain prompt open across the whole session.**
+  `OsaurusBonsaiProof` had been running ~55 minutes and kept a SecurityAgent
+  dialog ("Osaurus wants to use your confidential information stored in
+  'Osaurus Master Key'") at layer 1000 over the settings window, re-posting a
+  new one each time it was denied. Quitting the requesting app is what stopped
+  it; denying alone never does. This is the stuck modal reported earlier as
+  "i closed osaurus but this bs is still open". It is NOT the keystroke cause
+  above — keystrokes still failed after it was gone.
 
 Warm-up prefills are excluded upstream by
 `shouldRecordAsLastEffectiveGeneration`, so the row always describes a real
