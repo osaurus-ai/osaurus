@@ -136,18 +136,33 @@ struct MLXBatchAdapter {
             runtimeDefault: runtimeRepetitionPenalty
         )
 
+        // Merge order: per-request → THE USER'S Sampling Defaults → model-shipped
+        // defaults → vmlx engine defaults.
+        //
+        // The user's settings used to sit BEHIND the model's shipped defaults,
+        // which made them inert: 83 of 95 bundles in a real local library ship
+        // `temperature`/`top_p`/`top_k` in generation_config.json, so setting a
+        // temperature in Settings changed nothing on almost every model. The
+        // field was editable, saved, and had no effect — the same shape as the
+        // context-length setting that could not constrain anything.
+        //
+        // A blank field really is absent, not zero: a persisted `generation`
+        // block from a real run contains only `streamInterval` and
+        // `diffusionMaxDenoisingSteps`. So a non-nil runtime value here is
+        // always something the user deliberately chose, and deliberate choices
+        // outrank a bundle's suggestion. Per-request still wins over both.
         return EffectiveGenerationSettings(
             stage: stage,
             temperature: generation.temperature
-                ?? defaultTemperature
                 ?? runtimeTemperature
+                ?? defaultTemperature
                 ?? engineDefaults.temperature,
             maxTokens: generation.maxTokensExplicit
                 ? generation.maxTokens
-                : (modelDefaults.maxTokens ?? runtimeMaxTokens ?? generation.maxTokens),
-            topP: generation.topPOverride ?? modelDefaults.topP ?? runtimeTopP ?? engineDefaults.topP,
-            topK: generation.topKOverride ?? modelDefaults.topK ?? runtimeTopK ?? engineDefaults.topK,
-            minP: generation.minPOverride ?? modelDefaults.minP ?? runtimeMinP ?? engineDefaults.minP,
+                : (runtimeMaxTokens ?? modelDefaults.maxTokens ?? generation.maxTokens),
+            topP: generation.topPOverride ?? runtimeTopP ?? modelDefaults.topP ?? engineDefaults.topP,
+            topK: generation.topKOverride ?? runtimeTopK ?? modelDefaults.topK ?? engineDefaults.topK,
+            minP: generation.minPOverride ?? runtimeMinP ?? modelDefaults.minP ?? engineDefaults.minP,
             repetitionPenalty: repetitionPenalty,
             compiledBatchDecode: nativeMTPExplicitSamplingFallback
                 ? false
@@ -271,7 +286,10 @@ struct MLXBatchAdapter {
             return explicit
         }
 
-        let resolved = modelDefault ?? runtimeDefault
+        // Same precedence correction as the other sampler fields: the user's
+        // Sampling Default outranks the bundle's shipped one. Behind the
+        // model's value it was inert on any bundle that ships a penalty.
+        let resolved = runtimeDefault ?? modelDefault
         return resolved
     }
 
