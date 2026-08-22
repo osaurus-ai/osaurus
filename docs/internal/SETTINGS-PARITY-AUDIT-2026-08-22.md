@@ -199,7 +199,7 @@ Free RAM before this run: **84.3 GB**. Recorded per the rule added under C9.
 | C3 | **Every** VLM `LMInput` carries `cacheScopeSalt` | **FIXED** — `DeepseekOCRProcessor` was the sole omission; unsalted image path = fluent answer about the WRONG picture |
 | C4 | Qwen / Gemma / Zaya / Audex / GLM / FastVLM salted | PROVEN — none appeared in the coverage failure |
 | C5 | VL multiturn: image reuse across turns | CHARACTERIZED — resumes for text follow-ups; a media-INTRODUCING turn re-prefills (below) |
-| C6 | Live VIDEO passthrough + cache | **PASSTHROUGH PROVEN LIVE** — Qwen3.8 27B JANG_4D read a 4-frame clip as `7, 3, 5, 9` in order (below). Video *cache* reuse still OPEN: the EVS post-prepare cache key is unchanged and was not exercised |
+| C6 | Live VIDEO passthrough + cache | **CONTENT read correctly, MECHANISM not established** — an attached clip yields `7, 3, 5, 9` in order (twice), but the model reports receiving "a still image showing four digits stacked vertically", not video. Delivery shape unresolved; video *cache* reuse untouched (below) |
 | C7 | Live AUDIO passthrough + cache (gemma E2B) | **UNTESTABLE ON THIS HOST** — no installed bundle contains `embed_audio.embedding_projection`; `~/models`, `~/models/JANGQ-AI` and the whole HF cache return zero matches, so no audio turn can be run. Needs an E2B/E4B fetched first. An earlier "defect" claim here was withdrawn (below) |
 | C8 | Media + tools in the same turn | **PROVEN LIVE in a clean conversation** — image + tool answered correctly in one turn. But a NEW image after a PRIOR media turn was ignored and the model described the OLD media (below) |
 | C9 | Best prefix/suffix match block for multimodal | **FIXED+PROVEN LIVE for the Qwen VL families** — follow-up TTFT 3.40s → 0.59s median, A/B against the baseline vmlx pin (below). Other families still unreached |
@@ -1357,3 +1357,45 @@ being different kinds. Naming the property rather than the shape I happened to
 run: *a media-introducing turn that follows earlier media in the same
 conversation.* That is the case to re-run before anyone calls it understood —
 and it deserves its own investigation rather than a line in this PR.
+
+---
+
+## Video, second look: the content is right, the mechanism is not what I claimed
+
+An earlier revision of this document said "video passthrough PROVEN". That
+overstated what was observed, and a follow-up run said so in the model's own
+words. Asked to list the digits in the same clip, `Qwen3.8 27B JANG_4D`
+replied:
+
+> **I can't watch video** — what came through as a still image showing four
+> digits stacked vertically, top to bottom: 7 (blue), 3 (brown/red),
+> 5 (green), 9 (yellow/gold). So the sequence is: 7, 3, 5, 9.
+
+The digits and their order are right, twice, which is why the first run looked
+like clean video support. But the model describes receiving ONE stacked still,
+not four frames — and "stacked vertically, top to bottom" is a specific spatial
+claim, not vague hedging.
+
+**What is established:** attaching a video to a video-capable bundle produces a
+correct reading of its frame content, and the attach path is gated correctly
+(offered for `qwen3_5`, withheld for a bundle with no video tensors).
+
+**What is NOT established:** whether the runtime hands the model true temporal
+frames or composites them into a single image. A model's self-report is
+evidence, not proof — it could be describing a 4-frame grid it received as one
+tensor. The video preparation lives in vMLX rather than OsaurusCore, so it was
+not settled from this repository.
+
+This also gives a plausible mechanism for the wrong-media carry-over recorded
+above (a new image after a video turn answered about the video's last frame),
+and it sharpens that finding: the image→image control PASSED — a new image
+after a prior IMAGE was read correctly — so the failing ingredient involves
+video specifically, not merely "prior media".
+
+| prior turn | new attachment | result |
+|---|---|---|
+| image (blue 7) | image (green 5) | **correct** — "5 on a green background" |
+| video (4 frames) | image (red 3) | **wrong** — "9 on a yellow background", the video's last frame |
+
+Two runs, one each way. Enough to rule OUT the broad "any prior media" framing
+I first wrote, not enough to call the video-specific mechanism understood.
