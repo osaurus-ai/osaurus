@@ -519,10 +519,39 @@ Disk L2 read **0 hits / 55 misses / 12 stores** — no reuse at all, and TTFT is
 flat because this model prefills cheaply either way.
 
 So for Gemma the declaration is **necessary but not sufficient**: something
-further down still blocks the hit. It is not cache topology — Live Activity
-showed `Cache-enabled models 1`, `Hybrid caches 0`,
-`Paged-incompatible caches 0`. Not chased further, and explicitly NOT claimed
-as fixed. Only the Qwen VL families are proven end-to-end.
+further down still blocks the hit.
+
+Scoped it with a control rather than leaving it as "something". Same model,
+same build, same session, varying only whether the conversation carries media:
+
+| Gemma 4 conversation | Disk L2 hits |
+|---|---|
+| two VL turns (clean cache) | **0** (0 / 98 / 15) |
+| two text-only turns | **5** (5 / 116 / 28) |
+
+So Gemma's cache path works — it reuses on text and never on media. That rules
+out topology (`Cache-enabled models 1`, `Hybrid caches 0`,
+`Paged-incompatible caches 0`) and rules out "Gemma never caches". The
+remaining block is **media-specific and still unidentified**. Explicitly NOT
+claimed as fixed; only the Qwen VL families are proven end-to-end.
+
+**A wrong lead, recorded because it was convincing.** Setting
+`multimodal.requireMediaSaltForCache = false` and re-running produced 2 hits
+where the default produced 0, which looked like a clean single-variable A/B.
+It is not: `requireMediaSaltForCache` is read **nowhere** at runtime — it
+appears only as a stored property and a validation rule, never reaching
+`CacheCoordinatorConfig` or any fetch/store decision. Since `false` combined
+with any cache tier is a validation *error*, that run was almost certainly
+executing a rejected config on fallback defaults, not the flag's effect. The
+attribution is withdrawn.
+
+That the flag is inert is also **not** a defect. The salt is applied
+unconditionally, so the invariant genuinely holds, and the control discloses
+exactly that: *"Engine invariant whenever a cache reuse tier is enabled …
+Disabling fails validation."* Same disclosed-invariant pattern as
+"Keep Draft Cache Separate" and "Only Accepted Tokens Enter Base Cache" under
+Speculative Decoding. Documented here so the next person does not read the
+missing runtime call site as a wiring bug.
 
 `VLMediaTokenDeclarationReachabilityTests` names every family individually so
 the declared set cannot silently drift.
