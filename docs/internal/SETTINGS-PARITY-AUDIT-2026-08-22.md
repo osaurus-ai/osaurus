@@ -199,8 +199,8 @@ Free RAM before this run: **84.3 GB**. Recorded per the rule added under C9.
 | C3 | **Every** VLM `LMInput` carries `cacheScopeSalt` | **FIXED** — `DeepseekOCRProcessor` was the sole omission; unsalted image path = fluent answer about the WRONG picture |
 | C4 | Qwen / Gemma / Zaya / Audex / GLM / FastVLM salted | PROVEN — none appeared in the coverage failure |
 | C5 | VL multiturn: image reuse across turns | CHARACTERIZED — resumes for text follow-ups; a media-INTRODUCING turn re-prefills (below) |
-| C6 | Live VIDEO passthrough + cache | **OPEN** (video EVS additionally needs a post-prepare cache key) |
-| C7 | Live AUDIO passthrough + cache (gemma E2B) | CHARACTERIZED with C5 — audio rides the same two mechanisms |
+| C6 | Live VIDEO passthrough + cache | **PASSTHROUGH PROVEN LIVE** — Qwen3.8 27B JANG_4D read a 4-frame clip as `7, 3, 5, 9` in order (below). Video *cache* reuse still OPEN: the EVS post-prepare cache key is unchanged and was not exercised |
+| C7 | Live AUDIO passthrough + cache (gemma E2B) | **UNTESTABLE ON THIS HOST** — no installed bundle contains `embed_audio.embedding_projection`; `~/models`, `~/models/JANGQ-AI` and the whole HF cache return zero matches, so no audio turn can be run. Needs an E2B/E4B fetched first. An earlier "defect" claim here was withdrawn (below) |
 | C8 | Media + tools in the same turn | **OPEN** |
 | C9 | Best prefix/suffix match block for multimodal | **FIXED+PROVEN LIVE for the Qwen VL families** — follow-up TTFT 3.40s → 0.59s median, A/B against the baseline vmlx pin (below). Other families still unreached |
 
