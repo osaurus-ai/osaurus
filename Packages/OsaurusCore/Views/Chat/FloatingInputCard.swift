@@ -11,6 +11,8 @@ import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
+@preconcurrency import MLXLMCommon
+
 struct FloatingInputCard: View {
     @Binding var text: String
     @Binding var selectedModel: String?
@@ -7719,14 +7721,6 @@ private struct FloatingContextChip: View {
         guard let settings = ServerRuntimeSettingsStore.load(),
             settings.cache.blockDisk.enabled
         else { return nil }
-        // Only an EXPLICIT cap is reported here. When the size is unset the cap
-        // is resolved by the runtime, and this process cannot know that number
-        // without a resident coordinator — printing a guess would show a limit
-        // nothing is enforcing. maxBytes 0 renders as "used · Auto" with no
-        // percentage, which is the honest reading.
-        let capBytes = settings.cache.blockDisk.maxSizeGB.map {
-            Int($0 * 1_073_741_824)
-        }
         // Measure the directory the RUNTIME caps, not the default one.
         // `OsaurusPaths.diskKVCacheUsageBytes()` hardcodes the default path, so
         // with a custom Disk Cache Directory configured it would report the size
@@ -7736,9 +7730,25 @@ private struct FloatingContextChip: View {
         let dir =
             ModelRuntime.cacheDiskDirectoryOverride(for: settings.cache)
             ?? OsaurusPaths.diskKVCache()
+        // Resolve the cap the same way the coordinator does.
+        //
+        // This used to report ONLY an explicit `maxSizeGB`, on the reasoning
+        // that an unset size could not be known without a resident model. That
+        // is no longer true, and after the percent migration `maxSizeGB` is nil
+        // on every install — so the bar would have rendered "used · Auto" with
+        // no cap and no percentage while a real cap was being enforced, which
+        // is a worse lie than the guess it was avoiding. A share of a volume we
+        // can measure IS the number, computed by the same function that builds
+        // CacheCoordinatorConfig.
+        let resolvedGB = VMLXServerRuntimeSettings.resolveDiskCacheMaxGB(
+            percent: settings.cache.blockDisk.maxSizePercent,
+            legacyGB: settings.cache.blockDisk.maxSizeGB,
+            directory: dir)
+        // Still honest when the volume cannot be measured: the resolver falls
+        // back to the floor, which is a real enforced cap, not a guess.
         return DiskCacheUsage(
             usedBytes: OsaurusPaths.directorySizeIfExists(at: dir),
-            maxBytes: capBytes ?? 0,
+            maxBytes: Int(resolvedGB * 1_073_741_824),
             evictions: 0)
     }
 
