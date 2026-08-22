@@ -4314,9 +4314,23 @@ public actor ModelRuntime {
     ) -> (enabled: Bool, capGB: Double) {
         guard freeBytes > 0 else { return (true, configuredCapGB) }
         let freeGB = Double(freeBytes) / 1_073_741_824.0
-        let safeCapGB = min(configuredCapGB, freeGB * freeFraction)
-        if safeCapGB < minUsefulGB { return (false, configuredCapGB) }
-        return (true, safeCapGB)
+        let headroomGB = freeGB * freeFraction
+
+        // Disable only when the VOLUME is too full to host a useful cache.
+        //
+        // The old test was `min(configured, headroom) < minUseful`, which also
+        // fired when the user's own share was the smaller term — so choosing a
+        // deliberately small cache silently switched the tier OFF instead of
+        // giving them the small cache they asked for. On a 256 GB disk a 0.2%
+        // share is 0.51 GB, under the 1 GB floor, and the cache just stopped
+        // existing.
+        //
+        // Same shape as the auto-size floor: a bound meant to protect a
+        // nearly-full disk must not override a number the user typed. Their
+        // machine, their call — and a 0.51 GB cache still resumes short
+        // conversations, which beats no cache at all.
+        if headroomGB < minUsefulGB { return (false, configuredCapGB) }
+        return (true, min(configuredCapGB, headroomGB))
     }
 
     nonisolated static func cacheDiskDirectoryOverride(

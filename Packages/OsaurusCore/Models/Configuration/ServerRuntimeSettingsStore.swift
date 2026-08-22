@@ -120,7 +120,15 @@ public enum ServerRuntimeSettingsStore {
     /// Persists the settings to disk and updates the nonisolated
     /// snapshot consumed by `ModelRuntime`.
     public nonisolated static func save(_ settings: VMLXServerRuntimeSettings) {
-        let settings = canonicalizedContextAndKVPolicy(settings)
+        var settings = canonicalizedContextAndKVPolicy(settings)
+        // Anything we write is by definition current-schema, so stamp it.
+        //
+        // Without this a saved value could carry a stale (or absent)
+        // `schemaVersion`, and the next `load()` would run the one-time
+        // migrations over settings the user had just chosen — re-applying the
+        // 10% reset on top of a deliberate share. It also keeps save/load a
+        // true round trip, which is what the store's own equality tests assert.
+        settings.schemaVersion = VMLXServerRuntimeSettings.contractVersion
         let url = fileURL()
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         do {

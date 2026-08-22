@@ -7754,17 +7754,25 @@ private struct FloatingContextChip: View {
         // enforced 242 GB, because only 969 GB was free. Reporting the
         // unbounded number would make the bar's denominator disagree with the
         // cap that is actually evicting.
+        var tierDisabled = false
         if let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: dir.path), freeBytes > 0 {
             let decision = ModelRuntime.hostAwareDiskCacheDecision(
                 configuredCapGB: resolvedGB, freeBytes: freeBytes)
+            tierDisabled = !decision.enabled
             resolvedGB = decision.enabled ? decision.capGB : 0
         }
         // Still honest when the volume cannot be measured: the resolver falls
         // back to the floor, which is a real enforced cap, not a guess.
+        //
+        // `isDisabled` is carried separately so a switched-off tier renders as
+        // "Off" rather than "Auto" — a zero cap and an unknown cap are both
+        // maxBytes 0, and calling the former "Auto" tells the user their cache
+        // is being sized for them when it is not running at all.
         return DiskCacheUsage(
             usedBytes: OsaurusPaths.directorySizeIfExists(at: dir),
             maxBytes: Int(resolvedGB * 1_073_741_824),
-            evictions: 0)
+            evictions: 0,
+            isDisabled: tierDisabled)
     }
 
     let displayTokens: Int

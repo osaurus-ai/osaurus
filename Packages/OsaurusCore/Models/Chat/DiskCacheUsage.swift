@@ -35,10 +35,11 @@ public struct DiskCacheUsage: Equatable, Sendable {
     /// Non-zero is the observable proof the eviction janitor is running.
     public let evictions: Int
 
-    public init(usedBytes: Int, maxBytes: Int, evictions: Int = 0) {
+    public init(usedBytes: Int, maxBytes: Int, evictions: Int = 0, isDisabled: Bool = false) {
         self.usedBytes = max(0, usedBytes)
         self.maxBytes = max(0, maxBytes)
         self.evictions = max(0, evictions)
+        self.isDisabled = isDisabled
     }
 
     /// Share of the quota in use, clamped to 0 when no quota is configured.
@@ -50,11 +51,21 @@ public struct DiskCacheUsage: Equatable, Sendable {
         return Double(usedBytes) / Double(maxBytes)
     }
 
-    /// Right-hand readout. With a known cap it is "used / cap"; without one
-    /// the cap is being resolved by the runtime and this process cannot name
-    /// it, so it says "used · Auto" rather than inventing a limit.
+    /// True when the disk tier is switched OFF, as opposed to merely having an
+    /// unknown cap. Kept distinct because conflating the two is how a disabled
+    /// cache came to be labelled "Auto" — the most reassuring possible word for
+    /// "your cache is not running".
+    public let isDisabled: Bool
+
+    /// Right-hand readout.
+    ///
+    /// Three states, deliberately distinguished:
+    ///   - a known cap  → "used / cap"
+    ///   - tier off     → "Off" (never "Auto" — see `isDisabled`)
+    ///   - unknown cap  → "used · Auto", the runtime will resolve it
     public var headlineLabel: String {
-        maxBytes > 0 ? "\(usedLabel) / \(maxLabel)" : "\(usedLabel) · Auto"
+        if isDisabled { return "\(usedLabel) · Off" }
+        return maxBytes > 0 ? "\(usedLabel) / \(maxLabel)" : "\(usedLabel) · Auto"
     }
 
     public var usedLabel: String { Self.format(bytes: usedBytes) }
