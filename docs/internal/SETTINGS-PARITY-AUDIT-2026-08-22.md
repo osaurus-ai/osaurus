@@ -327,6 +327,14 @@ Two harness facts worth keeping, because both cost time here:
   "i closed osaurus but this bs is still open". It is NOT the keystroke cause
   above — keystrokes still failed after it was gone.
 
+**Swept the rest of the index for the same class.** The obvious follow-up to
+one unreachable setting is whether there are others: all 87 entries are
+findable by their own title, and every entry that displays a section header is
+findable by that header. No further gaps. Kept as a sweep
+(`SettingsSearchSelfFindProbe`) rather than named cases, so an entry added
+later inherits the guarantee, with an anti-vacuity check because an index that
+shrank to nothing would otherwise pass both sweeps silently.
+
 Warm-up prefills are excluded upstream by
 `shouldRecordAsLastEffectiveGeneration`, so the row always describes a real
 turn rather than the `temperature: 0, maxTokens: 1` housekeeping request that
