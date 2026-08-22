@@ -997,3 +997,59 @@ holds on inspection rather than on the A/B alone: `Image input is not
 advertised for …` is emitted by `ModelMediaCapabilities` in OsaurusCore, and
 the vmlx pin cannot reach that string. Recorded this way rather than presented
 as a clean single-variable result.
+
+---
+
+## Precedence and lifetime of sampling settings — measured, not assumed
+
+Two questions asked directly: does a new model's gen config populate the
+Settings temp/top-p/top-k fields, and is a user-set value scoped to the chat
+session until the next model swap re-derives it?
+
+**Answer to both: no.** Measured live in one session.
+
+The user's Sampling Defaults (`VMLXServerGenerationDefaults`) are all
+`Optional` and ship `nil`. Blank means "follow the model" — it does NOT mean
+"copy the model's values in". Nothing ever writes a bundle's numbers into
+those fields; they stay user-owned and empty.
+
+With every field blank, `server-runtime.json` read `temperature: null` while
+Live Activity → **Sampler last used** showed the bundle's own values. Then
+`temperature = 0.77` was set and saved, and a different model was used:
+
+```
+lfm2.5-vl-3b-jang_4m   temp 0.2   · top-p 1 · top-k 50 · min-p 0 · max 16384 · rep 1
+qwen3-0.6b-8bit        temp 0.77  · top-p 1 · top-k 0  · min-p 0 · max 16384
+```
+
+The readout is **per model**, and the user's 0.77 followed the model swap. So:
+
+- A user value is persisted **globally** in `server-runtime.json`, not per chat
+  and not per model. It is not re-derived on swap.
+- It **outranks the bundle** for every subsequent model — the repo's own
+  `effectiveGenerationSettings_userSamplingDefaultsOutrankBundle` pins this.
+
+Worth stating plainly because it is easy to expect otherwise: a temperature
+set while using one model silently governs every other model afterwards,
+including bundles that ship a very different value, until it is cleared.
+
+`top-k 0` for Qwen is not a partial-override defect — that bundle ships no
+`generation_config.json` and no `jang_config.json`, so there is nothing to
+derive and unset fields fall through to engine defaults. The LFM bundle does
+ship one, which is why it shows 0.2 / 50 / 1.0.
+
+**Derivation sources, in order** (`LocalGenerationDefaults`):
+
+1. `jang_config.json > chat > sampling_defaults` — JANG bundles carry their own
+   sampling contract and it wins over the generic file.
+2. `generation_config.json` — the Hugging Face standard.
+3. Neither present → `.empty`, engine defaults.
+
+**Reasoning / thinking budget is separately model-declared.**
+`DeclaredReasoningEffort` reads `preserve_thinking_supported`,
+`preserve_thinking_default` and `preserve_thinking_transport` from the bundle,
+so preserved-thinking is enforced the way each model declares rather than
+uniformly. This matters for the SSD tier: reasoning effort feeds
+`cacheScopeSalt` (D2), so a prefix built at one effort cannot be reused at
+another — which is the correct behaviour, since preserved thinking changes the
+prompt prefix itself.
