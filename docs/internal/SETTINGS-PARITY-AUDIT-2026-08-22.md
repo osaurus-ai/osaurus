@@ -54,7 +54,7 @@ Status key: **FIXED+PROVEN** / **FIXED, unproven live** / **OPEN** /
 | C6 | Live VIDEO passthrough + cache | **OPEN** (video EVS additionally needs a post-prepare cache key) |
 | C7 | Live AUDIO passthrough + cache (gemma E2B) | CHARACTERIZED with C5 — audio rides the same two mechanisms |
 | C8 | Media + tools in the same turn | **OPEN** |
-| C9 | Best prefix/suffix match block for multimodal | **DIAGNOSED, NOT FIXED** — the suffix rollback is the binding constraint, not the salt |
+| C9 | Best prefix/suffix match block for multimodal | **DIAGNOSED — and the earlier diagnosis was too optimistic.** Nothing reuses today: the mechanism is unreached (below) |
 
 ## D. Generation config parity
 
@@ -401,16 +401,57 @@ Two independent mechanisms decide reuse, and they have to be read together:
 
 Per-turn consequence:
 
-| turn shape | reuses? | why |
+| turn shape | reuses **in principle** | reuses **on a shipping family** |
 |---|---|---|
-| text follow-up after an image turn | **yes** | same tensor → same salt; suffix is text-only |
-| turn that ADDS an image / video / audio | **no** | salt changed AND the suffix carries the new placeholders |
-| text turn after a media-introducing turn | **yes** | tensor matches the previous turn again |
+| text follow-up after an image turn | yes — same tensor → same salt; suffix is text-only | **no** |
+| turn that ADDS an image / video / audio | no — salt changed AND the suffix carries new placeholders | **no** |
+| text turn after a media-introducing turn | yes — tensor matches the previous turn again | **no** |
+
+**The right-hand column is the correction.** The left column is what the
+mechanism does when it is fed; it is not what ships.
 
 So the cost is **per media-introducing turn**, not cumulative — but a chat that
 varies modality every turn introduces media every turn and therefore never
 resumes, re-running the vision tower over all prior images each time. That is
 the long-context degradation to expect, and it is the shape worth optimizing.
+
+### Correction: the mechanism is correct and almost nothing reaches it
+
+The two mechanisms above are accurate, and the conclusion drawn from them was
+still too optimistic, because it assumed processors feed them. Measured against
+the sources:
+
+- **3 of the VLM processors that build a media-bearing `LMInput` declare
+  `mediaTokenIds`** — Audex, DeepSeek-OCR, Nemotron-H Omni. Qwen3-VL,
+  Qwen2.5-VL, Qwen2-VL, Gemma 4, Gemma 3, Muse Glimmer, LFM2-VL, Mistral 3,
+  GLM-4V, Zaya1-VL, Idefics3, Pixtral, SmolVLM2 and FastVLM declare none.
+- Undeclared is not a smaller version of declared. It takes
+  `guard let mediaTokenIds else { return true }`, which rolls back on **any**
+  non-empty suffix — including the pure-text follow-up the table above listed
+  as reusing.
+- Qwen3-VL's **text** branch computes canonical boundaries and passes
+  `cachePrefixTokenCounts` / `cacheStablePrefixTokenCounts`. Its **media**
+  branch returns an `LMInput` carrying `image:` / `video:` and neither. A
+  prompt that declares no boundaries gives the coordinator nothing to probe, so
+  the rollback is not even reached — there is no candidate hit to roll back.
+
+So a VL conversation on the families Eric actually runs re-prefills every turn,
+vision tower included. That is the long-context degradation, and it is not the
+salt and not (yet) the suffix rollback — it is that neither is wired up.
+
+**And the rollback is load-bearing, not cautious.** Qwen 3.5 VL's
+`mergeInputIdsWithImageFeatures` throws `featureTokenMismatch` unless the
+number of masked placeholder elements equals the image-feature size. A suffix
+prefill that carried image features onto zero placeholders would not silently
+mis-substitute, it would throw. Any fix therefore has to drop the media from
+the suffix input, not merely permit the resume — while keeping the cache salt
+computed from the ORIGINAL media, since the restored KV contains those
+embeddings.
+
+Pinned by `Tests/MLXLMCommonFocusedTests/VLMediaTokenDeclarationReachabilityTests.swift`
+(5 tests: the unconditional-rollback branch, the declaring set, the mainstream
+families named individually so a failure says which one moved, and the
+Qwen3-VL boundary asymmetry).
 
 **Finding that prevents wasted work:** mechanism 2 is the binding constraint.
 Prefix-scoped salting on its own buys **nothing** — every case it would unlock
