@@ -343,6 +343,20 @@ public enum ServerRuntimeSettingsStore {
         _ settings: VMLXServerRuntimeSettings
     ) -> VMLXServerRuntimeSettings {
         var normalized = canonicalizedContextAndKVPolicy(settings)
+        // Run vmlx's schema migrations.
+        //
+        // These were DEAD CODE: `migrateToCurrentSchema()` had no call site in
+        // either repo, so every version-gated repair it defines silently never
+        // happened. The v2 repair (a persisted flat 10 GB disk cap becoming
+        // auto) therefore never reached a single updating install — only fresh
+        // installs benefited, because their value was nil to begin with and the
+        // resolver handled nil. A live launch is what surfaced it: the config
+        // the app wrote back had no `schemaVersion` at all.
+        //
+        // This is the right home for it. Both `load()` and `loadOrMigrate()`
+        // funnel through here, and `load()` persists whenever normalization
+        // changes the value, so the migration runs once and is written back.
+        normalized.migrateToCurrentSchema()
         // vmlx-swift e095d0f changed the engine default from "MTP off" to
         // "auto". Existing Osaurus installs persisted the old default exactly,
         // so without this repair tuned MXFP8/MTP bundles still never reach the
