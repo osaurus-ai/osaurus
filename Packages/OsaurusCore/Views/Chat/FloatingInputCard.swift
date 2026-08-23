@@ -4160,13 +4160,19 @@ extension FloatingInputCard {
         // model_type. Read only its non-blocking snapshot here: this getter is
         // evaluated from SwiftUI body/layout and must never trigger a disk
         // scan or synchronously parse a model bundle.
-        let localModelType = selectedModel.flatMap {
-            ModelManager.findInstalledMLXModelFromCache(named: $0)?.modelType
+        let localModel = selectedModel.flatMap {
+            ModelManager.findInstalledMLXModelFromCache(named: $0)
         }
+        // Audio has to come from the checkpoint, not the name: gemma-4 E2B
+        // carries `embed_audio.embedding_projection` while its id says nothing
+        // about audio, so the picker advertised "image supported" and greyed
+        // out every .wav. `hasAudioTensors` is memoized for exactly this
+        // getter's no-disk-IO rule.
         return ModelMediaCapabilities.composerDescriptor(
             modelId: selectedModel,
             fallbackSupportsImages: supportsImages,
-            localModelType: localModelType
+            localModelType: localModel?.modelType,
+            localHasAudioTensors: localModel?.hasAudioTensors ?? false
         )
     }
 
