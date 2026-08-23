@@ -58,7 +58,7 @@ construction.
 | T8 | **Restart survival — kill app, replay identical prompt** | does L2 actually persist | ✅ Ornith-1.5-9B — **17.11s → 0.41s (~42×)** across a real process restart on the same root; cache 3.5 → 4.4 GB |
 | T9 | SSD budget stress past the % cap | LRU eviction breaking live chains | ✅ **against a live chain** — 512 MB cap held to the megabyte while a 6-turn conversation ran; every turn still correct. See §11 |
 | T10 | Multiple images in different turns | the bunching bug | ✅ **live on 3 families** — LFM2.5-VL and Muse Glimmer both return `4, 5, 4, 7` and then `4,5,7`. Zaya is unstable but shows no bunching. See §10 |
-| T11 | Cold-vs-warm answer exactness at `%256 ≠ 0` | silent divergence | ❌ still unrun — attempting it proved reuse is **per-conversation**, so the probe needs the history sidebar. See §9 |
+| T11 | Cold-vs-warm answer exactness at `%256 ≠ 0` | silent divergence | ✅ **3 lengths, zero divergence** — cold and cache-served answers byte-identical while TTFT collapsed 6–15×. See §12 |
 | T12a | **Audio on `gemma4_unified` 12B** (raw-waveform path, not mel+conformer) | the second audio family | ⚠ **audio reaches and informs the model** — "what animal is mentioned?" → **"Elephant"**, correct. Asked to transcribe verbatim it answered *"The quick brown fox jumps over the lazy dog."* — a **confabulated pangram**. See §5 |
 | T12b | Audio on Nemotron-Omni (`sound_encoder` + Parakeet) | the third audio family | ✅ Nemotron-3-Nano-Omni-30B-A3B-JANG_4M — 4/4 content answers correct (`elephant` / `purple` / `7` / `violet`), TTFT 1.61s → 0.41/0.43/0.42s, 118–130 tok/s, kv_v2 604 MB, RSS 19.9 GB. **Reuse not discriminated at this size** — see §6 |
 | T13 | Muse Glimmer / Zaya / LFM2.5-VL / Step-3.7 media reuse | per-family media paths | ⚠ **3 of 4 run and passing** — see §8. Step-3.7-Flash deferred: needs ~82 GB and the box had none free |
@@ -416,3 +416,47 @@ cap used above, and it held exactly.
 
 Worth knowing because the failure is silent in the reassuring direction for
 anyone hand-editing a config: the field is accepted, persisted, and ignored.
+
+---
+
+## 12. T11: the same question, answered cold and then from cache
+
+§9 left this row blocked: reuse is per-conversation, killing the app to drop the
+in-memory cache also drops the chat, and the history sidebar's rows have no
+pressable AX element (a hover-then-click posted to the pid did not select one
+either).
+
+**`power.deepSleepAfterSeconds` gets around it.** Auto-sleep releases the
+model — and the live KV with it — after an idle period, `wakeOnRequest` brings
+it back, and the chat stays open the whole time. So the same conversation can
+be asked the identical question twice: once cold, once served from cache.
+
+LFM2.5-VL 3B, three manifest lengths chosen to be arbitrary rather than round:
+
+| manifest | cold TTFT | cold answer | second ask | answer | |
+| ---: | ---: | --- | ---: | --- | --- |
+| 400 lines | 1.84s | `1259` | **0.31s** | `1259` | identical, and correct |
+| 613 lines | 3.10s | `124` | **0.21s** | `124` | identical |
+| 887 lines | 4.17s | `1000` | **0.28s** | `1000` | identical |
+
+**Zero divergence at any length.** The 6–15x TTFT collapse is what makes the
+comparison mean something: the second ask was served from a cache rather than
+re-prefilled, so a padding/offset defect in that path would have had to show up
+in the output. It did not.
+
+The 613 and 887 legs answer `124` and `1000` where the manifest says `1259` —
+LFM2.5-VL's retrieval accuracy at 12–17k, **identically wrong both times**. A
+cache defect does not produce the same wrong answer twice from two different
+code paths; a model that cannot find the line does.
+
+### The gate had a fail-open, and it fired
+
+The first attempt ran Ornith-1.5-9B, whose turn 1 spent its output budget
+thinking and returned the max-tokens notice. The gate compared that notice
+against turn 2's `1259` and reported **DIVERGED** — a cache-corruption verdict
+manufactured out of a turn that never answered. The gate now treats the
+max-tokens notice, and an empty answer, as INVALID rather than as data.
+
+Same lesson as §6 in the opposite direction: a harness that cannot tell
+"no answer" from "different answer" will invent the most alarming reading
+available.
