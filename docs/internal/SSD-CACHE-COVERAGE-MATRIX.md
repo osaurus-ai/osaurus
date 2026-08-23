@@ -55,7 +55,7 @@ construction.
 | T5 | **Audio mid-conversation + follow-ups** | audio prefix reuse | ✅ gemma-4 E4B — "The purple elephant counted seven violet umbrellas." then "Seven" / "Elephant" at 0.21/0.24s vs 0.46s cold; disk cache 391 MB → 717 MB |
 | T6 | Audio attach gating | capability gates | ✅ picker A/B ("image supported" + greyed `.wav` → "image + audio supported" + selectable) and send gate (`audios=0` → `audios=1` at the engine boundary) |
 | T7 | Long-context (~30–48k) follow-ups | boundary publication value | ✅ run — **negative result**, see §3 |
-| T8 | **Restart survival — kill app, replay identical prompt** | does L2 actually persist | ✅ Ornith-1.5-9B — **17.11s → 0.41s (~42×)** across a real process restart on the same root; cache 3.5 → 4.4 GB |
+| T8 | **Restart survival — kill app, replay identical prompt** | does L2 actually persist | ⚠ **contradicted by §9 and not reproduced** — the recorded 17.11s → 0.41s cannot be obtained by replaying a prompt in a new chat; five later legs show no reuse. See §14 |
 | T9 | SSD budget stress past the % cap | LRU eviction breaking live chains | ✅ **against a live chain** — 512 MB cap held to the megabyte while a 6-turn conversation ran; every turn still correct. See §11 |
 | T10 | Multiple images in different turns | the bunching bug | ✅ **live on 3 families** — LFM2.5-VL and Muse Glimmer both return `4, 5, 4, 7` and then `4,5,7`. Zaya is unstable but shows no bunching. See §10 |
 | T11 | Cold-vs-warm answer exactness at `%256 ≠ 0` | silent divergence | ✅ **3 lengths, zero divergence** — cold and cache-served answers byte-identical while TTFT collapsed 6–15×. See §12 |
@@ -487,3 +487,39 @@ mostly to itself, which is a scheduling question rather than a testing one.
 The guard is worth keeping regardless. Three VL models in one process once left
 this machine with 15 MB free and triggered a watchdog panic; a supervised probe
 turns that into a clean abort.
+
+---
+
+## 14. T8 no longer holds as written
+
+T8 recorded "kill app, replay identical prompt → **17.11s → 0.41s (~42x)**" and
+was the evidence that disk L2 serves the cross-session case. §9 measured the
+opposite five times, and the T8 shape itself did not reproduce:
+
+| leg | model | cold | replay after restart |
+| --- | --- | ---: | ---: |
+| new chat, same root | Ornith-1.5-9B ~5.7k | 6.63s | 5.94s |
+| new chat, same root | **Ornith-1.5-9B ~17k** | **22.30s** | **23.73s** |
+| new chat, same root | LFM2.5-VL ~21k | 7.12s | 6.57s |
+| new chat, same root | LFM2.5-VL ~28k | 14.18s | 8.94s |
+| new chat, same process | LFM2.5-VL ~21k | 7.13s | 7.16s |
+
+Ornith at 17k is the closest match to T8's own conditions — same family, same
+order of magnitude — and it got *slower* on the replay.
+
+**What T8 probably measured.** A relaunched app opens a NEW chat (verified: the
+window comes up with an empty composer and a ~657-token context), so the replay
+could not have continued the original conversation. That leaves the model load
+itself: a first launch pays a cold read of the weights, and the second launch
+finds them in the OS page cache. A TTFT that includes weight loading would show
+exactly this shape, and it has nothing to do with the KV cache.
+
+**Not being rewritten from a guess.** The original run is not reconstructable —
+it happened in an earlier session and the numbers are all that survive. The row
+is downgraded rather than re-explained, and what would settle it is one run
+that separates load time from prefill time: replay the identical prompt twice
+in a row in the SAME relaunched process, so the weights are hot for both.
+
+The §12 result stands on its own regardless: a cache-served turn answers
+identically to a cold one. That was established by deep-sleeping a live
+conversation, not by restarting the app.
