@@ -58,7 +58,7 @@ construction.
 | T8 | **Restart survival — kill app, replay identical prompt** | does L2 actually persist | ✅ Ornith-1.5-9B — **17.11s → 0.41s (~42×)** across a real process restart on the same root; cache 3.5 → 4.4 GB |
 | T9 | SSD budget stress past the % cap | LRU eviction breaking live chains | ⚠ eviction proven at a share (1638 MB → 408 MB under a 762 MB cap) but not against a live chain |
 | T10 | Multiple images in different turns | the bunching bug | ⚠ unit-tested only |
-| T11 | Cold-vs-warm answer exactness at `%256 ≠ 0` | silent divergence | ❌ never run |
+| T11 | Cold-vs-warm answer exactness at `%256 ≠ 0` | silent divergence | ❌ still unrun — attempting it proved reuse is **per-conversation**, so the probe needs the history sidebar. See §9 |
 | T12a | **Audio on `gemma4_unified` 12B** (raw-waveform path, not mel+conformer) | the second audio family | ⚠ **audio reaches and informs the model** — "what animal is mentioned?" → **"Elephant"**, correct. Asked to transcribe verbatim it answered *"The quick brown fox jumps over the lazy dog."* — a **confabulated pangram**. See §5 |
 | T12b | Audio on Nemotron-Omni (`sound_encoder` + Parakeet) | the third audio family | ✅ Nemotron-3-Nano-Omni-30B-A3B-JANG_4M — 4/4 content answers correct (`elephant` / `purple` / `7` / `violet`), TTFT 1.61s → 0.41/0.43/0.42s, 118–130 tok/s, kv_v2 604 MB, RSS 19.9 GB. **Reuse not discriminated at this size** — see §6 |
 | T13 | Muse Glimmer / Zaya / LFM2.5-VL / Step-3.7 media reuse | per-family media paths | ⚠ **3 of 4 run and passing** — see §8. Step-3.7-Flash deferred: needs ~82 GB and the box had none free |
