@@ -60,8 +60,9 @@ construction.
 | T10 | Multiple images in different turns | the bunching bug | ⚠ unit-tested only |
 | T11 | Cold-vs-warm answer exactness at `%256 ≠ 0` | silent divergence | ❌ never run |
 | T12a | **Audio on `gemma4_unified` 12B** (raw-waveform path, not mel+conformer) | the second audio family | ⚠ **audio reaches and informs the model** — "what animal is mentioned?" → **"Elephant"**, correct. Asked to transcribe verbatim it answered *"The quick brown fox jumps over the lazy dog."* — a **confabulated pangram**. See §5 |
-| T12b | Audio on Nemotron-Omni (`sound_encoder`) | the third audio family | ❌ never run |
+| T12b | Audio on Nemotron-Omni (`sound_encoder` + Parakeet) | the third audio family | ✅ Nemotron-3-Nano-Omni-30B-A3B-JANG_4M — 4/4 content answers correct (`elephant` / `purple` / `7` / `violet`), TTFT 1.61s → 0.41/0.43/0.42s, 118–130 tok/s, kv_v2 604 MB, RSS 19.9 GB. **Reuse not discriminated at this size** — see §6 |
 | T13 | Muse Glimmer / Qwen3.6-35B / Zaya / Step-3.7 media reuse | per-family media paths | ❌ never run |
+| T14 | **Growing conversation on a media prefix** (0.6k → 27k → 54k) | reuse at a depth where it is worth seconds; decode sag | ✅ Nemotron-Omni — reuse holds (1.44s at 27k, 1.87s at 54k vs 11.1s to prefill the same span); decode 124 → 51 → 64 → 54 → 63 tok/s. **Answer quality collapses at 27k for BOTH audio and text** — see §6 |
 
 ---
 
@@ -139,3 +140,91 @@ seven violet umbrellas" rather than anything a model might plausibly guess.
 Corollary: **prefer a content question over "transcribe this"** when the
 question is merely whether audio arrived. "What animal is mentioned?" cannot be
 answered by reciting a pangram.
+
+---
+
+## 6. T14: what a growing conversation on Nemotron-Omni actually shows
+
+Model: `OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANG_4M` (`nemotron_h`,
+`sound_encoder` + Parakeet), neutral agent, tools off, isolated proof root.
+Turn 1 carries the audio clip *"The purple elephant counted seven violet
+umbrellas."*; the even turns append ~26k tokens of repetitive depot-log filler
+so a re-prefill is worth seconds rather than noise.
+
+| turn | context after | TTFT | decode | kv_v2 | question | answer |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| 1 audio | ~0.6k | 1.59s | 124.0 | 149 MB | what animal? | **elephant** ✅ |
+| 2 +26k | ~27k | 25.16s | 50.9 | 595 MB | what colour is the animal? | **blue** ❌ (purple) |
+| 3 short | ~27k | **1.44s** | 64.1 | 1043 MB | how many umbrellas? | **31** ❌ (seven) |
+| 4 +26k | ~54k | 28.28s | 54.1 | 1788 MB | seal code for corridor 4? | **66** ❌ (31 — it answered corridor 9's code, from the filler in that same message) |
+| 5 short | ~54k | **1.87s** | 63.1 | 2534 MB | what colour were the umbrellas? | **blue** ❌ (violet) |
+
+**Reuse is proven here, and this is the shape that proves it.** Turns 3 and 5
+answer in 1.4–1.9s at 27k and 54k, where prefilling that span costs 11.1s
+(measured below). The short T12b leg could not show this: at ~650 tokens a full
+re-prefill costs about the same as a resume, so its 0.4s follow-ups were
+compatible with either.
+
+### The wrong answers are NOT ours
+
+Two controls, both on the same build and model:
+
+| leg | shape | 27k answer |
+| --- | --- | --- |
+| A | audio turn, then +26k (reuse path) | **blue** / **31** |
+| B | audio + 26k filler + question in ONE cold turn (no reuse at all) | **blue** |
+| C | ground truth as **text**, then +26k (reuse path) | **blue** / **31** |
+
+Cold reproduces it, and text reproduces it. So the property separating pass
+from fail is neither modality nor cache — it is depth with distractor text
+present. At ~27k this bundle answers from the filler instead of from the fact
+it was given, and "31" is literally the seal code in the filler. That is a
+model-quality limit of this checkpoint, recorded here so the next person does
+not spend a day on the cache.
+
+**Rule this produces: a long-context media test must carry a text control at
+the same depth.** Without leg C, leg A reads exactly like an audio-in-cache
+corruption bug — fluent, wrong, and pointed straight at code we own.
+
+### A 2.2x "media prefill penalty" that did not survive replication
+
+Leg A's turn 2 appended ~26k onto an audio-carrying prefix in **25.16s**, while
+the same append on a text prefix (leg C) took **11.30s** and a cold 27k prefill
+(leg B) took **11.62s**. Read alone that says a conversation containing media
+prefills its later text at ~45% speed — a real product problem if true.
+
+It is not true. Alternating the two legs, fresh app and fresh root per leg,
+PhysMem logged per leg:
+
+| run | A (audio prefix) | C (text prefix) |
+| --- | ---: | ---: |
+| 1 | 11.11s | 11.16s |
+| 2 | 11.13s | 11.16s |
+| 3 | 11.13s | 11.15s |
+
+Medians 11.13s vs 11.16s — 0.3% apart, i.e. nothing. ~26k in 11.1s is about
+2,340 tok/s. The 25.16s came from the first large prefill after a model load
+and **stays UNEXPLAINED**; what is settled is that it is not caused by media in
+the prefix. One sample in A-then-B order proposed a 2.2x regression that six
+samples in ABAB order erased — the same failure mode that once fabricated a 29%
+DSV4 regression on this box.
+
+---
+
+## 7. The model chip advertised vision but never audio
+
+Found while capturing T12b: the selected-model chip renders `eye` for
+`option.isVLM` and had no audio glyph at all. So Nemotron-Omni — a bundle whose
+headline capability is audio — described itself as vision-only on the one
+surface a user reads before typing, while the composer directly beneath it was
+already accepting `.wav`.
+
+| build | chip badges |
+| --- | --- |
+| control | ● name · brain · **eye** · 30B |
+| fixed | ● name · brain · **eye** · **waveform** · 30B |
+
+The badge reads the same `mediaCapabilities` the attach button reads, so the
+two surfaces cannot drift apart. Affects every audio family: Nemotron-Omni,
+Gemma-4 E2B/E4B, Gemma-4 12B unified. No new localization keys — it reuses the
+existing `Audio Input` catalog entry.

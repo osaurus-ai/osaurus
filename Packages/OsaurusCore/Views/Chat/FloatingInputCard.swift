@@ -2801,6 +2801,21 @@ extension FloatingInputCard {
                                 .foregroundColor(theme.accentColor)
                         }
 
+                        // Audio indicator. The eye was the only modality
+                        // glyph here, so a Nemotron Omni / Gemma-4 E2B-E4B /
+                        // Gemma-4 12B bundle described itself as vision-only
+                        // on the one surface the user reads before typing —
+                        // while the composer beneath it was already
+                        // accepting `.wav`. Same capability source as the
+                        // attach button, so the two cannot disagree.
+                        if mediaCapabilities.supportsAudio {
+                            Image(systemName: "waveform")
+                                .font(theme.font(size: CGFloat(theme.captionSize) - 3))
+                                .foregroundColor(theme.accentColor)
+                                .localizedHelp("Audio Input")
+                                .accessibilityLabel(Text("Audio Input", bundle: .module))
+                        }
+
                         if !isCompact, let params = option.parameterCount {
                             Text(params)
                                 .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .medium))
