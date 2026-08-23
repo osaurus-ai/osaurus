@@ -332,11 +332,38 @@ That explains every measurement here at once:
 
 Two chats started in the same *minute* still miss, because of the seconds.
 
-**The trade is now a real one to make, with numbers instead of guesses.**
-Coarsening the injected time (to the minute, hour, or day) is what would make
-cross-chat reuse possible at all, and it is a behaviour change — agents that
-schedule things resolve "tomorrow at 8 AM" against this block. That is worth
-deciding deliberately, which is why nothing is changed here.
+### What coarsening the clock would be worth — measured, not argued
+
+Rather than leave the trade abstract, it was measured on a **local,
+uncommitted** build that rounds the injected clock to the hour behind an env
+flag. Nothing ships from it; it exists to turn "should we coarsen it" into a
+number. Same process, same loaded weights, LFM2.5-VL, a ~22.7k-token document
+sent in one chat and then again in a NEW chat:
+
+| injected clock | chat 1 (cold) | chat 2 (identical text, new chat) | stored keys |
+| --- | ---: | ---: | --- |
+| **as shipped** (seconds) | 2.93s | **2.96s** — no reuse | 22755 → **2 rows, 2 hashes** |
+| **rounded to the hour** | 2.92s | **0.20s** | 22755 → **1 row, 1 hash** |
+
+**14.6x on the second chat**, and the index says why: the same content lands on
+one key instead of two. The saving is a whole prefill, so it grows with the
+document — 12.2s at 17k on Ornith, ~25s at 27k on Nemotron-Omni.
+
+The cost is real too: relative-date resolution becomes hour-accurate, and
+anything scheduling against "tomorrow at 8 AM" inherits that. Minute rounding
+would keep more precision and still collapse the common case of two chats
+started minutes apart.
+
+**Still nothing changed here.** This is a model-visible behaviour change and
+the right resolution (minute / hour / day) depends on how the agents use the
+block — but it is now a decision with a measured payoff attached rather than a
+shrug.
+
+Harness note: the stale-read gate fires a false alarm on this test. Chat 2 is a
+new chat, so its transcript carries only its own TTFT line and the running
+count does not grow. The reported values are each chat's own line, which is why
+they differ (2.96 vs 0.20) — a counter that assumes one growing transcript is
+wrong for a test that deliberately switches chats.
 
 **T11 itself stays ❌.** Its question — does a restored cache produce the same
 answer at `cached_tokens % 256 != 0` — can only be asked inside one
