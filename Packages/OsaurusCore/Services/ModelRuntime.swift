@@ -3738,7 +3738,15 @@ public actor ModelRuntime {
         )
 
         let probe = MLXModel(id: id, name: name, description: "", downloadURL: "")
-        let completeVerified = await ModelDownloadService.ensureComplete(for: probe, directory: localURL)
+        // `.automatic`: a load may fill in absent metadata, but it must not
+        // rebuild a bundle the user deliberately trimmed or edited. Missing
+        // weights are caught loudly by `verifyShardManifest` below and fixed
+        // by the Repair button, not silently re-downloaded behind the user.
+        let completeVerified = await ModelDownloadService.ensureComplete(
+            for: probe,
+            directory: localURL,
+            intent: .automatic
+        )
         if !completeVerified {
             // `ensureComplete` returns false when the remote file list couldn't
             // be fetched (offline / HF down) or a missing-file fetch failed. A

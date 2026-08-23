@@ -1410,10 +1410,13 @@ struct ModelDetailView: View, Identifiable {
     // MARK: - Repair
 
     private func repairModel() async {
+        // The only caller allowed to restore weights and to overwrite files
+        // that differ from the Hub — because the user asked for it by name.
         let success = await ModelDownloadService.ensureComplete(
             for: model,
             directory: model.localDirectory,
-            clearSentinel: true
+            clearSentinel: true,
+            intent: .explicitRepair
         )
         await MainActor.run { repairResult = success }
     }
