@@ -1836,6 +1836,15 @@ public final class ToolRegistry: ObservableObject {
         pluginToolNames.contains(name)
     }
 
+    /// Names of every currently registered native dylib plugin tool.
+    /// Channel dispatch pre-loads these into the session's schema: channel
+    /// turns start with an empty loaded-tools set every message, and small
+    /// local models rarely self-serve through `capabilities_load`, so a
+    /// granted plugin tool would otherwise read as unavailable (#2443).
+    var registeredPluginToolNames: Set<String> {
+        pluginToolNames
+    }
+
     // MARK: - Unregister
     func unregister(names: [String]) {
         for n in names {
