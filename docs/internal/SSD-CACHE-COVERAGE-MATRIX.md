@@ -294,12 +294,49 @@ so every leg WROTE a block and none of them read one.
 So reuse is per-conversation. T8's 42x restart win (17.11s → 0.41s) was a
 conversation being continued, not a prefix being recognised.
 
-**This is worth a product decision, not a unilateral change.** Pasting the same
-document, system prompt, or codebase into a fresh chat is an ordinary thing to
-do, and today it pays full prefill every time. Whether cross-chat sharing is
-wanted — and under what scoping — is Eric's call; the salt itself is only
-`reasoning=on/off` plus a media fingerprint, so nothing in the key forces the
-current behaviour.
+### Why — it is a clock, not a scoping policy
+
+I first wrote this up as a cache-scoping decision. It is not. The disk index
+says so: four entries from four legs of the same prompt, all at **token_count
+28178**, each under a **different hash**.
+
+    sqlite> select token_count, file_size, datetime(created_at) from cache_entries;
+    28178|462038943|2026-08-23 09:50:42
+    28178|462038885|2026-08-23 09:51:52
+    28178|462038855|2026-08-23 09:59:28
+    28178|462038855|2026-08-23 09:59:51
+
+The key is `SHA256(modelKey ‖ mediaSalt ‖ tokens)`. Two of those rows were
+written by the SAME process, where `modelKey` is fixed and the salt is
+deterministic (`reasoning=on/off`, effort, strength — nothing per-chat). Same
+length, different digest, means **the token values differed**.
+
+They differ because every request carries a timestamp. Asked in the live app to
+repeat its prompt verbatim, the model answered:
+
+    [Current Time]
+    Sunday, August 23, 2026 at 11:10 AM — 2026-08-23T11:10:32-07:00 (America/Los_Angeles)
+    Resolve relative dates ("today", "tomorrow at 8 AM") against this …
+
+`SystemPromptTemplates.timeContext(now:timeZone:)`, frozen per user turn at
+dispatch as the turn's `injectedContextPrefix`. The ISO half carries
+**seconds**.
+
+That explains every measurement here at once:
+
+- **Within a chat** the earlier turns' prefixes are already frozen, so a
+  follow-up appends after them and reuse works — the 0.45s follow-ups.
+- **Across chats** the very first thing in the request is a timestamp that has
+  never been seen before, so nothing after it can match. Not a policy, not the
+  salt, not the model key: a prefix that is unique by construction.
+
+Two chats started in the same *minute* still miss, because of the seconds.
+
+**The trade is now a real one to make, with numbers instead of guesses.**
+Coarsening the injected time (to the minute, hour, or day) is what would make
+cross-chat reuse possible at all, and it is a behaviour change — agents that
+schedule things resolve "tomorrow at 8 AM" against this block. That is worth
+deciding deliberately, which is why nothing is changed here.
 
 **T11 itself stays ❌.** Its question — does a restored cache produce the same
 answer at `cached_tokens % 256 != 0` — can only be asked inside one
