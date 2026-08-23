@@ -347,7 +347,7 @@ final class AgentChannelInboundRelay {
     /// the global enabled registry, so every registered plugin tool applies.
     /// Sorted so successive dispatches into a reattached session append a
     /// stable set.
-    static func preloadedPluginToolNames(
+    nonisolated static func preloadedPluginToolNames(
         registered: Set<String>,
         granted: [String]?
     ) -> [String] {
