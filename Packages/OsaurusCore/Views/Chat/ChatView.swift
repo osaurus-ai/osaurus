@@ -1458,13 +1458,23 @@ final class ChatSession: ObservableObject {
     /// silently dropped a video the composer had happily accepted: the model
     /// then answers "I don't see any video". Same failure class as the remote
     /// image drop documented on `modelSupportsImages`.
+    /// The SEND gate, and it is a second site: the picker deciding a modality
+    /// is allowed does not make `buildUserChatMessage` include it. This getter
+    /// used to omit the checkpoint audio fact, so on gemma-4 E2B — a bundle
+    /// that carries `embed_audio.embedding_projection` — the picker accepted a
+    /// `.wav`, the chip appeared, and then `supportsAudio` was false here, so
+    /// the audio was dropped and the plain (partless) initializer ran.
+    /// Instrumented live: the user message reached the engine with
+    /// `parts= images=0 audios=0` while an image turn in the same session
+    /// reached it with `images=1`.
     private var selectedModelSendCapabilities: ModelMediaCapabilities.Capabilities {
         guard let model = selectedModel else { return .textOnly }
-        let localModelType = ModelManager.findInstalledMLXModelFromCache(named: model)?.modelType
+        let localModel = ModelManager.findInstalledMLXModelFromCache(named: model)
         return ModelMediaCapabilities.composerCapabilities(
             modelId: model,
             fallbackSupportsImages: selectedModelSupportsImages,
-            localModelType: localModelType
+            localModelType: localModel?.modelType,
+            localHasAudioTensors: localModel?.hasAudioTensors ?? false
         )
     }
 
