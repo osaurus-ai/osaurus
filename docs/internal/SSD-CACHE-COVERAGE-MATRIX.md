@@ -266,3 +266,52 @@ purple field. Zaya and Muse answered **purple** (the field); LFM2.5-VL answered
 **white** (the glyph). Both readings are correct, and each model stayed
 consistent with itself at 20k, which is the property being tested — but the
 question cannot score colour. Ask about the field explicitly next time.
+
+---
+
+## 9. T11 attempt: prefix reuse is scoped to ONE conversation
+
+T11 wants a cold answer and a cache-restored answer compared at a prefix length
+that is not a round number. Building it turned up something that has to be
+recorded first, because it changes what T11 can even be built out of.
+
+**A byte-identical prompt in a different chat reuses nothing.** Not across a
+restart, and not even inside one process:
+
+| shape | model | cold | second run | verdict |
+| --- | --- | ---: | ---: | --- |
+| new chat after app restart, same root | LFM2.5-VL 3B, ~21k | 7.12s | 6.57s | no reuse |
+| new chat after app restart, same root | LFM2.5-VL 3B, ~28k | 14.18s | 8.94s | no reuse |
+| new chat after app restart, same root | Ornith-1.5-9B, ~5.7k | 6.63s | 5.94s | no reuse |
+| **new chat in the SAME process** | LFM2.5-VL 3B, ~21k | **7.13s** | **7.16s** | **no reuse** |
+
+The last row is the decisive one: same process, same loaded weights, the same
+21k prompt sent twice into two chats, and the second is 0.03s slower. The disk
+cache had the block too — `kv_v2` grew 441 → 882 → 1764 MB across these runs,
+so every leg WROTE a block and none of them read one.
+
+So reuse is per-conversation. T8's 42x restart win (17.11s → 0.41s) was a
+conversation being continued, not a prefix being recognised.
+
+**This is worth a product decision, not a unilateral change.** Pasting the same
+document, system prompt, or codebase into a fresh chat is an ordinary thing to
+do, and today it pays full prefill every time. Whether cross-chat sharing is
+wanted — and under what scoping — is Eric's call; the salt itself is only
+`reasoning=on/off` plus a media fingerprint, so nothing in the key forces the
+current behaviour.
+
+**T11 itself stays ❌.** Its question — does a restored cache produce the same
+answer at `cached_tokens % 256 != 0` — can only be asked inside one
+conversation, which means driving the history sidebar to reopen a chat after a
+restart. The sidebar rows are `AXStaticText` inside an `AXOpaqueProviderGroup`
+with no pressable row element, and a pid-targeted click on the row did not
+select it. That is the next thing to solve for this row.
+
+### Two model-accuracy notes from the same runs, so they are not mistaken for cache bugs later
+
+- LFM2.5-VL answered `103` and `123` for a seal code that was stated as `1259`
+  in the prompt — wrong, but **identically wrong** cold and warm. Retrieval
+  accuracy at 21–28k, not cache divergence.
+- Ornith-1.5-9B at 44k spent its whole output budget thinking and returned the
+  max-tokens notice instead of an answer. A reasoning model needs its budget
+  raised (or thinking off) before it can be used as a cache probe at all.
