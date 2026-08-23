@@ -514,11 +514,16 @@ itself: a first launch pays a cold read of the weights, and the second launch
 finds them in the OS page cache. A TTFT that includes weight loading would show
 exactly this shape, and it has nothing to do with the KV cache.
 
-**Not being rewritten from a guess.** The original run is not reconstructable —
-it happened in an earlier session and the numbers are all that survive. The row
-is downgraded rather than re-explained, and what would settle it is one run
-that separates load time from prefill time: replay the identical prompt twice
-in a row in the SAME relaunched process, so the weights are hot for both.
+**The run that separates the two has already happened.** §9's last row is
+exactly it: one process, weights hot for both legs, the identical 21k prompt
+sent into two chats — **7.13s then 7.16s**. With weight loading taken out of
+the comparison, the second identical prompt saves nothing. So a 42x gap cannot
+be KV reuse in a new chat, and weight loading is the only term left that a
+restart changes.
+
+The original run is still not reconstructable — it happened in an earlier
+session and only the numbers survive — so the row is downgraded rather than
+re-explained with a cause it cannot support.
 
 The §12 result stands on its own regardless: a cache-served turn answers
 identically to a cold one. That was established by deep-sleeping a live
