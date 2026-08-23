@@ -1482,3 +1482,46 @@ image-only, video-only, and mixed prompts, because getting the split wrong
 silently corrupts every VL prompt rather than failing loudly. That belongs in
 vMLX with its own proof, not bolted onto this one.
 
+
+### Fixed in vMLX and proven by A/B (2026-08-22, later the same day)
+
+vMLX `e9971205` splits the scatter by placeholder kind: image rows go to image
+pads, video rows to video pads, with `imageRowCount` computed from the image
+`THW` frames. `f6f5a4c1` records the proof.
+
+The A/B, on the live app — same model (Qwen3.8 27B JANG_4D), same isolated
+root, byte-identical files (`sha256 616b4a4f…` video, `0264acad…` image), same
+prompts:
+
+- Turn 1 attaches a 4-frame video: 7 blue, 3 red, 5 green, 9 gold.
+- Turn 2 attaches a purple **4** — a digit/colour pair in NO video frame, so a
+  leak from the video cannot be mistaken for a lucky guess. The earlier probe
+  (a red "3") was ambiguous: red-3 is also frame 2.
+
+| build | answer to "what digit and colour is this NEW image?" |
+|---|---|
+| `ProofDD-base` (pre-fix; binary has no `mergedRowCount`) | "the digit **9** in white on a solid **orange/amber (golden)** background" — the video's LAST frame |
+| `ProofDD-vlfixorder` (`e9971205`) | "the digit **4** on a **blue (indigo)** background" — correct |
+
+Screenshots: `CONTROL-prefix-video-then-image.png`,
+`t2-image-after-video-FIXED.png`.
+
+**The shape matters, and the obvious test is the wrong one.** A single turn
+carrying both an image and a video does NOT reproduce this. Within one message
+`Qwen3VLMessageGenerator` emits image content before video content, so pads and
+feature rows already agree and a pooled scatter is accidentally correct — that
+turn passes on both builds (verified: it answered image=4 indigo and video=7,3,
+5,9 correctly on the pre-fix ordering path). The defect needs the two kinds in
+DIFFERENT turns, because `UserInput` flattens images and videos across all
+messages into two arrays while pads stay in conversation order.
+
+Two harness lessons from this run, both of which produced a false result first:
+
+- An attachment that silently fails to attach still yields a fluent answer.
+  One turn ran with no image and the model said "I don't see any image attached
+  to your message" — read as a product finding until the screenshot showed an
+  empty composer. The gate now counts the chip's own `AXButton desc="Close"`;
+  counting `AXImage` reported FAIL on a turn whose file WAS attached.
+- Clearing `cache/` in a proof root also deletes `cache/external-models.json`,
+  the external model registry — the app then lists only Hugging Face cache
+  models and the bundle under test vanishes from the picker.
