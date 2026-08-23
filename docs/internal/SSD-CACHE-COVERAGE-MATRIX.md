@@ -61,7 +61,7 @@ construction.
 | T11 | Cold-vs-warm answer exactness at `%256 ≠ 0` | silent divergence | ✅ **3 lengths, zero divergence** — cold and cache-served answers byte-identical while TTFT collapsed 6–15×. See §12 |
 | T12a | **Audio on `gemma4_unified` 12B** (raw-waveform path, not mel+conformer) | the second audio family | ⚠ **audio reaches and informs the model** — "what animal is mentioned?" → **"Elephant"**, correct. Asked to transcribe verbatim it answered *"The quick brown fox jumps over the lazy dog."* — a **confabulated pangram**. See §5 |
 | T12b | Audio on Nemotron-Omni (`sound_encoder` + Parakeet) | the third audio family | ✅ Nemotron-3-Nano-Omni-30B-A3B-JANG_4M — 4/4 content answers correct (`elephant` / `purple` / `7` / `violet`), TTFT 1.61s → 0.41/0.43/0.42s, 118–130 tok/s, kv_v2 604 MB, RSS 19.9 GB. **Reuse not discriminated at this size** — see §6 |
-| T13 | Muse Glimmer / Zaya / LFM2.5-VL / Step-3.7 media reuse | per-family media paths | ⚠ **3 of 4 run and passing** — see §8. Step-3.7-Flash **attempted and aborted by a RAM guard** at 0.4 GB free; see §13 |
+| T13 | Muse Glimmer / Zaya / LFM2.5-VL / Step-3.7 media reuse | per-family media paths | ✅ **3 of 3 applicable families pass** — see §8. Step-3.7 is **text-only by design** in this lane, so it has no media path to test; see §13 |
 | T14 | **Growing conversation on a media prefix** (0.6k → 27k → 54k) | reuse at a depth where it is worth seconds; decode sag | ✅ Nemotron-Omni — reuse holds (1.44s at 27k, 1.87s at 54k vs 11.1s to prefill the same span); decode 124 → 51 → 64 → 54 → 63 tok/s. **Answer quality collapses at 27k for BOTH audio and text** — see §6 |
 
 ---
@@ -463,30 +463,57 @@ available.
 
 ---
 
-## 13. Step-3.7-Flash: attempted, and stopped by a guard rather than by an estimate
+## 13. Step-3.7: two wrong reasons before the real one
 
-The §8 row said Step-3.7 was skipped because the bundle is ~74–82 GB. That was
-an estimate, so it was worth actually trying.
+This row went through three explanations. The first two were mine and both
+were wrong, which is the useful part.
 
-Run with a supervisor (`ramguard.sh`) polling free memory every 10s and killing
-the app below a 3 GB floor. Started at 57 GB free; during the weight load free
-memory fell to **0.4 GB** and the guard stopped the app. The machine recovered
-to 30 GB free with no panic, and the probe never reached its first turn.
+**"Too big to run" — wrong.** The row originally said Step-3.7 was skipped
+because the bundle is ~74 GB. Step-3.7-Flash-JANG_K loads and generates on this
+machine perfectly well: a warm-up turn answered in **0.89s at 61.0 tok/s**.
 
-Polling afterwards for a window big enough to retry, free memory over ten
-minutes went: 3, 44, 74, 20, 8, 41, 29, 35, 49, 84, 5, 1 GB. The box is being
-cycled by other model work, so there is no stable window for a bundle this
-size — and a run that survives only until the next background load would
-measure paging, not the cache.
+**"Stopped by a RAM guard" — also wrong, and the guard was the problem.** A
+first supervised attempt killed the app when free memory hit 0.4 GB, and that
+got written up as "measured as not runnable here". But MLX mmaps weights, so
+free memory falling during a load is the page cache doing its job. The guard
+was watching the wrong number. Rewritten to watch **swap growth** — the signal
+that the OS has run out of evictable pages — it never fired, and the model
+loaded fine with swap flat.
 
-**So this row is not "skipped", it is "measured as not runnable here".** The
-difference matters: the guard produced a number (0.4 GB free at load), and the
-polling produced a distribution. Both are evidence. Retrying needs the machine
-mostly to itself, which is a scheduling question rather than a testing one.
+That is the same mistake this codebase has a standing rule about, committed in
+a harness instead of in the product: a guard that fires on a prediction, and a
+conclusion ("not runnable") built on the guard rather than on the machine.
 
-The guard is worth keeping regardless. Three VL models in one process once left
-this machine with 15 MB free and triggered a watchdog panic; a supervised probe
-turns that into a clean abort.
+**The real reason: Step-3.7 has no media path in this lane, on purpose.**
+
+    // MLXModel.computeIsVLM()
+    if ModelFamilyNames.isStepFamily(id) || ModelFamilyNames.isStepFamily(name) {
+        // Step 3.7 bundles can carry upstream vision metadata, but this
+        // Osaurus/vMLX path is the Step text runtime. Keep picker capability
+        // detection text-only until Step VLM is wired and proven.
+        return false
+    }
+
+So the composer resolves Step-3.7 as text-only and the attach panel filters
+every image out — which is exactly what the harness saw: the file list came
+back **empty** (`cells=[]`) on all 12 retries while the same panel listed the
+file instantly for every other family. That was the product telling the truth,
+and the harness reading it as a timing problem.
+
+**T13 is therefore complete at 3 of 3 applicable families.** Step-3.7 is not a
+gap in coverage; it is a family whose media path does not exist yet.
+
+### What §1's inventory does and does not mean
+
+§1 counts `step3p7` under "with vision" because the checkpoint carries
+`vision_config` and an `image_token_id`. It does. **A checkpoint carrying
+vision tensors does not mean the runtime exposes them** — the inventory is a
+statement about bits on disk, and wiring is a separate question. Any future
+row derived from §1 has to check the runtime as well, or it will keep
+generating tests for paths that are deliberately closed.
+
+The swap-based guard is worth keeping for genuinely large probes: three VL
+models in one process once left this machine at 15 MB free and panicked it.
 
 ---
 
