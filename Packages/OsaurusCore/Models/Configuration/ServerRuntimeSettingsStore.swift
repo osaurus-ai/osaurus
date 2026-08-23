@@ -444,7 +444,49 @@ public enum ServerRuntimeSettingsStore {
             normalized.cache.prefix.memoryPercent = nil
             writeMemorySafetyOwnedCacheDefaultsMigrationMarker()
         }
+        warnIfDiskCapIsIgnored(normalized.cache)
         return normalized
+    }
+
+    /// Say so when a configured `maxSizeGB` will not be enforced.
+    ///
+    /// `resolveDiskCacheMaxGB` consults `maxSizePercent` first and only falls
+    /// through to `maxSizeGB` when the percent is nil or zero — and the app
+    /// writes a percent by default. So a GB cap typed into the config is
+    /// accepted, persisted, and then ignored. Measured live: a config asking
+    /// for 0.5 GB let the cache grow to 3897 MB, because the percent still
+    /// resolved to ~10% of a 3.7 TB volume.
+    ///
+    /// This does not change which field wins — that is a product decision, and
+    /// silently flipping precedence could shrink a cache someone is relying on.
+    /// It only refuses to keep the outcome secret, which is a trap under either
+    /// precedence.
+    private static let ignoredDiskCapWarningLock = OSAllocatedUnfairLock<Set<String>>(
+        initialState: []
+    )
+
+    private nonisolated static func warnIfDiskCapIsIgnored(
+        _ cache: VMLXServerCacheSettings
+    ) {
+        guard let gb = cache.blockDisk.maxSizeGB, gb > 0,
+            let percent = cache.blockDisk.maxSizePercent, percent > 0
+        else { return }
+        // Once per distinct pair per process. Normalization runs on more than
+        // one load path, so an ungated notice printed twice on every launch —
+        // and a warning a user learns to scroll past has stopped warning.
+        let seen = ignoredDiskCapWarningLock.withLock { state -> Bool in
+            let key = "\(gb)|\(percent)"
+            defer { state.insert(key) }
+            return state.contains(key)
+        }
+        if seen { return }
+        NSLog(
+            "[Settings] cache.blockDisk.maxSizeGB=%@ is NOT in effect: "
+                + "maxSizePercent=%@ takes precedence and is what the disk cache "
+                + "will enforce. Clear maxSizePercent to use the GB value.",
+            String(format: "%g", gb),
+            String(format: "%g", percent)
+        )
     }
 
     private nonisolated static func shouldRepairLegacyCacheDefaults(
