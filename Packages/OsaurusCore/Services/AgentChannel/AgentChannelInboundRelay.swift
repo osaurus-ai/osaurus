@@ -230,6 +230,15 @@ final class AgentChannelInboundRelay {
                 showToast: true,
                 source: .channel,
                 externalSessionKey: partition.externalSessionKey,
+                // Plugin tools are deferred behind `capabilities_load`, and a
+                // channel dispatch starts each message with an empty
+                // loaded-tools set. Pre-load the agent's granted plugin tools
+                // so calendar/mail/etc. work without the model having to
+                // discover and load them itself every turn (#2443).
+                requestedToolNames: Self.preloadedPluginToolNames(
+                    registered: ToolRegistry.shared.registeredPluginToolNames,
+                    granted: AgentManager.shared.effectiveEnabledToolNames(for: agentId)
+                ),
                 externalSurface: true,
                 loadIntent: .background
             )
@@ -331,6 +340,19 @@ final class AgentChannelInboundRelay {
                 message: message
             )
         }
+    }
+
+    /// Plugin tools to pre-load into a channel-dispatched session. `granted`
+    /// is the agent's manual-selection allowlist; `nil` means the agent uses
+    /// the global enabled registry, so every registered plugin tool applies.
+    /// Sorted so successive dispatches into a reattached session append a
+    /// stable set.
+    static func preloadedPluginToolNames(
+        registered: Set<String>,
+        granted: [String]?
+    ) -> [String] {
+        guard let granted else { return registered.sorted() }
+        return registered.intersection(granted).sorted()
     }
 
     private static func attachmentContext(_ attachments: [AgentChannelStoredAttachment]) -> String {
