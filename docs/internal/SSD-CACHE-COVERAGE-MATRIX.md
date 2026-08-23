@@ -62,6 +62,7 @@ construction.
 | T12a | **Audio on `gemma4_unified` 12B** (raw-waveform path, not mel+conformer) | the second audio family | ⚠ **audio reaches and informs the model** — "what animal is mentioned?" → **"Elephant"**, correct. Asked to transcribe verbatim it answered *"The quick brown fox jumps over the lazy dog."* — a **confabulated pangram**. See §5 |
 | T12b | Audio on Nemotron-Omni (`sound_encoder` + Parakeet) | the third audio family | ✅ Nemotron-3-Nano-Omni-30B-A3B-JANG_4M — 4/4 content answers correct (`elephant` / `purple` / `7` / `violet`), TTFT 1.61s → 0.41/0.43/0.42s, 118–130 tok/s, kv_v2 604 MB, RSS 19.9 GB. **Reuse not discriminated at this size** — see §6 |
 | T13 | Muse Glimmer / Zaya / LFM2.5-VL / Step-3.7 media reuse | per-family media paths | ✅ **3 of 3 applicable families pass** — see §8. Step-3.7 is **text-only by design** in this lane, so it has no media path to test; see §13 |
+| T15 | **Reasoning toggled mid-conversation** | the salt splitting the prefix | ✅ costs exactly one re-prefill, scales with depth (3.38s at 8k, 14.28s at 17k); both branches then persist. See §15 |
 | T14 | **Growing conversation on a media prefix** (0.6k → 27k → 54k) | reuse at a depth where it is worth seconds; decode sag | ✅ Nemotron-Omni — reuse holds (1.44s at 27k, 1.87s at 54k vs 11.1s to prefill the same span); decode 124 → 51 → 64 → 54 → 63 tok/s. **Answer quality collapses at 27k for BOTH audio and text** — see §6 |
 
 ---
@@ -555,3 +556,53 @@ re-explained with a cause it cannot support.
 The §12 result stands on its own regardless: a cache-served turn answers
 identically to a cold one. That was established by deep-sleeping a live
 conversation, not by restarting the app.
+
+---
+
+## 15. T15: what flipping reasoning mid-conversation costs
+
+`cacheScopeSalt` encodes `reasoning=on` / `reasoning=off`, so the two modes hash
+to different blocks. The worry is that a user who flips Thinking at depth
+strands the prefix and pays for it on every subsequent turn.
+
+Driven through the real control — an `AXCheckBox desc="Thinking"` in the model
+picker's MODEL OPTIONS section. (The chip itself only opens the picker; its
+"Thinking, On" text is an accessibility description, not a control.)
+Ornith-1.5-9B, starting from Thinking OFF so the control leg is clean:
+
+| turn | mode | 8k | 17k |
+| --- | --- | ---: | ---: |
+| 1 cold | OFF | 3.46s | 12.21s |
+| 2 follow-up | OFF | **0.45s** | **0.86s** |
+| 3 — **flip to ON** | ON | **3.38s** | **14.28s** |
+| 4 follow-up | ON | **0.42s** | not measurable (see below) |
+| 5 — **flip back to OFF** | OFF | **0.64s** | not measurable |
+
+**A flip costs exactly one re-prefill.** Turn 3 lands within 2% of the cold
+prefill at 8k (3.38 vs 3.46) and within 17% at 17k (14.28 vs 12.21), against
+same-mode follow-ups of 0.45s and 0.86s. So the penalty is ~7.5x a normal
+follow-up at 8k and ~16x at 17k — **it scales with depth, because it is the
+whole conversation being prefilled again.**
+
+**It is paid once per mode, not once per flip.** Turn 4 shows the new branch
+caching normally (0.42s), and turn 5 — flipping back — comes in at 0.64s, not
+another 3.4s. The abandoned branch was still there. A user who toggles Thinking
+repeatedly pays twice in total, not twice per toggle.
+
+The 17k legs 4–5 are marked not measurable rather than guessed: with Thinking
+ON at that depth Ornith spends its whole output budget reasoning and returns
+the max-tokens notice, so those turns have no TTFT line at all. The 8k run
+answers the same questions with clean data, and the three measurable 17k legs
+reproduced across two independent runs (12.20/12.21, 0.95/0.86, 14.33/14.28).
+
+### The harness caught itself twice
+
+The first version of this test read "the last TTFT line" after each turn and
+reported **13.30s for two different turns** — the AX tree lags the turn
+completing, so it re-read the previous line. The rewrite records the whole list
+each turn and requires it to have grown by exactly one, printing
+`STALE READ` otherwise. That gate then fired on the 17k run and correctly
+refused to report a fourth number that did not exist.
+
+Identical timings on different prompts are a harness bug, never a result —
+this is the second time that exact trap has been caught in this document (§4).
