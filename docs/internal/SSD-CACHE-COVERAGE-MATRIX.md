@@ -57,7 +57,7 @@ construction.
 | T7 | Long-context (~30–48k) follow-ups | boundary publication value | ✅ run — **negative result**, see §3 |
 | T8 | **Restart survival — kill app, replay identical prompt** | does L2 actually persist | ✅ Ornith-1.5-9B — **17.11s → 0.41s (~42×)** across a real process restart on the same root; cache 3.5 → 4.4 GB |
 | T9 | SSD budget stress past the % cap | LRU eviction breaking live chains | ⚠ eviction proven at a share (1638 MB → 408 MB under a 762 MB cap) but not against a live chain |
-| T10 | Multiple images in different turns | the bunching bug | ⚠ unit-tested only |
+| T10 | Multiple images in different turns | the bunching bug | ✅ **live on 3 families** — LFM2.5-VL and Muse Glimmer both return `4, 5, 4, 7` and then `4,5,7`. Zaya is unstable but shows no bunching. See §10 |
 | T11 | Cold-vs-warm answer exactness at `%256 ≠ 0` | silent divergence | ❌ still unrun — attempting it proved reuse is **per-conversation**, so the probe needs the history sidebar. See §9 |
 | T12a | **Audio on `gemma4_unified` 12B** (raw-waveform path, not mel+conformer) | the second audio family | ⚠ **audio reaches and informs the model** — "what animal is mentioned?" → **"Elephant"**, correct. Asked to transcribe verbatim it answered *"The quick brown fox jumps over the lazy dog."* — a **confabulated pangram**. See §5 |
 | T12b | Audio on Nemotron-Omni (`sound_encoder` + Parakeet) | the third audio family | ✅ Nemotron-3-Nano-Omni-30B-A3B-JANG_4M — 4/4 content answers correct (`elephant` / `purple` / `7` / `violet`), TTFT 1.61s → 0.41/0.43/0.42s, 118–130 tok/s, kv_v2 604 MB, RSS 19.9 GB. **Reuse not discriminated at this size** — see §6 |
@@ -315,3 +315,52 @@ select it. That is the next thing to solve for this row.
 - Ornith-1.5-9B at 44k spent its whole output budget thinking and returned the
   max-tokens notice instead of an answer. A reasoning model needs its budget
   raised (or thinking off) before it can be used as a cache probe at all.
+
+---
+
+## 10. T10: three images, three separate turns
+
+The bunching failure — features from one turn landing on another turn's
+placeholders — cannot be seen by asking only about the newest image, because
+the newest one is right even when the older ones have been displaced. So every
+turn asks about a different one, including going back to the first:
+
+1. attach purple `4` → which digit?
+2. attach green `5` → which digit in the new image?
+3. **no attachment** → which digit was in the FIRST image?  ← the test
+4. attach blue `7` → which digit?
+5. **no attachment** → list all three in order
+
+| family | t1 | t2 | **t3 (first image)** | t4 | t5 (in order) |
+| --- | --- | --- | --- | --- | --- |
+| LFM2.5-VL 3B MXFP8 | 4 ✅ | 5 ✅ | **4 ✅** | 7 ✅ | `4, 5, 7` ✅ |
+| Muse Glimmer 30B JANG_4M | 4 ✅ | 5 ✅ | **4 ✅** | 7 ✅ | `4,5,7` ✅ |
+| ZAYA1-VL 8B JANGTQ4 | 4 ✅ | 5 ✅ | 5 ❌ | 3 ❌ | `5, 3, 2` ❌ |
+
+**The pipeline keeps per-turn images distinct.** Two families answer every
+question correctly, including recalling the first image after two more have
+arrived, and reconstructing the full ordered list.
+
+### Zaya is not evidence of bunching, and it took a second run to know that
+
+The first Zaya run looked like the bunching bug. It was not:
+
+- Re-run with neutral wording — "the very first image of this conversation"
+  instead of "the FIRST image I sent" — Zaya answered **4**, correctly. The
+  earlier `5` was wording sensitivity, not a displaced feature.
+- Its `3` for the third image came from a prompt that said "this **THIRD**
+  image". Suspicious on its own — but LFM and Muse answered `7` to that exact
+  wording, so the wording is not sufficient to cause it.
+- On the neutral re-run Zaya also emitted tool-flavoured prose ("you can use
+  the osaurus_agent command…") on an agent with tools DISABLED, which is its
+  known template priming echo, not a media problem.
+
+So: Zaya1-VL gives unstable answers on multi-image conversations and is a poor
+probe model. `Zaya1VL.mergeImageFeatures` is a flat masked scatter that
+*throws* when the image-token count and feature-row count disagree, so a silent
+misplacement would require mis-ordered feature rows — not something the two
+passing families are consistent with.
+
+**Harness rule this reinforces:** when one family fails a probe that two others
+pass, re-run the failing one with the wording varied before believing it. A
+single family's wrong answer is a hypothesis, not a finding.
