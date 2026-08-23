@@ -61,7 +61,7 @@ construction.
 | T11 | Cold-vs-warm answer exactness at `%256 ≠ 0` | silent divergence | ❌ never run |
 | T12a | **Audio on `gemma4_unified` 12B** (raw-waveform path, not mel+conformer) | the second audio family | ⚠ **audio reaches and informs the model** — "what animal is mentioned?" → **"Elephant"**, correct. Asked to transcribe verbatim it answered *"The quick brown fox jumps over the lazy dog."* — a **confabulated pangram**. See §5 |
 | T12b | Audio on Nemotron-Omni (`sound_encoder` + Parakeet) | the third audio family | ✅ Nemotron-3-Nano-Omni-30B-A3B-JANG_4M — 4/4 content answers correct (`elephant` / `purple` / `7` / `violet`), TTFT 1.61s → 0.41/0.43/0.42s, 118–130 tok/s, kv_v2 604 MB, RSS 19.9 GB. **Reuse not discriminated at this size** — see §6 |
-| T13 | Muse Glimmer / Qwen3.6-35B / Zaya / Step-3.7 media reuse | per-family media paths | ❌ never run |
+| T13 | Muse Glimmer / Zaya / LFM2.5-VL / Step-3.7 media reuse | per-family media paths | ⚠ **3 of 4 run and passing** — see §8. Step-3.7-Flash deferred: needs ~82 GB and the box had none free |
 | T14 | **Growing conversation on a media prefix** (0.6k → 27k → 54k) | reuse at a depth where it is worth seconds; decode sag | ✅ Nemotron-Omni — reuse holds (1.44s at 27k, 1.87s at 54k vs 11.1s to prefill the same span); decode 124 → 51 → 64 → 54 → 63 tok/s. **Answer quality collapses at 27k for BOTH audio and text** — see §6 |
 
 ---
@@ -228,3 +228,41 @@ The badge reads the same `mediaCapabilities` the attach button reads, so the
 two surfaces cannot drift apart. Affects every audio family: Nemotron-Omni,
 Gemma-4 E2B/E4B, Gemma-4 12B unified. No new localization keys — it reuses the
 existing `Audio Input` catalog entry.
+
+---
+
+## 8. T13: does every vision family actually reuse across a media prefix?
+
+Same growing shape as §6, with an image instead of audio, one fresh app per
+family. Turn 2 adds ~13k tokens of filler (13k, not 26k — several of these
+ship shorter windows than Nemotron-Omni, and a filler that overflows the window
+measures the truncation policy rather than the cache). Turn 3 is the test:
+if it is not seconds faster than turn 2, that family is not reusing.
+
+| family | `model_type` | t1 image | t2 +13k | **t3 short** | t4 +13k | **t5 short** | decode 1k → 20k | kv_v2 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| ZAYA1-VL 8B JANGTQ4 | `zaya1_vl` | 1.65s | 4.99s | **0.38s** | 5.62s | **0.64s** | 51.5 → 29.3 | 101 → 4707 MB |
+| Muse Glimmer 30B JANG_4M | `muse_glimmer` | 1.62s | 11.92s | **1.05s** | 17.67s | **0.70s** | 30.7 → 18.7 | 266 → 3494 MB |
+| LFM2.5-VL 3B MXFP8 | `lfm2_vl` | 0.41s | 1.42s | **0.19s** | 1.73s | **0.24s** | 157.7 → 170.7 | 31 → 1953 MB |
+| Step-3.7-Flash | `step3p7` | — | — | — | — | — | — | not run: ~82 GB bundle, no free RAM |
+
+All three reuse across an image prefix, at both 10k and 20k. Answers were
+correct at both ends of every conversation — digit `4` on turn 1 and again on
+turn 5, and the filler's `17` in between — so the media survives to 20k here.
+
+**That is the useful contrast with §6.** Muse Glimmer still had the image at
+20k while Nemotron-Omni had lost the audio by 27k, on the same machine, through
+the same cache. A pipeline defect would not be so selective, which is more
+evidence that §6 is the checkpoint and not the code.
+
+**Decode sag is family-specific, not universal.** Zaya loses 43% and Muse 39%
+between 1k and 20k, while LFM2.5-VL loses nothing at all (157.7 → 170.7 tok/s).
+Any future claim that "decode sags with depth" has to name the family.
+
+### A probe question that was ambiguous
+
+Turn 1 asked "what digit is shown and what colour is it?" of a white `4` on a
+purple field. Zaya and Muse answered **purple** (the field); LFM2.5-VL answered
+**white** (the glyph). Both readings are correct, and each model stayed
+consistent with itself at 20k, which is the property being tested — but the
+question cannot score colour. Ask about the field explicitly next time.
