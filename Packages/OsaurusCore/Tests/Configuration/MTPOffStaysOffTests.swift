@@ -30,12 +30,18 @@ import XCTest
 final class MTPOffStaysOffTests: XCTestCase {
 
     private var root: URL!
+    /// Whatever `OSAURUS_TEST_ROOT` was before this suite ran. CI may set it
+    /// globally, and unsetting it unconditionally in tearDown would strip it
+    /// for every test that runs afterwards — server tests then fail with
+    /// `.notRunning`, far from the suite that caused it.
+    private var previousTestRoot: String?
 
     private func settingsFileURL() -> URL {
         root.appendingPathComponent("config/server-runtime.json")
     }
 
     override func setUpWithError() throws {
+        previousTestRoot = ProcessInfo.processInfo.environment["OSAURUS_TEST_ROOT"]
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("mtp-off-\(UUID().uuidString)")
         try FileManager.default.createDirectory(
@@ -44,7 +50,11 @@ final class MTPOffStaysOffTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
-        unsetenv("OSAURUS_TEST_ROOT")
+        if let previousTestRoot {
+            setenv("OSAURUS_TEST_ROOT", previousTestRoot, 1)
+        } else {
+            unsetenv("OSAURUS_TEST_ROOT")
+        }
         try? FileManager.default.removeItem(at: root)
     }
 
