@@ -56,7 +56,7 @@ construction.
 | T6 | Audio attach gating | capability gates | ✅ picker A/B ("image supported" + greyed `.wav` → "image + audio supported" + selectable) and send gate (`audios=0` → `audios=1` at the engine boundary) |
 | T7 | Long-context (~30–48k) follow-ups | boundary publication value | ✅ run — **negative result**, see §3 |
 | T8 | **Restart survival — kill app, replay identical prompt** | does L2 actually persist | ✅ Ornith-1.5-9B — **17.11s → 0.41s (~42×)** across a real process restart on the same root; cache 3.5 → 4.4 GB |
-| T9 | SSD budget stress past the % cap | LRU eviction breaking live chains | ⚠ eviction proven at a share (1638 MB → 408 MB under a 762 MB cap) but not against a live chain |
+| T9 | SSD budget stress past the % cap | LRU eviction breaking live chains | ✅ **against a live chain** — 512 MB cap held to the megabyte while a 6-turn conversation ran; every turn still correct. See §11 |
 | T10 | Multiple images in different turns | the bunching bug | ✅ **live on 3 families** — LFM2.5-VL and Muse Glimmer both return `4, 5, 4, 7` and then `4,5,7`. Zaya is unstable but shows no bunching. See §10 |
 | T11 | Cold-vs-warm answer exactness at `%256 ≠ 0` | silent divergence | ❌ still unrun — attempting it proved reuse is **per-conversation**, so the probe needs the history sidebar. See §9 |
 | T12a | **Audio on `gemma4_unified` 12B** (raw-waveform path, not mel+conformer) | the second audio family | ⚠ **audio reaches and informs the model** — "what animal is mentioned?" → **"Elephant"**, correct. Asked to transcribe verbatim it answered *"The quick brown fox jumps over the lazy dog."* — a **confabulated pangram**. See §5 |
@@ -364,3 +364,55 @@ passing families are consistent with.
 **Harness rule this reinforces:** when one family fails a probe that two others
 pass, re-run the failing one with the wording varied before believing it. A
 single family's wrong answer is a hypothesis, not a finding.
+
+---
+
+## 11. T9: eviction while the conversation is still running
+
+Eviction was already proven in isolation. The case that actually hurts is the
+cap being reached mid-chain, so the blocks being thrown away belong to the
+conversation still in progress.
+
+LFM2.5-VL 3B, image turn then five turns each adding ~13k tokens, every one
+asking again about the image sent at the start. Cap set to 512 MB.
+
+| turn | capped kv_v2 | capped TTFT | uncapped kv_v2 | uncapped TTFT | answer |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | 30 MB | 0.53s | 30 MB | 1.42s | 4 ✅ |
+| 2 | 308 MB | 2.19s | 308 MB | 1.93s | 4 ✅ |
+| 3 | **263 MB** ← evicted | 2.61s | 833 MB | 2.22s | 4 ✅ |
+| 4 | 387 MB | 3.01s | 1607 MB | 2.29s | 4 ✅ |
+| 5 | **511 MB** | 3.84s | 2628 MB | 2.83s | 4 ✅ |
+| 6 | **511 MB** | 3.73s | 3897 MB | 3.28s | 4 ✅ |
+
+**The cap holds to the megabyte** (511 of 512) and the drop at turn 3 is
+eviction happening *between* turns of a live conversation — not at startup, not
+on a timer. **Every turn still answered correctly**, including recalling the
+image after five intervening blocks of filler, so eviction does not break a
+running chain.
+
+The cost is small here and the reason is §3: same-session continuation is
+served by the in-memory KV cache, so throwing away disk blocks costs the live
+conversation almost nothing. Caveat on the comparison — the uncapped column is
+one run of the same script taken while the machine was under heavier memory
+pressure (5–12 GB free vs 8–13 GB), so treat the TTFT columns as "the same
+shape", not as a controlled delta.
+
+### The knob that does nothing
+
+The first run of this test set `cache.blockDisk.maxSizeGB = 0.5` and watched the
+cache grow to **3897 MB — 7.6x the cap**. That looks exactly like an unenforced
+user limit, and it is not:
+
+    resolveDiskCacheMaxGB(percent:legacyGB:directory:)
+      if let percent, percent > 0 { return capacity * percent / 100 }   // wins
+      if let legacyGB, legacyGB > 0 { return legacyGB }                 // dead
+
+**`maxSizeGB` is only consulted when `maxSizePercent` is nil or zero, and the
+app writes `maxSizePercent: 10` by default.** So a GB figure written into the
+config has no effect at all — 10% of this 3.7 TB volume is ~372 GB, which is
+what was actually enforced. Setting the percent to 0.01343% produced the 512 MB
+cap used above, and it held exactly.
+
+Worth knowing because the failure is silent in the reassuring direction for
+anyone hand-editing a config: the field is accepted, persisted, and ignored.
