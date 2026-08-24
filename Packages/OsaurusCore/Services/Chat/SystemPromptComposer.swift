@@ -261,9 +261,18 @@ public struct SystemPromptComposer: Sendable {
         if PrefillDebugLog.shared.isEnabled {
             let window = ContextSizeResolver.resolve(modelId: snapshot.model)
             let toolTokens = ToolRegistry.shared.totalEstimatedTokens(for: toolset.tools)
+            // `source=` is the bound session source, the input every
+            // source-scoped gate (channel publish tool, Channel Destinations)
+            // resolves against. Logging it makes warmup/send parity directly
+            // readable: two banners for one session must show the same source
+            // and the same staticPrefixHash, and `source=nil` on any live
+            // session's banner is itself the bug (an unbound compose path).
+            let boundSource = ChatExecutionContext.currentSessionSource
+                .map { String(describing: $0) } ?? "nil"
             PrefillDebugLog.shared.log(
                 "==== COMPOSE model=\(snapshot.model) sizeClass=\(window.sizeClass) "
                     + "ctxLen=\(window.contextLength.map(String.init) ?? "?") "
+                    + "source=\(boundSource) "
                     + "executionMode=\(executionMode) toolCount=\(toolset.tools.count) "
                     + "toolTokens≈\(toolTokens) "
                     + "systemPromptTokens≈\(manifest.totalEstimatedTokens) "
