@@ -5380,6 +5380,13 @@ extension RemoteProviderService {
             let models = try await fetchModels(from: provider)
             return (models, OpenAICodexOAuthService.lastContextWindows)
         }
+        // Grok/SuperGrok sign-in models have no live catalog to read windows
+        // from (the OAuth token 403s on `/models`), so surface the
+        // documented windows alongside the built-in model catalog instead.
+        if provider.authType == .xaiOAuth {
+            let models = try await fetchModels(from: provider)
+            return (models, XAIOAuthService.contextWindows)
+        }
         return (try await fetchModels(from: provider), [:])
     }
 
