@@ -103,14 +103,25 @@ public enum SystemPromptTemplates {
     /// — before they can fill absolute date-time tool arguments like a
     /// reminder's `dueDate` (live-confirmed 2026-07-27: Ornith-9B passed
     /// `2025-05-15` for "today").
+    ///
+    /// Minute granularity, deliberately: the block exists to resolve
+    /// relative dates and fill absolute date-time arguments, none of which
+    /// need seconds — and seconds made the rendered bytes unique per send,
+    /// so two fresh chats could never share a prefill past this block. At
+    /// minute granularity, chats started in the same minute render
+    /// byte-identical time blocks and stay KV/L2-shareable. It also rides
+    /// at the TAIL of the injected prefix (see
+    /// `composeInjectedUserPrefix`) so the stabler memory/screen blocks
+    /// sit adjacent to the shared static prefix and only the tail diverges.
     public static func timeContext(now: Date, timeZone: TimeZone) -> String {
         let readable = DateFormatter()
         readable.locale = Locale(identifier: "en_US_POSIX")
         readable.timeZone = timeZone
         readable.dateFormat = "EEEE, MMMM d, yyyy 'at' h:mm a"
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime]
+        let iso = DateFormatter()
+        iso.locale = Locale(identifier: "en_US_POSIX")
         iso.timeZone = timeZone
+        iso.dateFormat = "yyyy-MM-dd'T'HH:mmZZZZZ"
         return """
             [Current Time]
             \(readable.string(from: now)) — \(iso.string(from: now)) (\(timeZone.identifier))

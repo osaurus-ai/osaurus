@@ -3511,9 +3511,14 @@ public struct SystemPromptComposer: Sendable {
             let trimmed = automationContext.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { prefix = "\(trimmed)\n\n" + prefix }
         }
+        // Time rides LAST, right against the user's text: it is the most
+        // volatile block, and keeping it at the tail means the stabler
+        // automation/screen/memory bytes stay adjacent to the shared static
+        // prefix — a fresh chat whose earlier blocks match a previous
+        // session's prefill diverges only here, not at byte 0 of the turn.
         if let timeContext {
             let trimmed = timeContext.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { prefix = "\(trimmed)\n\n" + prefix }
+            if !trimmed.isEmpty { prefix += "\(trimmed)\n\n" }
         }
         return prefix.isEmpty ? nil : prefix
     }
