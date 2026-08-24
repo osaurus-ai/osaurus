@@ -48,12 +48,22 @@ struct AgentChannelPluginToolPreloadTests {
         )
     }
 
-    @Test("preload above the cap falls back to deferred loading")
-    func overCapPreloadsNothing() {
-        let registered = Set((0...AgentChannelInboundRelay.maxPreloadedPluginTools).map { "tool_\($0)" })
+    @Test("preload above the cap truncates to a deterministic sorted prefix")
+    func overCapTruncatesDeterministically() {
+        let cap = AgentChannelInboundRelay.maxPreloadedPluginTools
+        // 0...cap is cap+1 names; zero-padded so lexical order is numeric.
+        let registered = Set((0...cap).map { String(format: "tool_%03d", $0) })
+        let names = AgentChannelInboundRelay.preloadedPluginToolNames(
+            registered: registered, granted: nil)
+        #expect(names.count == cap)
+        #expect(names == registered.sorted().prefix(cap).map { $0 })
+        // Same inputs → same truncation, so reattached dispatches append a
+        // stable set even while over the cap.
+        let again = AgentChannelInboundRelay.preloadedPluginToolNames(
+            registered: registered, granted: nil)
+        #expect(names == again)
         #expect(
-            AgentChannelInboundRelay.preloadedPluginToolNames(registered: registered, granted: nil)
-                .isEmpty
+            AgentChannelInboundRelay.preloadOverflowCount(registered: registered, granted: nil) == 1
         )
     }
 
@@ -65,6 +75,9 @@ struct AgentChannelPluginToolPreloadTests {
             granted: nil
         )
         #expect(names.count == AgentChannelInboundRelay.maxPreloadedPluginTools)
+        #expect(
+            AgentChannelInboundRelay.preloadOverflowCount(registered: registered, granted: nil) == 0
+        )
     }
 
     @Test("a narrowing grant can bring an over-cap registry back under the cap")
@@ -75,6 +88,10 @@ struct AgentChannelPluginToolPreloadTests {
             granted: ["tool_5"]
         )
         #expect(names == ["tool_5"])
+        #expect(
+            AgentChannelInboundRelay.preloadOverflowCount(
+                registered: registered, granted: ["tool_5"]) == 0
+        )
     }
 
     @Test("output is sorted for stable accumulation across reattached dispatches")

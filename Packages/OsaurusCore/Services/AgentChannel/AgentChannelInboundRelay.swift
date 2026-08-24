@@ -352,15 +352,33 @@ final class AgentChannelInboundRelay {
     /// is the agent's manual-selection allowlist; `nil` means the agent uses
     /// the global enabled registry, so every registered plugin tool applies.
     /// Sorted so successive dispatches into a reattached session append a
-    /// stable set. Empty when the applicable set exceeds
-    /// `maxPreloadedPluginTools`.
+    /// stable set. Past `maxPreloadedPluginTools` the set is TRUNCATED to
+    /// the sorted prefix, not dropped: the same leading tools preload on
+    /// every dispatch (deterministic → reattached sessions stay
+    /// byte-stable), and "the first 40 work" degrades far better for the
+    /// small models the preload exists for than every tool silently
+    /// vanishing behind `capabilities_load` the moment one extra plugin is
+    /// installed. The overflow is deferred, not lost — the model can still
+    /// load it explicitly; `preloadOverflowCount` sizes the settings
+    /// warning that tells the operator to narrow the grant.
     nonisolated static func preloadedPluginToolNames(
         registered: Set<String>,
         granted: [String]?
     ) -> [String] {
         let applicable = granted.map { registered.intersection($0) } ?? registered
-        guard applicable.count <= maxPreloadedPluginTools else { return [] }
-        return applicable.sorted()
+        return Array(applicable.sorted().prefix(maxPreloadedPluginTools))
+    }
+
+    /// How many applicable plugin tools exceed the preload ceiling and fall
+    /// back to deferred loading. Non-zero means the operator should narrow
+    /// the agent's tool grant; surfaced in channel settings rather than
+    /// left as a silent behavior change.
+    nonisolated static func preloadOverflowCount(
+        registered: Set<String>,
+        granted: [String]?
+    ) -> Int {
+        let applicable = granted.map { registered.intersection($0) } ?? registered
+        return max(0, applicable.count - maxPreloadedPluginTools)
     }
 
     private static func attachmentContext(_ attachments: [AgentChannelStoredAttachment]) -> String {
