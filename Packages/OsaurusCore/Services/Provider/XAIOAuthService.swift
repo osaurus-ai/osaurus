@@ -109,6 +109,20 @@ public enum XAIOAuthService {
         "grok-4.20-latest-non-reasoning",
     ]
 
+    /// Documented context windows (docs.x.ai) for the OAuth catalog above,
+    /// keyed by slug. Since the OAuth `/models` endpoint 403s, there is no
+    /// live source for this — these are the vendor-published window sizes,
+    /// used in place of a live per-model discovery response the way Codex's
+    /// `lastContextWindows` is used for its (reachable) live catalog.
+    public static let contextWindows: [String: Int] = [
+        "grok-4.6": 500_000,
+        "grok-4.5": 500_000,
+        "grok-4.3": 256_000,
+        "grok-build-0.1": 256_000,
+        "grok-4.20-latest-reasoning": 256_000,
+        "grok-4.20-latest-non-reasoning": 256_000,
+    ]
+
     // MARK: - Provider Factory
 
     public static func makeProvider(id: UUID = UUID()) -> RemoteProvider {
