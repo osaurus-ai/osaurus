@@ -10123,6 +10123,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             "general.architecture": "foundation",
                             "general.name": "Apple Foundation Model",
                         ],
+                        "capabilities": ["completion"],
                     ]
                     let jsonData =
                         (try? JSONSerialization.data(withJSONObject: response, options: .osaurusCanonical))
