@@ -302,7 +302,8 @@ extension ModelPickerItem {
     /// GPT-5.6 models attach the documented public reasoning profile
     /// (`none` … `max`, never Codex-only `ultra`); every other id keeps the
     /// plain `/v1/models` id/display behavior and the generic static
-    /// profile fallback.
+    /// profile fallback. Context length comes from `officialOpenAIContextWindow`
+    /// since `/v1/models` never reports one (see that table's doc comment).
     static func fromOfficialOpenAIModel(
         modelId: String,
         providerName: String,
@@ -312,8 +313,39 @@ extension ModelPickerItem {
             id: modelId,
             displayName: displayName(fromModelId: modelId),
             source: .remote(providerName: providerName, providerId: providerId),
+            contextLength: officialOpenAIContextWindow(forModelId: modelId),
             reasoningCapabilities: isPublicGPT56ModelId(modelId) ? .officialOpenAIGPT56 : nil
         )
+    }
+
+    /// Context window (tokens) for known `api.openai.com` model families,
+    /// keyed by the documented slug prefix (longest match wins so dated
+    /// snapshots like `gpt-5.5-2026-01-01` still resolve). OpenAI's `/v1/models`
+    /// endpoint never reports a context window — confirmed against the live
+    /// API, which returns only `id`/`object`/`created`/`owned_by` — so this is
+    /// the only source for the official API-key route. Values are from
+    /// `developers.openai.com/api/docs/models/<slug>`; update when OpenAI ships
+    /// a new family. Scoped to the official host only — never applied to
+    /// OpenAI-compatible proxies, whose `id` values aren't OpenAI's to trust.
+    private static let officialOpenAIContextWindows: [(prefix: String, tokens: Int)] = [
+        ("gpt-5.6", 1_050_000),
+        ("gpt-5.5", 1_050_000),
+        ("gpt-5.4", 1_050_000),
+        ("gpt-5.2", 400_000),
+        ("gpt-5", 400_000),
+        ("gpt-4.1", 1_047_576),
+        ("gpt-4o", 128_000),
+        ("o4-mini", 200_000),
+        ("o3", 200_000),
+        ("gpt-3.5-turbo", 16_385),
+    ]
+
+    static func officialOpenAIContextWindow(forModelId modelId: String) -> Int? {
+        let bare = (modelId.split(separator: "/").last.map(String.init) ?? modelId).lowercased()
+        return officialOpenAIContextWindows
+            .filter { bare.hasPrefix($0.prefix) }
+            .max { $0.prefix.count < $1.prefix.count }?
+            .tokens
     }
 
     /// Whether a (possibly provider-prefixed) id names a GPT-5.6 model
