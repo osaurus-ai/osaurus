@@ -94,6 +94,63 @@ struct AgentChannelPluginToolPreloadTests {
         )
     }
 
+    @Test("insertion order of the registry set never changes the preload")
+    func setInsertionOrderIndependence() {
+        // Set iteration order is not guaranteed; the preload must not leak
+        // it into the schema, or two launches could serialize different
+        // tool orders and defeat cross-launch prefill reuse.
+        var forward = Set<String>()
+        var backward = Set<String>()
+        let names = (0..<60).map { String(format: "tool_%03d", $0) }
+        for n in names { forward.insert(n) }
+        for n in names.reversed() { backward.insert(n) }
+        #expect(
+            AgentChannelInboundRelay.preloadedPluginToolNames(registered: forward, granted: nil)
+                == AgentChannelInboundRelay.preloadedPluginToolNames(
+                    registered: backward, granted: nil)
+        )
+    }
+
+    @Test("successive dispatches into a reattached session leave the loaded set unchanged")
+    func reattachedDispatchesAreIdempotent() async {
+        // Models the dispatch sequence: preload names are appended into the
+        // session store on every inbound message. With a stable config the
+        // stored set — and therefore the composed tool schema — must be
+        // identical after N dispatches, or every channel message would
+        // re-prefill the whole session.
+        let store = SessionToolStateStore()
+        let preload = AgentChannelInboundRelay.preloadedPluginToolNames(
+            registered: ["get_events", "create_event", "list_calendars"], granted: nil)
+        await store.appendLoadedTools("s1", names: preload, fallbackAlwaysLoadedNames: nil)
+        let afterFirst = await store.get("s1")?.loadedToolNames
+        await store.appendLoadedTools("s1", names: preload, fallbackAlwaysLoadedNames: nil)
+        await store.appendLoadedTools("s1", names: preload, fallbackAlwaysLoadedNames: nil)
+        #expect(await store.get("s1")?.loadedToolNames == afterFirst)
+    }
+
+    @Test("a revocation between dispatches shrinks the set by exactly the revoked names")
+    func revocationBetweenDispatches() async {
+        // Dispatch 1 preloads under a wide grant; the operator narrows the
+        // grant; dispatch 2 reconciles then re-appends its own (narrower)
+        // preload. The stored set must be the original minus exactly the
+        // revoked names — nothing else may churn.
+        let registered: Set<String> = ["get_events", "create_event", "list_calendars"]
+        let store = SessionToolStateStore()
+        let wide = AgentChannelInboundRelay.preloadedPluginToolNames(
+            registered: registered, granted: nil)
+        await store.appendLoadedTools("s1", names: wide, fallbackAlwaysLoadedNames: nil)
+
+        let narrowGrant = ["get_events"]
+        let revoked = await store.retainLoadedTools(
+            "s1", allowed: Set(narrowGrant), among: registered)
+        let narrow = AgentChannelInboundRelay.preloadedPluginToolNames(
+            registered: registered, granted: narrowGrant)
+        await store.appendLoadedTools("s1", names: narrow, fallbackAlwaysLoadedNames: nil)
+
+        #expect(revoked == ["create_event", "list_calendars"])
+        #expect(await store.get("s1")?.loadedToolNames == ["get_events"])
+    }
+
     @Test("output is sorted for stable accumulation across reattached dispatches")
     func outputIsSorted() {
         let names = AgentChannelInboundRelay.preloadedPluginToolNames(
