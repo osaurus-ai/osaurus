@@ -56,6 +56,30 @@ struct TimeContextTests {
         #expect(memoryRange.upperBound <= timeRange.lowerBound)
     }
 
+    @Test func freshChatsInSameMinuteRenderIdenticalFirstTurnBytes() throws {
+        // Regression guard for the cross-chat prefill miss: two fresh chats
+        // dispatched seconds apart with the same recall/screen inputs must
+        // serialize byte-identical first user messages, so everything past
+        // the shared static prefix stays reusable across sessions. Seconds
+        // in the time block — or any per-send volatile byte joining the
+        // injected prefix — breaks this by construction and must fail here.
+        let zone = try #require(TimeZone(identifier: "Asia/Kolkata"))
+        let userText = "remind me tomorrow at 8 AM"
+        func firstTurnBytes(dispatchedAt instant: Date) throws -> String {
+            let prefix = try #require(
+                SystemPromptComposer.composeInjectedUserPrefix(
+                    memorySection: "a fact",
+                    screenContext: "[Screen Context]\nDoing: In Safari\n[/Screen Context]",
+                    timeContext: SystemPromptTemplates.timeContext(now: instant, timeZone: zone)
+                )
+            )
+            return prefix + userText
+        }
+        let chatA = try firstTurnBytes(dispatchedAt: fixedInstant)
+        let chatB = try firstTurnBytes(dispatchedAt: fixedInstant.addingTimeInterval(17))
+        #expect(chatA == chatB)
+    }
+
     @Test func timeContextAloneProducesPrefix() throws {
         let zone = try #require(TimeZone(identifier: "Asia/Kolkata"))
         let time = SystemPromptTemplates.timeContext(now: fixedInstant, timeZone: zone)
