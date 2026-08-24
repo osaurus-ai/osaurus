@@ -1948,12 +1948,20 @@ final class ChatSession: ObservableObject {
     /// (`recomputePreviewContext`).
     private func composePreview() -> ComposedContext {
         let effectiveId = agentId ?? Agent.defaultId
-        return SystemPromptComposer.composePreviewContext(
-            agentId: effectiveId,
-            executionMode: estimatedChatExecutionMode(agentId: effectiveId),
-            model: selectedModel,
-            modelType: selectedPickerItem?.modelType
-        )
+        // Price the popover under this session's source, exactly as the send
+        // binds it. Source-scoped gates (channel publish tool + Channel
+        // Destinations section) read the task-local; previewing with it unset
+        // showed a smaller context than the send then composed, which read as
+        // "dynamic tools appeared" when the send's manifest replaced the
+        // estimate.
+        return ChatExecutionContext.$currentSessionSource.withValue(source) {
+            SystemPromptComposer.composePreviewContext(
+                agentId: effectiveId,
+                executionMode: estimatedChatExecutionMode(agentId: effectiveId),
+                model: selectedModel,
+                modelType: selectedPickerItem?.modelType
+            )
+        }
     }
 
     /// Builds the full user message text, prepending any attached document contents wrapped in XML tags.
