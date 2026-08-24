@@ -80,12 +80,22 @@ struct XAIOAuthServiceTests {
         #expect(!XAIOAuthService.isTrustedEndpoint("not a url"))
     }
 
-    @Test func supportedModels_provideOAuthCatalogWithGrok45Default() {
+    @Test func supportedModels_provideOAuthCatalogWithGrok46Default() {
         let models = XAIOAuthService.supportedModels
-        #expect(models.first == "grok-4.5")
+        #expect(models.first == "grok-4.6")
+        #expect(models.contains("grok-4.5"))
         #expect(models.contains("grok-4.3"))
         #expect(models.contains("grok-build-0.1"))
         #expect(Set(models).count == models.count, "static catalog has duplicate slugs")
+    }
+
+    @Test func contextWindows_coverEveryModelInSupportedCatalog() {
+        for model in XAIOAuthService.supportedModels {
+            #expect(
+                XAIOAuthService.contextWindows[model] != nil,
+                "\(model) is missing a documented context window"
+            )
+        }
     }
 
     @Test func makeProvider_usesOpenAICompatibleXAIShape() {
