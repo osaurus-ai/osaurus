@@ -96,16 +96,17 @@ public enum XAIOAuthService {
     /// Models reachable through the xAI OAuth ("Grok Build" / SuperGrok / X
     /// Premium+) entitlement. The OAuth access token is denied access to the
     /// `/models` endpoint (HTTP 403), so — like Codex — model discovery uses
-    /// this built-in catalog rather than a live query. `grok-4.5` is the
-    /// default, matching xAI (it is the Grok Build default on the API and
-    /// CLI); `grok-4.5-latest` and `grok-build-latest` are aliases of it and
-    /// are intentionally not listed separately.
+    /// this built-in catalog rather than a live query. `grok-4.6` is the
+    /// default, matching xAI (it is the current Grok Build default on the
+    /// API and CLI); `-latest` aliases are intentionally not listed
+    /// separately.
     public static let supportedModels: [String] = [
+        "grok-4.6",
         "grok-4.5",
         "grok-4.3",
         "grok-build-0.1",
-        "grok-4.20-beta-latest-reasoning",
-        "grok-4.20-beta-latest-non-reasoning",
+        "grok-4.20-latest-reasoning",
+        "grok-4.20-latest-non-reasoning",
     ]
 
     // MARK: - Provider Factory
