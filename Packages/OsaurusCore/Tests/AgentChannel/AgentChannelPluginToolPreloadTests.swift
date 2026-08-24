@@ -48,6 +48,35 @@ struct AgentChannelPluginToolPreloadTests {
         )
     }
 
+    @Test("preload above the cap falls back to deferred loading")
+    func overCapPreloadsNothing() {
+        let registered = Set((0...AgentChannelInboundRelay.maxPreloadedPluginTools).map { "tool_\($0)" })
+        #expect(
+            AgentChannelInboundRelay.preloadedPluginToolNames(registered: registered, granted: nil)
+                .isEmpty
+        )
+    }
+
+    @Test("preload at the cap still loads")
+    func atCapPreloads() {
+        let registered = Set((1...AgentChannelInboundRelay.maxPreloadedPluginTools).map { "tool_\($0)" })
+        let names = AgentChannelInboundRelay.preloadedPluginToolNames(
+            registered: registered,
+            granted: nil
+        )
+        #expect(names.count == AgentChannelInboundRelay.maxPreloadedPluginTools)
+    }
+
+    @Test("a narrowing grant can bring an over-cap registry back under the cap")
+    func grantNarrowsBelowCap() {
+        let registered = Set((0...100).map { "tool_\($0)" })
+        let names = AgentChannelInboundRelay.preloadedPluginToolNames(
+            registered: registered,
+            granted: ["tool_5"]
+        )
+        #expect(names == ["tool_5"])
+    }
+
     @Test("output is sorted for stable accumulation across reattached dispatches")
     func outputIsSorted() {
         let names = AgentChannelInboundRelay.preloadedPluginToolNames(

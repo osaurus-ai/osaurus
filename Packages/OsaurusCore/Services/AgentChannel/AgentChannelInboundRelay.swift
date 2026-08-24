@@ -342,17 +342,25 @@ final class AgentChannelInboundRelay {
         }
     }
 
+    /// Ceiling on how many plugin tools a channel dispatch will pre-load.
+    /// Past this, a preloaded schema stops helping the small models the
+    /// preload exists for and starts crowding their context, so the
+    /// dispatch falls back to the deferred `capabilities_load` path.
+    nonisolated static let maxPreloadedPluginTools = 40
+
     /// Plugin tools to pre-load into a channel-dispatched session. `granted`
     /// is the agent's manual-selection allowlist; `nil` means the agent uses
     /// the global enabled registry, so every registered plugin tool applies.
     /// Sorted so successive dispatches into a reattached session append a
-    /// stable set.
+    /// stable set. Empty when the applicable set exceeds
+    /// `maxPreloadedPluginTools`.
     nonisolated static func preloadedPluginToolNames(
         registered: Set<String>,
         granted: [String]?
     ) -> [String] {
-        guard let granted else { return registered.sorted() }
-        return registered.intersection(granted).sorted()
+        let applicable = granted.map { registered.intersection($0) } ?? registered
+        guard applicable.count <= maxPreloadedPluginTools else { return [] }
+        return applicable.sorted()
     }
 
     private static func attachmentContext(_ attachments: [AgentChannelStoredAttachment]) -> String {
