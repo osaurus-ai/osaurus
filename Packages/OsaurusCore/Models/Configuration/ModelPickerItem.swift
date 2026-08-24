@@ -108,8 +108,10 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// unknown, matching `inputPriceMicroPerMTok`.
     let outputPriceMicroPerMTok: Int64?
 
-    /// Context window in tokens, from the Osaurus router metadata. Used only to
-    /// filter the Osaurus tab by context limit; `nil` when unknown.
+    /// Context window in tokens, from the Osaurus router metadata or the
+    /// ChatGPT/Codex catalog's `context_window`. Also read by
+    /// `AgentToolLoop.providerContextWindow` to resolve the runtime/chat
+    /// budget for remote models; `nil` when the source has no window.
     let contextLength: Int?
 
     /// Whether Router metadata explicitly advertises tool calling. Nil for
@@ -291,6 +293,7 @@ extension ModelPickerItem {
             displayName: (catalogDisplayName?.isEmpty == false ? catalogDisplayName : nil)
                 ?? displayName(fromModelId: modelId),
             source: .remote(providerName: providerName, providerId: providerId),
+            contextLength: metadata?.contextWindow,
             reasoningCapabilities: metadata.flatMap(ModelReasoningCapabilities.init(codex:))
         )
     }

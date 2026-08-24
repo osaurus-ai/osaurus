@@ -245,7 +245,8 @@ struct ModelPickerItemCacheTests {
             supportedReasoningLevels: ["low", "medium", "high", "xhigh", "max", "ultra"].map {
                 CodexReasoningLevel(effort: $0)
             },
-            usesResponsesLite: true
+            usesResponsesLite: true,
+            contextWindow: 1_048_576
         )
         let providers = [
             Self.providerEntry(
@@ -284,11 +285,13 @@ struct ModelPickerItemCacheTests {
                 == ["low", "medium", "high", "xhigh", "max", "ultra"]
         )
         #expect(terra.reasoningCapabilities?.defaultLevelId == "medium")
+        #expect(terra.contextLength == 1_048_576)
 
-        // Codex without catalog metadata: plain remote behavior.
+        // Codex without catalog metadata: plain remote behavior, no window.
         let legacyCodex = try #require(byId["openai-chatgpt/gpt-5.5"])
         #expect(legacyCodex.displayName == "gpt-5.5")
         #expect(legacyCodex.reasoningCapabilities == nil)
+        #expect(legacyCodex.contextLength == nil)
 
         // Official API key route: documented public GPT-5.6 profile, id/display
         // preserved, and never Codex-only ultra.
