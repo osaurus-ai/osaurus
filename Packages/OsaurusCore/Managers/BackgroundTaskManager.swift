@@ -750,6 +750,32 @@ public final class BackgroundTaskManager: ObservableObject {
         }
         await context.prepare()
 
+        // A reattached session's accumulated loaded-tools set can hold
+        // plugin tools whose grant was revoked between dispatches; the store
+        // only accumulates, so without this reconcile a revoked tool stayed
+        // in the schema until the session died. Drop revoked plugin tools
+        // BEFORE appending this dispatch's names, so the current request's
+        // own (host-validated) picks always survive. Scoped to plugin tool
+        // names — built-ins loaded via `capabilities_load` are governed by
+        // their own per-agent gates, not the grant list. `nil` grant means
+        // the agent runs on the global registry: every registered plugin
+        // tool remains allowed, and unregistered ones already drop out at
+        // spec resolution.
+        if reattach != nil,
+            let granted = AgentManager.shared.effectiveEnabledToolNames(for: context.agentId)
+        {
+            let revoked = await SessionToolStateStore.shared.retainLoadedTools(
+                context.id.uuidString,
+                allowed: Set(granted),
+                among: ToolRegistry.shared.registeredPluginToolNames
+            )
+            if !revoked.isEmpty {
+                debugLog(
+                    "[Dispatch] revoked plugin tools dropped on reattach: \(revoked.sorted().joined(separator: ", "))"
+                )
+            }
+        }
+
         // Plugin-supplied tool whitelist (already host-validated in
         // `planDispatch`) lands in the same `additionalToolNames`
         // channel `capabilities_load` uses, so the dispatched
