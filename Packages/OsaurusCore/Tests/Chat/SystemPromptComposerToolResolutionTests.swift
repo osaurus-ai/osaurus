@@ -511,6 +511,95 @@ struct SystemPromptComposerToolResolutionTests {
         }
     }
 
+    @Test("send, warmup, and preview resolve the same channel surface under one bound source")
+    func sourceBoundComposesAgreeOnChannelSurface() async {
+        // Regression guard for the warmup/send divergence: warmup and the
+        // context popover used to compose WITHOUT the session source bound,
+        // so a channel-bound agent's warmup built a prompt with no publish
+        // tool and no Channel Destinations section while the send built both.
+        // The warmed prefill diverged mid-schema and re-prefilled every send.
+        // Warmup and the popover now bind the session's source before
+        // composing; this test pins that all source-bound composes agree,
+        // and that the unbound shape they used to produce is genuinely
+        // different (the divergence was real, not cosmetic).
+        await withSandboxAgent(autonomous: true) { agentId in
+            let previousDirectory = AgentChannelConfigurationStore.overrideDirectory
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("warmup-send-parity-\(UUID().uuidString)")
+            AgentChannelConfigurationStore.overrideDirectory = directory
+            defer {
+                AgentChannelConfigurationStore.overrideDirectory = previousDirectory
+                try? FileManager.default.removeItem(at: directory)
+                ToolRegistry.shared.unregisterAllSandboxTools()
+            }
+
+            BuiltinSandboxTools.register(
+                agentId: agentId.uuidString,
+                agentName: "warmup-send-parity",
+                config: AutonomousExecConfig(enabled: true)
+            )
+
+            do {
+                try AgentChannelConfigurationStore.save(
+                    AgentChannelConfiguration(
+                        bindings: [
+                            AgentChannelBinding(
+                                id: "chat-calendar",
+                                agentId: agentId,
+                                connectionId: "discord",
+                                roomId: "room-1",
+                                label: "Calendar summaries",
+                                guidance: "Publish only completed calendar summaries.",
+                                allowedSources: [.chat],
+                                outboundMode: .autonomous
+                            )
+                        ]
+                    )
+                )
+            } catch {
+                Issue.record("failed to save chat channel fixture: \(error)")
+                return
+            }
+
+            let send = await ChatExecutionContext.$currentSessionSource.withValue(.chat) {
+                await SystemPromptComposer.composeChatContext(
+                    agentId: agentId,
+                    executionMode: .sandbox(hostRead: nil),
+                    model: "gpt-5"
+                )
+            }
+            let preview = ChatExecutionContext.$currentSessionSource.withValue(.chat) {
+                SystemPromptComposer.composePreviewContext(
+                    agentId: agentId,
+                    executionMode: .sandbox(hostRead: nil),
+                    model: "gpt-5"
+                )
+            }
+            let unbound = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .sandbox(hostRead: nil),
+                model: "gpt-5"
+            )
+
+            let sendNames = Set(send.tools.map(\.function.name))
+            let previewNames = Set(preview.tools.map(\.function.name))
+            #expect(sendNames.contains(AgentChannelPublishTool.toolName))
+            #expect(sendNames == previewNames)
+            // The static prefix hash is the warm/send cache identity; a
+            // mismatch here is exactly the wasted-warmup symptom.
+            #expect(send.cacheHint == preview.cacheHint)
+            #expect(
+                send.manifest.sections.map(\.id).contains("channelDestinations")
+                    == preview.manifest.sections.map(\.id).contains("channelDestinations")
+            )
+
+            // The unbound compose (the old warmup/popover shape) must differ,
+            // proving the source binding is load-bearing for this agent.
+            #expect(!unbound.tools.map(\.function.name).contains(AgentChannelPublishTool.toolName))
+            #expect(unbound.cacheHint != send.cacheHint)
+        }
+    }
+
     @Test
     func workspaceWebAppRequestKeepsCapabilityGatewayWithoutDisabledSearch() {
         withRegisteredFolderTools { folder in
