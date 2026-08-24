@@ -22,13 +22,6 @@ enum AgentStarterTemplate: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// Curated, ordered archetype list shown in the onboarding "Meet your
-    /// dino" step. Excludes `.blank` (a from-scratch option that only makes
-    /// sense in the in-app editor) and leads with the general-purpose
-    /// `.assistant` so a brand-new user can pick one and move on.
-    static let onboardingArchetypes: [AgentStarterTemplate] =
-        [.assistant, .writer, .researcher, .coder, .productivity]
-
     var label: String {
         switch self {
         case .blank: return L("Blank")

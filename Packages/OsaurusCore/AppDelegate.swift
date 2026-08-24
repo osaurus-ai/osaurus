@@ -2255,16 +2255,12 @@ extension AppDelegate {
                 Self.onboardingWindow = nil
             }
 
-            let themeManager = ThemeManager.shared
             // Read before building the view: `completeOnboarding()` flips
             // `hasCompletedOnboarding` before `onComplete` runs, so freshness
             // must be captured up front. Re-onboarding users (version bump)
             // are not fresh and never see the import prompt.
             let wasFreshInstall = OnboardingService.shared.isFreshInstall
             let contentView = OnboardingView(
-                onPreferredSizeChange: { [weak self] newSize in
-                    self?.resizeOnboardingWindow(to: newSize)
-                },
                 onComplete: { [weak self] in
                     // Close the onboarding window when complete
                     Self.onboardingWindow?.close()
@@ -2290,21 +2286,24 @@ extension AppDelegate {
                     }
                 }
             )
-            .environment(\.theme, themeManager.currentTheme)
 
-            // Use NSHostingView directly in an NSView container to avoid auto-sizing issues.
-            // Start the window at the welcome step's preferred height so the first frame
-            // doesn't visibly snap into place from a different size.
-            let windowWidth: CGFloat = onboardingPreferredWidth(for: .welcome)
-            let windowHeight: CGFloat = onboardingPreferredHeight(for: .welcome)
+            // Use NSHostingView directly in an NSView container to avoid
+            // auto-sizing issues. The onboarding window is a fixed 1000×640
+            // for every step (Figma kit).
+            let windowWidth: CGFloat = OnboardingMetrics.windowWidth
+            let windowHeight: CGFloat = OnboardingMetrics.windowHeight
 
-            let hostingView = NSHostingView(rootView: contentView)
+            // The redesigned onboarding is dark-only (Figma kit). Inject an
+            // explicit dark theme so nested theme consumers (the model-chooser
+            // dialog) match the forced `.darkAqua` appearance.
+            let hostingView = NSHostingView(
+                rootView: contentView.environment(\.theme, DarkTheme())
+            )
             hostingView.translatesAutoresizingMaskIntoConstraints = false
-            // Disable SwiftUI-driven auto-sizing of the hosting view; AppDelegate
-            // owns the window's size via `resizeOnboardingWindow(toHeight:)`.
-            // Without this, NSHostingView (macOS 14+) reports the SwiftUI content's
-            // intrinsic size and can grow the hosting view past the container,
-            // producing a tall narrow window.
+            // Disable SwiftUI-driven auto-sizing of the hosting view; the
+            // window size is fixed. Without this, NSHostingView (macOS 14+)
+            // reports the SwiftUI content's intrinsic size and can grow the
+            // hosting view past the container, producing a tall narrow window.
             if #available(macOS 13.0, *) {
                 hostingView.sizingOptions = []
             }
@@ -2335,7 +2334,10 @@ extension AppDelegate {
             window.standardWindowButton(.closeButton)?.isHidden = true
             window.standardWindowButton(.miniaturizeButton)?.isHidden = true
             window.standardWindowButton(.zoomButton)?.isHidden = true
-            window.backgroundColor = NSColor(themeManager.currentTheme.primaryBackground)
+            // Dark-only window per the Figma onboarding kit, regardless of
+            // the system or in-app theme.
+            window.appearance = NSAppearance(named: .darkAqua)
+            window.backgroundColor = NSColor(OnboardingPalette.windowBackground)
             window.isMovableByWindowBackground = true
             window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
@@ -2346,37 +2348,6 @@ extension AppDelegate {
         }
     }
 
-    /// Resize the onboarding window to a new height (width stays fixed),
-    /// anchoring the window at its current top edge so the title bar stays put
-    /// and growth happens downward.
-    @MainActor
-    fileprivate func resizeOnboardingWindow(to newSize: CGSize) {
-        guard let window = Self.onboardingWindow else { return }
-        let clampedHeight = min(max(newSize.height, OnboardingMetrics.minHeight), OnboardingMetrics.maxHeight)
-        let newWidth = newSize.width
-        let currentFrame = window.frame
-        // Skip changes smaller than a couple of points to avoid jitter from
-        // SwiftUI re-publishing the same preference during transitions.
-        guard abs(currentFrame.height - clampedHeight) > 2 || abs(currentFrame.width - newWidth) > 2 else { return }
-
-        // Anchor the window by its top-centre so the resize feels natural.
-        let deltaH = clampedHeight - currentFrame.height
-        let deltaW = newWidth - currentFrame.width
-        let newFrame = NSRect(
-            x: currentFrame.origin.x - deltaW / 2,
-            y: currentFrame.origin.y - deltaH,
-            width: newWidth,
-            height: clampedHeight
-        )
-
-        // Animate alongside the SwiftUI slide transition.
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.32
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            context.allowsImplicitAnimation = true
-            window.animator().setFrame(newFrame, display: true)
-        }
-    }
 }
 
 // MARK: Management Window

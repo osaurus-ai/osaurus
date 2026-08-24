@@ -20,9 +20,6 @@ struct OnboardingTelemetryNamingTests {
         #expect(OnboardingStep.welcome.telemetryName == "welcome")
         #expect(OnboardingStep.createAgent.telemetryName == "create_agent")
         #expect(OnboardingStep.configureAI.telemetryName == "configure_ai")
-        #expect(OnboardingStep.choosePlugins.telemetryName == "choose_plugins")
-        #expect(OnboardingStep.walkthrough.telemetryName == "walkthrough")
-        #expect(OnboardingStep.consent.telemetryName == "consent")
     }
 
     /// `telemetryName` is intentionally decoupled from `rawValue` so the

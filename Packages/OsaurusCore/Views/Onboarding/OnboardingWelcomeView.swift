@@ -2,9 +2,10 @@
 //  OnboardingWelcomeView.swift
 //  osaurus
 //
-//  Welcome step body + CTA — a single-column hero hosted in the chrome
-//  shell. No wordmark or eyebrow on this screen; the dinosaur and the
-//  headline carry the brand. Animation phases in over a tight cadence.
+//  Welcome step — Figma screen 1. Left column (bottom-aligned): 40pt hero
+//  title, 14pt subtitle, white "Get started →" pill, 10pt legal acceptance
+//  line, and the usage-data checkbox. Right: rounded panel with the
+//  dino-team hero image.
 //
 
 import SwiftUI
@@ -12,222 +13,108 @@ import SwiftUI
 // MARK: - State
 
 /// Welcome step state. Holds the anonymous-usage opt-in so the choice made
-/// via the `WelcomeUsageOptIn` checkbox survives the slide transition and can
-/// be read by the parent's "Get Started" CTA. Moving usage consent here (the
-/// *first* step) is deliberate: `TelemetryService` buffers the onboarding
-/// funnel until a decision is made, so opting in up front lets us capture the
-/// drop-off point even when the user bails partway through.
+/// via the checkbox survives the slide transition and can be read by the
+/// parent's "Get started" CTA. Moving usage consent here (the *first* step)
+/// is deliberate: `TelemetryService` buffers the onboarding funnel until a
+/// decision is made, so opting in up front lets us capture the drop-off
+/// point even when the user bails partway through.
 @MainActor
 final class WelcomeState: ObservableObject {
     /// Opt-OUT, so it defaults ON (consistent with crash reporting). The
-    /// parent reads this on the "Get Started" CTA and, when on, calls
+    /// parent reads this on the "Get started" CTA and, when on, calls
     /// `TelemetryService.setEnabled(true)` to flush the buffered funnel and
     /// send everything that follows live; unchecking it leaves telemetry
     /// undecided so `finishOnboarding` finalizes a decline.
     @Published var shareUsageData: Bool = true
-    @Published var isShowingRedeemCode = false
-
-    let redeemCode = RedeemCodeService(context: .onboarding)
-
-    func openRedeemCode() {
-        isShowingRedeemCode = true
-    }
-
-    func closeRedeemCode() {
-        guard !redeemCode.isSubmitting else { return }
-        isShowingRedeemCode = false
-    }
 }
 
-// MARK: - Welcome Body
+// MARK: - Step view
 
-struct WelcomeBody: View {
+struct WelcomeStepView: View {
     @ObservedObject var state: WelcomeState
+    let onGetStarted: () -> Void
 
-    @Environment(\.theme) private var theme
     @State private var visible = false
 
     var body: some View {
-        // The usage opt-in lives in the chrome footer caption slot (rendered by
-        // `OnboardingView`, see `WelcomeUsageOptIn`) so it sits directly above
-        // the CTA — consistent with the caption on the "Meet your dino" step.
-        OnboardingHeroBody(
-            illustrationAsset: "osaurus-main",
-            headline: "Own your AI.",
-            subtitle:
-                "Runs on your Mac. Your chats, files, and keys stay with you. No account, no cloud required."
-        )
+        OnboardingStepLayout {
+            leftColumn
+        } right: {
+            heroPanel
+        }
         .opacity(visible ? 1 : 0)
-        .scaleEffect(visible ? 1 : 0.98)
         .animation(.easeOut(duration: 0.5), value: visible)
         .onAppearAfter(0.05) { visible = true }
     }
-}
 
-// MARK: - Usage Opt-In
+    // MARK: Left column
 
-/// The anonymous-usage opt-in, surfaced in the footer caption slot just above
-/// the "Get Started" CTA. Rendered as a custom checkbox row because the native
-/// `.checkbox` toggle style was nearly invisible on the light hero — we draw
-/// our own SF Symbol box with theme colors for reliable contrast.
-struct WelcomeUsageOptIn: View {
-    @ObservedObject var state: WelcomeState
+    private var leftColumn: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("A Dino for every side of your work.", bundle: .module)
+                .font(OnboardingTypography.heroTitle)
+                .tracking(0.4)
+                .foregroundColor(OnboardingPalette.labelPrimary)
+                .fixedSize(horizontal: false, vertical: true)
 
-    @Environment(\.theme) private var theme
+            Spacer().frame(height: 16)
 
-    /// Drives the info popover. Local view state (not in `WelcomeState`) so it
-    /// resets cleanly with the view and never outlives the step transition.
-    @State private var showInfo = false
-
-    var body: some View {
-        HStack(spacing: 6) {
-            toggleButton
-            infoButton
-        }
-    }
-
-    /// The checkbox + label that toggles the opt-in.
-    private var toggleButton: some View {
-        Button {
-            state.shareUsageData.toggle()
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: state.shareUsageData ? "checkmark.square.fill" : "square")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(state.shareUsageData ? theme.accentColor : theme.tertiaryText)
-                Text("Share anonymous usage data to help improve Osaurus", bundle: .module)
-                    .font(theme.font(size: 12))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(state.shareUsageData ? [.isSelected] : [])
-    }
-
-    /// A separate button (outside `toggleButton`) so tapping it opens the
-    /// explainer popover without flipping the opt-in.
-    private var infoButton: some View {
-        Button {
-            showInfo.toggle()
-        } label: {
-            Image(systemName: "info.circle")
-                .font(.system(size: 12))
-                .foregroundColor(showInfo ? theme.accentColor : theme.tertiaryText)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(Text("Why we collect anonymous usage data", bundle: .module))
-        .popover(isPresented: $showInfo, arrowEdge: .bottom) {
-            infoPopover
-        }
-    }
-
-    private var infoPopover: some View {
-        VStack(alignment: .leading, spacing: 8) {
             Text(
-                "We collect anonymous, aggregated usage data to learn which features are used so we can improve Osaurus. It's completely anonymous and never includes your chats, prompts, files, or keys. You can turn this off anytime in Settings.",
+                "Build your own team of Dinos for every side of your life. Your chats, files, and keys can stay private on your Mac. No account or cloud required.",
                 bundle: .module
             )
-            .font(theme.font(size: 12))
-            .foregroundColor(theme.primaryText)
+            .font(OnboardingTypography.subtitle)
+            .foregroundColor(OnboardingPalette.labelSecondary)
+            .lineSpacing(1.5)
             .fixedSize(horizontal: false, vertical: true)
-            .multilineTextAlignment(.leading)
 
-            // Ties this specific consent to the matching diagnostics disclosure.
-            MarkdownLinkText(
-                markdown: OsaurusWebLinks.usageDiagnosticsMarkdown,
-                font: theme.font(size: 12),
-                textColor: theme.secondaryText,
-                linkColor: theme.accentColor
+            Spacer().frame(height: 40)
+
+            OnboardingPillButton(
+                title: "Get started",
+                style: .primary,
+                size: .large,
+                trailingSymbol: "arrow.right",
+                action: onGetStarted
             )
-            .fixedSize(horizontal: false, vertical: true)
+
+            Spacer().frame(height: 16)
+
+            legalNotice
+
+            Spacer().frame(height: 10)
+
+            OnboardingCheckboxRow(
+                isOn: $state.shareUsageData,
+                label: "Share anonymous usage data to help improve Osaurus"
+            )
         }
-        .padding(14)
-        .frame(width: 280)
-        // Fill an explicit themed surface so the text never renders dark-on-dark
-        // against the system popover material.
-        .background(theme.secondaryBackground)
     }
-}
 
-// MARK: - Legal Acceptance
-
-/// First-run affirmative acceptance, surfaced in the footer caption slot
-/// directly above the "Get Started" CTA: proceeding is the action that accepts
-/// the Terms and Privacy Policy, which is more defensible than a passive footer
-/// link alone.
-struct WelcomeLegalNotice: View {
-    @Environment(\.theme) private var theme
-
-    var body: some View {
+    /// First-run affirmative acceptance: proceeding is the action that
+    /// accepts the Terms and Privacy Policy, which is more defensible than a
+    /// passive footer link alone.
+    private var legalNotice: some View {
         MarkdownLinkText(
             markdown: OsaurusWebLinks.acceptanceMarkdown,
-            font: theme.font(size: 11),
-            textColor: theme.tertiaryText,
-            linkColor: theme.accentColor,
-            alignment: .center
+            font: OnboardingTypography.footnote,
+            textColor: OnboardingPalette.labelSecondary,
+            linkColor: OnboardingPalette.accentBlue,
+            alignment: .leading
         )
         .fixedSize(horizontal: false, vertical: true)
     }
-}
 
-// MARK: - Redeem Code Link
+    // MARK: Right panel
 
-/// Compact first-run affordance that sits above the usage checkbox. An
-/// accent-tinted capsule keeps it visible at rest without competing with the
-/// Get Started CTA, so it reads as an optional perk, not another required
-/// onboarding step.
-struct WelcomeRedeemCodeLink: View {
-    let action: () -> Void
-
-    @Environment(\.theme) private var theme
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                Text("Have a code?", bundle: .module)
-                    .font(theme.font(size: 12, weight: .medium))
-                    .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
-                HStack(spacing: 2) {
-                    Text("Enter it", bundle: .module)
-                        .font(theme.font(size: 12, weight: .semibold))
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .bold))
-                }
-                .foregroundColor(theme.accentColor)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(theme.accentColor.opacity(isHovered ? 0.15 : 0.08))
-            )
-            .overlay(
-                Capsule()
-                    .strokeBorder(
-                        theme.accentColor.opacity(isHovered ? 0.38 : 0.22),
-                        lineWidth: 1
-                    )
-            )
-            .contentShape(Capsule())
+    private var heroPanel: some View {
+        OnboardingRightPanel {
+            Image("osaurus-main", bundle: .module)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .padding(.horizontal, 16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(theme.animationQuick()) { isHovered = hovering }
-        }
-    }
-}
-
-// MARK: - Welcome CTA
-
-struct WelcomeCTA: View {
-    let onContinue: () -> Void
-
-    var body: some View {
-        OnboardingBrandButton(title: "Get Started", action: onContinue)
-            .fixedSize(horizontal: true, vertical: false)
     }
 }
 
@@ -236,14 +123,11 @@ struct WelcomeCTA: View {
 #if DEBUG
     struct OnboardingWelcomeView_Previews: PreviewProvider {
         static var previews: some View {
-            let state = WelcomeState()
-            return VStack(spacing: 12) {
-                WelcomeBody(state: state)
-                    .frame(height: 420)
-                WelcomeUsageOptIn(state: state)
-                WelcomeCTA(onContinue: {})
+            ZStack {
+                OnboardingPalette.windowBackground
+                WelcomeStepView(state: WelcomeState(), onGetStarted: {})
             }
-            .frame(width: OnboardingMetrics.windowWidth, height: 540)
+            .frame(width: OnboardingMetrics.windowWidth, height: OnboardingMetrics.windowHeight)
         }
     }
 #endif

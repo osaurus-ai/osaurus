@@ -61,9 +61,10 @@ enum OnboardingTelemetry {
         )
     }
 
-    /// Onboarding closed. `via` separates a genuine finish (the consent
-    /// step's CTA) from an early close (X button); `lastStep` is the step
-    /// they were on when they left — the early-close drop-off point.
+    /// Onboarding closed. `via` separates a genuine finish (Configure AI's
+    /// download / connect / set-up-later paths) from an early close (X
+    /// button); `lastStep` is the step they were on when they left — the
+    /// early-close drop-off point.
     ///
     /// Note: usage consent is now decided on the *first* (Welcome) step. If
     /// the user opted in there, this event — including a `closeButton`
@@ -83,7 +84,8 @@ enum OnboardingTelemetry {
     }
 
     enum Completion: String {
-        /// Reached the consent step and tapped its final CTA.
+        /// Finished the flow through Configure AI (download, provider
+        /// connect, or "Set up later").
         case finishButton = "finish_button"
         /// Closed early via the header X button.
         case closeButton = "close_button"
@@ -99,9 +101,6 @@ extension OnboardingStep {
         case .welcome: return "welcome"
         case .createAgent: return "create_agent"
         case .configureAI: return "configure_ai"
-        case .choosePlugins: return "choose_plugins"
-        case .walkthrough: return "walkthrough"
-        case .consent: return "consent"
         }
     }
 }
