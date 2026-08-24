@@ -5383,11 +5383,42 @@ extension RemoteProviderService {
         // Grok/SuperGrok sign-in models have no live catalog to read windows
         // from (the OAuth token 403s on `/models`), so surface the
         // documented windows alongside the built-in model catalog instead.
+        // If the user has also configured a separate xAI provider with an
+        // API key, that route isn't 403'd — its live discovery is preferred
+        // per model over the hardcoded table.
         if provider.authType == .xaiOAuth {
             let models = try await fetchModels(from: provider)
-            return (models, XAIOAuthService.contextWindows)
+            let contextLengths = await xaiContextWindows(preferringLiveOver: provider)
+            return (models, contextLengths)
         }
         return (try await fetchModels(from: provider), [:])
+    }
+
+    /// Merges `XAIOAuthService.contextWindows` with live-discovered windows
+    /// from any other connected xAI provider on the same host authenticated
+    /// via API key rather than OAuth. The API-key route can reach `/models`,
+    /// so its per-model windows — being current rather than a point-in-time
+    /// docs.x.ai snapshot — take priority where available.
+    @MainActor
+    private static func xaiContextWindows(preferringLiveOver oauthProvider: RemoteProvider) -> [String: Int] {
+        var windows = XAIOAuthService.contextWindows
+        let manager = RemoteProviderManager.shared
+        let liveProviders = manager.configuration.providers.filter { candidate in
+            candidate.id != oauthProvider.id
+                && candidate.authType != .xaiOAuth
+                && candidate.host.caseInsensitiveCompare(oauthProvider.host) == .orderedSame
+                && (manager.providerStates[candidate.id]?.isConnected ?? false)
+        }
+        for candidate in liveProviders {
+            for model in windows.keys {
+                if let liveWindow = manager.customProviderContextLength(
+                    providerId: candidate.id, unprefixedModelId: model
+                ) {
+                    windows[model] = liveWindow
+                }
+            }
+        }
+        return windows
     }
 
     static func fetchOpenAICompatibleModelsDiscovery(
