@@ -508,6 +508,7 @@ struct ShowResponse: Codable, Sendable {
     let template: String
     let details: ShowDetails
     let modelInfo: [String: AnyCodable]
+    let capabilities: [String]
 
     private enum CodingKeys: String, CodingKey {
         case modelfile
@@ -515,6 +516,7 @@ struct ShowResponse: Codable, Sendable {
         case template
         case details
         case modelInfo = "model_info"
+        case capabilities
     }
 
     struct ShowDetails: Codable, Sendable {
@@ -645,7 +647,8 @@ extension ModelInfo {
             parameters: paramLines.joined(separator: "\n"),
             template: "",
             details: details,
-            modelInfo: modelInfoDict
+            modelInfo: modelInfoDict,
+            capabilities: capabilities
         )
     }
 }
