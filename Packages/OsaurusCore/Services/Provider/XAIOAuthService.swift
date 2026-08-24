@@ -105,8 +105,9 @@ public enum XAIOAuthService {
         "grok-4.5",
         "grok-4.3",
         "grok-build-0.1",
-        "grok-4.20-latest-reasoning",
-        "grok-4.20-latest-non-reasoning",
+        "grok-4.20-0309-reasoning",
+        "grok-4.20-0309-non-reasoning",
+        "grok-4.20-multi-agent-0309",
     ]
 
     /// Documented context windows (docs.x.ai) for the OAuth catalog above,
@@ -117,10 +118,11 @@ public enum XAIOAuthService {
     public static let contextWindows: [String: Int] = [
         "grok-4.6": 500_000,
         "grok-4.5": 500_000,
-        "grok-4.3": 256_000,
+        "grok-4.3": 1_000_000,
         "grok-build-0.1": 256_000,
-        "grok-4.20-latest-reasoning": 256_000,
-        "grok-4.20-latest-non-reasoning": 256_000,
+        "grok-4.20-0309-reasoning": 1_000_000,
+        "grok-4.20-0309-non-reasoning": 1_000_000,
+        "grok-4.20-multi-agent-0309": 1_000_000,
     ]
 
     // MARK: - Provider Factory
