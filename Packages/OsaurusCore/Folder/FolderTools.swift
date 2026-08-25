@@ -1191,6 +1191,24 @@ struct FileReadTool: OsaurusTool {
             result["next_start_line"] = continuationStart
             result["next_end_line"] = validEnd
         }
+        // Anti-paging guard: a model on chunk 2+ of a file too large to
+        // ever fit is usually sequentially paging the whole thing through
+        // context (observed live: 9B model read chunk after chunk of a
+        // 15K-line file until stopped — every chunk grows the transcript
+        // and the next prefill). Steer to tools that operate on the file
+        // without loading it. Stateless: fires on any continuation read of
+        // an over-ceiling file, so it needs no per-session tracking.
+        if validStart > 1, renderedTruncated,
+            content.text.count > ToolOutputCaps.fileReadMax
+        {
+            result["paging_warning"] =
+                "This file is far too large to page through chunk by chunk - each chunk "
+                + "permanently grows the context and slows every later turn. Do NOT keep "
+                + "reading sequentially. Act with tools that process the file without "
+                + "loading it: `redact_file`/`detect_pii` for redaction, `file_edit` with "
+                + "`replace_all`/`edits` for replacements, `file_search` to locate "
+                + "specific lines, or `shell_run` for anything else."
+        }
         // The numbered gutter cannot express whether the file's last line is
         // terminated — a byte-exact reconstruction (backup copies, `equals`
         // contracts) needs to know if a final `\n` belongs at the end
