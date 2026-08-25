@@ -106,11 +106,13 @@ enum RedactionToolSupport {
     /// Pick the strongest available detection backend. Rampart (~37MB)
     /// wins over the multi-GB OpenAI bundle when both are installed
     /// since span quality is comparable for the redaction categories.
-    static func resolveBackend() -> ResolvedBackend {
+    /// Async because `PrivacyFilterEngine` is main-actor-isolated; the
+    /// `isLoaded` peek is the only state read.
+    static func resolveBackend() async -> ResolvedBackend {
         if RampartModelManager.bundleExists() {
             return .rampart
         }
-        if PrivacyFilterEngine.shared.isLoaded {
+        if await MainActor.run(body: { PrivacyFilterEngine.shared.isLoaded }) {
             return .openai
         }
         return .regexOnly(
@@ -211,12 +213,12 @@ public actor PIIModelDownloadGate {
     }
 
     func resolveBackendPromptingIfNeeded() async -> RedactionToolSupport.ResolvedBackend {
-        let resolved = RedactionToolSupport.resolveBackend()
+        let resolved = await RedactionToolSupport.resolveBackend()
         guard case .regexOnly = resolved else { return resolved }
         guard let presenter, !declinedThisSession else { return resolved }
         let installed = await presenter()
         if installed {
-            return RedactionToolSupport.resolveBackend()
+            return await RedactionToolSupport.resolveBackend()
         }
         declinedThisSession = true
         return .regexOnly(
