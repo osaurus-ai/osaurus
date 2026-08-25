@@ -2242,7 +2242,8 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                         "Found \(matches.count) matches for `\(label)` in \(relativePath). "
                         + "To replace EVERY occurrence, retry the same call with the added "
                         + "argument \"replace_all\": true. To replace only one occurrence, "
-                        + "include more surrounding context in `old_string`.\(atomicNote)",
+                        + "include more surrounding context in `old_string`. Do NOT add "
+                        + "dry_run - it only previews and changes nothing.\(atomicNote)",
                     field: "old_string",
                     expected: "the same call plus \"replace_all\": true (or a uniquely matching old_string)",
                     tool: name,
@@ -2272,10 +2273,18 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             preview.payload["edits_applied"] = perEditReplacements
         }
         if dryRun {
+            // Unmissable not-applied signal: observed live, a model read a
+            // dry-run preview as completion and told the user "all 3
+            // occurrences replaced" while the file was untouched.
+            var dryRunWarnings = preview.warnings
+            dryRunWarnings.append(
+                "PREVIEW ONLY - nothing was written. The file is unchanged. "
+                    + "Repeat the same call WITHOUT dry_run to apply the edit."
+            )
             return ToolEnvelope.success(
                 tool: name,
                 result: preview.payload,
-                warnings: preview.warnings
+                warnings: dryRunWarnings
             )
         }
         try content.write(to: fileURL, atomically: true, encoding: .utf8)

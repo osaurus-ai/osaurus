@@ -492,6 +492,12 @@ struct RedactFileTool: OsaurusTool, PermissionedTool {
 
         if dryRun || deduped.isEmpty {
             preview.payload["written"] = false
+            if dryRun {
+                warnings.append(
+                    "PREVIEW ONLY - nothing was written. The file is unchanged. "
+                        + "Repeat the same call WITHOUT dry_run to apply the redaction."
+                )
+            }
             return ToolEnvelope.success(tool: name, result: preview.payload, warnings: warnings)
         }
 
