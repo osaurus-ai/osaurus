@@ -178,7 +178,9 @@ struct RedactFileTool: OsaurusTool, PermissionedTool {
         + "replaced. Optionally pass `custom_rules` (ephemeral regex rules "
         + "for domain-specific patterns), `categories` to limit which built-in categories are "
         + "redacted, `placeholders` to override the per-category placeholder text, and "
-        + "`dry_run: true` to preview counts without writing. The change is undoable via `file_undo`."
+        + "`dry_run: true` to preview counts without writing (a dry run costs a full scan — when "
+        + "the user already asked for the change, call without it). Custom rules apply per call. "
+        + "The change is undoable via `file_undo`."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -276,23 +278,27 @@ struct RedactFileTool: OsaurusTool, PermissionedTool {
             )
         }
 
+        // Unknown category entries WARN and are skipped rather than failing
+        // the call: observed live, a model echoed a result-payload count key
+        // back as a category, the whole call hard-failed, and the model
+        // abandoned the tool for a hand-rolled script. A degraded-but-running
+        // call keeps the loop on the rails; the warning corrects the input.
         var allowedCategories: Set<EntityCategory>? = nil
+        var categoryWarnings: [String] = []
         if let rawCategories = args["categories"] as? [String] {
             var resolved: Set<EntityCategory> = []
             for raw in rawCategories {
-                guard let category = EntityCategory(rawValue: raw) else {
-                    return ToolEnvelope.failure(
-                        kind: .invalidArgs,
-                        message:
-                            "Unknown category `\(raw)`. Valid: \(EntityCategory.allCases.map(\.rawValue).joined(separator: ", ")).",
-                        field: "categories",
-                        expected: "array of valid category names",
-                        tool: name
+                if let category = EntityCategory(rawValue: raw) {
+                    resolved.insert(category)
+                } else {
+                    categoryWarnings.append(
+                        "Ignored unknown category `\(raw)`. Valid: "
+                            + EntityCategory.allCases.map(\.rawValue).joined(separator: ", ")
+                            + ". Custom-rule matches are always applied and need no category entry."
                     )
                 }
-                resolved.insert(category)
             }
-            allowedCategories = resolved
+            allowedCategories = resolved.isEmpty ? nil : resolved
         }
 
         var placeholderOverrides: [EntityCategory: String] = [:]
@@ -360,14 +366,26 @@ struct RedactFileTool: OsaurusTool, PermissionedTool {
         // verbatim (observed live: wrapping the sanitized label produced
         // "[REDACTED REDACTEDNUMBERS]" 6,217 times in one file).
         var rawPlaceholderByLabel: [String: String] = [:]
+        var ruleNameByLabel: [String: String] = [:]
         for rule in parsed.rules {
-            if let label = rule.effectivePlaceholderLabel, let raw = rule.placeholderLabel {
-                rawPlaceholderByLabel[label] = raw
+            if let label = rule.effectivePlaceholderLabel {
+                if let raw = rule.placeholderLabel {
+                    rawPlaceholderByLabel[label] = raw
+                }
+                if ruleNameByLabel[label] == nil {
+                    ruleNameByLabel[label] = rule.name
+                }
             }
         }
 
         var content = originalContent
         var countsByCategory: [String: Int] = [:]
+        // Custom-rule counts keyed by RULE NAME and kept out of
+        // `replacements_by_category`: a `custom:LABEL` pseudo-key in the
+        // category counts read like a valid category value, and a model
+        // echoed it back into `categories` on its next call (observed
+        // live), derailing the run.
+        var customRuleMatches: [String: Int] = [:]
         for entity in deduped.reversed() {
             let replacement: String
             if let custom = entity.placeholder.prefixOverride {
@@ -384,9 +402,11 @@ struct RedactFileTool: OsaurusTool, PermissionedTool {
                     ?? Self.defaultPlaceholder(for: entity.category)
             }
             content.replaceSubrange(entity.range, with: replacement)
-            let key = entity.placeholder.prefixOverride.map { "custom:\($0)" }
-                ?? entity.category.rawValue
-            countsByCategory[key, default: 0] += 1
+            if let custom = entity.placeholder.prefixOverride {
+                customRuleMatches[ruleNameByLabel[custom] ?? custom, default: 0] += 1
+            } else {
+                countsByCategory[entity.category.rawValue, default: 0] += 1
+            }
         }
 
         var preview = WorkspaceWriteSafety.preview(
@@ -402,6 +422,13 @@ struct RedactFileTool: OsaurusTool, PermissionedTool {
         preview.payload["backend"] = outcome.backend
         preview.payload["replacements"] = deduped.count
         preview.payload["replacements_by_category"] = countsByCategory
+        if !customRuleMatches.isEmpty {
+            preview.payload["custom_rule_matches"] = customRuleMatches
+            // Ephemerality reminder next to the counts, where the model
+            // reads them: rules do NOT persist to the next call.
+            preview.payload["custom_rules_note"] =
+                "custom_rules apply to THIS call only; pass them again on any follow-up call."
+        }
         // Context diet: the standard write preview embeds the diff twice
         // (`diff` + rendered `text`), and every retained char re-prefills
         // on all later turns (observed live: two dry-run envelopes added
@@ -415,12 +442,14 @@ struct RedactFileTool: OsaurusTool, PermissionedTool {
                 + "\n... (diff excerpt truncated; replacement counts above are complete)"
             preview.payload["diff_truncated"] = true
         }
+        var summaryParts = countsByCategory.sorted { $0.key < $1.key }
+            .map { "\($0.key)=\($0.value)" }
+        summaryParts += customRuleMatches.sorted { $0.key < $1.key }
+            .map { "rule '\($0.key)'=\($0.value)" }
         let summaryLine =
             (dryRun ? "Dry run: " : "")
             + "redact_file \(relativePath): \(deduped.count) replacements "
-            + countsByCategory.sorted { $0.key < $1.key }
-                .map { "\($0.key)=\($0.value)" }
-                .joined(separator: ", ")
+            + summaryParts.joined(separator: ", ")
         preview.payload["text"] = summaryLine
         if !parsed.rejected.isEmpty {
             preview.payload["rejected_rules"] = parsed.rejected.map {
@@ -428,6 +457,7 @@ struct RedactFileTool: OsaurusTool, PermissionedTool {
             }
         }
         var warnings = preview.warnings
+        warnings.append(contentsOf: categoryWarnings)
         if let degradation = outcome.degradation { warnings.append(degradation) }
         // Honesty guard: without custom rules only the built-in categories
         // were touched, and models have summarized that as "metrics
