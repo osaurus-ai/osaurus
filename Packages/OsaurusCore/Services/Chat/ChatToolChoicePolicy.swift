@@ -78,14 +78,18 @@ enum ChatToolChoicePolicy {
     }
 
     /// A redaction-shaped request: an action verb (replace / redact / mask /
-    /// anonymize / remove / scrub) together with a PII noun (names, emails,
-    /// phone numbers, ...). Both are required so a generic "replace foo with
-    /// bar" never gets force-routed.
+    /// anonymize / remove / scrub) together with a PII noun. Nouns are
+    /// deliberately the PLURAL / phrase forms: bare singulars like "name"
+    /// are everyday coding vocabulary ("replace the function name in
+    /// app.py") and would force-route ordinary edit requests into
+    /// `redact_file`, costing a gate-refusal turn each time.
     static func containsRedactionIntent(text: String) -> Bool {
         let verbs = ["replace", "redact", "mask", "anonymize", "anonymise", "remove", "scrub"]
         let piiNouns = [
-            "name", "email", "e-mail", "phone", "address", "pii",
-            "personal information", "personal info", "account number", "sensitive",
+            "names", "emails", "e-mails", "email address", "phone number", "phone numbers",
+            "addresses", "pii", "personal information", "personal info", "personal data",
+            "account number", "account numbers", "sensitive data", "sensitive information",
+            "sensitive values",
         ]
         guard verbs.contains(where: { text.contains($0) }) else { return false }
         return piiNouns.contains(where: { text.contains($0) })

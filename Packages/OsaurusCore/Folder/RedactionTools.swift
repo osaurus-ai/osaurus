@@ -83,7 +83,19 @@ struct DetectPIITool: OsaurusTool {
 
         let text: String
         var scannedPath: String? = nil
-        if let inline = args["text"] as? String, !inline.isEmpty {
+        if let inline = args["text"] as? String {
+            // Empty inline text is its own error — falling through to the
+            // path branch would answer "path required" to a caller that
+            // deliberately passed `text`.
+            guard !inline.isEmpty else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`text` is empty. Pass non-empty inline text, or `path` for a file.",
+                    field: "text",
+                    expected: "non-empty text (or use `path`)",
+                    tool: name
+                )
+            }
             text = inline
         } else {
             let pathReq = requireString(

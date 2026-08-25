@@ -1201,13 +1201,37 @@ struct FileReadTool: OsaurusTool {
         if validStart > 1, renderedTruncated,
             content.text.count > ToolOutputCaps.fileReadMax
         {
-            result["paging_warning"] =
+            // Suggest only tools actually in THIS request's schema — the
+            // redaction tools are host-folder-only, and steering a
+            // combined/sandbox conversation toward an unoffered tool just
+            // trades paging churn for tool_not_found churn. A nil scope
+            // means the surface publishes no schema (direct registry use);
+            // the full folder surface applies there.
+            let scope = ChatExecutionContext.toolExecutionScope
+            func offered(_ tool: String) -> Bool { scope?.permits(tool) ?? true }
+            var alternatives: [String] = []
+            if offered("redact_file") {
+                alternatives.append("`redact_file`/`detect_pii` for redaction")
+            }
+            if offered("file_edit") {
+                alternatives.append("`file_edit` with `replace_all`/`edits` for replacements")
+            }
+            if offered("file_search") {
+                alternatives.append("`file_search` to locate specific lines")
+            }
+            if offered("shell_run") {
+                alternatives.append("`shell_run` for anything else")
+            }
+            var warning =
                 "This file is far too large to page through chunk by chunk - each chunk "
                 + "permanently grows the context and slows every later turn. Do NOT keep "
-                + "reading sequentially. Act with tools that process the file without "
-                + "loading it: `redact_file`/`detect_pii` for redaction, `file_edit` with "
-                + "`replace_all`/`edits` for replacements, `file_search` to locate "
-                + "specific lines, or `shell_run` for anything else."
+                + "reading sequentially."
+            if !alternatives.isEmpty {
+                warning +=
+                    " Act with tools that process the file without loading it: "
+                    + alternatives.joined(separator: ", ") + "."
+            }
+            result["paging_warning"] = warning
         }
         // The numbered gutter cannot express whether the file's last line is
         // terminated — a byte-exact reconstruction (backup copies, `equals`

@@ -149,6 +149,20 @@ struct ChatToolChoicePolicyTests {
     }
 
     @Test
+    func codingRequest_withBareSingularNoun_doesNotForceRedactFile() {
+        // "name"/"email" singulars are everyday coding vocabulary; only
+        // plural/phrase PII forms may trigger the forced route.
+        let choice = ChatToolChoicePolicy.resolve(
+            tools: [Self.tool("file_edit"), Self.tool("redact_file")],
+            userText: "Replace the function name in app.py with a shorter one",
+            attempt: 1
+        )
+        if case .function = choice {
+            Issue.record("bare singular noun must not force redact_file")
+        }
+    }
+
+    @Test
     func genericReplace_withoutPIINoun_doesNotForceRedactFile() {
         let choice = ChatToolChoicePolicy.resolve(
             tools: [Self.tool("file_edit"), Self.tool("redact_file")],
