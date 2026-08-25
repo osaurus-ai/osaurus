@@ -84,6 +84,15 @@ struct LiveActivitySection: View {
         if let penalty = effective.repetitionPenalty {
             parts.append("rep \(trim(penalty))")
         }
+        // 0 is OpenAI's "no penalty" default and is treated as unset by
+        // `makeGenerateParameters`, so printing it would claim an effect that
+        // is not applied.
+        if let presence = effective.presencePenalty, presence != 0 {
+            parts.append("presence \(trim(presence))")
+        }
+        if let frequency = effective.frequencyPenalty, frequency != 0 {
+            parts.append("frequency \(trim(frequency))")
+        }
         // Temperature 0 is argmax, which makes top-p/top-k/min-p inert. Say
         // so rather than printing values that cannot have applied.
         if effective.temperature == 0 {

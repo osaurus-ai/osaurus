@@ -24,7 +24,9 @@ struct EffectiveSamplerReadoutTests {
         topK: Int = 20,
         minP: Float = 0.01,
         maxTokens: Int = 4096,
-        repetitionPenalty: Float? = 1.05
+        repetitionPenalty: Float? = 1.05,
+        presencePenalty: Float? = nil,
+        frequencyPenalty: Float? = nil
     ) -> MLXBatchAdapter.EffectiveGenerationSettings {
         MLXBatchAdapter.EffectiveGenerationSettings(
             stage: "submitted_to_batch_engine",
@@ -34,6 +36,8 @@ struct EffectiveSamplerReadoutTests {
             topK: topK,
             minP: minP,
             repetitionPenalty: repetitionPenalty,
+            presencePenalty: presencePenalty,
+            frequencyPenalty: frequencyPenalty,
             compiledBatchDecode: true
         )
     }

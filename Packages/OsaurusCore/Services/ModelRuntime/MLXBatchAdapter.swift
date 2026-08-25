@@ -98,6 +98,11 @@ struct MLXBatchAdapter {
         let topK: Int
         let minP: Float
         let repetitionPenalty: Float?
+        /// Resolved presence/frequency penalties, so the Live Activity readout
+        /// can show what actually applied. Without them here the value would be
+        /// enforced but invisible — the shape that let this gap go unnoticed.
+        let presencePenalty: Float?
+        let frequencyPenalty: Float?
         let compiledBatchDecode: Bool
     }
 
@@ -164,6 +169,8 @@ struct MLXBatchAdapter {
             topK: generation.topKOverride ?? runtimeTopK ?? modelDefaults.topK ?? engineDefaults.topK,
             minP: generation.minPOverride ?? runtimeMinP ?? modelDefaults.minP ?? engineDefaults.minP,
             repetitionPenalty: repetitionPenalty,
+            presencePenalty: generation.presencePenalty ?? modelDefaults.presencePenalty,
+            frequencyPenalty: generation.frequencyPenalty ?? modelDefaults.frequencyPenalty,
             compiledBatchDecode: nativeMTPExplicitSamplingFallback
                 ? false
                 : shouldEnableCompiledBatchDecode(
@@ -1564,8 +1571,17 @@ struct MLXBatchAdapter {
             topK: effective.topK,
             minP: effective.minP,
             repetitionPenalty: effective.repetitionPenalty,
-            presencePenalty: generation.presencePenalty,
-            frequencyPenalty: generation.frequencyPenalty,
+            // Per-request wins, then the bundle's shipped default — the same
+            // order the other sampling fields use. Before this, a bundle
+            // declaring `presence_penalty` had it adopted by vmlx's
+            // `GenerateParameters(generationConfig:fallback:)` and dropped here,
+            // because `LocalGenerationDefaults` (which osaurus uses instead of
+            // that initializer) did not read the key at all.
+            //
+            // A declared `0.0` stays inert: `makeGenerateParameters` treats 0 as
+            // "unset" per the OpenAI default.
+            presencePenalty: generation.presencePenalty ?? modelDefaults.presencePenalty,
+            frequencyPenalty: generation.frequencyPenalty ?? modelDefaults.frequencyPenalty,
             randomSeed: generation.seed,
             stopSequences: stopSequences,
             draftStrategy: effectiveDraftStrategy,
