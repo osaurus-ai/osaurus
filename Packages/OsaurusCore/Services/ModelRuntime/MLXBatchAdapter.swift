@@ -103,6 +103,18 @@ struct MLXBatchAdapter {
         /// enforced but invisible — the shape that let this gap go unnoticed.
         let presencePenalty: Float?
         let frequencyPenalty: Float?
+        /// What actually drafts this request: `nativeMTP`, `dflash2`, or nil for
+        /// ordinary decoding. Resolved, not requested — the Mode picker is an
+        /// input to this, never a description of it.
+        let draftStrategy: String?
+        /// Why native MTP is NOT running when the user asked for it.
+        ///
+        /// This string was already computed and written to the submit log, where
+        /// no user will ever see it. A model whose tuning artifact never asserted
+        /// `output_equivalent` cannot run MTP even on Force-On — correctly, since
+        /// that assertion is the output-equivalence proof — but without surfacing
+        /// the reason the setting just appears to do nothing.
+        let mtpFallbackReason: String?
         let compiledBatchDecode: Bool
     }
 
@@ -113,6 +125,7 @@ struct MLXBatchAdapter {
         maxBatchSize: Int,
         modelDefaults: LocalGenerationDefaults.Defaults,
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
+        nativeMTPFallbackReason: String? = nil,
         nativeMTPExplicitSamplingFallback: Bool = false,
         cacheTopology: ModelCacheTopologySnapshot? = nil,
         stage: String = "resolved"
@@ -171,6 +184,8 @@ struct MLXBatchAdapter {
             repetitionPenalty: repetitionPenalty,
             presencePenalty: generation.presencePenalty ?? modelDefaults.presencePenalty,
             frequencyPenalty: generation.frequencyPenalty ?? modelDefaults.frequencyPenalty,
+            draftStrategy: draftStrategy?.kindName,
+            mtpFallbackReason: nativeMTPFallbackReason,
             compiledBatchDecode: nativeMTPExplicitSamplingFallback
                 ? false
                 : shouldEnableCompiledBatchDecode(
@@ -1554,6 +1569,7 @@ struct MLXBatchAdapter {
             maxBatchSize: maxBatchSize,
             modelDefaults: modelDefaults,
             draftStrategy: effectiveDraftStrategy,
+            nativeMTPFallbackReason: nativeMTPFallbackReason,
             nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback,
             cacheTopology: cacheTopology,
             stage: "submitted_to_batch_engine"

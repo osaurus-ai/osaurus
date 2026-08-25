@@ -14,6 +14,12 @@ struct MTPSection: View {
     @Binding var draft: VMLXServerRuntimeSettings
     @Environment(\.theme) private var theme
 
+    /// What the engine ACTUALLY resolved for each loaded model, captured at
+    /// that model's load. Not derived from `draft` — a second, independent
+    /// derivation in the UI could disagree with the one the engine ran, and
+    /// the user would have no way to tell which was real.
+    @State private var loadedModels: [ModelRuntime.ModelCacheSummary] = []
+
     /// Metadata for the currently selected drafter folder, re-read
     /// whenever the path changes. `nil` when nothing is selected or the
     /// folder is not a DFlash 2 drafter.
@@ -139,7 +145,87 @@ struct MTPSection: View {
                     }
                 }
             }
+
+            SettingsDivider()
+
+            SettingsSubsection(label: "Resolved Per Loaded Model") {
+                resolvedStateRows
+            }
         }
+        .task {
+            while !Task.isCancelled {
+                loadedModels = await ModelRuntime.shared.cachedModelSummaries()
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+
+    // MARK: - What the engine actually resolved
+
+    /// Mode is a REQUEST, not a result. A bundle whose tuning artifact never
+    /// asserted `output_equivalent` cannot run speculative decoding even on
+    /// Force-On — correctly, since that assertion IS the output-equivalence
+    /// proof — and a Draft-Tokens limit can only lower the artifact's depth,
+    /// never raise it. Both are right, and both were previously invisible: the
+    /// picker looked inert and the reason, already computed at load and
+    /// already written to the log, reached nobody.
+    private var resolvedStateRows: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if loadedModels.isEmpty {
+                resolvedRow(
+                    label: "Resolved state",
+                    value: "No model loaded",
+                    detail:
+                        "Speculative decoding is resolved at model load. Load a model to see what it settled on."
+                )
+            } else {
+                ForEach(loadedModels, id: \.name) { model in
+                    resolvedRow(
+                        label: model.name,
+                        value: Self.resolvedValue(
+                            depth: model.nativeMTPDepth,
+                            strategy: model.draftStrategyDescription),
+                        detail: model.nativeMTPReason ?? model.nativeMTPStatus
+                            ?? "Captured at this model's last load."
+                    )
+                }
+            }
+        }
+    }
+
+    /// "MTP depth 2" when it is live, otherwise the drafter that replaced it,
+    /// otherwise a plain "Off" — never blank. A missing line is
+    /// indistinguishable from a broken readout.
+    static func resolvedValue(depth: Int?, strategy: String?) -> String {
+        if let depth, depth > 0 { return "MTP depth \(depth)" }
+        if let strategy, strategy != "none", !strategy.isEmpty { return strategy }
+        return "Off"
+    }
+
+    private func resolvedRow(label: String, value: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(label)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Text(value)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+            Text(detail)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.primary.opacity(0.04))
+        )
     }
 
     /// AppKit `NSOpenPanel` rather than SwiftUI `.fileImporter`, matching

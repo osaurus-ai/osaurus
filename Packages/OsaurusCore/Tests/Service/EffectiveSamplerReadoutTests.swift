@@ -26,7 +26,9 @@ struct EffectiveSamplerReadoutTests {
         maxTokens: Int = 4096,
         repetitionPenalty: Float? = 1.05,
         presencePenalty: Float? = nil,
-        frequencyPenalty: Float? = nil
+        frequencyPenalty: Float? = nil,
+        draftStrategy: String? = nil,
+        mtpFallbackReason: String? = nil
     ) -> MLXBatchAdapter.EffectiveGenerationSettings {
         MLXBatchAdapter.EffectiveGenerationSettings(
             stage: "submitted_to_batch_engine",
@@ -38,8 +40,43 @@ struct EffectiveSamplerReadoutTests {
             repetitionPenalty: repetitionPenalty,
             presencePenalty: presencePenalty,
             frequencyPenalty: frequencyPenalty,
+            draftStrategy: draftStrategy,
+            mtpFallbackReason: mtpFallbackReason,
             compiledBatchDecode: true
         )
+    }
+
+    // MARK: - What actually drafted the tokens
+
+    /// The MTP Mode picker is an INPUT to resolution, never a description of
+    /// it. A bundle whose tuning artifact never asserted `output_equivalent`
+    /// cannot run speculative decoding even on Force-On — correctly, since that
+    /// assertion IS the output-equivalence proof. Before this readout the user
+    /// saw a picker set to Force-On, no speedup, and no explanation anywhere in
+    /// the UI; the reason string existed but only reached the submit log.
+    @Test func readout_namesTheReasonMTPIsNotRunning() {
+        let text = LiveActivitySection.describe(
+            settings(
+                temperature: 0.7,
+                mtpFallbackReason: "tuning artifact did not assert output_equivalent"))
+
+        #expect(text.contains("MTP off — tuning artifact did not assert output_equivalent"))
+        #expect(!text.contains("draft none"), "a named reason must replace the bare state")
+    }
+
+    @Test func readout_namesTheDrafterWhenSpeculativeDecodingIsLive() {
+        let text = LiveActivitySection.describe(
+            settings(temperature: 0.7, draftStrategy: "nativeMTP"))
+
+        #expect(text.contains("draft nativeMTP"))
+    }
+
+    /// A model that never had MTP to begin with produces no fallback reason.
+    /// It must still say what ran, or "no line" becomes indistinguishable from
+    /// "the readout is broken".
+    @Test func readout_saysPlainDecodeWhenThereIsNoDrafterAndNoReason() {
+        let text = LiveActivitySection.describe(settings(temperature: 0.7))
+        #expect(text.contains("draft none"))
     }
 
     @Test func readout_showsEveryResolvedSamplerField() {

@@ -1644,6 +1644,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "top_k": settings.topK,
             "min_p": settings.minP,
             "repetition_penalty": settings.repetitionPenalty as Any? ?? NSNull(),
+            "presence_penalty": settings.presencePenalty as Any? ?? NSNull(),
+            "frequency_penalty": settings.frequencyPenalty as Any? ?? NSNull(),
+            "draft_strategy": settings.draftStrategy as Any? ?? NSNull(),
+            "mtp_fallback_reason": settings.mtpFallbackReason as Any? ?? NSNull(),
             "compiled_batch_decode": settings.compiledBatchDecode,
         ]
     }

@@ -98,6 +98,18 @@ struct LiveActivitySection: View {
         if effective.temperature == 0 {
             parts.append("(greedy — top-p/top-k/min-p inert)")
         }
+        // What actually drafted the tokens. The MTP Mode picker is a request,
+        // not a result: a bundle whose tuning artifact never asserted
+        // `output_equivalent` cannot run speculative decoding even on Force-On.
+        // Without this line the picker looks inert on exactly those models, and
+        // the reason — already computed, already logged — reaches nobody.
+        if let strategy = effective.draftStrategy {
+            parts.append("draft \(strategy)")
+        } else if let reason = effective.mtpFallbackReason {
+            parts.append("MTP off — \(reason)")
+        } else {
+            parts.append("draft none")
+        }
         return parts.joined(separator: " · ")
     }
 
