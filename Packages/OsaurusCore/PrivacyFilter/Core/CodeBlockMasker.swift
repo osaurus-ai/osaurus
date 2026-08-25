@@ -285,10 +285,10 @@ public enum CodeBlockMasker {
         guard idx < text.endIndex else { return false }
         if text[idx] == "\t" { return true }
         // Require at least 4 leading spaces and at least one
-        // non-whitespace char on the line.
-        let remaining = text.distance(from: idx, to: text.endIndex)
-        guard remaining >= 4 else { return false }
-        let fourEnd = text.index(idx, offsetBy: 4)
+        // non-whitespace char on the line. `limitedBy:` for the same
+        // reason as `matchesTripleBacktick`: a `distance` to `endIndex`
+        // here is O(remaining) per line start.
+        guard let fourEnd = text.index(idx, offsetBy: 4, limitedBy: text.endIndex) else { return false }
         for ch in text[idx ..< fourEnd] where ch != " " { return false }
         // Skip the rest of the leading spaces, then ensure the
         // remainder of the line is non-empty (otherwise it's a
@@ -307,8 +307,11 @@ public enum CodeBlockMasker {
     }
 
     private static func matchesTripleBacktick(_ text: String, at idx: String.Index) -> Bool {
-        guard text.distance(from: idx, to: text.endIndex) >= 3 else { return false }
-        let end = text.index(idx, offsetBy: 3)
+        // `limitedBy:` instead of `distance(from:to:)`: this runs at every
+        // scan position, and `distance` to `endIndex` walks the rest of the
+        // string each call — quadratic over the whole scan, which has hung
+        // the app for seconds on long messages.
+        guard let end = text.index(idx, offsetBy: 3, limitedBy: text.endIndex) else { return false }
         return text[idx ..< end] == "```"
     }
 
