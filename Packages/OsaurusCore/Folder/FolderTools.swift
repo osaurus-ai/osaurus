@@ -3953,6 +3953,11 @@ enum FolderToolFactory {
             FileOperationHistoryTool(rootPath: rootPath),
             FileUndoTool(rootPath: rootPath),
             FileSearchTool(rootPath: rootPath),
+            // Unconditional by design: the KV prefix hash covers canonical
+            // tool payloads, so availability of the PII model must degrade
+            // in the tool RESULT, never change the tool LIST.
+            DetectPIITool(rootPath: rootPath),
+            RedactFileTool(rootPath: rootPath),
             ShellRunTool(rootPath: rootPath),
             // Combined-mode bridge: registered with the folder set (it
             // needs the root) but hidden outside combined sandbox +
