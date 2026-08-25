@@ -2232,15 +2232,21 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                 )
             }
             if matches.count > 1, !replaceAll {
+                // Action-first phrasing plus a machine-readable retry hint:
+                // observed live, a 9B model got the old hint ("...or pass
+                // replace_all...") buried mid-sentence, retried with
+                // `dry_run: true` instead, and abandoned the task.
                 return ToolEnvelope.failure(
                     kind: .invalidArgs,
                     message:
-                        "Found \(matches.count) matches for `\(label)` in \(relativePath); include more "
-                        + "surrounding context to identify one location, or pass `replace_all: true` "
-                        + "to replace every occurrence.\(atomicNote)",
+                        "Found \(matches.count) matches for `\(label)` in \(relativePath). "
+                        + "To replace EVERY occurrence, retry the same call with the added "
+                        + "argument \"replace_all\": true. To replace only one occurrence, "
+                        + "include more surrounding context in `old_string`.\(atomicNote)",
                     field: "old_string",
-                    expected: "exact text that matches exactly one location (or replace_all: true)",
-                    tool: name
+                    expected: "the same call plus \"replace_all\": true (or a uniquely matching old_string)",
+                    tool: name,
+                    metadata: ["retry_with": ["replace_all": true]]
                 )
             }
             if replaceAll {
