@@ -125,6 +125,11 @@ struct MLXBatchAdapter {
         maxBatchSize: Int,
         modelDefaults: LocalGenerationDefaults.Defaults,
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
+        /// True when native MTP is active, which forces greedy decoding. The
+        /// readout has to show the COERCED sampler: reporting the request's
+        /// temp 1 / top-p 0.95 while argmax actually runs is the same
+        /// display-lie this readout exists to prevent.
+        forcesGreedyForNativeMTP: Bool = false,
         nativeMTPFallbackReason: String? = nil,
         nativeMTPExplicitSamplingFallback: Bool = false,
         cacheTopology: ModelCacheTopologySnapshot? = nil,
@@ -169,7 +174,7 @@ struct MLXBatchAdapter {
         // `diffusionMaxDenoisingSteps`. So a non-nil runtime value here is
         // always something the user deliberately chose, and deliberate choices
         // outrank a bundle's suggestion. Per-request still wins over both.
-        return EffectiveGenerationSettings(
+        let resolved = EffectiveGenerationSettings(
             stage: stage,
             temperature: generation.temperature
                 ?? runtimeTemperature
@@ -194,6 +199,23 @@ struct MLXBatchAdapter {
                     cacheTopology: cacheTopology
                 )
         )
+        // Native MTP forces greedy on the parameters that RUN, so the readout
+        // must say greedy too. Printing the request's temp 1 / top-p 0.95
+        // while argmax executes is the display-lie this readout exists to stop.
+        guard forcesGreedyForNativeMTP else { return resolved }
+        return EffectiveGenerationSettings(
+            stage: resolved.stage,
+            temperature: 0,
+            maxTokens: resolved.maxTokens,
+            topP: 1,
+            topK: 0,
+            minP: 0,
+            repetitionPenalty: resolved.repetitionPenalty,
+            presencePenalty: resolved.presencePenalty,
+            frequencyPenalty: resolved.frequencyPenalty,
+            draftStrategy: resolved.draftStrategy,
+            mtpFallbackReason: resolved.mtpFallbackReason,
+            compiledBatchDecode: resolved.compiledBatchDecode)
     }
 
     static func recordPendingEffectiveGenerationSettings(
@@ -241,14 +263,12 @@ struct MLXBatchAdapter {
         if disableNativeMTP {
             return nil
         }
-        guard
-            requestSamplingIsExplicitGreedy(
-                generation: generation,
-                draftStrategy: draftStrategy
-            )
-        else {
-            return nil
-        }
+        // Sampling is NOT a reason to abandon MTP any more. The submit path
+        // coerces the running parameters to greedy whenever MTP is active, so
+        // the equivalence precondition holds by construction. Dropping MTP
+        // here meant an ordinary chat turn — which reports
+        // `samplingParametersAreImplicit` — never engaged it at all, while the
+        // UI still said "MTP depth 2".
         if let promptTokenCount,
             promptTokenCount < nativeMTPTinyPromptMinimumTokens
         {
@@ -1569,6 +1589,7 @@ struct MLXBatchAdapter {
             maxBatchSize: maxBatchSize,
             modelDefaults: modelDefaults,
             draftStrategy: effectiveDraftStrategy,
+            forcesGreedyForNativeMTP: effectiveDraftStrategy?.usesNativeMTP == true,
             nativeMTPFallbackReason: nativeMTPFallbackReason,
             nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback,
             cacheTopology: cacheTopology,
@@ -1611,6 +1632,18 @@ struct MLXBatchAdapter {
                 ?? runtime.concurrency.prefillStepSize,
             modelName: modelName
         )
+        // Native MTP verifies drafts against the target's own argmax, so its
+        // output-equivalence guarantee is only defined under greedy decoding.
+        // Turning MTP on is therefore a request for greedy decoding. Coerced
+        // on the parameters that ACTUALLY run, and only when MTP is really
+        // active, so ordinary sampling is untouched everywhere else.
+        if effectiveDraftStrategy?.usesNativeMTP == true {
+            mlxParams.temperature = 0
+            mlxParams.topP = 1
+            mlxParams.topK = 0
+            mlxParams.minP = 0
+        }
+
         // OpenAI-compatible API clients read `content` only —
         // `reasoning_content` is invisible to them — so a think block that
         // spends the whole finite max_tokens returns an empty answer ("AI

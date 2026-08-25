@@ -2092,70 +2092,70 @@
       },
       "shouldTranslate": false
     },
-    "%@%% of %@ \u2248 %@ (limited to %@ \u2014 disk is nearly full)": {
+    "%@%% of %@ ≈ %@ (limited to %@ — disk is nearly full)": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@%% von %@ \u2248 %@ (begrenzt auf %@ \u2014 Datentr\u00e4ger fast voll)"
+            "value": "%@%% von %@ ≈ %@ (begrenzt auf %@ — Datenträger fast voll)"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@ %@\uc758 %%\uc5d0\uc11c \u2248 %@ (%@\ub85c \uc81c\ud55c \u2014 \ub514\uc2a4\ud06c \uacf5\uac04 \ubd80\uc871)"
+            "value": "%@ %@의 %%에서 ≈ %@ (%@로 제한 — 디스크 공간 부족)"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@%% \u043e\u0442 %@ \u2248 %@ (\u043e\u0433\u0440\u0430\u043d\u0438\u0447\u0435\u043d\u043e \u0434\u043e %@ \u2014 \u0434\u0438\u0441\u043a \u043f\u043e\u0447\u0442\u0438 \u043f\u043e\u043b\u043e\u043d)"
+            "value": "%@%% от %@ ≈ %@ (ограничено до %@ — диск почти полон)"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@ \u7684 %@%% \u2248 %@\uff08\u9650\u5236\u4e3a %@ \u2014 \u78c1\u76d8\u5feb\u6ee1\uff09"
+            "value": "%@ 的 %@%% ≈ %@（限制为 %@ — 磁盘快满）"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@ \u7684 %@%% \u2248 %@\uff08\u9650\u5236\u70ba %@ \u2014 \u78c1\u789f\u5feb\u6eff\uff09"
+            "value": "%@ 的 %@%% ≈ %@（限制為 %@ — 磁碟快滿）"
           }
         }
       }
     },
-    "%@%% of %@ \u2248 %@": {
+    "%@%% of %@ ≈ %@": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@%% von %@ \u2248 %@"
+            "value": "%@%% von %@ ≈ %@"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@ %@\uc758 %%\uc5d0\uc11c \u2248 %@"
+            "value": "%@ %@의 %%에서 ≈ %@"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@%% \u043e\u0442 %@ \u2248 %@"
+            "value": "%@%% от %@ ≈ %@"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@ \u7684 %@%% \u2248 %@"
+            "value": "%@ 的 %@%% ≈ %@"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@ \u7684 %@%% \u2248 %@"
+            "value": "%@ 的 %@%% ≈ %@"
           }
         }
       }
@@ -10087,25 +10087,25 @@
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "+%@ \ubaa8\ub378 \ub85c\ub529"
+            "value": "+%@ 모델 로딩"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "+%@ \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u043c\u043e\u0434\u0435\u043b\u0438"
+            "value": "+%@ загрузка модели"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "+%@ \u6a21\u578b\u52a0\u8f7d"
+            "value": "+%@ 模型加载"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "+%@ \u6a21\u578b\u8f09\u5165"
+            "value": "+%@ 模型載入"
           }
         }
       }
@@ -231818,25 +231818,25 @@
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "\ub0b4 \ucee8\ud14d\uc2a4\ud2b8 \uc81c\ud55c"
+            "value": "내 컨텍스트 제한"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "\u0412\u0430\u0448 \u043b\u0438\u043c\u0438\u0442 \u043a\u043e\u043d\u0442\u0435\u043a\u0441\u0442\u0430"
+            "value": "Ваш лимит контекста"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "\u60a8\u7684\u4e0a\u4e0b\u6587\u4e0a\u9650"
+            "value": "您的上下文上限"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "\u60a8\u7684\u4e0a\u4e0b\u6587\u4e0a\u9650"
+            "value": "您的上下文上限"
           }
         }
       }
@@ -233372,6 +233372,10 @@
       "localizations": {}
     },
     "Deletes all saved conversation data from disk, including leftover files from an interrupted write. Your chats are not affected — the next reply just takes a little longer to start.": {
+      "extractionState": "manual",
+      "localizations": {}
+    },
+    "Speculative Depth": {
       "extractionState": "manual",
       "localizations": {}
     }
