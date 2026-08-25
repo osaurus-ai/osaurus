@@ -175,7 +175,15 @@ enum ToolDisplayName {
             .replacingOccurrences(of: "-", with: " ")
             .trimmingCharacters(in: .whitespaces)
         guard let first = spaced.first else { return raw }
-        return first.uppercased() + spaced.dropFirst()
+        let sentenceCased = first.uppercased() + spaced.dropFirst()
+        // Acronyms must not read as lowercase words ("Detect pii"). Whole-word
+        // replacement so e.g. a hypothetical "piix" stays untouched.
+        var result = sentenceCased
+        for (word, acronym) in [("pii", "PII"), ("Pii", "PII"), ("url", "URL"), ("Url", "URL")] {
+            result = result.replacingOccurrences(
+                of: "\\b\(word)\\b", with: acronym, options: .regularExpression)
+        }
+        return result
     }
 
     /// Curated labels for built-in tools. Agent-loop tools (`todo`, `complete`,
@@ -226,6 +234,10 @@ enum ToolDisplayName {
         "file_search": ToolLabel(L("Searching files"), L("Searched files")),
         "file_tree": ToolLabel(L("Browsing files"), L("Browsed files")),
         "shell_run": ToolLabel(L("Running a command"), L("Ran a command")),
+        "detect_pii": ToolLabel(
+            L("Scanning for personal information"), L("Scanned for personal information")),
+        "redact_file": ToolLabel(
+            L("Redacting personal information"), L("Redacted personal information")),
         "git_status": ToolLabel(L("Checking git status"), L("Checked git status")),
         "git_diff": ToolLabel(L("Viewing changes"), L("Viewed changes")),
         "git_commit": ToolLabel(L("Committing changes"), L("Committed changes")),
