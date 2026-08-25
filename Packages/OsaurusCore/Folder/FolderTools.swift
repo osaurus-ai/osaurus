@@ -1856,6 +1856,10 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         + "location in the file — include surrounding context lines if needed to ensure uniqueness. "
         + "Copy the RAW file text only: never include the `N|` line-number prefixes shown in "
         + "`file_read` output. Fails if `old_string` is not found or matches multiple locations. "
+        + "For repeated occurrences of the same text pass `replace_all: true` to replace every one. "
+        + "For many distinct replacements pass `edits`: an array of {old_string, new_string} applied "
+        + "atomically in one call — if any edit fails to match, nothing is written. Prefer one `edits` "
+        + "call over many single-edit calls; for large pattern rewrites consider `shell_run` with `sed`. "
         + "Binary document/package extensions are rejected; this tool edits UTF-8 source only. "
         + "For runnable code, verify the result before claiming it works; a truncated diff is only a shortened review preview, not a partial edit. "
         + "Pass `dry_run: true` to preview the diff without modifying the file. "
@@ -1871,14 +1875,34 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             "old_string": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "The exact text to find and replace (must uniquely match one location in the file)"
+                    "The exact text to find and replace (must uniquely match one location in the file unless `replace_all` is true). Required unless `edits` is provided."
                 ),
             ]),
             "new_string": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "The replacement text"
+                    "The replacement text. Required unless `edits` is provided."
                 ),
+            ]),
+            "replace_all": .object([
+                "type": .string("boolean"),
+                "description": .string(
+                    "Replace every occurrence of `old_string` (or of each edit's `old_string` when `edits` is used) instead of requiring a unique match (default: false)"
+                ),
+            ]),
+            "edits": .object([
+                "type": .string("array"),
+                "description": .string(
+                    "Batch form: an array of {old_string, new_string} objects applied in order and atomically — if any edit fails, no change is written. Use instead of top-level `old_string`/`new_string` for multiple distinct replacements."
+                ),
+                "items": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "old_string": .object(["type": .string("string")]),
+                        "new_string": .object(["type": .string("string")]),
+                    ]),
+                    "required": .array([.string("old_string"), .string("new_string")]),
+                ]),
             ]),
             "dry_run": .object([
                 "type": .string("boolean"),
@@ -1887,12 +1911,16 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                 ),
             ]),
         ]),
-        "required": .array([.string("path"), .string("old_string"), .string("new_string")]),
+        "required": .array([.string("path")]),
     ])
 
     var requirements: [String] { [] }
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
     var mutatesHostFolder: Bool { true }
+
+    /// Cap on `edits` entries per call so a runaway batch can't produce an
+    /// unreviewably large atomic change.
+    static let maxBatchEdits = 100
 
     private let fixedRootPath: URL?
 
@@ -1914,31 +1942,84 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             return pathReq.failureEnvelope ?? ""
         }
 
-        // Empty `old_string` is ambiguous — `requireString` (default
-        // `allowEmpty: false`) rejects it with a pointed envelope that
-        // matches the sandbox in-place edit (`sandbox_write_file`).
-        let oldReq = requireString(
-            args,
-            "old_string",
-            expected: "non-empty exact text that uniquely matches one location in the file",
-            tool: name
-        )
-        guard case .value(let oldString) = oldReq else {
-            return oldReq.failureEnvelope ?? ""
-        }
-
-        // Empty `new_string` is the supported delete-the-match form.
-        let newReq = requireString(
-            args,
-            "new_string",
-            expected: "replacement text (use `\"\"` to delete the match)",
-            tool: name,
-            allowEmpty: true
-        )
-        guard case .value(let newString) = newReq else {
-            return newReq.failureEnvelope ?? ""
-        }
         let dryRun = coerceBool(args["dry_run"]) ?? false
+        let replaceAll = coerceBool(args["replace_all"]) ?? false
+
+        // Resolve the requested edits: either the batch `edits` array or the
+        // single `old_string`/`new_string` pair. Both funnel into one ordered
+        // list so the apply loop below has a single shape.
+        var requestedEdits: [(old: String, new: String)] = []
+        let isBatch = args["edits"] != nil
+        if isBatch {
+            guard let rawEdits = args["edits"] as? [[String: Any]], !rawEdits.isEmpty else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`edits` must be a non-empty array of {old_string, new_string} objects.",
+                    field: "edits",
+                    expected: "non-empty array of {old_string, new_string}",
+                    tool: name
+                )
+            }
+            if rawEdits.count > Self.maxBatchEdits {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "`edits` contains \(rawEdits.count) entries; the cap is \(Self.maxBatchEdits) per call. Split into multiple calls.",
+                    field: "edits",
+                    expected: "at most \(Self.maxBatchEdits) edits per call",
+                    tool: name
+                )
+            }
+            for (index, raw) in rawEdits.enumerated() {
+                // Empty `old_string` is ambiguous (same rule as the single
+                // form); empty `new_string` is the delete-the-match form.
+                guard let old = raw["old_string"] as? String, !old.isEmpty else {
+                    return ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "`edits[\(index)].old_string` must be a non-empty string.",
+                        field: "edits",
+                        expected: "non-empty exact text for every edit's old_string",
+                        tool: name
+                    )
+                }
+                guard let new = raw["new_string"] as? String else {
+                    return ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "`edits[\(index)].new_string` must be a string (use `\"\"` to delete the match).",
+                        field: "edits",
+                        expected: "replacement text for every edit",
+                        tool: name
+                    )
+                }
+                requestedEdits.append((old, new))
+            }
+        } else {
+            // Empty `old_string` is ambiguous — `requireString` (default
+            // `allowEmpty: false`) rejects it with a pointed envelope that
+            // matches the sandbox in-place edit (`sandbox_write_file`).
+            let oldReq = requireString(
+                args,
+                "old_string",
+                expected: "non-empty exact text that matches the target location (or pass `edits` for a batch)",
+                tool: name
+            )
+            guard case .value(let oldString) = oldReq else {
+                return oldReq.failureEnvelope ?? ""
+            }
+
+            // Empty `new_string` is the supported delete-the-match form.
+            let newReq = requireString(
+                args,
+                "new_string",
+                expected: "replacement text (use `\"\"` to delete the match)",
+                tool: name,
+                allowEmpty: true
+            )
+            guard case .value(let newString) = newReq else {
+                return newReq.failureEnvelope ?? ""
+            }
+            requestedEdits.append((oldString, newString))
+        }
 
         // Writable combined mode: an absolute `/workspace/...` path is the
         // Linux sandbox — route to the sandbox writer's in-place edit
@@ -1957,13 +2038,26 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                     tool: name
                 )
             }
+            // The sandbox writer's in-place edit branch only understands the
+            // single unique-match form; batch/replace_all stay host-only.
+            if isBatch || replaceAll {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "`edits` and `replace_all` are not supported for `/workspace/...` sandbox paths — "
+                        + "issue single old_string/new_string edits, or use `sandbox_exec` with `sed`.",
+                    field: isBatch ? "edits" : "replace_all",
+                    expected: "single old_string/new_string edit for sandbox paths",
+                    tool: name
+                )
+            }
             return try await sandboxBridgeWrite(
                 bridge,
                 tool: name,
                 args: [
                     "path": relativePath,
-                    "old_string": oldString,
-                    "new_string": newString,
+                    "old_string": requestedEdits[0].old,
+                    "new_string": requestedEdits[0].new,
                 ]
             )
         }
@@ -2006,31 +2100,45 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         }
         var content = originalContent
 
-        guard let range = content.range(of: oldString) else {
-            let diagnosis = Self.noMatchDiagnosis(oldString: oldString, content: content)
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message:
-                    "Could not find `old_string` in \(relativePath). \(diagnosis)",
-                field: "old_string",
-                expected: "exact non-empty text present once in the target file",
-                tool: name
-            )
+        // Apply every requested edit in order against the evolving content.
+        // Atomic by construction: content only reaches the filesystem after
+        // the whole loop succeeds, so a failing edit means nothing changed.
+        var perEditReplacements: [Int] = []
+        for (index, edit) in requestedEdits.enumerated() {
+            let label = isBatch ? "edits[\(index)].old_string" : "old_string"
+            let atomicNote = isBatch ? " No edits were applied — the batch is atomic." : ""
+            let matches = content.ranges(of: edit.old)
+            if matches.isEmpty {
+                let diagnosis = Self.noMatchDiagnosis(oldString: edit.old, content: content)
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "Could not find `\(label)` in \(relativePath). \(diagnosis)\(atomicNote)",
+                    field: "old_string",
+                    expected: "exact non-empty text present in the target file",
+                    tool: name
+                )
+            }
+            if matches.count > 1, !replaceAll {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "Found \(matches.count) matches for `\(label)` in \(relativePath); include more "
+                        + "surrounding context to identify one location, or pass `replace_all: true` "
+                        + "to replace every occurrence.\(atomicNote)",
+                    field: "old_string",
+                    expected: "exact text that matches exactly one location (or replace_all: true)",
+                    tool: name
+                )
+            }
+            if replaceAll {
+                content = content.replacingOccurrences(of: edit.old, with: edit.new)
+                perEditReplacements.append(matches.count)
+            } else {
+                content.replaceSubrange(matches[0], with: edit.new)
+                perEditReplacements.append(1)
+            }
         }
-
-        let matches = content.ranges(of: oldString)
-        if matches.count > 1 {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message:
-                    "Found \(matches.count) matches for `old_string` in \(relativePath); include more surrounding context to identify one location.",
-                field: "old_string",
-                expected: "exact text that matches exactly one location",
-                tool: name
-            )
-        }
-
-        content.replaceSubrange(range, with: newString)
         var preview = WorkspaceWriteSafety.preview(
             path: relativePath,
             previousContent: originalContent,
@@ -2041,6 +2149,10 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             createsParentDirectories: false,
             fileURL: fileURL
         )
+        preview.payload["replacements"] = perEditReplacements.reduce(0, +)
+        if isBatch {
+            preview.payload["edits_applied"] = perEditReplacements
+        }
         if dryRun {
             return ToolEnvelope.success(
                 tool: name,
