@@ -1005,7 +1005,19 @@ struct FileReadTool: OsaurusTool {
         }
         let validStart = max(1, min(startLine, lines.count))
         let validEnd = max(validStart, min(endLine, lines.count))
-        let charCap = maxChars > 0 ? min(maxChars, Self.maxOutputChars) : Self.maxOutputChars
+        // Adaptive cap: an explicit `max_chars` may exceed the default tier
+        // up to the absolute ceiling, and when the whole file fits under
+        // that ceiling it serves in one call — forced chunking of a file
+        // the model could hold whole just multiplies agent turns. Files
+        // above the ceiling keep the default tier + continuation chunking.
+        let charCap: Int
+        if maxChars > 0 {
+            charCap = min(maxChars, ToolOutputCaps.fileReadMax)
+        } else if content.text.count <= ToolOutputCaps.fileReadMax {
+            charCap = ToolOutputCaps.fileReadMax
+        } else {
+            charCap = Self.maxOutputChars
+        }
 
         var output = ""
         var lastLineIncluded = validStart - 1

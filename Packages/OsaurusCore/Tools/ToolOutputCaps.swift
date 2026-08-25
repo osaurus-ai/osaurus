@@ -39,6 +39,14 @@ enum ToolOutputCaps {
     /// `file_read` rendered output (also the workbook-preview cap).
     static let fileRead = 15_000
 
+    /// Absolute `file_read` ceiling. A file whose full content fits under
+    /// this serves in ONE call, and an explicit `max_chars` may raise the
+    /// per-call cap up to it (previously `max_chars` was clamped DOWN to
+    /// `fileRead`, so a 36KB attachment always cost three chunked reads —
+    /// three decode-bound agent turns). `next_start_line` continuation
+    /// chunking remains for files above this ceiling.
+    static let fileReadMax = 60_000
+
     /// `shell_run` combined output.
     static let shellOutput = 10_000
 
