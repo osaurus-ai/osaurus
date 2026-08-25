@@ -21,15 +21,22 @@ enum PIIModelDownloadAlertFlow {
     static func run(scope: ThemedAlertScope) async -> Bool {
         // Phase 1: ask. Standard title/message/buttons so the card is
         // byte-for-byte the app's themed alert.
+        let askId = UUID()
         let install = await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
             var resumed = false
             let finish: (Bool) -> Void = { value in
                 guard !resumed else { return }
                 resumed = true
+                // Clear the ask from the center before the next present:
+                // the host's dialog view is per-request, and a stale
+                // entry would otherwise linger invisible after its
+                // dismiss animation.
+                ThemedAlertCenter.shared.dismiss(scope: scope, id: askId)
                 cont.resume(returning: value)
             }
             ThemedAlertCenter.shared.present(
                 ThemedAlertRequest(
+                    id: askId,
                     title: L("Install PII Detection Model?"),
                     message: L(
                         "This task detects personal information (names, addresses) with an on-device model. Installing the recommended model (37 MB) takes a few seconds and runs fully offline. Without it, only pattern-based detection (emails, phone numbers) is available."
