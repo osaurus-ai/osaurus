@@ -229,6 +229,40 @@
         }
       }
     },
+    "Bulk Edits": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Massenbearbeitungen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "일괄 편집"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Массовые правки"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "批量编辑"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "批次編輯"
+          }
+        }
+      }
+    },
     "Choose Folder…": {
       "localizations": {
         "de": {
@@ -297,6 +331,142 @@
         }
       }
     },
+    "Download failed: %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Download fehlgeschlagen: %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "다운로드 실패: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ошибка загрузки: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "下载失败：%@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "下載失敗：%@"
+          }
+        }
+      }
+    },
+    "Downloading PII Model": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "PII-Modell wird geladen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "PII 모델 다운로드 중"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Загрузка модели PII"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在下载 PII 模型"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在下載 PII 模型"
+          }
+        }
+      }
+    },
+    "Downloading, %lld%%": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Wird geladen, %lld %%"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "다운로드 중, %lld%%"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Загрузка, %lld%%"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在下载，%lld%%"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在下載，%lld%%"
+          }
+        }
+      }
+    },
+    "Install PII Detection Model?": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "PII-Erkennungsmodell installieren?"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "PII 감지 모델을 설치할까요?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Установить модель распознавания PII?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "安装 PII 检测模型？"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "安裝 PII 偵測模型？"
+          }
+        }
+      }
+    },
     "Not a DFlash 2 drafter — no selector in its config.json.": {
       "localizations": {
         "de": {
@@ -327,6 +497,142 @@
           "stringUnit": {
             "state": "translated",
             "value": "不是 DFlash 2 草稿模型 — 其 config.json 中沒有選擇器。"
+          }
+        }
+      }
+    },
+    "Redacted personal information": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Persönliche Daten geschwärzt"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "개인정보를 마스킹함"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Личные данные скрыты"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "已隐去个人信息"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "已隱去個人資訊"
+          }
+        }
+      }
+    },
+    "Redacting personal information": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Persönliche Daten werden geschwärzt"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "개인정보 마스킹 중"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Скрытие личных данных"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在隐去个人信息"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在隱去個人資訊"
+          }
+        }
+      }
+    },
+    "Scanned for personal information": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Nach persönlichen Daten gesucht"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "개인정보 검사 완료"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Поиск личных данных завершён"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "已扫描个人信息"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "已掃描個人資訊"
+          }
+        }
+      }
+    },
+    "Scanning for personal information": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Suche nach persönlichen Daten"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "개인정보 검사 중"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Поиск личных данных"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在扫描个人信息"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在掃描個人資訊"
           }
         }
       }
@@ -429,6 +735,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "無法讀取或重新編碼該圖像。"
+          }
+        }
+      }
+    },
+    "This task detects personal information (names, addresses) with an on-device model. Installing the recommended model (37 MB) takes a few seconds and runs fully offline. Without it, only pattern-based detection (emails, phone numbers) is available.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Diese Aufgabe erkennt persönliche Daten (Namen, Adressen) mit einem lokalen Modell. Die Installation des empfohlenen Modells (37 MB) dauert nur wenige Sekunden und läuft vollständig offline. Ohne das Modell ist nur die musterbasierte Erkennung (E-Mails, Telefonnummern) verfügbar."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "이 작업은 온디바이스 모델로 개인정보(이름, 주소)를 감지합니다. 권장 모델(37 MB) 설치는 몇 초면 완료되며 완전히 오프라인으로 실행됩니다. 설치하지 않으면 패턴 기반 감지(이메일, 전화번호)만 사용할 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Эта задача распознаёт личные данные (имена, адреса) с помощью локальной модели. Установка рекомендуемой модели (37 МБ) занимает несколько секунд, и она работает полностью офлайн. Без неё доступно только распознавание по шаблонам (адреса эл. почты, номера телефонов)."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "此任务使用设备端模型检测个人信息（姓名、地址）。安装推荐模型（37 MB）只需几秒钟，并且完全离线运行。若不安装，则仅可使用基于模式的检测（电子邮件、电话号码）。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "此工作使用裝置端模型偵測個人資訊（姓名、地址）。安裝建議的模型（37 MB）只需幾秒鐘，並且完全離線執行。若不安裝，則僅能使用以模式為基礎的偵測（電子郵件、電話號碼）。"
           }
         }
       }
