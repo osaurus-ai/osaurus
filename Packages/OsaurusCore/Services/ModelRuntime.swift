@@ -4927,7 +4927,7 @@ public actor ModelRuntime {
                 generation: parameters,
                 toolChoice: toolChoice,
                 stopSequences: stopSequences,
-                draftStrategy: holder.draftStrategy,
+                draftStrategy: Self.requestDraftStrategy(holder.draftStrategy),
                 runtime: cfg,
                 maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
             )
@@ -5530,6 +5530,33 @@ public actor ModelRuntime {
             )
         }
         return plan
+    }
+
+    /// Re-resolves the speculative strategy from CURRENT settings on every
+    /// request, instead of reusing the one frozen into the holder at load.
+    ///
+    /// The MTP head's presence is a load-time fact, but the DEPTH is not: it is
+    /// a per-request parameter, and the server's draft-token limit only clamps
+    /// it downward. Freezing it at load meant a depth change had to evict the
+    /// model to take effect — a full 27B reload for a value the next generate
+    /// could simply have read.
+    ///
+    /// Turning MTP off is honoured here too: the loaded head is left in the
+    /// graph (unloading it is what a reload is for) but no longer drafts, so
+    /// switching back on is instant.
+    nonisolated static func requestDraftStrategy(
+        _ loaded: MLXLMCommon.DraftStrategy?
+    ) -> MLXLMCommon.DraftStrategy? {
+        guard case .some(.nativeMTP(let depth, let verifierMode)) = loaded else {
+            // DFlash 2 and the no-drafter case are load-time decisions.
+            return loaded
+        }
+        let mtp = ServerRuntimeSettingsStore.snapshot().mtp
+        if mtp.mode == .off { return nil }
+        guard let limit = mtp.draftTokenLimit, limit > 0, limit < depth else {
+            return loaded
+        }
+        return .nativeMTP(depth: limit, verifierMode: verifierMode)
     }
 
     private nonisolated static func describeDraftStrategy(
