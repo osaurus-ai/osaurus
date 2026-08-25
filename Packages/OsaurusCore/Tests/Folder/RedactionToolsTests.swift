@@ -148,6 +148,26 @@ struct RedactionToolsTests {
         #expect(content.contains("[REDACTED NUMBERS]"))
     }
 
+    @Test func redactFile_bracketedCustomPlaceholder_usedVerbatim() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("note.txt")
+        try "revenue $4.2M\n".write(to: url, atomically: true, encoding: .utf8)
+
+        // Agents pass the full bracketed placeholder from the user's
+        // request; it must land verbatim, not double-wrapped as
+        // "[REDACTED REDACTEDNUMBERS]".
+        _ = try await RedactFileTool(rootPath: root).execute(
+            argumentsJSON: """
+                {"path":"note.txt",
+                 "custom_rules":[{"name":"money","pattern":"\\\\$[0-9.,]+[MK]?","placeholder":"[REDACTED NUMBERS]"}]}
+                """
+        )
+        let content = try String(contentsOf: url, encoding: .utf8)
+        #expect(content.contains("revenue [REDACTED NUMBERS]"))
+        #expect(!content.contains("REDACTEDNUMBERS"))
+    }
+
     @Test func redactFile_dryRun_countsWithoutWriting() async throws {
         let root = tmpRoot()
         defer { try? FileManager.default.removeItem(at: root) }

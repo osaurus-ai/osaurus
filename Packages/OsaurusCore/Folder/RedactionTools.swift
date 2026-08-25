@@ -354,12 +354,30 @@ struct RedactFileTool: OsaurusTool, PermissionedTool {
             lastUpper = entity.range.upperBound
         }
 
+        // Custom-rule matches carry only the SANITIZED label (uppercase
+        // A-Z) in `prefixOverride`; map it back to the rule's raw
+        // `placeholder` so an agent-supplied "[REDACTED NUMBERS]" is used
+        // verbatim (observed live: wrapping the sanitized label produced
+        // "[REDACTED REDACTEDNUMBERS]" 6,217 times in one file).
+        var rawPlaceholderByLabel: [String: String] = [:]
+        for rule in parsed.rules {
+            if let label = rule.effectivePlaceholderLabel, let raw = rule.placeholderLabel {
+                rawPlaceholderByLabel[label] = raw
+            }
+        }
+
         var content = originalContent
         var countsByCategory: [String: Int] = [:]
         for entity in deduped.reversed() {
             let replacement: String
             if let custom = entity.placeholder.prefixOverride {
-                replacement = "[REDACTED \(custom)]"
+                if let raw = rawPlaceholderByLabel[custom],
+                    raw.hasPrefix("["), raw.hasSuffix("]")
+                {
+                    replacement = raw
+                } else {
+                    replacement = "[REDACTED \(custom)]"
+                }
             } else {
                 replacement =
                     placeholderOverrides[entity.category]
