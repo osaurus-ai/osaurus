@@ -87,7 +87,8 @@ struct RedactionToolsTests {
 
     @Test func detectPII_withoutModel_carriesDegradationWarning() async throws {
         // Test environment has no Rampart/OpenAI bundle installed.
-        guard !RampartModelManager.bundleExists(), !PrivacyFilterEngine.shared.isLoaded else {
+        let engineLoaded = await MainActor.run { PrivacyFilterEngine.shared.isLoaded }
+        guard !RampartModelManager.bundleExists(), !engineLoaded else {
             return
         }
         let output = try await DetectPIITool().execute(
