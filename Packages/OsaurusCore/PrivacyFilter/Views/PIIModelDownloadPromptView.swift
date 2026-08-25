@@ -97,7 +97,11 @@ private struct RampartDownloadProgressContent: View {
             switch manager.state {
             case .downloading(let progress):
                 ProgressView(value: progress)
-                Text(L("Downloading, \(Int(progress * 100))%"))
+                // Explicit format key: a literal `%` after an interpolation
+                // becomes `%%` in the extracted catalog key, which the i18n
+                // checker's interpolation matcher cannot derive from the
+                // interpolated form.
+                Text(String(format: L("Downloading, %lld%%"), Int(progress * 100)))
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
             case .failed(let message):
