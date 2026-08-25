@@ -310,7 +310,12 @@ struct RedactFileTool: OsaurusTool, PermissionedTool {
                     )
                 }
             }
-            allowedCategories = resolved.isEmpty ? nil : resolved
+            // An explicitly EMPTY array means "no built-in categories" —
+            // observed live: a model steered into redact_file against its
+            // intent passed `categories: []` to make the call a no-op, and
+            // the old empty-means-all fallback redacted the whole file
+            // anyway. Only an ABSENT `categories` argument means all.
+            allowedCategories = resolved
         }
 
         var placeholderOverrides: [EntityCategory: String] = [:]

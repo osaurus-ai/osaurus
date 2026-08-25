@@ -163,6 +163,35 @@ struct ChatToolChoicePolicyTests {
     }
 
     @Test
+    func ambiguousNoun_withWeakVerb_andNoRedactionSignal_doesNotForce() {
+        // The live false positive: "names" is also data/code vocabulary,
+        // and the forced tool WRITES — this prompt redacted a CSV's email
+        // cells before the two-tier check.
+        let choice = ChatToolChoicePolicy.resolve(
+            tools: [Self.tool("file_edit"), Self.tool("redact_file")],
+            userText: "Replace the column names in the CSV header of data.csv with lowercase versions",
+            attempt: 1
+        )
+        if case .function = choice {
+            Issue.record("ambiguous noun without redaction signal must not force redact_file")
+        }
+    }
+
+    @Test
+    func ambiguousNoun_withPlaceholderSignal_stillForces() {
+        let choice = ChatToolChoicePolicy.resolve(
+            tools: [Self.tool("redact_file")],
+            userText: "Replace names with \"[REDACTED NAME]\" in note.txt",
+            attempt: 1
+        )
+        guard case .function(let fn) = choice else {
+            Issue.record("placeholder signal must keep the forced route")
+            return
+        }
+        #expect(fn.function.name == "redact_file")
+    }
+
+    @Test
     func genericReplace_withoutPIINoun_doesNotForceRedactFile() {
         let choice = ChatToolChoicePolicy.resolve(
             tools: [Self.tool("file_edit"), Self.tool("redact_file")],

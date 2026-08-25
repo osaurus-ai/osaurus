@@ -199,16 +199,39 @@ struct RedactionToolsTests {
         #expect(try String(contentsOf: url, encoding: .utf8) == original)
     }
 
-    @Test func redactFile_unknownCategory_rejected() async throws {
+    @Test func redactFile_explicitEmptyCategories_writesNothing() async throws {
         let root = tmpRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        try "x".write(
-            to: root.appendingPathComponent("note.txt"), atomically: true, encoding: .utf8)
+        let original = "email a@b.co\n"
+        let url = root.appendingPathComponent("note.txt")
+        try original.write(to: url, atomically: true, encoding: .utf8)
 
+        // `categories: []` is a model's opt-out; it must be a no-op, not
+        // an implicit "all categories".
+        let output = try await RedactFileTool(rootPath: root).execute(
+            argumentsJSON: #"{"path":"note.txt","categories":[]}"#
+        )
+        let payload = try #require(ToolEnvelope.successPayload(output) as? [String: Any])
+        #expect(payload["written"] as? Bool == false)
+        #expect(try String(contentsOf: url, encoding: .utf8) == original)
+    }
+
+    @Test func redactFile_unknownCategory_warnsAndSkips() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = "email a@b.co\n"
+        let url = root.appendingPathComponent("note.txt")
+        try original.write(to: url, atomically: true, encoding: .utf8)
+
+        // Unknown entries warn and are skipped; with no valid entries left
+        // the call is a safe no-op rather than a hard failure.
         let output = try await RedactFileTool(rootPath: root).execute(
             argumentsJSON: #"{"path":"note.txt","categories":["nope"]}"#
         )
-        #expect(ToolEnvelope.successPayload(output) == nil)
+        let payload = try #require(ToolEnvelope.successPayload(output) as? [String: Any])
+        #expect(payload["written"] as? Bool == false)
+        #expect(envelopeWarnings(output).contains { $0.contains("nope") })
+        #expect(try String(contentsOf: url, encoding: .utf8) == original)
     }
 
     // MARK: - persisted config guard

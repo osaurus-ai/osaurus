@@ -77,22 +77,38 @@ enum ChatToolChoicePolicy {
         return requiresToolCall(tools: tools, userText: userText) ? .required : .auto
     }
 
-    /// A redaction-shaped request: an action verb (replace / redact / mask /
-    /// anonymize / remove / scrub) together with a PII noun. Nouns are
-    /// deliberately the PLURAL / phrase forms: bare singulars like "name"
-    /// are everyday coding vocabulary ("replace the function name in
-    /// app.py") and would force-route ordinary edit requests into
-    /// `redact_file`, costing a gate-refusal turn each time.
+    /// A redaction-shaped request, two-tier to keep false positives from
+    /// mutating files (a forced `redact_file` WRITES on a wrong guess —
+    /// observed live: "replace the column names ... with lowercase" forced
+    /// the tool and it redacted the CSV's email cells):
+    ///  - strong verbs (redact / mask / anonymize / scrub) pair with any
+    ///    PII noun,
+    ///  - weak verbs (replace / remove) need an unambiguous PII noun, or
+    ///    an ambiguous one ("names", "addresses" — also everyday
+    ///    code/data vocabulary) PLUS an explicit redaction signal such as
+    ///    a "[redacted..." placeholder or the word "placeholder".
     static func containsRedactionIntent(text: String) -> Bool {
-        let verbs = ["replace", "redact", "mask", "anonymize", "anonymise", "remove", "scrub"]
-        let piiNouns = [
-            "names", "emails", "e-mails", "email address", "phone number", "phone numbers",
-            "addresses", "pii", "personal information", "personal info", "personal data",
+        let strongVerbs = ["redact", "mask", "anonymize", "anonymise", "scrub"]
+        let weakVerbs = ["replace", "remove"]
+        let strongNouns = [
+            "emails", "e-mails", "email address", "email addresses", "phone number",
+            "phone numbers", "pii", "personal information", "personal info", "personal data",
             "account number", "account numbers", "sensitive data", "sensitive information",
             "sensitive values",
         ]
-        guard verbs.contains(where: { text.contains($0) }) else { return false }
-        return piiNouns.contains(where: { text.contains($0) })
+        let ambiguousNouns = ["names", "addresses"]
+        let redactionSignals = ["[redacted", "placeholder"]
+
+        let hasStrongNoun = strongNouns.contains(where: { text.contains($0) })
+        let hasAmbiguousNoun = ambiguousNouns.contains(where: { text.contains($0) })
+        guard hasStrongNoun || hasAmbiguousNoun else { return false }
+
+        if strongVerbs.contains(where: { text.contains($0) }) {
+            return true
+        }
+        guard weakVerbs.contains(where: { text.contains($0) }) else { return false }
+        if hasStrongNoun { return true }
+        return redactionSignals.contains(where: { text.contains($0) })
     }
 
     private static func requiresToolCall(tools: [Tool], userText: String) -> Bool {
