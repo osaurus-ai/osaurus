@@ -384,6 +384,26 @@ struct RedactFileTool: OsaurusTool, PermissionedTool {
         preview.payload["backend"] = outcome.backend
         preview.payload["replacements"] = deduped.count
         preview.payload["replacements_by_category"] = countsByCategory
+        // Context diet: the standard write preview embeds the diff twice
+        // (`diff` + rendered `text`), and every retained char re-prefills
+        // on all later turns (observed live: two dry-run envelopes added
+        // ~6K tokens of duplicated diff to a 9B session). Counts drive the
+        // model's next decision; keep only a short diff excerpt and drop
+        // the duplicated rendering. The UI diff sheet renders from the
+        // operation log, not from this payload.
+        if let fullDiff = preview.payload["diff"] as? String, fullDiff.count > 1_500 {
+            preview.payload["diff"] =
+                String(fullDiff.prefix(1_500))
+                + "\n... (diff excerpt truncated; replacement counts above are complete)"
+            preview.payload["diff_truncated"] = true
+        }
+        let summaryLine =
+            (dryRun ? "Dry run: " : "")
+            + "redact_file \(relativePath): \(deduped.count) replacements "
+            + countsByCategory.sorted { $0.key < $1.key }
+                .map { "\($0.key)=\($0.value)" }
+                .joined(separator: ", ")
+        preview.payload["text"] = summaryLine
         if !parsed.rejected.isEmpty {
             preview.payload["rejected_rules"] = parsed.rejected.map {
                 ["name": $0.name, "reason": $0.reason]
