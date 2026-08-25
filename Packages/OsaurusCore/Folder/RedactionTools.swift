@@ -411,6 +411,19 @@ struct RedactFileTool: OsaurusTool, PermissionedTool {
         }
         var warnings = preview.warnings
         if let degradation = outcome.degradation { warnings.append(degradation) }
+        // Honesty guard: without custom rules only the built-in categories
+        // were touched, and models have summarized that as "metrics
+        // redacted too" (observed live: a final report claimed ~6,000
+        // metric replacements that never happened). State the boundary in
+        // the result so the model reports what actually changed.
+        if parsed.rules.isEmpty {
+            warnings.append(
+                "Only built-in categories (names, emails, phones, addresses, accounts, URLs, "
+                    + "dates, secrets) were redacted. Domain-specific values such as revenue "
+                    + "figures, percentages, or IDs were NOT touched — pass `custom_rules` "
+                    + "regexes in another call to redact those."
+            )
+        }
 
         if dryRun || deduped.isEmpty {
             preview.payload["written"] = false

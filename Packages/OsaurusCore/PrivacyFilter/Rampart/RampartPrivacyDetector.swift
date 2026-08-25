@@ -59,26 +59,69 @@ actor RampartPrivacyDetector {
         } catch {
             return []
         }
-        let detected = model.detect(text)
-        await MetalGate.shared.exitPIIDetection()
+        // Windowed inference: the tokenizer hard-truncates at 512 wordpiece
+        // tokens, so a single pass over a large input silently drops every
+        // entity past roughly the first paragraph (observed live: 17 person
+        // spans detected in a 15,000-line file whose regex layer found
+        // 3,000 emails). Windows split on line boundaries so single-line
+        // entities never straddle a window; offsets are Character-based per
+        // the RampartPII contract and remapped via each window's start.
         var raw: [(category: EntityCategory, range: Range<String.Index>)] = []
-        for span in detected {
-            guard let category = Self.category(for: span.type) else { continue }
-            guard
-                let lo = text.index(
-                    text.startIndex,
-                    offsetBy: span.range.lowerBound,
-                    limitedBy: text.endIndex
-                ),
-                let hi = text.index(
-                    text.startIndex,
-                    offsetBy: span.range.upperBound,
-                    limitedBy: text.endIndex
-                )
-            else { continue }
-            raw.append((category, lo ..< hi))
+        for window in Self.windows(of: text) {
+            if Task.isCancelled { break }
+            let detected = model.detect(String(window.text))
+            for span in detected {
+                guard let category = Self.category(for: span.type) else { continue }
+                guard
+                    let lo = text.index(
+                        window.start,
+                        offsetBy: span.range.lowerBound,
+                        limitedBy: text.endIndex
+                    ),
+                    let hi = text.index(
+                        window.start,
+                        offsetBy: span.range.upperBound,
+                        limitedBy: text.endIndex
+                    )
+                else { continue }
+                raw.append((category, lo ..< hi))
+            }
         }
+        await MetalGate.shared.exitPIIDetection()
         return Self.coalesce(raw, in: text)
+    }
+
+    /// Split `text` into line-aligned windows of at most ~`cap` characters
+    /// (conservatively under the 512-wordpiece tokenizer cap for natural
+    /// language). A single line longer than the cap becomes its own window
+    /// and is truncated by the tokenizer as before. Windows are contiguous
+    /// and cover the whole input.
+    static func windows(
+        of text: String,
+        cap: Int = 1_500
+    ) -> [(start: String.Index, text: Substring)] {
+        guard text.count > cap else { return [(text.startIndex, text[...])] }
+        var result: [(start: String.Index, text: Substring)] = []
+        var windowStart = text.startIndex
+        var cursor = text.startIndex
+        var count = 0
+        while cursor < text.endIndex {
+            let lineEnd =
+                text[cursor...].firstIndex(of: "\n").map { text.index(after: $0) }
+                ?? text.endIndex
+            let lineLength = text.distance(from: cursor, to: lineEnd)
+            if count > 0, count + lineLength > cap {
+                result.append((windowStart, text[windowStart ..< cursor]))
+                windowStart = cursor
+                count = 0
+            }
+            count += lineLength
+            cursor = lineEnd
+        }
+        if windowStart < text.endIndex {
+            result.append((windowStart, text[windowStart ..< text.endIndex]))
+        }
+        return result
     }
 
     /// Merge adjacent spans of the SAME category separated only by
