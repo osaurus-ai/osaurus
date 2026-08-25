@@ -198,6 +198,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // path can run. Idempotent; safe if a future migration moves this.
         DocumentAdaptersBootstrap.registerBuiltIns()
 
+        // Interactive presenter for the redaction tools' PII-model download
+        // gate. The gate's headless default (no presenter) degrades to
+        // regex-only detection; the app process upgrades that to a blocking
+        // install prompt on the tool-approval panel machinery.
+        Task {
+            await PIIModelDownloadGate.shared.registerPresenter {
+                await ToolPermissionPromptService.requestPIIModelDownload()
+            }
+        }
+
         // Register every default-agent configure-tool domain. This is what
         // wires the consolidated `osaurus_provider`, `osaurus_model`, etc.
         // into `ToolRegistry` and feeds the system-prompt domain menu. Adding
