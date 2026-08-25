@@ -1565,11 +1565,11 @@ public enum SystemPromptTemplates {
         """
         ## Bulk edits and redaction
 
-        For repetitive find-and-replace or redaction tasks, prefer in order:
-        1. `redact_file` for PII/sensitive-data redaction (one deterministic pass; add `custom_rules` regexes for domain-specific patterns like revenue figures). Use `detect_pii` first when you need to see what would match.
-        2. `file_edit` with `replace_all: true` or an `edits` array — one call for many replacements.
-        3. `shell_run` with `sed` for large pattern rewrites.
-        Never re-emit unchanged file content, and never apply the same replacement one occurrence at a time.
+        When asked to replace, remove, mask, anonymize, or redact names, emails, phone numbers, addresses, account numbers, or other sensitive values across a file, use `redact_file` — one deterministic pass with placeholder text, no scripting needed. Add `custom_rules` regexes for domain-specific patterns the built-in categories miss (revenue figures, percentages, IDs). Use `detect_pii` first when you need to preview what would match.
+        For other repetitive find-and-replace tasks, prefer in order:
+        1. `file_edit` with `replace_all: true` or an `edits` array — one call for many replacements.
+        2. `shell_run` with `sed` for large pattern rewrites.
+        Never re-emit unchanged file content, never write a one-off script for a job `redact_file` or `file_edit` covers, and never apply the same replacement one occurrence at a time.
         """
     }
 

@@ -17,8 +17,10 @@ import Foundation
 struct DetectPIITool: OsaurusTool {
     let name = "detect_pii"
     let description =
-        "Detect PII (names, emails, phone numbers, addresses, URLs, account numbers, secrets) in a "
+        "Find names, emails, phone numbers, addresses, URLs, account numbers, and secrets in a "
         + "file or in inline text using the on-device PII model plus deterministic regex detectors. "
+        + "Use this to preview what a replace/mask/anonymize/redact request would match before "
+        + "calling `redact_file`. "
         + "Pass `path` (relative file path) OR `text`. Optionally pass `custom_rules`: an array of "
         + "{name, pattern, placeholder} regex rules for domain-specific patterns the built-in "
         + "categories miss (e.g. revenue figures) — rules apply to this call only. Returns detected "
@@ -168,10 +170,12 @@ struct DetectPIITool: OsaurusTool {
 struct RedactFileTool: OsaurusTool, PermissionedTool {
     let name = "redact_file"
     let description =
-        "Detect and permanently replace PII in a file in ONE deterministic pass — prefer this over "
-        + "many `file_edit` calls for redaction tasks. Detection uses the on-device PII model plus "
-        + "regex detectors; every occurrence of each detected entity is replaced with a bracketed "
-        + "placeholder like `[REDACTED NAME]`. Optionally pass `custom_rules` (ephemeral regex rules "
+        "Replace names, emails, phone numbers, addresses, account numbers, and other sensitive "
+        + "values in a file with placeholder text like `[REDACTED NAME]` in ONE deterministic pass. "
+        + "Use this whenever asked to replace, remove, mask, anonymize, or redact such values across "
+        + "a file — prefer it over `file_edit` loops or writing a script. Detection uses the "
+        + "on-device PII model plus regex detectors; every occurrence of each detected entity is "
+        + "replaced. Optionally pass `custom_rules` (ephemeral regex rules "
         + "for domain-specific patterns), `categories` to limit which built-in categories are "
         + "redacted, `placeholders` to override the per-category placeholder text, and "
         + "`dry_run: true` to preview counts without writing. The change is undoable via `file_undo`."
