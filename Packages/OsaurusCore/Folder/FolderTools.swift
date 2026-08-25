@@ -214,6 +214,45 @@ enum FolderToolHelpers {
         fixed ?? ChatExecutionContext.currentFolderRoot
     }
 
+    /// Bounded search for files whose basename matches the (missing)
+    /// requested path, so a not-found envelope can quote the real
+    /// relative paths instead of leaving the model to guess-and-search.
+    /// Case-insensitive on the basename; hidden entries skipped; scan
+    /// capped so a huge tree can't stall a failing read.
+    static func basenameCandidates(
+        for relativePath: String,
+        rootPath: URL,
+        maxResults: Int = 5,
+        maxScanned: Int = 5_000
+    ) -> [String] {
+        let wanted = (relativePath as NSString).lastPathComponent.lowercased()
+        guard !wanted.isEmpty else { return [] }
+        guard
+            let enumerator = FileManager.default.enumerator(
+                at: rootPath,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )
+        else { return [] }
+        var results: [String] = []
+        var scanned = 0
+        let rootStandardized = rootPath.standardizedFileURL.path
+        for case let url as URL in enumerator {
+            scanned += 1
+            if scanned > maxScanned { break }
+            guard url.lastPathComponent.lowercased() == wanted else { continue }
+            guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
+            else { continue }
+            // Never surface denylisted paths through the recovery hint.
+            if shouldRefuseSecret(fileURL: url) { continue }
+            let full = url.standardizedFileURL.path
+            guard full.hasPrefix(rootStandardized + "/") else { continue }
+            results.append(String(full.dropFirst(rootStandardized.count + 1)))
+            if results.count >= maxResults { break }
+        }
+        return results
+    }
+
     /// Typed failure returned when a folder tool executes with no working
     /// folder in scope (e.g. the model guessed a tool name outside a folder
     /// session, or the folder was cleared mid-run).
@@ -934,6 +973,25 @@ struct FileReadTool: OsaurusTool {
 
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory) else {
+            // Resolve basename candidates before failing: a wrong path
+            // guess otherwise costs a failed turn plus one or two
+            // `file_search` turns (observed live) before the model finds
+            // the file it was told about. Quoting the real relative paths
+            // makes the very next call correct.
+            let candidates = FolderToolHelpers.basenameCandidates(
+                for: relativePath, rootPath: rootPath)
+            if !candidates.isEmpty {
+                return ToolEnvelope.failure(
+                    kind: .notFound,
+                    message:
+                        "File not found: \(relativePath). Files with a matching name exist at: "
+                        + candidates.joined(separator: ", ")
+                        + ". Use one of those exact relative paths.",
+                    field: "path",
+                    expected: "an existing relative path",
+                    tool: name
+                )
+            }
             throw FolderToolError.fileNotFound(relativePath)
         }
         let ext = fileURL.pathExtension.lowercased()
