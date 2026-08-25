@@ -66,34 +66,25 @@ actor RampartPrivacyDetector {
         // 3,000 emails). Windows split on line boundaries so single-line
         // entities never straddle a window; offsets are Character-based per
         // the RampartPII contract and remapped via each window's start.
-        // Windows run through the model in padded batches: one forward
-        // pass per `batchSize` windows instead of one per window, which
-        // amortizes the per-pass eval/sync overhead (a 15,000-line file
-        // is ~380 windows — sequential passes cost ~50s of the tool call).
-        let windows = Self.windows(of: text)
-        let batchSize = 16
         var raw: [(category: EntityCategory, range: Range<String.Index>)] = []
-        for batchStart in stride(from: 0, to: windows.count, by: batchSize) {
+        for window in Self.windows(of: text) {
             if Task.isCancelled { break }
-            let batch = Array(windows[batchStart ..< min(batchStart + batchSize, windows.count)])
-            let batchResults = model.detectBatch(batch.map { String($0.text) })
-            for (window, detected) in zip(batch, batchResults) {
-                for span in detected {
-                    guard let category = Self.category(for: span.type) else { continue }
-                    guard
-                        let lo = text.index(
-                            window.start,
-                            offsetBy: span.range.lowerBound,
-                            limitedBy: text.endIndex
-                        ),
-                        let hi = text.index(
-                            window.start,
-                            offsetBy: span.range.upperBound,
-                            limitedBy: text.endIndex
-                        )
-                    else { continue }
-                    raw.append((category, lo ..< hi))
-                }
+            let detected = model.detect(String(window.text))
+            for span in detected {
+                guard let category = Self.category(for: span.type) else { continue }
+                guard
+                    let lo = text.index(
+                        window.start,
+                        offsetBy: span.range.lowerBound,
+                        limitedBy: text.endIndex
+                    ),
+                    let hi = text.index(
+                        window.start,
+                        offsetBy: span.range.upperBound,
+                        limitedBy: text.endIndex
+                    )
+                else { continue }
+                raw.append((category, lo ..< hi))
             }
         }
         await MetalGate.shared.exitPIIDetection()
