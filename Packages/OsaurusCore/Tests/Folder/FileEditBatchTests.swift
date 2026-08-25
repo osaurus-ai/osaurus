@@ -34,11 +34,12 @@ struct FileEditBatchTests {
     }
 
     private func failureMessage(_ output: String) -> String {
+        // `ToolEnvelope.failure` writes `message` at the TOP level of the
+        // envelope, not nested under an `error` object.
         guard let data = output.data(using: .utf8),
-            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let error = dict["error"] as? [String: Any]
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return "" }
-        return error["message"] as? String ?? ""
+        return dict["message"] as? String ?? ""
     }
 
     // MARK: - replace_all

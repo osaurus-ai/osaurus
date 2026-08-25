@@ -60,7 +60,9 @@ struct FileReadAdaptiveCapTests {
         let payload = try #require(ToolEnvelope.successPayload(output) as? [String: Any])
         let text = payload["text"] as? String ?? ""
         #expect(text.count > ToolOutputCaps.fileRead)
-        #expect(text.count <= 40_000)
+        // Allow render overhead: the "Lines X-Y of Z" header and per-line
+        // gutter sit outside the content cap.
+        #expect(text.count <= 40_000 + 500)
     }
 
     @Test func explicitMaxChars_clampedToAbsoluteCeiling() async throws {
@@ -75,7 +77,7 @@ struct FileReadAdaptiveCapTests {
         )
         let payload = try #require(ToolEnvelope.successPayload(output) as? [String: Any])
         let text = payload["text"] as? String ?? ""
-        #expect(text.count <= ToolOutputCaps.fileReadMax)
+        #expect(text.count <= ToolOutputCaps.fileReadMax + 500)
         #expect(payload["truncated"] as? Bool == true)
     }
 
