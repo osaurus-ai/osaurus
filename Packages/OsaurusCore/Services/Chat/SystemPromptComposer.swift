@@ -1530,6 +1530,17 @@ public struct SystemPromptComposer: Sendable {
                     content: SystemPromptTemplates.folderContext(from: folder)
                 )
             )
+            // Bulk-edit steering: constant text, `.static` so it joins the
+            // cached KV prefix (one-time cold prefill on update, byte-stable
+            // per turn thereafter). Ordering: after folderContext so it
+            // reads as a refinement of the folder tool surface.
+            composer.append(
+                .static(
+                    id: "bulkEditGuidance",
+                    label: L("Bulk Edits"),
+                    content: SystemPromptTemplates.bulkEditGuidance()
+                )
+            )
         }
 
         // Capability-discovery nudge: explain how to recover when the

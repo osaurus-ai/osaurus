@@ -1557,6 +1557,22 @@ public enum SystemPromptTemplates {
     /// path rule + tool dispatch + mode-specific framing + optional
     /// project context. Returns `""` when no folder is mounted so the
     /// composer can append unconditionally.
+    /// Steering for repetitive find-and-replace / redaction tasks.
+    /// CONSTANT text by contract: this section is `.static` and must stay
+    /// byte-identical across turns and sessions so it never perturbs the
+    /// reusable KV prefix. No paths, dates, or per-session state.
+    public static func bulkEditGuidance() -> String {
+        """
+        ## Bulk edits and redaction
+
+        For repetitive find-and-replace or redaction tasks, prefer in order:
+        1. `redact_file` for PII/sensitive-data redaction (one deterministic pass; add `custom_rules` regexes for domain-specific patterns like revenue figures). Use `detect_pii` first when you need to see what would match.
+        2. `file_edit` with `replace_all: true` or an `edits` array — one call for many replacements.
+        3. `shell_run` with `sed` for large pattern rewrites.
+        Never re-emit unchanged file content, and never apply the same replacement one occurrence at a time.
+        """
+    }
+
     public static func folderContext(from folderContext: FolderContext?) -> String {
         guard let folder = folderContext else { return "" }
 
