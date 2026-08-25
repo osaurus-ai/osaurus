@@ -13,7 +13,36 @@ enum ChatToolChoicePolicy {
         guard !tools.isEmpty else { return nil }
         guard attempt == 1 else { return .auto }
 
+        // Deterministic redaction routing: prose steering alone does not
+        // reliably move small models off the read-then-script reflex
+        // (observed live: a 9B model ignored `redact_file` twice and
+        // hand-rolled a catastrophic name regex). When the request pairs a
+        // redaction verb with a PII noun and `redact_file` is registered,
+        // force it for the first call; the loop returns to `.auto` on the
+        // next attempt so the model keeps full freedom for follow-up work.
+        if containsRedactionIntent(text: userText.lowercased()),
+            !containsNegatedToolIntent(userText.lowercased()),
+            tools.contains(where: { $0.function.name == "redact_file" })
+        {
+            return .function(
+                .init(type: "function", function: .init(name: "redact_file")))
+        }
+
         return requiresToolCall(tools: tools, userText: userText) ? .required : .auto
+    }
+
+    /// A redaction-shaped request: an action verb (replace / redact / mask /
+    /// anonymize / remove / scrub) together with a PII noun (names, emails,
+    /// phone numbers, ...). Both are required so a generic "replace foo with
+    /// bar" never gets force-routed.
+    static func containsRedactionIntent(text: String) -> Bool {
+        let verbs = ["replace", "redact", "mask", "anonymize", "anonymise", "remove", "scrub"]
+        let piiNouns = [
+            "name", "email", "e-mail", "phone", "address", "pii",
+            "personal information", "personal info", "account number", "sensitive",
+        ]
+        guard verbs.contains(where: { text.contains($0) }) else { return false }
+        return piiNouns.contains(where: { text.contains($0) })
     }
 
     private static func requiresToolCall(tools: [Tool], userText: String) -> Bool {

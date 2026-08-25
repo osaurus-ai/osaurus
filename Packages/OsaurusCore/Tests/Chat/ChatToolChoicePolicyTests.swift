@@ -119,6 +119,59 @@ struct ChatToolChoicePolicyTests {
         #expect(choice == nil)
     }
 
+    @Test
+    func redactionShapedRequestForcesRedactFileOnFirstAttempt() {
+        let choice = ChatToolChoicePolicy.resolve(
+            tools: [Self.tool("file_read"), Self.tool("redact_file")],
+            userText: """
+                Look in the selected folder for the file "note.txt". Edit the file using the following criteria:
+                Replace names with "[REDACTED NAME]"
+                Replace emails with "[REDACTED EMAIL]"
+                """,
+            attempt: 1
+        )
+
+        guard case .function(let fn) = choice else {
+            Issue.record("expected forced redact_file, got \(String(describing: choice))")
+            return
+        }
+        #expect(fn.function.name == "redact_file")
+    }
+
+    @Test
+    func redactionIntent_secondAttempt_returnsAuto() {
+        let choice = ChatToolChoicePolicy.resolve(
+            tools: [Self.tool("redact_file")],
+            userText: "Redact all names and emails in note.txt",
+            attempt: 2
+        )
+        #expect(Self.isAuto(choice))
+    }
+
+    @Test
+    func genericReplace_withoutPIINoun_doesNotForceRedactFile() {
+        let choice = ChatToolChoicePolicy.resolve(
+            tools: [Self.tool("file_edit"), Self.tool("redact_file")],
+            userText: "Replace every comma with a semicolon in note.txt",
+            attempt: 1
+        )
+        if case .function = choice {
+            Issue.record("generic replace must not force redact_file")
+        }
+    }
+
+    @Test
+    func redactionIntent_withoutRedactFileRegistered_fallsThrough() {
+        let choice = ChatToolChoicePolicy.resolve(
+            tools: [Self.tool("file_edit")],
+            userText: "Redact all names and emails in note.txt",
+            attempt: 1
+        )
+        if case .function = choice {
+            Issue.record("must not force an unregistered tool")
+        }
+    }
+
     private static func tool(_ name: String) -> Tool {
         Tool(
             type: "function",
