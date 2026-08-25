@@ -3093,6 +3093,18 @@ public struct SystemPromptComposer: Sendable {
                 )
                 allowed.formUnion(ToolRegistry.coreWorkspaceToolNames)
             }
+            // Redaction tools join the schema only when a HOST folder is
+            // active: they resolve the chat's folder root directly and have
+            // no sandbox bridge, so VM-only mode must not offer them.
+            if executionMode.usesHostFolderTools {
+                add(
+                    ToolRegistry.shared.specs(
+                        forTools: Array(ToolRegistry.redactionToolNames)
+                    ),
+                    replacingExisting: true
+                )
+                allowed.formUnion(ToolRegistry.redactionToolNames)
+            }
             if snapshot.dbEnabled { allowed.formUnion(agentDBToolNames) }
             if snapshot.renderChartEnabled { allowed.insert("render_chart") }
             if snapshot.speakEnabled { allowed.insert("speak") }

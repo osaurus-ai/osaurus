@@ -523,6 +523,8 @@ public final class ToolRegistry: ObservableObject {
     /// tool family.
     nonisolated static let externallyDeniedHostToolNames: Set<String> = [
         "file_write", "file_edit", "file_copy", "shell_run", "git_commit", "file_undo",
+        // Mutates host files (in-place redaction) — same class as file_edit.
+        "redact_file",
         // Curator draft path: never invocable from external surfaces.
         "propose_knowledge_update",
     ]
@@ -2058,6 +2060,14 @@ public final class ToolRegistry: ObservableObject {
 
     static let coreWorkspaceToolNames: Set<String> = [
         "file_read", "file_search", "file_write", "file_edit", "shell_run",
+    ]
+
+    /// Redaction tools: part of the host-folder schema (they resolve the
+    /// executing chat's folder root) but NOT of `coreWorkspaceToolNames`,
+    /// because that set also surfaces in sandbox/VM mode where these have
+    /// no bridge routing and would dead-end in `noActiveFolderEnvelope`.
+    static let redactionToolNames: Set<String> = [
+        "detect_pii", "redact_file",
     ]
 
     /// Resolve the active execution mode for a chat send. Single source of
