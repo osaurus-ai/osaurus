@@ -137,56 +137,6 @@ enum ToolPermissionPromptService {
         }
     }
 
-    /// Blocking "install the PII model?" prompt for `detect_pii` /
-    /// `redact_file`. Suspends the tool call on the same panel machinery as
-    /// tool approvals, drives `RampartModelManager` from inside the card,
-    /// and resolves true only when the bundle is installed and loaded.
-    /// Headless (tests, no UI): deterministic false, mirroring
-    /// `requestApproval`'s denial semantics — the tool then degrades to
-    /// regex-only in its RESULT, it does not fail.
-    static func requestPIIModelDownload() async -> Bool {
-        if isHeadlessTestProcess { return false }
-        if Task.isCancelled { return false }
-
-        let requestID = UUID()
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                var hasResumed = false
-                let finish: (Bool) -> Void = { installed in
-                    guard !hasResumed else { return }
-                    hasResumed = true
-                    if pendingApprovalPrompt?.id == requestID {
-                        pendingApprovalPrompt = nil
-                    }
-                    dismissWindow()
-                    continuation.resume(returning: installed)
-                }
-                let onInstalled = { finish(true) }
-                let onDecline = { finish(false) }
-
-                pendingApprovalPrompt = (id: requestID, cancel: onDecline)
-                let themeManager = ThemeManager.shared
-                let promptView = PIIModelDownloadPromptView(
-                    onInstalled: onInstalled,
-                    onDecline: onDecline
-                )
-                .environment(\.theme, themeManager.currentTheme)
-                // Enter maps to decline-safe no-op via the card's own
-                // buttons; the panel-level allow hook stays a no-op so a
-                // stray Enter can't silently start a download.
-                presentPanel(view: promptView, onAllow: {}, onDeny: onDecline)
-
-                if Task.isCancelled {
-                    onDecline()
-                }
-            }
-        } onCancel: {
-            Task { @MainActor in
-                cancelApprovalPrompt(id: requestID)
-            }
-        }
-    }
-
     /// Approval prompt for a caller-owned policy. Unlike `requestApproval`,
     /// choosing "Always Allow" does NOT mutate `ToolRegistry`: the caller owns
     /// the policy namespace and persists that outcome in its own store.

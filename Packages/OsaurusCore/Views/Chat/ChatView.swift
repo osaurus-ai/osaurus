@@ -8923,6 +8923,16 @@ struct ChatView: View {
                 pendingRedactionReview = state
             }
             privacyPresenterToken = token
+
+            // Presenter for the redaction tools' PII-model download gate,
+            // rendered on this window's ThemedAlertHost overlay so it
+            // matches every other app dialog. Value-captured scope (no
+            // windowState retain); last-write-wins across windows, same
+            // pragmatic behavior as other global presenters.
+            let downloadScope = ThemedAlertScope.chat(windowState.windowId)
+            await PIIModelDownloadGate.shared.registerPresenter {
+                await PIIModelDownloadAlertFlow.run(scope: downloadScope)
+            }
         }
         .onDisappear {
             // Drop only this window's registration — by passing the
