@@ -172,6 +172,29 @@ struct ChatToolChoicePolicyTests {
         }
     }
 
+    @Test
+    func forcedToolGate_refusesMismatchedCall_untilMatchingCallDisarms() {
+        let gate = ForcedToolChoiceGate()
+        gate.arm(.function(.init(type: "function", function: .init(name: "redact_file"))))
+
+        // Mismatch refused, gate stays armed for the rest of the wave.
+        let first = gate.violationEnvelope(calledTool: "file_read")
+        #expect(first?.contains("redact_file") == true)
+        #expect(gate.violationEnvelope(calledTool: "shell_run") != nil)
+
+        // Matching call executes and disarms.
+        #expect(gate.violationEnvelope(calledTool: "redact_file") == nil)
+        #expect(gate.violationEnvelope(calledTool: "file_read") == nil)
+    }
+
+    @Test
+    func forcedToolGate_autoChoice_disarms() {
+        let gate = ForcedToolChoiceGate()
+        gate.arm(.function(.init(type: "function", function: .init(name: "redact_file"))))
+        gate.arm(.auto)
+        #expect(gate.violationEnvelope(calledTool: "file_read") == nil)
+    }
+
     private static func tool(_ name: String) -> Tool {
         Tool(
             type: "function",

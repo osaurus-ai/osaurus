@@ -6401,6 +6401,13 @@ final class ChatSession: ObservableObject {
                         return AgentLoopToolExecution(result: resultText)
                     }
 
+                    // Enforces a forced `tool_choice` at the execution
+                    // boundary — chat templates that ignore the
+                    // `tool_choice_name` hint leave decoding unconstrained,
+                    // so a mismatched call must be refused here, not run.
+                    // Armed per iteration in `modelStep`.
+                    let forcedToolGate = ForcedToolChoiceGate()
+
                     // The historical single-call path: registry dispatch
                     // (permission gate included) followed by post-processing.
                     // Thrown errors become rejection envelopes flagged
@@ -6411,6 +6418,9 @@ final class ChatSession: ObservableObject {
                         _ inv: ServiceToolInvocation,
                         callId: String
                     ) async -> AgentLoopToolExecution {
+                        if let violation = forcedToolGate.violationEnvelope(calledTool: inv.toolName) {
+                            return AgentLoopToolExecution(result: violation)
+                        }
                         do {
                             // Never print a direct secret-set value to the
                             // process log. Execution below still receives the
@@ -6890,6 +6900,7 @@ final class ChatSession: ObservableObject {
                                 userText: trimmed,
                                 attempt: attempt
                             )
+                            forcedToolGate.arm(requestedToolChoice)
                             var req = ChatCompletionRequest(
                                 // Mode 2: the wire omits the model and routing is
                                 // by provider id, so don't pass the local
