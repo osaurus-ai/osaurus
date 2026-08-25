@@ -194,13 +194,13 @@ struct RedactionToolsTests {
     // MARK: - persisted config guard
 
     @Test func toolCalls_neverTouchPersistedCustomRules() async throws {
-        let before = PrivacyFilterStore.shared.configuration.customRules
+        let before = PrivacyFilterStore.snapshot().customRules
         _ = try await DetectPIITool().execute(
             argumentsJSON: """
                 {"text":"a@b.co","custom_rules":[{"name":"r","pattern":"x+"}]}
                 """
         )
-        let after = PrivacyFilterStore.shared.configuration.customRules
+        let after = PrivacyFilterStore.snapshot().customRules
         #expect(before == after)
     }
 }
