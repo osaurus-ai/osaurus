@@ -112,9 +112,9 @@ struct KnowledgeWriteHistoryView: View {
 
     private var filterBar: some View {
         HStack(spacing: 12) {
-            Spacer(minLength: 8)
-
             collectionMenu
+
+            Spacer(minLength: 8)
 
             Toggle(isOn: $showsReverted) {
                 Text("Show reverted", bundle: .module)
@@ -123,7 +123,7 @@ struct KnowledgeWriteHistoryView: View {
             .toggleStyle(.switch)
             .controlSize(.mini)
         }
-        .frame(maxWidth: .infinity, alignment: .trailing)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// The stock macOS pop-up button.
