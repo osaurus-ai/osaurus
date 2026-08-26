@@ -2309,6 +2309,31 @@ extension FloatingInputCard {
     /// and lowercased. Comparing them directly silently matched nothing, so
     /// the depth row never appeared on a model that plainly has an MTP head.
     /// Normalise both sides through one function so they cannot drift apart.
+    /// vmlx's status line begins "mtp: <mode>, layers=N, tensors=N" for
+    /// EVERY inspected bundle — a headless model reads "mtp: none, layers=0,
+    /// tensors=0". Matching the bare "mtp:" prefix therefore admitted every
+    /// resident model and the depth row rendered on models with no MTP head
+    /// at all. Capability means the status names a REAL head: a mode that
+    /// implies weights, and a nonzero tensor count.
+    nonisolated static func statusIndicatesNativeMTPHead(_ status: String?) -> Bool {
+        guard let status, status.hasPrefix("mtp: ") else { return false }
+        let mode = status.dropFirst("mtp: ".count)
+            .prefix(while: { $0 != "," })
+        switch mode {
+        case "none", "unknown", "metadata_only_missing_weights":
+            return false
+        default:
+            break
+        }
+        if let range = status.range(of: "tensors=") {
+            let digits = status[range.upperBound...].prefix(while: \.isNumber)
+            if let count = Int(digits) { return count > 0 }
+        }
+        // A mode that implies a head but no parseable tensor count: trust
+        // the mode rather than hiding a control on a capable bundle.
+        return true
+    }
+
     static func mtpIdentity(_ model: String) -> String {
         (model.split(separator: "/").last.map(String.init) ?? model)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2382,8 +2407,10 @@ extension FloatingInputCard {
             // depth row vanished the moment Mode=Off unloaded the model — the
             // exact time a user wants the control to switch back on.
             nativeMTPCapableModels.formUnion(
-                summaries.filter { $0.nativeMTPStatus?.contains("mtp:") == true }
-                    .map { Self.mtpIdentity($0.name) })
+                summaries.filter {
+                    Self.statusIndicatesNativeMTPHead($0.nativeMTPStatus)
+                }
+                .map { Self.mtpIdentity($0.name) })
         }
     }
 
