@@ -510,8 +510,8 @@ struct CapabilitiesDiscoverToolTests {
                 #expect(result.contains("availability: loadable_via_capabilities_load"))
 
                 let configureNames = ToolRegistry.configureToolNames
-                #expect(configureNames.contains("osaurus_provider"))
-                let configureQuery = #"{"query":"osaurus_provider"}"#
+                #expect(configureNames.contains("osaurus_config"))
+                let configureQuery = #"{"query":"osaurus_config"}"#
 
                 let seededConfigureResult = try await tool.execute(argumentsJSON: configureQuery)
                 for configureName in configureNames {
@@ -568,7 +568,7 @@ struct CapabilitiesDiscoverToolTests {
 
                 let defaultResult = try await CapabilitiesDiscoverTool(agentId: Agent.defaultId)
                     .execute(argumentsJSON: configureQuery)
-                #expect(defaultResult.contains("tool/osaurus_provider"))
+                #expect(defaultResult.contains("tool/osaurus_config"))
 
                 _ = await AgentManager.shared.delete(id: unseededAgent.id)
                 _ = await AgentManager.shared.delete(id: agent.id)

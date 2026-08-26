@@ -45,17 +45,23 @@ struct KnowledgeFormatSupportTests {
 
 /// End-to-end guard: an approved proposal must never overwrite a binary
 /// source of truth. Runs against the shared singletons scoped into a
-/// temporary `OsaurusPaths.overrideRoot`, so it is serialized and bails
-/// out if another suite already opened the shared database at the real
-/// path (approving there would touch real user state).
+/// temporary `OsaurusPaths.overrideRoot`, so it is serialized and closes
+/// any database an earlier suite left open so the singleton rebinds to
+/// this test's root (approving elsewhere would touch foreign state).
 @Suite(.serialized)
 struct KnowledgeCurationApprovalGuardTests {
 
     @MainActor
     @Test func approvingProposalAgainstPDFThrowsAndLeavesFileIntact() async throws {
-        guard !KnowledgeDatabase.shared.isOpen else {
-            Issue.record("Shared knowledge database already open outside override root; skipping")
-            return
+        // An earlier suite can leave the shared database open and bound to
+        // its own root (e.g. a `knowledge_collections` apply kicks
+        // `KnowledgeIndexService`, which opens the singleton lazily and
+        // never closes it). Close it so the `open()` below rebinds to this
+        // test's override root — approving must never run against foreign
+        // state, and recording an issue here just turned CI's suite
+        // ordering into a hard failure.
+        if KnowledgeDatabase.shared.isOpen {
+            KnowledgeDatabase.shared.close()
         }
 
         let root = FileManager.default.temporaryDirectory
