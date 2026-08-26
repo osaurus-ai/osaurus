@@ -1,18 +1,8 @@
 {
   "images" : [
     {
-      "filename" : "gemini.png",
-      "idiom" : "universal",
-      "scale" : "1x"
-    },
-    {
-      "filename" : "gemini@2x.png",
-      "idiom" : "universal",
-      "scale" : "2x"
-    },
-    {
-      "idiom" : "universal",
-      "scale" : "3x"
+      "filename" : "gemini.svg",
+      "idiom" : "universal"
     }
   ],
   "info" : {
@@ -20,6 +10,7 @@
     "version" : 1
   },
   "properties" : {
+    "preserves-vector-representation" : true,
     "template-rendering-intent" : "original"
   }
 }
