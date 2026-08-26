@@ -230,16 +230,19 @@ struct KnowledgeWriteHistoryView: View {
 
                 Spacer(minLength: 8)
 
-                // Expandable regardless of size. A single-document run still
-                // has a path and an operation worth seeing before deciding.
-                Button {
-                    toggle(run.id)
-                } label: {
-                    Image(systemName: expanded.contains(run.id) ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
+                // Only multi-document runs expand: a single-document row
+                // already shows its path, operation and time, so a chevron
+                // there opens a list of one and just crowds the Revert button.
+                if run.records.count > 1 {
+                    Button {
+                        toggle(run.id)
+                    } label: {
+                        Image(systemName: expanded.contains(run.id) ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(theme.secondaryText)
                 }
-                .buttonStyle(.plain)
-                .foregroundColor(theme.secondaryText)
 
                 if !run.isFullyReverted {
                     Button {
@@ -299,6 +302,7 @@ struct KnowledgeWriteHistoryView: View {
                 .foregroundColor(theme.accentColor)
             }
         }
+        .padding(.vertical, 4)
     }
 
     // MARK: - Helpers
