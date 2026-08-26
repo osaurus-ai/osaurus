@@ -540,7 +540,11 @@ final class ServerController: ObservableObject {
     ) -> Bool {
         previous.cache != next.cache
             || previous.multimodal != next.multimodal
-            || previous.mtp != next.mtp
+            // Only the MTP fields that change what gets LOADED force a reload.
+            // Comparing the whole `mtp` struct meant changing the draft-token
+            // depth — a per-request value — evicted every resident model, so a
+            // quick depth switch cost a full 27B reload on the next turn.
+            || mtpLoadInputsChanged(previous: previous.mtp, next: next.mtp)
             // These values are consumed while constructing the model graph.
             // Compare effective settings so nil versus an explicit default
             // does not unload a resident model unnecessarily.
@@ -553,6 +557,28 @@ final class ServerController: ObservableObject {
             // Persisting a new profile while retaining the old container makes
             // the settings panel lie until a manual reload.
             || previous.memorySafety != next.memorySafety
+    }
+
+    /// Whether an MTP settings change alters what the model LOAD must produce.
+    ///
+    /// The MTP head is either in the graph or it is not, and that is decided at
+    /// load: `mode == .off` loads without it, and a DFlash 2 drafter is a
+    /// different set of weights entirely. Those need a reload.
+    ///
+    /// The DEPTH does not. `draftTokenLimit` only clamps the recommended depth
+    /// downward, and the depth is applied per request — so it is re-resolved
+    /// from current settings on each generate instead of being frozen at load.
+    /// Auto vs Force-On likewise selects between already-loaded weights.
+    nonisolated static func mtpLoadInputsChanged(
+        previous: VMLXServerMTPSettings,
+        next: VMLXServerMTPSettings
+    ) -> Bool {
+        (previous.mode == .off) != (next.mode == .off)
+            || previous.dflash2DrafterPath != next.dflash2DrafterPath
+            || previous.dflash2BlockSize != next.dflash2BlockSize
+            || previous.keepDraftCacheSeparate != next.keepDraftCacheSeparate
+            || previous.acceptedTokensOnlyEnterBaseCache
+                != next.acceptedTokensOnlyEnterBaseCache
     }
 
     /// Settings captured by `RuntimeConfig.snapshot()` but not by a loaded

@@ -153,11 +153,13 @@ struct UpdateKnowledgeTicketToolTests {
     }
 
     @Test
-    func curatorToolsStayOffTheExternalAllowList() {
-        // propose remains externally denied; the claim tool is
-        // curator-gated at execution time and harmless externally, so it
-        // is deliberately NOT on the deny list.
-        #expect(ToolRegistry.externallyDeniedToolNames.contains("propose_knowledge_update"))
+    func corpusMutationStaysOffTheExternalAllowList() {
+        // The write tools' only gate is an interactive approval card, which an
+        // external caller cannot be shown, so they are denied outright.
+        #expect(ToolRegistry.externallyDeniedToolNames.contains("write_knowledge"))
+        #expect(ToolRegistry.externallyDeniedToolNames.contains("delete_knowledge"))
+        // Ticket bookkeeping mutates nothing in a collection and stays allowed.
         #expect(!ToolRegistry.externallyDeniedToolNames.contains("update_knowledge_ticket"))
+        #expect(!ToolRegistry.externallyDeniedToolNames.contains("flag_knowledge_stale"))
     }
 }

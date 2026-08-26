@@ -154,6 +154,27 @@ enum AgentLoopModelStep {
     /// content, so transparently replaying would concatenate two attempts.
     /// End honestly without an automatic retry.
     case incompleteVisibleResponse
+    /// The model emitted visible text that ANNOUNCES an imminent tool call
+    /// ("Let me write the first batch:") and then stopped without emitting
+    /// one, while tools were on the table. Ending here is what makes a small
+    /// model look like its tools are silently failing: the user reads a
+    /// promise to act, no call runs, and the next turn the model reports the
+    /// tool "isn't executing". Recoverable — the driver nudges and retries,
+    /// and because the announcement is a preamble rather than an answer, the
+    /// retry's tool call reads as the natural continuation of it.
+    case announcedToolCall
+    /// The stream consumer cut the turn short because the model collapsed
+    /// into a phrase-repetition loop. Recoverable once: the repeat is a
+    /// decoding failure, not an answer, so ending here would present a wall
+    /// of the same sentence as the response.
+    case repetitionLoop(phrase: String?)
+    /// The turn ended by asking the user for permission to carry on ("would
+    /// you like me to continue?") instead of carrying on. Only a stall when
+    /// tracked work is still pending — the driver checks that before
+    /// recovering, so a genuine question to the user still ends the run.
+    /// `clarify` is the tool for real questions; this shape is the model
+    /// handing back a turn it was asked to finish.
+    case continuationRequest
 
     /// Classify a naturally completed model step from its rendered channels
     /// and authoritative terminal stop reason.
@@ -174,14 +195,27 @@ enum AgentLoopModelStep {
     ///   `requiresVisibleFinalResponse` cannot cover that case: it is
     ///   `hasStructuredToolWork || isRemoteAgentTarget`, both false on the very
     ///   first turn, which is exactly when this happens.
+    /// - Parameter content: the rendered visible content, used only to tell an
+    ///   answer apart from a bare announcement of an un-made tool call. Pass
+    ///   `nil` from surfaces that cannot cheaply materialise it; the
+    ///   announce-only recovery is then skipped and behaviour is unchanged.
     static func classifyTerminal(
         contentIsBlank: Bool,
         thinkingIsBlank: Bool,
         stopReason: String?,
         unclosedReasoning: Bool = false,
         requiresVisibleFinalResponse: Bool,
-        toolsWereOffered: Bool = false
+        toolsWereOffered: Bool = false,
+        content: String? = nil,
+        repetitionLoopPhrase: String? = nil
     ) -> Self {
+        // Checked before `stopReason`: the consumer stopped reading, so the
+        // reported terminal reason describes a stream nobody finished. A
+        // repeated sentence is never a usable answer regardless of how the
+        // generation would otherwise have ended.
+        if let repetitionLoopPhrase {
+            return .repetitionLoop(phrase: repetitionLoopPhrase.isEmpty ? nil : repetitionLoopPhrase)
+        }
         if stopReason == "length" {
             return .lengthExhausted
         }
@@ -204,8 +238,87 @@ enum AgentLoopModelStep {
         if contentIsBlank, toolsWereOffered {
             return .incompleteReasoning
         }
+        // Visible text, no call, tools available — check whether that text is
+        // an answer, a request to be allowed to carry on, or only a preamble
+        // to a call the model never emitted.
+        if toolsWereOffered, let content {
+            if isContinuationRequest(content) { return .continuationRequest }
+            if isAnnounceOnly(content) { return .announcedToolCall }
+        }
         return .finalResponse
     }
+
+    /// Whether visible content ends by asking permission to keep going.
+    ///
+    /// Matches only the closing line, and only an explicit ask about
+    /// CONTINUING — not questions in general. A model that asks something
+    /// substantive ("which version of the toolkit do you mean?") is doing the
+    /// right thing and must still end the turn.
+    static func isContinuationRequest(_ content: String) -> Bool {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasSuffix("?") else { return false }
+        guard trimmed.components(separatedBy: "```").count % 2 == 1 else { return false }
+
+        let lines = trimmed.split(whereSeparator: \.isNewline)
+        guard let last = lines.last?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        else { return false }
+        return Self.continuationRequestPhrases.contains { last.contains($0) }
+    }
+
+    /// Ways a model asks to be let off the hook mid-task. Lowercased,
+    /// matched anywhere in the closing line.
+    private static let continuationRequestPhrases: [String] = [
+        "would you like me to continue", "want me to continue", "shall i continue",
+        "should i continue", "do you want me to continue", "shall i proceed",
+        "should i proceed", "would you like me to proceed", "want me to proceed",
+        "shall i keep going", "should i keep going", "want me to keep going",
+        "would you like me to keep going", "ok to continue", "okay to continue",
+    ]
+
+    /// Whether visible content reads as a preamble to a tool call rather than
+    /// an answer to the user.
+    ///
+    /// Deliberately narrow, because a false positive suppresses a legitimate
+    /// final answer and spends a retry. The signal is the LAST non-empty line:
+    /// a finished answer does not end on a colon (a colon promises something
+    /// follows, and when something does follow the colon is no longer last),
+    /// and does not end on a bare first-person statement of what the model is
+    /// about to do. Both shapes dominate the announce-only turns in
+    /// osaurus#2439, where every "Let me write the first batch:" ended the run.
+    static func isAnnounceOnly(_ content: String) -> Bool {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        // An unbalanced fence means the visible tail is inside a code block,
+        // where a trailing colon carries no discourse meaning.
+        guard trimmed.components(separatedBy: "```").count % 2 == 1 else { return false }
+
+        let lines = trimmed.split(whereSeparator: \.isNewline)
+        guard
+            let last = lines.last?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !last.isEmpty
+        else { return false }
+        // Structural tails (list items, tables, fences, quotes) are answer
+        // content even when they happen to end in a colon.
+        guard let first = last.first,
+            !"-*>|#`+".contains(first)
+        else { return false }
+
+        if last.hasSuffix(":") { return true }
+
+        // "Let me check the result" / "I'll write these now" as the whole
+        // closing line, with no answer after it. Bounded length keeps this
+        // from matching a long sentence that merely opens with "I'll".
+        guard last.count <= 120 else { return false }
+        let lowered = last.lowercased()
+        return Self.announcementPrefixes.contains { lowered.hasPrefix($0) }
+    }
+
+    /// Openers of a first-person "about to act" line. Lowercased, matched as
+    /// prefixes of the final line only.
+    private static let announcementPrefixes: [String] = [
+        "let me ", "let's ", "now let me ", "i'll ", "i will ", "i am going to ",
+        "i'm going to ", "next, i'll ", "next i'll ", "first, let me ", "first let me ",
+    ]
 
     /// Preserve visible partial output, remove only terminal whitespace, and
     /// append the truthful output-cap notice. A whitespace-only completion
@@ -912,6 +1025,9 @@ enum AgentToolLoop {
         /// A streamed tool envelope repeatedly hit the model output ceiling
         /// before becoming executable.
         case truncatedToolCallExhausted
+        /// The model degenerated into a phrase-repetition loop and the bounded
+        /// retry did not recover it.
+        case repetitionLoopExhausted
         /// Bounded recovery could not turn reasoning-only/unclosed output into
         /// a user-visible final answer.
         case incompleteReasoningExhausted
@@ -956,6 +1072,61 @@ enum AgentToolLoop {
     /// an empty turn never surfaces as a silent "No visible text was produced".
     static let emptyTurnFallback =
         "I wasn't able to generate a response to that. Please try rephrasing your request."
+
+    /// Max consecutive announce-only turns to nudge-and-retry. Lower than the
+    /// empty-turn budget: each retry leaves the announcement visible in the
+    /// transcript, so repeated attempts read as the model talking to itself.
+    /// If two nudges don't produce a call, the model is not going to make one
+    /// and the announcement is accepted as the (poor) final answer.
+    static let maxAnnouncedToolCallRetries = 2
+
+    /// Staged before an announce-only retry. Names the specific failure — the
+    /// model believes it already issued the call — because the generic
+    /// "produced no output" nudge does not fit a turn that produced text.
+    static let announcedToolCallNotice =
+        "[System Notice] Your previous turn described a tool call but did not actually emit one, so nothing ran. "
+        + "No file was written and no command executed. Emit the tool call itself now, as a real call — "
+        + "do not describe it, narrate it, or claim it already ran."
+
+    /// How many times a run will push back on "shall I continue?" before
+    /// letting the question stand. Two: enough to get past a model that asks
+    /// reflexively, few enough that a user who really is being consulted is
+    /// not talked over indefinitely.
+    static let maxContinuationRequestRetries = 2
+
+    /// Staged before a continuation-request retry. States the standing
+    /// authorization explicitly — a model that asks permission mid-task is
+    /// usually unsure it has any — and names the pending count so "continue"
+    /// has a concrete referent.
+    static func continuationRequestNotice(pending: Int) -> String {
+        let items = pending == 1 ? "1 item remains" : "\(pending) items remain"
+        return
+            "[System Notice] You asked whether to continue. Yes — continue. The user's request "
+            + "already authorized this work and \(items) unchecked on your todo. Do not ask "
+            + "again: proceed with the next pending item now. If you are genuinely blocked on "
+            + "something only the user can decide, call `clarify` with the specific question "
+            + "instead of asking in prose."
+    }
+
+    /// One retry. A model that degenerated once usually degenerates again,
+    /// and each attempt costs the user real wall-clock time.
+    static let maxRepetitionLoopRetries = 1
+
+    static func repetitionLoopNotice(phrase: String?) -> String {
+        let quoted = phrase.map { " (\"\($0)\")" } ?? ""
+        return
+            "[System Notice] Your previous turn repeated the same sentence\(quoted) over and over "
+            + "and was stopped. Repeating a plan is not progress. Do exactly ONE concrete thing "
+            + "now: emit a single tool call, or state plainly what is blocking you. Do not restate "
+            + "what you are about to do."
+    }
+
+    /// Shown when the retry degenerates too. Honest about what happened
+    /// rather than leaving a wall of repeated text as the answer.
+    static let repetitionLoopFallback =
+        "The model got stuck repeating itself and the response was stopped. "
+        + "This usually means the task is too large for one turn — try narrowing it to a single "
+        + "step, or switch to a different model."
 
     static let emptyToolTaskFallback =
         "The model returned empty output after tool execution. The agent task may be incomplete; retry with less context or continue from the latest tool result."
@@ -1791,6 +1962,13 @@ enum AgentToolLoop {
         // final-response check has consumed (bounded, never editing output).
         var hasGroundedConfigApply = false
         var groundedClaimRetries = 0
+        // Consecutive announce-only turns (visible "let me…" preamble, no
+        // call). Reset by any productive turn, for the same reason.
+        var consecutiveAnnouncedToolCalls = 0
+        // Total repetition-loop recoveries this run.
+        var repetitionLoopRetries = 0
+        // Consecutive "shall I continue?" hand-backs this run.
+        var consecutiveContinuationRequests = 0
         // Total (not merely consecutive) reasoning-only recovery attempts.
         // A tool call between attempts must not re-arm another potentially
         // huge reasoning cycle in the same logical run.
@@ -1984,6 +2162,61 @@ enum AgentToolLoop {
                 await hooks.emitFallbackText?(Self.emptyTurnFallback)
                 return RunResult(exit: .finalResponse, iterations: iteration)
 
+            case .announcedToolCall:
+                // The model announced a call and stopped. Treating that as a
+                // final answer is what makes tools look silently broken, so
+                // nudge-and-retry instead. On exhaustion, accept the text as
+                // the final answer rather than emitting a fallback: unlike an
+                // empty turn, the user already has something on screen, and
+                // replacing it would retract visible content.
+                consecutiveAnnouncedToolCalls += 1
+                if consecutiveAnnouncedToolCalls <= Self.maxAnnouncedToolCallRetries {
+                    pendingStateNotice = Self.announcedToolCallNotice
+                    // Not charged against the tool-iteration budget.
+                    iteration -= 1
+                    continue
+                }
+                return RunResult(exit: .finalResponse, iterations: iteration)
+
+            case .continuationRequest:
+                // Asking "would you like me to continue?" is only a stall when
+                // there IS tracked work left. With nothing pending it is a
+                // real question and the user should get it, so fall through to
+                // an ordinary final response rather than talking past them.
+                // Matches the todo-staleness call shape below: unwrap the hook
+                // first, then await it. A surface that supplies no hook has no
+                // tracked work to appeal to, so the question stands.
+                var pending = 0
+                if let pendingTodoCount = hooks.pendingTodoCount {
+                    pending = await pendingTodoCount()
+                }
+                guard pending > 0 else {
+                    return RunResult(exit: .finalResponse, iterations: iteration)
+                }
+                consecutiveContinuationRequests += 1
+                if consecutiveContinuationRequests <= Self.maxContinuationRequestRetries {
+                    pendingStateNotice = Self.continuationRequestNotice(pending: pending)
+                    // Not charged against the tool-iteration budget.
+                    iteration -= 1
+                    continue
+                }
+                // Recovery spent: the model will not proceed on its own. Hand
+                // the question to the user rather than looping on it — the
+                // text is already on screen and is a reasonable thing to end
+                // on once we have tried twice.
+                return RunResult(exit: .finalResponse, iterations: iteration)
+
+            case .repetitionLoop(let phrase):
+                repetitionLoopRetries += 1
+                if repetitionLoopRetries <= Self.maxRepetitionLoopRetries {
+                    pendingStateNotice = Self.repetitionLoopNotice(phrase: phrase)
+                    // Not charged against the tool-iteration budget.
+                    iteration -= 1
+                    continue
+                }
+                await hooks.emitFallbackText?(Self.repetitionLoopFallback)
+                return RunResult(exit: .repetitionLoopExhausted, iterations: iteration)
+
             case .lengthExhausted:
                 // `stop=length` is authoritative. Do not mislabel a
                 // reasoning-only capped turn as successful task completion,
@@ -2024,9 +2257,12 @@ enum AgentToolLoop {
                 )
 
             case .toolCalls(let invocations):
-                // A productive turn — reset the empty-turn recovery budget so
-                // a later unrelated empty turn gets its own fresh allowance.
+                // A productive turn — reset the empty-turn and announce-only
+                // recovery budgets so a later unrelated stall gets its own
+                // fresh allowance.
                 consecutiveEmptyTurns = 0
+                consecutiveAnnouncedToolCalls = 0
+                consecutiveContinuationRequests = 0
 
                 // A desktop subagent already completed successfully, and the
                 // very next model step emitted only a malformed repeat of that

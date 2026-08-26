@@ -229,6 +229,21 @@
         }
       }
     },
+    "Agents leave a note here when a document looks out of date but fixing it was not the task at hand. Open one in a chat to have an agent correct it; you review the change before it is saved.": {},
+    "Documents agents have written to your collections. You approved each of these when it ran; if something looks wrong, put it back here.": {},
+    "Fix in a chat": {},
+    "Hide documents": {},
+    "Left over from the old review flow. Approve or dismiss these; agents now write documents directly, with your approval at the time.": {},
+    "Let the agent search, read and update the knowledge collections granted below: curated guides, templates, and standards. The agent shows you every change and waits for your approval before saving, and you can undo anything it writes from the Knowledge section.": {},
+    "NEWER VERSION": {},
+    "Open this in a chat to have it fixed": {},
+    "Recent agent changes": {},
+    "Revert": {},
+    "Revert all": {},
+    "Reverted": {},
+    "Show documents": {},
+    "This store was written by a newer version of Osaurus, so this build won't open it. Update Osaurus to read it again. Do not Reset, your data is intact.": {},
+    "Your memories are intact. This database was written by a newer version of Osaurus, and this build is older than the format it uses. Update Osaurus to open it again, and don't reset the store.": {},
     "Bulk Edits": {
       "localizations": {
         "de": {
@@ -2092,70 +2107,70 @@
       },
       "shouldTranslate": false
     },
-    "%@%% of %@ \u2248 %@ (limited to %@ \u2014 disk is nearly full)": {
+    "%@%% of %@ ≈ %@ (limited to %@ — disk is nearly full)": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@%% von %@ \u2248 %@ (begrenzt auf %@ \u2014 Datentr\u00e4ger fast voll)"
+            "value": "%@%% von %@ ≈ %@ (begrenzt auf %@ — Datenträger fast voll)"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@ %@\uc758 %%\uc5d0\uc11c \u2248 %@ (%@\ub85c \uc81c\ud55c \u2014 \ub514\uc2a4\ud06c \uacf5\uac04 \ubd80\uc871)"
+            "value": "%@ %@의 %%에서 ≈ %@ (%@로 제한 — 디스크 공간 부족)"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@%% \u043e\u0442 %@ \u2248 %@ (\u043e\u0433\u0440\u0430\u043d\u0438\u0447\u0435\u043d\u043e \u0434\u043e %@ \u2014 \u0434\u0438\u0441\u043a \u043f\u043e\u0447\u0442\u0438 \u043f\u043e\u043b\u043e\u043d)"
+            "value": "%@%% от %@ ≈ %@ (ограничено до %@ — диск почти полон)"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@ \u7684 %@%% \u2248 %@\uff08\u9650\u5236\u4e3a %@ \u2014 \u78c1\u76d8\u5feb\u6ee1\uff09"
+            "value": "%@ 的 %@%% ≈ %@（限制为 %@ — 磁盘快满）"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@ \u7684 %@%% \u2248 %@\uff08\u9650\u5236\u70ba %@ \u2014 \u78c1\u789f\u5feb\u6eff\uff09"
+            "value": "%@ 的 %@%% ≈ %@（限制為 %@ — 磁碟快滿）"
           }
         }
       }
     },
-    "%@%% of %@ \u2248 %@": {
+    "%@%% of %@ ≈ %@": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@%% von %@ \u2248 %@"
+            "value": "%@%% von %@ ≈ %@"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@ %@\uc758 %%\uc5d0\uc11c \u2248 %@"
+            "value": "%@ %@의 %%에서 ≈ %@"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@%% \u043e\u0442 %@ \u2248 %@"
+            "value": "%@%% от %@ ≈ %@"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@ \u7684 %@%% \u2248 %@"
+            "value": "%@ 的 %@%% ≈ %@"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "%@ \u7684 %@%% \u2248 %@"
+            "value": "%@ 的 %@%% ≈ %@"
           }
         }
       }
@@ -10087,25 +10102,25 @@
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "+%@ \ubaa8\ub378 \ub85c\ub529"
+            "value": "+%@ 모델 로딩"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "+%@ \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u043c\u043e\u0434\u0435\u043b\u0438"
+            "value": "+%@ загрузка модели"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "+%@ \u6a21\u578b\u52a0\u8f7d"
+            "value": "+%@ 模型加载"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "+%@ \u6a21\u578b\u8f09\u5165"
+            "value": "+%@ 模型載入"
           }
         }
       }
@@ -10522,6 +10537,14 @@
         }
       }
     },
+    "~%lldh remaining" : {
+      "comment" : "A string that describes a number of hours, like \"2h remaining\".",
+      "isCommentAutoGenerated" : true
+    },
+    "~%lldmin remaining" : {
+      "comment" : "A time estimate in minutes, rounded to the nearest whole number.",
+      "isCommentAutoGenerated" : true
+    },
     "~1 item would be masked before cloud send.": {
       "comment": "Privacy note: singular count of the span the Privacy Filter would mask before a cloud send.",
       "localizations": {
@@ -10556,6 +10579,10 @@
           }
         }
       }
+    },
+    "~1min remaining" : {
+      "comment" : "Estimated download time remaining, e.g. \"~1min remaining\".",
+      "isCommentAutoGenerated" : true
     },
     "~2k / 200k": {
       "shouldTranslate": false
@@ -13211,36 +13238,37 @@
         }
       }
     },
-    "A brain that runs on your Mac": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ein Gehirn, das auf deinem Mac läuft"
+    "A brain that runs on your Mac" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein Gehirn, das auf deinem Mac läuft"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Mac에서 실행되는 두뇌"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac에서 실행되는 두뇌"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Мозг, который работает на вашем Mac"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мозг, который работает на вашем Mac"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在你的 Mac 上运行的大脑"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在你的 Mac 上运行的大脑"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在你的 Mac 上執行的大腦"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在你的 Mac 上執行的大腦"
           }
         }
       }
@@ -13384,6 +13412,10 @@
         }
       }
     },
+    "A Dino for every side of your work." : {
+      "comment" : "A welcome message that describes the app's",
+      "isCommentAutoGenerated" : true
+    },
     "A domain allowlist is configured, which this sandbox can't enforce — network stays fully blocked. Clear agents' Allowed Domains to restore outbound access.": {
       "localizations": {
         "de": {
@@ -13485,6 +13517,10 @@
           }
         }
       }
+    },
+    "A focused helper for questions, planning, and staying on track." : {
+      "comment" : "A description of the \"Everyday helper\" onboarding specialty.",
+      "isCommentAutoGenerated" : true
     },
     "A free Hugging Face token raises rate limits so models download faster.": {
       "localizations": {
@@ -13726,6 +13762,10 @@
         }
       }
     },
+    "A pragmatic pair-programmer for building and debugging code." : {
+      "comment" : "A description of the \"Coding & development\" onboarding specialty.",
+      "isCommentAutoGenerated" : true
+    },
     "A pragmatic pair-programmer for reading and writing code.": {
       "localizations": {
         "de": {
@@ -13760,36 +13800,40 @@
         }
       }
     },
-    "A quick tour": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Eine kurze Tour"
+    "A private brain that runs on your Mac" : {
+
+    },
+    "A quick tour" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eine kurze Tour"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "빠른 둘러보기"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "빠른 둘러보기"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Краткий обзор"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Краткий обзор"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "快速导览"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快速导览"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "快速瀏覽"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快速瀏覽"
           }
         }
       }
@@ -14386,6 +14430,10 @@
           }
         }
       }
+    },
+    "A thoughtful partner for weighing sources and polishing prose." : {
+      "comment" : "A description of the research onboarding specialty.",
+      "isCommentAutoGenerated" : true
     },
     "A watcher": {
       "comment": "Label for an outbound binding run source of \"watcher\".",
@@ -16638,36 +16686,37 @@
         }
       }
     },
-    "Add a few tools": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ein paar Tools hinzufügen"
+    "Add a few tools" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein paar Tools hinzufügen"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "몇 가지 도구 추가"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "몇 가지 도구 추가"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Добавьте несколько инструментов"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавьте несколько инструментов"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "添加一些工具"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加一些工具"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "添加一些工具"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加一些工具"
           }
         }
       }
@@ -21194,36 +21243,37 @@
         }
       }
     },
-    "All optional. Add or remove anytime.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Alles optional. Jederzeit hinzufügen oder entfernen."
+    "All optional. Add or remove anytime." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alles optional. Jederzeit hinzufügen oder entfernen."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "모두 선택 사항입니다. 언제든지 추가하거나 제거할 수 있습니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모두 선택 사항입니다. 언제든지 추가하거나 제거할 수 있습니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Всё необязательно. Добавлять и удалять инструменты можно в любое время."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Всё необязательно. Добавлять и удалять инструменты можно в любое время."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "全部可选。可随时添加或移除。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全部可选。可随时添加或移除。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "全部可選。可隨時添加或移除。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全部可選。可隨時添加或移除。"
           }
         }
       }
@@ -21297,6 +21347,7 @@
         }
       }
     },
+    "All Collections": {},
     "All Sources": {
       "comment": "Source filter option: show tools from every source in the Tool Exposure Control Center.",
       "extractionState": "manual",
@@ -23479,36 +23530,37 @@
         }
       }
     },
-    "Already have a provider? Connect it": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Du hast bereits einen Anbieter? Verbinde ihn"
+    "Already have a provider? Connect it" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Du hast bereits einen Anbieter? Verbinde ihn"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이미 사용 중인 제공업체가 있나요? 연결하기"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이미 사용 중인 제공업체가 있나요? 연결하기"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Уже есть провайдер? Подключите его"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Уже есть провайдер? Подключите его"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已有提供商？连接它"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已有提供商？连接它"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已有服務供應商？連接"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已有服務供應商？連接"
           }
         }
       }
@@ -23617,36 +23669,37 @@
         }
       }
     },
-    "Already redeemed": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Bereits eingelöst"
+    "Already redeemed" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bereits eingelöst"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이미 사용됨"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이미 사용됨"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Уже активировано"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Уже активировано"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已兑换"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已兑换"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已兌換"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已兌換"
           }
         }
       }
@@ -24247,43 +24300,44 @@
         }
       }
     },
-    "Anthropic, Google, Ollama, and more — paste a key to connect": {
-      "comment": "Subtitle for the \"Use an API key\" provider-picker entry.",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Anthropic, Google, Ollama und mehr – Schluessel einfuegen zum Verbinden"
+    "Anthropic, Google, Ollama, and more — paste a key to connect" : {
+      "comment" : "Subtitle for the \"Use an API key\" provider-picker entry.",
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic, Google, Ollama und mehr – Schluessel einfuegen zum Verbinden"
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Anthropic, Google, Ollama, and more — paste a key to connect"
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Anthropic, Google, Ollama, and more — paste a key to connect"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Anthropic, Google, Ollama 등 — 키를 붙여넣어 연결하세요"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anthropic, Google, Ollama 등 — 키를 붙여넣어 연결하세요"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Anthropic, Google, Ollama и другие — вставьте ключ для подключения"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anthropic, Google, Ollama и другие — вставьте ключ для подключения"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Anthropic、Google、Ollama 等 — 粘贴密钥以连接"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anthropic、Google、Ollama 等 — 粘贴密钥以连接"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Anthropic、Google、Ollama 等 — 粘貼密鑰以連接"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anthropic、Google、Ollama 等 — 粘貼密鑰以連接"
           }
         }
       }
@@ -25314,47 +25368,44 @@
         }
       }
     },
-    "Apple Music": {
-      "comment": "Onboarding plugin picker display name for the Apple Music tool.",
-      "shouldTranslate": false
-    },
-    "Apple Notes": {
-      "comment": "Onboarding plugin picker display name for the Apple Notes tool.",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Apple Notizen"
+    "Apple Notes" : {
+      "comment" : "Onboarding plugin picker display name for the Apple Notes tool.",
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple Notizen"
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Apple Notes"
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Apple Notes"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Apple 메모"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple 메모"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Заметки Apple"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Заметки Apple"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Apple 备忘录"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple 备忘录"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Apple 備忘錄"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple 備忘錄"
           }
         }
       }
@@ -26827,36 +26878,37 @@
         }
       }
     },
-    "Ask for something real. It uses the web, your files, and your apps to finish the job, then double-checks before answering.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Bitte um etwas Konkretes. Es nutzt das Web, deine Dateien und deine Apps, um die Aufgabe zu erledigen, und prüft alles noch einmal, bevor es antwortet."
+    "Ask for something real. It uses the web, your files, and your apps to finish the job, then double-checks before answering." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bitte um etwas Konkretes. Es nutzt das Web, deine Dateien und deine Apps, um die Aufgabe zu erledigen, und prüft alles noch einmal, bevor es antwortet."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "실제 작업을 요청하세요. 웹, 파일 및 앱을 사용하여 작업을 완료한 다음, 대답하기 전에 다시 확인합니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "실제 작업을 요청하세요. 웹, 파일 및 앱을 사용하여 작업을 완료한 다음, 대답하기 전에 다시 확인합니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Попросите выполнить реальную задачу. Он использует интернет, файлы и приложения, чтобы довести её до конца, а перед ответом проверяет всё ещё раз."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Попросите выполнить реальную задачу. Он использует интернет, файлы и приложения, чтобы довести её до конца, а перед ответом проверяет всё ещё раз."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "提出一个真实的任务。它会使用网络、你的文件和你的应用来完成工作，并在回答前再次核对。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提出一个真实的任务。它会使用网络、你的文件和你的应用来完成工作，并在回答前再次核对。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "提出一個真實的任務。它會使用網絡、你的文件和你的應用來完成工作，並在回答前再次核對。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提出一個真實的任務。它會使用網絡、你的文件和你的應用來完成工作，並在回答前再次核對。"
           }
         }
       }
@@ -27787,6 +27839,10 @@
           }
         }
       }
+    },
+    "Authenticating..." : {
+      "comment" : "Text displayed in a connect dialog while connecting to a provider.",
+      "isCommentAutoGenerated" : true
     },
     "Authentication": {
       "localizations": {
@@ -35183,36 +35239,37 @@
         }
       }
     },
-    "Browse the full catalog in Settings → Plugins.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Durchsuche den vollständigen Katalog unter Einstellungen → Plugins."
+    "Browse the full catalog in Settings → Plugins." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Durchsuche den vollständigen Katalog unter Einstellungen → Plugins."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "설정 → 플러그인에서 전체 카탈로그를 찾아보세요."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 → 플러그인에서 전체 카탈로그를 찾아보세요."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Полный каталог доступен в «Настройках» → «Плагины»."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Полный каталог доступен в «Настройках» → «Плагины»."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在“设置 → 插件”中浏览完整目录。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在“设置 → 插件”中浏览完整目录。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在「設置 → 插件」中瀏覽完整目錄。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在「設置 → 插件」中瀏覽完整目錄。"
           }
         }
       }
@@ -36009,46 +36066,51 @@
         }
       }
     },
-    "Build PowerPoint decks.": {
-      "comment": "Onboarding plugin picker blurb for PPTX.",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "PowerPoint-Präsentationen erstellen."
+    "Build PowerPoint decks." : {
+      "comment" : "Onboarding plugin picker blurb for PPTX.",
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "PowerPoint-Präsentationen erstellen."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Build PowerPoint decks."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Build PowerPoint decks."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "PowerPoint 프레젠테이션을 만듭니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "PowerPoint 프레젠테이션을 만듭니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Создаёт презентации PowerPoint."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Создаёт презентации PowerPoint."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "制作 PowerPoint 演示文稿。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "制作 PowerPoint 演示文稿。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "製作 PowerPoint 簡報。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "製作 PowerPoint 簡報。"
           }
         }
       }
+    },
+    "Build your own team of Dinos for every side of your life. Your chats, files, and keys can stay private on your Mac. No account or cloud required." : {
+      "comment" : "A longer description of the app's features.",
+      "isCommentAutoGenerated" : true
     },
     "Built into Osaurus": {
       "comment": "Badge text for a plugin that is installed but is no longer supported by Osaurus.",
@@ -39159,6 +39221,9 @@
         }
       }
     },
+    "Change its specialty or create another Dino anytime." : {
+
+    },
     "Change model": {
       "localizations": {
         "de": {
@@ -41409,36 +41474,37 @@
         }
       }
     },
-    "Chats, files, and keys stay on your device. No servers, no account, no one reading over your shoulder.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Chats, Dateien und Schlüssel bleiben auf deinem Gerät. Keine Server, kein Konto, niemand schaut dir über die Schulter."
+    "Chats, files, and keys stay on your device. No servers, no account, no one reading over your shoulder." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chats, Dateien und Schlüssel bleiben auf deinem Gerät. Keine Server, kein Konto, niemand schaut dir über die Schulter."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "채팅, 파일 및 키는 사용자의 기기에 유지됩니다. 서버나 계정이 없으며, 아무도 사용자의 정보를 훔쳐보지 않습니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "채팅, 파일 및 키는 사용자의 기기에 유지됩니다. 서버나 계정이 없으며, 아무도 사용자의 정보를 훔쳐보지 않습니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Чаты, файлы и ключи остаются на вашем устройстве. Без серверов и аккаунта; никто не просматривает ваши данные."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чаты, файлы и ключи остаются на вашем устройстве. Без серверов и аккаунта; никто не просматривает ваши данные."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "聊天记录、文件和密钥都留在你的设备上。没有服务器，没有账户，也没有人能窥探你。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聊天记录、文件和密钥都留在你的设备上。没有服务器，没有账户，也没有人能窥探你。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "聊天記錄、文件和密鑰都留在你的設備上。沒有服務器，沒有賬戶，也沒有人能窺探你。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聊天記錄、文件和密鑰都留在你的設備上。沒有服務器，沒有賬戶，也沒有人能窺探你。"
           }
         }
       }
@@ -46242,36 +46308,37 @@
         }
       }
     },
-    "Cloud included": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Cloud inklusive"
+    "Cloud included" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud inklusive"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Cloud 포함"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud 포함"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Cloud включено"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud включено"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已包含云端服务"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已包含云端服务"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已包含雲端服務"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已包含雲端服務"
           }
         }
       }
@@ -46763,6 +46830,10 @@
         }
       }
     },
+    "Coding & development" : {
+      "comment" : "The title of the onboarding specialty \"Coding & development\".",
+      "isCommentAutoGenerated" : true
+    },
     "Coding and testing guidelines agents must follow": {
       "extractionState": "stale",
       "localizations": {
@@ -46950,6 +47021,7 @@
       "comment": "A label for a button that collapses a list.",
       "isCommentAutoGenerated": true
     },
+    "Collections": {},
     "Collections every chat in this project can search.": {
       "localizations": {
         "de": {
@@ -53340,6 +53412,10 @@
         }
       }
     },
+    "Continue to Osaurus" : {
+      "comment" : "Button title that appears when a model is successfully connected.",
+      "isCommentAutoGenerated" : true
+    },
     "Continuous Batching": {
       "comment": "Toggle that allows new requests to join an in-flight batch for shared decode.",
       "isCommentAutoGenerated": true,
@@ -53444,43 +53520,44 @@
         }
       }
     },
-    "Control playback and search your library.": {
-      "comment": "Onboarding plugin picker blurb for Apple Music.",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Wiedergabe steuern und die Mediathek durchsuchen."
+    "Control playback and search your library." : {
+      "comment" : "Onboarding plugin picker blurb for Apple Music.",
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wiedergabe steuern und die Mediathek durchsuchen."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Control playback and search your library."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Control playback and search your library."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "재생을 제어하고 보관함을 검색합니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "재생을 제어하고 보관함을 검색합니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Управляет воспроизведением и ищет в медиатеке."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Управляет воспроизведением и ищет в медиатеке."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "控制播放并搜索你的资料库。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "控制播放并搜索你的资料库。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "控制播放並搜尋您的資料庫。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "控制播放並搜尋您的資料庫。"
           }
         }
       }
@@ -53838,43 +53915,44 @@
         }
       }
     },
-    "Convert, resize, and optimize images.": {
-      "comment": "Onboarding plugin picker blurb for Images.",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Bilder konvertieren, skalieren und optimieren."
+    "Convert, resize, and optimize images." : {
+      "comment" : "Onboarding plugin picker blurb for Images.",
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilder konvertieren, skalieren und optimieren."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Convert, resize, and optimize images."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Convert, resize, and optimize images."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "이미지를 변환하고, 크기를 조절하고, 최적화합니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이미지를 변환하고, 크기를 조절하고, 최적화합니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Конвертирует, изменяет размер и оптимизирует изображения."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Конвертирует, изменяет размер и оптимизирует изображения."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "转换、调整大小和优化图像。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "转换、调整大小和优化图像。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "轉換、調整大小和最佳化影像。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "轉換、調整大小和最佳化影像。"
           }
         }
       }
@@ -56019,6 +56097,7 @@
         }
       }
     },
+    "Could not revert: %@": {},
     "Could not start the ChatGPT sign-in callback server on localhost:1455. Close any other in-progress sign-in or app using that port, then retry. Details: %@": {
       "localizations": {
         "de": {
@@ -56312,36 +56391,37 @@
         }
       }
     },
-    "Couldn't load the tool list": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Tool-Liste konnte nicht geladen werden"
+    "Couldn't load the tool list" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tool-Liste konnte nicht geladen werden"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "도구 목록을 불러올 수 없음"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "도구 목록을 불러올 수 없음"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Не удалось загрузить список инструментов"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось загрузить список инструментов"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无法加载工具列表"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法加载工具列表"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "無法加載工具列表"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法加載工具列表"
           }
         }
       }
@@ -57689,36 +57769,37 @@
         }
       }
     },
-    "Create Dino": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Dino erstellen"
+    "Create Dino" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dino erstellen"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Dino 생성"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dino 생성"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Создать Дино"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создать Дино"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "创建小恐龙"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "创建小恐龙"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "創建小恐龍"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "創建小恐龍"
           }
         }
       }
@@ -58239,6 +58320,10 @@
           }
         }
       }
+    },
+    "Create your Dino" : {
+      "comment" : "Button title for creating a new agent.",
+      "isCommentAutoGenerated" : true
     },
     "Create Your First Agent": {
       "localizations": {
@@ -59540,42 +59625,43 @@
         }
       }
     },
-    "Custom / OpenAI-compatible": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Benutzerdefiniert / OpenAI-kompatibel"
+    "Custom / OpenAI-compatible" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Benutzerdefiniert / OpenAI-kompatibel"
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Custom / OpenAI-compatible"
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Custom / OpenAI-compatible"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "사용자 지정 / OpenAI 호환"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사용자 지정 / OpenAI 호환"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Пользовательский / совместимый с OpenAI"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пользовательский / совместимый с OpenAI"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自定义 / 兼容 OpenAI"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自定义 / 兼容 OpenAI"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自定義 / 兼容 OpenAI"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自定義 / 兼容 OpenAI"
           }
         }
       }
@@ -61149,36 +61235,37 @@
         }
       }
     },
-    "Data is aggregated and anonymous, so it isn't tied to you.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Die Daten werden zusammengefasst und anonymisiert, sodass sie nicht mit dir verknüpft sind."
+    "Data is aggregated and anonymous, so it isn't tied to you." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Daten werden zusammengefasst und anonymisiert, sodass sie nicht mit dir verknüpft sind."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "데이터는 집계되고 익명화되므로 귀하와 연결되지 않습니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "데이터는 집계되고 익명화되므로 귀하와 연결되지 않습니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Данные агрегированы и анонимны, поэтому они не привязаны к вам."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Данные агрегированы и анонимны, поэтому они не привязаны к вам."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "数据经过汇总且匿名，因此不会与你关联。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "数据经过汇总且匿名，因此不会与你关联。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "數據經過匯總且匿名，因此不會與你關聯。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "數據經過匯總且匿名，因此不會與你關聯。"
           }
         }
       }
@@ -66178,6 +66265,7 @@
         }
       }
     },
+    "Did not revert %@: the document changed after the agent wrote it.": {},
     "Diffusion Models": {
       "extractionState": "manual",
       "localizations": {
@@ -68729,36 +68817,37 @@
         }
       }
     },
-    "Don't have it set up yet?": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Noch nicht eingerichtet?"
+    "Don't have it set up yet?" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch nicht eingerichtet?"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "아직 설정하지 않으셨나요?"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아직 설정하지 않으셨나요?"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ещё не настроили?"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ещё не настроили?"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "还没有设置好？"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还没有设置好？"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "還沒有設置好？"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還沒有設置好？"
           }
         }
       }
@@ -69006,6 +69095,10 @@
         }
       }
     },
+    "Download : %@" : {
+      "comment" : "\"Download\" is a label for downloading a file.",
+      "isCommentAutoGenerated" : true
+    },
     "Download a model": {
       "localizations": {
         "de": {
@@ -69108,6 +69201,10 @@
           }
         }
       }
+    },
+    "Download hit a snag — %@" : {
+      "comment" : "A message describing a download error. The argument is a localized error description.",
+      "isCommentAutoGenerated" : true
     },
     "Download image models": {
       "localizations": {
@@ -69242,36 +69339,37 @@
         }
       }
     },
-    "Download model": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Modell herunterladen"
+    "Download model" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modell herunterladen"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "모델 다운로드"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델 다운로드"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Скачать модель"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скачать модель"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "下载模型"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下载模型"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "下載模型"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下載模型"
           }
         }
       }
@@ -69909,6 +70007,9 @@
         }
       }
     },
+    "Downloading.." : {
+
+    },
     "Downloading...": {
       "localizations": {
         "de": {
@@ -69943,36 +70044,37 @@
         }
       }
     },
-    "Downloading…": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Wird heruntergeladen …"
+    "Downloading…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wird heruntergeladen …"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "다운로드 중…"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다운로드 중…"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Загрузка…"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузка…"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在下载…"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在下载…"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在下載…"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在下載…"
           }
         }
       }
@@ -76198,36 +76300,37 @@
         }
       }
     },
-    "Enter a code": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Code eingeben"
+    "Enter a code" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Code eingeben"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "코드 입력"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "코드 입력"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Введите код"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Введите код"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "输入代码"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "输入代码"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "輸入代碼"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "輸入代碼"
           }
         }
       }
@@ -76575,38 +76678,39 @@
         }
       }
     },
-    "Enter it": {
-      "comment": "A label for a redeem code button.",
-      "isCommentAutoGenerated": true,
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Eingeben"
+    "Enter it" : {
+      "comment" : "A label for a redeem code button.",
+      "extractionState" : "stale",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eingeben"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "입력하기"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "입력하기"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ввести"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ввести"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "输入"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "输入"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "輸入"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "輸入"
           }
         }
       }
@@ -77630,10 +77734,13 @@
         }
       }
     },
+    "Est memory usage : %@" : {
+      "comment" : "Text describing the estimated memory usage of a machine learning model. The argument is a human-readable description of the memory size.",
+      "isCommentAutoGenerated" : true
+    },
     "est. %@ running": {},
     "Est. Memory": {},
     "Est. memory while running: %@": {},
-    "Est. running memory: %@": {},
     "Establishing the Osaurus Secure Channel — forward-secret, mutually authenticated end-to-end encryption. Not encrypted until connected.": {
       "comment": "Help text for the empty-state security badge while a remote agent connection is still being established.",
       "localizations": {
@@ -78433,6 +78540,10 @@
           }
         }
       }
+    },
+    "Everyday helper" : {
+      "comment" : "The title of the \"Everyday helper\" specialty.",
+      "isCommentAutoGenerated" : true
     },
     "Everything agents can use, grouped by where each tool comes from": {
       "extractionState": "stale",
@@ -83976,43 +84087,44 @@
         }
       }
     },
-    "Find places and get directions.": {
-      "comment": "Onboarding plugin picker blurb for Maps.",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Orte finden und Routen abrufen."
+    "Find places and get directions." : {
+      "comment" : "Onboarding plugin picker blurb for Maps.",
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Orte finden und Routen abrufen."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Find places and get directions."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Find places and get directions."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "장소를 찾고 길안내를 받습니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "장소를 찾고 길안내를 받습니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Находит места и прокладывает маршруты."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Находит места и прокладывает маршруты."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "查找地点并获取路线。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "查找地点并获取路线。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "尋找地點並取得路線。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "尋找地點並取得路線。"
           }
         }
       }
@@ -88022,36 +88134,41 @@
         }
       }
     },
-    "Get Started": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Los geht's"
+    "Get started" : {
+      "comment" : "Text of the \"Get started\" button.",
+      "isCommentAutoGenerated" : true
+    },
+    "Get Started" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Los geht's"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "시작하기"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "시작하기"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Начать"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Начать"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "开始使用"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开始使用"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "開始使用"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開始使用"
           }
         }
       }
@@ -88629,36 +88746,37 @@
         }
       }
     },
-    "Give your dino a brain": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Gib deinem Dino ein Gehirn"
+    "Give your dino a brain" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gib deinem Dino ein Gehirn"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "공룡에게 두뇌를 제공하세요"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "공룡에게 두뇌를 제공하세요"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Выберите модель для динозавра"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите модель для динозавра"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "给你的小恐龙一个大脑"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "给你的小恐龙一个大脑"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "給你的小恐龍一個大腦"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "給你的小恐龍一個大腦"
           }
         }
       }
@@ -91622,39 +91740,44 @@
         }
       }
     },
-    "Help us squash bugs": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Hilf uns, Fehler auszumerzen"
+    "Help us squash bugs" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hilf uns, Fehler auszumerzen"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "버그 해결에 참여하기"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "버그 해결에 참여하기"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Помогите нам избавиться от ошибок"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Помогите нам избавиться от ошибок"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "帮我们消灭 bug"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "帮我们消灭 bug"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "幫我們消滅 bug"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "幫我們消滅 bug"
           }
         }
       }
+    },
+    "Helper" : {
+      "comment" : "Default name of the new agent.",
+      "isCommentAutoGenerated" : true
     },
     "Hey! After 10 months of building in public, today is our official launch on Product Hunt.\n\nOsaurus has been shaped by feedback from people like you. If it's been useful to you, come say hi and support the launch. It means a lot to us.\n\nThank you for being here early.": {
       "comment": "The body text of the \"We're live on",
@@ -94715,36 +94838,37 @@
         }
       }
     },
-    "If Osaurus crashes, an anonymous report shows us what went wrong so we can fix it.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Wenn Osaurus abstürzt, zeigt uns ein anonymer Bericht, was schiefgelaufen ist, damit wir es beheben können."
+    "If Osaurus crashes, an anonymous report shows us what went wrong so we can fix it." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wenn Osaurus abstürzt, zeigt uns ein anonymer Bericht, was schiefgelaufen ist, damit wir es beheben können."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus에 오류가 발생하면 익명 보고서를 통해 문제의 원인을 파악하고 수정할 수 있습니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus에 오류가 발생하면 익명 보고서를 통해 문제의 원인을 파악하고 수정할 수 있습니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "В случае сбоя Osaurus анонимный отчет покажет нам, что пошло не так, и мы сможем это исправить."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В случае сбоя Osaurus анонимный отчет покажет нам, что пошло не так, и мы сможем это исправить."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "如果 Osaurus 崩溃了，一份匿名报告会告诉我们出了什么问题，以便我们修复。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "如果 Osaurus 崩溃了，一份匿名报告会告诉我们出了什么问题，以便我们修复。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "如果 Osaurus 崩潰了，一份匿名報告會告訴我們出了什麼問題，以便我們修復。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "如果 Osaurus 崩潰了，一份匿名報告會告訴我們出了什麼問題，以便我們修復。"
           }
         }
       }
@@ -95062,36 +95186,37 @@
         }
       }
     },
-    "illustration": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Illustration"
+    "illustration" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Illustration"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "일러스트레이션"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "일러스트레이션"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "иллюстрация"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "иллюстрация"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "插图"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "插图"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "插圖"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "插圖"
           }
         }
       }
@@ -99513,98 +99638,100 @@
         }
       }
     },
-    "Install %lld Tools": {
-      "comment": "Button title that appears when no plugins are selected to install.",
-      "isCommentAutoGenerated": true,
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld Tools installieren"
+    "Install %lld Tools" : {
+      "comment" : "Button title that appears when no plugins are selected to install.",
+      "extractionState" : "stale",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Tools installieren"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld개의 도구 설치"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld개의 도구 설치"
           }
         },
-        "ru": {
-          "variations": {
-            "plural": {
-              "few": {
-                "stringUnit": {
-                  "state": "translated",
-                  "value": "Установить %lld инструмента"
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Установить %lld инструмента"
                 }
               },
-              "many": {
-                "stringUnit": {
-                  "state": "translated",
-                  "value": "Установить %lld инструментов"
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Установить %lld инструментов"
                 }
               },
-              "one": {
-                "stringUnit": {
-                  "state": "translated",
-                  "value": "Установить %lld инструмент"
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Установить %lld инструмент"
                 }
               },
-              "other": {
-                "stringUnit": {
-                  "state": "translated",
-                  "value": "Установить %lld инструмента"
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Установить %lld инструмента"
                 }
               }
             }
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "安装 %lld 个工具"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安装 %lld 个工具"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "安裝 %lld 個工具"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安裝 %lld 個工具"
           }
         }
       }
     },
-    "Install 1 Tool": {
-      "comment": "Button title for onboarding step 6: install 1 tool.",
-      "isCommentAutoGenerated": true,
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "1 Tool installieren"
+    "Install 1 Tool" : {
+      "comment" : "Button title for onboarding step 6: install 1 tool.",
+      "extractionState" : "stale",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 Tool installieren"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "1개의 도구 설치"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1개의 도구 설치"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Установить 1 инструмент"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Установить 1 инструмент"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "安装 1 个工具"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安装 1 个工具"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "安裝 1 個工具"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安裝 1 個工具"
           }
         }
       }
@@ -101823,36 +101950,37 @@
         }
       }
     },
-    "It does the work, not just the talking": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Es erledigt die Arbeit, nicht nur das Reden"
+    "It does the work, not just the talking" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Es erledigt die Arbeit, nicht nur das Reden"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "말만 하는 것이 아니라 직접 작업을 수행합니다"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "말만 하는 것이 아니라 직접 작업을 수행합니다"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Он не только говорит, но и делает"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Он не только говорит, но и делает"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "它动手做事，而不只是动嘴说说"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "它动手做事，而不只是动嘴说说"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "它動手做事，而不只是動嘴說說"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "它動手做事，而不只是動嘴說說"
           }
         }
       }
@@ -109123,36 +109251,37 @@
         }
       }
     },
-    "Loading recommended tools…": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Empfohlene Tools werden geladen…"
+    "Loading recommended tools…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Empfohlene Tools werden geladen…"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "추천 도구 불러오는 중…"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "추천 도구 불러오는 중…"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Загрузка рекомендуемых инструментов…"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузка рекомендуемых инструментов…"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在加载推荐工具…"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加载推荐工具…"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在加載推薦工具…"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加載推薦工具…"
           }
         }
       }
@@ -109544,36 +109673,37 @@
         }
       }
     },
-    "Local endpoints don't usually need a key — leave blank to skip auth.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Lokale Endpunkte benötigen normalerweise keinen Schlüssel – leer lassen, um die Authentifizierung zu überspringen."
+    "Local endpoints don't usually need a key — leave blank to skip auth." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lokale Endpunkte benötigen normalerweise keinen Schlüssel – leer lassen, um die Authentifizierung zu überspringen."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "로컬 엔드포인트는 일반적으로 키가 필요하지 않습니다 — 인증을 건너뛰려면 비워 두세요."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "로컬 엔드포인트는 일반적으로 키가 필요하지 않습니다 — 인증을 건너뛰려면 비워 두세요."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Локальным конечным точкам обычно ключ не нужен — оставьте поле пустым, чтобы пропустить аутентификацию."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Локальным конечным точкам обычно ключ не нужен — оставьте поле пустым, чтобы пропустить аутентификацию."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "本地端点通常不需要密钥——留空即可跳过身份验证。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本地端点通常不需要密钥——留空即可跳过身份验证。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "本地端點通常不需要密鑰——留空即可跳過身份驗證。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本地端點通常不需要密鑰——留空即可跳過身份驗證。"
           }
         }
       }
@@ -110513,43 +110643,44 @@
         }
       }
     },
-    "Look up people and phone numbers.": {
-      "comment": "Onboarding plugin picker blurb for Contacts.",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Personen und Telefonnummern nachschlagen."
+    "Look up people and phone numbers." : {
+      "comment" : "Onboarding plugin picker blurb for Contacts.",
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Personen und Telefonnummern nachschlagen."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Look up people and phone numbers."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Look up people and phone numbers."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "사람과 전화번호를 찾아봅니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "사람과 전화번호를 찾아봅니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Ищет людей и номера телефонов."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ищет людей и номера телефонов."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "查找联系人和电话号码。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "查找联系人和电话号码。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "查詢聯絡人和電話號碼。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "查詢聯絡人和電話號碼。"
           }
         }
       }
@@ -110826,36 +110957,37 @@
         }
       }
     },
-    "Made to feel like yours": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Gemacht, damit es sich wie deins anfühlt"
+    "Made to feel like yours" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gemacht, damit es sich wie deins anfühlt"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "나만의 것으로 만들기"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "나만의 것으로 만들기"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Настраивается под вас"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настраивается под вас"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "为你量身打造"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "为你量身打造"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "打造得宛如你專屬"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打造得宛如你專屬"
           }
         }
       }
@@ -110973,43 +111105,44 @@
         }
       }
     },
-    "Make and check off your Reminders.": {
-      "comment": "Onboarding plugin picker blurb for Reminders.",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Make and check off your Reminders."
+    "Make and check off your Reminders." : {
+      "comment" : "Onboarding plugin picker blurb for Reminders.",
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Make and check off your Reminders."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Make and check off your Reminders."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Make and check off your Reminders."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Make and check off your Reminders."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Make and check off your Reminders."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Создаёт напоминания и отмечает их выполненными."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создаёт напоминания и отмечает их выполненными."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "创建和完成你的提醒事项。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "创建和完成你的提醒事项。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "建立和完成您的提醒事項。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "建立和完成您的提醒事項。"
           }
         }
       }
@@ -121182,36 +121315,37 @@
         }
       }
     },
-    "Never your content": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Niemals deine Inhalte"
+    "Never your content" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Niemals deine Inhalte"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "사용자 콘텐츠 사용 안 함"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사용자 콘텐츠 사용 안 함"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Никогда ваш контент"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Никогда ваш контент"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "绝不包含你的内容"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "绝不包含你的内容"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "絕不包含你的內容"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "絕不包含你的內容"
           }
         }
       }
@@ -122327,36 +122461,37 @@
         }
       }
     },
-    "No accounts, no profiles": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Keine Konten, keine Profile"
+    "No accounts, no profiles" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keine Konten, keine Profile"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "계정 없음, 프로필 없음"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계정 없음, 프로필 없음"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Нет аккаунтов, нет профилей"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет аккаунтов, нет профилей"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无账户，无用户画像"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无账户，无用户画像"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "無賬戶，無用戶畫像"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無賬戶，無用戶畫像"
           }
         }
       }
@@ -122572,6 +122707,7 @@
         }
       }
     },
+    "No agent has this collection yet. Grant it to one in Features → Knowledge.": {},
     "No agents can use this collection yet": {
       "localizations": {
         "de": {
@@ -122742,39 +122878,44 @@
         }
       }
     },
-    "No API key required": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Kein API-Schlüssel erforderlich"
+    "No API key required" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kein API-Schlüssel erforderlich"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "API 키가 필요하지 않음"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API 키가 필요하지 않음"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ключ API не требуется"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ключ API не требуется"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无需 API 密钥"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无需 API 密钥"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "無需 API 密鑰"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無需 API 密鑰"
           }
         }
       }
+    },
+    "No API key required — connects to your local server" : {
+      "comment" : "A description of a button that opens a dialog to connect to a local server.",
+      "isCommentAutoGenerated" : true
     },
     "No app allowlist is active.": {
       "localizations": {
@@ -123193,6 +123334,7 @@
         }
       }
     },
+    "No changes match these filters.": {},
     "No channels are marked Write yet. Mark them in the Access section or add IDs under its Advanced options.": {
       "comment": "A warning message displayed when a user tries to send to a channel that hasn't been marked as writable.",
       "isCommentAutoGenerated": true,
@@ -123353,36 +123495,37 @@
         }
       }
     },
-    "No chats, prompts, files, or keys are ever included.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Chats, Eingaben, Dateien und Schlüssel sind niemals enthalten."
+    "No chats, prompts, files, or keys are ever included." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chats, Eingaben, Dateien und Schlüssel sind niemals enthalten."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "채팅, 프롬프트, 파일 또는 키는 절대 포함되지 않습니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "채팅, 프롬프트, 파일 또는 키는 절대 포함되지 않습니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Никакие чаты, промпты, файлы или ключи никогда не включаются."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Никакие чаты, промпты, файлы или ключи никогда не включаются."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "绝不会包含任何聊天记录、提示词、文件或密钥。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "绝不会包含任何聊天记录、提示词、文件或密钥。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "絕不會包含任何聊天記錄、提示詞、文件或密鑰。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "絕不會包含任何聊天記錄、提示詞、文件或密鑰。"
           }
         }
       }
@@ -131734,6 +131877,7 @@
       "comment": "A description of the destinations section of the",
       "isCommentAutoGenerated": true
     },
+    "Nothing to show.": {},
     "Nothing to show here": {
       "localizations": {
         "de": {
@@ -133559,36 +133703,37 @@
         }
       }
     },
-    "One last thing": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Eine letzte Sache"
+    "One last thing" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eine letzte Sache"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "마지막으로 한 가지 더"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "마지막으로 한 가지 더"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "И последнее"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "И последнее"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最后一件事"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最后一件事"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最後一件事"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最後一件事"
           }
         }
       }
@@ -139828,36 +139973,37 @@
         }
       }
     },
-    "Own your AI.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Deine eigene KI."
+    "Own your AI." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deine eigene KI."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "나만의 AI를 소유하세요."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "나만의 AI를 소유하세요."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Станьте владельцем своего ИИ."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Станьте владельцем своего ИИ."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "拥有你的 AI。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拥有你的 AI。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "擁有你的 AI。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "擁有你的 AI。"
           }
         }
       }
@@ -140881,6 +141027,17 @@
         }
       }
     },
+    "Paste a key from aistudio.google.com" : {
+
+    },
+    "Paste a key from console.anthropic.com" : {
+      "comment" : "Label for the paste-an-API-key form for Anthropic.",
+      "isCommentAutoGenerated" : true
+    },
+    "Paste a key from console.x.ai" : {
+      "comment" : "Label for the paste-an-API-key form for XAI.",
+      "isCommentAutoGenerated" : true
+    },
     "Paste a key from console.x.ai.": {
       "comment": "Subtitle for the xAI API-key option.",
       "localizations": {
@@ -140921,6 +141078,9 @@
           }
         }
       }
+    },
+    "Paste a key from openrouter.ai" : {
+
     },
     "Paste a key from openrouter.ai/keys.": {
       "comment": "Subtitle for the OpenRouter API-key option.",
@@ -140963,6 +141123,10 @@
         }
       }
     },
+    "Paste a key from platform.openai.com" : {
+      "comment" : "Label for the paste-an-API-key form for OpenAI.",
+      "isCommentAutoGenerated" : true
+    },
     "Paste a key from platform.openai.com.": {
       "comment": "Subtitle for the OpenAI Platform API-key option.",
       "localizations": {
@@ -141003,6 +141167,10 @@
           }
         }
       }
+    },
+    "Paste a key from your provider dashboard" : {
+      "comment" : "Label for a paste-API-key form in a provider drill-in.",
+      "isCommentAutoGenerated" : true
     },
     "Paste a model URL or repo id": {
       "localizations": {
@@ -144552,36 +144720,37 @@
         }
       }
     },
-    "Pick a color": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Wähle eine Farbe"
+    "Pick a color" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle eine Farbe"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "색상 선택"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "색상 선택"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Выберите цвет"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите цвет"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "选择一个颜色"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择一个颜色"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "選擇一個顏色"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇一個顏色"
           }
         }
       }
@@ -144696,113 +144865,120 @@
         }
       }
     },
-    "Pick a provider to continue": {
-      "comment": "Footer hint on the Cloud provider list in the \"Configure AI\" onboarding step.",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Anbieter auswaehlen, um fortzufahren"
+    "Pick a provider to continue" : {
+      "comment" : "Footer hint on the Cloud provider list in the \"Configure AI\" onboarding step.",
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anbieter auswaehlen, um fortzufahren"
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Pick a provider to continue"
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Pick a provider to continue"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "계속하려면 제공사를 선택하세요"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계속하려면 제공사를 선택하세요"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Выберите провайдера, чтобы продолжить"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите провайдера, чтобы продолжить"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "选择一个提供商继续"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择一个提供商继续"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "選擇一個提供商繼續"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇一個提供商繼續"
           }
         }
       }
     },
-    "Pick a random name": {
-      "comment": "A help text for the \"Pick a random name\" button in the",
-      "isCommentAutoGenerated": true,
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Zufaelligen Namen auswaehlen"
+    "Pick a random look" : {
+      "comment" : "Localized help text for the randomize badge.",
+      "isCommentAutoGenerated" : true
+    },
+    "Pick a random name" : {
+      "comment" : "A help text for the \"Pick a random name\" button in the",
+      "extractionState" : "stale",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zufaelligen Namen auswaehlen"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "임의의 이름 선택"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "임의의 이름 선택"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Выберите случайное имя"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите случайное имя"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "随机选择一个名字"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "随机选择一个名字"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "隨機選擇一個名字"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "隨機選擇一個名字"
           }
         }
       }
     },
-    "Pick a role": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Wähle eine Rolle"
+    "Pick a role" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle eine Rolle"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "역할 선택"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "역할 선택"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Выберите роль"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите роль"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "选择一个角色"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择一个角色"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "選擇一個角色"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇一個角色"
           }
         }
       }
@@ -145159,36 +145335,37 @@
         }
       }
     },
-    "Pick what your dino can do": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Wähle, was dein Dino tun kann"
+    "Pick what your dino can do" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle, was dein Dino tun kann"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "디노가 할 수 있는 일을 선택하세요"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "디노가 할 수 있는 일을 선택하세요"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Выберите, что умеет ваш динозавр"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите, что умеет ваш динозавр"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "选择你的小恐龙能做什么"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择你的小恐龙能做什么"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "選擇你的小恐龍能做什麼"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇你的小恐龍能做什麼"
           }
         }
       }
@@ -148063,10 +148240,6 @@
         }
       }
     },
-    "PPTX": {
-      "comment": "Onboarding plugin picker display name for the PowerPoint presentations tool.",
-      "shouldTranslate": false
-    },
     "Pre-flight picks the most relevant per turn.": {
       "extractionState": "stale",
       "localizations": {
@@ -148176,6 +148349,10 @@
           }
         }
       }
+    },
+    "Prefer to connect your AI Provider?" : {
+      "comment" : "A label describing the \"Prefer to connect your",
+      "isCommentAutoGenerated" : true
     },
     "Prefill": {
       "extractionState": "manual",
@@ -153855,36 +154032,37 @@
       "comment": "Badge label for a private channel.",
       "isCommentAutoGenerated": true
     },
-    "Private and offline": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Privat und offline"
+    "Private and offline" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privat und offline"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "비공개 및 오프라인"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "비공개 및 오프라인"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Приватно и офлайн"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Приватно и офлайн"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "私密且离线"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "私密且离线"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "私密且離線"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "私密且離線"
           }
         }
       }
@@ -155062,36 +155240,37 @@
         }
       }
     },
-    "Protocol": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Protokoll"
+    "Protocol" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Protokoll"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "프로토콜"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "프로토콜"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Протокол"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Протокол"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "协议"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "协议"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "協議"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "協議"
           }
         }
       }
@@ -155164,6 +155343,10 @@
           }
         }
       }
+    },
+    "Provide an %@ API Key" : {
+      "comment" : "Title of a row that lets the user provide an API key. The argument is the string “Gemini”.",
+      "isCommentAutoGenerated" : true
     },
     "Provider Connectivity": {
       "localizations": {
@@ -157504,43 +157687,44 @@
         }
       }
     },
-    "Read and create Excel spreadsheets.": {
-      "comment": "Onboarding plugin picker blurb for XLSX.",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Excel-Tabellen lesen und erstellen."
+    "Read and create Excel spreadsheets." : {
+      "comment" : "Onboarding plugin picker blurb for XLSX.",
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Excel-Tabellen lesen und erstellen."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Read and create Excel spreadsheets."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Read and create Excel spreadsheets."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Excel 스프레드시트를 읽고 생성합니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Excel 스프레드시트를 읽고 생성합니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Читает и создаёт таблицы Excel."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Читает и создаёт таблицы Excel."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "读取和创建 Excel 电子表格。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "读取和创建 Excel 电子表格。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "讀取和建立 Excel 試算表。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "讀取和建立 Excel 試算表。"
           }
         }
       }
@@ -158274,43 +158458,44 @@
         }
       }
     },
-    "Read text from images and analyze photos.": {
-      "comment": "Onboarding plugin picker blurb for Vision.",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Text aus Bildern lesen und Fotos analysieren."
+    "Read text from images and analyze photos." : {
+      "comment" : "Onboarding plugin picker blurb for Vision.",
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Text aus Bildern lesen und Fotos analysieren."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Read text from images and analyze photos."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Read text from images and analyze photos."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "이미지에서 텍스트를 읽고 사진을 분석합니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이미지에서 텍스트를 읽고 사진을 분석합니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Распознаёт текст на изображениях и анализирует фото."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Распознаёт текст на изображениях и анализирует фото."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "从图像中读取文字并分析照片。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "从图像中读取文字并分析照片。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "從影像中讀取文字並分析照片。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "從影像中讀取文字並分析照片。"
           }
         }
       }
@@ -158558,43 +158743,44 @@
         }
       }
     },
-    "Read, search, and draft Apple Mail.": {
-      "comment": "Onboarding plugin picker blurb for Mail.",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Apple Mail lesen, durchsuchen und Entwürfe schreiben."
+    "Read, search, and draft Apple Mail." : {
+      "comment" : "Onboarding plugin picker blurb for Mail.",
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple Mail lesen, durchsuchen und Entwürfe schreiben."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Read, search, and draft Apple Mail."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Read, search, and draft Apple Mail."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Apple Mail을 읽고, 검색하고, 초안을 작성합니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple Mail을 읽고, 검색하고, 초안을 작성합니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Читает, ищет и создаёт черновики в Apple Mail."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Читает, ищет и создаёт черновики в Apple Mail."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "阅读、搜索和起草 Apple 邮件。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "阅读、搜索和起草 Apple 邮件。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "閱讀、搜尋和草擬 Apple 郵件。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "閱讀、搜尋和草擬 Apple 郵件。"
           }
         }
       }
@@ -161594,74 +161780,76 @@
         }
       }
     },
-    "Redeemed": {
-      "comment": "Button title when redeeming a code is successful.",
-      "isCommentAutoGenerated": true,
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Eingelöst"
+    "Redeemed" : {
+      "comment" : "Button title when redeeming a code is successful.",
+      "extractionState" : "stale",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eingelöst"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "사용 완료"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사용 완료"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Активировано"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Активировано"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已兑换"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已兑换"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已兌換"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已兌換"
           }
         }
       }
     },
-    "Redeeming…": {
-      "comment": "Button title while redeeming a code.",
-      "isCommentAutoGenerated": true,
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Wird eingelöst…"
+    "Redeeming…" : {
+      "comment" : "Button title while redeeming a code.",
+      "extractionState" : "stale",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wird eingelöst…"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "사용 중…"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사용 중…"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Активация…"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Активация…"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在兑换…"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在兑换…"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在兌換…"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在兌換…"
           }
         }
       }
@@ -168287,6 +168475,10 @@
         }
       }
     },
+    "Research & writing" : {
+      "comment" : "The title of the research & writing onboarding specialty.",
+      "isCommentAutoGenerated" : true
+    },
     "Research Analyst": {
       "extractionState": "stale",
       "localizations": {
@@ -171464,6 +171656,9 @@
         }
       }
     },
+    "Reverted %lld of %lld documents. The rest changed after the agent wrote them, so they were left alone.": {},
+    "Reverted %lld documents": {},
+    "Reverted %@": {},
     "Review": {
       "comment": "A button label that filters the theme library to show only duplicated themes.",
       "isCommentAutoGenerated": true,
@@ -175513,36 +175708,37 @@
         }
       }
     },
-    "Runs on your Mac. Your chats, files, and keys stay with you. No account, no cloud required.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Läuft auf deinem Mac. Deine Chats, Dateien und Schlüssel bleiben bei dir. Kein Konto, keine Cloud nötig."
+    "Runs on your Mac. Your chats, files, and keys stay with you. No account, no cloud required." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Läuft auf deinem Mac. Deine Chats, Dateien und Schlüssel bleiben bei dir. Kein Konto, keine Cloud nötig."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Mac에서 실행됩니다. 채팅, 파일 및 키가 기기에 유지됩니다. 계정이나 클라우드가 필요하지 않습니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac에서 실행됩니다. 채팅, 파일 및 키가 기기에 유지됩니다. 계정이나 클라우드가 필요하지 않습니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Работает на вашем Mac. Чаты, файлы и ключи остаются у вас. Аккаунт и облако не требуются."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Работает на вашем Mac. Чаты, файлы и ключи остаются у вас. Аккаунт и облако не требуются."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在你的 Mac 上运行。你的聊天记录、文件和密钥都留在你这里。无需账户，无需云端。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在你的 Mac 上运行。你的聊天记录、文件和密钥都留在你这里。无需账户，无需云端。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在你的 Mac 上運行。你的聊天記錄、文件和密鑰都留在你這裡。無需賬戶，無需雲端。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在你的 Mac 上運行。你的聊天記錄、文件和密鑰都留在你這裡。無需賬戶，無需雲端。"
           }
         }
       }
@@ -180395,43 +180591,44 @@
         }
       }
     },
-    "Search and create notes.": {
-      "comment": "Onboarding plugin picker blurb for Apple Notes.",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Notizen durchsuchen und erstellen."
+    "Search and create notes." : {
+      "comment" : "Onboarding plugin picker blurb for Apple Notes.",
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Notizen durchsuchen und erstellen."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Search and create notes."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Search and create notes."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "메모를 검색하고 생성합니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "메모를 검색하고 생성합니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Ищет и создаёт заметки."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ищет и создаёт заметки."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "搜索和创建备忘录。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "搜索和创建备忘录。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "搜尋和建立備忘錄。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "搜尋和建立備忘錄。"
           }
         }
       }
@@ -182787,43 +182984,44 @@
         }
       }
     },
-    "See and create events on your Mac.": {
-      "comment": "Onboarding plugin picker blurb for Calendar.",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "See and create events on your Mac."
+    "See and create events on your Mac." : {
+      "comment" : "Onboarding plugin picker blurb for Calendar.",
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "See and create events on your Mac."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "See and create events on your Mac."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "See and create events on your Mac."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "See and create events on your Mac."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "See and create events on your Mac."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "See and create events on your Mac."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "See and create events on your Mac."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "查看和创建 Mac 上的日历事件。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看和创建 Mac 上的日历事件。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "查看和建立 Mac 上的日曆事件。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看和建立 Mac 上的日曆事件。"
           }
         }
       }
@@ -184529,36 +184727,37 @@
         }
       }
     },
-    "Send crash reports": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Absturzberichte senden"
+    "Send crash reports" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Absturzberichte senden"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "충돌 보고서 보내기"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "충돌 보고서 보내기"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Отправлять отчеты о сбоях"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправлять отчеты о сбоях"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "发送崩溃报告"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发送崩溃报告"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "發送崩潰報告"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "發送崩潰報告"
           }
         }
       }
@@ -184597,43 +184796,44 @@
         }
       }
     },
-    "Send iMessages from your Mac.": {
-      "comment": "Onboarding plugin picker blurb for Messages.",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Send iMessages from your Mac."
+    "Send iMessages from your Mac." : {
+      "comment" : "Onboarding plugin picker blurb for Messages.",
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Send iMessages from your Mac."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Send iMessages from your Mac."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Send iMessages from your Mac."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Send iMessages from your Mac."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Send iMessages from your Mac."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Отправляет сообщения iMessage с вашего Mac."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправляет сообщения iMessage с вашего Mac."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "从 Mac 发送 iMessage。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从 Mac 发送 iMessage。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "從 Mac 傳送 iMessage。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "從 Mac 傳送 iMessage。"
           }
         }
       }
@@ -186458,36 +186658,37 @@
         }
       }
     },
-    "Set up a dino for each kind of work. It remembers your context, so you stop re-explaining yourself.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Richte für jede Art von Arbeit einen Dino ein. Er merkt sich deinen Kontext, sodass du dich nicht ständig wiederholen musst."
+    "Set up a dino for each kind of work. It remembers your context, so you stop re-explaining yourself." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Richte für jede Art von Arbeit einen Dino ein. Er merkt sich deinen Kontext, sodass du dich nicht ständig wiederholen musst."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "각 작업 종류에 맞게 공룡을 설정하세요. 컨텍스트를 기억하므로 반복해서 설명할 필요가 없습니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "각 작업 종류에 맞게 공룡을 설정하세요. 컨텍스트를 기억하므로 반복해서 설명할 필요가 없습니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Настройте отдельного динозавра для каждого типа работы. Он запоминает контекст, поэтому не нужно каждый раз объяснять всё заново."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройте отдельного динозавра для каждого типа работы. Он запоминает контекст, поэтому не нужно каждый раз объяснять всё заново."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "为每种工作设置一只小恐龙。它会记住你的上下文，让你不必反复解释。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "为每种工作设置一只小恐龙。它会记住你的上下文，让你不必反复解释。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "爲每種工作設置一隻小恐龍。它會記住你的上下文，讓你不必反覆解釋。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "爲每種工作設置一隻小恐龍。它會記住你的上下文，讓你不必反覆解釋。"
           }
         }
       }
@@ -186629,6 +186830,10 @@
           }
         }
       }
+    },
+    "Set up later" : {
+      "comment" : "Button title for the \"Set up later\" button in the",
+      "isCommentAutoGenerated" : true
     },
     "Set up recurring or delayed self-running tasks with notifications": {
       "localizations": {
@@ -188505,6 +188710,7 @@
         }
       }
     },
+    "Shortened for display. Not the whole document.": {},
     "Should run smoothly on this Mac": {
       "extractionState": "stale",
       "localizations": {
@@ -189148,6 +189354,7 @@
         }
       }
     },
+    "Show reverted": {},
     "Show technical details": {
       "localizations": {
         "de": {
@@ -190095,6 +190302,10 @@
         }
       }
     },
+    "Sign in with a ChatGPT account" : {
+      "comment" : "Title of a row in the provider drill-in that lets you sign in with your OpenAI account.",
+      "isCommentAutoGenerated" : true
+    },
     "Sign in with ChatGPT": {
       "localizations": {
         "de": {
@@ -190430,6 +190641,13 @@
           }
         }
       }
+    },
+    "Sign in with your Grok account" : {
+
+    },
+    "Sign in with your OpenRouter account" : {
+      "comment" : "Title of a row in the provider drill-in that lets users sign in with their ChatGPT account.",
+      "isCommentAutoGenerated" : true
     },
     "Sign up at api.search.brave.com (a credit card is required; new accounts get a small starting credit).": {
       "localizations": {
@@ -191540,6 +191758,10 @@
         }
       }
     },
+    "sk-..." : {
+      "comment" : "Placeholder text for an API key field.",
+      "isCommentAutoGenerated" : true
+    },
     "sk-…": {
       "comment": "Placeholder text for a secure field that should display only as many characters as necessary to obscure the actual API key.",
       "isCommentAutoGenerated": true,
@@ -192129,36 +192351,37 @@
         }
       }
     },
-    "Skip download and use Cloud only": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Download überspringen und nur Osaurus Cloud verwenden"
+    "Skip download and use Cloud only" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Download überspringen und nur Osaurus Cloud verwenden"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "다운로드를 건너뛰고 Osaurus Cloud만 사용"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다운로드를 건너뛰고 Osaurus Cloud만 사용"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Пропустить загрузку и использовать только Osaurus Cloud"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пропустить загрузку и использовать только Osaurus Cloud"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "跳过下载，仅使用 Osaurus Cloud"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跳过下载，仅使用 Osaurus Cloud"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "跳過下載，僅使用 Osaurus Cloud"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跳過下載，僅使用 Osaurus Cloud"
           }
         }
       }
@@ -195531,36 +195754,37 @@
         }
       }
     },
-    "Start chatting right away": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sofort loschatten"
+    "Start chatting right away" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sofort loschatten"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "바로 채팅 시작"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "바로 채팅 시작"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Начните общение сразу"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Начните общение сразу"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "立即开始聊天"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "立即开始聊天"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "立即開始聊天"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "立即開始聊天"
           }
         }
       }
@@ -195710,36 +195934,37 @@
         }
       }
     },
-    "Start on free Osaurus Cloud credits — you can download a model anytime later.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Starte mit kostenlosem Osaurus-Cloud-Guthaben – ein Modell kannst du jederzeit später laden."
+    "Start on free Osaurus Cloud credits — you can download a model anytime later." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Starte mit kostenlosem Osaurus-Cloud-Guthaben – ein Modell kannst du jederzeit später laden."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "무료 Osaurus Cloud 크레딧으로 시작하세요. 모델은 나중에 언제든 다운로드할 수 있습니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "무료 Osaurus Cloud 크레딧으로 시작하세요. 모델은 나중에 언제든 다운로드할 수 있습니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Начните с бесплатных кредитов Osaurus Cloud — модель можно скачать позже в любое время."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Начните с бесплатных кредитов Osaurus Cloud — модель можно скачать позже в любое время."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "先使用免费的 Osaurus Cloud 积分——之后可随时下载模型。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "先使用免费的 Osaurus Cloud 积分——之后可随时下载模型。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "先使用免費的 Osaurus Cloud 額度——之後可隨時下載模型。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "先使用免費的 Osaurus Cloud 額度——之後可隨時下載模型。"
           }
         }
       }
@@ -196125,36 +196350,37 @@
         }
       }
     },
-    "Start using Osaurus": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus verwenden"
+    "Start using Osaurus" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus verwenden"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus 사용 시작하기"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 사용 시작하기"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Начните использовать Osaurus"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Начните использовать Osaurus"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "开始使用 Osaurus"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开始使用 Osaurus"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "開始使用 Osaurus"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開始使用 Osaurus"
           }
         }
       }
@@ -196228,6 +196454,10 @@
           }
         }
       }
+    },
+    "Starting download…" : {
+      "comment" : "Text displayed in a progress bar when a model download is in progress.",
+      "isCommentAutoGenerated" : true
     },
     "Starting host API bridge": {
       "localizations": {
@@ -208506,6 +208736,10 @@
         }
       }
     },
+    "This agent has %lld more plugin tools than channel messages preload. The extra tools may not respond over this channel. Narrow the agent's tool selection to make every tool available." : {
+      "comment" : "A warning banner that appears when an agent has more plugin tools than the channel preload limit. The argument is the number of overflow tools.",
+      "isCommentAutoGenerated" : true
+    },
     "This agent has no memory tables yet.": {
       "extractionState": "stale",
       "localizations": {
@@ -211620,6 +211854,15 @@
         }
       }
     },
+    "This will use your ChatGPT Plus/Pro subscription" : {
+
+    },
+    "This will use your OpenRouter account" : {
+
+    },
+    "This will use your SuperGrok or X Premium+ subscription" : {
+
+    },
     "Thought": {
       "localizations": {
         "de": {
@@ -214090,36 +214333,37 @@
         }
       }
     },
-    "Tools are little powers your dino can use, like reading the web or grabbing a file. Add a couple now, swap them in and out any time from Settings.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Tools sind kleine Fähigkeiten, die dein Dino nutzen kann, wie das Lesen des Webs oder das Holen einer Datei. Füge jetzt ein paar hinzu und tausche sie jederzeit über die Einstellungen aus."
+    "Tools are little powers your dino can use, like reading the web or grabbing a file. Add a couple now, swap them in and out any time from Settings." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tools sind kleine Fähigkeiten, die dein Dino nutzen kann, wie das Lesen des Webs oder das Holen einer Datei. Füge jetzt ein paar hinzu und tausche sie jederzeit über die Einstellungen aus."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "도구는 웹을 읽거나 파일을 가져오는 등 공룡이 사용할 수 있는 작은 기능입니다. 지금 몇 개를 추가해 보세요. 설정에서 언제든지 변경할 수 있습니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "도구는 웹을 읽거나 파일을 가져오는 등 공룡이 사용할 수 있는 작은 기능입니다. 지금 몇 개를 추가해 보세요. 설정에서 언제든지 변경할 수 있습니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Инструменты — это небольшие возможности вашего динозавра: например, читать веб-страницы или получать файлы. Добавьте пару сейчас, а позже меняйте набор в настройках."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Инструменты — это небольшие возможности вашего динозавра: например, читать веб-страницы или получать файлы. Добавьте пару сейчас, а позже меняйте набор в настройках."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "工具是你的小恐龙可以使用的小本领，比如浏览网页或获取文件。现在就添加几个，随时可以从“设置”中增减它们。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工具是你的小恐龙可以使用的小本领，比如浏览网页或获取文件。现在就添加几个，随时可以从“设置”中增减它们。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "工具是你的小恐龍可以使用的小本領，比如閱讀網絡或獲取文件。現在就添加幾個，隨時可以從「設置」中增減它們。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工具是你的小恐龍可以使用的小本領，比如閱讀網絡或獲取文件。現在就添加幾個，隨時可以從「設置」中增減它們。"
           }
         }
       }
@@ -226050,36 +226294,37 @@
         }
       }
     },
-    "We collect anonymous, aggregated usage data to learn which features are used so we can improve Osaurus. It's completely anonymous and never includes your chats, prompts, files, or keys. You can turn this off anytime in Settings.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Wir erfassen anonyme, aggregierte Nutzungsdaten, um zu erfahren, welche Funktionen genutzt werden, damit wir Osaurus verbessern können. Sie sind vollständig anonym und enthalten niemals deine Chats, Eingaben, Dateien oder Schlüssel. Du kannst dies jederzeit in den Einstellungen deaktivieren."
+    "We collect anonymous, aggregated usage data to learn which features are used so we can improve Osaurus. It's completely anonymous and never includes your chats, prompts, files, or keys. You can turn this off anytime in Settings." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wir erfassen anonyme, aggregierte Nutzungsdaten, um zu erfahren, welche Funktionen genutzt werden, damit wir Osaurus verbessern können. Sie sind vollständig anonym und enthalten niemals deine Chats, Eingaben, Dateien oder Schlüssel. Du kannst dies jederzeit in den Einstellungen deaktivieren."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus 개선을 위해 사용되는 기능을 파악하고자 익명화 및 집계된 사용 데이터를 수집합니다. 이 데이터는 완전히 익명으로 처리되며 사용자의 채팅, 프롬프트, 파일 또는 키는 절대 포함되지 않습니다. 설정에서 언제든지 이 기능을 끌 수 있습니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 개선을 위해 사용되는 기능을 파악하고자 익명화 및 집계된 사용 데이터를 수집합니다. 이 데이터는 완전히 익명으로 처리되며 사용자의 채팅, 프롬프트, 파일 또는 키는 절대 포함되지 않습니다. 설정에서 언제든지 이 기능을 끌 수 있습니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Мы собираем анонимные агрегированные данные об использовании, чтобы понимать, какие функции востребованы, и улучшать Osaurus. Эти данные полностью анонимны и никогда не включают ваши чаты, промпты, файлы или ключи. Сбор можно в любой момент отключить в настройках."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мы собираем анонимные агрегированные данные об использовании, чтобы понимать, какие функции востребованы, и улучшать Osaurus. Эти данные полностью анонимны и никогда не включают ваши чаты, промпты, файлы или ключи. Сбор можно в любой момент отключить в настройках."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "我们收集匿名的聚合使用数据，以了解哪些功能被使用，从而改进 Osaurus。这些数据完全匿名，绝不会包含你的聊天、提示词、文件或密钥。你可以随时在“设置”中关闭此功能。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我们收集匿名的聚合使用数据，以了解哪些功能被使用，从而改进 Osaurus。这些数据完全匿名，绝不会包含你的聊天、提示词、文件或密钥。你可以随时在“设置”中关闭此功能。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "我們收集匿名的聚合使用數據，以瞭解哪些功能被使用，從而改進 Osaurus。這些數據完全匿名，絕不會包含你的聊天、提示詞、檔案或密鑰。你可以隨時在“設置”中關閉此功能。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我們收集匿名的聚合使用數據，以瞭解哪些功能被使用，從而改進 Osaurus。這些數據完全匿名，絕不會包含你的聊天、提示詞、檔案或密鑰。你可以隨時在“設置”中關閉此功能。"
           }
         }
       }
@@ -226228,36 +226473,37 @@
         }
       }
     },
-    "We'll keep trying. You can also add tools later from Settings.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Wir versuchen es weiter. Du kannst Tools auch später über die Einstellungen hinzufügen."
+    "We'll keep trying. You can also add tools later from Settings." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wir versuchen es weiter. Du kannst Tools auch später über die Einstellungen hinzufügen."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "계속 다시 시도하겠습니다. 설정에서 나중에 도구를 추가할 수도 있습니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계속 다시 시도하겠습니다. 설정에서 나중에 도구를 추가할 수도 있습니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Мы продолжим попытки. Вы также можете добавить инструменты позже из настроек."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мы продолжим попытки. Вы также можете добавить инструменты позже из настроек."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "我们会继续尝试。你也可以稍后从“设置”中添加工具。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我们会继续尝试。你也可以稍后从“设置”中添加工具。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "我們會繼續嘗試。你也可以稍後從「設置」中添加工具。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我們會繼續嘗試。你也可以稍後從「設置」中添加工具。"
           }
         }
       }
@@ -226331,36 +226577,37 @@
         }
       }
     },
-    "We’ll take it from here.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ab hier übernehmen wir."
+    "We’ll take it from here." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ab hier übernehmen wir."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "여기서부터는 저희가 처리할게요."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "여기서부터는 저희가 처리할게요."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Дальше мы всё сделаем сами."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дальше мы всё сделаем сами."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "接下来交给我们。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接下来交给我们。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "接下來交給我們。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接下來交給我們。"
           }
         }
       }
@@ -226470,6 +226717,9 @@
           }
         }
       }
+    },
+    "We've picked the best fit for your Mac and the specialty you chose, so your Dino can work locally — even offline." : {
+
     },
     "Web": {
       "comment": "Feature title for enabling the agent to search the web.",
@@ -227310,6 +227560,9 @@
           }
         }
       }
+    },
+    "What should your first Dino be great at?" : {
+
     },
     "What the agent has stored, at a glance.": {
       "comment": "Help text for the \"Overview\" section of the database workspace.",
@@ -229028,36 +229281,37 @@
         }
       }
     },
-    "Why we collect anonymous usage data": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Warum wir anonyme Nutzungsdaten erfassen"
+    "Why we collect anonymous usage data" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Warum wir anonyme Nutzungsdaten erfassen"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "익명 사용 데이터를 수집하는 이유"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "익명 사용 데이터를 수집하는 이유"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Почему мы собираем анонимные данные об использовании"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Почему мы собираем анонимные данные об использовании"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "我们为何收集匿名使用数据"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我们为何收集匿名使用数据"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "我們爲何收集匿名使用數據"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我們爲何收集匿名使用數據"
           }
         }
       }
@@ -231023,10 +231277,6 @@
         }
       }
     },
-    "XLSX": {
-      "comment": "Onboarding plugin picker display name for the Excel spreadsheets tool.",
-      "shouldTranslate": false
-    },
     "xoxb-...": {
       "localizations": {
         "de": {
@@ -231231,39 +231481,44 @@
         }
       }
     },
-    "You can continue — the download keeps going in the background.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Du kannst fortfahren – der Download läuft im Hintergrund weiter."
+    "You can continue — the download keeps going in the background." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Du kannst fortfahren – der Download läuft im Hintergrund weiter."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "계속 진행해도 됩니다. 다운로드는 백그라운드에서 계속됩니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계속 진행해도 됩니다. 다운로드는 백그라운드에서 계속됩니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Можно продолжить — загрузка продолжится в фоновом режиме."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Можно продолжить — загрузка продолжится в фоновом режиме."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "你可以继续——下载会在后台进行。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你可以继续——下载会在后台进行。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "你可以繼續——下載會在背景進行。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你可以繼續——下載會在背景進行。"
           }
         }
       }
+    },
+    "You can continue while the model downloads in the background!" : {
+      "comment" : "A speech bubble shown while a model is downloading.",
+      "isCommentAutoGenerated" : true
     },
     "You can keep chatting with Osaurus Cloud.": {
       "comment": "Polished pending-local-setup status copy.",
@@ -231307,36 +231562,37 @@
         }
       }
     },
-    "You can rename and customize your dino anytime in Settings.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Du kannst deinen Dino jederzeit in den Einstellungen umbenennen und anpassen."
+    "You can rename and customize your dino anytime in Settings." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Du kannst deinen Dino jederzeit in den Einstellungen umbenennen und anpassen."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "설정에서 언제든지 다이노의 이름을 변경하고 사용자화할 수 있습니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정에서 언제든지 다이노의 이름을 변경하고 사용자화할 수 있습니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Вы можете в любое время переименовать и настроить своего динозавра в настройках."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы можете в любое время переименовать и настроить своего динозавра в настройках."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "你可以随时在设置中重命名和自定义你的恐龙。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你可以随时在设置中重命名和自定义你的恐龙。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "你可以隨時在設置中重命名和自定義你的恐龍。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你可以隨時在設置中重命名和自定義你的恐龍。"
           }
         }
       }
@@ -231703,36 +231959,37 @@
         }
       }
     },
-    "You’re all set": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Alles bereit"
+    "You’re all set" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alles bereit"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "준비 완료"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "준비 완료"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Всё готово"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Всё готово"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "一切就绪"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一切就绪"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "一切就緒"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一切就緒"
           }
         }
       }
@@ -231818,25 +232075,25 @@
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "\ub0b4 \ucee8\ud14d\uc2a4\ud2b8 \uc81c\ud55c"
+            "value": "내 컨텍스트 제한"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "\u0412\u0430\u0448 \u043b\u0438\u043c\u0438\u0442 \u043a\u043e\u043d\u0442\u0435\u043a\u0441\u0442\u0430"
+            "value": "Ваш лимит контекста"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "\u60a8\u7684\u4e0a\u4e0b\u6587\u4e0a\u9650"
+            "value": "您的上下文上限"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "\u60a8\u7684\u4e0a\u4e0b\u6587\u4e0a\u9650"
+            "value": "您的上下文上限"
           }
         }
       }
@@ -232156,70 +232413,72 @@
         }
       }
     },
-    "Your chats stay private and work offline. We picked the best fit for this Mac — all you have to do is download it.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Deine Chats bleiben privat und funktionieren offline. Wir haben die beste Wahl für diesen Mac getroffen — du musst sie nur noch herunterladen."
+    "Your chats stay private and work offline. We picked the best fit for this Mac — all you have to do is download it." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deine Chats bleiben privat und funktionieren offline. Wir haben die beste Wahl für diesen Mac getroffen — du musst sie nur noch herunterladen."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "채팅은 비공개로 유지되며 오프라인에서도 작동합니다. 이 Mac에 가장 잘 맞는 모델을 골랐으니 다운로드만 하면 됩니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "채팅은 비공개로 유지되며 오프라인에서도 작동합니다. 이 Mac에 가장 잘 맞는 모델을 골랐으니 다운로드만 하면 됩니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ваши чаты остаются приватными и работают офлайн. Мы подобрали лучший вариант для этого Mac — осталось только загрузить его."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ваши чаты остаются приватными и работают офлайн. Мы подобрали лучший вариант для этого Mac — осталось только загрузить его."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "聊天保持私密，并可离线使用。我们已为这台 Mac 选好最合适的模型，你只需下载即可。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聊天保持私密，并可离线使用。我们已为这台 Mac 选好最合适的模型，你只需下载即可。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "聊天保持私密，並可離線使用。我們已為這臺 Mac 選好最合適的模型，你只需下載即可。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聊天保持私密，並可離線使用。我們已為這臺 Mac 選好最合適的模型，你只需下載即可。"
           }
         }
       }
     },
-    "Your chats, prompts, files, and keys never leave your Mac.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Deine Chats, Prompts, Dateien und Schlüssel verlassen niemals deinen Mac."
+    "Your chats, prompts, files, and keys never leave your Mac." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deine Chats, Prompts, Dateien und Schlüssel verlassen niemals deinen Mac."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "사용자의 채팅, 프롬프트, 파일 및 키는 Mac 외부로 절대 전송되지 않습니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사용자의 채팅, 프롬프트, 파일 및 키는 Mac 외부로 절대 전송되지 않습니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ваши чаты, промпты, файлы и ключи никогда не покинут ваш Mac."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ваши чаты, промпты, файлы и ключи никогда не покинут ваш Mac."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "你的聊天、提示词、文件和密钥绝不会离开你的 Mac。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的聊天、提示词、文件和密钥绝不会离开你的 Mac。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "你的聊天、提示詞、檔案和密鑰絕不會離開你的 Mac。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的聊天、提示詞、檔案和密鑰絕不會離開你的 Mac。"
           }
         }
       }
@@ -232260,72 +232519,74 @@
         }
       }
     },
-    "Your code is checked securely when you redeem.": {
-      "comment": "A description of how the user's code is protected when redeeming.",
-      "isCommentAutoGenerated": true,
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Dein Code wird beim Einlösen sicher geprüft."
+    "Your code is checked securely when you redeem." : {
+      "comment" : "A description of how the user's code is protected when redeeming.",
+      "extractionState" : "stale",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dein Code wird beim Einlösen sicher geprüft."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "코드를 사용할 때 안전하게 확인합니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "코드를 사용할 때 안전하게 확인합니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "При активации код проверяется безопасным способом."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "При активации код проверяется безопасным способом."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "兑换时会安全地验证你的代码。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "兑换时会安全地验证你的代码。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "兌換時會安全地驗證你的代碼。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "兌換時會安全地驗證你的代碼。"
           }
         }
       }
     },
-    "Your code was accepted.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Dein Code wurde akzeptiert."
+    "Your code was accepted." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dein Code wurde akzeptiert."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "코드가 승인되었습니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "코드가 승인되었습니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Код принят."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Код принят."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代码已接受。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "代码已接受。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代碼已接受。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "代碼已接受。"
           }
         }
       }
@@ -232504,36 +232765,37 @@
         }
       }
     },
-    "Your data stays yours": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Deine Daten bleiben deine"
+    "Your data stays yours" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deine Daten bleiben deine"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "사용자의 데이터는 온전히 사용자의 것입니다"
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사용자의 데이터는 온전히 사용자의 것입니다"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ваши данные остаются вашими"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ваши данные остаются вашими"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "你的数据始终归你所有"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的数据始终归你所有"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "你的數據始終歸你所有"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的數據始終歸你所有"
           }
         }
       }
@@ -232606,36 +232868,37 @@
         }
       }
     },
-    "Your free $2.50 credit lets you start immediately. Osaurus switches to your private model automatically when it's ready.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Mit deinem kostenlosen Guthaben von 2,50 $ kannst du sofort starten. Osaurus wechselt automatisch zu deinem privaten Modell, sobald es bereit ist."
+    "Your free $2.50 credit lets you start immediately. Osaurus switches to your private model automatically when it's ready." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit deinem kostenlosen Guthaben von 2,50 $ kannst du sofort starten. Osaurus wechselt automatisch zu deinem privaten Modell, sobald es bereit ist."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "무료 $2.50 크레딧으로 바로 시작할 수 있습니다. 비공개 모델이 준비되면 Osaurus가 자동으로 전환합니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "무료 $2.50 크레딧으로 바로 시작할 수 있습니다. 비공개 모델이 준비되면 Osaurus가 자동으로 전환합니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Бесплатный кредит $2,50 позволит начать сразу. Когда приватная модель будет готова, Osaurus автоматически переключится на неё."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бесплатный кредит $2,50 позволит начать сразу. Когда приватная модель будет готова, Osaurus автоматически переключится на неё."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "免费 $2.50 额度让你立即开始。私有模型准备好后，Osaurus 会自动切换。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "免费 $2.50 额度让你立即开始。私有模型准备好后，Osaurus 会自动切换。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "免費 $2.50 額度讓你立即開始。私人模型準備好後，Osaurus 會自動切換。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "免費 $2.50 額度讓你立即開始。私人模型準備好後，Osaurus 會自動切換。"
           }
         }
       }
@@ -232673,6 +232936,10 @@
           }
         }
       }
+    },
+    "Your key is stored securely in the macOS Keychain" : {
+      "comment" : "Text describing the security of an API key.",
+      "isCommentAutoGenerated" : true
     },
     "Your key stays on your Mac, locked in the Keychain.": {
       "extractionState": "stale",
@@ -233071,38 +233338,39 @@
         }
       }
     },
-    "Your referral is linked. The reward is applied after the first paid top-up.": {
-      "comment": "A message that appears when a user's referral is linked.",
-      "isCommentAutoGenerated": true,
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Deine Empfehlung ist verknüpft. Die Belohnung wird nach der ersten bezahlten Aufladung gutgeschrieben."
+    "Your referral is linked. The reward is applied after the first paid top-up." : {
+      "comment" : "A message that appears when a user's referral is linked.",
+      "extractionState" : "stale",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deine Empfehlung ist verknüpft. Die Belohnung wird nach der ersten bezahlten Aufladung gutgeschrieben."
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "추천이 연결되었습니다. 첫 유료 충전 후 보상이 적용됩니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "추천이 연결되었습니다. 첫 유료 충전 후 보상이 적용됩니다."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ваша реферальная связь установлена. Награда будет начислена после первого платного пополнения."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ваша реферальная связь установлена. Награда будет начислена после первого платного пополнения."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "你的推荐关系已建立。首次付费充值后将发放奖励。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的推荐关系已建立。首次付费充值后将发放奖励。"
           }
         },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "你的推薦關係已建立。首次付費儲值後將發放獎勵。"
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的推薦關係已建立。首次付費儲值後將發放獎勵。"
           }
         }
       }
@@ -233372,6 +233640,10 @@
       "localizations": {}
     },
     "Deletes all saved conversation data from disk, including leftover files from an interrupted write. Your chats are not affected — the next reply just takes a little longer to start.": {
+      "extractionState": "manual",
+      "localizations": {}
+    },
+    "Speculative Depth": {
       "extractionState": "manual",
       "localizations": {}
     }

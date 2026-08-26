@@ -102,3 +102,40 @@ protocol ContextualPermissionedTool: PermissionedTool {
 extension ContextualPermissionedTool {
     func unattendedAskQueuesForApproval(argumentsJSON: String) async -> Bool { false }
 }
+
+/// A tool whose approval card renders a domain-specific review surface
+/// instead of the generic pretty-printed JSON arguments block.
+///
+/// Exists because a knowledge write cannot be consented to as JSON: the
+/// decision needs paths, create-vs-replace, and a diff. Deliberately narrow —
+/// one method, resolved next to `ContextualPermissionedTool` in the registry's
+/// `.ask` branch — rather than a general "custom approval view" mechanism
+/// nothing else needs yet.
+protocol KnowledgeWritePreviewingTool {
+    /// Build the manifest for this invocation. Must be side-effect free: it
+    /// runs before approval and before execution. Returning nil falls back to
+    /// the JSON block, so a preview that cannot be built never blocks the call
+    /// from being reviewed at all.
+    func approvalPreview(argumentsJSON: String) async -> KnowledgeWritePreview?
+}
+
+/// A tool whose approval can never be pre-granted: every single call shows the
+/// card, and neither "Allow for This Task" nor "Always Allow" is offered.
+///
+/// Exists for `delete_knowledge`. Deletion is the highest-blast-radius
+/// operation in the knowledge feature, it is irreversible from the user's
+/// point of view without going through the write log, and it is exactly what
+/// osaurus#2439 asked for ("delete all of them") and got wrong. A lease
+/// granted for a bulk WRITE must not silently authorize removal later in the
+/// same run, which is what a shared `.ask` gate would do.
+///
+/// Deliberately narrow. This is not "high risk" as a general concept; it is a
+/// specific refusal to let a blanket grant cover destruction.
+protocol PerCallApprovalTool {
+    /// Marker only. Conformance is the whole contract.
+    var requiresApprovalEveryCall: Bool { get }
+}
+
+extension PerCallApprovalTool {
+    var requiresApprovalEveryCall: Bool { true }
+}

@@ -195,40 +195,6 @@ struct KnowledgeCurationToolsTests {
         #expect(ToolEnvelope.isError(result))
     }
 
-    @Test
-    func proposeRejectsNonMarkdownAndTraversalPaths() async throws {
-        let tool = ProposeKnowledgeUpdateTool()
-        let traversal = try await tool.execute(
-            argumentsJSON: #"{"path":"../x.md","new_content":"c","rationale":"r"}"#
-        )
-        #expect(ToolEnvelope.isError(traversal))
-
-        let notMarkdown = try await tool.execute(
-            argumentsJSON: #"{"path":"script.sh","new_content":"c","rationale":"r"}"#
-        )
-        #expect(ToolEnvelope.isError(notMarkdown))
-        #expect(notMarkdown.contains(".md"))
-    }
-
-    @Test
-    func proposeRejectsEmptyContent() async throws {
-        let tool = ProposeKnowledgeUpdateTool()
-        let result = try await tool.execute(
-            argumentsJSON: #"{"path":"a.md","new_content":"   ","rationale":"r"}"#
-        )
-        #expect(ToolEnvelope.isError(result))
-        #expect(result.contains("new_content"))
-    }
-
-    @Test
-    func proposeWithoutAgentContextIsRejected() async throws {
-        let tool = ProposeKnowledgeUpdateTool()
-        let result = try await tool.execute(
-            argumentsJSON: #"{"path":"a.md","new_content":"content","rationale":"r"}"#
-        )
-        #expect(ToolEnvelope.isError(result))
-        #expect(result.contains("agent"))
-    }
 
     /// A spawned subagent keeps `currentAgentId` inherited from its launcher
     /// (budget/limiter accounting), but its knowledge tools must resolve grants
@@ -247,54 +213,5 @@ struct KnowledgeCurationToolsTests {
             // Override cleared → back to the running identity.
             #expect(ChatExecutionContext.knowledgeAgentId == launcher)
         }
-    }
-
-    @Test
-    func proposeIsDeniedOnExternalSurfaces() {
-        #expect(ToolRegistry.externallyDeniedToolNames.contains("propose_knowledge_update"))
-        // The annotation tools stay allowed externally.
-        #expect(!ToolRegistry.externallyDeniedToolNames.contains("flag_knowledge_stale"))
-        #expect(!ToolRegistry.externallyDeniedToolNames.contains("list_knowledge_tickets"))
-    }
-
-    /// A curator that read the document first receives it wrapped in
-    /// `read_knowledge`'s `[Collection] path` + `title:/type:/tags:` framing.
-    /// Weaker models copy that header verbatim into their replacement content;
-    /// `strippingReadPreamble` removes a leaked block so an approval never
-    /// persists it above the real body.
-    @Test
-    func strippingReadPreambleRemovesLeakedHeaderOnly() {
-        // Full leaked framing (header + metadata + blank) is dropped; the
-        // real body (and any real frontmatter below it) survives.
-        let leaked =
-            "[Sample Knowledge] deploy-runbook.md\n"
-            + "title: Production Deploy Runbook\n"
-            + "type: guide\n"
-            + "tags: engineering,ops,deploy\n"
-            + "\n"
-            + "# Production Deploy Runbook\n\nBody."
-        #expect(
-            ProposeKnowledgeUpdateTool.strippingReadPreamble(leaked)
-                == "# Production Deploy Runbook\n\nBody."
-        )
-
-        // Header with no metadata lines, just the bracket line + blank.
-        #expect(
-            ProposeKnowledgeUpdateTool.strippingReadPreamble("[Coll] path.md\n\nBody.") == "Body."
-        )
-
-        // Normal markdown is untouched.
-        let plain = "# Title\n\nSome text."
-        #expect(ProposeKnowledgeUpdateTool.strippingReadPreamble(plain) == plain)
-
-        // A document that legitimately opens with frontmatter is untouched
-        // (first non-blank line is `---`, not `[name] …`).
-        let withFrontmatter = "---\ntype: guide\n---\n\n# Title"
-        #expect(ProposeKnowledgeUpdateTool.strippingReadPreamble(withFrontmatter) == withFrontmatter)
-
-        // A markdown reference definition (`[id]: url`) is NOT a framing header
-        // (`]:` not `] `), so it survives.
-        let refDef = "[docs]: https://example.com\n\nSee the docs."
-        #expect(ProposeKnowledgeUpdateTool.strippingReadPreamble(refDef) == refDef)
     }
 }

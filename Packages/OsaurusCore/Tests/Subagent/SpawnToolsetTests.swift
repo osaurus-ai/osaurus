@@ -382,7 +382,12 @@ struct SpawnToolsetTests {
                 capabilities: capabilities(knowledge: true)
             )
         )
-        #expect(knowledge.isSuperset(of: SystemPromptComposer.knowledgeToolNames))
+        // Knowledge MUTATION stays with the parent (`isExcludedChildTool`):
+        // a child carries the retrieval/ticket subset, never write/delete.
+        let childKnowledgeNames = SystemPromptComposer.knowledgeToolNames
+            .filter { !TextSubagentKind.isExcludedChildTool($0) }
+        #expect(knowledge.isSuperset(of: childKnowledgeNames))
+        #expect(knowledge.isDisjoint(with: ["write_knowledge", "delete_knowledge"]))
         #expect(knowledge.isDisjoint(with: SystemPromptComposer.knowledgeCuratorToolNames))
 
         let curator = Set(
@@ -410,14 +415,14 @@ struct SpawnToolsetTests {
         let names = ToolRegistry.shared.specsForSpawnedOperations(
             forTools: [
                 "web_search", "get_current_time", "search_knowledge",
-                "propose_knowledge_update",
+                "write_knowledge",
             ]
         ).map(\.function.name)
         #expect(names.contains("web_search"))
         #expect(names.contains("get_current_time"))
         #expect(names.contains("search_knowledge"))
         // Interactive approval flow — must never run inside a child.
-        #expect(!names.contains("propose_knowledge_update"))
+        #expect(!names.contains("write_knowledge"))
     }
 
     // MARK: - Child seed composition (A4)

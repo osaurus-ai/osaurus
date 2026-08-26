@@ -1423,12 +1423,7 @@ public struct SystemPromptComposer: Sendable {
                     id: "knowledge",
                     label: L("Knowledge"),
                     content: SystemPromptTemplates.knowledgeGuidance(
-                        collections: snapshot.knowledgeCollections,
-                        // Curator line only when the proposal tool actually
-                        // resolved — mirrors the section's own schema gate.
-                        curator: !resolvedNames.isDisjoint(
-                            with: Self.knowledgeCuratorToolNames
-                        )
+                        collections: snapshot.knowledgeCollections
                     )
                 )
             )
@@ -1978,8 +1973,19 @@ public struct SystemPromptComposer: Sendable {
     /// full parameter schema, so small models see the constraints on turn 1
     /// without paying for the full prose (which the `.small` budget
     /// guardrail can't afford).
+    ///
+    /// The knowledge write tools qualify on the same grounds, and the cost of
+    /// leaving them out was measured rather than guessed. With their property
+    /// descriptions stripped, a live model sent `documents` as a prose STRING
+    /// instead of an array, and — because the rule "when replacing a
+    /// document, carry its `---` frontmatter across, `read_knowledge` returns
+    /// the body without it" lives in the `content` description — replaced
+    /// documents kept losing their title, type and tags. Both are argument
+    /// contracts, both were invisible, and neither tool is ever reached via a
+    /// `capabilities_load` that would have restored the full spec.
     private static let constraintPreservingBootstrapToolNames: Set<String> = [
         "complete", "clarify", "share_artifact",
+        "write_knowledge", "delete_knowledge", "edit_knowledge",
     ]
 
     /// Compress first-turn always-loaded specs by keeping the callable name,
@@ -2164,15 +2170,23 @@ public struct SystemPromptComposer: Sendable {
     static let knowledgeToolNames: Set<String> = [
         "search_knowledge", "read_knowledge", "list_knowledge",
         "flag_knowledge_stale", "list_knowledge_tickets",
+        // Direct write follows the collection grant, not a separate role: the
+        // grant is the access boundary and the approval modal is the consent
+        // gate. Gating it behind an extra opt-in is what left an agent with
+        // knowledge grants unable to write and unable to say why (#2439).
+        "write_knowledge", "delete_knowledge", "edit_knowledge",
+        "update_knowledge_ticket",
     ]
 
-    /// Curator-only knowledge tools, gated on
-    /// `AgentConfigSnapshot.knowledgeCuratorEnabled` in `resolveTools`.
-    /// The tool re-checks the role at execution time, so this strip is a
-    /// token-cost optimization, not the boundary.
-    static let knowledgeCuratorToolNames: Set<String> = [
-        "propose_knowledge_update", "update_knowledge_ticket",
-    ]
+    /// Formerly curator-only knowledge tools.
+    ///
+    /// Now EMPTY. `propose_knowledge_update` was removed with the proposal
+    /// architecture, and `update_knowledge_ticket` moved to the ordinary
+    /// knowledge set: claiming or releasing a ticket is bookkeeping over an
+    /// annotation, never a corpus mutation, so it does not need a role of its
+    /// own. Kept as an empty set rather than deleted so the composer's
+    /// gate/strip pair keeps its shape for a future privileged group.
+    static let knowledgeCuratorToolNames: Set<String> = []
 
     /// Render the schema snapshot block injected after the onboarding
     /// prompt when `dbEnabled` is true. Best-effort: a failure to open

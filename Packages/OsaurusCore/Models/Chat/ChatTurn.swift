@@ -348,6 +348,11 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// The agent loop uses it to avoid treating a reasoning-only `length`
     /// completion as a successful final response.
     var terminalStopReason: String?
+    /// Set when the stream consumer cut this turn short because the model
+    /// collapsed into a phrase-repetition loop; carries the repeated phrase
+    /// for the model-facing notice. Nil for every normally-completed turn.
+    /// Transient run state — not persisted, like `unclosedReasoning`.
+    var repetitionLoopPhrase: String?
 
     /// Osaurus Router billing snapshot captured from the in-stream summary
     /// frame (cost, token counts, status). Persisted so a reloaded chat still

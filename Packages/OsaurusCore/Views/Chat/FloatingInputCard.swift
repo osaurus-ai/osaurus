@@ -404,6 +404,14 @@ struct FloatingInputCard: View {
     @State private var selectorRowWidth: CGFloat = 0
     // Cache picker items to prevent popover refresh during streaming
     @State private var cachedPickerItems: [ModelPickerItem] = []
+    /// Models the engine reports as carrying a native MTP head. The depth row
+    /// appears for these only: a model with no head has nothing to switch, and
+    /// showing the control there would advertise speculation it cannot do.
+    /// Sourced from the engine's own per-model status, never from the name.
+    @State private var nativeMTPCapableModels: Set<String> = []
+    /// Mirrors `mtp.mode` / `mtp.draftTokenLimit` so the row renders the value
+    /// that is actually saved rather than a local guess.
+    @State private var nativeMTPSelection: String = "auto"
 
     // MARK: - RAM Tight-Fit State
 
@@ -2291,6 +2299,94 @@ extension FloatingInputCard {
 
     // MARK: - Selector Row (Model + Tools)
 
+    // MARK: - Native MTP depth (model picker)
+
+    static let nativeMTPOptionID = "nativeMTPDepth"
+
+    /// The picker's model id and the runtime's model name are NOT the same
+    /// string: the picker holds `JANGQ-AI/Qwen3.8-27B-JANG_4D` while
+    /// `ModelCacheSummary.name` is `qwen3.8-27b-jang_4d` — namespace stripped
+    /// and lowercased. Comparing them directly silently matched nothing, so
+    /// the depth row never appeared on a model that plainly has an MTP head.
+    /// Normalise both sides through one function so they cannot drift apart.
+    static func mtpIdentity(_ model: String) -> String {
+        (model.split(separator: "/").last.map(String.init) ?? model)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+    }
+
+    /// Off / Auto / 1 / 2 / 3, beside Reasoning Effort in the picker's Model
+    /// Options. Auto uses the depth the bundle's measured tuning row proved;
+    /// 1-3 pin it lower, which is all the server draft-token limit can do —
+    /// it clamps the measured depth downward, never upward.
+    private func nativeMTPOption(for model: String) -> ModelOptionDefinition? {
+        guard !isRemoteAgentRun,
+            nativeMTPCapableModels.contains(Self.mtpIdentity(model))
+        else { return nil }
+        return ModelOptionDefinition(
+            id: Self.nativeMTPOptionID,
+            label: L("Speculative Depth"),
+            icon: "hare",
+            kind: .segmented([
+                ModelOptionSegment(id: "off", label: L("Off")),
+                ModelOptionSegment(id: "auto", label: L("Auto")),
+                ModelOptionSegment(id: "1", label: "1"),
+                ModelOptionSegment(id: "2", label: "2"),
+                ModelOptionSegment(id: "3", label: "3"),
+            ])
+        )
+    }
+
+    /// Current saved value as a segment id.
+    private static func nativeMTPSegment(
+        _ mtp: VMLXServerMTPSettings
+    ) -> String {
+        if mtp.mode == .off { return "off" }
+        if let limit = mtp.draftTokenLimit, (1...3).contains(limit) { return String(limit) }
+        return "auto"
+    }
+
+    /// Writes through the same path the Settings pane uses, so there is one
+    /// persistence route and one enforcement route.
+    ///
+    /// NOTE: saving any `mtp` field makes
+    /// `loadedModelRuntimeInputsRequireRefresh` true, which unloads resident
+    /// models — the next turn reloads. That is correct today (the launch plan,
+    /// including whether the MTP head is in the graph, is resolved at load)
+    /// but it makes this row costlier than Reasoning Effort beside it.
+    private func applyNativeMTPSegment(_ segment: String) {
+        var settings = ServerController.runtimeSettingsForConfigureTool().settings
+        switch segment {
+        case "off":
+            settings.mtp.mode = .off
+            settings.mtp.draftTokenLimit = nil
+        case "auto":
+            settings.mtp.mode = .auto
+            settings.mtp.draftTokenLimit = nil
+        default:
+            settings.mtp.mode = .auto
+            settings.mtp.draftTokenLimit = Int(segment)
+        }
+        nativeMTPSelection = segment
+        Task { _ = await ServerController.applyRuntimeSettingsFromConfigureTool(settings) }
+    }
+
+    /// Refreshes both the capable-model set and the saved selection.
+    private func refreshNativeMTPState() {
+        nativeMTPSelection = Self.nativeMTPSegment(
+            ServerController.runtimeSettingsForConfigureTool().settings.mtp)
+        Task { @MainActor in
+            let summaries = await ModelRuntime.shared.cachedModelSummaries()
+            // UNION, not replace: capability is a property of the bundle, and
+            // the summaries only cover RESIDENT models. Replacing meant the
+            // depth row vanished the moment Mode=Off unloaded the model — the
+            // exact time a user wants the control to switch back on.
+            nativeMTPCapableModels.formUnion(
+                summaries.filter { $0.nativeMTPStatus?.contains("mtp:") == true }
+                    .map { Self.mtpIdentity($0.name) })
+        }
+    }
+
     private var activeProfileOptions: [ModelOptionDefinition] {
         guard let model = selectedModel else { return [] }
         return ModelProfileRegistry.options(for: model)
@@ -2862,6 +2958,10 @@ extension FloatingInputCard {
             if isShowing {
                 // Snapshot options when popover opens to prevent refresh during streaming
                 cachedPickerItems = pickerItems
+                // Residency and the saved MTP mode both change outside this
+                // view; a stale set would hide the depth row on a capable
+                // model, which reads as "this model has no MTP".
+                refreshNativeMTPState()
             }
         }
         .onChange(of: pickerItems) { _, newItems in
@@ -2885,7 +2985,11 @@ extension FloatingInputCard {
         // The dedicated Thinking row owns the thinking option (semantic
         // on/off, never the raw inverted bool); the generic rows render
         // everything else.
-        let options = activeProfileOptions.filter { $0.id != thinkingId }
+        var options = activeProfileOptions.filter { $0.id != thinkingId }
+        // Beside Reasoning Effort, for models that actually have a head.
+        if let mtpOption = nativeMTPOption(for: model) {
+            options.append(mtpOption)
+        }
         let thinking = modelPickerThinkingControl(for: model)
         guard !options.isEmpty || thinking != nil else { return nil }
 
@@ -2902,13 +3006,31 @@ extension FloatingInputCard {
             defaults = ModelProfileRegistry.defaults(for: model)
         }
 
+        // MTP lives in GLOBAL server settings, not the per-model option store,
+        // because the depth is consumed when the model loads. Render it from
+        // there so the row cannot disagree with what the engine will do.
+        var values = activeModelOptions
+        var displayDefaults = defaults
+        if options.contains(where: { $0.id == Self.nativeMTPOptionID }) {
+            values[Self.nativeMTPOptionID] = .string(nativeMTPSelection)
+            displayDefaults[Self.nativeMTPOptionID] = .string("auto")
+        }
+
         return ModelPickerOptionsControl(
             capabilities: capabilities,
             thinking: thinking,
             options: options,
-            values: activeModelOptions,
-            defaults: defaults,
+            values: values,
+            defaults: displayDefaults,
             onChange: { optionId, newValue in
+                // Routed to server settings, NOT ModelOptionsStore: writing it
+                // per-model would persist a value the load path never reads.
+                if optionId == Self.nativeMTPOptionID {
+                    DispatchQueue.main.async {
+                        applyNativeMTPSegment(newValue?.stringValue ?? "auto")
+                    }
+                    return
+                }
                 // Deferred write for the same reason as the Thinking row's
                 // saved options: the popover's anchor (the model chip)
                 // renders the effort label from `activeModelOptions`, and

@@ -786,7 +786,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "52576334f1c2e5e35d352350df40593da7d93f12"
+        let expectedRuntimeHardenedRevision = "ef1ee2f1936433bcb360e676c1681730154f0ede"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -1224,7 +1224,12 @@ struct RuntimePolicySourceTests {
         #expect(controller.contains("previous.cache != next.cache"))
         #expect(controller.contains("previous.memorySafety != next.memorySafety"))
         #expect(controller.contains("previous.multimodal != next.multimodal"))
-        #expect(controller.contains("previous.mtp != next.mtp"))
+        // Deliberately NOT `previous.mtp != next.mtp` any more: comparing the
+        // whole struct evicted every resident model for a per-request depth
+        // change. Only load-affecting MTP fields (mode off<->on, the DFlash 2
+        // drafter) force the refresh; depth re-resolves per request.
+        #expect(controller.contains("mtpLoadInputsChanged(previous: previous.mtp, next: next.mtp)"))
+        #expect(controller.contains("(previous.mode == .off) != (next.mode == .off)"))
         #expect(controller.contains("await ModelRuntime.shared.clearAll()"))
     }
 

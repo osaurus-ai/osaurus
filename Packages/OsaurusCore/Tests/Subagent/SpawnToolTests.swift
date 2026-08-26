@@ -49,18 +49,23 @@ struct SpawnToolTests {
         #expect(knowledge.contains("list_knowledge"))
         #expect(knowledge.contains("search_knowledge"))
         #expect(knowledge.contains("flag_knowledge_stale"))
-        // Curator-only tools stay out until the curator role is on.
-        #expect(!knowledge.contains("propose_knowledge_update"))
-        #expect(!knowledge.contains("update_knowledge_ticket"))
+        // Ticket bookkeeping follows the ordinary grant now that the curator
+        // role is gone.
+        #expect(knowledge.contains("update_knowledge_ticket"))
 
-        // A curator agent additionally carries the proposal/ticket tools.
+        // Knowledge MUTATION stays with the parent: a corpus write whose only
+        // gate is an approval card must not fire from inside a subagent feed
+        // the user is not watching as directly.
+        #expect(!knowledge.contains("write_knowledge"))
+        #expect(!knowledge.contains("delete_knowledge"))
+
+        // The curator flag is inert; it can no longer widen a child's tools.
         let curator = Set(
             TextSubagentKind.childToolNames(
                 manual: [], capabilities: capabilities(knowledge: true, curator: true)
             )
         )
-        #expect(curator.contains("propose_knowledge_update"))
-        #expect(curator.contains("update_knowledge_ticket"))
+        #expect(curator == knowledge)
 
         // Web Search on rides into the child even when the seeded/manual
         // allowlist predates the capability and never listed the tools —

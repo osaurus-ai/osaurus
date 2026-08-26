@@ -67,22 +67,34 @@ enum ToolPermissionPromptService {
     static func requestApproval(
         toolName: String,
         description: String,
-        argumentsJSON: String
+        argumentsJSON: String,
+        knowledgeWritePreview: KnowledgeWritePreview? = nil,
+        perCallApprovalOnly: Bool = false
     ) async -> Bool {
         switch await requestApprovalOutcome(
             toolName: toolName,
             description: description,
-            argumentsJSON: argumentsJSON
+            argumentsJSON: argumentsJSON,
+            knowledgeWritePreview: knowledgeWritePreview,
+            perCallApprovalOnly: perCallApprovalOnly
         ) {
         case .denied: return false
         case .allowOnce, .allowForRun, .alwaysAllow: return true
         }
     }
 
+    /// `knowledgeWritePreview` swaps the generic JSON arguments block for a
+    /// per-document manifest with diffs. Supplied only by the knowledge write
+    /// tools; every other caller leaves it nil and the modal is unchanged.
+    ///
+    /// `perCallApprovalOnly` suppresses "Allow for This Task" and "Always
+    /// Allow" so the call cannot be pre-granted. See `PerCallApprovalTool`.
     static func requestApprovalOutcome(
         toolName: String,
         description: String,
-        argumentsJSON: String
+        argumentsJSON: String,
+        knowledgeWritePreview: KnowledgeWritePreview? = nil,
+        perCallApprovalOnly: Bool = false
     ) async -> ApprovalOutcome {
         if isHeadlessTestProcess { return .denied }
         if Task.isCancelled { return .denied }
@@ -121,7 +133,9 @@ enum ToolPermissionPromptService {
                     onAllow: onAllow,
                     onDeny: onDeny,
                     onAlwaysAllow: onAlwaysAllow,
-                    onAllowForRun: onAllowForRun
+                    onAllowForRun: perCallApprovalOnly ? nil : onAllowForRun,
+                    knowledgeWritePreview: knowledgeWritePreview,
+                    perCallApprovalOnly: perCallApprovalOnly
                 )
                 .environment(\.theme, themeManager.currentTheme)
                 presentPanel(view: permissionView, onAllow: onAllow, onDeny: onDeny)

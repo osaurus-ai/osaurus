@@ -234,9 +234,9 @@ struct SubagentOperationCancellationTests {
                 "\(tool.name) must be cooperative"
             )
         }
-        // propose_knowledge_update drives an interactive user-approval flow —
+        // write_knowledge drives an interactive user-approval flow —
         // it must never execute inside a headless child.
-        #expect(!ProposeKnowledgeUpdateTool().canExposeToSpawnedOperation)
+        #expect(!WriteKnowledgeTool().canExposeToSpawnedOperation)
     }
 
     @Test("spawned folder tools opt in only for audited host-file paths")

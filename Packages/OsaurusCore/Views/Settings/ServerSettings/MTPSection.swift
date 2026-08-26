@@ -184,7 +184,8 @@ struct MTPSection: View {
                         label: model.name,
                         value: Self.resolvedValue(
                             depth: model.nativeMTPDepth,
-                            strategy: model.draftStrategyDescription),
+                            strategy: model.draftStrategyDescription,
+                            dflash2BlockSize: model.dflash2BlockSize),
                         detail: model.nativeMTPReason ?? model.nativeMTPStatus
                             ?? "Captured at this model's last load."
                     )
@@ -196,9 +197,21 @@ struct MTPSection: View {
     /// "MTP depth 2" when it is live, otherwise the drafter that replaced it,
     /// otherwise a plain "Off" — never blank. A missing line is
     /// indistinguishable from a broken readout.
-    static func resolvedValue(depth: Int?, strategy: String?) -> String {
+    static func resolvedValue(
+        depth: Int?,
+        strategy: String?,
+        dflash2BlockSize: Int? = nil
+    ) -> String {
         if let depth, depth > 0 { return "MTP depth \(depth)" }
-        if let strategy, strategy != "none", !strategy.isEmpty { return strategy }
+        if let strategy, strategy != "none", !strategy.isEmpty {
+            // Name the width. "dflash2" alone cannot distinguish a run at the
+            // checkpoint's trained width from one pinned by Draft Tokens Per
+            // Step, which is the whole point of that control.
+            if let block = dflash2BlockSize, block > 0 {
+                return "\(strategy) block \(block)"
+            }
+            return strategy
+        }
         return "Off"
     }
 

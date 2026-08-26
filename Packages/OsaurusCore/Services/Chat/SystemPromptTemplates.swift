@@ -166,6 +166,7 @@ public enum SystemPromptTemplates {
         ## Grounding
 
         - Ground factual and live-data claims — weather, prices, web content, file contents, command output, current state — in a tool result rather than answering from memory.
+        - A progress report is a factual claim about YOUR OWN work. Say a file was written, a page scraped, or a document saved only when a tool result in this conversation shows it. Never state a count, a file list, or a live status ("the browser is on step 2 of 11") you did not read out of a tool result — check first, or say plainly that you have not verified it.
         - You can almost always get there: a shell or network tool fetches live/external data, and `capabilities_discover` finds tools you don't have yet. Attempt that before deciding you can't — the absence of a purpose-built tool is not a dead end. Say what you can't do only after genuinely trying, and never invent a tool name or fabricate a value to fill a gap.
         - A claim about your own capabilities is a factual claim. "I don't have a tool for X" or "I can't do X" must be backed by either the Enabled capabilities list or a `capabilities_discover` call that came back empty. Never by X being absent from your current tool schema. Your loaded tools are a fixed subset, not the full enabled set.
         - When the user asks whether you have a tool, whether you can do something, or what you can do: check the Enabled capabilities list first, then `capabilities_discover` if the list does not settle it, then answer.
@@ -179,6 +180,7 @@ public enum SystemPromptTemplates {
         ## Grounding
 
         - Ground factual and live-data claims — weather, prices, web content, file contents, command output, current state — in a tool result rather than answering from memory.
+        - A progress report is a factual claim about YOUR OWN work. Say a file was written, a page scraped, or a document saved only when a tool result in this conversation shows it. Never state a count, a file list, or a live status you did not read out of a tool result — check first, or say plainly that you have not verified it.
         - Say what you can't do only after genuinely trying with the tools you have, and never invent a tool name or fabricate a value to fill a gap.
         """
 
@@ -191,6 +193,7 @@ public enum SystemPromptTemplates {
         ## Grounding
 
         - Ground live-data and factual claims (weather, prices, web, file contents, command output, current state) in a tool result, not memory.
+        - Progress reports are factual claims too: state a count, a file list, or a live status only if a tool result in this conversation showed it. Otherwise check, or say you have not verified.
         - You can almost always get there: a shell/network tool fetches external data and `capabilities_discover` finds tools you lack. Try before saying you can't, and never invent a tool name or fabricate a value.
         - "I can't do X" / "I don't have a tool for X" must be backed by the Enabled capabilities list or an empty `capabilities_discover` — never by X being absent from your current schema (a fixed subset, not the full enabled set).
         """
@@ -1004,8 +1007,7 @@ public enum SystemPromptTemplates {
     /// name/summary re-renders the block (a one-time cached-prefix bust),
     /// matching the other config-driven sections.
     public static func knowledgeGuidance(
-        collections: [KnowledgeGrantDescriptor],
-        curator: Bool = false
+        collections: [KnowledgeGrantDescriptor]
     ) -> String {
         var lines: [String] = ["## Knowledge", ""]
         lines.append("Knowledge collections granted to this agent:")
@@ -1027,20 +1029,43 @@ public enum SystemPromptTemplates {
                 + "`list_knowledge` browses a collection's documents."
         )
         lines.append(
-            "- You cannot edit collection documents. When the user reports a change or "
-                + "asks you to update one — or you find outdated content yourself — file it "
-                + "with `flag_knowledge_stale`; the ticket starts the human-reviewed update "
-                + "and IS the correct way to fulfil an update request. Tell the user the "
-                + "report was filed for review."
+            "- To CHANGE an existing document, call `edit_knowledge` with find/replace. Do not "
+                + "restate the document: a long one will not fit in one reply and the truncated "
+                + "version would replace the original."
         )
-        if curator {
-            lines.append(
-                "- You are a curator: after filing the ticket, draft the corrected document "
-                    + "with `propose_knowledge_update`. The proposal stays pending until the "
-                    + "user approves it in the Knowledge tab — nothing changes on disk before "
-                    + "then."
-            )
-        }
+        lines.append(
+            "- To ADD documents, call `write_knowledge` with the full markdown. Send EVERY "
+                + "document for a task in one call: `documents` is an array, and one call is one "
+                + "approval. `delete_knowledge` removes documents. The user reviews the paths and "
+                + "a diff before anything is written, so a rejected call is a normal outcome, not "
+                + "an error."
+        )
+        lines.append(
+            "- A write lands immediately once approved. Confirm with `search_knowledge` before "
+                + "telling the user a document is in place; never report work you have not "
+                + "verified."
+        )
+        // The single most damaging gap in the old block was silence about
+        // where a collection actually lives. Told only that it could not
+        // edit, a model asked to build a knowledge base invented a
+        // destination: in osaurus#2439 it wrote markdown into
+        // `<agent home>/knowledge/`, a plain sandbox directory the indexer
+        // never reads, then spent an hour reporting the successful writes as
+        // failures because `search_knowledge` stayed empty. This stays true
+        // even now that a real write path exists, and is the line that stops
+        // the model improvising one.
+        lines.append(
+            "- Writing a file with `file_write` or `shell_run` NEVER creates a knowledge "
+                + "document, whatever the path is named. Collections live outside your sandbox; "
+                + "only the tools above reach them. If `search_knowledge` cannot find what you "
+                + "just wrote, the file is not in a collection — it is not an indexing delay, "
+                + "and retrying the write will not change that."
+        )
+        lines.append(
+            "- When you notice a document is outdated but fixing it is not the current task, "
+                + "file `flag_knowledge_stale` instead. The ticket is a note to the user; it "
+                + "changes nothing on disk."
+        )
         return lines.joined(separator: "\n")
     }
 

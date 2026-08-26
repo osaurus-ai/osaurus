@@ -229,16 +229,29 @@ public final class ToolRegistry: ObservableObject {
             SearchKnowledgeTool(),
             ReadKnowledgeTool(),
             ListKnowledgeTool(),
+            // Direct write, gated by the ordinary permission modal, which
+            // renders paths + diffs for this tool instead of raw JSON. The
+            // user approves the call and the documents land immediately, so
+            // the agent can verify them with `search_knowledge` — the loop
+            // closure the proposal queue structurally could not provide.
+            WriteKnowledgeTool(),
+            // Deletion is separate from writing, and conforms to
+            // `PerCallApprovalTool`: a lease taken for a bulk import must never
+            // end up covering removal later in the same run.
+            DeleteKnowledgeTool(),
+            // Find/replace on one document. Preferred over `write_knowledge` for
+            // editing: restating a long document is slow and truncates, and a
+            // truncated restatement replaces the original.
+            EditKnowledgeTool(),
             // Knowledge curation loop: staleness tickets (annotation only,
-            // same gate as the retrieval tools). The corpus itself is never
-            // written by a tool.
+            // same gate as the retrieval tools). Tickets remain the right
+            // shape for drift the agent NOTICES but is not being asked to fix
+            // now; that is an async signal to a human, not a consent gate.
             FlagKnowledgeStaleTool(),
             ListKnowledgeTicketsTool(),
-            // Curator-only draft path (`.ask` policy, external-surface
-            // denied). Creates pending proposals; the user approves them
-            // in the Knowledge tab before anything lands in the corpus.
-            ProposeKnowledgeUpdateTool(),
-            // Curator queue coordination (claim/release tickets).
+            // Ticket queue coordination (claim/release). Bookkeeping over
+            // annotations, so it follows the ordinary knowledge grant now that
+            // the curator role is gone.
             UpdateKnowledgeTicketTool(),
             // Native web search (Settings → Search providers). Always loaded;
             // the composer strips it per-agent via `webSearchEnabled`. Its
@@ -523,8 +536,10 @@ public final class ToolRegistry: ObservableObject {
         "file_write", "file_edit", "file_copy", "shell_run", "git_commit", "file_undo",
         // Mutates host files (in-place redaction) — same class as file_edit.
         "redact_file",
-        // Curator draft path: never invocable from external surfaces.
-        "propose_knowledge_update",
+        // Direct corpus mutation. Their ONLY gate is the interactive approval
+        // modal, which an external caller cannot be shown, so there is no
+        // safe way to honor these off-surface.
+        "write_knowledge", "delete_knowledge", "edit_knowledge",
     ]
 
     /// Tool classes that must never be invocable from EXTERNAL surfaces
@@ -555,15 +570,15 @@ public final class ToolRegistry: ObservableObject {
     /// `.ask` tools that may run without an approval card on an UNATTENDED,
     /// app-authored background dispatch (`ChatExecutionContext.isUnattendedDispatch`
     /// — schedule / self-schedule / watcher, never external). Membership is
-    /// justified per tool by a SEPARATE human gate downstream: the curator's
-    /// `propose_knowledge_update` only queues an inert draft that the user must
-    /// still review and approve (with a diff) in the Knowledge tab before any
-    /// document is written. Without this, a scheduled Knowledge/Curator agent
-    /// stalls forever on an approval card nobody is present to click. The
-    /// interactive chat surface is unaffected — it still shows the card.
-    nonisolated static let unattendedAutoApprovableToolNames: Set<String> = [
-        "propose_knowledge_update"
-    ]
+    /// justified per tool by a SEPARATE human gate downstream.
+    ///
+    /// Currently EMPTY. Its only member was `propose_knowledge_update`, which
+    /// qualified because a human still reviewed the draft in the Knowledge tab
+    /// afterwards. Direct write has no such downstream gate — approving the
+    /// card is the only review — so neither `write_knowledge` nor
+    /// `delete_knowledge` may join this list. An unattended run stalls rather
+    /// than mutating a collection nobody ever saw a diff of.
+    nonisolated static let unattendedAutoApprovableToolNames: Set<String> = []
 
     /// Whether `name` is blocked for the current execution because an
     /// external surface (`ChatExecutionContext.isExternalSurface`) is
@@ -618,7 +633,23 @@ public final class ToolRegistry: ObservableObject {
             )
         }
         guard let tool = toolsByName[name] else { return }
-        try await runPermissionGate(tool: tool, name: name, argumentsJSON: argumentsJSON)
+        // Preflight first, mirroring `execute`: a batch member that cannot
+        // pass schema validation must not raise an approval card, and the
+        // card must show the coerced arguments the body will receive.
+        // A rejection is not thrown here — `execute` re-runs preflight and
+        // returns the structured envelope — so this only decides what the
+        // user is shown.
+        let normalized = tool.normalizeArgumentsBeforeValidation(argumentsJSON)
+        guard case .ready(let effectiveArgumentsJSON) = Self.preflight(
+            argumentsJSON: normalized,
+            schema: tool.parameters,
+            toolName: name
+        ) else { return }
+        try await runPermissionGate(
+            tool: tool,
+            name: name,
+            argumentsJSON: effectiveArgumentsJSON
+        )
     }
 
     /// Parse the capability-manifest alias syntax shared by permission
@@ -698,6 +729,12 @@ public final class ToolRegistry: ObservableObject {
                 )
             case .ask:
                 let approved: Bool
+                // A per-call tool refuses every pre-grant: the run lease and
+                // the global auto-allow both go through the shortcuts below,
+                // and a lease taken for a bulk WRITE must not end up covering
+                // a delete later in the same run.
+                let perCallApproval =
+                    (tool as? PerCallApprovalTool)?.requiresApprovalEveryCall == true
                 if permissioned.handlesOwnApproval {
                     // The tool runs its own purpose-built interactive
                     // approval in its body (osaurus_config's plan-review
@@ -706,7 +743,9 @@ public final class ToolRegistry: ObservableObject {
                     approved = true
                 } else if ChatExecutionContext.autoApproveToolPrompts {
                     approved = true
-                } else if ChatExecutionContext.toolPermissionRunScope?.allows(name) == true {
+                } else if !perCallApproval,
+                    ChatExecutionContext.toolPermissionRunScope?.allows(name) == true
+                {
                     approved = true
                 } else if ChatExecutionContext.denyUnapprovedToolPrompts {
                     // Headless eval / external MCP with no UI: deny instead of
@@ -735,16 +774,26 @@ public final class ToolRegistry: ObservableObject {
                     // moves into the outbox rather than blocking the run on a
                     // card nobody can answer.
                     approved = true
-                } else if ToolApprovalSettings.autoAllowAll {
+                } else if ToolApprovalSettings.autoAllowAll, !perCallApproval {
                     // User opted into the global auto-allow chat setting: skip
                     // the interactive card. Only reachable where a card would
                     // have been shown, so external/headless denials above win.
+                    // A per-call tool opts out: "auto-allow tools" is not
+                    // consent to destroy a knowledge collection unseen.
                     approved = true
                 } else {
+                    // A knowledge write renders paths + diffs instead of the
+                    // JSON block; nil for every other tool keeps the card
+                    // exactly as it was.
+                    let writePreview =
+                        await (tool as? KnowledgeWritePreviewingTool)?
+                        .approvalPreview(argumentsJSON: approvalArgumentsJSON)
                     let outcome = await ToolPermissionPromptService.requestApprovalOutcome(
                         toolName: name,
                         description: tool.description,
-                        argumentsJSON: approvalArgumentsJSON
+                        argumentsJSON: approvalArgumentsJSON,
+                        knowledgeWritePreview: writePreview,
+                        perCallApprovalOnly: perCallApproval
                     )
                     switch outcome {
                     case .denied:
@@ -752,7 +801,13 @@ public final class ToolRegistry: ObservableObject {
                     case .allowOnce, .alwaysAllow:
                         approved = true
                     case .allowForRun:
-                        ChatExecutionContext.toolPermissionRunScope?.allow(name)
+                        // Never record a lease for a per-call tool. The modal
+                        // does not offer the button, but the outcome is
+                        // re-checked here so the invariant does not depend on
+                        // the view.
+                        if !perCallApproval {
+                            ChatExecutionContext.toolPermissionRunScope?.allow(name)
+                        }
                         approved = true
                     }
                 }
@@ -982,33 +1037,40 @@ public final class ToolRegistry: ObservableObject {
             )
         }
         // Coerce + preflight against the tool's schema BEFORE the permission
-        // gate: schema-invalid arguments return a typed `invalid_args`
-        // envelope for one model correction without ever raising an approval
-        // prompt for a call that cannot execute. `normalizeArgumentsBeforeValidation`
-        // is a pure, tool-owned string repair, so running it pre-gate has no
-        // side effects. Returns either a (possibly rewritten) `argumentsJSON`
-        // ready for dispatch, or a structured failure envelope to
-        // short-circuit with.
+        // gate. Returns either a (possibly rewritten) `argumentsJSON` ready
+        // for dispatch, or a structured failure envelope to short-circuit
+        // with.
+        //
+        // Order matters, and it used to be the other way round. Gating first
+        // meant a call that could never execute still raised an approval card:
+        // observed live, a `write_knowledge` whose `documents` was a string
+        // instead of an array sat in front of the user for 2m26s before schema
+        // validation rejected it in milliseconds. Never ask a person to
+        // approve something already known to be invalid.
+        //
+        // It also closes a consent gap: the gate now sees the SAME coerced
+        // arguments the tool body will receive, so an approval card cannot
+        // preview one thing while execution does another.
         let normalizedArguments = tool.normalizeArgumentsBeforeValidation(argumentsJSON)
-        let preflightOutcome = Self.preflight(
+        switch Self.preflight(
             argumentsJSON: normalizedArguments,
             schema: tool.parameters,
             toolName: name
-        )
-        if case .rejected(let envelopeJSON) = preflightOutcome {
-            return envelopeJSON
-        }
-        // Permission gating. Skipped when the caller already resolved the
-        // gate via `resolvePermissionGate` (parallel batches resolve every
-        // approval serially in model order BEFORE executing concurrently,
-        // so approval prompts never stack or race).
-        if !permissionGateResolved {
-            try await runPermissionGate(tool: tool, name: name, argumentsJSON: argumentsJSON)
-        }
-        switch preflightOutcome {
+        ) {
         case .rejected(let envelopeJSON):
             return envelopeJSON
         case .ready(let effectiveArgumentsJSON):
+            // Skipped when the caller already resolved the gate via
+            // `resolvePermissionGate` (parallel batches resolve every approval
+            // serially in model order BEFORE executing concurrently, so
+            // approval prompts never stack or race).
+            if !permissionGateResolved {
+                try await runPermissionGate(
+                    tool: tool,
+                    name: name,
+                    argumentsJSON: effectiveArgumentsJSON
+                )
+            }
             // Prefill diagnostics: time the actual tool body (sandbox boot,
             // embedding search, shell, network) so the /tmp log can separate
             // tool-execution latency from model decode between agent-loop steps.
@@ -1107,6 +1169,13 @@ public final class ToolRegistry: ObservableObject {
                     }
                 }
             }
+            // Count real tool work for the run, so `todo` can tell progress
+            // from assertion. Recorded at dispatch rather than on success: a
+            // tool that ran and failed is still an attempt the model can
+            // honestly report on, and only "nothing ran at all" is the signal
+            // the Todo tool acts on.
+            ChatExecutionContext.agentTodoRunScope?.recordToolExecution(name: name)
+
             let result: String
             do {
                 result = try await ChatExecutionContext.$hostReadOnlyScope.withValue(policy.scope) {

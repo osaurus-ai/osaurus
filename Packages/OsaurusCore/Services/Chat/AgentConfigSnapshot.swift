@@ -175,9 +175,9 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// `read_knowledge` / `list_knowledge` from the model-visible schema.
     /// Execution-time scoping happens in the tools themselves.
     public let knowledgeEnabled: Bool
-    /// Curator role, pre-folded like `knowledgeEnabled` — false strips
-    /// `propose_knowledge_update` from the model-visible schema. The tool
-    /// re-checks the role at execution time.
+    /// DEPRECATED and inert. Gated `propose_knowledge_update`, removed with
+    /// the proposal architecture. Kept so existing agent JSON still decodes;
+    /// nothing reads it, and writing follows the collection grant instead.
     public let knowledgeCuratorEnabled: Bool
     /// Granted collections resolved to enabled ones at capture time
     /// (name + summary only). Feeds the `## Knowledge` prompt section —

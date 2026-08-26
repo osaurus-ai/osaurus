@@ -18,7 +18,7 @@
 import Foundation
 import OsaurusSQLCipher
 
-public enum KnowledgeDatabaseError: Error, LocalizedError {
+public enum KnowledgeDatabaseError: Error, LocalizedError, ForwardVersionStoreError {
     case failedToOpen(String)
     case failedToExecute(String)
     case failedToPrepare(String)
@@ -37,6 +37,13 @@ public enum KnowledgeDatabaseError: Error, LocalizedError {
                 "Knowledge database is schema v\(found) but this build supports up to v\(expected). Refusing to open to avoid forward-version corruption."
         case .notOpen: return "Knowledge database is not open"
         }
+    }
+
+    /// Only the forward-version refusal is a healthy-file downgrade; every
+    /// other case here is a real fault.
+    public var isForwardVersion: Bool {
+        if case .databaseFromNewerVersion = self { return true }
+        return false
     }
 }
 
@@ -72,6 +79,44 @@ public final class KnowledgeDatabase: @unchecked Sendable {
     /// all reads on the single writer connection.
     private var isInMemory = false
 
+    /// Writer-connection state, readable WITHOUT entering `queue`.
+    ///
+    /// `ensureReadConnectionLocked` needs two facts before it can open the
+    /// reader — is the file open, and is it in-memory — and it used to get
+    /// them with `queue.sync`. That is a priority inversion in the one place
+    /// that must not have one: a read-only tool query hops onto the writer
+    /// queue and waits behind the indexer's entire write backlog, which is
+    /// exactly the starvation the read connection exists to avoid. The hop
+    /// ran on every read until the reader was successfully cached, so a
+    /// `list_knowledge` issued during a large initial index paid it in full
+    /// (osaurus#2439: a 5m56s `list_knowledge`). These mirror `db`/
+    /// `isInMemory` under a plain lock so the read path never touches
+    /// `queue`.
+    private let writerStateLock = NSLock()
+    private var writerStateIsOpen = false
+    private var writerStateIsInMemory = false
+
+    /// Publish writer-connection state for the lock-free read path. Called
+    /// from inside `queue` whenever `db` / `isInMemory` change.
+    private func publishWriterState(isOpen: Bool, isInMemory: Bool) {
+        writerStateLock.lock()
+        writerStateIsOpen = isOpen
+        writerStateIsInMemory = isInMemory
+        writerStateLock.unlock()
+    }
+
+    private var writerSnapshot: (isOpen: Bool, isInMemory: Bool) {
+        writerStateLock.lock()
+        defer { writerStateLock.unlock() }
+        return (writerStateIsOpen, writerStateIsInMemory)
+    }
+
+    /// Test hooks for the read-path mirror. Silently falling back to the
+    /// write connection restores the exact starvation this replaced, so the
+    /// mirror needs assertions rather than trust.
+    var writerStateSnapshotForTesting: (isOpen: Bool, isInMemory: Bool) { writerSnapshot }
+    var hasOpenReadConnectionForTesting: Bool { readQueue.sync { readDB != nil } }
+
     public var isOpen: Bool {
         queue.sync { db != nil }
     }
@@ -105,6 +150,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
                 }
                 throw error
             }
+            publishWriterState(isOpen: true, isInMemory: false)
         }
         OsaurusDatabaseHandle.register(maintenanceHandle)
     }
@@ -132,6 +178,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
                 applyPerfPragmas: false
             )
             try runMigrations()
+            publishWriterState(isOpen: true, isInMemory: true)
         }
     }
 
@@ -149,18 +196,40 @@ public final class KnowledgeDatabase: @unchecked Sendable {
             sqlite3_close(connection)
             db = nil
             isInMemory = false
+            publishWriterState(isOpen: false, isInMemory: false)
         }
     }
 
     // MARK: - Schema & Migrations
 
+    /// Every knowledge migration so far only ADDS tables or columns; none
+    /// drops, renames, re-types, or changes the meaning of anything an older
+    /// build already reads. A DB stamped by a newer build is therefore safe to
+    /// open here: unknown columns are ignored on read, and this build's writes
+    /// all name their columns explicitly.
+    ///
+    /// IMPORTANT: if a future migration ever becomes destructive, this
+    /// forward-open stops being safe and MUST be replaced by an explicit
+    /// minimum-compatible-version gate. Same contract as
+    /// `ChatHistoryDatabase.migrationsAreAdditiveOnly`.
+    static let migrationsAreAdditiveOnly = true
+
     private func runMigrations() throws {
         let currentVersion = try getSchemaVersion()
+        // Forward-compatible open. Hard-refusing a schema-ahead file is what
+        // turned a harmless channel bounce into "all my chat history is gone"
+        // (the same bug, one database over). The knowledge index is
+        // rebuildable, so refusing looks even more like data loss here: every
+        // collection renders empty and every `search_knowledge` comes back
+        // with nothing, which is exactly the symptom osaurus#2439 opened with.
+        //
+        // Leave `user_version` untouched so a newer build still recognizes its
+        // own schema and re-applies its idempotent migrations.
         if currentVersion > Self.latestSchemaVersion {
-            throw KnowledgeDatabaseError.databaseFromNewerVersion(
-                found: currentVersion,
-                expected: Self.latestSchemaVersion
+            KnowledgeLogger.database.info(
+                "Opening schema-ahead knowledge database (found v\(currentVersion), this build writes v\(Self.latestSchemaVersion))"
             )
+            return
         }
         if currentVersion < 1 {
             try runMigrationStep(1, migrateToV1)
@@ -1160,11 +1229,15 @@ public final class KnowledgeDatabase: @unchecked Sendable {
     /// file isn't open yet or the read connection can't be opened.
     private func ensureReadConnectionLocked() -> OpaquePointer? {
         if let readConnection = readDB { return readConnection }
+        // Both facts come from the lock-free mirror, never from `queue`:
+        // entering the writer queue here would park this read behind the
+        // indexer's write backlog (see `writerStateLock`).
+        let writer = writerSnapshot
         // In-memory DBs are per-connection; a reader would see nothing.
-        guard !isInMemory else { return nil }
+        guard !writer.isInMemory else { return nil }
         // Only open a reader once the primary (writer) connection exists, so
         // the file is present and migrated.
-        guard queue.sync(execute: { db != nil }) else { return nil }
+        guard writer.isOpen else { return nil }
         // Don't open a reader against a half-rekeyed file.
         StorageMutationGate.blockingAwaitNotMutating()
         do {

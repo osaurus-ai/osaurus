@@ -473,12 +473,7 @@ final class TextSubagentKind:
                 .effectiveKnowledgeCollections(for: agent.id)
                 .map(\.grantDescriptor)
             guard !grants.isEmpty else { return nil }
-            return SystemPromptTemplates.knowledgeGuidance(
-                collections: grants,
-                curator: !childToolNames.isDisjoint(
-                    with: SystemPromptComposer.knowledgeCuratorToolNames
-                )
-            )
+            return SystemPromptTemplates.knowledgeGuidance(collections: grants)
         }
         self.systemPrompt = Self.childSystemPrompt(
             persona: agent.systemPrompt,
@@ -1035,6 +1030,11 @@ final class TextSubagentKind:
                     "Subagent '\(targetLabel)' repeatedly reached its output limit inside a tool call.",
                 retryable: false
             )
+        case .repetitionLoopExhausted:
+            throw SubagentError.executionFailed(
+                message: "Subagent '\(targetLabel)' got stuck repeating itself.",
+                retryable: false
+            )
         case .incompleteReasoningExhausted:
             throw SubagentError.executionFailed(
                 message: "Subagent '\(targetLabel)' ended in reasoning without producing a visible result.",
@@ -1151,6 +1151,12 @@ final class TextSubagentKind:
     ///   user surface — the question would strand the run until its deadline.
     static func isExcludedChildTool(_ name: String) -> Bool {
         if SubagentCapabilityRegistry.capability(forToolName: name) != nil { return true }
+        // Knowledge MUTATION stays with the parent. A spawned child runs
+        // inside a subagent feed, and a corpus write whose only gate is an
+        // approval card should not fire from a nested context the user is not
+        // watching as directly. Retrieval and ticket tools are unaffected, so
+        // a child can still read and flag.
+        if name == "write_knowledge" || name == "delete_knowledge" { return true }
         return name == "clarify"
     }
 

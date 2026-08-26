@@ -235,6 +235,11 @@ public actor ModelRuntime {
         let isCurrent: Bool
         let draftStrategyDescription: String?
         let nativeMTPDepth: Int?
+        /// Positions the DFlash 2 drafter emits per forward — the depth that
+        /// actually ran. `DraftStrategy.dflash2` carries only the REQUESTED
+        /// value (`nil` = use the checkpoint's own), so the strategy alone
+        /// cannot say what the runtime settled on.
+        let dflash2BlockSize: Int?
         let nativeMTPStatus: String?
         let nativeMTPReason: String?
         let mlxPressStatus: MLXPressStatus
@@ -281,6 +286,7 @@ public actor ModelRuntime {
         let weightsFingerprint: String
         let isVLM: Bool
         let draftStrategy: MLXLMCommon.DraftStrategy?
+        let dflash2BlockSize: Int?
         let nativeMTPStatus: String?
         let nativeMTPReason: String?
         /// Numeric allocator-cache cap resolved from the user-visible
@@ -301,6 +307,7 @@ public actor ModelRuntime {
             weightsFingerprint: String,
             isVLM: Bool = false,
             draftStrategy: MLXLMCommon.DraftStrategy? = nil,
+            dflash2BlockSize: Int? = nil,
             nativeMTPStatus: String? = nil,
             nativeMTPReason: String? = nil,
             allocatorCacheLimitBytes: Int? = nil,
@@ -312,6 +319,7 @@ public actor ModelRuntime {
             self.weightsFingerprint = weightsFingerprint
             self.isVLM = isVLM
             self.draftStrategy = draftStrategy
+            self.dflash2BlockSize = dflash2BlockSize
             self.nativeMTPStatus = nativeMTPStatus
             self.nativeMTPReason = nativeMTPReason
             self.allocatorCacheLimitBytes = allocatorCacheLimitBytes
@@ -319,9 +327,18 @@ public actor ModelRuntime {
         }
     }
 
+    /// `DFlash2TokenIterator` guards `effectiveBlockSize >= 2` and throws
+    /// `blockSizeTooSmall` below it. Mirrored here so an unusable width is
+    /// dropped at resolve time instead of failing every request.
+    static let dflash2MinimumBlockSize = 2
+
     private struct NativeMTPLaunchPlan: Sendable {
         let loadConfiguration: LoadConfiguration
         let draftStrategy: MLXLMCommon.DraftStrategy?
+        /// Effective DFlash 2 block width, resolved here from the same two
+        /// inputs `DFlash2TokenIterator` uses (`requestedBlockSize ??
+        /// config.blockSize`) so the readout cannot disagree with the run.
+        var dflash2BlockSize: Int? = nil
         let statusLine: String?
         let reason: String
         let memorySafetySummary: String
@@ -1232,8 +1249,11 @@ public actor ModelRuntime {
                 name: holder.name,
                 bytes: holder.weightsSizeBytes,
                 isCurrent: holder.name == currentModelName,
-                draftStrategyDescription: Self.describeDraftStrategy(holder.draftStrategy),
-                nativeMTPDepth: Self.nativeMTPDepth(holder.draftStrategy),
+                draftStrategyDescription: Self.describeDraftStrategy(
+                    Self.requestDraftStrategy(holder.draftStrategy)),
+                nativeMTPDepth: Self.nativeMTPDepth(
+                    Self.requestDraftStrategy(holder.draftStrategy)),
+                dflash2BlockSize: holder.dflash2BlockSize,
                 nativeMTPStatus: holder.nativeMTPStatus,
                 nativeMTPReason: holder.nativeMTPReason,
                 mlxPressStatus: holder.container.mlxPressStatus(),
@@ -3993,6 +4013,7 @@ public actor ModelRuntime {
                 weightsFingerprint: Self.weightsFingerprint(for: localURL),
                 isVLM: isVLM,
                 draftStrategy: mtpPlan.draftStrategy,
+                dflash2BlockSize: mtpPlan.dflash2BlockSize,
                 nativeMTPStatus: mtpPlan.statusLine,
                 nativeMTPReason: mtpPlan.reason,
                 allocatorCacheLimitBytes: mtpPlan.loadConfiguration.maxResidentBytes
@@ -4908,7 +4929,7 @@ public actor ModelRuntime {
                 generation: parameters,
                 toolChoice: toolChoice,
                 stopSequences: stopSequences,
-                draftStrategy: holder.draftStrategy,
+                draftStrategy: Self.requestDraftStrategy(holder.draftStrategy),
                 runtime: cfg,
                 maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
             )
@@ -5411,11 +5432,67 @@ public actor ModelRuntime {
             jangConfig: jangConfig,
             status: status
         )
-        let draftStrategy = settings.resolvedMTPDraftStrategy(
+        // Resolve the loaded strategy WITHOUT the draft-token limit: the limit
+        // is a per-request clamp (`requestDraftStrategy`), not a load input.
+        // Baking it in here froze the clamped depth into the holder, so after
+        // "limit 1" a later "limit 2" or Auto stayed at depth 1 until a full
+        // reload — observed live from the picker ladder.
+        var unclampedSettings = settings
+        unclampedSettings.mtp.draftTokenLimit = nil
+        let draftStrategy = unclampedSettings.resolvedMTPDraftStrategy(
             configData: configData,
             jangConfig: jangConfig,
             status: status
         )
+        // `DFlash2TokenIterator` resolves its width as
+        // `requestedBlockSize ?? config.blockSize`. Mirror exactly that, from
+        // the same drafter metadata, so the number shown is the number that
+        // drafted rather than a UI-side guess. Nil unless DFlash 2 is what
+        // actually resolved — a value here would otherwise imply a drafter is
+        // running when none is.
+        let dflash2BlockSize: Int? = {
+            guard draftStrategy?.dflash2DrafterPath != nil,
+                let selection = settings.resolvedDFlash2Selection(configData: configData)
+            else { return nil }
+            return settings.mtp.dflash2BlockSize ?? selection.blockSize
+        }()
+
+        // A width below the runtime's floor cannot draft. `DFlash2TokenIterator`
+        // throws `blockSizeTooSmall`, and BatchEngine's solo-fast-path catch
+        // turns any such throw into a zero-token stream stamped `.cancelled` —
+        // so the user sees "I wasn't able to generate a response to that.
+        // Please try rephrasing your request." on every turn, with nothing in
+        // the UI or the app log pointing at the setting that caused it.
+        //
+        // This is NOT a new limit: the runtime already refuses this width. It
+        // drops the drafter so the request degrades to ordinary decoding —
+        // exactly what a missing drafter folder already does in
+        // `resolvedDFlash2Selection` — and names the reason instead of
+        // blaming the user's prompt.
+        if let width = dflash2BlockSize, width < Self.dflash2MinimumBlockSize {
+            let downgrade =
+                "DFlash 2 block size \(width) is below the runtime minimum of "
+                + "\(Self.dflash2MinimumBlockSize); drafting is off and this model "
+                + "is decoding normally."
+            genLog.error(
+                "dflash2 width unusable model=\(modelName, privacy: .public) width=\(width, privacy: .public)"
+            )
+            let memorySafetyPlan = Self.resolveMemorySafetyLoadPlan(
+                modelName: modelName,
+                modelDirectory: modelDirectory,
+                settings: settings,
+                baseLoadConfiguration: loadConfiguration,
+                inspectBundleFacts: true
+            )
+            return NativeMTPLaunchPlan(
+                loadConfiguration: memorySafetyPlan.loadConfiguration,
+                draftStrategy: nil,
+                dflash2BlockSize: nil,
+                statusLine: status?.statusLine,
+                reason: downgrade,
+                memorySafetySummary: memorySafetyPlan.displaySummary
+            )
+        }
         let memorySafetyPlan = Self.resolveMemorySafetyLoadPlan(
             modelName: modelName,
             modelDirectory: modelDirectory,
@@ -5427,6 +5504,7 @@ public actor ModelRuntime {
         return NativeMTPLaunchPlan(
             loadConfiguration: memorySafetyPlan.loadConfiguration,
             draftStrategy: draftStrategy,
+            dflash2BlockSize: dflash2BlockSize,
             statusLine: status?.statusLine,
             reason: launch.reason,
             memorySafetySummary: memorySafetyPlan.displaySummary
@@ -5461,6 +5539,33 @@ public actor ModelRuntime {
             )
         }
         return plan
+    }
+
+    /// Re-resolves the speculative strategy from CURRENT settings on every
+    /// request, instead of reusing the one frozen into the holder at load.
+    ///
+    /// The MTP head's presence is a load-time fact, but the DEPTH is not: it is
+    /// a per-request parameter, and the server's draft-token limit only clamps
+    /// it downward. Freezing it at load meant a depth change had to evict the
+    /// model to take effect — a full 27B reload for a value the next generate
+    /// could simply have read.
+    ///
+    /// Turning MTP off is honoured here too: the loaded head is left in the
+    /// graph (unloading it is what a reload is for) but no longer drafts, so
+    /// switching back on is instant.
+    nonisolated static func requestDraftStrategy(
+        _ loaded: MLXLMCommon.DraftStrategy?
+    ) -> MLXLMCommon.DraftStrategy? {
+        guard case .some(.nativeMTP(let depth, let verifierMode)) = loaded else {
+            // DFlash 2 and the no-drafter case are load-time decisions.
+            return loaded
+        }
+        let mtp = ServerRuntimeSettingsStore.snapshot().mtp
+        if mtp.mode == .off { return nil }
+        guard let limit = mtp.draftTokenLimit, limit > 0, limit < depth else {
+            return loaded
+        }
+        return .nativeMTP(depth: limit, verifierMode: verifierMode)
     }
 
     private nonisolated static func describeDraftStrategy(

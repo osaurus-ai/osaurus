@@ -675,7 +675,7 @@ struct MLXBatchAdapterTests {
         #expect(effective.minP == 0)
     }
 
-    @Test func effectiveGenerationSettings_nativeMTPDoesNotOverrideExplicitSampling() {
+    @Test func effectiveGenerationSettings_nativeMTPKeepsStrategyAndReportsGreedy() {
         let generation = GenerationParameters(
             temperature: 0.7,
             maxTokens: 128,
@@ -706,18 +706,24 @@ struct MLXBatchAdapterTests {
             maxBatchSize: 1,
             modelDefaults: mtpBundleDefaults,
             draftStrategy: effectiveDraftStrategy,
+            forcesGreedyForNativeMTP: effectiveDraftStrategy?.usesNativeMTP == true,
             nativeMTPExplicitSamplingFallback: effectiveDraftStrategy == nil
         )
 
-        #expect(effectiveDraftStrategy == nil)
-        #expect(effective.temperature == 0.7)
-        #expect(effective.topP == 0.95)
-        #expect(effective.topK == 32)
+        // Sampling no longer drops MTP: the submit path coerces the running
+        // parameters to greedy, so the strategy survives and the readout must
+        // report the greedy values that actually execute — not the request's
+        // temp 0.7 / top-k 32 that argmax ignores.
+        #expect(effectiveDraftStrategy?.usesNativeMTP == true)
+        #expect(effective.temperature == 0)
+        #expect(effective.topP == 1)
+        #expect(effective.topK == 0)
+        #expect(effective.minP == 0)
         #expect(effective.repetitionPenalty == nil)
-        #expect(effective.compiledBatchDecode == false)
+        #expect(effective.draftStrategy == DraftStrategy.nativeMTP(depth: 3).kindName)
     }
 
-    @Test func effectiveDraftStrategy_dropsNativeMTPForExplicitNonGreedySampling() {
+    @Test func effectiveDraftStrategy_keepsNativeMTPForExplicitNonGreedySampling() {
         let explicitSampling = GenerationParameters(
             temperature: 0.7,
             maxTokens: 128,
@@ -727,15 +733,17 @@ struct MLXBatchAdapterTests {
             repetitionPenalty: nil
         )
 
+        // The submit path coerces to greedy while MTP is active, so explicit
+        // sampling is not a reason to abandon the strategy any more.
         #expect(
             MLXBatchAdapter.effectiveDraftStrategy(
                 generation: explicitSampling,
                 draftStrategy: .nativeMTP(depth: 3)
-            ) == nil
+            )?.usesNativeMTP == true
         )
     }
 
-    @Test func effectiveDraftStrategy_dropsNativeMTPForImplicitChatSampling() {
+    @Test func effectiveDraftStrategy_keepsNativeMTPForImplicitChatSampling() {
         let implicitSampling = GenerationParameters(
             temperature: 0.7,
             maxTokens: 128,
@@ -746,11 +754,13 @@ struct MLXBatchAdapterTests {
             samplingParametersAreImplicit: true
         )
 
+        // Ordinary chat turns report samplingParametersAreImplicit; dropping
+        // MTP here is what made "MTP depth 2" in the UI never engage at all.
         #expect(
             MLXBatchAdapter.effectiveDraftStrategy(
                 generation: implicitSampling,
                 draftStrategy: .nativeMTP(depth: 3)
-            ) == nil
+            )?.usesNativeMTP == true
         )
     }
 

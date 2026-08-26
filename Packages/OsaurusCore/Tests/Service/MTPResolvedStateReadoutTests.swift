@@ -40,6 +40,36 @@ struct MTPResolvedStateReadoutTests {
         #expect(MTPSection.resolvedValue(depth: nil, strategy: "") == "Off")
     }
 
+    // MARK: - Depth
+
+    /// A drafter name without its width cannot distinguish a run at the
+    /// checkpoint's trained block from one pinned by the user, which is
+    /// exactly what the Draft Tokens Per Step control changes.
+    @Test func namesTheDflash2WidthThatActuallyDrafted() {
+        #expect(
+            MTPSection.resolvedValue(depth: nil, strategy: "dflash2", dflash2BlockSize: 8)
+                == "dflash2 block 8")
+        #expect(
+            MTPSection.resolvedValue(depth: nil, strategy: "dflash2", dflash2BlockSize: 2)
+                == "dflash2 block 2")
+    }
+
+    /// No width resolved means no drafter ran, so printing "block 0" would
+    /// claim a depth that never existed.
+    @Test func aZeroOrAbsentWidthIsNotPrinted() {
+        #expect(MTPSection.resolvedValue(depth: nil, strategy: "dflash2", dflash2BlockSize: 0)
+            == "dflash2")
+        #expect(MTPSection.resolvedValue(depth: nil, strategy: "dflash2") == "dflash2")
+    }
+
+    /// Native MTP owns the depth when it is what resolved; a stale DFlash 2
+    /// width must not override it.
+    @Test func nativeDepthWinsOverADflash2Width() {
+        #expect(
+            MTPSection.resolvedValue(depth: 2, strategy: "native_mtp:d2", dflash2BlockSize: 8)
+                == "MTP depth 2")
+    }
+
     /// Never blank. A missing value is indistinguishable from a broken
     /// readout, which is how this gap survived in the first place.
     @Test func alwaysSaysSomething() {

@@ -224,6 +224,21 @@ struct SandboxSectionTokenAuditTests {
         )
         #expect(SystemPromptTemplates.groundingDirectiveFullCompact.contains("capabilities_discover"))
 
+        // Progress claims are grounded claims. osaurus#2439: the model
+        // reported "Documents already saved (22)" as a table and "Browser
+        // session is active right now — Step 2/11" with no tool call behind
+        // any of it, then cited its own report as evidence for hours. The
+        // rule has to reach EVERY variant — a small local model on the
+        // compact prompt is exactly the one that fabricates.
+        for grounding in [
+            SystemPromptTemplates.groundingDirectiveFull,
+            SystemPromptTemplates.groundingDirectiveBase,
+            SystemPromptTemplates.groundingDirectiveFullCompact,
+        ] {
+            #expect(grounding.lowercased().contains("progress report"))
+            #expect(grounding.contains("tool result"))
+        }
+
         // Self-improvement: compact keeps the SOUL.md contract the existing
         // audit pins for the full variant.
         let compactSelf = SystemPromptTemplates.selfImprovementGuidance(

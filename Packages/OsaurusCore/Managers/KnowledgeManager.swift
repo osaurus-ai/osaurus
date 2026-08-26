@@ -150,6 +150,15 @@ public final class KnowledgeManager: ObservableObject {
         NotificationCenter.default.post(name: .knowledgeCollectionsChanged, object: id)
         Task.detached(priority: .utility) {
             await KnowledgeIndexService.shared.removeCollectionArtifacts(collectionId: id)
+            // Discard the agent write history too. Nothing can be reverted
+            // into a collection that no longer exists, and orphan rows are
+            // never pruned (retention is per collection) while still showing
+            // up in the Knowledge tab's history with a blank collection name
+            // and a Revert button that can only fail.
+            if KnowledgeWriteLogDatabase.shared.isOpen {
+                try? KnowledgeWriteLogDatabase.shared.deleteRecords(
+                    collectionId: id.uuidString)
+            }
             // A cloned collection's content lives in our managed
             // directory; remove it with the registration. User-chosen
             // folders are never touched.

@@ -24,7 +24,7 @@ import CryptoKit
 import Foundation
 import OsaurusSQLCipher
 
-public enum MemoryDatabaseError: Error, LocalizedError {
+public enum MemoryDatabaseError: Error, LocalizedError, ForwardVersionStoreError {
     case failedToOpen(String)
     case failedToExecute(String)
     case failedToPrepare(String)
@@ -43,6 +43,13 @@ public enum MemoryDatabaseError: Error, LocalizedError {
                 "Memory database is schema v\(found) but this build supports up to v\(expected). Refusing to open to avoid forward-version corruption."
         case .notOpen: return "Memory database is not open"
         }
+    }
+
+    /// Only the forward-version refusal is a healthy-file downgrade; every
+    /// other case here is a real fault.
+    public var isForwardVersion: Bool {
+        if case .databaseFromNewerVersion = self { return true }
+        return false
     }
 }
 

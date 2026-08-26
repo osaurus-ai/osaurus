@@ -612,9 +612,45 @@ final class ListKnowledgeTool: OsaurusTool, @unchecked Sendable {
             )) ?? []
 
         if documents.isEmpty {
+            // The old text blamed indexing unconditionally. That is a lie in
+            // the common case and an expensive one: in osaurus#2439 an agent
+            // read "may still be indexing" off a collection that was simply
+            // empty and waited on it for forty minutes, re-running the same
+            // listing. Only claim indexing when the collection really is
+            // mid-index — the check `search_knowledge` already makes.
+            let scopeNote = collections.count == 1 ? " in collection '\(collections[0].name)'" : ""
+            let indexing = await MainActor.run {
+                collections.contains { KnowledgeManager.shared.indexingCollectionIds.contains($0.id) }
+            }
+            if indexing {
+                return ToolEnvelope.success(
+                    tool: name,
+                    text: "No knowledge documents listed yet\(scopeNote) — this collection is still "
+                        + "indexing, so its contents are incomplete. Retry in a moment."
+                )
+            }
+            let hasFilter = (docType?.isEmpty == false) || (tag?.isEmpty == false)
+            if hasFilter {
+                var facets: [String] = []
+                if let docType, !docType.isEmpty { facets.append("type '\(docType)'") }
+                if let tag, !tag.isEmpty { facets.append("tag '\(tag)'") }
+                return ToolEnvelope.success(
+                    tool: name,
+                    text: "No knowledge documents match \(facets.joined(separator: " and "))"
+                        + "\(scopeNote). Other documents may exist; list without the filter to see them."
+                )
+            }
+            let subject =
+                collections.count == 1
+                ? "Collection '\(collections[0].name)' is empty" : "These collections are empty"
             return ToolEnvelope.success(
                 tool: name,
-                text: "No knowledge documents match the filter. The collection may still be indexing."
+                // Naming the real write path matters as much as denying the
+                // indexing excuse: an agent told only "this is empty" with no
+                // route forward is what invented `<agent home>/knowledge/`.
+                text: "\(subject) — no documents at all. This is not an indexing delay, so "
+                    + "waiting will not change it. Add documents with `write_knowledge`; writing "
+                    + "files to a path never puts them in a collection."
             )
         }
 

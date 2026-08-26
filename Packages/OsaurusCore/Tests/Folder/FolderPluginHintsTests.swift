@@ -20,10 +20,10 @@ struct FolderPluginHintsTests {
     // MARK: - Table contents
 
     @Test func tableMapsKnownExtensions() {
-        // The onboarding picker (`OnboardingChoosePluginsView`) ships
-        // `osaurus.xlsx` default-on and `osaurus.pptx` opt-in; the hint
-        // table must agree on those exact ids or the bias becomes a no-op.
-        // `.csv` shares the xlsx plugin (csv → xlsx conversions / pivots).
+        // The plugin catalog ships `osaurus.xlsx` default-on and
+        // `osaurus.pptx` opt-in; the hint table must agree on those exact
+        // ids or the bias becomes a no-op. `.csv` shares the xlsx plugin
+        // (csv → xlsx conversions / pivots).
         #expect(FolderPluginHints.extensionToPluginId["xlsx"] == "osaurus.xlsx")
         #expect(FolderPluginHints.extensionToPluginId["pptx"] == "osaurus.pptx")
         #expect(FolderPluginHints.extensionToPluginId["csv"] == "osaurus.xlsx")

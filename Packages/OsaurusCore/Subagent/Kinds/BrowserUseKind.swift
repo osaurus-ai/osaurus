@@ -294,6 +294,11 @@ final class BrowserUseKind: SubagentKind, @unchecked Sendable {
                 message: "Browser Use repeatedly reached its output limit inside a tool call.",
                 retryable: false
             )
+        case .repetitionLoopExhausted:
+            throw SubagentError.executionFailed(
+                message: "Browser Use got stuck repeating itself.",
+                retryable: false
+            )
         case .incompleteReasoningExhausted:
             throw SubagentError.executionFailed(
                 message: "Browser Use ended in reasoning without producing a visible result.",

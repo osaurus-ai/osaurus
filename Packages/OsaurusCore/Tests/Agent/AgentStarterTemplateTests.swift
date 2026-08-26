@@ -19,49 +19,63 @@ struct AgentStarterTemplateTests {
         #expect(AgentStarterTemplate(rawValue: "osaurusGuide") == nil)
     }
 
-    @Test("Onboarding create-agent step defaults to the assistant archetype")
+    @Test("Onboarding create-agent step defaults to the everyday helper")
     @MainActor
-    func onboardingCreateAgentDefaultsToAssistant() {
+    func onboardingCreateAgentDefaults() {
         let state = CreateAgentState()
 
+        #expect(state.selectedSpecialty == .everyday)
         #expect(state.selectedTemplate == .assistant)
-        #expect(state.selectedAvatar == AgentMascot.allCases.first?.id)
-        #expect(state.name == AgentStarterTemplate.assistant.defaultName)
+        #expect(state.selectedAvatar == AgentMascot.green.id)
+        #expect(state.name == CreateAgentState.defaultName)
         #expect(state.canSave)
     }
 
-    @Test("Switching archetype updates the name until the user edits it")
+    @Test("Name is independent of the selected specialty")
     @MainActor
-    func archetypeFollowsNameUntilEdited() {
+    func nameIsIndependentOfSpecialty() {
         let state = CreateAgentState()
 
-        // Pre-edit: the name tracks the selected archetype.
-        state.selectArchetype(.coder)
-        #expect(state.name == AgentStarterTemplate.coder.defaultName)
+        // Switching cards never rewrites the name chip (the Figma "Helper"
+        // chip is decoupled from the specialty).
+        state.selectedSpecialty = .coding
+        #expect(state.name == CreateAgentState.defaultName)
 
-        // Once the user types their own name, presets stop touching it.
         state.name = "Rexy"
-        state.nameUserEdited = true
-        state.selectArchetype(.writer)
+        state.selectedSpecialty = .research
         #expect(state.name == "Rexy")
         #expect(state.resolvedName == "Rexy")
     }
 
-    @Test("Blank name resolves to the archetype default")
+    @Test("Blank name resolves to the default dino name")
     @MainActor
     func blankNameResolvesToDefault() {
         let state = CreateAgentState()
         state.name = "   "
 
-        #expect(state.resolvedName == AgentStarterTemplate.assistant.defaultName)
+        #expect(state.resolvedName == CreateAgentState.defaultName)
     }
 
-    @Test("Onboarding archetypes lead with assistant and exclude blank")
-    func onboardingArchetypesCurated() {
-        let archetypes = AgentStarterTemplate.onboardingArchetypes
+    @Test("Specialty cards map onto distinct starter archetypes")
+    func specialtyCardsMapToArchetypes() {
+        #expect(OnboardingSpecialty.everyday.template == .assistant)
+        #expect(OnboardingSpecialty.research.template == .researcher)
+        #expect(OnboardingSpecialty.coding.template == .coder)
 
-        #expect(archetypes.first == .assistant)
-        #expect(!archetypes.contains(.blank))
-        #expect(archetypes == [.assistant, .writer, .researcher, .coder, .productivity])
+        let templates = OnboardingSpecialty.allCases.map(\.template)
+        #expect(Set(templates).count == templates.count)
+        #expect(!templates.contains(.blank))
+    }
+
+    @Test("Randomize always lands on a different mascot")
+    @MainActor
+    func randomizeAvatarChangesMascot() {
+        let state = CreateAgentState()
+        for _ in 0..<10 {
+            let before = state.selectedAvatar
+            state.randomizeAvatar()
+            #expect(state.selectedAvatar != before)
+            #expect(state.selectedAvatar != nil)
+        }
     }
 }

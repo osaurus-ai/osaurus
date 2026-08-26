@@ -103,6 +103,12 @@ struct LiveActivitySection: View {
         // `output_equivalent` cannot run speculative decoding even on Force-On.
         // Without this line the picker looks inert on exactly those models, and
         // the reason — already computed, already logged — reaches nobody.
+        // Whether the compiled batch-decode path ran. Native MTP uses its own
+        // iterator, which does not take `enableCompiledBatchDecode` at all —
+        // so speculation and compilation are mutually exclusive today, and a
+        // tok/s comparison that does not say which one was active cannot be
+        // attributed. Printed for both legs so the difference is visible.
+        parts.append(effective.compiledBatchDecode ? "compiled" : "uncompiled")
         if let strategy = effective.draftStrategy {
             parts.append("draft \(strategy)")
         } else if let reason = effective.mtpFallbackReason {

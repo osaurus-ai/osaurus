@@ -121,6 +121,23 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
         // current run's task state.
         ChatExecutionContext.agentTodoRunScope?.markTodoWritten()
         let stored = update.todo
+        // Did anything actually run since the last checklist write? Newly
+        // checked items with no intervening tool call are the model marking
+        // work it only described. The write is still accepted — a list can be
+        // legitimately re-scoped, and refusing it would strand the run with no
+        // way to correct the list — but the reply must not launder the claim
+        // into a fact the model can quote back at itself later.
+        //
+        // Requires a PRE-EXISTING checklist: the first list of a session may
+        // legitimately arrive with items already checked (planning steps, work
+        // done before the list existed), and there is no earlier count to
+        // compare it against.
+        let didToolWork =
+            ChatExecutionContext.agentTodoRunScope?.consumeToolWorkSinceLastTodo() ?? true
+        let previousDoneCount = update.previousDoneCount
+        let unverifiedCompletions =
+            update.changed && !didToolWork
+            && (previousDoneCount.map { stored.doneCount > $0 } ?? false)
         if !update.changed {
             return ToolEnvelope.success(
                 tool: name,
@@ -130,6 +147,20 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
                     + "next concrete pending action now. Before the final answer, send one last "
                     + "tool update only if status changed; never print the checklist as prose. "
                     + "Then answer the user once and stop."
+            )
+        }
+        if unverifiedCompletions {
+            let newlyChecked = stored.doneCount - (previousDoneCount ?? 0)
+            return ToolEnvelope.success(
+                tool: name,
+                text:
+                    "Todo recorded, but NOT verified: you checked off \(newlyChecked) more "
+                    + "item(s) and no tool has run since your last checklist. Checking a box "
+                    + "does not do the work and this reply is not evidence that it happened — "
+                    + "do not cite it later as proof. If those items really are done, run the "
+                    + "tool that proves it (read back the file, list the directory, re-run the "
+                    + "search) before relying on them; if they are not done, uncheck them and "
+                    + "do the work now."
             )
         }
         return ToolEnvelope.success(
