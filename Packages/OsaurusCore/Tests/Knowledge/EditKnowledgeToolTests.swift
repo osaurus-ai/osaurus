@@ -322,7 +322,6 @@ struct EditKnowledgeDiffTests {
             KnowledgeWritePreviewBuilder.honestDiff(real, priorLines: 2, newLines: 2) == real)
     }
 }
-git add Packages/OsaurusCore/Services/Knowledge/KnowledgeWritePreview.swift Packages/OsaurusCore/Views/Knowledge/KnowledgeWritePreviewView.swift Packages/OsaurusCore/Tools/KnowledgeWriteTools.swift Packages/OsaurusCore/Tests/Knowledge/EditKnowledgeToolTests.swift && git commit -q -m "stop showing plus minus counts left over from a replaced diff" 2>&1 | grep -v LFS; git log --oneline main..HEAD | wc -l
 
 /// The header's change indicator.
 ///
