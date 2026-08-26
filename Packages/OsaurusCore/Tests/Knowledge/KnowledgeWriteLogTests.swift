@@ -61,7 +61,7 @@ struct KnowledgeWriteLogTests {
     @Test func recordRoundTripsEveryField() throws {
         guard let db = makeDB() else { return }
         let id = try log(db, priorContent: "old body", resultContent: "new body")
-        let record = try #require(db.record(id: id))
+        let record = try #require(try db.record(id: id))
 
         #expect(record.collectionId == "c1")
         #expect(record.relPath == "a.md")
@@ -81,7 +81,7 @@ struct KnowledgeWriteLogTests {
     @Test func createRecordsNoPriorContent() throws {
         guard let db = makeDB() else { return }
         let id = try log(db, operation: .create, priorContent: "", resultContent: "fresh")
-        let record = try #require(db.record(id: id))
+        let record = try #require(try db.record(id: id))
         #expect(record.operation == .create)
         #expect(record.priorContent.isEmpty)
         #expect(record.priorContentHash.isEmpty)
@@ -94,7 +94,7 @@ struct KnowledgeWriteLogTests {
     @Test func deleteRecordsEmptyResultHash() throws {
         guard let db = makeDB() else { return }
         let id = try log(db, operation: .delete, priorContent: "doomed", resultContent: "")
-        let record = try #require(db.record(id: id))
+        let record = try #require(try db.record(id: id))
         #expect(record.operation == .delete)
         #expect(record.priorContent == "doomed")
         #expect(record.resultContentHash.isEmpty)
