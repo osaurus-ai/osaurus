@@ -1249,8 +1249,10 @@ public actor ModelRuntime {
                 name: holder.name,
                 bytes: holder.weightsSizeBytes,
                 isCurrent: holder.name == currentModelName,
-                draftStrategyDescription: Self.describeDraftStrategy(holder.draftStrategy),
-                nativeMTPDepth: Self.nativeMTPDepth(holder.draftStrategy),
+                draftStrategyDescription: Self.describeDraftStrategy(
+                    Self.requestDraftStrategy(holder.draftStrategy)),
+                nativeMTPDepth: Self.nativeMTPDepth(
+                    Self.requestDraftStrategy(holder.draftStrategy)),
                 dflash2BlockSize: holder.dflash2BlockSize,
                 nativeMTPStatus: holder.nativeMTPStatus,
                 nativeMTPReason: holder.nativeMTPReason,
@@ -5430,7 +5432,14 @@ public actor ModelRuntime {
             jangConfig: jangConfig,
             status: status
         )
-        let draftStrategy = settings.resolvedMTPDraftStrategy(
+        // Resolve the loaded strategy WITHOUT the draft-token limit: the limit
+        // is a per-request clamp (`requestDraftStrategy`), not a load input.
+        // Baking it in here froze the clamped depth into the holder, so after
+        // "limit 1" a later "limit 2" or Auto stayed at depth 1 until a full
+        // reload — observed live from the picker ladder.
+        var unclampedSettings = settings
+        unclampedSettings.mtp.draftTokenLimit = nil
+        let draftStrategy = unclampedSettings.resolvedMTPDraftStrategy(
             configData: configData,
             jangConfig: jangConfig,
             status: status

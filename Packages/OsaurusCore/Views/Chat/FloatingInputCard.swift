@@ -2377,7 +2377,11 @@ extension FloatingInputCard {
             ServerController.runtimeSettingsForConfigureTool().settings.mtp)
         Task { @MainActor in
             let summaries = await ModelRuntime.shared.cachedModelSummaries()
-            nativeMTPCapableModels = Set(
+            // UNION, not replace: capability is a property of the bundle, and
+            // the summaries only cover RESIDENT models. Replacing meant the
+            // depth row vanished the moment Mode=Off unloaded the model — the
+            // exact time a user wants the control to switch back on.
+            nativeMTPCapableModels.formUnion(
                 summaries.filter { $0.nativeMTPStatus?.contains("mtp:") == true }
                     .map { Self.mtpIdentity($0.name) })
         }
