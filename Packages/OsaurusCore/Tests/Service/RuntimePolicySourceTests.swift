@@ -1224,7 +1224,12 @@ struct RuntimePolicySourceTests {
         #expect(controller.contains("previous.cache != next.cache"))
         #expect(controller.contains("previous.memorySafety != next.memorySafety"))
         #expect(controller.contains("previous.multimodal != next.multimodal"))
-        #expect(controller.contains("previous.mtp != next.mtp"))
+        // Deliberately NOT `previous.mtp != next.mtp` any more: comparing the
+        // whole struct evicted every resident model for a per-request depth
+        // change. Only load-affecting MTP fields (mode off<->on, the DFlash 2
+        // drafter) force the refresh; depth re-resolves per request.
+        #expect(controller.contains("mtpLoadInputsChanged(previous: previous.mtp, next: next.mtp)"))
+        #expect(controller.contains("(previous.mode == .off) != (next.mode == .off)"))
         #expect(controller.contains("await ModelRuntime.shared.clearAll()"))
     }
 
