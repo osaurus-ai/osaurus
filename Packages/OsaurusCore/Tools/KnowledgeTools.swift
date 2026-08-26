@@ -170,6 +170,18 @@ final class SearchKnowledgeTool: OsaurusTool, @unchecked Sendable {
         "required": .array([.string("query")]),
     ])
 
+    /// Cancellation audit: the body is bounded local retrieval — one query
+    /// embedding plus a hybrid Vectura/SQLite lookup capped at `top_k` — with
+    /// no external processes or detached work; it terminates promptly on its
+    /// own, so an owning spawned run drains it within that bounded window.
+    var canExposeToSpawnedOperation: Bool { true }
+
+    func spawnedOperationCancellationSupport(
+        argumentsJSON _: String
+    ) -> SpawnedOperationCancellationSupport {
+        .cooperative
+    }
+
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
@@ -320,6 +332,18 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
         ]),
         "required": .array([.string("path")]),
     ])
+
+    /// Cancellation audit: bounded local reads — SQLite index lookups plus
+    /// one capped (`maxContentChars`) file/extracted-text read inside the
+    /// collection folder. No network, no external processes, no detached
+    /// work; the body terminates promptly and drains trivially.
+    var canExposeToSpawnedOperation: Bool { true }
+
+    func spawnedOperationCancellationSupport(
+        argumentsJSON _: String
+    ) -> SpawnedOperationCancellationSupport {
+        .cooperative
+    }
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
@@ -549,6 +573,17 @@ final class ListKnowledgeTool: OsaurusTool, @unchecked Sendable {
         ]),
         "required": .array([]),
     ])
+
+    /// Cancellation audit: one capped (`limit` ≤ 200) SQLite listing over the
+    /// granted collections — no network, no external processes, no detached
+    /// work; the body terminates promptly and drains trivially.
+    var canExposeToSpawnedOperation: Bool { true }
+
+    func spawnedOperationCancellationSupport(
+        argumentsJSON _: String
+    ) -> SpawnedOperationCancellationSupport {
+        .cooperative
+    }
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)

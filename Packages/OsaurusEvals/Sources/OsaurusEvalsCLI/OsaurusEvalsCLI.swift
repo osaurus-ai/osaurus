@@ -59,8 +59,8 @@ struct OsaurusEvalsCLI {
         // `configuration.providers`. Without this, a `default_agent` honesty
         // case ("which providers are connected?") would read the harness's own
         // run/judge provider and score a truthful model as fabricating. This
-        // flag tells the configure READ tools (`osaurus_status`/`osaurus_list`/
-        // `osaurus_describe`) to hide ephemeral providers so the scenario sees
+        // flag tells the configure READ tool (`osaurus_inspect`)
+        // to hide ephemeral providers so the scenario sees
         // the genuine user state. Safe: the eval binary runs no Bonjour
         // discovery, so in-process the only ephemeral providers are the
         // harness's; routing is untouched, so the model still runs.
@@ -145,8 +145,8 @@ struct OsaurusEvalsCLI {
 
     @MainActor
     static func runCommand(_ args: [String]) async {
-        // Headless harness: provider tools (`osaurus_provider` add / connect /
-        // set_credentials) open a modal credential NSPanel and suspend until
+        // Headless harness: provider writes (an `osaurus_config` apply that
+        // adds or connects a provider) open a modal credential NSPanel and suspend until
         // the user pastes a key. In a headless eval there is no user, so the
         // panel pops on the developer's screen and the case hangs until a
         // watchdog cancels it. Resolve every credential prompt as `.cancelled`

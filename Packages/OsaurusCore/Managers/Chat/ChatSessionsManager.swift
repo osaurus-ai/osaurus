@@ -186,6 +186,11 @@ final class ChatSessionsManager: ObservableObject {
         // would treat its empty `turns` as truth and delete every turn row.
         // Also keeps the DB write off the main thread.
         ChatSessionStore.renameTitleAsync(id: id, title: title, updatedAt: session.updatedAt)
+        // A registry-shared live instance saves itself in full
+        // on turn finalize; sync its title or that save clobbers the rename.
+        // (The window-attached case is synced by the sidebar callback; this
+        // covers a live session no window is viewing.)
+        LiveChatSessionRegistry.shared.registeredSession(for: id)?.title = title
         upsertInMemory(session)
     }
 
@@ -206,6 +211,8 @@ final class ChatSessionsManager: ObservableObject {
         // (empty turns), and a full save would delete the conversation's
         // turn rows. See `ChatSessionStore.renameTitleAsync`.
         ChatSessionStore.renameTitleAsync(id: id, title: title)
+        // Same live-instance sync as `rename` — see the note there.
+        LiveChatSessionRegistry.shared.registeredSession(for: id)?.title = title
         upsertInMemory(session)
     }
 
@@ -223,6 +230,8 @@ final class ChatSessionsManager: ObservableObject {
         // Flag-only update for the same reason as `rename`: the in-memory
         // copy is metadata-only and a full save would delete turn rows.
         ChatSessionStore.setArchivedAsync(id: id, archived: archived)
+        // Same live-instance sync as `rename` — see the note there.
+        LiveChatSessionRegistry.shared.registeredSession(for: id)?.archived = archived
         upsertInMemory(session)
     }
 
@@ -238,6 +247,8 @@ final class ChatSessionsManager: ObservableObject {
         session.pinned = pinned
         // Flag-only update; see `setArchived`.
         ChatSessionStore.setPinnedAsync(id: id, pinned: pinned)
+        // Same live-instance sync as `rename` — see the note there.
+        LiveChatSessionRegistry.shared.registeredSession(for: id)?.pinned = pinned
         upsertInMemory(session)
     }
 

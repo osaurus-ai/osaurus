@@ -10,7 +10,7 @@ import SwiftUI
 
 /// Service for managing user-selected directory access with security-scoped bookmarks
 @MainActor
-final class DirectoryPickerService: ObservableObject {
+public final class DirectoryPickerService: ObservableObject {
     static let shared = DirectoryPickerService()
 
     @Published var selectedDirectory: URL?
@@ -31,6 +31,31 @@ final class DirectoryPickerService: ObservableObject {
     /// bookmark is set) paid for a fresh directory enumeration per row, on the
     /// main thread, during layout. Cleared alongside the bookmark cache.
     private static nonisolated(unsafe) var cachedDefaultDirectory: URL?
+
+    /// Process-local models-directory override for hermetic harnesses
+    /// (OsaurusEvals). The eval process isolates every `~/.osaurus` store, but
+    /// the models directory lives OUTSIDE that root — without this override a
+    /// model-issued `osaurus_config` models prune deletes the user's REAL
+    /// weights (observed 2026-08-22: a DefaultAgent lane wiped installed
+    /// models from `~/MLXModels`). Precedence: an explicit `OSU_MODELS_DIR`
+    /// env override still wins (the harness only sets this when env is unset);
+    /// the saved bookmark and defaults come after.
+    private static nonisolated(unsafe) var processOverrideDirectory: URL?
+
+    /// Set (or clear) the process-local models-directory override. Clears the
+    /// memoized default so resolution cannot serve a pre-override answer.
+    public nonisolated static func setProcessModelsDirectoryOverride(_ url: URL?) {
+        cacheLock.lock()
+        processOverrideDirectory = url
+        cachedDefaultDirectory = nil
+        cacheLock.unlock()
+    }
+
+    private nonisolated static func processModelsDirectoryOverride() -> URL? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return processOverrideDirectory
+    }
 
     nonisolated private static func invalidateCache() {
         cacheLock.lock()
@@ -285,6 +310,9 @@ final class DirectoryPickerService: ObservableObject {
         if let override = modelsDirectoryEnvironmentOverride() {
             return override
         }
+        if let override = processModelsDirectoryOverride() {
+            return override
+        }
         let homeURL = fileManager.homeDirectoryForCurrentUser
         let newDefault = homeURL.appendingPathComponent("MLXModels")
         let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
@@ -307,12 +335,19 @@ final class DirectoryPickerService: ObservableObject {
     /// Nonisolated static resolver that respects the saved bookmark when present.
     /// Falls back to env var and defaults when no valid bookmark exists.
     /// Uses cached bookmark URL to avoid expensive IPC calls on every access.
-    nonisolated static func effectiveModelsDirectory() -> URL {
+    public nonisolated static func effectiveModelsDirectory() -> URL {
         // Test/live-proof runs may need to point at a specific model root even
         // when the user's app has a saved bookmark. Treat an explicit env
         // override as stronger than persisted UI state so probes are
         // deterministic and do not accidentally scan a stale volume.
         if let override = modelsDirectoryEnvironmentOverride() {
+            return override
+        }
+
+        // Hermetic-harness override beats persisted UI state (bookmark) for
+        // the same reason the env override does, but never beats an explicit
+        // env choice from the caller.
+        if let override = processModelsDirectoryOverride() {
             return override
         }
 

@@ -50,6 +50,19 @@ final class ToolPermissionRunScope: @unchecked Sendable {
     }
 }
 
+/// Sendable weak wrapper for the MainActor `ChatSession`, carried through
+/// task locals so a background helper dispatch can address its launching
+/// session at completion time. Weak on purpose: the box never extends the
+/// session's lifetime — if the chat is gone when the helper finishes, the
+/// report-back is dropped and the notch row remains the record.
+final class WeakChatSessionBox: @unchecked Sendable {
+    @MainActor private(set) weak var session: ChatSession?
+
+    @MainActor init(_ session: ChatSession) {
+        self.session = session
+    }
+}
+
 /// TaskLocal storage carrying the active chat session / agent / batch ids
 /// down through tool execution. The chat engine seeds these in
 /// `ChatSession.send` (and equivalent headless paths) so any tool reading
@@ -59,6 +72,13 @@ public enum ChatExecutionContext {
     /// need per-conversation state (todo store, file-op undo log, method
     /// telemetry) key off this.
     @TaskLocal public static var currentSessionId: String?
+
+    /// Weak handle to the live `ChatSession` driving the current turn.
+    /// Bound by `ChatSession.send` so a `background: true` spawn dispatch
+    /// can deliver its report-back digest to the exact launching session
+    /// without a global live-session registry. Module-internal so
+    /// out-of-module callers cannot rebind the delivery target.
+    @TaskLocal static var currentChatSessionBox: WeakChatSessionBox?
 
     /// One logical AgentToolLoop run's Todo marker. Nil outside the canonical
     /// loop preserves direct/bare tool-call compatibility.
@@ -177,7 +197,7 @@ public enum ChatExecutionContext {
     /// uses it: those cases score the model's tool SELECTION and honest
     /// claims, NOT the side effects of running configure/agent WRITE tools.
     /// Auto-approving them instead (as `default_agent` intentionally does)
-    /// would let the model really execute `osaurus_agent`/configure writes
+    /// would let the model really execute `osaurus_config`/configure writes
     /// mid-eval, mutating global agent + scheduler state and deadlocking a
     /// later case's isolated-agent teardown. Denying records the call and
     /// feeds the model a typed "denied by policy" envelope — the honest

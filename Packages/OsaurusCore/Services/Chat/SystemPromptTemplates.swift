@@ -93,6 +93,27 @@ public enum SystemPromptTemplates {
         - `share_artifact(path | content+filename)` — the only way the user sees a file/image; it MUST exist first. Sandbox: save under home, not `/tmp`.
         """
 
+    /// Agent-loop guidance for the resolved schema: the `share_artifact`
+    /// bullet is emitted only when that tool actually resolved — the
+    /// orchestrator surface deliberately excludes it (workers deliver
+    /// artifacts), and a bullet naming an uncallable tool is the
+    /// recitation-loop trap `defaultPersona` documents. Both flags are
+    /// session-constant, so the choice is KV-cache safe. Line-filtering the
+    /// canonical statics (rather than duplicating them) keeps one source of
+    /// truth for the bullet text.
+    public static func agentLoopGuidance(
+        compact: Bool,
+        includeShareArtifact: Bool
+    ) -> String {
+        let base = compact ? agentLoopGuidanceCompact : agentLoopGuidance
+        guard !includeShareArtifact else { return base }
+        return
+            base
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.contains("`share_artifact(") }
+            .joined(separator: "\n")
+    }
+
     // MARK: - Time Context
 
     /// Per-turn current date/time block injected into the latest user

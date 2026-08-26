@@ -454,8 +454,9 @@ extension EvalRunner {
         var judgeElapsed: Double?
         if transcript.error == nil, let rubric = exp.rubric, !rubric.isEmpty {
             // Self-heal the ephemeral judge provider before grading — a
-            // provider-mutating suite earlier in the same process (e.g.
-            // `default_agent`'s `osaurus_provider`) can have evicted it,
+            // provider-mutating suite earlier in the same process (e.g. a
+            // `default_agent` `osaurus_config` apply that touches providers)
+            // can have evicted it,
             // which would otherwise fail every rubric row spuriously.
             await ensureJudgeProviderRoutable(judgeModel)
             let judgeStarted = Date()

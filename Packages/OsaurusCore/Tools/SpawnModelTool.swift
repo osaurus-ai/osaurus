@@ -36,6 +36,10 @@ public final class SpawnModelTool: OsaurusTool, @unchecked Sendable {
                     "Id of a spawnable model (e.g. \"qwen3-4b-4bit\" or a remote \"provider/model\")."
                 ),
             ]),
+            "background": .object([
+                "type": .string("boolean"),
+                "description": .string(SpawnInputContract.backgroundParameterDescription),
+            ]),
         ]),
         "required": .array([.string("input"), .string("model")]),
     ])
@@ -97,9 +101,10 @@ public final class SpawnModelTool: OsaurusTool, @unchecked Sendable {
         // The shared host owns the recursion guard, live feed, permission
         // verdict, residency handoff, compact-result normalization, and
         // telemetry; the kind owns model resolution + the bounded text loop.
-        return await SubagentSession.runWithVisiblePreparation(
-            TextSubagentKind(model: model, input: input),
-            tool: name
-        )
+        let kind = TextSubagentKind(model: model, input: input)
+        if ArgumentCoercion.bool(args["background"]) == true {
+            return await SubagentSession.dispatchInBackground(kind, tool: name)
+        }
+        return await SubagentSession.runWithVisiblePreparation(kind, tool: name)
     }
 }

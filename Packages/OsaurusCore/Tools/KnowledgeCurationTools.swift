@@ -74,6 +74,17 @@ final class FlagKnowledgeStaleTool: OsaurusTool, @unchecked Sendable {
         "required": .array([.string("path"), .string("reason")]),
     ])
 
+    /// Cancellation audit: one bounded SQLite ticket insert (plus grant/index
+    /// lookups) — no network, no external processes, no detached work; the
+    /// body terminates promptly and drains trivially.
+    var canExposeToSpawnedOperation: Bool { true }
+
+    func spawnedOperationCancellationSupport(
+        argumentsJSON _: String
+    ) -> SpawnedOperationCancellationSupport {
+        .cooperative
+    }
+
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
@@ -197,6 +208,17 @@ final class ListKnowledgeTicketsTool: OsaurusTool, @unchecked Sendable {
         "required": .array([]),
     ])
 
+    /// Cancellation audit: one capped (`limit` ≤ 100) SQLite ticket listing —
+    /// no network, no external processes, no detached work; the body
+    /// terminates promptly and drains trivially.
+    var canExposeToSpawnedOperation: Bool { true }
+
+    func spawnedOperationCancellationSupport(
+        argumentsJSON _: String
+    ) -> SpawnedOperationCancellationSupport {
+        .cooperative
+    }
+
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
@@ -280,6 +302,19 @@ final class UpdateKnowledgeTicketTool: OsaurusTool, @unchecked Sendable {
         ]),
         "required": .array([.string("ticket_id"), .string("status")]),
     ])
+
+    /// Cancellation audit: one bounded SQLite status update behind the
+    /// curator-role check — no network, no external processes, no detached
+    /// work; the body terminates promptly and drains trivially.
+    /// (`propose_knowledge_update` deliberately stays unaudited: its
+    /// interactive permission gate can stall a bounded child like `clarify`.)
+    var canExposeToSpawnedOperation: Bool { true }
+
+    func spawnedOperationCancellationSupport(
+        argumentsJSON _: String
+    ) -> SpawnedOperationCancellationSupport {
+        .cooperative
+    }
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)

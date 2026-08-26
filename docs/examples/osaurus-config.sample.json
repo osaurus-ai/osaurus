@@ -1,0 +1,147 @@
+{
+  "version": 1,
+  "memory": {
+    "enabled": true,
+    "budget_tokens": 1200,
+    "retention_days": 365
+  },
+  "default_agent": {
+    "model": "foundation",
+    "temperature": 0.7,
+    "max_tokens": null,
+    "system_prompt": "You are a friendly, concise assistant.",
+    "disable_tools": false
+  },
+  "active_agent": "default",
+  "agents": [
+    {
+      "name": "Research Agent",
+      "description": "Web research with cited sources",
+      "system_prompt": "Research topics thoroughly and cite your sources.",
+      "model": null,
+      "temperature": 0.4,
+      "max_tokens": 4096,
+      "capabilities": {
+        "tools_enabled": true,
+        "web_search_enabled": true,
+        "knowledge_enabled": true,
+        "knowledge_collection_ids": [],
+        "browser_use_enabled": false,
+        "computer_use_enabled": false,
+        "relay_enabled": false
+      }
+    }
+  ],
+  "tools": {
+    "enabled": {
+      "web_search": true
+    },
+    "policies": {
+      "file_write": "ask"
+    }
+  },
+  "delegation": {
+    "local_text_enabled": true,
+    "spawnable_agents": ["Research Agent"],
+    "spawn_tool_access": "read_only",
+    "permission_defaults": {
+      "spawn": "ask"
+    },
+    "budget_max_tokens": 4096,
+    "budget_max_turns": 4,
+    "budget_max_seconds": 300,
+    "ram_safety_preflight": true
+  },
+  "commands": [
+    {
+      "name": "standup",
+      "description": "Draft my standup update",
+      "icon": "text.bubble",
+      "template": "Draft a three-bullet standup update from this conversation."
+    }
+  ],
+  "knowledge_collections": [
+    {
+      "name": "Team Docs",
+      "folder_path": "~/Documents/TeamDocs",
+      "summary": "Internal team documentation",
+      "enabled": true,
+      "include_globs": ["**/*.md"],
+      "exclude_globs": ["**/drafts/**"]
+    }
+  ],
+  "channels": {
+    "write_enabled": true,
+    "telegram": {
+      "default_read_limit": 25,
+      "sender_allowlist": ["123456789"],
+      "require_mention": true,
+      "bot_token_ref": "env:TELEGRAM_BOT_TOKEN"
+    }
+  },
+  "mcp_servers": [
+    {
+      "name": "GitHub",
+      "transport": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "auth": "bearer",
+      "enabled": true,
+      "token_ref": "env:GITHUB_MCP_TOKEN"
+    },
+    {
+      "name": "Filesystem",
+      "transport": "stdio",
+      "command": "/usr/local/bin/mcp-filesystem",
+      "args": ["--root", "~/Projects"],
+      "env": {
+        "NODE_ENV": "production"
+      },
+      "secret_env_refs": {
+        "API_TOKEN": "env:FS_MCP_TOKEN"
+      },
+      "execution_host": "sandbox",
+      "enabled": true
+    }
+  ],
+  "models": ["mlx-community/Qwen2.5-7B-Instruct-4bit"],
+  "plugins": ["osaurus.weather"],
+  "providers": [
+    {
+      "name": "Anthropic",
+      "provider": "anthropic",
+      "enabled": true,
+      "auto_connect": true,
+      "api_key_ref": "env:ANTHROPIC_API_KEY"
+    }
+  ],
+  "search_providers": {
+    "ranking": ["tavily", "ddg_scrape"],
+    "providers": [
+      {
+        "id": "tavily",
+        "enabled": true
+      }
+    ]
+  },
+  "schedules": [
+    {
+      "name": "Morning news",
+      "agent": "Research Agent",
+      "instructions": "Summarize the top technology headlines.",
+      "frequency": "daily",
+      "frequency_time_of_day": "08:00",
+      "enabled": true
+    }
+  ],
+  "watchers": [
+    {
+      "name": "Downloads sorter",
+      "agent": "Research Agent",
+      "instructions": "File new downloads into the right subfolder.",
+      "path": "~/Downloads",
+      "recursive": false,
+      "responsiveness": "balanced",
+      "enabled": true
+    }
+  ]
+}

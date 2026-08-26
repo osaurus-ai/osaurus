@@ -203,6 +203,11 @@ public final class BackgroundTaskManager: ObservableObject {
             // completion/failure never double-announces (or leaks into) the
             // chat the user is currently looking at.
             .filter { !isTaskAttachedToWindow($0.id) }
+            // Same rule for spawned-helper mirrors: while the launching chat
+            // is visible in a window, its in-chat spawn card already reports
+            // the run, so the notch stays quiet. Detached launchers
+            // (closed windows) surface the helper here.
+            .filter { !isMirrorParentVisibleInChatWindow($0) }
             .sorted { a, b in
                 let ap = Self.statusSortPriority(a.status), bp = Self.statusSortPriority(b.status)
                 if ap != bp { return ap < bp }
@@ -288,6 +293,16 @@ public final class BackgroundTaskManager: ObservableObject {
     public func isWindowDetachedToBackground(windowId: UUID) -> Bool {
         guard let id = taskIdByWindow[windowId] else { return false }
         return backgroundTasks[id] != nil
+    }
+
+    /// Whether a spawned-helper mirror's launching chat session is currently
+    /// visible in an open chat window (where the in-chat spawn card already
+    /// reports the run). Always false for non-mirror tasks.
+    private func isMirrorParentVisibleInChatWindow(_ state: BackgroundTaskState) -> Bool {
+        guard let parent = state.subagentParentSessionId,
+            let sessionId = UUID(uuidString: parent)
+        else { return false }
+        return ChatWindowManager.shared.findWindow(bySessionId: sessionId) != nil
     }
 
     /// Whether any live chat window is currently bound to (viewing) this
@@ -384,6 +399,14 @@ public final class BackgroundTaskManager: ObservableObject {
         // the pause into `.waitingForInput`.)
         guard session.isStreaming || session.awaitingClarify != nil else { return nil }
 
+        // Registry-shared sessions are co-owned by their registering
+        // owner, which keeps an in-flight run alive after every window
+        // stops viewing it; adopting one here would create a second
+        // execution owner (double stop/finalize/save). Refusing makes the
+        // window-close path fall through to `ChatWindowState.cleanup()`,
+        // whose shared branch unlinks without stopping the run.
+        guard !LiveChatSessionRegistry.shared.isShared(session) else { return nil }
+
         // Persist before adopting so the sidebar and `openTaskWindow` reload
         // path both see a real saved row for this session.
         session.save()
@@ -428,6 +451,14 @@ public final class BackgroundTaskManager: ObservableObject {
     /// Open a window for a background task
     public func openTaskWindow(_ backgroundId: UUID) {
         guard let state = backgroundTasks[backgroundId] else { return }
+
+        // A spawned-helper mirror has no chat of its own to open — its
+        // transcript lives inside the launching turn. Tapping a finished
+        // mirror just dismisses it; an active one is a no-op.
+        if state.isSubagentMirror {
+            if !state.status.isActive { finalizeTask(backgroundId) }
+            return
+        }
 
         if let context = state.executionContext ?? hydrateRetainedTask(state) {
             let windowId = ChatWindowManager.shared.createWindowForContext(context, showImmediately: true)
@@ -535,6 +566,22 @@ public final class BackgroundTaskManager: ObservableObject {
     public func cancelTask(_ backgroundId: UUID) {
         guard let state = backgroundTasks[backgroundId] else { return }
 
+        // A spawned-helper mirror has no session to stop — trip the run's
+        // interrupt token (same path as the in-chat card's Stop button) and
+        // mark the row cancelled immediately for a responsive notch. The
+        // feed's terminal status arrives later and is ignored because the
+        // mirror is no longer active.
+        if let toolCallId = state.subagentToolCallId {
+            SubagentInterruptCenter.shared.interrupt(toolCallId)
+            if state.status.isActive {
+                state.status = .cancelled
+                state.appendActivity(kind: .info, title: "Stopped")
+            }
+            scheduleAutoFinalize(backgroundId)
+            recomputeSortedToastTasks()
+            return
+        }
+
         // A queued task never started — drop its deferred start so a later
         // pump can't resurrect it.
         queuedOrder.removeAll { $0 == backgroundId }
@@ -620,7 +667,7 @@ public final class BackgroundTaskManager: ObservableObject {
     /// runs are view-only).
     @discardableResult
     public func submitQuickReply(_ backgroundId: UUID, text: String) -> Bool {
-        guard let state = backgroundTasks[backgroundId] else { return false }
+        guard let state = backgroundTasks[backgroundId], !state.isSubagentMirror else { return false }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
 
@@ -695,6 +742,58 @@ public final class BackgroundTaskManager: ObservableObject {
             type: .draft,
             json: PluginHostContext.serializeDraftEvent(draftJSON: draftJSON, taskTitle: state.taskTitle)
         )
+    }
+
+    // MARK: - Subagent Mirrors
+
+    /// Register a visibility-only mirror of a live spawned-helper run.
+    /// Called by `SubagentBackgroundTaskBridge` when a spawn feed appears in
+    /// the registry. Mirrors reuse the ordinary task pipeline (notch row,
+    /// activity feed, power assertion) but are excluded from execution-slot
+    /// accounting and relaunch persistence.
+    func registerSubagentMirror(_ state: BackgroundTaskState) {
+        guard state.isSubagentMirror else { return }
+        registerTask(state)
+    }
+
+    /// Append an activity row to a mirror and nudge the throttled view
+    /// update (mirrors have no `observeChatTask` observers forwarding
+    /// their state changes).
+    func appendSubagentMirrorActivity(
+        _ backgroundId: UUID,
+        kind: BackgroundTaskActivityItem.Kind,
+        title: String,
+        detail: String? = nil
+    ) {
+        guard let state = backgroundTasks[backgroundId], state.isSubagentMirror else { return }
+        state.appendActivity(kind: kind, title: title, detail: detail)
+        viewUpdateSubject.send()
+    }
+
+    /// Update a mirror's one-line current step (latest feed phase/progress).
+    func updateSubagentMirrorStep(_ backgroundId: UUID, step: String) {
+        guard let state = backgroundTasks[backgroundId],
+            state.isSubagentMirror,
+            state.status.isActive
+        else { return }
+        state.currentStep = step
+        viewUpdateSubject.send()
+    }
+
+    /// Transition a mirror to its terminal state when the mirrored feed
+    /// finishes. No-op once the mirror is already terminal (e.g. the user
+    /// cancelled from the notch and the run's own failure lands later).
+    func finishSubagentMirror(_ backgroundId: UUID, success: Bool, summary: String) {
+        guard let state = backgroundTasks[backgroundId],
+            state.isSubagentMirror,
+            state.status.isActive
+        else { return }
+        state.status = success ? .completed(summary: summary) : .failed(summary: summary)
+        state.currentStep = nil
+        state.appendActivity(kind: success ? .success : .error, title: summary)
+        scheduleAutoFinalize(backgroundId)
+        persistRetainedTabs()
+        recomputeSortedToastTasks()
     }
 
     // MARK: - Dispatch
@@ -1030,7 +1129,12 @@ public final class BackgroundTaskManager: ObservableObject {
     /// released their slot.
     private func hasExecutionCapacity(agentId: UUID?) -> Bool {
         let globalLimit = ToastManager.shared.configuration.maxConcurrentTasks
-        let slotted = backgroundTasks.values.filter { $0.status.consumesExecutionSlot }
+        // Spawned-helper mirrors are visibility-only: the spawn itself is
+        // admitted (and budgeted) inside its parent turn, so counting the
+        // mirror here would double-charge one run against the limits.
+        let slotted = backgroundTasks.values.filter {
+            $0.status.consumesExecutionSlot && !$0.isSubagentMirror
+        }
 
         guard slotted.count < globalLimit else { return false }
 
@@ -1213,7 +1317,7 @@ public final class BackgroundTaskManager: ObservableObject {
     /// is the minimal mapping that's stable for Phase 1.
     private static func triggerKind(for source: SessionSource) -> AgentRunTriggerKind {
         switch source {
-        case .chat, .plugin, .http, .channel, .imported: return .user
+        case .chat, .plugin, .http, .channel, .imported, .delegation: return .user
         case .schedule: return .recurringSchedule
         case .watcher: return .watcher
         case .selfSchedule: return .schedule
@@ -1474,7 +1578,9 @@ public final class BackgroundTaskManager: ObservableObject {
         guard persistsRetainedTabs else { return }
         let records =
             backgroundTasks.values
-            .filter { $0.showToast && $0.status.isTerminal }
+            // Mirrors have no persisted session to rehydrate — a retained
+            // mirror tab would be a dead row after relaunch.
+            .filter { $0.showToast && $0.status.isTerminal && !$0.isSubagentMirror }
             .compactMap(RetainedNotchTabRecord.init(state:))
             .sorted { $0.createdAt < $1.createdAt }
         guard !records.isEmpty else {

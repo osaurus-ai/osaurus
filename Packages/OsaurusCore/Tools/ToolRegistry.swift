@@ -299,12 +299,10 @@ public final class ToolRegistry: ObservableObject {
             // composer further restricts visibility to the default
             // agent only. The matching consolidated writes live under
             // `ConfigurationDomainRegistry`: the Default agent receives
-            // them DIRECTLY (see `defaultAgentAllowedToolNames`), while
+            // them DIRECTLY (see `orchestratorAllowedToolNames`), while
             // custom agents reach them on demand via
             // `capabilities_discover` / `capabilities_load`.
-            OsaurusStatusTool(),
-            OsaurusListTool(),
-            OsaurusDescribeTool(),
+            OsaurusInspectTool(),
             OsaurusHelpTool(),
             // Computer Use (macOS automation harness). Registered as a
             // built-in so the runtime can execute it and ChatView can
@@ -700,7 +698,13 @@ public final class ToolRegistry: ObservableObject {
                 )
             case .ask:
                 let approved: Bool
-                if ChatExecutionContext.autoApproveToolPrompts {
+                if permissioned.handlesOwnApproval {
+                    // The tool runs its own purpose-built interactive
+                    // approval in its body (osaurus_config's plan-review
+                    // card) — the generic args-JSON panel here would be a
+                    // redundant double prompt that hides the real diff.
+                    approved = true
+                } else if ChatExecutionContext.autoApproveToolPrompts {
                     approved = true
                 } else if ChatExecutionContext.toolPermissionRunScope?.allows(name) == true {
                     approved = true
@@ -977,6 +981,23 @@ public final class ToolRegistry: ObservableObject {
                 retryable: false
             )
         }
+        // Coerce + preflight against the tool's schema BEFORE the permission
+        // gate: schema-invalid arguments return a typed `invalid_args`
+        // envelope for one model correction without ever raising an approval
+        // prompt for a call that cannot execute. `normalizeArgumentsBeforeValidation`
+        // is a pure, tool-owned string repair, so running it pre-gate has no
+        // side effects. Returns either a (possibly rewritten) `argumentsJSON`
+        // ready for dispatch, or a structured failure envelope to
+        // short-circuit with.
+        let normalizedArguments = tool.normalizeArgumentsBeforeValidation(argumentsJSON)
+        let preflightOutcome = Self.preflight(
+            argumentsJSON: normalizedArguments,
+            schema: tool.parameters,
+            toolName: name
+        )
+        if case .rejected(let envelopeJSON) = preflightOutcome {
+            return envelopeJSON
+        }
         // Permission gating. Skipped when the caller already resolved the
         // gate via `resolvePermissionGate` (parallel batches resolve every
         // approval serially in model order BEFORE executing concurrently,
@@ -984,15 +1005,7 @@ public final class ToolRegistry: ObservableObject {
         if !permissionGateResolved {
             try await runPermissionGate(tool: tool, name: name, argumentsJSON: argumentsJSON)
         }
-        // Coerce + preflight against the tool's schema. Returns either
-        // a (possibly rewritten) `argumentsJSON` ready for dispatch, or
-        // a structured failure envelope to short-circuit with.
-        let normalizedArguments = tool.normalizeArgumentsBeforeValidation(argumentsJSON)
-        switch Self.preflight(
-            argumentsJSON: normalizedArguments,
-            schema: tool.parameters,
-            toolName: name
-        ) {
+        switch preflightOutcome {
         case .rejected(let envelopeJSON):
             return envelopeJSON
         case .ready(let effectiveArgumentsJSON):
@@ -1219,9 +1232,16 @@ public final class ToolRegistry: ObservableObject {
         let message = object["_message"] as? String ?? "invalid tool arguments"
         let field = object["_field"] as? String
         let expected = object["_expected"] as? String
+        // Observed in live transcripts: a model whose history shows the
+        // sentinel object as its own previous arguments will pattern-match
+        // and re-emit `{"_error": ...}` verbatim as its next call. Say
+        // explicitly that the error object is not a template to copy.
         return ToolEnvelope.failure(
             kind: .invalidArgs,
-            message: message,
+            message: message
+                + " Your previous call was malformed, so its arguments were "
+                + "discarded. Do NOT copy this error object into `arguments` — "
+                + "re-issue the call with real arguments per the tool schema.",
             field: field,
             expected: expected,
             tool: toolName,
@@ -1524,6 +1544,18 @@ public final class ToolRegistry: ObservableObject {
     /// Check if a tool is enabled in the global configuration
     func isGlobalEnabled(_ name: String) -> Bool {
         return configuration.isEnabled(name: name)
+    }
+
+    /// Whether a tool with this name is registered.
+    func isRegistered(_ name: String) -> Bool {
+        return toolsByName[name] != nil
+    }
+
+    /// Explicit per-tool enablement and policy overrides, for the
+    /// declarative config exporter/planner. Only names the user (or a
+    /// previous apply) explicitly touched appear here.
+    func explicitToolSettings() -> (enabled: [String: Bool], policies: [String: ToolPermissionPolicy]) {
+        (configuration.enabled, configuration.policy)
     }
 
     /// Retrieve parameter schema for a tool by name.
@@ -2458,35 +2490,89 @@ extension ToolRegistry {
         return union
     }
 
-    /// Every tool that exists for the *configure* surface — the four
-    /// generic reads (`osaurus_status`, `osaurus_list`,
-    /// `osaurus_describe`, `osaurus_help`) plus every write across
-    /// every domain. Used by `SystemPromptComposer.resolveTools` to
-    /// strip configure tools from non-default agents' schemas.
+    /// Every tool that exists for the *configure* surface — the two
+    /// generic reads (`osaurus_inspect`, `osaurus_help`) plus every
+    /// write across every domain. Used by
+    /// `SystemPromptComposer.resolveTools` to strip configure tools
+    /// from non-default agents' schemas.
     static var configureToolNames: Set<String> {
         configureWriteToolNames.union([
-            "osaurus_status",
-            "osaurus_list",
-            "osaurus_describe",
+            "osaurus_inspect",
             "osaurus_help",
         ])
     }
 
-    /// Turn-1 schema for the Default (configuration) agent: the consolidated
-    /// configure surface — the four generic reads (`osaurus_status` /
-    /// `osaurus_list` / `osaurus_describe` / `osaurus_help`) plus the
-    /// per-domain `osaurus_*` write tools — together with the agent-loop
-    /// tools (`todo` / `complete` / `clarify`). The Default agent loads its write tools **directly**; it
-    /// does NOT use `capabilities_discover` / `capabilities_load` (those stay
-    /// available to custom agents). Computed from the live domain registry so
-    /// a newly registered domain expands the set automatically, and stable
-    /// across a session for KV-cache reuse.
-    static var defaultAgentAllowedToolNames: Set<String> {
-        // `web_search` joins the baseline deliberately: native search is the
-        // one tool every agent gets (Settings → Search), and the free
-        // providers make it usable with zero configuration.
+    // MARK: - Tool surfaces (declarative per-role policy)
+    //
+    // The four roles a schema is assembled for. Declaring the role policies
+    // HERE — in one table — is what keeps the orchestrator resolver
+    // (`SystemPromptComposer.resolveTools`) and the worker resolver
+    // (`TextSubagentKind.autoChildToolNames` / `childToolNames`) from
+    // drifting apart again:
+    //
+    //   * `.orchestrator` — the Default agent (direct chat): the
+    //     consolidated configure surface + agent-loop
+    //     tools + `get_current_time` + the native search pair
+    //     (`web_search` / `search_and_extract` for quick lookups), plus
+    //     (applied in `resolveTools`) the visible
+    //     delegation tools. It NEVER carries the tools in
+    //     `orchestratorExcludedToolNames`: heavy work is dispatched to
+    //     workers, not done in the orchestrator's own loop.
+    //   * `.customAgent` — a custom agent's direct chat: the capability-gated
+    //     baseline (`resolveTools` gates), untouched by this table.
+    //   * `.spawnedWorker` — an agent-target spawned child: the target
+    //     agent's capability-gated tools plus
+    //     `spawnedWorkerBaselineToolNames`, minus the spawn family and
+    //     `clarify` (`TextSubagentKind.isExcludedChildTool`), intersected
+    //     with `specsForSpawnedOperations` (cancellation audit).
+    //   * `.bareModelWorker` — a bare-model spawned child: only the curated
+    //     read-only file set (`TextSubagentKind.readOnlyChildToolNames`).
+    public enum ToolSurface: Sendable {
+        case orchestrator
+        case customAgent
+        case spawnedWorker
+        case bareModelWorker
+    }
+
+    /// Tools the orchestrator (Default agent) must NEVER carry, because its
+    /// contract is to dispatch that work to spawned helpers:
+    ///   * `share_artifact` — workers deliver files; the artifact pipeline
+    ///     promotes a worker's shared artifact straight to the user, so the
+    ///     orchestrator has no re-share step.
+    /// Custom agents keep this tool in their OWN direct chats — this
+    /// exclusion is about the orchestrator role, not the tool. Note that
+    /// `web_search` / `search_and_extract` are NOT excluded: quick lookups
+    /// are a basic orchestrator capability (heavy research still dispatches
+    /// to workers).
+    nonisolated static let orchestratorExcludedToolNames: Set<String> = [
+        "share_artifact"
+    ]
+
+    /// Baseline names every agent-target spawned worker carries regardless
+    /// of the target's capability toggles: time for grounding, and
+    /// `share_artifact` because a worker's shared file is the ONLY way its
+    /// output artifacts reach the user (the parent receives just a digest).
+    nonisolated static let spawnedWorkerBaselineToolNames: Set<String> = [
+        "get_current_time", "share_artifact",
+    ]
+
+    /// Turn-1 schema for the `.orchestrator` surface (the Default agent):
+    /// the consolidated configure surface — the two generic reads
+    /// (`osaurus_inspect` / `osaurus_help`) plus the single declarative write tool
+    /// (`osaurus_config`) — together with the agent-loop tools
+    /// (`todo` / `complete` / `clarify`),
+    /// `get_current_time`, and the native search pair (`web_search` /
+    /// `search_and_extract`) for quick lookups — heavy research still
+    /// dispatches to workers. The Default agent loads its write tools
+    /// **directly**; it does NOT use `capabilities_discover` /
+    /// `capabilities_load` (those stay available to custom agents). Computed
+    /// from the live domain registry so a newly registered domain expands
+    /// the set automatically, and stable across a session for KV-cache
+    /// reuse.
+    static var orchestratorAllowedToolNames: Set<String> {
         configureToolNames.union([
-            "todo", "complete", "clarify", "web_search", "get_current_time",
+            "todo", "complete", "clarify", "get_current_time",
+            "web_search", "search_and_extract",
         ])
     }
 }

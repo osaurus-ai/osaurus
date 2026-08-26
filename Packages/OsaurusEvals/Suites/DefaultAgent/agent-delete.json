@@ -1,18 +1,23 @@
 {
   "id": "default_agent.agent-delete",
   "domain": "default_agent",
-  "label": "default agent • delete an agent by id",
-  "query": "Delete the agent with id d7c2a401-9b6e-4f38-8a15-3e0c9d27b6f4.",
-  "notes": "action 'delete' with id. Unknown id → typed not-found error (no mutation). The selection assertion pins action 'delete'.",
-  "fixtures": {},
+  "label": "default agent • delete an agent (declarative prune)",
+  "query": "Delete the agent named \"Eval Obsolete Agent\" — I don't need it anymore.",
+  "notes": "Deletion in the declarative model is prune: apply an agents list WITHOUT the entry plus prune:true. The agent is seeded and is the only custom agent in the isolated store, so `agents: []` with prune is the canonical document (a model that lists agents first and re-declares the rest is equally correct). The assertion pins the apply + prune selection.",
+  "fixtures": {
+    "seedAgents": [
+      { "id": "d7c2a401-9b6e-4f38-8a15-3e0c9d27b6f4", "name": "Eval Obsolete Agent" }
+    ]
+  },
   "expect": {
     "defaultAgent": {
-      "mustCallTools": ["osaurus_agent"],
+      "mustCallTools": ["osaurus_config"],
       "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
       "argsMustContain": [
-        { "tool": "osaurus_agent", "args": { "action": "delete" } }
+        { "tool": "osaurus_config", "args": { "action": "apply", "prune": "true" } },
+        { "tool": "osaurus_config", "args": { "yaml": "agents" } }
       ],
-      "maxIterations": 4
+      "maxIterations": 8
     }
   }
 }

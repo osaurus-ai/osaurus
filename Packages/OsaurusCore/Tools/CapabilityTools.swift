@@ -1168,9 +1168,8 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                         kind: .rejected,
                         message:
                             "Default agent can only load configuration write tools "
-                            + "(`osaurus_*_<verb>`). Use `osaurus_status`, `osaurus_list`, "
-                            + "`osaurus_describe`, or `osaurus_help` for reads; nothing else "
-                            + "needs `capabilities_load`."
+                            + "(`osaurus_*_<verb>`). Use `osaurus_inspect` or `osaurus_help` "
+                            + "for reads; nothing else needs `capabilities_load`."
                     )
                 )
             }

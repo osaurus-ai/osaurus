@@ -28,6 +28,12 @@ public protocol SubagentKind: Sendable {
     /// prompt). Defaults to the capability id.
     var feedTitle: String { get }
 
+    /// True when this run executes as a real dispatched chat session that
+    /// registers its own background task (true agent delegation) — the
+    /// host then marks the feed so `SubagentBackgroundTaskBridge` does not
+    /// mirror it into a duplicate notch row. Defaults to false.
+    var suppressNotchMirror: Bool { get }
+
     /// Resolve + validate the target model BEFORE any residency eviction
     /// (reject-before-evict). Throw `SubagentError` to fail cleanly.
     func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel
@@ -97,6 +103,9 @@ protocol SubagentPostAdmissionResidencyPlanning: SubagentKind {
 
 extension SubagentKind {
     public var feedTitle: String { capability.id }
+
+    /// Default: ordinary in-memory subagent runs are mirrored to the notch.
+    public var suppressNotchMirror: Bool { false }
 
     /// Default: no residency change. Model-swapping kinds override.
     public func makeHandoff() -> SubagentHandoff { PassthroughHandoff() }

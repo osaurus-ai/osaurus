@@ -1206,6 +1206,18 @@ extension ContentBlock {
             : blocks
     }
 
+    /// Stable id prefix for clarify-question paragraph blocks (see
+    /// `makeClarifyQuestionBlock`). Renderers use `isClarifyQuestion`
+    /// to special-case their chrome — keep the prefix and the check
+    /// in lockstep.
+    private static let clarifyQuestionIdPrefix = "clarifyq-"
+
+    /// True when this block is the inline "Asked: …" scrollback
+    /// paragraph generated for a `clarify` tool call.
+    public var isClarifyQuestion: Bool {
+        id.hasPrefix(Self.clarifyQuestionIdPrefix)
+    }
+
     /// Build the inline "Asked: …" paragraph block for a `clarify`
     /// tool call. Returns nil when the arguments don't decode to a
     /// usable question (matches what the overlay would have skipped).
@@ -1220,7 +1232,7 @@ extension ContentBlock {
         return ContentBlock(
             // Key on the call id so multiple clarifies in one turn
             // (rare, but legal) each get a distinct stable block id.
-            id: "clarifyq-\(turnId.uuidString)-\(call.id)",
+            id: "\(clarifyQuestionIdPrefix)\(turnId.uuidString)-\(call.id)",
             turnId: turnId,
             kind: .paragraph(
                 index: -1,

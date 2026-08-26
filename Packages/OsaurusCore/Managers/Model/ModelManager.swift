@@ -39,7 +39,7 @@ enum ModelListTab: String, CaseIterable, AnimatedTabItem {
 /// Manages MLX model catalog, discovery, and resolution.
 /// Download orchestration is handled by ModelDownloadService.
 @MainActor
-final class ModelManager: NSObject, ObservableObject {
+public final class ModelManager: NSObject, ObservableObject {
     static let shared = ModelManager()
 
     /// Diagnostics logger usable from the `nonisolated static` discovery paths.
@@ -1879,7 +1879,7 @@ extension ModelManager {
     nonisolated(unsafe) static var scanLocalModelsOverrideForTests: ((URL) -> [MLXModel])?
     nonisolated(unsafe) static var localModelsScanWaitLimitOverrideForTests: TimeInterval?
 
-    nonisolated static func invalidateLocalModelsCache() {
+    public nonisolated static func invalidateLocalModelsCache() {
         localModelsCacheCondition.lock()
         cachedLocalModels = nil
         localModelsScanInFlight = false

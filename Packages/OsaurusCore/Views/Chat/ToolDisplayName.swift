@@ -93,6 +93,15 @@ enum ToolDisplayName {
         if rawName == "image" {
             return imageLabel(running: running, arguments: arguments)
         }
+        // Osaurus self-configuration tools are action-multiplexed; peek at the
+        // `action` argument so the chip says what actually happened
+        // ("Applying configuration" vs a generic "Osaurus config").
+        if rawName == "osaurus_config" {
+            return configLabel(running: running, arguments: arguments)
+        }
+        if rawName == "osaurus_inspect" {
+            return inspectLabel(running: running, arguments: arguments)
+        }
         // Other subagent tools (spawn, computer_use) take their
         // chip label from the capability registry (SSOT) so the chip and the
         // live-feed header always read the same word.
@@ -132,6 +141,48 @@ enum ToolDisplayName {
             let paths = ArgumentCoercion.stringArray(json["source_paths"])
         else { return false }
         return paths.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    /// Action-aware label for `osaurus_config` (schema / export / plan /
+    /// apply / templates).
+    private static func configLabel(running: Bool, arguments: String?) -> String {
+        switch actionArgument(from: arguments) {
+        case "schema":
+            return running ? L("Reading the config schema") : L("Read the config schema")
+        case "export":
+            return running ? L("Exporting Osaurus configuration") : L("Exported Osaurus configuration")
+        case "plan":
+            return running ? L("Planning configuration changes") : L("Planned configuration changes")
+        case "apply":
+            return running ? L("Applying configuration changes") : L("Applied configuration changes")
+        case "templates":
+            return running ? L("Reading config templates") : L("Read config templates")
+        default:
+            return running ? L("Configuring Osaurus") : L("Configured Osaurus")
+        }
+    }
+
+    /// Action-aware label for `osaurus_inspect` (status / list / describe).
+    private static func inspectLabel(running: Bool, arguments: String?) -> String {
+        switch actionArgument(from: arguments) {
+        case "status":
+            return running ? L("Checking Osaurus status") : L("Checked Osaurus status")
+        case "list":
+            return running ? L("Listing Osaurus items") : L("Listed Osaurus items")
+        case "describe":
+            return running ? L("Inspecting an Osaurus item") : L("Inspected an Osaurus item")
+        default:
+            return running ? L("Inspecting Osaurus") : L("Inspected Osaurus")
+        }
+    }
+
+    private static func actionArgument(from arguments: String?) -> String? {
+        guard let arguments,
+            let data = arguments.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let action = json["action"] as? String
+        else { return nil }
+        return action.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     private static func searchLabel(_ rawName: String, running: Bool, arguments: String?) -> String {
@@ -241,6 +292,10 @@ enum ToolDisplayName {
         "git_status": ToolLabel(L("Checking git status"), L("Checked git status")),
         "git_diff": ToolLabel(L("Viewing changes"), L("Viewed changes")),
         "git_commit": ToolLabel(L("Committing changes"), L("Committed changes")),
+
+        // Osaurus self-management. `osaurus_config` / `osaurus_inspect` are
+        // action-aware (see configLabel / inspectLabel); these cover the rest.
+        "osaurus_help": ToolLabel(L("Reading the Osaurus guide"), L("Read the Osaurus guide")),
 
         // General built-ins
         "capabilities_discover": ToolLabel(L("Searching capabilities"), L("Searched capabilities")),

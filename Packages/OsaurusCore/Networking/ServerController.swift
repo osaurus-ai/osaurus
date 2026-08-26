@@ -56,8 +56,8 @@ final class ServerController: ObservableObject {
         await controller.applySpawnBatchLimit(normalized)
     }
 
-    /// Applies runtime settings on behalf of the `osaurus_settings`
-    /// configure tool. Routes through the live controller when one is
+    /// Applies runtime settings on behalf of the declarative
+    /// `osaurus_config` surface (its `server:` section). Routes through the live controller when one is
     /// wired (restart-aware: port/expose/CORS changes restart the NIO
     /// socket, cache/multimodal changes unload models). Returns `nil`
     /// when no controller exists yet — the settings are persisted and
@@ -72,8 +72,8 @@ final class ServerController: ObservableObject {
         return await controller.saveRuntimeSettings(settings)
     }
 
-    /// Current runtime settings + server liveness for the
-    /// `osaurus_settings` configure tool. Prefers the live controller's
+    /// Current runtime settings + server liveness for the declarative
+    /// configure surface (exporter/applier). Prefers the live controller's
     /// published value (identical to the store snapshot after every
     /// save, but authoritative mid-flight).
     static func runtimeSettingsForConfigureTool() -> (
@@ -85,8 +85,8 @@ final class ServerController: ObservableObject {
         return (ServerRuntimeSettingsStore.snapshot(), false)
     }
 
-    /// Current app-shell configuration for the `osaurus_settings`
-    /// configure tool `get` action. Prefers the live controller's
+    /// Current app-shell configuration for the declarative configure
+    /// surface (exporter). Prefers the live controller's
     /// published value.
     static func appShellSettingsForConfigureTool() -> ServerConfiguration {
         ServerControllerHolder.shared.controller?.configuration
@@ -95,7 +95,7 @@ final class ServerController: ObservableObject {
     }
 
     /// Applies app-shell settings (start at login / hide dock icon) on
-    /// behalf of the `osaurus_settings` configure tool, mirroring the
+    /// behalf of the declarative `osaurus_config` surface, mirroring the
     /// General settings pane: persist, sync the live controller's
     /// published configuration, and (re)register the login item.
     static func applyAppShellSettingsFromConfigureTool(

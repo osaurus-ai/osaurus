@@ -506,7 +506,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         let feed = SubagentFeed(
             toolCallId: parentScope.toolCallId,
             kindId: SubagentCapabilityRegistry.spawn.id,
-            title: "spawn batch (\(jobs.count))"
+            title: "spawn batch (\(jobs.count))",
+            agentId: parentScope.agentId,
+            parentSessionId: parentScope.sessionId
         )
         let interrupt = InterruptToken()
         SubagentFeedRegistry.shared.register(feed)
@@ -902,8 +904,14 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                         )
                         continue
                     }
+                    // Seed the human name so the feed title (captured before
+                    // `resolveModel`) shows the agent, not its UUID.
+                    let agentName = await MainActor.run {
+                        AgentManager.shared.agent(for: agentID)?.name
+                    }
                     kind = TextSubagentKind(
                         agentID: agentID,
+                        agentName: agentName,
                         input: job.input,
                         modelOverride: Self.modelOverrideForTests,
                         permissionPreauthorized: true

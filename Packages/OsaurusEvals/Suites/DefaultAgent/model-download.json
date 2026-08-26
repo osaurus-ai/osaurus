@@ -1,18 +1,19 @@
 {
   "id": "default_agent.model-download",
   "domain": "default_agent",
-  "label": "default agent • download a local MLX model",
-  "query": "Download the MLX model mlx-community/Osaurus-Eval-Fixture-NotReal-4bit.",
-  "notes": "action 'download' with repo_id. The repo id is a non-existent fixture; if classified MLX-compatible by name the background fetch 404s immediately (no real model lands), and the selection assertion matches the emitted call regardless.",
+  "label": "default agent • download a local MLX model (declarative apply)",
+  "query": "Download the MLX model mlx-community/Nanosaur-3B-Instruct-4bit.",
+  "notes": "Models are a desired-state list of repo ids: listing one that isn't installed starts the download. The repo id is a nonexistent fixture with a PLAUSIBLE name — the earlier 'Osaurus-Eval-Fixture-NotReal-4bit' id made grok correctly spot the fake and refuse, so the case measured fake-name detection instead of download routing. If classified MLX-compatible by name the background fetch 404s immediately (no real model lands), and the selection assertion matches the emitted apply regardless.",
   "fixtures": {},
   "expect": {
     "defaultAgent": {
-      "mustCallTools": ["osaurus_model"],
+      "mustCallTools": ["osaurus_config"],
       "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
       "argsMustContain": [
-        { "tool": "osaurus_model", "args": { "action": "download", "repo_id": "Osaurus-Eval-Fixture-NotReal-4bit" } }
+        { "tool": "osaurus_config", "args": { "action": "apply", "yaml": "Nanosaur-3B-Instruct-4bit" } },
+        { "tool": "osaurus_config", "args": { "yaml": "models" } }
       ],
-      "maxIterations": 4
+      "maxIterations": 8
     }
   }
 }

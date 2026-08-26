@@ -291,8 +291,12 @@ struct SystemPromptComposerToolResolutionTests {
 
     @Test("custom plain chat publishes an enabled-tool manifest for the unified gateway")
     func customPlainChatPublishesGatewayAlignedManifest() async {
-        await DynamicCatalogTestLock.shared.run {
-            await withSandboxAgent(autonomous: false) { agentId in
+        // Lock order: Storage → Sandbox (inside `withSandboxAgent`) with the
+        // catalog lock INNERMOST — the canonical nesting (see
+        // `TotalPromptBudgetTests`). Taking the catalog lock outermost here
+        // deadlocks against suites that nest it canonically.
+        await withSandboxAgent(autonomous: false) { agentId in
+            await DynamicCatalogTestLock.shared.run {
                 let fixture = capabilityManifestFixtureTool()
                 ToolRegistry.shared.registerPluginTool(fixture)
                 ToolRegistry.shared.setEnabled(true, for: fixture.name)
@@ -322,8 +326,9 @@ struct SystemPromptComposerToolResolutionTests {
 
     @Test("compact Gemma prompt distinguishes plugin ids from callable tools")
     func compactGemmaPromptTeachesGatewayLoadShape() async {
-        await DynamicCatalogTestLock.shared.run {
-            await withSandboxAgent(autonomous: false) { agentId in
+        // Canonical lock order: Storage → Sandbox → Catalog (innermost).
+        await withSandboxAgent(autonomous: false) { agentId in
+            await DynamicCatalogTestLock.shared.run {
                 let fixture = capabilityManifestFixtureTool()
                 ToolRegistry.shared.registerPluginTool(fixture)
                 ToolRegistry.shared.setEnabled(true, for: fixture.name)
@@ -384,8 +389,9 @@ struct SystemPromptComposerToolResolutionTests {
 
     @Test("custom sandbox keeps manifest static and uses gateway vocabulary in SOUL")
     func customSandboxPublishesGatewayAlignedManifestBeforeDynamics() async {
-        await DynamicCatalogTestLock.shared.run {
-            await withSandboxAgent(autonomous: true) { agentId in
+        // Canonical lock order: Storage → Sandbox → Catalog (innermost).
+        await withSandboxAgent(autonomous: true) { agentId in
+            await DynamicCatalogTestLock.shared.run {
                 let fixture = capabilityManifestFixtureTool()
                 ToolRegistry.shared.registerPluginTool(fixture)
                 ToolRegistry.shared.setEnabled(true, for: fixture.name)

@@ -34,6 +34,18 @@ public final class CurrentTimeTool: OsaurusTool, @unchecked Sendable {
 
     public init() {}
 
+    /// Cancellation audit: the body is synchronous, allocation-only date
+    /// formatting with no I/O, no awaits, and no spawned work — it terminates
+    /// in microseconds, so an owning spawned run drains it trivially.
+    /// (Internal witnesses: the protocol and support enum are internal.)
+    var canExposeToSpawnedOperation: Bool { true }
+
+    func spawnedOperationCancellationSupport(
+        argumentsJSON _: String
+    ) -> SpawnedOperationCancellationSupport {
+        .cooperative
+    }
+
     public func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }

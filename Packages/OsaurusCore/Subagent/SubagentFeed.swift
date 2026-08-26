@@ -134,9 +134,23 @@ public final class SubagentFeed: @unchecked Sendable {
     /// One-line human label for the row header (the goal / task / prompt).
     public let title: String
     public let startedAt: Date
+    /// The agent whose turn launched this run, when the creation site knows
+    /// its `SubagentScope`. Lets global observers (the background-task
+    /// mirror) group the run under the launching agent.
+    public let agentId: UUID?
+    /// The parent chat session's id (from `SubagentScope.sessionId`), when
+    /// known. Lets global observers suppress duplicate reporting while the
+    /// parent chat is visible on screen.
+    public let parentSessionId: String?
+    /// True when this run executes as a REAL dispatched chat session (true
+    /// agent delegation). The dispatched run registers its own background
+    /// task with a working "Open Chat", so `SubagentBackgroundTaskBridge`
+    /// must not adopt this feed as a second notch row.
+    public let suppressNotchMirror: Bool
 
     private let lock = NSLock()
     private var _events: [SubagentActivityEvent] = []
+    private var _delegatedSessionId: String?
     private var eventRevision: UInt64 = 0
     /// Serializes `CurrentValueSubject.send` without holding the event-buffer
     /// lock across subscriber callbacks. Recursive locking keeps a synchronous
@@ -163,11 +177,21 @@ public final class SubagentFeed: @unchecked Sendable {
     private nonisolated(unsafe) let eventsSubject: CurrentValueSubject<[SubagentActivityEvent], Never>
     private nonisolated(unsafe) let statusSubject: CurrentValueSubject<SubagentRunStatus, Never>
 
-    public convenience init(toolCallId: String, kindId: String, title: String) {
+    public convenience init(
+        toolCallId: String,
+        kindId: String,
+        title: String,
+        agentId: UUID? = nil,
+        parentSessionId: String? = nil,
+        suppressNotchMirror: Bool = false
+    ) {
         self.init(
             toolCallId: toolCallId,
             kindId: kindId,
             title: title,
+            agentId: agentId,
+            parentSessionId: parentSessionId,
+            suppressNotchMirror: suppressNotchMirror,
             beforeEventPublicationForTesting: nil
         )
     }
@@ -176,12 +200,18 @@ public final class SubagentFeed: @unchecked Sendable {
         toolCallId: String,
         kindId: String,
         title: String,
+        agentId: UUID? = nil,
+        parentSessionId: String? = nil,
+        suppressNotchMirror: Bool = false,
         beforeEventPublicationForTesting:
             (@Sendable (_ revision: UInt64) -> Void)?
     ) {
         self.toolCallId = toolCallId
         self.kindId = kindId
         self.title = title
+        self.agentId = agentId
+        self.parentSessionId = parentSessionId
+        self.suppressNotchMirror = suppressNotchMirror
         self.startedAt = Date()
         self.beforeEventPublicationForTesting =
             beforeEventPublicationForTesting
@@ -338,6 +368,25 @@ public final class SubagentFeed: @unchecked Sendable {
         return "…\n" + String(value.suffix(maxStreamingDetailCharacters))
     }
 
+    /// The persisted chat session id of the delegated child run, once the
+    /// dispatcher has created it. Lets the in-chat spawn card offer an
+    /// "open chat" affordance for a true-delegation run.
+    public var delegatedSessionId: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return _delegatedSessionId
+    }
+
+    /// Record the delegated child's chat session id (thread-safe, one-shot in
+    /// practice). Re-publishes the event snapshot so bound rows refresh.
+    public func setDelegatedSessionId(_ sessionId: String) {
+        lock.lock()
+        _delegatedSessionId = sessionId
+        lock.unlock()
+        // Nudge subscribers so a bound card re-reads `delegatedSessionId`.
+        mutateEvents { _ in }
+    }
+
     /// Mark the run finished. Idempotent.
     public func finish(success: Bool, summary: String) {
         if case .finished = statusSubject.value { return }
@@ -363,6 +412,14 @@ public final class SubagentFeedRegistry: @unchecked Sendable {
         [:])
 
     private init() {}
+
+    #if DEBUG
+        /// Test-only: an isolated registry so bridge/observer suites never
+        /// race feeds registered on `.shared` by concurrently-running tests.
+        public static func makeForTesting() -> SubagentFeedRegistry {
+            SubagentFeedRegistry()
+        }
+    #endif
 
     /// Grace window between `unregister` and the feed being dropped, so a
     /// late-mounting row still binds, replays events, and sees the final

@@ -1,9 +1,9 @@
 {
   "id": "default_agent.schedule-create-weekly",
   "domain": "default_agent",
-  "label": "default agent • create a weekly schedule",
-  "query": "Every Monday at 09:30, have the agent e3a7c1d4-5b29-4f80-9a6e-1c8d2f5b3079 post a weekly report. Set that up.",
-  "notes": "action 'create' with frequency 'weekly' (frequency_value names a weekday, frequency_time_of_day=09:30). The weekly parser accepts a full day name (\"Monday\") or the 3-letter form (\"MON\") — the eval matrix surfaced that a MON-only parser sent the model into a retry loop since it naturally emits \"Monday\". A custom agent is seeded at the referenced id so create SUCCEEDS (correct weekly mapping + a real schedule) instead of looping on a not-found agent — the agent is torn down after the case. The selection assertion pins action + the weekly frequency enum, proving the model maps \"every Monday\" onto weekly rather than daily/cron.",
+  "label": "default agent • create a weekly schedule (declarative apply)",
+  "query": "Every Monday at 09:30, have the agent \"Eval Reporter Agent\" post a weekly report. Set that up.",
+  "notes": "osaurus_config apply with a schedules entry using frequency 'weekly' (frequency_value names a weekday, frequency_time_of_day=09:30). The weekly parser accepts a full day name (\"Monday\") or the 3-letter form (\"MON\") — the eval matrix surfaced that a MON-only parser sent the model into a retry loop since it naturally emits \"Monday\". The referenced agent is seeded so create SUCCEEDS — the agent is torn down after the case. The selection assertion pins the weekly frequency, proving the model maps \"every Monday\" onto weekly rather than daily/cron.",
   "fixtures": {
     "seedAgents": [
       { "id": "e3a7c1d4-5b29-4f80-9a6e-1c8d2f5b3079", "name": "Eval Reporter Agent" }
@@ -11,12 +11,12 @@
   },
   "expect": {
     "defaultAgent": {
-      "mustCallTools": ["osaurus_schedule"],
+      "mustCallTools": ["osaurus_config"],
       "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
       "argsMustContain": [
-        { "tool": "osaurus_schedule", "args": { "action": "create", "frequency": "weekly" } }
+        { "tool": "osaurus_config", "args": { "action": "apply", "yaml": "weekly" } }
       ],
-      "maxIterations": 6
+      "maxIterations": 8
     }
   }
 }

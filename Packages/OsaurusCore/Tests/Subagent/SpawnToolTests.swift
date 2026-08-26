@@ -17,14 +17,33 @@ import Testing
 
 struct SpawnToolTests {
 
-    @Test func childToolNamesFoldInKnowledgeBuiltins() {
+    private func capabilities(
+        webSearch: Bool = false,
+        knowledge: Bool = false,
+        curator: Bool = false
+    ) -> AgentCapabilities {
+        AgentCapabilities(
+            toolsEnabled: true,
+            memoryEnabled: false,
+            dbEnabled: false,
+            renderChartEnabled: false,
+            speakEnabled: false,
+            searchMemoryEnabled: false,
+            webSearchEnabled: webSearch,
+            selfSchedulingEnabled: false,
+            knowledgeEnabled: knowledge,
+            knowledgeCuratorEnabled: curator
+        )
+    }
+
+    @Test func childToolNamesFoldInCapabilityGatedBuiltins() {
         // A knowledge (non-curator) agent's spawned child carries the knowledge
         // read/annotate tools even with an EMPTY manual allowlist — they are
         // feature-gated builtins, not manual-list entries, so without this fold a
         // spawned knowledge agent would be silently tool-less.
         let knowledge = Set(
             TextSubagentKind.childToolNames(
-                manual: [], knowledgeEnabled: true, knowledgeCuratorEnabled: false
+                manual: [], capabilities: capabilities(knowledge: true)
             )
         )
         #expect(knowledge.contains("list_knowledge"))
@@ -37,29 +56,45 @@ struct SpawnToolTests {
         // A curator agent additionally carries the proposal/ticket tools.
         let curator = Set(
             TextSubagentKind.childToolNames(
-                manual: [], knowledgeEnabled: true, knowledgeCuratorEnabled: true
+                manual: [], capabilities: capabilities(knowledge: true, curator: true)
             )
         )
         #expect(curator.contains("propose_knowledge_update"))
         #expect(curator.contains("update_knowledge_ticket"))
 
-        // Knowledge off → the manual allowlist only, no knowledge tools.
-        let plain = Set(
+        // Web Search on rides into the child even when the seeded/manual
+        // allowlist predates the capability and never listed the tools —
+        // mirroring direct chat, where the toggle applies on top of the
+        // allowlist. (Regression: a seeded allowlist without `web_search`
+        // left the spawned helper unable to search despite the toggle.)
+        let webSearch = Set(
             TextSubagentKind.childToolNames(
-                manual: ["read_file"], knowledgeEnabled: false, knowledgeCuratorEnabled: false
+                manual: ["read_file"], capabilities: capabilities(webSearch: true)
             )
         )
-        #expect(plain == ["read_file"])
+        #expect(webSearch.contains("web_search"))
+        #expect(webSearch.contains("search_and_extract"))
+        #expect(webSearch.contains("read_file"))
+
+        // All capability toggles off → the manual allowlist plus the
+        // unconditional worker baseline (time + `share_artifact`, the
+        // worker's only artifact-delivery path).
+        let plain = Set(
+            TextSubagentKind.childToolNames(
+                manual: ["read_file"], capabilities: capabilities()
+            )
+        )
+        #expect(plain == ["get_current_time", "read_file", "share_artifact"])
+        #expect(!plain.contains("web_search"))
 
         // Spawn-capability tools and `clarify` are always dropped for children.
         let filtered = Set(
             TextSubagentKind.childToolNames(
                 manual: ["read_file", "clarify", SubagentCapabilityRegistry.spawnAgentToolName],
-                knowledgeEnabled: false,
-                knowledgeCuratorEnabled: false
+                capabilities: capabilities()
             )
         )
-        #expect(filtered == ["read_file"])
+        #expect(filtered == ["get_current_time", "read_file", "share_artifact"])
     }
 
     @Test func refusesRecursion() async throws {
@@ -197,6 +232,46 @@ struct SpawnToolTests {
         #expect(expected.contains("complete standalone task"))
         #expect(expected.contains("cannot see the parent chat"))
         #expect(expected.contains("Never refer to a previous/earlier message"))
+    }
+
+    @Test func singleSpawnToolsExposeOptionalBackgroundParameter() throws {
+        func backgroundProperty(_ tool: any OsaurusTool) throws -> [String: JSONValue] {
+            guard case .object(let root)? = tool.parameters,
+                case .object(let properties)? = root["properties"],
+                case .object(let background)? = properties["background"]
+            else {
+                Issue.record("Expected a `background` property on \(tool.name)")
+                return [:]
+            }
+            // Optional: `background` must never join the required list.
+            if case .array(let required)? = root["required"] {
+                #expect(!required.contains(.string("background")))
+            }
+            return background
+        }
+
+        for tool in [SpawnAgentTool(), SpawnModelTool()] as [any OsaurusTool] {
+            let background = try backgroundProperty(tool)
+            #expect(background["type"] == .string("boolean"))
+            guard case .string(let description)? = background["description"] else {
+                Issue.record("Expected a string `background` description on \(tool.name)")
+                continue
+            }
+            #expect(description == SpawnInputContract.backgroundParameterDescription)
+        }
+        #expect(
+            SpawnInputContract.backgroundParameterDescription.contains("returns immediately")
+        )
+        #expect(
+            SpawnInputContract.backgroundParameterDescription.contains("follow-up message")
+        )
+
+        // spawn_batch stays synchronous — no background knob in its schema.
+        if case .object(let root)? = SpawnBatchTool().parameters,
+            case .object(let properties)? = root["properties"]
+        {
+            #expect(properties["background"] == nil)
+        }
     }
 
     @Test func allSpawnSurfacesDoNotLexicallyRejectParentReferencePhrases() {

@@ -96,24 +96,13 @@ struct ConfigurationDomainRegistryTests {
         ConfigurationDomainBootstrap.registerBuiltIns()
 
         let configureWrites = ToolRegistry.configureWriteToolNames
-        // Provider, model, MCP, search, plugin, schedule, watcher, agent, and
-        // settings domains each contribute exactly one consolidated
-        // `osaurus_*` write tool.
-        #expect(configureWrites.contains("osaurus_provider"))
-        #expect(configureWrites.contains("osaurus_model"))
-        #expect(configureWrites.contains("osaurus_mcp"))
-        #expect(configureWrites.contains("osaurus_search"))
-        #expect(configureWrites.contains("osaurus_plugin"))
-        #expect(configureWrites.contains("osaurus_schedule"))
-        #expect(configureWrites.contains("osaurus_watcher"))
-        #expect(configureWrites.contains("osaurus_agent"))
-        #expect(configureWrites.contains("osaurus_settings"))
+        // Since the declarative consolidation the entire write surface is
+        // exactly one tool.
+        #expect(configureWrites == ["osaurus_config"])
 
         let configureAll = ToolRegistry.configureToolNames
         #expect(configureAll.isSuperset(of: configureWrites))
-        #expect(configureAll.contains("osaurus_status"))
-        #expect(configureAll.contains("osaurus_list"))
-        #expect(configureAll.contains("osaurus_describe"))
+        #expect(configureAll.contains("osaurus_inspect"))
         #expect(configureAll.contains("osaurus_help"))
     }
 
@@ -131,51 +120,49 @@ struct ConfigurationDomainRegistryTests {
         ConfigurationDomainBootstrap.registerBuiltIns()
 
         let builtIn = ToolRegistry.shared.builtInToolNames
-        // The consolidated provider/model/etc. tools must end up flagged
-        // built-in so the Default-agent baseline + capability infrastructure
-        // can reach them.
-        #expect(builtIn.contains("osaurus_provider"))
-        #expect(builtIn.contains("osaurus_model"))
-        #expect(builtIn.contains("osaurus_schedule"))
-        #expect(builtIn.contains("osaurus_agent"))
+        // The declarative config tool must end up flagged built-in so the
+        // Default-agent baseline + capability infrastructure can reach it.
+        #expect(builtIn.contains("osaurus_config"))
     }
 
     @Test
-    func defaultAgentAllowedToolNames_isTheConsolidatedConfigureSurfacePlusLoop() {
-        // The Default-agent baseline is a hard product contract: the
-        // consolidated configure surface (4 reads + 9 per-domain writes)
-        // plus the three agent-loop tools and native `web_search`, and
-        // NOTHING else. In particular the capability-search gateway is no
-        // longer part of it. Changing this set changes the model's
-        // first-turn schema and must be reviewed deliberately.
+    func orchestratorAllowedToolNames_isTheConsolidatedConfigureSurfacePlusLoop() {
+        // The orchestrator (Default agent) baseline is a hard product
+        // contract: the consolidated configure surface (2 reads + the single
+        // declarative write) plus the three agent-loop tools,
+        // `get_current_time`, and the native search pair (`web_search` /
+        // `search_and_extract` — quick lookups run in the orchestrator's own
+        // loop; heavy research still dispatches to workers), and NOTHING
+        // else. The capability-search gateway is not part of it. Changing
+        // this set changes the model's first-turn schema and must be
+        // reviewed deliberately.
         ConfigurationDomainBootstrap._resetForTests()
         ConfigurationDomainBootstrap.registerBuiltIns()
         defer { ConfigurationDomainBootstrap._resetForTests() }
 
         let expected: Set<String> = [
-            "osaurus_status",
-            "osaurus_list",
-            "osaurus_describe",
+            "osaurus_inspect",
             "osaurus_help",
-            "osaurus_provider",
-            "osaurus_model",
-            "osaurus_mcp",
-            "osaurus_search",
-            "osaurus_plugin",
-            "osaurus_schedule",
-            "osaurus_watcher",
-            "osaurus_agent",
-            "osaurus_settings",
+            "osaurus_config",
             "todo",
             "complete",
             "clarify",
-            "web_search",
             "get_current_time",
+            "web_search",
+            "search_and_extract",
         ]
-        #expect(ToolRegistry.defaultAgentAllowedToolNames == expected)
+        #expect(ToolRegistry.orchestratorAllowedToolNames == expected)
         // The capability-search gateway is explicitly NOT in the Default
         // agent's surface anymore (it stays available to custom agents).
-        #expect(!ToolRegistry.defaultAgentAllowedToolNames.contains("capabilities_discover"))
-        #expect(!ToolRegistry.defaultAgentAllowedToolNames.contains("capabilities_load"))
+        #expect(!ToolRegistry.orchestratorAllowedToolNames.contains("capabilities_discover"))
+        #expect(!ToolRegistry.orchestratorAllowedToolNames.contains("capabilities_load"))
+        // Orchestrator/worker split: worker-owned tools never intersect the
+        // orchestrator allowlist, and the worker baseline carries the
+        // artifact-delivery tool.
+        #expect(
+            ToolRegistry.orchestratorAllowedToolNames
+                .isDisjoint(with: ToolRegistry.orchestratorExcludedToolNames)
+        )
+        #expect(ToolRegistry.spawnedWorkerBaselineToolNames.contains("share_artifact"))
     }
 }

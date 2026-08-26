@@ -41,6 +41,11 @@ final class SubagentFeedObserver: ObservableObject {
     /// say "N earlier steps" instead of silently starting mid-run.
     @Published private(set) var truncatedEventCount = 0
     @Published private(set) var status: SubagentRunStatus = .running
+    /// The delegated child's persisted chat session id, once the true-
+    /// delegation dispatcher created it. Drives the card's "Open Chat"
+    /// affordance. Refreshed on event ticks — `setDelegatedSessionId`
+    /// republishes the event snapshot exactly so late subscribers see it.
+    @Published private(set) var delegatedSessionId: UUID?
     /// Wall-clock the run finished at, captured the moment status flips to
     /// `.finished`, so the header timer freezes on a stable final duration.
     @Published private(set) var finishedAt: Date?
@@ -52,14 +57,17 @@ final class SubagentFeedObserver: ObservableObject {
     let startedAt: Date
 
     private var cancellables: Set<AnyCancellable> = []
+    private let feed: SubagentFeed
 
     init(feed: SubagentFeed) {
+        self.feed = feed
         self.toolCallId = feed.toolCallId
         self.kindId = feed.kindId
         self.title = feed.title
         self.startedAt = feed.startedAt
         let initialEvents = feed.currentEvents()
         let initialStatus = feed.currentStatus()
+        self.delegatedSessionId = feed.delegatedSessionId.flatMap(UUID.init(uuidString:))
         self.apply(initialEvents)
         self.status = initialStatus
         if case .finished = initialStatus {
@@ -97,6 +105,11 @@ final class SubagentFeedObserver: ObservableObject {
         } else {
             truncatedEventCount = 0
             events = snapshot
+        }
+        if delegatedSessionId == nil,
+            let id = feed.delegatedSessionId.flatMap(UUID.init(uuidString:))
+        {
+            delegatedSessionId = id
         }
     }
 
@@ -184,6 +197,24 @@ struct SubagentFeedView: View {
             }
             Spacer()
             elapsedLabel
+            if let sessionId = observer.delegatedSessionId {
+                Button(action: { Self.openDelegatedChat(sessionId) }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "bubble.left.and.text.bubble.right")
+                            .font(.system(size: 9))
+                        Text("Open Chat", bundle: .module)
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(theme.accentColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule().fill(theme.accentColor.opacity(0.12))
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(Text("Open the delegated agent's chat session", bundle: .module))
+            }
             if observer.isRunning {
                 Button(action: { observer.stop() }) {
                     HStack(spacing: 4) {
@@ -288,6 +319,35 @@ struct SubagentFeedView: View {
                 }
             }
             Spacer(minLength: 0)
+        }
+    }
+
+    /// Open the delegated child's chat session: attach to the live
+    /// background task mid-run (same window-binding path as the notch's
+    /// Open Chat), else focus an already-open window, else hydrate the
+    /// persisted session from the store.
+    @MainActor
+    static func openDelegatedChat(_ sessionId: UUID) {
+        let manager = BackgroundTaskManager.shared
+        if let live = manager.liveTask(forSessionId: sessionId) {
+            manager.openTaskWindow(live.id)
+            return
+        }
+        // Dispatched runs align task id and session id, and openTaskWindow
+        // also rehydrates a retained (dehydrated) terminal tab.
+        if manager.isBackgroundTask(sessionId) {
+            manager.openTaskWindow(sessionId)
+            return
+        }
+        if let existing = ChatWindowManager.shared.findWindow(bySessionId: sessionId) {
+            ChatWindowManager.shared.showWindow(id: existing.id)
+            return
+        }
+        if let sessionData = ChatSessionStore.load(id: sessionId) {
+            ChatWindowManager.shared.createWindow(
+                agentId: sessionData.agentId,
+                sessionData: sessionData
+            )
         }
     }
 

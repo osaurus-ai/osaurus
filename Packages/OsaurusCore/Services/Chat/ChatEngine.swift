@@ -371,6 +371,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         effectiveModel: String,
         stream: Bool
     ) {
+        // Warmup prefills replay conversation history to heat the KV cache;
+        // they are not a user message even when that history happens to end
+        // with a user turn.
+        guard !request.warmupPrefill else { return }
         guard FeatureTelemetry.isPrimaryUserTurn(request.messages) else { return }
         let info = FeatureTelemetry.messageInfo(
             service: service,
@@ -566,8 +570,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
     private static func canonicalToolArgumentsJSON(
         _ json: String,
-        schema: JSONValue? = nil,
-        toolName: String? = nil
+        schema: JSONValue? = nil
     ) -> String {
         let candidates = [
             json,
@@ -582,20 +585,19 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             return json
         }
         let normalized = normalizeNestedJSONStringValues(object)
+        // Schema-invalid arguments are preserved (coerced but NOT replaced):
+        // this string becomes both the assistant's recorded tool call and the
+        // executed invocation. Substituting an `_error` sentinel here destroyed
+        // the model's real arguments, so tool-level recovery never saw them,
+        // and models pattern-matched the sentinel from their own history and
+        // re-emitted it as arguments on later calls. Enforcement lives at
+        // execution time: `ToolRegistry.preflight` re-validates and returns a
+        // typed `invalid_args` envelope after the tool's own
+        // `normalizeArgumentsBeforeValidation` has had a chance to repair the
+        // call.
         let coerced: Any
         if let schema {
-            let candidate = SchemaValidator.coerceArguments(normalized, against: schema)
-            let result = SchemaValidator.validate(arguments: candidate, against: schema)
-            if result.isValid {
-                coerced = candidate
-            } else if let invalid = invalidToolArgumentsJSON(
-                toolName: toolName,
-                result: result
-            ) {
-                return invalid
-            } else {
-                coerced = normalized
-            }
+            coerced = SchemaValidator.coerceArguments(normalized, against: schema)
         } else {
             coerced = normalized
         }
@@ -604,33 +606,6 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             let string = String(data: data, encoding: .utf8)
         else {
             return json
-        }
-        return string
-    }
-
-    private static func invalidToolArgumentsJSON(
-        toolName: String?,
-        result: SchemaValidator.ValidationResult
-    ) -> String? {
-        var object: [String: Any] = [
-            "_error": "invalid_tool_arguments",
-            "_message": result.errorMessage ?? "invalid tool arguments",
-            "_expected": "schema-compliant arguments",
-        ]
-        if let field = result.field {
-            object["_field"] = field
-        }
-        if let toolName {
-            object["_tool"] = toolName
-        }
-        guard
-            let data = try? JSONSerialization.data(
-                withJSONObject: object,
-                options: .osaurusCanonical
-            ),
-            let string = String(data: data, encoding: .utf8)
-        else {
-            return nil
         }
         return string
     }
@@ -701,8 +676,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     name: inv.toolName,
                     arguments: canonicalToolArgumentsJSON(
                         inv.jsonArguments,
-                        schema: schemasByName[inv.toolName] ?? nil,
-                        toolName: inv.toolName
+                        schema: schemasByName[inv.toolName] ?? nil
                     )
                 ),
                 geminiThoughtSignature: inv.geminiThoughtSignature

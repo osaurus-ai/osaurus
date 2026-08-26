@@ -6,20 +6,21 @@ order: 120
 
 # Settings Overview
 
-Osaurus settings live in the Management window (⌘⇧M). The built-in assistant can change many of them directly in chat via its settings tool — each change shows a one-tap approval card first.
+Osaurus settings live in the Management window (⌘⇧M). The built-in assistant can change many of them directly in chat via its `osaurus_config` tool, which plans and applies a declarative YAML document — each change shows a one-tap approval card first (see the Declarative Configuration topic).
 
 ## What the assistant can change in chat
 
-- Server: port, expose to network, generation defaults (temperature, top-p, top-k, max tokens), continuous batching, max concurrent sequences, prefix/paged-KV/disk cache toggles. Port and exposure changes restart the server; cache changes unload loaded models.
 - Default agent (itself): model, temperature, max tokens, persona (system prompt).
-- Chat: top-p, max tool attempts, context length, warm models on load, auto-generated chat titles, clipboard monitoring.
-- App: start at login, hide dock icon (takes effect after app restart), appearance (system / light / dark).
 - Memory: enabled, budget tokens, retention days.
-- Plus everything covered by the other configure tools: models, providers, MCP, plugins, schedules, agents, and web-search providers.
+- Agents: create/update custom agents, capability toggles, the active agent.
+- Tools: global enablement and permission policies; delegation settings and child budgets.
+- Plus everything else the declarative document covers: models, providers, MCP servers, plugins, commands, knowledge collections, channel routing, schedules, watchers, and web-search providers.
 
 ## What lives only in the Settings UI
 
-- General: global hotkey, core model for background jobs, notifications/toasts.
+- Server: port, expose to network, generation defaults, batching/concurrency, prefix/paged-KV/disk cache toggles, memory safety, model exposure. (Port and exposure changes restart the server; cache changes unload loaded models.)
+- Chat behavior: core model for background jobs, context length, chat titles, clipboard monitoring.
+- App: start at login, hide dock icon, appearance, global hotkey, notifications/toasts.
 - Voice: speech-to-text models, dictation, wake phrase, text-to-speech engine and voice.
 - Themes: theme gallery, custom theme editor, import/export.
 - Computer Use / Browser / Sandbox: autonomy presets, app allowlists, resources.

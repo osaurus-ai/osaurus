@@ -7,7 +7,7 @@
 //  `default_agent` domain. It exists so the eval runner can prove the
 //  Default agent's stability end to end: with the agent pinned, the
 //  composer resolves exactly the consolidated configure surface
-//  (`osaurus_status` / `osaurus_list` / `osaurus_describe` reads + the
+//  (the `osaurus_inspect` read + the
 //  per-domain `osaurus_*` write tools) plus the agent-loop tools — and
 //  NOTHING else — so a case can assert which tools the model calls, the
 //  arguments it passes, and that out-of-scope asks route to creating or
@@ -40,11 +40,11 @@ public enum DefaultAgentConfigurationEvaluator {
     /// `model` defaults to whatever `ChatConfigurationStore` currently
     /// routes to (set by the eval runner's `ModelOverride`).
     /// Wall-clock budget for any single configure-tool execution before the
-    /// harness abandons it and feeds the model a typed timeout error. The
-    /// Default agent's write tools mostly mutate local state (fast) or open a
-    /// credential sheet that the eval bypass resolves instantly, but a few
-    /// reach live services — `osaurus_model` download probes Hugging Face,
-    /// `osaurus_plugin` install hits the registry, `osaurus_mcp` add connects
+    /// harness abandons it and feeds the model a typed timeout error. An
+    /// `osaurus_config` apply mostly mutates local state (fast) or opens a
+    /// credential sheet that the eval bypass resolves instantly, but some
+    /// sections reach live services — a `models:` entry probes Hugging Face,
+    /// a `plugins:` entry hits the registry, an `mcp_servers:` entry connects
     /// the server. With no/slow network those awaits would otherwise stall the
     /// whole suite. 25s is far longer than any healthy local op yet bounds a
     /// hung network call. The tool CALL is recorded before execution, so
@@ -56,19 +56,18 @@ public enum DefaultAgentConfigurationEvaluator {
         maxIterations: Int = 6,
         model: String? = nil
     ) async -> CapabilityClaimsTranscript {
-        // The consolidated configure write tools (`osaurus_provider`, …) are
-        // registered into `ToolRegistry` lazily by the domain bootstrap, not
-        // as static built-ins. The host app calls this from
+        // The configure tools (`osaurus_config` + the reads) are registered
+        // into `ToolRegistry` lazily by the domain bootstrap, not as static
+        // built-ins. The host app calls this from
         // `applicationDidFinishLaunching`, but the out-of-process eval CLI
         // does not run AppDelegate — so without this idempotent call a
         // `default_agent` run would compose a Default agent that can only see
-        // the three reads + loop tools, and every `mustCallTools` write case
-        // would fail for "tool not in schema" reasons that have nothing to do
-        // with the model. Idempotent (latched + registry-deduped).
+        // the loop tools, and every `mustCallTools` case would fail for
+        // "tool not in schema" reasons that have nothing to do with the
+        // model. Idempotent (latched + registry-deduped).
         ConfigurationDomainBootstrap.registerBuiltIns()
 
-        // The Default agent's configure surface is almost entirely WRITE tools
-        // (`osaurus_provider`, `osaurus_model`, …), which carry an `.ask`
+        // The configure write (`osaurus_config`) carries an `.ask`
         // permission policy. Production gates each write behind a one-tap
         // approval; the headless eval has no UI, so without this bypass the
         // first write tool call suspends forever on `ToolPermissionPromptService`

@@ -19,10 +19,13 @@ import Foundation
 
 @MainActor
 public enum DefaultAgentSystemPromptBuilder {
-    private static var cachedGeneration: Int = -1
-    private static var cachedAddendum: String = ""
-    private static var cachedCompactGeneration: Int = -1
-    private static var cachedCompactAddendum: String = ""
+    /// Memoized addendum per compact variant, each slot tagged
+    /// with the registry generation it rendered from.
+    private struct CacheSlot {
+        var generation: Int = -1
+        var addendum: String = ""
+    }
+    private static var cache: [String: CacheSlot] = [:]
 
     /// Render (or return the cached) addendum. Memoized against
     /// `ConfigurationDomainRegistry.shared.generation` so the prompt
@@ -30,22 +33,20 @@ public enum DefaultAgentSystemPromptBuilder {
     /// regenerated exactly once when a new domain registers.
     ///
     /// `compact` renders the leaner variant for small local models
-    /// (`prefersCompactPrompt`) — same tool surface, trimmed prose —
-    /// memoized on its own cache slot so toggling model size mid-app
-    /// doesn't thrash the full-variant cache.
+    /// (`prefersCompactPrompt`) — same tool surface, trimmed prose.
+    /// Each compact variant memoizes on its own cache slot so
+    /// switching model size mid-app doesn't thrash the other.
     public static func render(compact: Bool = false) -> String {
         let generation = ConfigurationDomainRegistry.shared.generation
-        if compact {
-            if generation == cachedCompactGeneration { return cachedCompactAddendum }
-            let rendered = build(from: ConfigurationDomainRegistry.shared.domains, compact: true)
-            cachedCompactGeneration = generation
-            cachedCompactAddendum = rendered
-            return rendered
+        let key = "\(compact)"
+        if let slot = cache[key], slot.generation == generation {
+            return slot.addendum
         }
-        if generation == cachedGeneration { return cachedAddendum }
-        let rendered = build(from: ConfigurationDomainRegistry.shared.domains, compact: false)
-        cachedGeneration = generation
-        cachedAddendum = rendered
+        let rendered = build(
+            from: ConfigurationDomainRegistry.shared.domains,
+            compact: compact
+        )
+        cache[key] = CacheSlot(generation: generation, addendum: rendered)
         return rendered
     }
 
@@ -53,20 +54,23 @@ public enum DefaultAgentSystemPromptBuilder {
     /// list of domains without touching the shared registry / cache.
     /// Internal because `ConfigurationDomain` itself is internal —
     /// tests reach this through `@testable import OsaurusCore`.
-    static func _renderForTests(domains: [ConfigurationDomain], compact: Bool = false) -> String {
+    static func _renderForTests(
+        domains: [ConfigurationDomain],
+        compact: Bool = false
+    ) -> String {
         build(from: domains, compact: compact)
     }
 
     /// Test-only: forget the memoized value so the next `render()`
     /// rebuilds. Use alongside `ConfigurationDomainRegistry._resetForTests()`.
     public static func _resetForTests() {
-        cachedGeneration = -1
-        cachedAddendum = ""
-        cachedCompactGeneration = -1
-        cachedCompactAddendum = ""
+        cache = [:]
     }
 
-    private static func build(from domains: [ConfigurationDomain], compact: Bool) -> String {
+    private static func build(
+        from domains: [ConfigurationDomain],
+        compact: Bool
+    ) -> String {
         // Write tools are listed straight from the registry (sorted for a
         // byte-stable, KV-cacheable prefix). Each tool's own schema carries its
         // `action` enum and per-action required fields, so the prompt only needs
@@ -78,20 +82,10 @@ public enum DefaultAgentSystemPromptBuilder {
             .joined(separator: ", ")
 
         if compact {
-            // Small local models pay a long prefill for tool schemas, so the
-            // per-domain write tools are DEFERRED from the turn-1 schema (in
-            // `SystemPromptComposer.resolveTools`). Name them here so the model
-            // loads the one it needs by name in a single round-trip — no
-            // `capabilities_discover` step. `osaurus_agent` stays loaded, so the
-            // "if it isn't already available" clause lets the model call it
-            // directly for the out-of-scope handoff.
-            //
-            // Each write tool carries its domain's one-line `menuHint`:
-            // deferring the schemas removed the ONLY text that said what each
-            // tool does, and a 12B model reading the bare name `osaurus_model`
-            // refused "download the MLX model …" as out-of-scope web work.
-            // The full variant doesn't need this — its writes ship complete
-            // schemas in turn 1.
+            // One declarative write tool since the consolidation. Its schema
+            // ships compacted on small models, so the menuHint line here is
+            // the text that says what it does, and the workflow line spells
+            // out the schema → plan → apply loop the compact schema can't.
             let writeToolLines =
                 domains
                 .flatMap { domain in
@@ -103,12 +97,22 @@ public enum DefaultAgentSystemPromptBuilder {
             var lines: [String] = []
             lines.append("# Osaurus Assistant")
             lines.append("")
+            // Tool names get explicit action shapes and the lookup tools
+            // are never called "read tools"/"Reads" as a noun: small
+            // models turned that framing into invented `<read>` call
+            // markup instead of real tool calls.
             lines.append(
                 "You are Osaurus's built-in assistant: you configure Osaurus and answer "
-                    + "questions about it. Reads are always available; call them directly "
-                    + "(no loading step): `osaurus_status`, `osaurus_list`, `osaurus_describe` "
-                    + "for the current configuration; `osaurus_help` for how Osaurus and its "
-                    + "features work — read the matching topic, then answer from its text."
+                    + "questions about it. Look things up any time, directly (no loading "
+                    + "step): `osaurus_inspect` ({action: 'status' | 'list' | 'describe'}) "
+                    + "for the current configuration; `osaurus_help` ({action: 'topics' | "
+                    + "'read', topic: ...}) for how Osaurus and its features work — for "
+                    + "ANY question about Osaurus or a feature, ALWAYS call `osaurus_help` "
+                    + "first and answer from its text, never from memory: read the "
+                    + "matching topic, or list `topics` when no single topic fits (a "
+                    + "broad \"what can Osaurus do?\" tour). Web tools (`web_search`, "
+                    + "`search_and_extract`) are for the outside world only — never for "
+                    + "Osaurus features, configuration, models, or plugins."
             )
             lines.append("")
             if writeToolLines.isEmpty {
@@ -116,43 +120,79 @@ public enum DefaultAgentSystemPromptBuilder {
             } else {
                 lines.append("Change tools:")
                 lines.append(contentsOf: writeToolLines)
-                // The read-exclusion lives HERE, at the load decision site,
-                // not only in the intro: gemma-12B live runs read the old
-                // "if the one you need isn't already available, load it"
-                // as covering reads too, and opened read-only turns with
-                // `capabilities_load` ids=[tool/osaurus_status, …] — or
-                // loaded a WRITE tool (`osaurus_schedule`) just to list
-                // schedules — burning tight iteration budgets into empty
-                // finals.
                 lines.append(
-                    "These change tools load on demand (keeps startup fast): if the "
-                        + "change tool you need isn't already available, call "
-                        + "`capabilities_load` with `tool/<name>` "
-                        + "(e.g. `tool/osaurus_provider`), then call it with an `action` "
-                        + "(its schema lists actions + fields). Loading is for change "
-                        + "tools only — reads never need it: to look anything up "
-                        + "(schedules, MCP, plugins, providers, models, agents) call the "
-                        + "read tools directly."
+                    // The write mechanics (apply-only, delete via keep-list +
+                    // prune tool argument, set_api_key, no confirmation asks)
+                    // are stated once in `ConfigurationReadNextStep
+                    // .writeContract` and shared with every read-envelope
+                    // hint, so prompt and tool results can never disagree.
+                    // The roster renders from ConfigSectionID so it can never
+                    // drift from the real schema: without it small models
+                    // conclude features like slash commands "can't be
+                    // configured" because no read result names the section.
+                    "Document sections: \(ConfigSectionID.allNames.joined(separator: ", ")). "
+                        + ConfigurationReadNextStep.writeContract + " "
+                        + "Read results include the relevant section's `yaml_shape`; when they "
+                        + "don't, call {action: 'schema', sections: ['<section>']} first. "
+                        // The install-vs-use split lived in the compact prompt through
+                        // the iterations-4-8 recovery and was demoted to the full
+                        // variant in the Gap 0.5 consolidation — the frozen runs
+                        // showed the 9B needs it in-prompt (model-download and
+                        // settings-default-agent-model regressed without it), so
+                        // it is compact-resident again. USE leads, install second:
+                        // 'set your/my model to X' must map to `default_agent.model`,
+                        // not to an install-first detour that defers the switch.
+                        + "'Set your/my/the agent's model to X' = apply `default_agent: "
+                        + "{model: X}` (the Default agent) or `agents[].model` (a custom "
+                        + "agent) — do that even when X is not installed yet; `foundation` "
+                        + "is always a valid model value. Installing is separate: adding a "
+                        + "repo id to the `models:` list starts its download (you CAN do "
+                        + "that from here, in the same apply when needed). "
+                        + "For a normal single change call apply directly — reserve "
+                        + "{action: 'plan'} for big or destructive changes, and a plan is a "
+                        + "dry run that changes NOTHING: after a plan you MUST still call "
+                        + "apply, and a change is only done when an apply result says applied "
+                        + "— never report a planned change as done. After at most a couple of "
+                        + "lookups you have enough to act — compose the YAML and apply it; do "
+                        + "not keep inspecting. `osaurus_config` is for changes only — to look "
+                        + "anything up (schedules, MCP, plugins, providers, models, agents) call "
+                        + "`osaurus_inspect` or `osaurus_help` directly. Server runtime, chat "
+                        + "behavior, and app settings (port, caches, login item, dock icon) are "
+                        + "changed in the Settings UI, not here — point the user there and "
+                        + "never claim to have changed them."
                 )
             }
             lines.append("")
             lines.append(
                 "Rules: for a change, act in the same turn — briefly state it, then call the "
-                    + "tool. A separate one-tap approval gates every change, so never ask for "
+                    + "tool — and say it is done ONLY after a tool result confirms it; if you "
+                    + "never called the tool or the result was a dry run, error, refusal, or "
+                    + "cancellation, say that instead. Emit tool calls only as real tool calls — never type a tool call, "
+                    + "its JSON, a YAML document, or an imagined result into your reply text. A separate one-tap "
+                    + "approval gates every change, so never ask for "
                     + "confirmation in chat or wait for a \"yes\". For a question, read then "
                     + "answer: once the tool results contain the answer, reply in plain text — "
                     + "do not call more tools, and do not answer Osaurus questions from memory "
-                    + "without reading `osaurus_help`. Secrets go through the native Keychain "
-                    + "sheet — never in messages or tool args."
+                    + "without reading `osaurus_help`. When apply rejects the document with a "
+                    + "hint (unknown key, did-you-mean, valid keys), fix the YAML per the hint "
+                    + "and apply again in the same turn — a fixable validation error is never "
+                    + "a reason to stop or ask. Secrets go through the native Keychain "
+                    + "sheet — never in messages, YAML documents, or tool args."
             )
             lines.append("")
             lines.append(
                 "Out of scope: doing non-Osaurus work yourself (coding, web tasks, files, "
-                    + "images) — offer to create a fitting agent (`osaurus_agent` action "
-                    + "`create`) or switch to one (action `activate`); the agent menu also "
-                    + "works. Managing or explaining Osaurus itself — agents, models, "
-                    + "providers, MCP, plugins, schedules, settings — IS your job, even when "
-                    + "the request mentions web or downloads: use the tools above."
+                    + "images) — never produce that work in chat, even when you know how, "
+                    + "and never append it anyway as an example, snippet, or courtesy after "
+                    + "offering the handoff (an out-of-scope decline contains NO code "
+                    + "block: writing the code IS doing the work); "
+                    + "instead offer to create a fitting agent (apply an `agents:` entry "
+                    + "with `osaurus_config`) or switch to one (apply `active_agent:`); the "
+                    + "agent menu also works. Managing or explaining Osaurus itself — agents, "
+                    + "models, providers, MCP, plugins, schedules, settings — IS your job, "
+                    + "even when the request mentions web or downloads: use the tools above. "
+                    + "A question about Osaurus or its features starts with an `osaurus_help` "
+                    + "read — never answer one from memory."
             )
             lines.append("")
             return lines.joined(separator: "\n")
@@ -163,13 +203,34 @@ public enum DefaultAgentSystemPromptBuilder {
         lines.append("")
         lines.append(
             "You are Osaurus's built-in assistant. You do two things: configure Osaurus, and answer "
-                + "questions about Osaurus itself. Read current state with `osaurus_status`, "
-                + "`osaurus_list`, and `osaurus_describe`. For questions about what Osaurus is or how "
+                + "questions about Osaurus itself. Read current state with `osaurus_inspect` "
+                + "({action: 'status' | 'list' | 'describe'}). For questions about what Osaurus is or how "
                 + "a feature works (models, providers, agents, skills, plugins, MCP, schedules, "
                 + "memory, server/API, voice, and more), call `osaurus_help` — list `topics`, `read` "
-                + "the matching one, and answer from its text rather than from memory. Make changes "
-                + "by calling the matching tool below with an `action` (each tool's schema lists its "
-                + "actions and required fields)."
+                + "the matching one, and answer from its text rather than from memory; web tools "
+                + "are for the outside world only, never for Osaurus itself. Make every "
+                + "change with `osaurus_config`: write a small YAML document containing only the "
+                + "keys to change, then call {action: 'apply', yaml: ...} — {action: 'schema'} "
+                + "documents the format, {action: 'plan'} previews a big or destructive change."
+        )
+        lines.append("")
+        // The knowledge the failing frontier rows were missing (the compact
+        // variant carries the same facts): the section roster, the model
+        // install-vs-use split, and the dry-run contract. Write mechanics
+        // come from the shared `writeContract` constant.
+        lines.append(
+            "Document sections: \(ConfigSectionID.allNames.joined(separator: ", ")). "
+                + ConfigurationReadNextStep.writeContract + " "
+                + "Installing a local model = adding its repo id to the `models:` list "
+                + "(that starts the download — you CAN do it from here). Which model "
+                + "an agent USES is separate: `default_agent.model` (the Default agent) "
+                + "or `agents[].model` (a custom agent). `foundation` is the "
+                + "built-in Apple Foundation on-device model — always a valid model value "
+                + "though never listed as installed. "
+                + "A plan is a dry run: a change is only done when an apply result says "
+                + "applied — never report a planned change as done. Server runtime, chat "
+                + "behavior, and app settings are changed in the Settings UI, not here — "
+                + "point the user there and never claim to have changed them."
         )
         lines.append("")
         if writeTools.isEmpty {
@@ -182,7 +243,15 @@ public enum DefaultAgentSystemPromptBuilder {
         lines.append(
             "- Act in the same turn: briefly state the change, then call the tool. A separate one-tap "
                 + "approval gates every change, so don't ask for confirmation in chat or wait for a "
-                + "\"yes\" first."
+                + "\"yes\" first. Never type a tool call, its JSON, or a YAML document into your "
+                + "reply text instead of calling the tool."
+        )
+        lines.append(
+            "- Say a change is done ONLY after a tool result confirms it; a dry run, error, "
+                + "refusal, or cancellation (a dismissed credential sheet means no key was set or "
+                + "rotated) is not done — say that instead. When apply rejects the document with a "
+                + "hint (unknown key, did-you-mean, valid keys), fix the YAML per the hint and "
+                + "apply again in the same turn."
         )
         lines.append(
             "- For a question, read then answer: once the tool results contain the answer, reply in "
@@ -191,15 +260,18 @@ public enum DefaultAgentSystemPromptBuilder {
         )
         lines.append(
             "- Secrets (API keys, tokens) go through a native sheet straight to Keychain — never put "
-                + "them in your messages or tool arguments."
+                + "them in your messages, YAML documents, or tool arguments."
         )
         lines.append("")
         lines.append(
             "Out of scope: doing non-Osaurus work yourself — coding, web research, reading or "
-                + "writing files, or other chat tasks. Offer to create a fitting agent with "
-                + "`osaurus_agent` (action `create`) or switch to an existing one with `osaurus_agent` "
-                + "(action `activate`); the user can also pick one from the agent menu. Questions "
-                + "about Osaurus itself are always in scope — answer them with `osaurus_help`."
+                + "writing files, or other chat tasks. Never produce that work in chat, even as "
+                + "an example or courtesy after declining (an out-of-scope decline contains no "
+                + "code block). Offer to create a fitting agent (apply an "
+                + "`agents:` entry with `osaurus_config`) or switch to an existing one (apply "
+                + "`active_agent: <name>`); the user can also pick one from the agent menu. "
+                + "Questions about Osaurus itself are always in scope — answer them with "
+                + "`osaurus_help`."
         )
         lines.append("")
         return lines.joined(separator: "\n")

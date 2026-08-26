@@ -1,0 +1,35 @@
+{
+  "id": "default_agent.knowledge-collection-create",
+  "domain": "default_agent",
+  "label": "default agent • register a knowledge collection",
+  "query": "Register my ~/Documents/Notes folder as a knowledge collection called \"Notes\" so agents can search it.",
+  "notes": "Wave 3c knowledge scope: a `knowledge_collections:` entry with `name` and `folder_path`. The applier validates the directory exists, so on eval hosts without ~/Documents/Notes the call still counts for selection scoring (same contract as watcher-create).",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "knowledge_collections"
+          }
+        },
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "Documents/Notes"
+          }
+        }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

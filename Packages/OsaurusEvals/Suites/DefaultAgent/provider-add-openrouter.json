@@ -1,18 +1,18 @@
 {
   "id": "default_agent.provider-add-openrouter",
   "domain": "default_agent",
-  "label": "default agent • connect OpenRouter (OAuth provider)",
+  "label": "default agent • connect OpenRouter (OAuth provider, declarative apply)",
   "query": "Connect OpenRouter so I can use its models.",
-  "notes": "Second provider-enum value, distinct from the Anthropic case, to prove the provider enum carries more than one option. action 'add', provider 'openrouter'. Credential/OAuth flow is bypassed in eval (cancelled); the tool CALL is what's scored.",
+  "notes": "Second provider id, distinct from the Anthropic case, to prove the model maps vendor names onto the documented provider ids. osaurus_config apply with a providers entry (provider 'openrouter'). Credential/OAuth flow is bypassed in eval (cancelled); the tool CALL is what's scored.",
   "fixtures": {},
   "expect": {
     "defaultAgent": {
-      "mustCallTools": ["osaurus_provider"],
+      "mustCallTools": ["osaurus_config"],
       "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
       "argsMustContain": [
-        { "tool": "osaurus_provider", "args": { "action": "add", "provider": "openrouter" } }
+        { "tool": "osaurus_config", "args": { "action": "apply", "yaml": "openrouter" } }
       ],
-      "maxIterations": 4
+      "maxIterations": 8
     }
   }
 }

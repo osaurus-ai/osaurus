@@ -198,11 +198,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // path can run. Idempotent; safe if a future migration moves this.
         DocumentAdaptersBootstrap.registerBuiltIns()
 
-        // Register every default-agent configure-tool domain. This is what
-        // wires the consolidated `osaurus_provider`, `osaurus_model`, etc.
-        // into `ToolRegistry` and feeds the system-prompt domain menu. Adding
-        // a new domain is one new file under `Tools/Configuration/` plus one
-        // register call in `ConfigurationDomainBootstrap`.
+        // Register the default-agent configure-tool domain. This is what
+        // wires the declarative `osaurus_config` write into `ToolRegistry`
+        // and feeds the system-prompt domain menu. Adding a new domain is
+        // one new file plus one register call in
+        // `ConfigurationDomainBootstrap`.
         ConfigurationDomainBootstrap.registerBuiltIns()
 
         // Warm the GitHub API token cache off the main thread so the first
@@ -303,6 +303,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // even when Osaurus is itself frontmost at send time. Cheap: a single
         // NSWorkspace activation observer.
         FrontmostAppTracker.shared.start()
+
+        // Mirror spawned-helper runs into the notch's background tasks so
+        // orchestrated dispatches are visible and stoppable outside the
+        // launching transcript.
+        SubagentBackgroundTaskBridge.shared.start()
 
         // Set up distributed control listeners (local-only management)
         setupControlNotifications()
@@ -2038,12 +2043,23 @@ extension AppDelegate {
     /// `osaurus://<addr>?pair=<base64url(invite)>` — incoming agent share link.
     /// `osaurus://plugins-install?tool=<plugin_id>` — open Plugins tab on a plugin's detail page.
     /// `osaurus://themes-install?hash=<sha256>` — open Themes tab and install a shared theme.
+    /// `osaurus://settings?tab=<tab>` — open the management window on a tab
+    /// (used by the in-chat osaurus_config result card's "Open in Settings"
+    /// links for rows the user must finish by hand).
     fileprivate func handleOsaurusDeepLink(_ url: URL) {
         Task { @MainActor in
             NSApp.activate(ignoringOtherApps: true)
 
             if url.host?.lowercased() == "plugins-install" {
                 handlePluginsInstallDeepLink(url)
+                return
+            }
+
+            if url.host?.lowercased() == "settings" {
+                let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                    .queryItems?
+                    .first(where: { $0.name.lowercased() == "tab" })?.value ?? ""
+                showManagementWindow(initialTab: ManagementTab.resolved(from: raw))
                 return
             }
 

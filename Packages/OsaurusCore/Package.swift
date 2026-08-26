@@ -33,6 +33,10 @@ let package = Package(
             traits: [.trait(name: "AsyncHTTPClient")]
         ),
         .package(url: "https://github.com/orlandos-nl/IkigaJSON", from: "2.3.2"),
+        // YAML for the declarative `osaurus_config` document (export / plan /
+        // apply). Used only by Configuration/Declarative; skills keep their
+        // hand-rolled frontmatter parser.
+        .package(url: "https://github.com/jpsim/Yams.git", from: "5.1.0"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.7.0"),
         // Single consolidated vMLX dependency. This package vendors the MLX,
         // MLXLMCommon, MLXLLM, MLXVLM, Tokenizers, Jinja, cache, parser,
@@ -364,6 +368,7 @@ let package = Package(
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "MCP", package: "swift-sdk"),
                 .product(name: "IkigaJSON", package: "IkigaJSON"),
+                .product(name: "Yams", package: "Yams"),
                 .product(name: "Sparkle", package: "Sparkle"),
                 .product(name: "MLX", package: "vmlx-swift"),
                 .product(name: "MLXLLM", package: "vmlx-swift"),

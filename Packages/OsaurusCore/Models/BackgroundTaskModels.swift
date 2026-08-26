@@ -247,6 +247,23 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// `agent_runs.error` rather than the generic "cancelled" text.
     public var budgetExhaustedReason: String?
 
+    /// Non-nil when this task mirrors a live spawned-helper run (a
+    /// `SubagentFeed`) rather than owning a `ChatSession`. The value is the
+    /// spawn's tool-call id — the key its interrupt token and feed are
+    /// registered under. Mirrors are visibility-only: they never consume an
+    /// execution slot, never persist across relaunch, and their cancel path
+    /// trips the spawn's interrupt token instead of stopping a session.
+    public let subagentToolCallId: String?
+
+    /// The parent chat session (uuid string) whose turn launched the
+    /// mirrored spawn, when known. Used to suppress the notch row while
+    /// that chat is visible in a window (the in-chat spawn card already
+    /// reports the run there).
+    public let subagentParentSessionId: String?
+
+    /// Whether this task is a spawned-helper mirror (see `subagentToolCallId`).
+    public var isSubagentMirror: Bool { subagentToolCallId != nil }
+
     /// Returns the first budget dimension that's been exceeded, or
     /// nil when usage is still under all configured caps.
     public func budgetExceededReason() -> String? {
@@ -289,6 +306,34 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         self.sourcePluginId = sourcePluginId
         self.externalSessionKey = externalSessionKey
         self.showToast = showToast
+        self.subagentToolCallId = nil
+        self.subagentParentSessionId = nil
+    }
+
+    /// A visibility-only mirror of a live spawned-helper run. No session or
+    /// execution context is ever attached; the bridge drives status and
+    /// activity from the run's `SubagentFeed`.
+    init(
+        subagentMirrorId id: UUID,
+        toolCallId: String,
+        parentSessionId: String?,
+        taskTitle: String,
+        agentId: UUID
+    ) {
+        self.id = id
+        self.taskTitle = taskTitle
+        self.agentId = agentId
+        self.chatSession = nil
+        self.executionContext = nil
+        self.status = .running
+        self.currentStep = "Running..."
+        self.createdAt = Date()
+        self.source = .chat
+        self.sourcePluginId = nil
+        self.externalSessionKey = nil
+        self.showToast = true
+        self.subagentToolCallId = toolCallId
+        self.subagentParentSessionId = parentSessionId
     }
 
     /// Restore a lightweight terminal tab from durable metadata. No live
@@ -317,6 +362,8 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         self.externalSessionKey = externalSessionKey
         self.showToast = true
         self.contextPreview = contextPreview
+        self.subagentToolCallId = nil
+        self.subagentParentSessionId = nil
     }
 
     deinit {

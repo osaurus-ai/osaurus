@@ -1,18 +1,19 @@
 {
   "id": "default_agent.settings-memory-disable",
   "domain": "default_agent",
-  "label": "default agent • disable memory via osaurus_settings",
+  "label": "default agent • disable memory via osaurus_config",
   "query": "Disable the memory feature in Osaurus — I don't want it remembering things between chats.",
-  "notes": "Memory scope: action 'set', scope 'memory', settings.enabled false. The 'false' matcher probes the re-encoded settings object (booleans render as true/false).",
+  "notes": "Memory scope: a `memory:` section with `enabled: false`. The 'false' matcher probes the document text.",
   "fixtures": {},
   "expect": {
     "defaultAgent": {
-      "mustCallTools": ["osaurus_settings"],
-      "mustNotCallTools": ["capabilities_discover"],
+      "mustCallTools": ["osaurus_config"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
       "argsMustContain": [
-        { "tool": "osaurus_settings", "args": { "action": "set", "scope": "memory", "settings": "false" } }
+        { "tool": "osaurus_config", "args": { "action": "apply", "yaml": "memory" } },
+        { "tool": "osaurus_config", "args": { "yaml": "false" } }
       ],
-      "maxIterations": 4
+      "maxIterations": 8
     }
   }
 }

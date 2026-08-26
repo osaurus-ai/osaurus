@@ -391,6 +391,22 @@ struct AgentLoopHooks {
     /// prior empty-final behavior, which is harmless off the chat surface.
     var emitFallbackText: ((_ text: String) async -> Void)?
 
+    /// The user-visible text of the final response the surface just
+    /// classified, for the grounded-claim check
+    /// (`GroundedConfigClaimCheck`). Return nil to skip the check for this
+    /// turn — chat returns nil when `osaurus_config` is not in the offered
+    /// tool schema, so agents without the configure surface are never
+    /// second-guessed. Leaving the hook nil opts the surface out entirely.
+    var finalVisibleText: (() async -> String?)?
+
+    /// Keep the ungrounded final visible in the surface transcript but
+    /// exclude it from the next model request and prepare a fresh output
+    /// buffer — the same persistence-backed boundary contract as
+    /// `prepareTrackedTaskContinuation`. Required for the grounded-claim
+    /// retry: without it a streaming surface would splice two attempts into
+    /// one answer, so the driver skips the check when this is nil.
+    var prepareGroundedClaimRetry: (() async -> Void)?
+
     init(
         isCancelled: @escaping () async -> Bool = { false },
         buildMessages: @escaping (_ notices: [String]) async -> AgentLoopIterationInput,
@@ -411,7 +427,9 @@ struct AgentLoopHooks {
         onBatchComplete: @escaping (_ outcomes: [AgentLoopToolOutcome]) async -> Void = { _ in },
         pendingTodoCount: (() async -> Int)? = nil,
         todoProgressSnapshot: (() async -> AgentTodoProgressSnapshot?)? = nil,
-        emitFallbackText: ((_ text: String) async -> Void)? = nil
+        emitFallbackText: ((_ text: String) async -> Void)? = nil,
+        finalVisibleText: (() async -> String?)? = nil,
+        prepareGroundedClaimRetry: (() async -> Void)? = nil
     ) {
         self.isCancelled = isCancelled
         self.buildMessages = buildMessages
@@ -426,6 +444,8 @@ struct AgentLoopHooks {
         self.pendingTodoCount = pendingTodoCount
         self.todoProgressSnapshot = todoProgressSnapshot
         self.emitFallbackText = emitFallbackText
+        self.finalVisibleText = finalVisibleText
+        self.prepareGroundedClaimRetry = prepareGroundedClaimRetry
     }
 }
 
@@ -986,6 +1006,13 @@ enum AgentToolLoop {
     /// history and starts a fresh output buffer; the driver does not fabricate
     /// a user/system message or alter decode controls.
     static let maxIncompleteReasoningRetries = 1
+
+    /// Bounded grounded-claim retries per run (see
+    /// `GroundedConfigClaimCheck`): one regeneration per trip class — a
+    /// fabricated-envelope answer and an ungrounded change claim can each be
+    /// corrected once. The notice reflects true executed state back to the
+    /// model; the model always writes its own corrected answer.
+    static let maxGroundedClaimRetries = 2
 
     static let incompleteReasoningFallback =
         "The model ended in reasoning without producing a user-visible final answer. "
@@ -1759,6 +1786,11 @@ enum AgentToolLoop {
         // productive turn; bounds the nudge-and-retry recovery so the loop
         // can never spin on a deterministically-empty model.
         var consecutiveEmptyTurns = 0
+        // Grounded-claim invariant state: whether any `osaurus_config` apply
+        // landed a real change this run, and how many corrective retries the
+        // final-response check has consumed (bounded, never editing output).
+        var hasGroundedConfigApply = false
+        var groundedClaimRetries = 0
         // Total (not merely consecutive) reasoning-only recovery attempts.
         // A tool call between attempts must not re-arm another potentially
         // huge reasoning cycle in the same logical run.
@@ -1861,6 +1893,36 @@ enum AgentToolLoop {
             }
             switch step {
             case .finalResponse:
+                // Grounded-claim invariant (user-approved honest-state
+                // reflection, see `GroundedConfigClaimCheck`): a final answer
+                // that IS a fabricated tool envelope, or that claims a config
+                // change no apply actually landed, gets the factual notice
+                // staged and one bounded regeneration. Both hooks are
+                // required — without the retry boundary a streaming surface
+                // would splice two attempts into one answer.
+                if let finalVisibleText = hooks.finalVisibleText,
+                    let prepareRetry = hooks.prepareGroundedClaimRetry,
+                    groundedClaimRetries < Self.maxGroundedClaimRetries,
+                    let visibleText = await finalVisibleText(),
+                    let notice = GroundedConfigClaimCheck.notice(
+                        finalText: visibleText,
+                        hasGroundedApply: hasGroundedConfigApply
+                    )
+                {
+                    groundedClaimRetries += 1
+                    print(
+                        "[Osaurus] Grounded-claim guard tripped "
+                            + "(retry \(groundedClaimRetries)/\(Self.maxGroundedClaimRetries), "
+                            + "groundedApply=\(hasGroundedConfigApply)): "
+                            + String(notice.prefix(140))
+                    )
+                    pendingStateNotice = notice
+                    await prepareRetry()
+                    // Protocol correction, not agent progress — don't charge
+                    // the tool-iteration budget (same as the empty-turn path).
+                    iteration -= 1
+                    continue
+                }
                 // An ordinary model final is authoritative. Todo is visible
                 // progress metadata; it must never override EOS/stop and make
                 // the driver regenerate the same answer until the step cap.
@@ -2495,6 +2557,20 @@ enum AgentToolLoop {
                     !Self.isRecoverableTodoContractResult($0.result)
                 }) {
                     completedToolWork = true
+                }
+                // Grounded-claim bookkeeping: remember when an apply landed a
+                // real change so a later change claim in the final answer is
+                // recognized as grounded.
+                if !hasGroundedConfigApply,
+                    outcomes.contains(where: {
+                        GroundedConfigClaimCheck.isGroundedApplyOutcome(
+                            toolName: $0.invocation.toolName,
+                            argumentsJSON: $0.invocation.jsonArguments,
+                            result: $0.result
+                        )
+                    })
+                {
+                    hasGroundedConfigApply = true
                 }
                 let successfulTodoOutcomes = outcomes.filter { outcome in
                     outcome.invocation.toolName == "todo"

@@ -211,6 +211,34 @@ struct SubagentOperationCancellationTests {
         #expect(names == [cooperative.name])
     }
 
+    @Test("audited common tools opt in with cooperative cancellation; interactive curator stays out")
+    func auditedCommonToolsOptInCooperatively() {
+        // Each opt-in is a real per-tool cancellation audit (A2): URLSession /
+        // local-SQLite / synchronous bodies that abort-and-drain cleanly.
+        let audited: [any OsaurusTool] = [
+            WebSearchTool(),
+            SearchAndExtractTool(),
+            CurrentTimeTool(),
+            SearchKnowledgeTool(),
+            ReadKnowledgeTool(),
+            ListKnowledgeTool(),
+            FlagKnowledgeStaleTool(),
+            ListKnowledgeTicketsTool(),
+            UpdateKnowledgeTicketTool(),
+        ]
+        for tool in audited {
+            #expect(tool.canExposeToSpawnedOperation, "\(tool.name) must opt in")
+            #expect(
+                tool.spawnedOperationCancellationSupport(argumentsJSON: "{}")
+                    == .cooperative,
+                "\(tool.name) must be cooperative"
+            )
+        }
+        // propose_knowledge_update drives an interactive user-approval flow —
+        // it must never execute inside a headless child.
+        #expect(!ProposeKnowledgeUpdateTool().canExposeToSpawnedOperation)
+    }
+
     @Test("spawned folder tools opt in only for audited host-file paths")
     func spawnedFolderToolCancellationClassification() throws {
         let root = FileManager.default.temporaryDirectory

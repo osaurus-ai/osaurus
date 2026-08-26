@@ -61,6 +61,18 @@ protocol PermissionedTool {
     var requirements: [String] { get }
     /// Default policy suggested by the tool (host configuration may override)
     var defaultPermissionPolicy: ToolPermissionPolicy { get }
+    /// Whether the tool runs its OWN purpose-built interactive approval
+    /// inside its body (e.g. `osaurus_config`'s in-chat plan-review card).
+    /// When true, an `.ask` policy resolution skips the generic
+    /// args-JSON approval panel — showing it would be a redundant double
+    /// prompt that hides the real diff. `.deny` still denies, and the
+    /// tool body remains responsible for gating headless/external
+    /// surfaces. Defaults to `false`.
+    var handlesOwnApproval: Bool { get }
+}
+
+extension PermissionedTool {
+    var handlesOwnApproval: Bool { false }
 }
 
 /// Argument-aware permission resolution for tools whose approval semantics

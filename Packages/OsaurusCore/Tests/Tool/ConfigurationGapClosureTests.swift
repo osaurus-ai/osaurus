@@ -2,24 +2,19 @@
 //  ConfigurationGapClosureTests.swift
 //  OsaurusCoreTests
 //
-//  Functional coverage for the configuration-agent gap-closure surfaces:
+//  Functional coverage for the configuration-agent READ surfaces:
 //
-//   * osaurus_list / osaurus_describe — new read scopes (skills, watchers,
+//   * osaurus_inspect list / describe — read scopes (skills, watchers,
 //     knowledge, themes, commands, channels, search) return well-formed
 //     payloads from live state.
-//   * osaurus_status — the enriched snapshot carries the server / memory /
-//     sandbox / channels / watchers / skills / knowledge rollups.
-//   * osaurus_agent update `capabilities` — safe per-agent toggles,
-//     knowledge grants, theme_id, with validation of unknown keys and
-//     unknown grant/theme ids.
-//   * osaurus_schedule update `agent_id` — schedules move between custom
-//     agents; the Default agent stays refused.
-//   * osaurus_watcher — create / update / enable / disable / delete plus
-//     directory-path validation.
+//   * osaurus_inspect status — the enriched snapshot carries the server /
+//     memory / sandbox / channels / watchers / skills / knowledge rollups.
 //
-//  All mutations run against the OSAURUS_TEST_ROOT-scoped stores and are
-//  cleaned up (delete created agents/schedules/watchers) so the suite
-//  leaves no residue for sibling suites.
+//  Write-path coverage (agent capabilities, schedule reassignment,
+//  watcher CRUD) moved to the declarative-config tests when the
+//  per-domain write tools were replaced by `osaurus_config`.
+//
+//  All reads run against the OSAURUS_TEST_ROOT-scoped stores.
 //
 
 import Foundation
@@ -52,7 +47,7 @@ struct ConfigurationReadScopeFunctionalTests {
 
     @Test
     func list_skillsScope_returnsRowsWithOriginFlags() async throws {
-        let dict = try await runAsDefaultAgent(OsaurusListTool(), #"{"scope": "skills"}"#)
+        let dict = try await runAsDefaultAgent(OsaurusInspectTool(), #"{"action": "list", "scope": "skills"}"#)
         #expect(dict["ok"] as? Bool == true)
         let result = try #require(dict["result"] as? [String: Any])
         #expect(result["scope"] as? String == "skills")
@@ -69,7 +64,7 @@ struct ConfigurationReadScopeFunctionalTests {
 
     @Test
     func list_commandsScope_includesBuiltIns() async throws {
-        let dict = try await runAsDefaultAgent(OsaurusListTool(), #"{"scope": "commands"}"#)
+        let dict = try await runAsDefaultAgent(OsaurusInspectTool(), #"{"action": "list", "scope": "commands"}"#)
         #expect(dict["ok"] as? Bool == true)
         let result = try #require(dict["result"] as? [String: Any])
         let items = try #require(result["items"] as? [[String: Any]])
@@ -78,7 +73,7 @@ struct ConfigurationReadScopeFunctionalTests {
 
     @Test
     func list_themesScope_marksTheActiveTheme() async throws {
-        let dict = try await runAsDefaultAgent(OsaurusListTool(), #"{"scope": "themes"}"#)
+        let dict = try await runAsDefaultAgent(OsaurusInspectTool(), #"{"action": "list", "scope": "themes"}"#)
         #expect(dict["ok"] as? Bool == true)
         let result = try #require(dict["result"] as? [String: Any])
         let items = try #require(result["items"] as? [[String: Any]])
@@ -94,7 +89,7 @@ struct ConfigurationReadScopeFunctionalTests {
     func list_knowledgeWatchersChannels_returnWellFormedPayloads() async throws {
         for scope in ["knowledge", "watchers", "channels"] {
             let dict = try await runAsDefaultAgent(
-                OsaurusListTool(), "{\"scope\": \"\(scope)\"}"
+                OsaurusInspectTool(), "{\"action\": \"list\", \"scope\": \"\(scope)\"}"
             )
             #expect(dict["ok"] as? Bool == true, "scope \(scope) should list")
             let result = try #require(dict["result"] as? [String: Any])
@@ -103,9 +98,125 @@ struct ConfigurationReadScopeFunctionalTests {
         }
     }
 
+    // MARK: yaml_shape embedding (inspect → apply without a schema call)
+
+    @Test
+    func list_declarativeScope_embedsTheSectionYamlShape() async throws {
+        let dict = try await runAsDefaultAgent(
+            OsaurusInspectTool(), #"{"action": "list", "scope": "schedules"}"#)
+        #expect(dict["ok"] as? Bool == true)
+        let result = try #require(dict["result"] as? [String: Any])
+        let shape = try #require(result["yaml_shape"] as? String)
+        #expect(shape.contains("schedules:"))
+        // The shape-aware hint replaces the generic one: no schema call needed.
+        let nextStep = try #require(result["next_step"] as? String)
+        #expect(nextStep.contains("yaml_shape"))
+        #expect(nextStep.contains("no schema call needed"))
+        #expect(nextStep.contains("prune: true"))
+    }
+
+    @Test
+    func list_agentsScope_shapeCoversAgentsAndActiveAgent() async throws {
+        let dict = try await runAsDefaultAgent(
+            OsaurusInspectTool(), #"{"action": "list", "scope": "agents"}"#)
+        let result = try #require(dict["result"] as? [String: Any])
+        let shape = try #require(result["yaml_shape"] as? String)
+        // Activation ("switch to X") writes `active_agent`, so the agents
+        // read must teach both sections.
+        #expect(shape.contains("agents:"))
+        #expect(shape.contains("active_agent:"))
+    }
+
+    @Test
+    func list_nonDeclarativeScope_keepsThePlainHintWithoutShape() async throws {
+        // Skills and themes have no declarative writer — embedding a shape
+        // would teach a write that doesn't exist.
+        for scope in ["skills", "themes"] {
+            let dict = try await runAsDefaultAgent(
+                OsaurusInspectTool(), "{\"action\": \"list\", \"scope\": \"\(scope)\"}")
+            let result = try #require(dict["result"] as? [String: Any])
+            #expect(result["yaml_shape"] == nil, "scope \(scope) must not embed a shape")
+            let nextStep = try #require(result["next_step"] as? String)
+            #expect(nextStep.contains("schema"), "plain hint should still route to schema")
+        }
+    }
+
+    @Test
+    func status_doesNotEmbedAShape() async throws {
+        let dict = try await runAsDefaultAgent(OsaurusInspectTool(), #"{"action": "status"}"#)
+        let result = try #require(dict["result"] as? [String: Any])
+        #expect(result["yaml_shape"] == nil)
+    }
+
+    @Test
+    func describe_declarativeScope_embedsTheSectionYamlShape() async throws {
+        // Describe a built-in command by name: commands are declarative, so
+        // the describe payload must carry the commands section shape.
+        let list = try await runAsDefaultAgent(
+            OsaurusInspectTool(), #"{"action": "list", "scope": "commands"}"#)
+        let listResult = try #require(list["result"] as? [String: Any])
+        let items = try #require(listResult["items"] as? [[String: Any]])
+        let first = try #require(items.first)
+        let name = try #require(first["name"] as? String)
+        let dict = try await runAsDefaultAgent(
+            OsaurusInspectTool(),
+            "{\"action\": \"describe\", \"scope\": \"commands\", \"id\": \"\(name)\"}")
+        let result = try #require(dict["result"] as? [String: Any])
+        let shape = try #require(result["yaml_shape"] as? String)
+        #expect(shape.contains("commands:"))
+    }
+
+    @Test
+    func readHints_teachPruneAndSetApiKey() {
+        // Knowledge-gap pins: delete = prune, key rotation = set_api_key —
+        // on BOTH hint variants, since small models act on whichever hint
+        // their last read carried. Both now ride on the single write
+        // contract (Gap 0.5 consolidation).
+        for hint in [
+            ConfigurationReadNextStep.hint(hasShape: false),
+            ConfigurationReadNextStep.hint(hasShape: true),
+        ] {
+            #expect(hint.contains("prune: true"))
+            #expect(hint.contains("set_api_key: true"))
+            #expect(hint.contains("never the key value"))
+            #expect(hint.contains(ConfigurationReadNextStep.writeContract))
+        }
+    }
+
+    @Test
+    func removedScopes_getTheSettingsUIRedirect() async throws {
+        // Scope reduction 2: `server`, `chat`, `app` are Settings-UI-only.
+        // Guessing them as inspect scopes must return the honest redirect —
+        // not the export redirect the model would loop on.
+        for scope in ["server", "chat", "app"] {
+            let dict = try await runAsDefaultAgent(
+                OsaurusInspectTool(), "{\"action\": \"list\", \"scope\": \"\(scope)\"}")
+            #expect(dict["ok"] as? Bool == false, "scope \(scope) must not list")
+            let message = (dict["message"] as? String) ?? ""
+            #expect(message.contains("Settings UI"), "no redirect for `\(scope)`: \(message)")
+            #expect(!message.contains("export"), "removed scope must not route to export")
+        }
+    }
+
+    @Test
+    func modelAndProviderShapes_counterTheObservedFalseBeliefs() {
+        // Iter-3 failure pins: with the roster in view the model still said
+        // "downloads happen in the UI" (model-download) and "openrouter
+        // isn't a real provider" (provider-add-openrouter). The scope
+        // headers must contradict both outright.
+        let models = ConfigurationReadNextStep.semanticsHeader(forScope: "models")
+        #expect(models.contains("STARTS the download"))
+        #expect(models.contains("Never redirect the user to the UI"))
+        let providers = ConfigurationReadNextStep.semanticsHeader(forScope: "providers")
+        #expect(providers.contains("openrouter included"))
+        #expect(providers.contains("Never claim a listed provider is unsupported"))
+        // And the secret semantics still ride on providers.
+        #expect(providers.contains("set_api_key: true"))
+    }
+
     @Test
     func list_searchScope_mirrorsProviderRanking() async throws {
-        let dict = try await runAsDefaultAgent(OsaurusListTool(), #"{"scope": "search"}"#)
+        let dict = try await runAsDefaultAgent(OsaurusInspectTool(), #"{"action": "list", "scope": "search"}"#)
         #expect(dict["ok"] as? Bool == true)
         let result = try #require(dict["result"] as? [String: Any])
         let items = try #require(result["items"] as? [[String: Any]])
@@ -119,15 +230,15 @@ struct ConfigurationReadScopeFunctionalTests {
     @Test
     func describe_skillByName_matchesCaseInsensitively() async throws {
         // Pick a real skill from the list, then describe it by lowercased name.
-        let listDict = try await runAsDefaultAgent(OsaurusListTool(), #"{"scope": "skills"}"#)
+        let listDict = try await runAsDefaultAgent(OsaurusInspectTool(), #"{"action": "list", "scope": "skills"}"#)
         let listResult = try #require(listDict["result"] as? [String: Any])
         let items = try #require(listResult["items"] as? [[String: Any]])
         let first = try #require(items.first)
         let skillName = try #require(first["name"] as? String)
 
         let dict = try await runAsDefaultAgent(
-            OsaurusDescribeTool(),
-            "{\"scope\": \"skills\", \"id\": \"\(skillName.lowercased())\"}"
+            OsaurusInspectTool(),
+            "{\"action\": \"describe\", \"scope\": \"skills\", \"id\": \"\(skillName.lowercased())\"}"
         )
         #expect(dict["ok"] as? Bool == true)
         let result = try #require(dict["result"] as? [String: Any])
@@ -139,8 +250,8 @@ struct ConfigurationReadScopeFunctionalTests {
     func describe_unknownIdInNewScopes_failsCleanly() async throws {
         for scope in ["skills", "watchers", "knowledge", "themes", "commands", "channels", "search"] {
             let dict = try await runAsDefaultAgent(
-                OsaurusDescribeTool(),
-                "{\"scope\": \"\(scope)\", \"id\": \"definitely-not-a-real-id\"}"
+                OsaurusInspectTool(),
+                "{\"action\": \"describe\", \"scope\": \"\(scope)\", \"id\": \"definitely-not-a-real-id\"}"
             )
             #expect(dict["ok"] as? Bool == false, "scope \(scope) should not find the id")
             #expect(dict["kind"] as? String == "invalid_args")
@@ -162,8 +273,8 @@ struct ConfigurationReadScopeFunctionalTests {
         defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
 
         let dict = try await runAsDefaultAgent(
-            OsaurusDescribeTool(),
-            "{\"scope\": \"agents\", \"id\": \"\(agent.id.uuidString)\"}"
+            OsaurusInspectTool(),
+            "{\"action\": \"describe\", \"scope\": \"agents\", \"id\": \"\(agent.id.uuidString)\"}"
         )
         #expect(dict["ok"] as? Bool == true)
         let result = try #require(dict["result"] as? [String: Any])
@@ -176,8 +287,64 @@ struct ConfigurationReadScopeFunctionalTests {
     }
 
     @Test
+    func describe_agentByName_matchesAndUsesDocumentModelKey() async throws {
+        // Regression for the live "set model on the coding agent" transcript:
+        // describe must resolve names (not just UUIDs) so the model doesn't
+        // burn a list round-trip, and the payload key must be `model` — the
+        // old `default_model` key taught the model to write `default_model:`
+        // into YAML, which the document schema rejects.
+        let agent = await MainActor.run {
+            AgentManager.shared.create(
+                name: "GapClosure Name Probe",
+                description: "",
+                systemPrompt: "",
+                defaultModel: "provider/some-model",
+                temperature: nil,
+                maxTokens: nil
+            )
+        }
+        defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
+
+        let dict = try await runAsDefaultAgent(
+            OsaurusInspectTool(),
+            #"{"action": "describe", "scope": "agents", "id": "gapclosure name probe"}"#
+        )
+        #expect(dict["ok"] as? Bool == true)
+        let result = try #require(dict["result"] as? [String: Any])
+        #expect(result["name"] as? String == "GapClosure Name Probe")
+        #expect(result["model"] as? String == "provider/some-model")
+        #expect(result["default_model"] == nil)
+
+        _ = await AgentManager.shared.delete(id: agent.id)
+    }
+
+    @Test
+    func describe_providerByName_matchesCaseInsensitively() async throws {
+        let provider = RemoteProvider(
+            id: UUID(), name: "GapClosure Provider Probe", host: "api.example.test",
+            enabled: false, autoConnect: false
+        )
+        await MainActor.run {
+            RemoteProviderManager.shared.addProvider(provider, apiKey: nil, isEphemeral: false)
+        }
+        defer {
+            Task { @MainActor in RemoteProviderManager.shared.removeProvider(id: provider.id) }
+        }
+
+        let dict = try await runAsDefaultAgent(
+            OsaurusInspectTool(),
+            #"{"action": "describe", "scope": "providers", "id": "gapclosure provider probe"}"#
+        )
+        #expect(dict["ok"] as? Bool == true)
+        let result = try #require(dict["result"] as? [String: Any])
+        #expect(result["id"] as? String == provider.id.uuidString)
+
+        await MainActor.run { RemoteProviderManager.shared.removeProvider(id: provider.id) }
+    }
+
+    @Test
     func status_carriesTheEnrichedRollups() async throws {
-        let dict = try await runAsDefaultAgent(OsaurusStatusTool(), "{}")
+        let dict = try await runAsDefaultAgent(OsaurusInspectTool(), #"{"action": "status"}"#)
         #expect(dict["ok"] as? Bool == true)
         let result = try #require(dict["result"] as? [String: Any])
 
@@ -206,411 +373,53 @@ struct ConfigurationReadScopeFunctionalTests {
     }
 }
 
-// MARK: - osaurus_agent capabilities
+// MARK: - Malformed-args teaches (observed eval dead ends)
 
+/// Ornith-9B eval trials died on two malformed read calls: `list` with the
+/// scope name in `filter` (and no `scope`), and `describe` with no `id`.
+/// The generic missing-arg failure taught nothing, so the model never saw
+/// the scope's items or capability lines and gave up. These envelopes must
+/// name the exact corrected call.
 @Suite(.serialized)
-struct AgentCapabilitiesPatchTests {
-
-    private func makeAgent(_ name: String) async -> Agent {
-        await MainActor.run {
-            AgentManager.shared.create(
-                name: name,
-                description: "",
-                systemPrompt: "",
-                defaultModel: nil,
-                temperature: nil,
-                maxTokens: nil
-            )
-        }
-    }
+struct ConfigurationReadArgTeachTests {
 
     @Test
-    func update_capabilitiesPatchesSafeTogglesAndPersists() async throws {
-        let agent = await makeAgent("GapClosure Capabilities Probe")
-        defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
-
+    func list_scopeNameInFilter_executesTheIntendedList() async throws {
+        // Tolerant input handling: the intent is unambiguous, so the tool
+        // runs the list against the misplaced scope instead of rejecting
+        // (the reject-and-teach still left small models fabricating results
+        // rather than retrying), and names the canonical shape in a note.
         let dict = try await runAsDefaultAgent(
-            OsaurusAgentTool(),
-            """
-            {"action": "update", "id": "\(agent.id.uuidString)", "capabilities": {
-                "browser_use_enabled": true,
-                "web_search_enabled": false,
-                "speak_enabled": true,
-                "memory_enabled": false,
-                "knowledge_collection_ids": []
-            }}
-            """
-        )
-        #expect(dict["ok"] as? Bool == true)
-
-        let saved = try #require(await MainActor.run { AgentManager.shared.agent(for: agent.id) }
-        )
-        #expect(saved.settings.browserUseEnabled == true)
-        #expect(saved.settings.webSearchEnabled == false)
-        #expect(saved.settings.speakEnabled == true)
-        #expect(saved.memoryEnabled == false)
-        #expect(saved.settings.knowledgeCollectionIds.isEmpty)
-
-        _ = await AgentManager.shared.delete(id: agent.id)
-    }
-
-    @Test
-    func update_knowledgeEnabledWithoutGrants_notesHiddenTools() async throws {
-        let agent = await makeAgent("GapClosure Knowledge Note Probe")
-        defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
-
-        let dict = try await runAsDefaultAgent(
-            OsaurusAgentTool(),
-            """
-            {"action": "update", "id": "\(agent.id.uuidString)", "capabilities": {
-                "knowledge_enabled": true
-            }}
-            """
+            OsaurusInspectTool(), #"{"action": "list", "filter": "plugins"}"#
         )
         #expect(dict["ok"] as? Bool == true)
         let result = try #require(dict["result"] as? [String: Any])
-        let note = try #require(result["note"] as? String)
-        #expect(note.contains("knowledge_collection_ids"))
-
-        _ = await AgentManager.shared.delete(id: agent.id)
+        #expect(result["scope"] as? String == "plugins")
+        #expect(result["items"] is [Any])
+        let note = try #require(dict["note"] as? String)
+        #expect(note.contains("`plugins` is a scope, not a filter"))
+        #expect(note.contains("{action: 'list', scope: 'plugins'}"))
     }
 
     @Test
-    func update_rejectsUnknownCapabilityNamingTheUIOnlyBoundary() async throws {
-        let agent = await makeAgent("GapClosure Unknown Cap Probe")
-        defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
-
+    func list_missingScopeWithRealFilter_staysGenericMissingArg() async throws {
+        // A genuine filter value must not trigger the scope-in-filter teach.
         let dict = try await runAsDefaultAgent(
-            OsaurusAgentTool(),
-            """
-            {"action": "update", "id": "\(agent.id.uuidString)", "capabilities": {
-                "spawn_delegation_enabled": true
-            }}
-            """
-        )
-        #expect(dict["ok"] as? Bool == false)
-        #expect(dict["kind"] as? String == "invalid_args")
-        let message = try #require(dict["message"] as? String)
-        #expect(message.contains("spawn_delegation_enabled"))
-        #expect(message.contains("Settings"))
-
-        _ = await AgentManager.shared.delete(id: agent.id)
-    }
-
-    @Test
-    func update_rejectsUnknownKnowledgeCollectionIds() async throws {
-        let agent = await makeAgent("GapClosure Grant Probe")
-        defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
-
-        let phantom = UUID().uuidString
-        let dict = try await runAsDefaultAgent(
-            OsaurusAgentTool(),
-            """
-            {"action": "update", "id": "\(agent.id.uuidString)", "capabilities": {
-                "knowledge_collection_ids": ["\(phantom)"]
-            }}
-            """
+            OsaurusInspectTool(), #"{"action": "list", "filter": "enabled"}"#
         )
         #expect(dict["ok"] as? Bool == false)
         let message = try #require(dict["message"] as? String)
-        #expect(message.contains(phantom))
-
-        _ = await AgentManager.shared.delete(id: agent.id)
+        #expect(!message.contains("is a scope, not a filter"))
     }
 
     @Test
-    func update_rejectsUnknownThemeIdAndAcceptsRealOne() async throws {
-        let agent = await makeAgent("GapClosure Theme Probe")
-        defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
-
-        // Unknown theme → refused.
-        let bad = try await runAsDefaultAgent(
-            OsaurusAgentTool(),
-            """
-            {"action": "update", "id": "\(agent.id.uuidString)", "capabilities": {
-                "theme_id": "\(UUID().uuidString)"
-            }}
-            """
-        )
-        #expect(bad["ok"] as? Bool == false)
-        #expect(bad["field"] as? String == "theme_id")
-
-        // A real installed theme → applied; null → cleared.
-        let themeId = await MainActor.run {
-            ThemeConfigurationStore.listThemes().first?.metadata.id
-        }
-        let realThemeId = try #require(themeId)
-        let good = try await runAsDefaultAgent(
-            OsaurusAgentTool(),
-            """
-            {"action": "update", "id": "\(agent.id.uuidString)", "capabilities": {
-                "theme_id": "\(realThemeId.uuidString)"
-            }}
-            """
-        )
-        #expect(good["ok"] as? Bool == true)
-        var saved = try #require(await MainActor.run { AgentManager.shared.agent(for: agent.id) }
-        )
-        #expect(saved.themeId == realThemeId)
-
-        let cleared = try await runAsDefaultAgent(
-            OsaurusAgentTool(),
-            """
-            {"action": "update", "id": "\(agent.id.uuidString)", "capabilities": {
-                "theme_id": null
-            }}
-            """
-        )
-        #expect(cleared["ok"] as? Bool == true)
-        saved = try #require(await MainActor.run { AgentManager.shared.agent(for: agent.id) }
-        )
-        #expect(saved.themeId == nil)
-
-        _ = await AgentManager.shared.delete(id: agent.id)
-    }
-}
-
-// MARK: - osaurus_schedule agent_id reassignment
-
-@Suite(.serialized)
-struct ScheduleReassignmentTests {
-
-    @Test
-    func update_movesScheduleToAnotherCustomAgent() async throws {
-        let (agentA, agentB) = await MainActor.run {
-            (
-                AgentManager.shared.create(
-                    name: "GapClosure Sched A", description: "", systemPrompt: "",
-                    defaultModel: nil, temperature: nil, maxTokens: nil
-                ),
-                AgentManager.shared.create(
-                    name: "GapClosure Sched B", description: "", systemPrompt: "",
-                    defaultModel: nil, temperature: nil, maxTokens: nil
-                )
-            )
-        }
-        defer {
-            Task {
-                _ = await AgentManager.shared.delete(id: agentA.id)
-                _ = await AgentManager.shared.delete(id: agentB.id)
-            }
-        }
-
-        let created = try await runAsDefaultAgent(
-            OsaurusScheduleTool(),
-            """
-            {"action": "create", "name": "GapClosure Move Probe",
-             "instructions": "do the thing", "agent_id": "\(agentA.id.uuidString)",
-             "frequency": "daily", "frequency_time_of_day": "09:00", "enabled": false}
-            """
-        )
-        #expect(created["ok"] as? Bool == true)
-        let createdResult = try #require(created["result"] as? [String: Any])
-        let scheduleIdStr = try #require(createdResult["schedule_id"] as? String)
-        let scheduleId = try #require(UUID(uuidString: scheduleIdStr))
-        defer {
-            Task { _ = await MainActor.run { ScheduleManager.shared.delete(id: scheduleId) } }
-        }
-
-        // Move it to agent B.
-        let moved = try await runAsDefaultAgent(
-            OsaurusScheduleTool(),
-            """
-            {"action": "update", "id": "\(scheduleIdStr)", "agent_id": "\(agentB.id.uuidString)"}
-            """
-        )
-        #expect(moved["ok"] as? Bool == true)
-        // ScheduleManager's async init load can land after the tool's
-        // in-memory update and clobber it with a stale disk snapshot.
-        // Re-reading through the serial IO queue (ordered after the
-        // update's save) makes the assertion deterministic.
-        await ScheduleManager.shared.refreshFromDisk()
-        let schedule = try #require(await MainActor.run { ScheduleManager.shared.schedule(for: scheduleId) }
-        )
-        #expect(schedule.agentId == agentB.id)
-
-        // The Default agent stays refused on update, same as create.
-        let refused = try await runAsDefaultAgent(
-            OsaurusScheduleTool(),
-            """
-            {"action": "update", "id": "\(scheduleIdStr)", "agent_id": "\(Agent.defaultId.uuidString)"}
-            """
-        )
-        #expect(refused["ok"] as? Bool == false)
-        #expect(refused["field"] as? String == "agent_id")
-
-        // Unknown agents are refused before anything persists.
-        let unknown = try await runAsDefaultAgent(
-            OsaurusScheduleTool(),
-            """
-            {"action": "update", "id": "\(scheduleIdStr)", "agent_id": "\(UUID().uuidString)"}
-            """
-        )
-        #expect(unknown["ok"] as? Bool == false)
-
-        _ = await MainActor.run { ScheduleManager.shared.delete(id: scheduleId) }
-        _ = await AgentManager.shared.delete(id: agentA.id)
-        _ = await AgentManager.shared.delete(id: agentB.id)
-    }
-}
-
-// MARK: - osaurus_watcher
-
-@Suite(.serialized)
-struct WatcherConfigurationDomainTests {
-
-    private func makeTempWatchDirectory() throws -> URL {
-        let dir = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("osaurus-watcher-tool-tests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
-    @Test
-    func createUpdateToggleDelete_roundTrips() async throws {
-        let dir = try makeTempWatchDirectory()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        // Watchers must target a custom agent (the runtime refuses nil /
-        // built-in agentIds at dispatch), so seed one for the round trip.
-        let agent = await MainActor.run {
-            AgentManager.shared.create(
-                name: "GapClosure Watch Agent", description: "", systemPrompt: "",
-                defaultModel: nil, temperature: nil, maxTokens: nil
-            )
-        }
-        defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
-
-        // Create disabled so the FSEvents stream never starts for this probe.
-        let created = try await runAsDefaultAgent(
-            OsaurusWatcherTool(),
-            """
-            {"action": "create", "name": "GapClosure Watch Probe",
-             "instructions": "organize new files", "path": "\(dir.path)",
-             "agent_id": "\(agent.id.uuidString)",
-             "enabled": false, "responsiveness": "patient", "recursive": true}
-            """
-        )
-        #expect(created["ok"] as? Bool == true)
-        let createdResult = try #require(created["result"] as? [String: Any])
-        let watcherIdStr = try #require(createdResult["watcher_id"] as? String)
-        let watcherId = try #require(UUID(uuidString: watcherIdStr))
-        defer {
-            Task { _ = await MainActor.run { WatcherManager.shared.delete(id: watcherId) } }
-        }
-
-        var watcher = try #require(await MainActor.run { WatcherManager.shared.watchers.first { $0.id == watcherId } }
-        )
-        #expect(watcher.watchPath == dir.path)
-        #expect(watcher.isEnabled == false)
-        #expect(watcher.recursive == true)
-        #expect(watcher.responsiveness == .patient)
-        #expect(watcher.agentId == agent.id)
-
-        // Patch instructions + responsiveness.
-        let updated = try await runAsDefaultAgent(
-            OsaurusWatcherTool(),
-            """
-            {"action": "update", "id": "\(watcherIdStr)",
-             "instructions": "rename screenshots", "responsiveness": "fast"}
-            """
-        )
-        #expect(updated["ok"] as? Bool == true)
-        watcher = try #require(await MainActor.run { WatcherManager.shared.watchers.first { $0.id == watcherId } }
-        )
-        #expect(watcher.instructions == "rename screenshots")
-        #expect(watcher.responsiveness == .fast)
-
-        // Enable, then disable via the first-class actions.
-        let enabled = try await runAsDefaultAgent(
-            OsaurusWatcherTool(), #"{"action": "enable", "id": "\#(watcherIdStr)"}"#
-        )
-        #expect(enabled["ok"] as? Bool == true)
-        watcher = try #require(await MainActor.run { WatcherManager.shared.watchers.first { $0.id == watcherId } }
-        )
-        #expect(watcher.isEnabled == true)
-
-        let disabled = try await runAsDefaultAgent(
-            OsaurusWatcherTool(), #"{"action": "disable", "id": "\#(watcherIdStr)"}"#
-        )
-        #expect(disabled["ok"] as? Bool == true)
-        watcher = try #require(await MainActor.run { WatcherManager.shared.watchers.first { $0.id == watcherId } }
-        )
-        #expect(watcher.isEnabled == false)
-
-        // Delete removes it from live state.
-        let deleted = try await runAsDefaultAgent(
-            OsaurusWatcherTool(), #"{"action": "delete", "id": "\#(watcherIdStr)"}"#
-        )
-        #expect(deleted["ok"] as? Bool == true)
-        let stillThere = await MainActor.run {
-            WatcherManager.shared.watchers.contains { $0.id == watcherId }
-        }
-        #expect(stillThere == false)
-    }
-
-    @Test
-    func create_rejectsMissingDirectory() async throws {
+    func describe_missingId_routesToList() async throws {
         let dict = try await runAsDefaultAgent(
-            OsaurusWatcherTool(),
-            """
-            {"action": "create", "name": "Bad Path Probe",
-             "instructions": "x", "path": "/definitely/not/a/real/dir/\(UUID().uuidString)"}
-            """
-        )
-        #expect(dict["ok"] as? Bool == false)
-        #expect(dict["field"] as? String == "path")
-    }
-
-    @Test
-    func create_listsAllMissingRequiredFieldsAtOnce() async throws {
-        let dict = try await runAsDefaultAgent(
-            OsaurusWatcherTool(), #"{"action": "create"}"#
+            OsaurusInspectTool(), #"{"action": "describe", "scope": "plugins"}"#
         )
         #expect(dict["ok"] as? Bool == false)
         let message = try #require(dict["message"] as? String)
-        #expect(message.contains("name"))
-        #expect(message.contains("instructions"))
-        #expect(message.contains("path"))
-        #expect(message.contains("agent_id"))
-    }
-
-    @Test
-    func create_rejectsTheDefaultAgent() async throws {
-        let dir = try makeTempWatchDirectory()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        // The runtime skips watchers with nil/built-in agentIds, so the tool
-        // must refuse the Default agent's id up front instead of creating a
-        // watcher that would never fire.
-        let dict = try await runAsDefaultAgent(
-            OsaurusWatcherTool(),
-            """
-            {"action": "create", "name": "Default Agent Probe",
-             "instructions": "x", "path": "\(dir.path)",
-             "agent_id": "\(Agent.defaultId.uuidString)", "enabled": false}
-            """
-        )
-        #expect(dict["ok"] as? Bool == false)
-        #expect(dict["field"] as? String == "agent_id")
-        let message = try #require(dict["message"] as? String)
-        #expect(message.contains("custom"))
-    }
-
-    @Test
-    func create_rejectsUnknownAgent() async throws {
-        let dir = try makeTempWatchDirectory()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let dict = try await runAsDefaultAgent(
-            OsaurusWatcherTool(),
-            """
-            {"action": "create", "name": "Unknown Agent Probe",
-             "instructions": "x", "path": "\(dir.path)", "agent_id": "\(UUID().uuidString)",
-             "enabled": false}
-            """
-        )
-        #expect(dict["ok"] as? Bool == false)
-        #expect(dict["field"] as? String == "agent_id")
+        #expect(message.contains("`describe` needs `id`"))
+        #expect(message.contains("{action: 'list', scope: 'plugins'}"))
     }
 }

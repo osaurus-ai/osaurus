@@ -62,6 +62,16 @@ public struct DispatchRequest: Sendable {
     /// hand-pressed button and every waiting API client keeps the default.
     public let loadIntent: ModelLoadIntent
 
+    /// True when this dispatch is a TRUE agent delegation (an orchestrating
+    /// agent's `spawn_agent` / `spawn_batch` call). Derived from `source` —
+    /// delegation always dispatches with `source: .delegation` — so there is
+    /// exactly one source of truth. The dispatcher binds the source as
+    /// `ChatExecutionContext.currentSessionSource` for the run (and
+    /// `ChatSession.send` rebinds it from the persisted session on every
+    /// turn), which the chat context composer uses to strip `spawn_*` tools
+    /// from the delegated child so a helper can never fan out recursively.
+    public var isDelegatedRun: Bool { source == .delegation }
+
     public init(
         id: UUID = UUID(),
         prompt: String,

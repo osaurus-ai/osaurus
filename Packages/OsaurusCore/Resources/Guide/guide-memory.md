@@ -18,6 +18,7 @@ Memory is what Osaurus learns from your conversations. Knowledge is what you tea
 - Per-agent Memory Recall (a `search_memory` tool) is a separate opt-in: agent → Abilities → Overview → Memory Recall.
 - Settings you can change (also via the assistant): enabled, memory budget tokens, retention days. Config: `~/.osaurus/config/memory.json`; data: `~/.osaurus/memory/memory.sqlite`.
 - Note: the raw `POST /v1/chat/completions` API does not inject memory; in-app chat and `POST /agents/{id}/run` do.
+- Memory is NOT the server prompt/KV cache. The on-disk prompt cache (persists prompt prefixes across restarts) is a Server toggle in Settings → Server; it is not part of the declarative configuration document.
 
 ## Knowledge
 

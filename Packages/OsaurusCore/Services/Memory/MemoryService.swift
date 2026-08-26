@@ -52,6 +52,14 @@ public actor MemoryService {
         telemetry
     }
 
+    /// Test-visibility accessor for the session-switch tracking map: the
+    /// conversation currently considered "live" for an agent. Lets tests
+    /// assert `bufferDelegatedTurn` never re-points it (the contract that
+    /// keeps a spawn from force-distilling the agent's live chat early).
+    func activeConversationId(forAgent agentId: String) -> String? {
+        activeConversation[agentId]
+    }
+
     private init() {}
 
     // MARK: - Buffer Turn (no LLM)
@@ -68,6 +76,50 @@ public actor MemoryService {
         conversationId: String,
         sessionDate: String? = nil,
         projectId: UUID? = nil
+    ) async {
+        await bufferTurnCore(
+            userMessage: userMessage,
+            assistantMessage: assistantMessage,
+            agentId: agentId,
+            conversationId: conversationId,
+            sessionDate: sessionDate,
+            projectId: projectId,
+            startsSession: true
+        )
+    }
+
+    /// Buffer a turn produced on the agent's behalf by a delegated run
+    /// (spawned subagent) rather than the agent's own live chat. Identical
+    /// to `bufferTurn` EXCEPT it never re-points `activeConversation`: a
+    /// spawn landing mid-direct-chat must not force-distill the target
+    /// agent's live session early or steal its session-switch tracking.
+    /// The spawn's own conversation id still gets a pending signal and a
+    /// debounce, so it distills on its own schedule.
+    public func bufferDelegatedTurn(
+        userMessage: String,
+        assistantMessage: String?,
+        agentId: String,
+        conversationId: String,
+        sessionDate: String? = nil
+    ) async {
+        await bufferTurnCore(
+            userMessage: userMessage,
+            assistantMessage: assistantMessage,
+            agentId: agentId,
+            conversationId: conversationId,
+            sessionDate: sessionDate,
+            startsSession: false
+        )
+    }
+
+    private func bufferTurnCore(
+        userMessage: String,
+        assistantMessage: String?,
+        agentId: String,
+        conversationId: String,
+        sessionDate: String?,
+        projectId: UUID? = nil,
+        startsSession: Bool
     ) async {
         // Telemetry intentionally precedes the early-return guards so
         // "attempts" reflects every caller invocation. The diagnostics
@@ -123,14 +175,18 @@ public actor MemoryService {
             conversationProjectIds[conversationId] = nil
         }
 
-        // Session change → flush the previous conversation.
-        let previous = activeConversation[agentId]
-        activeConversation[agentId] = conversationId
-        if let prev = previous, prev != conversationId {
-            debounceTasks[prev]?.cancel()
-            debounceTasks[prev] = nil
-            let prevDate = conversationSessionDates[prev]
-            Task { await self.distillSession(agentId: agentId, conversationId: prev, sessionDate: prevDate) }
+        // Session change → flush the previous conversation. Delegated turns
+        // skip this: they ride alongside whatever session the agent is
+        // actually in and must not hijack it.
+        if startsSession {
+            let previous = activeConversation[agentId]
+            activeConversation[agentId] = conversationId
+            if let prev = previous, prev != conversationId {
+                debounceTasks[prev]?.cancel()
+                debounceTasks[prev] = nil
+                let prevDate = conversationSessionDates[prev]
+                Task { await self.distillSession(agentId: agentId, conversationId: prev, sessionDate: prevDate) }
+            }
         }
 
         guard config.extractionMode == .sessionEnd else { return }

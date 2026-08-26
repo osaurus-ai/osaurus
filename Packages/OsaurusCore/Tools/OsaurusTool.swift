@@ -258,8 +258,8 @@ extension OsaurusTool {
     /// Require an `action` enum argument and validate it against `allowed`.
     /// Returns the normalized (lower-cased) action or a typed failure that
     /// names the allowed set so the model can self-correct. The backbone of
-    /// the consolidated per-domain configure tools (`osaurus_provider`,
-    /// `osaurus_model`, …), where one tool fans out across several verbs.
+    /// action-fanning tools like `osaurus_config` and `osaurus_help`, where
+    /// one tool fans out across several verbs.
     func requireAction(
         _ args: [String: Any],
         allowed: [String]
