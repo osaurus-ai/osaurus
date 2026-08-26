@@ -261,9 +261,18 @@ public struct SystemPromptComposer: Sendable {
         if PrefillDebugLog.shared.isEnabled {
             let window = ContextSizeResolver.resolve(modelId: snapshot.model)
             let toolTokens = ToolRegistry.shared.totalEstimatedTokens(for: toolset.tools)
+            // `source=` is the bound session source, the input every
+            // source-scoped gate (channel publish tool, Channel Destinations)
+            // resolves against. Logging it makes warmup/send parity directly
+            // readable: two banners for one session must show the same source
+            // and the same staticPrefixHash, and `source=nil` on any live
+            // session's banner is itself the bug (an unbound compose path).
+            let boundSource = ChatExecutionContext.currentSessionSource
+                .map { String(describing: $0) } ?? "nil"
             PrefillDebugLog.shared.log(
                 "==== COMPOSE model=\(snapshot.model) sizeClass=\(window.sizeClass) "
                     + "ctxLen=\(window.contextLength.map(String.init) ?? "?") "
+                    + "source=\(boundSource) "
                     + "executionMode=\(executionMode) toolCount=\(toolset.tools.count) "
                     + "toolTokens≈\(toolTokens) "
                     + "systemPromptTokens≈\(manifest.totalEstimatedTokens) "
@@ -1514,6 +1523,17 @@ public struct SystemPromptComposer: Sendable {
                     id: "folderContext",
                     label: L("Working Directory"),
                     content: SystemPromptTemplates.folderContext(from: folder)
+                )
+            )
+            // Bulk-edit steering: constant text, `.static` so it joins the
+            // cached KV prefix (one-time cold prefill on update, byte-stable
+            // per turn thereafter). Ordering: after folderContext so it
+            // reads as a refinement of the folder tool surface.
+            composer.append(
+                .static(
+                    id: "bulkEditGuidance",
+                    label: L("Bulk Edits"),
+                    content: SystemPromptTemplates.bulkEditGuidance()
                 )
             )
         }
@@ -3087,6 +3107,18 @@ public struct SystemPromptComposer: Sendable {
                 )
                 allowed.formUnion(ToolRegistry.coreWorkspaceToolNames)
             }
+            // Redaction tools join the schema only when a HOST folder is
+            // active: they resolve the chat's folder root directly and have
+            // no sandbox bridge, so VM-only mode must not offer them.
+            if executionMode.usesHostFolderTools {
+                add(
+                    ToolRegistry.shared.specs(
+                        forTools: Array(ToolRegistry.redactionToolNames)
+                    ),
+                    replacingExisting: true
+                )
+                allowed.formUnion(ToolRegistry.redactionToolNames)
+            }
             if snapshot.dbEnabled { allowed.formUnion(agentDBToolNames) }
             if snapshot.renderChartEnabled { allowed.insert("render_chart") }
             if snapshot.speakEnabled { allowed.insert("speak") }
@@ -3525,9 +3557,14 @@ public struct SystemPromptComposer: Sendable {
             let trimmed = automationContext.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { prefix = "\(trimmed)\n\n" + prefix }
         }
+        // Time rides LAST, right against the user's text: it is the most
+        // volatile block, and keeping it at the tail means the stabler
+        // automation/screen/memory bytes stay adjacent to the shared static
+        // prefix — a fresh chat whose earlier blocks match a previous
+        // session's prefill diverges only here, not at byte 0 of the turn.
         if let timeContext {
             let trimmed = timeContext.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { prefix = "\(trimmed)\n\n" + prefix }
+            if !trimmed.isEmpty { prefix += "\(trimmed)\n\n" }
         }
         return prefix.isEmpty ? nil : prefix
     }

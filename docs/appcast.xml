@@ -3,6 +3,69 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.23.1</title>
+            <pubDate>Sun, 23 Aug 2026 23:34:48 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.23.1</sparkle:version>
+            <sparkle:shortVersionString>0.23.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.23.1/Osaurus-0.23.1.dmg" length="71513342" type="application/octet-stream" sparkle:edSignature="3TywE9r3XhgHPlom8QZ84WFLA3QFL9WB4//w7OhR2vVKQY2UV78qs9yt6QX1Aw91BjqTi1WHRBaOa1DMVY+LBg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Measure what coarsening the injected clock would be worth: 14.6x on a repeated document (#2461) by @jjang-ai
+- Cross-chat reuse: the cause is a timestamp, not a scoping policy (#2460) by @jjang-ai
+- Say when a configured disk cap is not the one being enforced (#2459) by @jjang-ai
+- T15: flipping reasoning mid-conversation costs one re-prefill, then nothing (#2458) by @jjang-ai
+- Correct the Step-3.7 row: text-only by design, not too big to run (#2457) by @jjang-ai
+- T8 no longer holds as written — the 42× restart win did not reproduce (#2456) by @jjang-ai
+- Step-3.7: attempted under a RAM guard rather than estimated away (#2455) by @jjang-ai
+- T11: cold and cache-served answers are identical at three arbitrary prefix lengths (#2454) by @jjang-ai
+- T9: the disk cap holds mid-conversation — and maxSizeGB is dead while maxSizePercent is set (#2453) by @jjang-ai
+- T10: three images across three turns — the pipeline keeps them distinct (#2452) by @jjang-ai
+- Prefix reuse is scoped to one conversation — a byte-identical prompt in a new chat reuses nothing (#2450) by @jjang-ai
+- T13: three vision families reuse across a media prefix at 10k and 20k (#2449) by @jjang-ai
+- Only an explicit Repair may rebuild a bundle the user changed (#2448) by @jjang-ai
+- Audio coverage: third family proven, the depth limit that is not ours, and an audio badge on the model chip (#2447) by @jjang-ai
+- Turning native MTP off did not stay off (#2446) by @jjang-ai
+- Repin vmlx to the merged VL feature-order fix (#2445) by @jjang-ai
+- An audio-capable model could not be given audio, and C7 was wrong about why (#2444) by @jjang-ai
+- Sampling Defaults were inert on almost every model, and nothing showed what actually ran (#2442) by @jjang-ai
+- Disk cache size is a percent in Settings, and every stale GB reader is fixed (#2441) by @jjang-ai
+- Stop billing cold model load as TTFT, and say when the Mac is the bottleneck (#2440) by @jjang-ai
+- Repin vmlx to the auto disk-cache size (10f27d03) (#2438) by @jjang-ai
+- Disk cache: auto-size to 10% of disk, surface usage in chat, add Clear SSD Cache (#2436) by @jjang-ai
+- Repin vmlx: adaptive depth re-arm + warmup-memo scope fix (#2432) by @jjang-ai
+- Make the MTP Mode hint tell the truth about a selected DFlash drafter (#2430) by @jjang-ai
+- Repin vmlx: DFlash 2 at 56-62 tok/s in-app (ring fix + q4 drafter + verify dispatch) (#2429) by @jjang-ai
+- Images to remote providers: size for the wire, fix mime labels, never silently drop (#2428) by @jjang-ai
+- Video attachments were silently dropped at send for bundles whose name lacks -vl (#2427) by @jjang-ai
+- Unload image gen/edit models from Loaded Models, like LLMs (#2426) by @jjang-ai
+- Fix the DFlash 2 drafter download link: point at the published incoai bundle (#2422) by @jjang-ai
+- Settings: DFlash 2 drafter picker with download link and live folder validation (#2421) by @jjang-ai
+- Repin vmlx: DFlash 2 drafter failures contained — AR fallback instead of a host crash (#2420) by @jjang-ai
+- Repin vmlx to staged-verify MTP + crash fixes; picker rows gain an accessibility press (#2419) by @jjang-ai
+- i18n: the Computer Use diagnostics panel was marked never-translate (#2329) by @YspritanHyzygy
+- i18n: unflag the remaining strings that were marked never-translate by mistake (#2330) by @YspritanHyzygy
+
+## 🚀 Features
+
+- make sidebar resizable (#2413) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- fit fixed size sheets to the screen so action footers stay reachable (#2435) by @RaajeevChandran
+- fix mcp connection docs to point to tools connections tab (#2434) by @RaajeevChandran
+- warn when inbound dispatch is on but reply automatically is off (#2317) by @RaajeevChandran
+- fix openai codex models reporting a fallback context window (#2416) by @RaajeevChandran
+- fix external providers stuck disconnected after an update relaunch (#2415) by @RaajeevChandran
+- minor adjustments to project pill for resizable sidebar (#2414) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.23.0...0.23.1
+]]></description>
+        </item>
+        <item>
             <title>0.23.0</title>
             <pubDate>Tue, 18 Aug 2026 22:35:45 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

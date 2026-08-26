@@ -7,6 +7,13 @@ import Testing
 
 @Suite("Image generation bridge contract")
 struct ImageGenerationBridgeContractTests {
+
+    /// True when a `Package.resolved` pins `revision`, however SwiftPM spaced
+    /// the JSON. Collapsing whitespace keeps this about the PIN rather than
+    /// the serializer's formatting.
+    private func pins(_ resolvedJSON: String, to revision: String) -> Bool {
+        resolvedJSON.filter { !$0.isWhitespace }.contains("\"revision\":\"\(revision)\"")
+    }
     @Test("image models route through the image-generation picker source")
     func imageModelPickerItemUsesImageGenerationSource() {
         let model = ImageModelInfo(
@@ -74,11 +81,17 @@ struct ImageGenerationBridgeContractTests {
             encoding: .utf8
         )
 
-        let expectedRevision = "5ef4ccf737c0f37993781f117fe7e30f8ce0386c"
+        let expectedRevision = "52576334f1c2e5e35d352350df40593da7d93f12"
         #expect(packageSwift.contains(#"revision: "\#(expectedRevision)""#))
-        #expect(packageResolved.contains(#""revision" : "\#(expectedRevision)""#))
-        #expect(workspaceResolved.contains(#""revision" : "\#(expectedRevision)""#))
-        #expect(appResolved.contains(#""revision" : "\#(expectedRevision)""#))
+        // Whitespace-insensitive: the literal spacing is SwiftPM's to choose,
+        // not part of the contract. `Package.resolved` used to be written
+        // `"revision" : "…"` and is now written `"revision": "…"` — an exact
+        // match failed on all three files while every pin was correct, which
+        // reads as a bad repin and is not one. What this catches, the pin sites
+        // disagreeing, is fully preserved.
+        #expect(pins(packageResolved, to: expectedRevision))
+        #expect(pins(workspaceResolved, to: expectedRevision))
+        #expect(pins(appResolved, to: expectedRevision))
         #expect(service.contains("import vMLXFlux"))
         #expect(service.contains("await MetalGate.shared.enterImageGeneration()"))
         #expect(service.contains("await MetalGate.shared.exitImageGeneration()"))

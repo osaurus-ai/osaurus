@@ -74,7 +74,7 @@ struct ImportThemeByIdSheet: View {
 
             footer
         }
-        .frame(width: 520, height: 430)
+        .fittedSheetFrame(width: 520, height: 430)
         .background(theme.cardBackground)
         .onAppear { applyInitialInput() }
     }

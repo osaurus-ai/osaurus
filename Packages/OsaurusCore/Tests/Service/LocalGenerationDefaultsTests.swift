@@ -1066,4 +1066,70 @@ struct LocalGenerationDefaultsTests {
             )
         }
     }
+
+    // MARK: - vmlx parity
+
+    /// vmlx's `GenerationConfigFile` decodes `presence_penalty` and
+    /// `frequency_penalty` (vmlx-swift#297). osaurus does NOT use
+    /// `GenerateParameters(generationConfig:fallback:)` — it re-implements the
+    /// adoption here — so before this was wired, a bundle declaring a penalty
+    /// had it honoured by the direct engine and silently dropped by the app.
+    @Test("Qwen3-style presence_penalty is adopted, not dropped")
+    func adoptsDeclaredPenalties() {
+        let d = Self.defaults(
+            fromJSON: #"""
+                {
+                  "do_sample": true, "temperature": 0.7, "top_p": 0.8, "top_k": 20,
+                  "presence_penalty": 1.5, "frequency_penalty": 0.5,
+                  "repetition_penalty": 1.05
+                }
+                """#
+        )
+        #expect(d.presencePenalty == 1.5)
+        #expect(d.frequencyPenalty == 0.5)
+        #expect(d.repetitionPenalty == 1.05)
+    }
+
+    /// The neutral value must stay inert. `makeGenerateParameters` treats 0 as
+    /// "unset" per the OpenAI default, so reading a declared 0.0 must not switch
+    /// a penalty ON for a bundle that only wrote the neutral value — which is
+    /// what most inspectable bundles actually ship.
+    @Test("a declared 0.0 penalty is read but stays neutral")
+    func zeroPenaltyIsNeutral() {
+        let d = Self.defaults(
+            fromJSON: #"{"temperature": 0.7, "presence_penalty": 0.0, "frequency_penalty": 0.0}"#
+        )
+        #expect(d.presencePenalty == 0.0)
+        #expect(d.frequencyPenalty == 0.0)
+    }
+
+    /// Pins the covered key set against vmlx's `GenerationConfigFile`. This is a
+    /// hand-mirrored decoder, which is exactly why it drifted: vmlx gained two
+    /// keys and nothing here failed. `suppress_tokens` is the one vmlx decodes
+    /// that osaurus still does not adopt — named here rather than left silent,
+    /// because an omission nobody can see is how this happened the first time.
+    /// It has no sink in `makeGenerateParameters`, so wiring it would be inert.
+    @Test("every sampling key vmlx decodes is either adopted or named as a gap")
+    func vmlxParity() {
+        let d = Self.defaults(
+            fromJSON: #"""
+                {
+                  "max_new_tokens": 512, "temperature": 0.7, "top_p": 0.8, "top_k": 20,
+                  "min_p": 0.01, "repetition_penalty": 1.05, "do_sample": true,
+                  "presence_penalty": 1.5, "frequency_penalty": 0.5,
+                  "suppress_tokens": [11, 22]
+                }
+                """#
+        )
+        #expect(d.maxTokens == 512)
+        #expect(d.temperature == 0.7)
+        #expect(d.topP == 0.8)
+        #expect(d.topK == 20)
+        #expect(d.minP == 0.01)
+        #expect(d.repetitionPenalty == 1.05)
+        #expect(d.doSample == true)
+        #expect(d.presencePenalty == 1.5)
+        #expect(d.frequencyPenalty == 0.5)
+        // KNOWN GAP: suppress_tokens — adopt here once a sink exists.
+    }
 }

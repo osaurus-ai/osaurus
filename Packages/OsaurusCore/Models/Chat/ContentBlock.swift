@@ -54,11 +54,15 @@ enum ContentBlockKind: Equatable {
     /// fires — model ended the stream still inside a `<think>` block (trapped
     /// thinking). Cell renderer surfaces a one-line "thinking didn't close"
     /// warning beside the tok/s chip when set.
+    /// `modelLoad` is non-nil only when a cold container load happened inside
+    /// this turn's TTFT window; it is shown beside the TTFT chip so a long wait
+    /// is attributed to loading weights rather than read as a slow engine.
     case generationStats(
         ttft: TimeInterval?,
         tokensPerSecond: Double?,
         tokenCount: Int?,
-        unclosedReasoning: Bool
+        unclosedReasoning: Bool,
+        modelLoad: TimeInterval?
     )
     case typingIndicator
     case groupSpacer
@@ -132,11 +136,14 @@ enum ContentBlockKind: Equatable {
             return lName == rName && lSize == rSize
 
         case let (
-            .generationStats(lTtft, lTps, lCount, lUnclosed),
-            .generationStats(rTtft, rTps, rCount, rUnclosed)
+            .generationStats(lTtft, lTps, lCount, lUnclosed, lLoad),
+            .generationStats(rTtft, rTps, rCount, rUnclosed, rLoad)
         ):
+            // `modelLoad` participates: this equality decides whether the cell
+            // re-renders, so omitting it would leave a stale (or missing)
+            // load chip on screen when only that value changed.
             return lTtft == rTtft && lTps == rTps && lCount == rCount
-                && lUnclosed == rUnclosed
+                && lUnclosed == rUnclosed && lLoad == rLoad
 
         case (.typingIndicator, .typingIndicator):
             return true
@@ -399,6 +406,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         tokensPerSecond: Double?,
         tokenCount: Int?,
         unclosedReasoning: Bool = false,
+        modelLoad: TimeInterval? = nil,
         position: BlockPosition
     ) -> ContentBlock {
         ContentBlock(
@@ -408,7 +416,8 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
                 ttft: ttft,
                 tokensPerSecond: tokensPerSecond,
                 tokenCount: tokenCount,
-                unclosedReasoning: unclosedReasoning
+                unclosedReasoning: unclosedReasoning,
+                modelLoad: modelLoad
             ),
             position: position
         )
@@ -856,6 +865,7 @@ extension ContentBlock {
                         tokensPerSecond: turn.generationTokensPerSecond,
                         tokenCount: turn.generationTokenCount,
                         unclosedReasoning: turn.unclosedReasoning,
+                        modelLoad: turn.modelLoadSeconds,
                         position: .middle
                     )
                 )

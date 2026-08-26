@@ -71,6 +71,7 @@ enum DeclaredReasoningEffort {
 
     private static nonisolated let lock = NSLock()
     private static nonisolated(unsafe) var cache: [String: Declaration?] = [:]
+    private static nonisolated(unsafe) var inFlightBackgroundResolves: Set<String> = []
 
     /// Test seam: when set, resolution consults this instead of disk so unit
     /// tests can exercise adapter/registry behavior without installing model
@@ -88,6 +89,17 @@ enum DeclaredReasoningEffort {
             return hit
         }
         lock.unlock()
+
+        // Same main-thread rule as `LocalReasoningCapability.capability`:
+        // a cold miss reads jang/generation config files from disk, and the
+        // main thread reaches this from picker/suffix recomputes. Resolve on
+        // a background queue and report "no declaration" until it lands; the
+        // posted `.localModelsChanged` recomputes the observing UI, and
+        // off-main dispatch callers keep the synchronous resolution.
+        if Thread.isMainThread {
+            scheduleBackgroundResolve(key: key, modelId: modelId)
+            return nil
+        }
 
         let resolved = resolve(modelId: modelId)
 
@@ -111,6 +123,33 @@ enum DeclaredReasoningEffort {
 
     static func preserveThinking(forModelId modelId: String) -> PreserveThinking? {
         declaration(forModelId: modelId)?.preserveThinking
+    }
+
+    /// Off-main resolution for a main-thread cold miss, deduped per key.
+    /// Mirrors `LocalReasoningCapability.scheduleBackgroundDetect`, including
+    /// the never-memoize-a-provisional-miss rule while the local-models scan
+    /// is still warming.
+    private static func scheduleBackgroundResolve(key: String, modelId: String) {
+        lock.lock()
+        let alreadyRunning = !inFlightBackgroundResolves.insert(key).inserted
+        lock.unlock()
+        if alreadyRunning { return }
+
+        DispatchQueue.global(qos: .utility).async {
+            let resolved = resolve(modelId: modelId)
+            let provisionalMiss = resolved == nil && !ModelManager.isLocalModelsCacheWarm
+            lock.lock()
+            if !provisionalMiss {
+                cache[key] = resolved
+            }
+            inFlightBackgroundResolves.remove(key)
+            lock.unlock()
+            if !provisionalMiss, resolved != nil {
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+                }
+            }
+        }
     }
 
     /// Call when models are added/removed so the next lookup re-reads stamps.

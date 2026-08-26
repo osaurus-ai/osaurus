@@ -284,6 +284,41 @@ enum GenerationEventMapper {
             "[perf] mlxStats promptTokens=\(info.promptTokenCount, privacy: .public) promptTps=\(info.promptTokensPerSecond, privacy: .public) promptMs=\(Int(info.promptTime * 1000), privacy: .public) genTokens=\(info.generationTokenCount, privacy: .public) genTps=\(info.tokensPerSecond, privacy: .public) genMs=\(Int(info.generateTime * 1000), privacy: .public) stop=\(String(describing: info.stopReason), privacy: .public) unclosedReasoning=\(info.unclosedReasoning, privacy: .public)"
         )
 
+        // Which decode path actually ran. vmlx populates `nativeMTPStats` ONLY
+        // when the native-MTP iterator was the one that produced these tokens;
+        // every other path (plain AR, dFlash-2) leaves it nil. Nothing in the
+        // app read this field, so a turn that requested MTP and was silently
+        // excluded by `canUseNativeMTP` — bounded KV window, media in the
+        // input, or any sampler whose logits depend on sampled history — was
+        // indistinguishable from one where MTP ran and simply didn't help.
+        // Both just showed a tok/s number. That made every MTP measurement
+        // unfalsifiable, so it is logged before anything else is measured.
+        //
+        // `mtp=off` here does NOT by itself mean the gate rejected the turn —
+        // it means native MTP did not produce these tokens, which also covers
+        // "not requested". Distinguishing REQUESTED-but-excluded from
+        // not-requested needs the gate itself to report its reason, and the
+        // gate lives in vmlx (`GenerateParameters.canUseNativeMTP`). This line
+        // makes the effect observable; the reason is still a vmlx-side gap.
+        if let mtp = info.nativeMTPStats {
+            let accepted = mtp.acceptedByDepth.map(String.init).joined(separator: "/")
+            mapperLog.info(
+                "[perf] decodePath=nativeMTP depth=\(mtp.depth, privacy: .public) activeDepth=\(mtp.activeDepth, privacy: .public) verifyCalls=\(mtp.verifyCalls, privacy: .public) acceptedByDepth=\(accepted, privacy: .public) avgCommittedPerVerify=\(mtp.avgCommittedPerVerify, privacy: .public) avgAcceptProb=\(mtp.avgAcceptProbability, privacy: .public) bonus=\(mtp.bonusTokens, privacy: .public) rejected=\(mtp.rejectedTokens, privacy: .public) arFallbackTokens=\(mtp.arFallbackTokens, privacy: .public) downshifts=\(mtp.adaptiveDownshifts, privacy: .public) fallbackReason=\(mtp.adaptiveFallbackReason ?? "-", privacy: .public) verifier=\(mtp.verifierMode, privacy: .public) cacheMode=\(mtp.cacheMode, privacy: .public)"
+            )
+            PrefillDebugLog.shared.log(
+                "     STEP-MTP   depth=\(mtp.depth) active=\(mtp.activeDepth) "
+                    + "verifyCalls=\(mtp.verifyCalls) acceptedByDepth=\(accepted) "
+                    + "avgCommitted=\(String(format: "%.2f", mtp.avgCommittedPerVerify)) "
+                    + "avgAcceptProb=\(String(format: "%.3f", mtp.avgAcceptProbability)) "
+                    + "arFallback=\(mtp.arFallbackTokens) downshifts=\(mtp.adaptiveDownshifts) "
+                    + "fallbackReason=\(mtp.adaptiveFallbackReason ?? "-") "
+                    + "verifier=\(mtp.verifierMode) cacheMode=\(mtp.cacheMode)"
+            )
+        } else {
+            mapperLog.info("[perf] decodePath=plain mtp=off")
+            PrefillDebugLog.shared.log("     STEP-MTP   decodePath=plain mtp=off")
+        }
+
         // Prefill diagnostics: vmlx's actual processed-prompt count + prefill
         // timing for this step, then the cumulative cache counters AFTER it.
         // Compare promptTokens here against the STEP-BEGIN tokenizedPrompt: a

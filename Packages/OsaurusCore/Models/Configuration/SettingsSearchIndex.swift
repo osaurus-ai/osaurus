@@ -166,6 +166,16 @@ public enum SettingsSearchIndex {
             keywords: ["cmd n", "new chat", "shortcut", "keyboard", "new window", "hotkey"]
         ),
         .init(
+            id: "settings.chat.thinkingDisplay",
+            tab: .chat,
+            section: "Chat",
+            title: "Expand Thinking While Streaming",
+            keywords: [
+                "thinking", "reasoning", "expand thinking", "show thinking",
+                "group thinking", "tool activity", "chain of thought",
+            ]
+        ),
+        .init(
             id: "settings.chat.compactionModel",
             tab: .chat,
             section: "Chat",
@@ -197,6 +207,8 @@ public enum SettingsSearchIndex {
             keywords: [
                 "context window", "context", "model maximum",
                 "metadata fallback", "kv retention", "cache window",
+                "context window cap", "context cap", "max context",
+                "limit context",
             ],
             subTab: "cache"
         ),
@@ -213,6 +225,24 @@ public enum SettingsSearchIndex {
             section: "Generation",
             title: "Max Tool Attempts",
             keywords: ["tool calls", "agent loop", "attempts"]
+        ),
+        // Had NO index entry at all. Worse than merely missing: searching
+        // "tool calls" matched `Max Tool Attempts` above, so the one query
+        // that did return something routed the user to a different setting.
+        // This is the control that answers "make every tool always allowed" —
+        // 83 tools ship `enabled: true` with an EMPTY policy map, and
+        // `ToolConfiguration.policy(for:)` defaults to `.ask`, so without this
+        // toggle every one of them prompts.
+        .init(
+            id: "settings.chat.autoAllowAllTools",
+            tab: .chat,
+            section: "Chat",
+            title: "Auto-Allow All Tool Calls",
+            keywords: [
+                "auto allow", "auto-allow", "allow all tools", "allow tools",
+                "tool permission", "tool permissions", "approve tools",
+                "approval", "always allow", "never ask", "tool prompt",
+            ]
         ),
 
         // MARK: Settings (Notifications / Legal)
@@ -372,7 +402,9 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Sampling Defaults",
             title: "Generation Defaults",
-            keywords: ["top p", "temperature", "sampling", "defaults"],
+            keywords: [
+                "top p", "temperature", "sampling", "sampler", "top k", "min p", "defaults",
+            ],
             subTab: "sampling"
         ),
         .init(
@@ -404,7 +436,17 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Cache",
             title: "Prompt Cache",
-            keywords: ["cache", "kv cache", "prefix"],
+            // The controls in this section are labelled "Disk Cache", "SSD
+            // Cache (L2)", "Disk Cache Size (% of disk)" and "Clear SSD
+            // Cache". None of those phrases resolved, so the section could
+            // not be found by any name it shows the user — the same defect
+            // D5 fixed for the sampler row.
+            keywords: [
+                "cache", "kv cache", "prefix",
+                "disk cache", "ssd cache", "l2 cache", "disk cache size",
+                "clear cache", "clear ssd cache", "disk cache directory",
+                "eviction", "evict", "paged kv", "gpu cache",
+            ],
             subTab: "cache"
         ),
         .init(
@@ -431,7 +473,13 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Speculative Decoding",
             title: "Speculative Decoding",
-            keywords: ["speculative", "mtp", "draft model"],
+            keywords: [
+                "speculative", "mtp", "draft model",
+                // The drafter picker lives in this card. Someone who has
+                // just downloaded a DFlash 2 checkpoint searches for its
+                // name, not for "speculative decoding".
+                "dflash", "dflash 2", "drafter", "block diffusion",
+            ],
             subTab: "speculative"
         ),
         .init(
@@ -439,7 +487,9 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Live Activity",
             title: "Live Activity",
-            keywords: ["live activity", "dynamic island", "status"],
+            keywords: [
+                "live activity", "dynamic island", "status", "sampler", "sampler last used",
+            ],
             subTab: "liveActivity"
         ),
         .init(
@@ -455,7 +505,16 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Tools & Templates",
             title: "Tools & Templates",
-            keywords: ["tool calling", "templates", "chat template"],
+            // "Reasoning Parser Override" lives in this section, and reasoning
+            // was unfindable by ANY of its own words — `reasoning`, `thinking`,
+            // `effort` and `preserve thinking` all returned 0 matches while
+            // three real controls existed. Same defect D5 fixed for the
+            // sampler row.
+            keywords: [
+                "tool calling", "templates", "chat template",
+                "reasoning", "reasoning parser", "reasoning effort", "effort",
+                "thinking", "preserve thinking", "think tags",
+            ],
             subTab: "tools"
         ),
         .init(

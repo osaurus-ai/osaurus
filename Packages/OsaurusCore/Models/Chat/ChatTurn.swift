@@ -311,9 +311,22 @@ final class ChatTurn: ObservableObject, Identifiable {
 
     // MARK: - Generation Benchmarks
 
-    /// Wall-clock time from request start to first visible token.
+    /// Time from request start to first visible token, EXCLUDING any cold
+    /// model load that happened inside that window.
     /// Persisted with the turn for billing / latency reporting.
+    ///
+    /// The exclusion matters. Loading a container happens between the send and
+    /// the first token, so it used to be billed here: a 64 GB M3 Max reported
+    /// "TTFT 215.61s" for a ~1.8k-token prompt, which is not a prefill rate any
+    /// machine produces — it was a 27 GB bundle loading. Reporting the sum made
+    /// a healthy engine look broken. The load is now carried separately in
+    /// `modelLoadSeconds`; neither number is hidden.
     var timeToFirstToken: TimeInterval?
+
+    /// Seconds of cold model loading that fell inside this turn's
+    /// time-to-first-token window, or nil when the model was already resident
+    /// (the overwhelmingly common case, and the one that must look unchanged).
+    var modelLoadSeconds: TimeInterval?
     /// Tokens generated per second (GPU-timed for MLX, UI-estimated for
     /// remote APIs). Ephemeral — not persisted. The exporter recomputes
     /// it from token count and stream duration when needed, which

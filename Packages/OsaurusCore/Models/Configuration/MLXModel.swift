@@ -531,6 +531,31 @@ struct MLXModel: Identifiable, Codable {
         return value
     }
 
+    /// Whether this bundle's checkpoint actually carries audio tensors.
+    ///
+    /// The composer used to decide audio purely from the model NAME, via
+    /// `ModelMediaCapabilities.from(modelId:)`. The checkpoint-fact-driven
+    /// answer already existed in `from(directory:modelId:)`, which scans the
+    /// safetensors index for `embed_audio.embedding_projection` — nothing on
+    /// the composer path reached it. Live result: gemma-4 E2B-it-8bit, which
+    /// does carry that tensor, offered "Select files to attach (image
+    /// supported)" and greyed every `.wav` out, so an audio-capable model
+    /// could not be given audio at all.
+    ///
+    /// Memoized like `isVLM` because the probe reads the index off disk and
+    /// the composer asks from a SwiftUI body getter.
+    var hasAudioTensors: Bool {
+        let usesSharedCache = rootDirectory == nil && bundleDirectory == nil
+        if usesSharedCache, let cached = MLXModelDownloadCache.cachedAudio(for: id) {
+            return cached
+        }
+        let value = isDownloaded && ModelMediaCapabilities.bundleCarriesAudio(directory: localDirectory)
+        if usesSharedCache {
+            MLXModelDownloadCache.setAudio(value, for: id)
+        }
+        return value
+    }
+
     /// Direct (uncached) VLM detection used by `isVLM`.
     func computeIsVLM() -> Bool {
         if ModelFamilyNames.isStepFamily(id) || ModelFamilyNames.isStepFamily(name) {

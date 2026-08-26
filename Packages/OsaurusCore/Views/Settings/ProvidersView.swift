@@ -1374,7 +1374,7 @@ private struct ProviderEditSheet: View {
 
             sheetFooter
         }
-        .frame(width: 560, height: 660)
+        .fittedSheetFrame(width: 560, height: 660)
         .background(themeManager.currentTheme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(

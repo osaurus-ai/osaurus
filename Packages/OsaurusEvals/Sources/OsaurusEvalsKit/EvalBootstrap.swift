@@ -528,7 +528,9 @@ public enum EvalBootstrap {
         // Safe disk-L2 default for the constrained profile; an explicit
         // OSAURUS_EVALS_DISK_L2_CAP_GB (applied after this, in
         // applyKVRegimeOverrideIfRequested) or a user-configured cap wins.
-        if settings.cache.blockDisk.maxSizeGB == nil {
+        if settings.cache.blockDisk.maxSizeGB == nil,
+            settings.cache.blockDisk.maxSizePercent == nil
+        {
             settings.cache.blockDisk.maxSizeGB = simulatedProfileDefaultDiskL2CapGB
             notes.append(
                 "blockDisk.maxSizeGB=\(simulatedProfileDefaultDiskL2CapGB) (profile default)"
@@ -641,8 +643,15 @@ public enum EvalBootstrap {
                 // `blockDisk.maxSizeGB` flows to `CacheCoordinatorConfig.diskCacheMaxGB`
                 // → `DiskCache.maxSizeBytes`, enforced after every store. Bounds
                 // the disk-L2 lane for a safe reuse A/B on a constrained host.
+                //
+                // The percent MUST be cleared: resolution is percent-then-GB,
+                // and schema v3 stamps 10% onto every install. Leaving it set
+                // would silently ignore this explicit cap and run the lane at
+                // 10% of the host disk instead — every cap-sensitive A/B would
+                // compare two runs that were never actually capped differently.
+                settings.cache.blockDisk.maxSizePercent = nil
                 settings.cache.blockDisk.maxSizeGB = capGB
-                notes.append("blockDisk.maxSizeGB=\(capGB)")
+                notes.append("blockDisk.maxSizeGB=\(capGB) (percent cleared so GB wins)")
             } else {
                 notes.append("diskL2Cap='\(diskCapRaw)' ignored (use a positive GB number)")
             }

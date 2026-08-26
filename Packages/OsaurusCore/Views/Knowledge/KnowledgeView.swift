@@ -1704,7 +1704,7 @@ private struct KnowledgeCollectionDetailSheet: View {
             Divider()
             footer
         }
-        .frame(width: 560, height: 640)
+        .fittedSheetFrame(width: 560, height: 640)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
         .onAppear(perform: loadData)

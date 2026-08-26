@@ -61,7 +61,7 @@ struct IncomingPairSheet: View {
                 hint: "+ Enter to add"
             )
         }
-        .frame(width: 480, height: 580)
+        .fittedSheetFrame(width: 480, height: 580)
         .background(theme.cardBackground)
         .onAppear {
             existingPairing = RemoteAgentManager.shared.remoteAgent(forAddress: invite.addr)

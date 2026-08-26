@@ -472,12 +472,18 @@ public actor RemoteProviderService: ToolCapableService {
         parameters: GenerationParameters
     ) async throws -> (messages: [ChatMessage], map: RedactionMap?) {
         do {
-            return try await PrivacyFilterPipeline.applyOutbound(
+            let scrubbed = try await PrivacyFilterPipeline.applyOutbound(
                 messages: messages,
                 sessionId: parameters.sessionId,
                 providerId: provider.id,
                 requestSource: parameters.requestSource
             )
+            // Every remote request funnels through here, so this is the one
+            // place attached images get sized for the wire (oversized Retina
+            // captures → relay/provider 413, mislabeled containers → 400).
+            // The local model path never enters this service and keeps
+            // full-resolution input.
+            return (RemoteImagePayloadPolicy.prepared(scrubbed.messages), scrubbed.map)
         } catch PrivacyFilterPipelineError.reviewCanceled {
             throw CancellationError()
         }
@@ -5374,7 +5380,45 @@ extension RemoteProviderService {
             let models = try await fetchModels(from: provider)
             return (models, OpenAICodexOAuthService.lastContextWindows)
         }
+        // Grok/SuperGrok sign-in models have no live catalog to read windows
+        // from (the OAuth token 403s on `/models`), so surface the
+        // documented windows alongside the built-in model catalog instead.
+        // If the user has also configured a separate xAI provider with an
+        // API key, that route isn't 403'd — its live discovery is preferred
+        // per model over the hardcoded table.
+        if provider.authType == .xaiOAuth {
+            let models = try await fetchModels(from: provider)
+            let contextLengths = await xaiContextWindows(preferringLiveOver: provider)
+            return (models, contextLengths)
+        }
         return (try await fetchModels(from: provider), [:])
+    }
+
+    /// Merges `XAIOAuthService.contextWindows` with live-discovered windows
+    /// from any other connected xAI provider on the same host authenticated
+    /// via API key rather than OAuth. The API-key route can reach `/models`,
+    /// so its per-model windows — being current rather than a point-in-time
+    /// docs.x.ai snapshot — take priority where available.
+    @MainActor
+    private static func xaiContextWindows(preferringLiveOver oauthProvider: RemoteProvider) -> [String: Int] {
+        var windows = XAIOAuthService.contextWindows
+        let manager = RemoteProviderManager.shared
+        let liveProviders = manager.configuration.providers.filter { candidate in
+            candidate.id != oauthProvider.id
+                && candidate.authType != .xaiOAuth
+                && candidate.host.caseInsensitiveCompare(oauthProvider.host) == .orderedSame
+                && (manager.providerStates[candidate.id]?.isConnected ?? false)
+        }
+        for candidate in liveProviders {
+            for model in windows.keys {
+                if let liveWindow = manager.customProviderContextLength(
+                    providerId: candidate.id, unprefixedModelId: model
+                ) {
+                    windows[model] = liveWindow
+                }
+            }
+        }
+        return windows
     }
 
     static func fetchOpenAICompatibleModelsDiscovery(

@@ -230,6 +230,15 @@ final class AgentChannelInboundRelay {
                 showToast: true,
                 source: .channel,
                 externalSessionKey: partition.externalSessionKey,
+                // Plugin tools are deferred behind `capabilities_load`, and a
+                // channel dispatch starts each message with an empty
+                // loaded-tools set. Pre-load the agent's granted plugin tools
+                // so calendar/mail/etc. work without the model having to
+                // discover and load them itself every turn (#2443).
+                requestedToolNames: Self.preloadedPluginToolNames(
+                    registered: ToolRegistry.shared.registeredPluginToolNames,
+                    granted: AgentManager.shared.effectiveEnabledToolNames(for: agentId)
+                ),
                 externalSurface: true,
                 loadIntent: .background
             )
@@ -331,6 +340,45 @@ final class AgentChannelInboundRelay {
                 message: message
             )
         }
+    }
+
+    /// Ceiling on how many plugin tools a channel dispatch will pre-load.
+    /// Past this, a preloaded schema stops helping the small models the
+    /// preload exists for and starts crowding their context, so the
+    /// dispatch falls back to the deferred `capabilities_load` path.
+    nonisolated static let maxPreloadedPluginTools = 40
+
+    /// Plugin tools to pre-load into a channel-dispatched session. `granted`
+    /// is the agent's manual-selection allowlist; `nil` means the agent uses
+    /// the global enabled registry, so every registered plugin tool applies.
+    /// Sorted so successive dispatches into a reattached session append a
+    /// stable set. Past `maxPreloadedPluginTools` the set is TRUNCATED to
+    /// the sorted prefix, not dropped: the same leading tools preload on
+    /// every dispatch (deterministic → reattached sessions stay
+    /// byte-stable), and "the first 40 work" degrades far better for the
+    /// small models the preload exists for than every tool silently
+    /// vanishing behind `capabilities_load` the moment one extra plugin is
+    /// installed. The overflow is deferred, not lost — the model can still
+    /// load it explicitly; `preloadOverflowCount` sizes the settings
+    /// warning that tells the operator to narrow the grant.
+    nonisolated static func preloadedPluginToolNames(
+        registered: Set<String>,
+        granted: [String]?
+    ) -> [String] {
+        let applicable = granted.map { registered.intersection($0) } ?? registered
+        return Array(applicable.sorted().prefix(maxPreloadedPluginTools))
+    }
+
+    /// How many applicable plugin tools exceed the preload ceiling and fall
+    /// back to deferred loading. Non-zero means the operator should narrow
+    /// the agent's tool grant; surfaced in channel settings rather than
+    /// left as a silent behavior change.
+    nonisolated static func preloadOverflowCount(
+        registered: Set<String>,
+        granted: [String]?
+    ) -> Int {
+        let applicable = granted.map { registered.intersection($0) } ?? registered
+        return max(0, applicable.count - maxPreloadedPluginTools)
     }
 
     private static func attachmentContext(_ attachments: [AgentChannelStoredAttachment]) -> String {

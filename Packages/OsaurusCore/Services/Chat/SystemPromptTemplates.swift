@@ -103,14 +103,25 @@ public enum SystemPromptTemplates {
     /// — before they can fill absolute date-time tool arguments like a
     /// reminder's `dueDate` (live-confirmed 2026-07-27: Ornith-9B passed
     /// `2025-05-15` for "today").
+    ///
+    /// Minute granularity, deliberately: the block exists to resolve
+    /// relative dates and fill absolute date-time arguments, none of which
+    /// need seconds — and seconds made the rendered bytes unique per send,
+    /// so two fresh chats could never share a prefill past this block. At
+    /// minute granularity, chats started in the same minute render
+    /// byte-identical time blocks and stay KV/L2-shareable. It also rides
+    /// at the TAIL of the injected prefix (see
+    /// `composeInjectedUserPrefix`) so the stabler memory/screen blocks
+    /// sit adjacent to the shared static prefix and only the tail diverges.
     public static func timeContext(now: Date, timeZone: TimeZone) -> String {
         let readable = DateFormatter()
         readable.locale = Locale(identifier: "en_US_POSIX")
         readable.timeZone = timeZone
         readable.dateFormat = "EEEE, MMMM d, yyyy 'at' h:mm a"
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime]
+        let iso = DateFormatter()
+        iso.locale = Locale(identifier: "en_US_POSIX")
         iso.timeZone = timeZone
+        iso.dateFormat = "yyyy-MM-dd'T'HH:mmZZZZZ"
         return """
             [Current Time]
             \(readable.string(from: now)) — \(iso.string(from: now)) (\(timeZone.identifier))
@@ -1571,6 +1582,22 @@ public enum SystemPromptTemplates {
     /// path rule + tool dispatch + mode-specific framing + optional
     /// project context. Returns `""` when no folder is mounted so the
     /// composer can append unconditionally.
+    /// Steering for repetitive find-and-replace / redaction tasks.
+    /// CONSTANT text by contract: this section is `.static` and must stay
+    /// byte-identical across turns and sessions so it never perturbs the
+    /// reusable KV prefix. No paths, dates, or per-session state.
+    public static func bulkEditGuidance() -> String {
+        """
+        ## Bulk edits and redaction
+
+        When asked to replace, remove, mask, anonymize, or redact names, emails, phone numbers, addresses, account numbers, or other sensitive values across a file, use `redact_file` — one deterministic pass with placeholder text, no scripting needed. Add `custom_rules` regexes for domain-specific patterns the built-in categories miss (revenue figures, percentages, IDs). Use `detect_pii` first when you need to preview what would match.
+        For other repetitive find-and-replace tasks, prefer in order:
+        1. `file_edit` with `replace_all: true` or an `edits` array — one call for many replacements.
+        2. `shell_run` with `sed` for large pattern rewrites.
+        Never re-emit unchanged file content, never write a one-off script for a job `redact_file` or `file_edit` covers, and never apply the same replacement one occurrence at a time.
+        """
+    }
+
     public static func folderContext(from folderContext: FolderContext?) -> String {
         guard let folder = folderContext else { return "" }
 

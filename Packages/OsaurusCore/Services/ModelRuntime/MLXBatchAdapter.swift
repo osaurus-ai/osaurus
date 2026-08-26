@@ -98,6 +98,23 @@ struct MLXBatchAdapter {
         let topK: Int
         let minP: Float
         let repetitionPenalty: Float?
+        /// Resolved presence/frequency penalties, so the Live Activity readout
+        /// can show what actually applied. Without them here the value would be
+        /// enforced but invisible — the shape that let this gap go unnoticed.
+        let presencePenalty: Float?
+        let frequencyPenalty: Float?
+        /// What actually drafts this request: `nativeMTP`, `dflash2`, or nil for
+        /// ordinary decoding. Resolved, not requested — the Mode picker is an
+        /// input to this, never a description of it.
+        let draftStrategy: String?
+        /// Why native MTP is NOT running when the user asked for it.
+        ///
+        /// This string was already computed and written to the submit log, where
+        /// no user will ever see it. A model whose tuning artifact never asserted
+        /// `output_equivalent` cannot run MTP even on Force-On — correctly, since
+        /// that assertion is the output-equivalence proof — but without surfacing
+        /// the reason the setting just appears to do nothing.
+        let mtpFallbackReason: String?
         let compiledBatchDecode: Bool
     }
 
@@ -108,6 +125,7 @@ struct MLXBatchAdapter {
         maxBatchSize: Int,
         modelDefaults: LocalGenerationDefaults.Defaults,
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
+        nativeMTPFallbackReason: String? = nil,
         nativeMTPExplicitSamplingFallback: Bool = false,
         cacheTopology: ModelCacheTopologySnapshot? = nil,
         stage: String = "resolved"
@@ -136,19 +154,38 @@ struct MLXBatchAdapter {
             runtimeDefault: runtimeRepetitionPenalty
         )
 
+        // Merge order: per-request → THE USER'S Sampling Defaults → model-shipped
+        // defaults → vmlx engine defaults.
+        //
+        // The user's settings used to sit BEHIND the model's shipped defaults,
+        // which made them inert: 83 of 95 bundles in a real local library ship
+        // `temperature`/`top_p`/`top_k` in generation_config.json, so setting a
+        // temperature in Settings changed nothing on almost every model. The
+        // field was editable, saved, and had no effect — the same shape as the
+        // context-length setting that could not constrain anything.
+        //
+        // A blank field really is absent, not zero: a persisted `generation`
+        // block from a real run contains only `streamInterval` and
+        // `diffusionMaxDenoisingSteps`. So a non-nil runtime value here is
+        // always something the user deliberately chose, and deliberate choices
+        // outrank a bundle's suggestion. Per-request still wins over both.
         return EffectiveGenerationSettings(
             stage: stage,
             temperature: generation.temperature
-                ?? defaultTemperature
                 ?? runtimeTemperature
+                ?? defaultTemperature
                 ?? engineDefaults.temperature,
             maxTokens: generation.maxTokensExplicit
                 ? generation.maxTokens
-                : (modelDefaults.maxTokens ?? runtimeMaxTokens ?? generation.maxTokens),
-            topP: generation.topPOverride ?? modelDefaults.topP ?? runtimeTopP ?? engineDefaults.topP,
-            topK: generation.topKOverride ?? modelDefaults.topK ?? runtimeTopK ?? engineDefaults.topK,
-            minP: generation.minPOverride ?? modelDefaults.minP ?? runtimeMinP ?? engineDefaults.minP,
+                : (runtimeMaxTokens ?? modelDefaults.maxTokens ?? generation.maxTokens),
+            topP: generation.topPOverride ?? runtimeTopP ?? modelDefaults.topP ?? engineDefaults.topP,
+            topK: generation.topKOverride ?? runtimeTopK ?? modelDefaults.topK ?? engineDefaults.topK,
+            minP: generation.minPOverride ?? runtimeMinP ?? modelDefaults.minP ?? engineDefaults.minP,
             repetitionPenalty: repetitionPenalty,
+            presencePenalty: generation.presencePenalty ?? modelDefaults.presencePenalty,
+            frequencyPenalty: generation.frequencyPenalty ?? modelDefaults.frequencyPenalty,
+            draftStrategy: draftStrategy?.kindName,
+            mtpFallbackReason: nativeMTPFallbackReason,
             compiledBatchDecode: nativeMTPExplicitSamplingFallback
                 ? false
                 : shouldEnableCompiledBatchDecode(
@@ -271,7 +308,10 @@ struct MLXBatchAdapter {
             return explicit
         }
 
-        let resolved = modelDefault ?? runtimeDefault
+        // Same precedence correction as the other sampler fields: the user's
+        // Sampling Default outranks the bundle's shipped one. Behind the
+        // model's value it was inert on any bundle that ships a penalty.
+        let resolved = runtimeDefault ?? modelDefault
         return resolved
     }
 
@@ -585,6 +625,14 @@ struct MLXBatchAdapter {
             var diskL2Hits = 0
             var diskL2Misses = 0
             var diskL2Stores = 0
+            // Root-wide gauges: every model's DiskCache reads the SAME
+            // cacheDir/cache_index.db with no modelKey predicate, so each
+            // reports the identical whole-root figure. MAX, never sum --
+            // summing would multiply the reported size by the model count.
+            var diskL2PayloadBytes = 0
+            var diskL2MaxBytes = 0
+            // Per-instance counter, so this one genuinely accumulates.
+            var diskL2Evictions = 0
             var ssmHits = 0
             var ssmMisses = 0
             var ssmReDerives = 0
@@ -605,6 +653,10 @@ struct MLXBatchAdapter {
                     diskL2Hits += diskStats.hits
                     diskL2Misses += diskStats.misses
                     diskL2Stores += diskStats.stores
+                    diskL2PayloadBytes = max(
+                        diskL2PayloadBytes, diskStats.currentPayloadBytes)
+                    diskL2MaxBytes = max(diskL2MaxBytes, diskStats.maxSizeBytes)
+                    diskL2Evictions += diskStats.evictions
                 }
                 ssmHits += stats.ssmStats.hits
                 ssmMisses += stats.ssmStats.misses
@@ -651,7 +703,10 @@ struct MLXBatchAdapter {
                 diskL2Stores: diskL2Stores,
                 ssmCompanionHits: ssmHits,
                 ssmCompanionMisses: ssmMisses,
-                ssmCompanionReDerives: ssmReDerives
+                ssmCompanionReDerives: ssmReDerives,
+                diskL2PayloadBytes: diskL2PayloadBytes,
+                diskL2MaxBytes: diskL2MaxBytes,
+                diskL2Evictions: diskL2Evictions
             )
             return processLifetimeCounters.mergingCounters(into: live)
         }
@@ -1514,6 +1569,7 @@ struct MLXBatchAdapter {
             maxBatchSize: maxBatchSize,
             modelDefaults: modelDefaults,
             draftStrategy: effectiveDraftStrategy,
+            nativeMTPFallbackReason: nativeMTPFallbackReason,
             nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback,
             cacheTopology: cacheTopology,
             stage: "submitted_to_batch_engine"
@@ -1531,8 +1587,17 @@ struct MLXBatchAdapter {
             topK: effective.topK,
             minP: effective.minP,
             repetitionPenalty: effective.repetitionPenalty,
-            presencePenalty: generation.presencePenalty,
-            frequencyPenalty: generation.frequencyPenalty,
+            // Per-request wins, then the bundle's shipped default — the same
+            // order the other sampling fields use. Before this, a bundle
+            // declaring `presence_penalty` had it adopted by vmlx's
+            // `GenerateParameters(generationConfig:fallback:)` and dropped here,
+            // because `LocalGenerationDefaults` (which osaurus uses instead of
+            // that initializer) did not read the key at all.
+            //
+            // A declared `0.0` stays inert: `makeGenerateParameters` treats 0 as
+            // "unset" per the OpenAI default.
+            presencePenalty: generation.presencePenalty ?? modelDefaults.presencePenalty,
+            frequencyPenalty: generation.frequencyPenalty ?? modelDefaults.frequencyPenalty,
             randomSeed: generation.seed,
             stopSequences: stopSequences,
             draftStrategy: effectiveDraftStrategy,

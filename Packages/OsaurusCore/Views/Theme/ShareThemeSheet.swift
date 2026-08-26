@@ -51,7 +51,7 @@ struct ShareThemeSheet: View {
             Divider().opacity(0.5)
             footer
         }
-        .frame(width: 520, height: 560)
+        .fittedSheetFrame(width: 520, height: 560)
         .background(theme.cardBackground)
         .task { await runUpload() }
     }

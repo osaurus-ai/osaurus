@@ -245,7 +245,8 @@ struct ModelPickerItemCacheTests {
             supportedReasoningLevels: ["low", "medium", "high", "xhigh", "max", "ultra"].map {
                 CodexReasoningLevel(effort: $0)
             },
-            usesResponsesLite: true
+            usesResponsesLite: true,
+            contextWindow: 1_048_576
         )
         let providers = [
             Self.providerEntry(
@@ -284,11 +285,13 @@ struct ModelPickerItemCacheTests {
                 == ["low", "medium", "high", "xhigh", "max", "ultra"]
         )
         #expect(terra.reasoningCapabilities?.defaultLevelId == "medium")
+        #expect(terra.contextLength == 1_048_576)
 
-        // Codex without catalog metadata: plain remote behavior.
+        // Codex without catalog metadata: plain remote behavior, no window.
         let legacyCodex = try #require(byId["openai-chatgpt/gpt-5.5"])
         #expect(legacyCodex.displayName == "gpt-5.5")
         #expect(legacyCodex.reasoningCapabilities == nil)
+        #expect(legacyCodex.contextLength == nil)
 
         // Official API key route: documented public GPT-5.6 profile, id/display
         // preserved, and never Codex-only ultra.
@@ -296,6 +299,9 @@ struct ModelPickerItemCacheTests {
         #expect(sol.displayName == "gpt-5.6-sol")
         #expect(sol.reasoningCapabilities == .officialOpenAIGPT56)
         #expect(sol.reasoningCapabilities?.levels.map(\.id).contains("ultra") == false)
+        // /v1/models never reports a window, so the official route falls back
+        // to the documented per-family table instead of the generic default.
+        #expect(sol.contextLength == 1_050_000)
 
         // Official route, non-GPT-5.6 id: no documented profile.
         let gpt41 = try #require(byId["openai/gpt-4.1"])
@@ -305,6 +311,9 @@ struct ModelPickerItemCacheTests {
         // official contract, even for a GPT-5.6 slug.
         let proxySol = try #require(byId["proxy/gpt-5.6-sol"])
         #expect(proxySol.reasoningCapabilities == nil)
+        // The static window table is scoped to api.openai.com only — a proxy
+        // claiming an OpenAI slug must not inherit OpenAI's real window.
+        #expect(proxySol.contextLength == nil)
 
         // Capability map holds exactly the enriched full ids.
         #expect(
@@ -316,6 +325,24 @@ struct ModelPickerItemCacheTests {
     /// A catalog refetch that changes metadata while model ids stay identical
     /// must still produce different items (so `ChatView.applyPickerItems`
     /// re-normalizes options) and an updated capability map.
+    /// Longest matching prefix wins so dated snapshots resolve to their
+    /// family's window, and an id outside the known families falls back to
+    /// nil (never a guessed number) so resolution defers to the configured
+    /// fallback instead of asserting a wrong window.
+    @Test func officialOpenAIContextWindow_resolvesByLongestPrefixMatch() {
+        #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-5.6-luna") == 1_050_000)
+        #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-5.5-2026-01-01") == 1_050_000)
+        // "gpt-5.2" must not fall through to the shorter "gpt-5" entry.
+        #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-5.2") == 400_000)
+        #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-5") == 400_000)
+        #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-4.1") == 1_047_576)
+        #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-4o-mini") == 128_000)
+        #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-3.5-turbo-0125") == 16_385)
+        // Provider-prefixed id: only the bare slug is matched.
+        #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "openai/gpt-4.1") == 1_047_576)
+        #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "davinci-002") == nil)
+    }
+
     @Test func remoteModelItems_sameIds_reflectMetadataRefresh() throws {
         let provider = Self.providerEntry(
             name: "OpenAI ChatGPT",

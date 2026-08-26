@@ -536,6 +536,8 @@ public final class ToolRegistry: ObservableObject {
     /// tool family.
     nonisolated static let externallyDeniedHostToolNames: Set<String> = [
         "file_write", "file_edit", "file_copy", "shell_run", "git_commit", "file_undo",
+        // Mutates host files (in-place redaction) — same class as file_edit.
+        "redact_file",
         // Direct corpus mutation. Their ONLY gate is the interactive approval
         // modal, which an external caller cannot be shown, so there is no
         // safe way to honor these off-surface.
@@ -1914,6 +1916,15 @@ public final class ToolRegistry: ObservableObject {
         pluginToolNames.contains(name)
     }
 
+    /// Names of every currently registered native dylib plugin tool.
+    /// Channel dispatch pre-loads these into the session's schema: channel
+    /// turns start with an empty loaded-tools set every message, and small
+    /// local models rarely self-serve through `capabilities_load`, so a
+    /// granted plugin tool would otherwise read as unavailable (#2443).
+    var registeredPluginToolNames: Set<String> {
+        pluginToolNames
+    }
+
     // MARK: - Unregister
     func unregister(names: [String]) {
         for n in names {
@@ -2127,6 +2138,14 @@ public final class ToolRegistry: ObservableObject {
 
     static let coreWorkspaceToolNames: Set<String> = [
         "file_read", "file_search", "file_write", "file_edit", "shell_run",
+    ]
+
+    /// Redaction tools: part of the host-folder schema (they resolve the
+    /// executing chat's folder root) but NOT of `coreWorkspaceToolNames`,
+    /// because that set also surfaces in sandbox/VM mode where these have
+    /// no bridge routing and would dead-end in `noActiveFolderEnvelope`.
+    static let redactionToolNames: Set<String> = [
+        "detect_pii", "redact_file",
     ]
 
     /// Resolve the active execution mode for a chat send. Single source of

@@ -120,7 +120,15 @@ public enum ServerRuntimeSettingsStore {
     /// Persists the settings to disk and updates the nonisolated
     /// snapshot consumed by `ModelRuntime`.
     public nonisolated static func save(_ settings: VMLXServerRuntimeSettings) {
-        let settings = canonicalizedContextAndKVPolicy(settings)
+        var settings = canonicalizedContextAndKVPolicy(settings)
+        // Anything we write is by definition current-schema, so stamp it.
+        //
+        // Without this a saved value could carry a stale (or absent)
+        // `schemaVersion`, and the next `load()` would run the one-time
+        // migrations over settings the user had just chosen — re-applying the
+        // 10% reset on top of a deliberate share. It also keeps save/load a
+        // true round trip, which is what the store's own equality tests assert.
+        settings.schemaVersion = VMLXServerRuntimeSettings.contractVersion
         let url = fileURL()
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         do {
@@ -343,16 +351,52 @@ public enum ServerRuntimeSettingsStore {
         _ settings: VMLXServerRuntimeSettings
     ) -> VMLXServerRuntimeSettings {
         var normalized = canonicalizedContextAndKVPolicy(settings)
+        // Run vmlx's schema migrations.
+        //
+        // These were DEAD CODE: `migrateToCurrentSchema()` had no call site in
+        // either repo, so every version-gated repair it defines silently never
+        // happened. The v2 repair (a persisted flat 10 GB disk cap becoming
+        // auto) therefore never reached a single updating install — only fresh
+        // installs benefited, because their value was nil to begin with and the
+        // resolver handled nil. A live launch is what surfaced it: the config
+        // the app wrote back had no `schemaVersion` at all.
+        //
+        // This is the right home for it. Both `load()` and `loadOrMigrate()`
+        // funnel through here, and `load()` persists whenever normalization
+        // changes the value, so the migration runs once and is written back.
+        // Captured BEFORE the migration, which overwrites `schemaVersion` and
+        // would otherwise make a legacy install indistinguishable from a
+        // current one by the time the MTP repair below runs.
+        let wasPreMigrationInstall =
+            settings.schemaVersion != VMLXServerRuntimeSettings.contractVersion
+        normalized.migrateToCurrentSchema()
         // vmlx-swift e095d0f changed the engine default from "MTP off" to
         // "auto". Existing Osaurus installs persisted the old default exactly,
         // so without this repair tuned MXFP8/MTP bundles still never reach the
         // tensor+tuning-gated autodetect path after upgrade.
-        if normalized.mtp.mode == .off,
+        //
+        // Gated by a marker, because the condition above cannot tell a legacy
+        // install from a user who just switched MTP off and touched nothing
+        // else — both are `.off` with the other three fields at defaults.
+        // Ungated it re-fired on EVERY load, and load() persists what it
+        // changes, so "native MTP off" silently became "auto" forever. Same
+        // one-shot shape as the diffusion / tied-head / cache repairs below.
+        // Two gates, because either alone is insufficient. `wasPreMigrationInstall`
+        // is what separates a legacy install from a user who just switched MTP
+        // off — the field values are identical in both cases. The marker then
+        // stops the repair re-firing on later loads, since the migration makes
+        // every install look current from the second load onward.
+        if wasPreMigrationInstall,
+            normalized.mtp.mode == .off,
             normalized.mtp.draftTokenLimit == nil,
             normalized.mtp.keepDraftCacheSeparate,
-            normalized.mtp.acceptedTokensOnlyEnterBaseCache
+            normalized.mtp.acceptedTokensOnlyEnterBaseCache,
+            !FileManager.default.fileExists(
+                atPath: mtpAutoDefaultsMigrationMarkerURL().path
+            )
         {
             normalized.mtp.mode = .auto
+            writeMTPAutoDefaultsMigrationMarker()
         }
         // Osaurus product default for block-diffusion models: 16 denoising
         // steps (~74 tok/s on diffusiongemma-26B-A4B MXFP4, coherent) vs the
@@ -400,7 +444,49 @@ public enum ServerRuntimeSettingsStore {
             normalized.cache.prefix.memoryPercent = nil
             writeMemorySafetyOwnedCacheDefaultsMigrationMarker()
         }
+        warnIfDiskCapIsIgnored(normalized.cache)
         return normalized
+    }
+
+    /// Say so when a configured `maxSizeGB` will not be enforced.
+    ///
+    /// `resolveDiskCacheMaxGB` consults `maxSizePercent` first and only falls
+    /// through to `maxSizeGB` when the percent is nil or zero — and the app
+    /// writes a percent by default. So a GB cap typed into the config is
+    /// accepted, persisted, and then ignored. Measured live: a config asking
+    /// for 0.5 GB let the cache grow to 3897 MB, because the percent still
+    /// resolved to ~10% of a 3.7 TB volume.
+    ///
+    /// This does not change which field wins — that is a product decision, and
+    /// silently flipping precedence could shrink a cache someone is relying on.
+    /// It only refuses to keep the outcome secret, which is a trap under either
+    /// precedence.
+    private static let ignoredDiskCapWarningLock = OSAllocatedUnfairLock<Set<String>>(
+        initialState: []
+    )
+
+    private nonisolated static func warnIfDiskCapIsIgnored(
+        _ cache: VMLXServerCacheSettings
+    ) {
+        guard let gb = cache.blockDisk.maxSizeGB, gb > 0,
+            let percent = cache.blockDisk.maxSizePercent, percent > 0
+        else { return }
+        // Once per distinct pair per process. Normalization runs on more than
+        // one load path, so an ungated notice printed twice on every launch —
+        // and a warning a user learns to scroll past has stopped warning.
+        let seen = ignoredDiskCapWarningLock.withLock { state -> Bool in
+            let key = "\(gb)|\(percent)"
+            defer { state.insert(key) }
+            return state.contains(key)
+        }
+        if seen { return }
+        NSLog(
+            "[Settings] cache.blockDisk.maxSizeGB=%@ is NOT in effect: "
+                + "maxSizePercent=%@ takes precedence and is what the disk cache "
+                + "will enforce. Clear maxSizePercent to use the GB value.",
+            String(format: "%g", gb),
+            String(format: "%g", percent)
+        )
     }
 
     private nonisolated static func shouldRepairLegacyCacheDefaults(
@@ -427,6 +513,14 @@ public enum ServerRuntimeSettingsStore {
             && cache.legacyDisk.maxSizeGB == nil
             && cache.blockDisk.enabled
             && cache.blockDisk.maxSizeGB == nil
+            // The cap is a share of the disk now, and schema v3 stamps the
+            // shipped 10% onto every install. Testing only `maxSizeGB == nil`
+            // would call a deliberate 40% "untouched" — because that field is
+            // nil for everyone after migration — and let a later defaults
+            // migration overwrite a choice the user made.
+            && (cache.blockDisk.maxSizePercent == nil
+                || cache.blockDisk.maxSizePercent
+                    == VMLXServerRuntimeSettings.autoDiskCacheFraction * 100)
             && cache.blockDisk.directory == nil
             && cache.enableSSMReDerive == false
     }
@@ -461,6 +555,14 @@ public enum ServerRuntimeSettingsStore {
             && cache.legacyDisk.maxSizeGB == nil
             && cache.blockDisk.enabled
             && cache.blockDisk.maxSizeGB == nil
+            // The cap is a share of the disk now, and schema v3 stamps the
+            // shipped 10% onto every install. Testing only `maxSizeGB == nil`
+            // would call a deliberate 40% "untouched" — because that field is
+            // nil for everyone after migration — and let a later defaults
+            // migration overwrite a choice the user made.
+            && (cache.blockDisk.maxSizePercent == nil
+                || cache.blockDisk.maxSizePercent
+                    == VMLXServerRuntimeSettings.autoDiskCacheFraction * 100)
             && cache.blockDisk.directory == nil
             && cache.enableSSMReDerive
     }
@@ -697,6 +799,22 @@ public enum ServerRuntimeSettingsStore {
 
     private nonisolated static func diffusionDefaultsMigrationMarkerURL() -> URL {
         directoryURL().appendingPathComponent(diffusionDefaultsMigrationMarkerName)
+    }
+
+    /// One-shot repair of the pre-e095d0f "MTP off" engine default. The marker
+    /// is what keeps a user's later explicit "off" sticky — without it the
+    /// repair cannot distinguish the two and overwrites the choice on reload.
+    static let mtpAutoDefaultsMigrationMarkerName =
+        "mtp-auto-defaults-migrated.marker"
+
+    private nonisolated static func mtpAutoDefaultsMigrationMarkerURL() -> URL {
+        directoryURL().appendingPathComponent(mtpAutoDefaultsMigrationMarkerName)
+    }
+
+    private nonisolated static func writeMTPAutoDefaultsMigrationMarker() {
+        let url = mtpAutoDefaultsMigrationMarkerURL()
+        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
+        try? Data().write(to: url)
     }
 
     private nonisolated static func writeDiffusionDefaultsMigrationMarker() {

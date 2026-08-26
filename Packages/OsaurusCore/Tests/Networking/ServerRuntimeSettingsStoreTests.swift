@@ -404,8 +404,20 @@ struct ServerRuntimeSettingsStoreTests {
             ServerRuntimeSettingsStore.invalidateSnapshot()
             let loaded = ServerRuntimeSettingsStore.load()
 
-            #expect(loaded == settings)
-            #expect(ServerRuntimeSettingsStore.snapshot() == settings)
+            // `save` stamps the current schema version, because anything the
+            // app writes IS current-schema. Without that, the next `load` would
+            // re-run the one-time migrations over settings the user had just
+            // chosen — re-applying the 10% disk-cache reset on top of a
+            // deliberate share. So the round trip preserves every field and
+            // additionally guarantees the value comes back already migrated.
+            var expected = settings
+            expected.schemaVersion = VMLXServerRuntimeSettings.contractVersion
+
+            #expect(loaded == expected)
+            #expect(ServerRuntimeSettingsStore.snapshot() == expected)
+            #expect(
+                loaded?.schemaVersion == VMLXServerRuntimeSettings.contractVersion,
+                "a saved value must not come back needing migration")
         }
     }
 

@@ -154,7 +154,10 @@ struct ModelDetailView: View, Identifiable {
             // Action Footer
             actionFooter
         }
-        .frame(width: 720, height: 720)
+        // Clamped to the screen: a hard 720pt height clipped `actionFooter`
+        // off-screen on small displays, taking the Download/Delete buttons
+        // with it. The ScrollView above absorbs whatever height is lost.
+        .fittedSheetFrame(width: 720, height: 720)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
@@ -1407,10 +1410,13 @@ struct ModelDetailView: View, Identifiable {
     // MARK: - Repair
 
     private func repairModel() async {
+        // The only caller allowed to restore weights and to overwrite files
+        // that differ from the Hub — because the user asked for it by name.
         let success = await ModelDownloadService.ensureComplete(
             for: model,
             directory: model.localDirectory,
-            clearSentinel: true
+            clearSentinel: true,
+            intent: .explicitRepair
         )
         await MainActor.run { repairResult = success }
     }

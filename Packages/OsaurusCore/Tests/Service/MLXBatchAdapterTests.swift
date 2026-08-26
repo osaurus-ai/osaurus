@@ -301,7 +301,7 @@ struct MLXBatchAdapterTests {
         let effective = MLXBatchAdapter.effectiveGenerationSettings(
             modelName: "JANGQ-AI/MiniMax-M2.7-JANGTQ",
             generation: generation,
-            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            runtimeDefaults: VMLXServerGenerationDefaults(),
             maxBatchSize: 1,
             modelDefaults: defaults
         )
@@ -313,6 +313,113 @@ struct MLXBatchAdapterTests {
         #expect(effective.minP == 0.03)
         #expect(effective.repetitionPenalty == 1.05)
         #expect(!effective.compiledBatchDecode)
+    }
+
+    /// Settings → Sampling Defaults must actually change sampling.
+    ///
+    /// The panel's own copy promises it: every field reads "Blank = model
+    /// default", and the card says "Leave blank to honor the model's own
+    /// defaults." A filled field therefore has to apply.
+    ///
+    /// It did not. The user's values sat BEHIND the bundle's shipped
+    /// `generation_config.json`, and 83 of 95 bundles in a real local library
+    /// ship `temperature`/`top_p`/`top_k` — so on almost every model the field
+    /// was editable, persisted, and inert.
+    ///
+    /// Two independent places already encode "non-nil means the user chose
+    /// it": the first-run migration writes `topP: nil` unless the legacy
+    /// `genTopP` differs from its default, and `RuntimeConfig.snapshot()`
+    /// bridges the legacy value only when it differs — commented "Honor a
+    /// legacy `genTopP` override". Honoring it was impossible under the old
+    /// order. Per-request still outranks both.
+    @Test func effectiveGenerationSettings_userSamplingDefaultsOutrankBundle() {
+        let generation = GenerationParameters(
+            temperature: nil,
+            maxTokens: 16_384,
+            maxTokensExplicit: false,
+            topPOverride: nil,
+            minPOverride: nil,
+            repetitionPenalty: nil
+        )
+        let defaults = LocalGenerationDefaults.Defaults(
+            maxTokens: 300,
+            temperature: 1.0,
+            topP: 0.95,
+            topK: 40,
+            minP: 0.03,
+            repetitionPenalty: 1.05,
+            doSample: true
+        )
+
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "JANGQ-AI/MiniMax-M2.7-JANGTQ",
+            generation: generation,
+            runtimeDefaults: VMLXServerGenerationDefaults(
+                maxTokens: 512,
+                temperature: 0.3,
+                topP: 0.8,
+                topK: 20,
+                minP: 0.01,
+                repetitionPenalty: 1.2
+            ),
+            maxBatchSize: 1,
+            modelDefaults: defaults
+        )
+
+        #expect(effective.temperature == 0.3)
+        #expect(effective.maxTokens == 512)
+        #expect(effective.topP == 0.8)
+        #expect(effective.topK == 20)
+        #expect(effective.minP == 0.01)
+        #expect(effective.repetitionPenalty == 1.2)
+    }
+
+    /// Per-request still wins over the user's Sampling Defaults.
+    ///
+    /// Raising the user's settings above the bundle must not raise them above
+    /// an explicit API/agent request — that would break every client that
+    /// sends its own sampler.
+    @Test func effectiveGenerationSettings_requestOutranksUserSamplingDefaults() {
+        let generation = GenerationParameters(
+            temperature: 0.9,
+            maxTokens: 4_096,
+            maxTokensExplicit: true,
+            topPOverride: 0.5,
+            topKOverride: 7,
+            minPOverride: 0.2,
+            repetitionPenalty: 1.4
+        )
+        let defaults = LocalGenerationDefaults.Defaults(
+            maxTokens: 300,
+            temperature: 1.0,
+            topP: 0.95,
+            topK: 40,
+            minP: 0.03,
+            repetitionPenalty: 1.05,
+            doSample: true
+        )
+
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "JANGQ-AI/MiniMax-M2.7-JANGTQ",
+            generation: generation,
+            runtimeDefaults: VMLXServerGenerationDefaults(
+                maxTokens: 512,
+                temperature: 0.3,
+                topP: 0.8,
+                topK: 20,
+                minP: 0.01,
+                repetitionPenalty: 1.2
+            ),
+            maxBatchSize: 1,
+            modelDefaults: defaults
+        )
+
+        #expect(effective.temperature == 0.9)
+        #expect(effective.maxTokens == 4_096)
+        #expect(effective.topP == 0.5)
+        #expect(effective.topK == 7)
+        #expect(effective.minP == 0.2)
+        #expect(effective.repetitionPenalty == 1.4)
     }
 
     /// An agent-level `temperature: 0` silently defeats the bundle's sampler.
@@ -404,7 +511,7 @@ struct MLXBatchAdapterTests {
         let effective = MLXBatchAdapter.effectiveGenerationSettings(
             modelName: "NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
             generation: generation,
-            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0, topK: nil),
+            runtimeDefaults: VMLXServerGenerationDefaults(),
             maxBatchSize: 1,
             modelDefaults: ultraDefaults
         )
@@ -439,7 +546,7 @@ struct MLXBatchAdapterTests {
         let effective = MLXBatchAdapter.effectiveGenerationSettings(
             modelName: "JANGQ-AI/MiniMax-M2.7-JANGTQ",
             generation: generation,
-            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            runtimeDefaults: VMLXServerGenerationDefaults(),
             maxBatchSize: 1,
             modelDefaults: defaults
         )
@@ -490,7 +597,7 @@ struct MLXBatchAdapterTests {
                 maxTokensExplicit: true,
                 topKOverride: 32
             ),
-            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            runtimeDefaults: VMLXServerGenerationDefaults(),
             maxBatchSize: 1,
             modelDefaults: repairedDefaults
         )
@@ -520,7 +627,7 @@ struct MLXBatchAdapterTests {
         let effective = MLXBatchAdapter.effectiveGenerationSettings(
             modelName: "JANGQ/Qwen3.6-35B-A3B-MXFP4-MTP",
             generation: generation,
-            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            runtimeDefaults: VMLXServerGenerationDefaults(),
             maxBatchSize: 1,
             modelDefaults: mtpBundleDefaults,
             draftStrategy: .nativeMTP(depth: 3)
@@ -556,7 +663,7 @@ struct MLXBatchAdapterTests {
         let effective = MLXBatchAdapter.effectiveGenerationSettings(
             modelName: "JANGQ/Qwen3.6-35B-A3B-MXFP4-MTP",
             generation: generation,
-            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            runtimeDefaults: VMLXServerGenerationDefaults(),
             maxBatchSize: 1,
             modelDefaults: mtpBundleDefaults,
             draftStrategy: .nativeMTP(depth: 3)
@@ -595,7 +702,7 @@ struct MLXBatchAdapterTests {
         let effective = MLXBatchAdapter.effectiveGenerationSettings(
             modelName: "JANGQ/Qwen3.6-35B-A3B-MXFP4-MTP",
             generation: generation,
-            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            runtimeDefaults: VMLXServerGenerationDefaults(),
             maxBatchSize: 1,
             modelDefaults: mtpBundleDefaults,
             draftStrategy: effectiveDraftStrategy,
@@ -696,7 +803,7 @@ struct MLXBatchAdapterTests {
         let effective = MLXBatchAdapter.effectiveGenerationSettings(
             modelName: "JANGQ/Qwen3.6-35B-A3B-MXFP4-MTP",
             generation: greedy,
-            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            runtimeDefaults: VMLXServerGenerationDefaults(),
             maxBatchSize: 1,
             modelDefaults: .empty,
             draftStrategy: nil,
@@ -734,7 +841,7 @@ struct MLXBatchAdapterTests {
         let effective = MLXBatchAdapter.effectiveGenerationSettings(
             modelName: "deepseek-v4-flash-jangtq-k",
             generation: generation,
-            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            runtimeDefaults: VMLXServerGenerationDefaults(),
             maxBatchSize: 1,
             modelDefaults: defaults
         )
@@ -761,7 +868,7 @@ struct MLXBatchAdapterTests {
                 repetitionPenalty: nil,
                 modelOptions: ["reasoningEffort": .string("high")]
             ),
-            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            runtimeDefaults: VMLXServerGenerationDefaults(),
             maxBatchSize: 1,
             modelDefaults: defaults
         )
@@ -774,7 +881,7 @@ struct MLXBatchAdapterTests {
                 repetitionPenalty: 1.03,
                 modelOptions: ["reasoningEffort": .string("max")]
             ),
-            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            runtimeDefaults: VMLXServerGenerationDefaults(),
             maxBatchSize: 1,
             modelDefaults: defaults
         )
@@ -1312,7 +1419,7 @@ struct MLXBatchAdapterTests {
                 maxTokens: 64,
                 maxTokensExplicit: true
             ),
-            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            runtimeDefaults: VMLXServerGenerationDefaults(),
             maxBatchSize: 1,
             modelDefaults: defaults
         )
@@ -1325,7 +1432,7 @@ struct MLXBatchAdapterTests {
                 maxTokens: 64,
                 maxTokensExplicit: true
             ),
-            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            runtimeDefaults: VMLXServerGenerationDefaults(),
             maxBatchSize: 1,
             modelDefaults: defaults
         )

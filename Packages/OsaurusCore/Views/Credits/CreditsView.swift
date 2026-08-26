@@ -32,7 +32,12 @@ struct CreditsView: View {
     private var routerEnabled: Bool { providerManager.isOsaurusRouterEnabled }
 
     /// Top-ups need both an active router and an identity to bill against.
-    private var canAddCredits: Bool { routerEnabled && OsaurusIdentity.exists() }
+    /// `existsCached()` because this recomputes with every body pass: the
+    /// synchronous `exists()` blocks on securityd's keychain mutex, which has
+    /// hung the main thread for seconds. Gating chrome is eventually
+    /// consistent by design; the checkout/redeem services still verify the
+    /// identity authoritatively before billing.
+    private var canAddCredits: Bool { routerEnabled && OsaurusIdentity.existsCached() }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -42,7 +47,7 @@ struct CreditsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     if routerEnabled {
-                        if !OsaurusIdentity.exists() {
+                        if !OsaurusIdentity.existsCached() {
                             identityRequiredCard
                         }
                         balanceCard
@@ -91,7 +96,7 @@ struct CreditsView: View {
         .sheet(isPresented: $showRouterUsageCenter) {
             RouterAccountUsageCenterView()
                 .environment(\.theme, themeManager.currentTheme)
-                .frame(width: 980, height: 760)
+                .fittedSheetFrame(width: 980, height: 760)
         }
         .confirmationDialog(
             Text("Turn off Osaurus Router?", bundle: .module),
@@ -371,7 +376,7 @@ struct CreditsView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(!OsaurusIdentity.exists() || accountService.isCreatingCheckout)
+                .disabled(!OsaurusIdentity.existsCached() || accountService.isCreatingCheckout)
             }
 
             if let error = accountService.lastError, !error.isEmpty {

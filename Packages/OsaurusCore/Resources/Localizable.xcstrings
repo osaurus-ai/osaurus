@@ -244,6 +244,550 @@
     "Show documents": {},
     "This store was written by a newer version of Osaurus, so this build won't open it. Update Osaurus to read it again. Do not Reset, your data is intact.": {},
     "Your memories are intact. This database was written by a newer version of Osaurus, and this build is older than the format it uses. Update Osaurus to open it again, and don't reset the store.": {},
+    "Bulk Edits": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Massenbearbeitungen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "일괄 편집"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Массовые правки"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "批量编辑"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "批次編輯"
+          }
+        }
+      }
+    },
+    "Choose Folder…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ordner wählen…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "폴더 선택…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выбрать папку…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择文件夹…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選擇資料夾…"
+          }
+        }
+      }
+    },
+    "Download drafter…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drafter herunterladen…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "드래프터 다운로드…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Скачать черновую модель…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下载草稿模型…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下載草稿模型…"
+          }
+        }
+      }
+    },
+    "Download failed: %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Download fehlgeschlagen: %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "다운로드 실패: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ошибка загрузки: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "下载失败：%@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "下載失敗：%@"
+          }
+        }
+      }
+    },
+    "Downloading PII Model": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "PII-Modell wird geladen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "PII 모델 다운로드 중"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Загрузка модели PII"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在下载 PII 模型"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在下載 PII 模型"
+          }
+        }
+      }
+    },
+    "Downloading, %lld%%": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Wird geladen, %lld %%"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "다운로드 중, %lld%%"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Загрузка, %lld%%"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在下载，%lld%%"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在下載，%lld%%"
+          }
+        }
+      }
+    },
+    "Install PII Detection Model?": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "PII-Erkennungsmodell installieren?"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "PII 감지 모델을 설치할까요?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Установить модель распознавания PII?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "安装 PII 检测模型？"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "安裝 PII 偵測模型？"
+          }
+        }
+      }
+    },
+    "Not a DFlash 2 drafter — no selector in its config.json.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kein DFlash-2-Drafter — in der config.json fehlt der Selector."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "DFlash 2 드래프터가 아닙니다 — config.json에 셀렉터가 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это не черновая модель DFlash 2 — в config.json нет селектора."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不是 DFlash 2 草稿模型 — 其 config.json 中没有选择器。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不是 DFlash 2 草稿模型 — 其 config.json 中沒有選擇器。"
+          }
+        }
+      }
+    },
+    "Redacted personal information": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Persönliche Daten geschwärzt"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "개인정보를 마스킹함"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Личные данные скрыты"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "已隐去个人信息"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "已隱去個人資訊"
+          }
+        }
+      }
+    },
+    "Redacting personal information": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Persönliche Daten werden geschwärzt"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "개인정보 마스킹 중"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Скрытие личных данных"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在隐去个人信息"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在隱去個人資訊"
+          }
+        }
+      }
+    },
+    "Scanned for personal information": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Nach persönlichen Daten gesucht"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "개인정보 검사 완료"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Поиск личных данных завершён"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "已扫描个人信息"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "已掃描個人資訊"
+          }
+        }
+      }
+    },
+    "Scanning for personal information": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Suche nach persönlichen Daten"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "개인정보 검사 중"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Поиск личных данных"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在扫描个人信息"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在掃描個人資訊"
+          }
+        }
+      }
+    },
+    "Select a downloaded DFlash 2 drafter folder": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wähle einen heruntergeladenen DFlash-2-Drafter-Ordner"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "다운로드한 DFlash 2 드래프터 폴더를 선택하세요"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выберите загруженную папку черновой модели DFlash 2"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择已下载的 DFlash 2 草稿模型文件夹"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選擇已下載的 DFlash 2 草稿模型資料夾"
+          }
+        }
+      }
+    },
+    "That folder no longer exists.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieser Ordner existiert nicht mehr."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "해당 폴더가 더 이상 존재하지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Эта папка больше не существует."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "该文件夹已不存在。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "該資料夾已不存在。"
+          }
+        }
+      }
+    },
+    "The image could not be read or re-encoded.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Das Bild konnte nicht gelesen oder neu kodiert werden."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이미지를 읽거나 다시 인코딩할 수 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось прочитать или перекодировать изображение."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法读取或重新编码该图像。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法讀取或重新編碼該圖像。"
+          }
+        }
+      }
+    },
+    "This task detects personal information (names, addresses) with an on-device model. Installing the recommended model (37 MB) takes a few seconds and runs fully offline. Without it, only pattern-based detection (emails, phone numbers) is available.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Diese Aufgabe erkennt persönliche Daten (Namen, Adressen) mit einem lokalen Modell. Die Installation des empfohlenen Modells (37 MB) dauert nur wenige Sekunden und läuft vollständig offline. Ohne das Modell ist nur die musterbasierte Erkennung (E-Mails, Telefonnummern) verfügbar."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "이 작업은 온디바이스 모델로 개인정보(이름, 주소)를 감지합니다. 권장 모델(37 MB) 설치는 몇 초면 완료되며 완전히 오프라인으로 실행됩니다. 설치하지 않으면 패턴 기반 감지(이메일, 전화번호)만 사용할 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Эта задача распознаёт личные данные (имена, адреса) с помощью локальной модели. Установка рекомендуемой модели (37 МБ) занимает несколько секунд, и она работает полностью офлайн. Без неё доступно только распознавание по шаблонам (адреса эл. почты, номера телефонов)."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "此任务使用设备端模型检测个人信息（姓名、地址）。安装推荐模型（37 MB）只需几秒钟，并且完全离线运行。若不安装，则仅可使用基于模式的检测（电子邮件、电话号码）。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "此工作使用裝置端模型偵測個人資訊（姓名、地址）。安裝建議的模型（37 MB）只需幾秒鐘，並且完全離線執行。若不安裝，則僅能使用以模式為基礎的偵測（電子郵件、電話號碼）。"
+          }
+        }
+      }
+    },
     "—": {
       "comment": "A placeholder text to indicate missing data.",
       "isCommentAutoGenerated": true,
@@ -1562,6 +2106,74 @@
         }
       },
       "shouldTranslate": false
+    },
+    "%@%% of %@ \u2248 %@ (limited to %@ \u2014 disk is nearly full)": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@%% von %@ \u2248 %@ (begrenzt auf %@ \u2014 Datentr\u00e4ger fast voll)"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ %@\uc758 %%\uc5d0\uc11c \u2248 %@ (%@\ub85c \uc81c\ud55c \u2014 \ub514\uc2a4\ud06c \uacf5\uac04 \ubd80\uc871)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@%% \u043e\u0442 %@ \u2248 %@ (\u043e\u0433\u0440\u0430\u043d\u0438\u0447\u0435\u043d\u043e \u0434\u043e %@ \u2014 \u0434\u0438\u0441\u043a \u043f\u043e\u0447\u0442\u0438 \u043f\u043e\u043b\u043e\u043d)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ \u7684 %@%% \u2248 %@\uff08\u9650\u5236\u4e3a %@ \u2014 \u78c1\u76d8\u5feb\u6ee1\uff09"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ \u7684 %@%% \u2248 %@\uff08\u9650\u5236\u70ba %@ \u2014 \u78c1\u789f\u5feb\u6eff\uff09"
+          }
+        }
+      }
+    },
+    "%@%% of %@ \u2248 %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@%% von %@ \u2248 %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ %@\uc758 %%\uc5d0\uc11c \u2248 %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@%% \u043e\u0442 %@ \u2248 %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ \u7684 %@%% \u2248 %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ \u7684 %@%% \u2248 %@"
+          }
+        }
+      }
     },
     "%@ · %@": {
       "comment": "A short identifier for a channel binding.",
@@ -9475,6 +10087,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "+ Enter 保存"
+          }
+        }
+      }
+    },
+    "+%@ model load": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "+%@ Modellladen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "+%@ \ubaa8\ub378 \ub85c\ub529"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "+%@ \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u043c\u043e\u0434\u0435\u043b\u0438"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "+%@ \u6a21\u578b\u52a0\u8f7d"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "+%@ \u6a21\u578b\u8f09\u5165"
           }
         }
       }
@@ -132119,40 +132765,6 @@
         }
       }
     },
-    "Off disables speculation. Auto uses it only when the model ships a verified native MTP head. Force-On requires that head.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Off disables speculation. Auto uses it only when the model ships a verified native MTP head. Force-On requires that head."
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "끄면 추측이 비활성화됩니다. 자동은 모델이 검증된 기본 MTP 헤드를 제공할 때만 사용합니다. 강제 켬은 해당 헤드가 필요합니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Выкл. отключает спекуляции. Auto использует его только тогда, когда модель поставляется с проверенной головкой MTP. Force-On требует этой головы."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Off 会禁用推测解码。Auto 仅在模型自带经验证的原生 MTP 头时使用。Force-On 要求该头存在。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Off 會禁用推測解碼。Auto 僅在模型自帶經驗證的原生 MTP 頭時使用。Force-On 要求該頭存在。"
-          }
-        }
-      }
-    },
     "Off means premium search stops at your remaining credits; everything else uses the built-in sources.": {
       "localizations": {
         "de": {
@@ -175434,6 +176046,41 @@
           "stringUnit": {
             "state": "translated",
             "value": "安全級別"
+          }
+        }
+      }
+    },
+    "Sampler last used": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zuletzt verwendeter Sampler"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "마지막으로 사용한 샘플러"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Последний использованный сэмплер"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上次使用的采样器"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上次使用的取樣器"
           }
         }
       }
@@ -231177,6 +231824,40 @@
         }
       }
     },
+    "Your context limit": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ihr Kontextlimit"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "\ub0b4 \ucee8\ud14d\uc2a4\ud2b8 \uc81c\ud55c"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "\u0412\u0430\u0448 \u043b\u0438\u043c\u0438\u0442 \u043a\u043e\u043d\u0442\u0435\u043a\u0441\u0442\u0430"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "\u60a8\u7684\u4e0a\u4e0b\u6587\u4e0a\u9650"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "\u60a8\u7684\u4e0a\u4e0b\u6587\u4e0a\u9650"
+          }
+        }
+      }
+    },
     "Your agents can now browse the web for you — navigating pages, reading content, and filling forms, with every step shown in a live feed. Each agent gets its own persistent browser session, so cookies and sign-ins carry over between chats but are never shared with other agents or your regular browser. If you used the browser plugin before, your sessions were migrated automatically.": {
       "comment": "What's New (0.22.9) page body — Browser Use feature.",
       "localizations": {
@@ -232656,6 +233337,60 @@
           }
         }
       }
+    },
+    "Off disables the model's native MTP head. Auto uses it only when the model ships a verified head; Force-On requires it. A selected DFlash 2 drafter drafts regardless of Mode — remove it below to stop.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Off disables the model's native MTP head. Auto uses it only when the model ships a verified head; Force-On requires it. A selected DFlash 2 drafter drafts regardless of Mode — remove it below to stop."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "끄기는 모델의 기본 MTP 헤드를 비활성화합니다. 자동은 모델이 검증된 헤드를 제공할 때만 사용하며, 강제 켬은 해당 헤드가 필요합니다. 선택된 DFlash 2 드래프터는 모드와 관계없이 초안을 생성합니다 — 중지하려면 아래에서 제거하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выкл. отключает родную голову MTP модели. Auto использует её только тогда, когда модель поставляется с проверенной головой; Force-On требует её. Выбранный драфтер DFlash 2 работает независимо от режима — удалите его ниже, чтобы остановить."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off 会禁用模型的原生 MTP 头。Auto 仅在模型自带经验证的头时使用；Force-On 要求该头存在。已选择的 DFlash 2 草稿器无论模式如何都会起草——在下方移除即可停止。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off 會禁用模型的原生 MTP 頭。Auto 僅在模型自帶經驗證的頭時使用；Force-On 要求該頭存在。已選擇的 DFlash 2 草稿器無論模式如何都會起草——在下方移除即可停止。"
+          }
+        }
+      }
+    },
+    "Cleared %@": {
+      "extractionState": "manual",
+      "localizations": {}
+    },
+    "Cache was already empty": {
+      "extractionState": "manual",
+      "localizations": {}
+    },
+    "Clear SSD Cache": {
+      "extractionState": "manual",
+      "localizations": {}
+    },
+    "Deletes every stored prompt checkpoint, including orphaned files left by an interrupted write. Chats keep working; the next turn re-prefills instead of resuming.": {
+      "extractionState": "manual",
+      "localizations": {}
+    },
+    "Deletes all saved conversation data from disk, including leftover files from an interrupted write. Your chats are not affected — the next reply just takes a little longer to start.": {
+      "extractionState": "manual",
+      "localizations": {}
     }
   },
   "version": "1.1"

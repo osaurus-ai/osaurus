@@ -429,6 +429,7 @@ struct DiscordSettingsView: View {
                     defaultAgentId: $inboundAgentId,
                     routes: $inboundRoutes
                 )
+                AgentChannelPluginPreloadOverflowNotice(agentId: inboundAgentId)
                 SettingsToggle(
                     title: L("Require an @mention"),
                     description: L("Start new conversations only when the bot is mentioned."),

@@ -1444,13 +1444,38 @@ final class ChatSession: ObservableObject {
     }
 
     var selectedModelSupportsAudio: Bool {
-        guard let model = selectedModel else { return false }
-        return ModelMediaCapabilities.from(modelId: model).supportsAudio
+        selectedModelSendCapabilities.supportsAudio
     }
 
     var selectedModelSupportsVideo: Bool {
-        guard let model = selectedModel else { return false }
-        return ModelMediaCapabilities.from(modelId: model).supportsVideo
+        selectedModelSendCapabilities.supportsVideo
+    }
+
+    /// Media capabilities the SEND path gates on. Must resolve exactly like
+    /// the composer's attach gate (`FloatingInputCard.mediaCapabilityDescriptor`)
+    /// — the name-only matcher requires a "-vl" suffix that community bundles
+    /// like "Qwen3.6-35B-A3B-6bit" don't carry, so gating the send on it
+    /// silently dropped a video the composer had happily accepted: the model
+    /// then answers "I don't see any video". Same failure class as the remote
+    /// image drop documented on `modelSupportsImages`.
+    /// The SEND gate, and it is a second site: the picker deciding a modality
+    /// is allowed does not make `buildUserChatMessage` include it. This getter
+    /// used to omit the checkpoint audio fact, so on gemma-4 E2B — a bundle
+    /// that carries `embed_audio.embedding_projection` — the picker accepted a
+    /// `.wav`, the chip appeared, and then `supportsAudio` was false here, so
+    /// the audio was dropped and the plain (partless) initializer ran.
+    /// Instrumented live: the user message reached the engine with
+    /// `parts= images=0 audios=0` while an image turn in the same session
+    /// reached it with `images=1`.
+    private var selectedModelSendCapabilities: ModelMediaCapabilities.Capabilities {
+        guard let model = selectedModel else { return .textOnly }
+        let localModel = ModelManager.findInstalledMLXModelFromCache(named: model)
+        return ModelMediaCapabilities.composerCapabilities(
+            modelId: model,
+            fallbackSupportsImages: selectedModelSupportsImages,
+            localModelType: localModel?.modelType,
+            localHasAudioTensors: localModel?.hasAudioTensors ?? false
+        )
     }
 
     /// Get the currently selected ModelPickerItem
@@ -1923,12 +1948,20 @@ final class ChatSession: ObservableObject {
     /// (`recomputePreviewContext`).
     private func composePreview() -> ComposedContext {
         let effectiveId = agentId ?? Agent.defaultId
-        return SystemPromptComposer.composePreviewContext(
-            agentId: effectiveId,
-            executionMode: estimatedChatExecutionMode(agentId: effectiveId),
-            model: selectedModel,
-            modelType: selectedPickerItem?.modelType
-        )
+        // Price the popover under this session's source, exactly as the send
+        // binds it. Source-scoped gates (channel publish tool + Channel
+        // Destinations section) read the task-local; previewing with it unset
+        // showed a smaller context than the send then composed, which read as
+        // "dynamic tools appeared" when the send's manifest replaced the
+        // estimate.
+        return ChatExecutionContext.$currentSessionSource.withValue(source) {
+            SystemPromptComposer.composePreviewContext(
+                agentId: effectiveId,
+                executionMode: estimatedChatExecutionMode(agentId: effectiveId),
+                model: selectedModel,
+                modelType: selectedPickerItem?.modelType
+            )
+        }
     }
 
     /// Builds the full user message text, prepending any attached document contents wrapped in XML tags.
@@ -4702,7 +4735,24 @@ final class ChatSession: ObservableObject {
         }
 
         if let first = firstDeltaTime {
-            currentTurn.timeToFirstToken = first.timeIntervalSince(streamStartTime)
+            // Split cold model load out of TTFT.
+            //
+            // `streamStartTime` is stamped immediately before `streamChat`, and
+            // no delta can arrive until the weights are resident — so a cold
+            // container load lands inside this window and used to be reported
+            // as time-to-first-token. A 64 GB M3 Max showed "TTFT 215.61s" on a
+            // ~1.8k-token prompt: no machine prefills 1.8k tokens in 215s, so
+            // the number was measuring a 27 GB load and reading as an engine
+            // fault. Both halves are kept; neither is hidden.
+            //
+            // `modelLoadSeconds` is clamped to the window by the manager, so
+            // the subtraction cannot go negative and cannot turn an honest
+            // slow turn into a reassuring fast one.
+            let wallClock = first.timeIntervalSince(streamStartTime)
+            let loadSeconds = InferenceProgressManager.shared.modelLoadSeconds(
+                from: streamStartTime, to: first)
+            currentTurn.modelLoadSeconds = loadSeconds > 0 ? loadSeconds : nil
+            currentTurn.timeToFirstToken = max(0, wallClock - loadSeconds)
             // Stamp the steady-state tok/s. Single source of truth across
             // local-MLX, remote-API, with-tools, and thinking-on/off paths.
             //
@@ -6365,6 +6415,13 @@ final class ChatSession: ObservableObject {
                         return AgentLoopToolExecution(result: resultText)
                     }
 
+                    // Enforces a forced `tool_choice` at the execution
+                    // boundary — chat templates that ignore the
+                    // `tool_choice_name` hint leave decoding unconstrained,
+                    // so a mismatched call must be refused here, not run.
+                    // Armed per iteration in `modelStep`.
+                    let forcedToolGate = ForcedToolChoiceGate()
+
                     // The historical single-call path: registry dispatch
                     // (permission gate included) followed by post-processing.
                     // Thrown errors become rejection envelopes flagged
@@ -6375,6 +6432,9 @@ final class ChatSession: ObservableObject {
                         _ inv: ServiceToolInvocation,
                         callId: String
                     ) async -> AgentLoopToolExecution {
+                        if let violation = forcedToolGate.violationEnvelope(calledTool: inv.toolName) {
+                            return AgentLoopToolExecution(result: violation)
+                        }
                         do {
                             // Never print a direct secret-set value to the
                             // process log. Execution below still receives the
@@ -6854,6 +6914,7 @@ final class ChatSession: ObservableObject {
                                 userText: trimmed,
                                 attempt: attempt
                             )
+                            forcedToolGate.arm(requestedToolChoice)
                             var req = ChatCompletionRequest(
                                 // Mode 2: the wire omits the model and routing is
                                 // by provider id, so don't pass the local
@@ -7267,8 +7328,19 @@ final class ChatSession: ObservableObject {
                         // window — the driver ended the run before sending a
                         // doomed request. Surface the distinct failure on the
                         // assistant bubble instead of a generic stream error.
-                        assistantTurn.content = AgentToolLoop.overBudgetMessage
-                        lastStreamError = AgentToolLoop.overBudgetMessage
+                        // Name the user's cap when that is the ceiling, so the
+                        // advice points at the setting that decided the number
+                        // rather than at a model window that had room.
+                        var overBudgetWindowSource: AgentLoopBudget.ContextWindowSource?
+                        if let overBudgetModel = selectedModel {
+                            overBudgetWindowSource = AgentLoopBudget
+                                .resolveContextWindowResolutionSync(modelId: overBudgetModel)
+                                .source
+                        }
+                        let overBudgetText = AgentToolLoop.overBudgetMessage(
+                            windowSource: overBudgetWindowSource)
+                        assistantTurn.content = overBudgetText
+                        lastStreamError = overBudgetText
                         rebuildVisibleBlocks()
                     }
 
@@ -8875,6 +8947,16 @@ struct ChatView: View {
                 pendingRedactionReview = state
             }
             privacyPresenterToken = token
+
+            // Presenter for the redaction tools' PII-model download gate,
+            // rendered on this window's ThemedAlertHost overlay so it
+            // matches every other app dialog. Value-captured scope (no
+            // windowState retain); last-write-wins across windows, same
+            // pragmatic behavior as other global presenters.
+            let downloadScope = ThemedAlertScope.chat(windowState.windowId)
+            await PIIModelDownloadGate.shared.registerPresenter {
+                await PIIModelDownloadAlertFlow.run(scope: downloadScope)
+            }
         }
         .onDisappear {
             // Drop only this window's registration — by passing the

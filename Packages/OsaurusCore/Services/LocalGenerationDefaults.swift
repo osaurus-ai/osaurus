@@ -57,6 +57,13 @@ enum LocalGenerationDefaults {
         var topK: Int?
         var minP: Float?
         var repetitionPenalty: Float?
+        /// vLLM/OpenAI parameters. HuggingFace's `GenerationConfig` has neither,
+        /// which is why they were skipped here originally — but model authors
+        /// write them into `generation_config.json` anyway, because that is
+        /// where a bundle's sampling defaults live in practice. Qwen3 publishes
+        /// `presence_penalty: 1.5` for non-thinking operation.
+        var presencePenalty: Float?
+        var frequencyPenalty: Float?
         var doSample: Bool?
 
         static let empty = Defaults()
@@ -460,6 +467,8 @@ enum LocalGenerationDefaults {
         if out.topK == nil { out.topK = fallback.topK }
         if out.minP == nil { out.minP = fallback.minP }
         if out.repetitionPenalty == nil { out.repetitionPenalty = fallback.repetitionPenalty }
+        if out.presencePenalty == nil { out.presencePenalty = fallback.presencePenalty }
+        if out.frequencyPenalty == nil { out.frequencyPenalty = fallback.frequencyPenalty }
         if out.doSample == nil { out.doSample = fallback.doSample }
         return out
     }
@@ -472,6 +481,8 @@ enum LocalGenerationDefaults {
         if let k = readInt(obj["top_k"]) { out.topK = k }
         if let minP = readFloat(obj["min_p"]) { out.minP = minP }
         if let rp = readFloat(obj["repetition_penalty"]) { out.repetitionPenalty = rp }
+        if let pp = readFloat(obj["presence_penalty"]) { out.presencePenalty = pp }
+        if let fp = readFloat(obj["frequency_penalty"]) { out.frequencyPenalty = fp }
         if let doSample = readBool(obj["do_sample"]) { out.doSample = doSample }
         return out
     }

@@ -11,6 +11,8 @@ import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
+@preconcurrency import MLXLMCommon
+
 struct FloatingInputCard: View {
     @Binding var text: String
     @Binding var selectedModel: String?
@@ -516,7 +518,19 @@ struct FloatingInputCard: View {
         // chip explain, instead of letting the model error mid-stream.
         // History-driven growth is deliberately NOT gated — compaction
         // handles that.
-        guard !isContextHardOverflow else { return false }
+        //
+        // But ONLY when the model is the ceiling. `contextLengthCap` is a
+        // preference — a smaller window for faster prefill — and the weights
+        // can still take more, so letting it kill the send turns a preference
+        // into a wall. Worse, it is a SILENT wall: the button simply stops
+        // working, with nothing naming the setting responsible. Measured
+        // live at cap 2048 against a 2.5k prefix — the send did nothing, and
+        // clearing the cap sent the identical text immediately.
+        //
+        // The chip still goes red, which is the advisory. A ceiling the user
+        // chose must never refuse; if the request really cannot run, the
+        // engine fails loudly and that is strictly better than a dead button.
+        guard !isContextHardOverflow || contextWindowIsUserCapped else { return false }
 
         // Configuration gate: the Default agent needs the configure tool
         // schema to do its job, but a too-small context window (e.g.
@@ -624,6 +638,15 @@ struct FloatingInputCard: View {
     /// is blocked with a clear signal instead of a guaranteed model failure.
     private var isContextHardOverflow: Bool {
         budgetAssessment.hardOverflow
+    }
+
+    /// Whether the window in force came from the user's `contextLengthCap`
+    /// rather than from the model. The resolver already records this as
+    /// `.userCap` precisely so surfaces can say WHY the window is smaller
+    /// than the bundle advertises; the send gate reads it to keep a
+    /// preference from behaving like a hardware limit.
+    private var contextWindowIsUserCapped: Bool {
+        contextWindowResolution?.source == .userCap
     }
 
     private var isVoiceConfigured: Bool {
@@ -2778,6 +2801,21 @@ extension FloatingInputCard {
                                 .foregroundColor(theme.accentColor)
                         }
 
+                        // Audio indicator. The eye was the only modality
+                        // glyph here, so a Nemotron Omni / Gemma-4 E2B-E4B /
+                        // Gemma-4 12B bundle described itself as vision-only
+                        // on the one surface the user reads before typing —
+                        // while the composer beneath it was already
+                        // accepting `.wav`. Same capability source as the
+                        // attach button, so the two cannot disagree.
+                        if mediaCapabilities.supportsAudio {
+                            Image(systemName: "waveform")
+                                .font(theme.font(size: CGFloat(theme.captionSize) - 3))
+                                .foregroundColor(theme.accentColor)
+                                .localizedHelp("Audio Input")
+                                .accessibilityLabel(Text("Audio Input", bundle: .module))
+                        }
+
                         if !isCompact, let params = option.parameterCount {
                             Text(params)
                                 .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .medium))
@@ -4137,13 +4175,19 @@ extension FloatingInputCard {
         // model_type. Read only its non-blocking snapshot here: this getter is
         // evaluated from SwiftUI body/layout and must never trigger a disk
         // scan or synchronously parse a model bundle.
-        let localModelType = selectedModel.flatMap {
-            ModelManager.findInstalledMLXModelFromCache(named: $0)?.modelType
+        let localModel = selectedModel.flatMap {
+            ModelManager.findInstalledMLXModelFromCache(named: $0)
         }
+        // Audio has to come from the checkpoint, not the name: gemma-4 E2B
+        // carries `embed_audio.embedding_projection` while its id says nothing
+        // about audio, so the picker advertised "image supported" and greyed
+        // out every .wav. `hasAudioTensors` is memoized for exactly this
+        // getter's no-disk-IO rule.
         return ModelMediaCapabilities.composerDescriptor(
             modelId: selectedModel,
             fallbackSupportsImages: supportsImages,
-            localModelType: localModelType
+            localModelType: localModel?.modelType,
+            localHasAudioTensors: localModel?.hasAudioTensors ?? false
         )
     }
 
@@ -4241,19 +4285,32 @@ extension FloatingInputCard {
                 return
             }
             let sizeLimit = maxImageSize
+            let filename = url.lastPathComponent
             Task { @MainActor in
-                // The image decode and PNG re-encode block for seconds on a
+                // The image decode and re-encode block for seconds on a
                 // large file, so they run off the main actor and only the
                 // finished bytes are attached here.
-                let pngData = await Task.detached(priority: .userInitiated) {
+                let encoded = await Task.detached(priority: .userInitiated) {
                     () -> Data? in
-                    guard let data = try? Data(contentsOf: url), data.count <= sizeLimit,
-                        let nsImage = NSImage(data: data)
-                    else { return nil }
-                    return nsImage.pngData()
+                    guard let data = try? Data(contentsOf: url) else { return nil }
+                    if data.count <= sizeLimit {
+                        guard let nsImage = NSImage(data: data) else { return nil }
+                        return nsImage.pngData()
+                    }
+                    // Over the inline cap: downscale to the wire budget
+                    // instead of vanishing without a word — the old
+                    // `data.count <= sizeLimit else return nil` silently
+                    // dropped a big photo while the picker looked like it
+                    // accepted it.
+                    return RemoteImagePayloadPolicy.downsizedJPEGData(from: data)
                 }.value
-                if let pngData {
-                    appendAttachment(.image(pngData))
+                if let encoded {
+                    appendAttachment(.image(encoded))
+                } else {
+                    ToastManager.shared.error(
+                        L("Could not attach \(filename)"),
+                        message: L("The image could not be read or re-encoded.")
+                    )
                 }
             }
             return
@@ -4374,14 +4431,20 @@ extension FloatingInputCard {
             {
                 handled = true
                 provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, error in
-                    guard let data = data, error == nil, data.count <= maxImageSize else { return }
+                    guard let data = data, error == nil else { return }
                     // Decode and re-encode on the provider's background queue;
-                    // only the finished bytes hop to the main thread.
-                    guard let nsImage = NSImage(data: data),
-                        let pngData = nsImage.pngData()
-                    else { return }
+                    // only the finished bytes hop to the main thread. Oversized
+                    // drops downscale to the wire budget instead of silently
+                    // vanishing (the old `count <= maxImageSize else return`).
+                    let encoded: Data?
+                    if data.count <= maxImageSize {
+                        encoded = NSImage(data: data)?.pngData()
+                    } else {
+                        encoded = RemoteImagePayloadPolicy.downsizedJPEGData(from: data)
+                    }
+                    guard let encoded else { return }
                     DispatchQueue.main.async {
-                        appendAttachment(.image(pngData))
+                        appendAttachment(.image(encoded))
                     }
                 }
             } else if cap.supportsAudio,
@@ -5785,6 +5848,19 @@ private struct ContextBreakdownPopover: View {
     /// turn is streaming).
     var canCompact: Bool = false
     var onCompact: (() -> Void)? = nil
+    /// Live disk-cache usage for the footer readout. nil when the disk cache is
+    /// off or no quota is configured, in which case the section is hidden
+    /// entirely rather than rendering a meaningless 0 GB.
+    var diskCache: DiskCacheUsage? = nil
+
+    /// Non-nil only while the HOST is out of memory badly enough to be the
+    /// reason generation is slow. Advisory only — nothing here gates a load or
+    /// caps anything; it exists so a user is not left concluding the model is
+    /// broken when their Mac is thrashing.
+    var memoryPressure: MemoryPressureAdvisory? = nil
+
+    /// Fraction of the configured quota at which the footer starts warning.
+    static let diskCacheWarnFraction: Double = 0.75
 
     @Environment(\.theme) private var theme
 
@@ -5964,11 +6040,105 @@ private struct ContextBreakdownPopover: View {
                 messagesSection
             }
 
+            // `isDisabled` has to pass this gate on its own: a switched-off
+            // tier reports maxBytes 0, and an empty cache directory reports
+            // usedBytes 0, so the size test alone would hide the "Off" row it
+            // exists to show.
+            if let diskCache,
+                diskCache.isDisabled || diskCache.usedBytes > 0 || diskCache.maxBytes > 0
+            {
+                divider
+                diskCacheSection(diskCache)
+            }
+
+            // Only present when the machine is genuinely struggling, so this
+            // adds nothing to the panel on a healthy Mac.
+            if let memoryPressure {
+                divider
+                memoryPressureSection(memoryPressure)
+            }
+
             if showsCompactionSection {
                 divider
                 compactionSection
             }
         }
+    }
+
+    // MARK: - Disk cache
+
+    /// Footer readout for the on-SSD prompt cache: how much it holds, against
+    /// what cap, warning once it nears that cap.
+    ///
+    /// This exists because the cap used to be a flat 10 GB that could not hold
+    /// one full-context conversation of a 27B, and nothing surfaced that. The
+    /// cache silently thrashed and the only symptom was decode slowing down as
+    /// the conversation grew. Showing the number makes eviction observable
+    /// instead of inferred.
+    private func diskCacheSection(_ usage: DiskCacheUsage) -> some View {
+        let fraction = usage.usedFraction
+        let warn = fraction >= Self.diskCacheWarnFraction
+        let tint = warn ? theme.warningColor : theme.accentColor
+        return VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                sectionEyebrow("Disk Cache")
+                Spacer(minLength: 0)
+                Text(verbatim: usage.headlineLabel)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(warn ? tint : theme.secondaryText)
+            }
+            if usage.maxBytes > 0 {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(theme.tertiaryText.opacity(0.15))
+                        Capsule()
+                            .fill(tint)
+                            .frame(width: max(0, min(1, fraction)) * geo.size.width)
+                    }
+                }
+                .frame(height: 4)
+            }
+            if warn, usage.maxBytes > 0 {
+                Text(verbatim: usage.warningText)
+                    .font(.system(size: 9))
+                    .foregroundColor(tint)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    // MARK: - Host memory pressure
+
+    /// Shown when the Mac itself is out of memory badly enough to be the
+    /// reason generation is crawling.
+    ///
+    /// Built from a real report: a 64 GB M3 Max running a 35B-A3B bundle sat
+    /// at 9.3 tok/s with 254 MB of free RAM, 13 of the model's own 27 GB
+    /// living in the compressor, and ~300k page decompressions every two
+    /// seconds. The app reported the slow number and said nothing about why,
+    /// so the reasonable conclusion was that the model or the runtime was
+    /// broken. Neither was.
+    ///
+    /// Advisory only. It never blocks a load, never caps a size, never
+    /// refuses generation — the user decides what to quit.
+    private func memoryPressureSection(_ advisory: MemoryPressureAdvisory) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                sectionEyebrow("Memory")
+                Spacer(minLength: 0)
+                Text(verbatim: advisory.shortLabel)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(theme.warningColor)
+            }
+            Text(verbatim: advisory.warningText)
+                .font(.system(size: 9))
+                .foregroundColor(theme.warningColor)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
     }
 
     // MARK: - Compaction
@@ -6164,6 +6334,10 @@ private struct ContextBreakdownPopover: View {
             return L("Provider model maximum")
         case .metadataFallback:
             return L("Metadata fallback")
+        case .userCap:
+            // Named so a window smaller than the bundle advertises reads as a
+            // setting the user chose, not as the model being mis-detected.
+            return L("Your context limit")
         case nil:
             return L("Model maximum")
         }
@@ -7622,6 +7796,89 @@ private struct FloatingCreditsChip: View {
 /// popover's content is computed only when it actually opens, matching the
 /// lazy evaluation the inline `.popover` closure had before extraction.
 private struct FloatingContextChip: View {
+    /// Read the shared disk-cache gauge. Returns nil when no quota is
+    /// configured (disk cache off), so the popover hides the section rather
+    /// than showing a meaningless 0 GB.
+    static func readDiskCacheUsage() async -> DiskCacheUsage? {
+        // Preferred source: a resident model's coordinator, which reports both
+        // the live payload bytes and the cap it is actually enforcing.
+        if let snapshot = await MLXBatchAdapter.snapshotDiagnostics(),
+            snapshot.diskL2MaxBytes > 0
+        {
+            return DiskCacheUsage(
+                usedBytes: snapshot.diskL2PayloadBytes,
+                maxBytes: snapshot.diskL2MaxBytes,
+                evictions: snapshot.diskL2Evictions)
+        }
+        // Fallback: nothing resident. The coordinator-backed figures only
+        // exist while a model is loaded, so gating the whole row on them made
+        // the cache readout VANISH on an idle chat — which reads as the
+        // feature being missing rather than merely unmeasured. The cache is
+        // still on disk and still capped, so report it from disk and settings.
+        guard let settings = ServerRuntimeSettingsStore.load() else { return nil }
+        // Measure the directory the RUNTIME caps, not the default one.
+        // `OsaurusPaths.diskKVCacheUsageBytes()` hardcodes the default path, so
+        // with a custom Disk Cache Directory configured it would report the size
+        // of a directory that is not the one being evicted — a plausible-looking
+        // number about the wrong thing. Resolve the override the same way
+        // `ModelRuntime` does.
+        let dir =
+            ModelRuntime.cacheDiskDirectoryOverride(for: settings.cache)
+            ?? OsaurusPaths.diskKVCache()
+        // A tier the USER switched off still gets a row, reading "· Off".
+        // Returning nil here instead made the readout vanish the moment
+        // someone unticked Disk Cache — the exact failure the comment above
+        // describes for an idle chat ("reads as the feature being missing"),
+        // and it left `isDisabled` reachable only from the host-aware
+        // free-disk decision. The state was built and then never rendered.
+        guard settings.cache.blockDisk.enabled else {
+            return DiskCacheUsage(
+                usedBytes: OsaurusPaths.directorySizeIfExists(at: dir),
+                maxBytes: 0,
+                evictions: 0,
+                isDisabled: true)
+        }
+        // Resolve the cap the same way the coordinator does.
+        //
+        // This used to report ONLY an explicit `maxSizeGB`, on the reasoning
+        // that an unset size could not be known without a resident model. That
+        // is no longer true, and after the percent migration `maxSizeGB` is nil
+        // on every install — so the bar would have rendered "used · Auto" with
+        // no cap and no percentage while a real cap was being enforced, which
+        // is a worse lie than the guess it was avoiding. A share of a volume we
+        // can measure IS the number, computed by the same function that builds
+        // CacheCoordinatorConfig.
+        var resolvedGB = VMLXServerRuntimeSettings.resolveDiskCacheMaxGB(
+            percent: settings.cache.blockDisk.maxSizePercent,
+            legacyGB: settings.cache.blockDisk.maxSizeGB,
+            directory: dir)
+        // The share is not the last word: `applyHostAwareDiskCacheCeiling`
+        // additionally bounds the cap to a quarter of the free bytes. Measured
+        // live, 10% of a 3.7 TB volume resolved to 372 GB while the coordinator
+        // enforced 242 GB, because only 969 GB was free. Reporting the
+        // unbounded number would make the bar's denominator disagree with the
+        // cap that is actually evicting.
+        var tierDisabled = false
+        if let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: dir.path), freeBytes > 0 {
+            let decision = ModelRuntime.hostAwareDiskCacheDecision(
+                configuredCapGB: resolvedGB, freeBytes: freeBytes)
+            tierDisabled = !decision.enabled
+            resolvedGB = decision.enabled ? decision.capGB : 0
+        }
+        // Still honest when the volume cannot be measured: the resolver falls
+        // back to the floor, which is a real enforced cap, not a guess.
+        //
+        // `isDisabled` is carried separately so a switched-off tier renders as
+        // "Off" rather than "Auto" — a zero cap and an unknown cap are both
+        // maxBytes 0, and calling the former "Auto" tells the user their cache
+        // is being sized for them when it is not running at all.
+        return DiskCacheUsage(
+            usedBytes: OsaurusPaths.directorySizeIfExists(at: dir),
+            maxBytes: Int(resolvedGB * 1_073_741_824),
+            evictions: 0,
+            isDisabled: tierDisabled)
+    }
+
     let displayTokens: Int
     let usableTokens: Int?
     let modelMaxTokens: Int?
@@ -7649,6 +7906,15 @@ private struct FloatingContextChip: View {
     /// period to travel from the trigger into the popover (which lives in its
     /// own window, so hovering it doesn't keep the trigger "hovered").
     @State private var contextDismissTask: Task<Void, Never>?
+    /// Live disk-cache reading, refreshed only while the popover is open so an
+    /// idle chat does not poll the cache index on a timer.
+    @State private var diskCacheUsage: DiskCacheUsage?
+    /// Previous host-memory reading. The signal is a RATE, so the first poll
+    /// can only establish a baseline — there is nothing to compare it against
+    /// yet, and inventing a rate from one sample would be fiction.
+    @State private var previousMemorySample: HostMemorySample?
+    /// Non-nil only while the machine is actually struggling.
+    @State private var memoryAdvisory: MemoryPressureAdvisory?
 
     var body: some View {
         let warningColor: Color? =
@@ -7729,8 +7995,30 @@ private struct FloatingContextChip: View {
                 formatTokenCount: formatTokenCount,
                 compactionState: compactionState,
                 canCompact: canCompact,
-                onCompact: onCompact
+                onCompact: onCompact,
+                diskCache: diskCacheUsage,
+                memoryPressure: memoryAdvisory
             )
+            .task(id: showContextBreakdown) {
+                // Poll while open. The cache index is a small SQLite read, but
+                // it is still I/O, so it runs off the main actor and stops as
+                // soon as the popover closes.
+                guard showContextBreakdown else { return }
+                // A stale baseline from a previous opening would produce a
+                // rate averaged over however long the popover was shut.
+                previousMemorySample = nil
+                while !Task.isCancelled {
+                    diskCacheUsage = await Self.readDiskCacheUsage()
+                    if let current = HostMemoryPressureProbe.sample() {
+                        if let previous = previousMemorySample {
+                            memoryAdvisory = MemoryPressureAdvisory.evaluate(
+                                previous: previous, current: current)
+                        }
+                        previousMemorySample = current
+                    }
+                    try? await Task.sleep(for: .seconds(2))
+                }
+            }
             // Keep the popover alive while the cursor is over it, so the user
             // can travel from the trigger and click the disclosure headers.
             .onPopoverHover { hovering in

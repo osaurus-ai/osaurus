@@ -7730,7 +7730,7 @@ private struct AgentEditorSheet: View {
 
             footerView
         }
-        .frame(width: 860, height: 580)
+        .fittedSheetFrame(width: 860, height: 580)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(

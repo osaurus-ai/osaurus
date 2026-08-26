@@ -128,4 +128,31 @@ struct SettingsSearchIndexTests {
         let killSwitchHits = SettingsSearchIndex.search("kill switch")
         #expect(killSwitchHits.contains { $0.id == "agentChannels.globalWrites" && $0.tab == .agentChannels })
     }
+
+    /// Searching "sampler" returned ZERO results in the live app, even though
+    /// Settings has a "Sampling Defaults" section and Live Activity renders a
+    /// row literally labelled "Sampler last used". The matcher is substring /
+    /// token based with `allowFuzzy: false`, so "sampler" can never reach
+    /// "sampling" — no stemming bridges the two. A user who types the word
+    /// printed on screen found nothing.
+    ///
+    /// Both entries now carry the token explicitly. This test fails against
+    /// the old keyword lists.
+    @Test func searchFindsSamplerByTheWordShownOnScreen() {
+        let hits = SettingsSearchIndex.search("sampler")
+        #expect(hits.contains { $0.id == "server.generation" && $0.tab == .server })
+        #expect(hits.contains { $0.id == "server.liveActivity" && $0.tab == .server })
+
+        // The pre-existing spelling must keep working — this is an addition,
+        // not a replacement.
+        let sampling = SettingsSearchIndex.search("sampling")
+        #expect(sampling.contains { $0.id == "server.generation" })
+
+        // The other sampler knobs the Sampling Defaults panel exposes.
+        for term in ["top k", "min p", "temperature"] {
+            #expect(
+                SettingsSearchIndex.search(term).contains { $0.id == "server.generation" },
+                "\"\(term)\" should reach Sampling Defaults")
+        }
+    }
 }
