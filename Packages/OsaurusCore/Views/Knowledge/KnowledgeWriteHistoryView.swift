@@ -111,28 +111,19 @@ struct KnowledgeWriteHistoryView: View {
     // MARK: - Filter bar
 
     private var filterBar: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 12) {
-                if collectionOptions.count > 1 {
-                    collectionMenu
-                }
+        HStack(spacing: 12) {
+            Spacer(minLength: 8)
 
-                Spacer(minLength: 8)
+            collectionMenu
 
-                Toggle(isOn: $showsReverted) {
-                    Text("Show reverted", bundle: .module)
-                        .font(.system(size: 11))
-                }
-                .toggleStyle(.switch)
-                .controlSize(.mini)
+            Toggle(isOn: $showsReverted) {
+                Text("Show reverted", bundle: .module)
+                    .font(.system(size: 11))
             }
-
-            Text("Showing \(visibleRuns.count) of \(runs.count)", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .padding(.vertical, 4)
+            .toggleStyle(.switch)
+            .controlSize(.mini)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     /// The stock macOS pop-up button.
@@ -142,7 +133,7 @@ struct KnowledgeWriteHistoryView: View {
     /// which is what pushed it out of alignment with the rows below.
     private var collectionMenu: some View {
         Picker(selection: $collectionFilter) {
-            Text("All collections", bundle: .module).tag("")
+            Text("All Collections", bundle: .module).tag("")
             ForEach(collectionOptions, id: \.id) { option in
                 Text(option.name).tag(option.id)
             }
