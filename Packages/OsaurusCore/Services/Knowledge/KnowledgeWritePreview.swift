@@ -376,7 +376,14 @@ public enum KnowledgeWritePreviewBuilder {
     }
 
     private static func lineCount(_ text: String) -> Int {
-        text.isEmpty ? 0 : text.components(separatedBy: .newlines).count
+        guard !text.isEmpty else { return 0 }
+        // A trailing newline terminates the last line, it does not start
+        // another: a 500 line file must not read as 501 in the manifest.
+        var count = text.components(separatedBy: .newlines).count
+        if let last = text.unicodeScalars.last, CharacterSet.newlines.contains(last) {
+            count -= 1
+        }
+        return count
     }
 
     /// Count diff body lines starting with `marker`, skipping the `---` /
