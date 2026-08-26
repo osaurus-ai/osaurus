@@ -44,7 +44,7 @@ struct KnowledgeWriteServiceRoundTripTests {
             #expect(onDisk == "# Deploy\n\nStep one.\n")
 
             let record = try #require(
-                KnowledgeWriteLogDatabase.shared.record(id: outcome.recordId))
+                try KnowledgeWriteLogDatabase.shared.record(id: outcome.recordId))
             #expect(record.operation == .create)
             // Nothing existed before, so there is nothing to restore TO.
             #expect(record.priorContent.isEmpty)
@@ -63,7 +63,7 @@ struct KnowledgeWriteServiceRoundTripTests {
 
             #expect(outcome.operation == .replace)
             let record = try #require(
-                KnowledgeWriteLogDatabase.shared.record(id: outcome.recordId))
+                try KnowledgeWriteLogDatabase.shared.record(id: outcome.recordId))
             // The WHOLE prior document: a revert must not depend on the
             // current file still being what the agent left behind.
             #expect(record.priorContent == "original\n")
@@ -85,7 +85,9 @@ struct KnowledgeWriteServiceRoundTripTests {
             let restored = try String(
                 contentsOf: folder.appendingPathComponent("a.md"), encoding: .utf8)
             #expect(restored == "original\n")
-            #expect(KnowledgeWriteLogDatabase.shared.record(id: outcome.recordId)?.isReverted == true)
+            #expect(
+                try KnowledgeWriteLogDatabase.shared.record(id: outcome.recordId)?.isReverted
+                    == true)
         }
     }
 
@@ -235,7 +237,9 @@ struct KnowledgeWriteServiceRoundTripTests {
     /// A real collection registered with `KnowledgeManager`, inside a temp
     /// root so every `.shared` store lands somewhere disposable.
     private func withCollection(
-        _ body: (KnowledgeCollection, URL) async throws -> Void
+        // `@Sendable` because the whole thing runs inside
+        // `StoragePathsTestLock.run`, whose closure is `@Sendable`.
+        _ body: @Sendable (KnowledgeCollection, URL) async throws -> Void
     ) async throws {
         try await StoragePathsTestLock.shared.run {
             let root = FileManager.default.temporaryDirectory
