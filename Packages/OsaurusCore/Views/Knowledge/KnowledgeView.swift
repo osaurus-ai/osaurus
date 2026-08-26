@@ -580,19 +580,32 @@ struct KnowledgeView: View {
         KnowledgeWriteHistoryView(
             runs: writeRuns,
             onRevertRun: { run in
-                showSuccess(L("Reverting \(run.records.count) document(s)…"))
                 Task {
                     let failures = await KnowledgeWriteService.shared.revertRun(
                         runId: run.runId
                     )
-                    if failures.isEmpty {
-                        showSuccess(L("Reverted \(run.records.count) document(s)"))
+                    // A single-document run gets a sentence about that
+                    // document. The batch arithmetic ("Reverted 0 of 1")
+                    // is only for runs where partial success is possible.
+                    if let only = run.records.first, run.records.count == 1 {
+                        if failures.isEmpty {
+                            showSuccess(L("Reverted \(only.relPath)"))
+                        } else {
+                            showSuccess(
+                                L(
+                                    "Did not revert \(only.relPath): the document changed after the agent wrote it."
+                                ),
+                                type: .warning
+                            )
+                        }
+                    } else if failures.isEmpty {
+                        showSuccess(L("Reverted \(run.records.count) documents"))
                     } else {
                         // Best-effort per record: say what could not be put
                         // back rather than implying the whole run undid.
                         showSuccess(
                             L(
-                                "Reverted \(run.records.count - failures.count) of \(run.records.count). \(failures.count) could not be restored, most likely changed since."
+                                "Reverted \(run.records.count - failures.count) of \(run.records.count) documents. The rest changed after the agent wrote them, so they were left alone."
                             ),
                             type: .warning
                         )
