@@ -48,6 +48,9 @@ struct KnowledgeView: View {
     @State private var editingCollection: KnowledgeCollection?
     @State private var hasAppeared = false
     @State private var successMessage: String?
+    /// Style of the toast currently shown. Failures render as warnings; a
+    /// refused revert wearing a green checkmark reads as "reverted".
+    @State private var toastType: SimpleToastType = .success
 
     /// A freshly created collection awaiting the "grant to agents" prompt.
     /// Set right after `create`/`createFromGit` succeeds so the user can
@@ -168,7 +171,7 @@ struct KnowledgeView: View {
                 if let message = successMessage {
                     VStack {
                         Spacer()
-                        ThemedToastView(message, type: .success)
+                        ThemedToastView(message, type: toastType)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                             .padding(.bottom, 20)
                     }
@@ -205,7 +208,10 @@ struct KnowledgeView: View {
                                 showSuccess("Cloned \"\(created.name)\", indexing in the background")
                                 grantingCollection = created
                             } catch {
-                                showSuccess("Clone failed: \(error.localizedDescription)")
+                                showSuccess(
+                                    "Clone failed: \(error.localizedDescription)",
+                                    type: .error
+                                )
                             }
                         }
                     } else {
@@ -299,7 +305,12 @@ struct KnowledgeView: View {
                                 showSuccess(L("Approved proposal #\(proposal.id)"))
                             }
                         } catch {
-                            await MainActor.run { showSuccess("Approve failed: \(error.localizedDescription)") }
+                            await MainActor.run {
+                                showSuccess(
+                                    "Approve failed: \(error.localizedDescription)",
+                                    type: .error
+                                )
+                            }
                         }
                     }
                 },
@@ -519,7 +530,8 @@ struct KnowledgeView: View {
     private func startTicketFix(for ticket: KnowledgeTicket) {
         guard let agent = agentGranted(forCollectionId: ticket.collectionId) else {
             showSuccess(
-                L("No agent has this collection yet. Grant it to one in Features → Knowledge.")
+                L("No agent has this collection yet. Grant it to one in Features → Knowledge."),
+                type: .warning
             )
             return
         }
@@ -581,7 +593,8 @@ struct KnowledgeView: View {
                         showSuccess(
                             L(
                                 "Reverted \(run.records.count - failures.count) of \(run.records.count). \(failures.count) could not be restored, most likely changed since."
-                            )
+                            ),
+                            type: .warning
                         )
                     }
                     reloadCuration()
@@ -593,7 +606,10 @@ struct KnowledgeView: View {
                         try await KnowledgeWriteService.shared.revert(recordId: record.id)
                         showSuccess(L("Reverted \(record.relPath)"))
                     } catch {
-                        showSuccess(L("Could not revert: \(error.localizedDescription)"))
+                        showSuccess(
+                            L("Could not revert: \(error.localizedDescription)"),
+                            type: .warning
+                        )
                     }
                     reloadCuration()
                 }
@@ -691,9 +707,10 @@ struct KnowledgeView: View {
         }
     }
 
-    private func showSuccess(_ message: String) {
+    private func showSuccess(_ message: String, type: SimpleToastType = .success) {
         withAnimation(theme.springAnimation()) {
             successMessage = message
+            toastType = type
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
             withAnimation(theme.animationQuick()) {
