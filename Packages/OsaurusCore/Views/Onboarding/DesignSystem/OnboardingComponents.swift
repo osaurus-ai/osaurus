@@ -559,7 +559,7 @@ struct OnboardingProviderLogo: View {
     }
 
     /// Monochrome SVG-derived logos render as templates so they take the
-    /// kit's light label color; Gemini's multicolor mark stays original.
+    /// kit's light label color; Gemini's blue mark stays original.
     private static func isTemplate(_ preset: ProviderPreset) -> Bool {
         preset != .google
     }
