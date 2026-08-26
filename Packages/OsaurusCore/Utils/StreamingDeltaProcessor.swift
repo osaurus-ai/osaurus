@@ -74,7 +74,10 @@ final class StreamingDeltaProcessor {
     /// streaming looks like a typewriter regardless of network delivery
     /// pattern. Local MLX at typical token rates is unaffected — its
     /// natural pace is below the reveal rate.
-    private var pacingTimer: Timer?
+    ///
+    /// Internal (not `private`) so tests can assert that a processor
+    /// destroyed mid-stream leaves no live run-loop timer behind.
+    var pacingTimer: Timer?
 
     /// User-facing reveal rate floor. ~12 chars per 16ms ≈ 750 chars/s ≈
     /// ~180 tok/s display rate. Fast enough not to drag, slow enough that
@@ -105,6 +108,21 @@ final class StreamingDeltaProcessor {
     ) {
         self.turn = turn
         self.onSync = onSync
+    }
+
+    isolated deinit {
+        // The pacing/flush timers retain their closures, but those closures
+        // hold `self` only weakly — so once this processor is gone, nothing
+        // can ever invalidate them. A processor destroyed mid-stream (chat
+        // window closed while smooth-streaming was revealing a buffer)
+        // therefore left a 16ms repeating run-loop timer ticking forever,
+        // spawning a no-op task every tick for the rest of the process
+        // lifetime. Invalidate both here on the main actor, where the
+        // timers were also scheduled.
+        pacingTimer?.invalidate()
+        pacingTimer = nil
+        flushTimer?.invalidate()
+        flushTimer = nil
     }
 
     // MARK: - Public API
