@@ -1822,16 +1822,26 @@ struct ConfigureModelChooserModal: View {
     /// compatibility verdict (`.unknown` fails open so the list isn't blank
     /// before the system monitor reports), and the hardware-aware
     /// recommendation is pinned first so the safe default is the first thing
-    /// a first-timer sees; everything else keeps catalog order.
+    /// a first-timer sees; everything else keeps catalog order, except LFM
+    /// rows, which always sink to the bottom (the recommendation pin wins
+    /// when LFM itself is the hardware pick — the "Picked for your Mac"
+    /// badge must stay on the first row).
     private var pickerModels: [(model: MLXModel, compatibility: ModelCompatibility)] {
         let totalMemoryGB = systemMonitor.totalMemoryGB
-        let items = dedupedTopPicks.map {
+        var items = dedupedTopPicks.map {
             (model: $0, compatibility: $0.compatibility(totalMemoryGB: totalMemoryGB))
         }
-        guard let recommendedId = recommendedRowId else { return items }
-        let recommended = items.filter { $0.model.id == recommendedId }
-        let rest = items.filter { $0.model.id != recommendedId }
-        return recommended + rest
+        if let recommendedId = recommendedRowId {
+            let recommended = items.filter { $0.model.id == recommendedId }
+            let rest = items.filter { $0.model.id != recommendedId }
+            items = recommended + rest
+        }
+        let lfm = items.filter { $0.model.id != recommendedRowId && isLFM($0.model) }
+        return items.filter { $0.model.id == recommendedRowId || !isLFM($0.model) } + lfm
+    }
+
+    private func isLFM(_ model: MLXModel) -> Bool {
+        model.id.lowercased().contains("lfm")
     }
 
     /// The row carrying the "Picked for your Mac" pill — the exact build

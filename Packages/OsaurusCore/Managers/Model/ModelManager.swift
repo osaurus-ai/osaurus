@@ -712,18 +712,6 @@ extension ModelManager {
     /// Order is a fallback only — `ModelDownloadView.filteredSuggestedModels`
     /// sorts by curated-first → top-pick → `releasedAt` desc → name.
     nonisolated fileprivate static let curatedSuggestedModels: [MLXModel] = [
-        // MARK: Top Picks
-
-        curated(
-            id: "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
-            description:
-                "Liquid AI LFM2.5 8B hybrid MoE (~1B active), MXFP8 — high-precision, fast Apple Silicon chat. 128K context.",
-            isTopSuggestion: true,
-            modelType: "lfm2_moe",
-            releasedAt: date("2026-05-29"),
-            useCase: .general
-        ),
-
         // MARK: Gemma 4 — multimodal
         //
         // Onboarding recommendation spine (2026-08-26; the 2026-07-08 set was
@@ -1303,6 +1291,23 @@ extension ModelManager {
             modelType: "gemma4",
             releasedAt: date("2026-06-02"),
             useCase: .smallest
+        ),
+
+        // MARK: LFM2.5 (Liquid AI hybrid MoE — Top Pick, listed last)
+        //
+        // Kept at the tail of the catalog so LFM rows always render at the
+        // bottom of order-following lists (the onboarding chooser keeps
+        // catalog order). It remains a Top Pick: the ~1B-active hybrid MoE is
+        // the mainstream-RAM auto-default that replaced the dense Bonsai 27B.
+
+        curated(
+            id: "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
+            description:
+                "Liquid AI LFM2.5 8B hybrid MoE (~1B active), MXFP8 — high-precision, fast Apple Silicon chat. 128K context.",
+            isTopSuggestion: true,
+            modelType: "lfm2_moe",
+            releasedAt: date("2026-05-29"),
+            useCase: .general
         ),
     ]
 
