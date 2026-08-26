@@ -536,7 +536,7 @@ struct OnboardingProviderLogo: View {
         if let asset = Self.assetName(for: preset) {
             Image(asset, bundle: .module)
                 .resizable()
-                .renderingMode(Self.isTemplate(preset) ? .template : .original)
+                .renderingMode(.template)
                 .aspectRatio(contentMode: .fit)
                 .foregroundColor(OnboardingPalette.labelPrimary)
                 .frame(width: size, height: size)
@@ -558,9 +558,4 @@ struct OnboardingProviderLogo: View {
         }
     }
 
-    /// Monochrome SVG-derived logos render as templates so they take the
-    /// kit's light label color; Gemini's blue mark stays original.
-    private static func isTemplate(_ preset: ProviderPreset) -> Bool {
-        preset != .google
-    }
 }
