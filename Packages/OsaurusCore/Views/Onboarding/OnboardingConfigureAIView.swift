@@ -270,11 +270,12 @@ final class ConfigureAIState: ObservableObject {
     /// the larger resident footprint as the higher-quality precision.
     /// Every curated Top Pick is a GUI-verified-good model — coherent output
     /// with clean tool-calling and reasoning and no control-marker leakage
-    /// (verified live in the dev app across the curated families). Ranking by
-    /// base parameters rather than quantized bytes matters for Bonsai: its 27B
-    /// 1-bit build is smaller on disk than a 9B MXFP8 model without becoming a
-    /// 4B-class model. When nothing is comfortable (very low RAM), fall back
-    /// to the smallest candidate overall so onboarding never dead-ends.
+    /// (verified live in the dev app across the curated families). Bonsai 27B
+    /// is no longer a Top Pick: as a dense model (every parameter active per
+    /// token) it decoded far too slowly per user feedback, so the mainstream
+    /// slot recommends the LFM2.5 8B-A1B hybrid MoE instead. When nothing is
+    /// comfortable (very low RAM), fall back to the smallest candidate overall
+    /// so onboarding never dead-ends.
     ///
     /// This replaced the earlier Gemma-4-QAT auto-default spine: the Gemma 4
     /// `qat-MXFP4` builds are no longer curated Top Picks, so they are neither

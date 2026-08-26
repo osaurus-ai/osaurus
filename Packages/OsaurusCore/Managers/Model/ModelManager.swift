@@ -718,6 +718,7 @@ extension ModelManager {
             id: "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
             description:
                 "Liquid AI LFM2.5 8B hybrid MoE (~1B active), MXFP8 — high-precision, fast Apple Silicon chat. 128K context.",
+            isTopSuggestion: true,
             modelType: "lfm2_moe",
             releasedAt: date("2026-05-29"),
             useCase: .general
@@ -725,12 +726,17 @@ extension ModelManager {
 
         // MARK: Gemma 4 — multimodal
         //
-        // Onboarding recommendation spine (2026-07-08, GUI-verified in the
-        // dev-built app — every model below loads, calls tools, reasons with
-        // thinking on, and leaks no markup into visible content):
-        //   • Mainstream RAM → Bonsai 27B, selecting its 1-bit or ternary
-        //                      variant from the machine's model-memory budget.
-        //   • Larger RAM     → Ornith 1.0 MXFP8 (9B / 35B, below).
+        // Onboarding recommendation spine (2026-08-26; the 2026-07-08 set was
+        // GUI-verified in the dev-built app — every model below loads, calls
+        // tools, reasons with thinking on, and leaks no markup into visible
+        // content):
+        //   • Mainstream RAM → LFM2.5 8B-A1B MXFP8 hybrid MoE (~1B active) and
+        //                      Gemma 4 12B-it-MXFP8 as RAM allows. Bonsai 27B
+        //                      was demoted from this slot: user feedback showed
+        //                      the dense 27B decodes far too slowly for a
+        //                      first-run default, so the mainstream pick is now
+        //                      an MoE with a small active set.
+        //   • Larger RAM     → Ornith 1.0 MXFP8 (9B / 35B MoE, below).
         //   • Smaller RAM → official OsaurusAI Gemma 4 at the highest non-QAT,
         //                    non-MXFP4 precision that exists: `12B-it-MXFP8`
         //                    (the only MXFP8 Gemma the org ships) and the
@@ -739,8 +745,8 @@ extension ModelManager {
         // A *recommended* Gemma build must never be `qat` or plain `MXFP4`, so
         // the 5 Gemma `qat-MXFP4` builds (E2B/E4B/12B/31B/26B-A4B) stay in the
         // catalog but are not Top Picks. Qwen 3.6 (incl. MXFP8-MTP), Nemotron-3
-        // and LFM2.5 also remain catalog-only for now: they are installable and
-        // selectable, just not part of the auto-default recommendation spine.
+        // and Bonsai remain catalog-only: they are installable and selectable,
+        // just not part of the auto-default recommendation spine.
 
         curated(
             id: "OsaurusAI/gemma-4-12B-it-MXFP8",
@@ -903,17 +909,18 @@ extension ModelManager {
         // prism-ml's Bonsai checkpoints. Text matrices use affine JANG
         // (schema-2 discrete storage — not JANGTQ/MXTQ or a codebook
         // sidecar); vision components stay 4-bit affine. Same `qwen3_5`
-        // runtime class as Qwen 3.6 / Ornith dense builds. Both variants are
-        // Top Picks so the normalized Bonsai family can select the best build
-        // for this Mac. Their mixed text/vision precision cannot be estimated
-        // accurately from `27B × bit-width`, so the current Hub sizes bootstrap
+        // runtime class as Qwen 3.6 / Ornith dense builds. Demoted from Top
+        // Picks (2026-08-26): user feedback showed the dense 27B — every
+        // parameter active per token, unlike an MoE — decodes far too slowly
+        // for a recommended default, so both variants are catalog-only now.
+        // Their mixed text/vision precision cannot be estimated accurately
+        // from `27B × bit-width`, so the current Hub sizes bootstrap
         // first-launch hardware selection until `ModelSizeCache` refreshes.
 
         curated(
             id: "OsaurusAI/Bonsai-27b-Ternary-JANG",
             description:
                 "Bonsai 27B dense vision model on a Qwen 3.5 backbone. Ternary (2-bit slot) affine JANG text weights — ~8 GB on disk.",
-            isTopSuggestion: true,
             bootstrapDownloadSizeBytes: 8_040_700_199,
             modelType: "qwen3_5",
             releasedAt: date("2026-07-14"),
@@ -924,7 +931,6 @@ extension ModelManager {
             id: "OsaurusAI/Bonsai-27b-1bit-JANG",
             description:
                 "Bonsai 27B dense vision model on a Qwen 3.5 backbone. 1-bit affine JANG text weights — smallest of the family at ~4.7 GB.",
-            isTopSuggestion: true,
             bootstrapDownloadSizeBytes: 4_679_030_015,
             modelType: "qwen3_5",
             releasedAt: date("2026-07-14"),
