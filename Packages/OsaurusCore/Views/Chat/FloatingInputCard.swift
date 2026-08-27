@@ -2633,45 +2633,40 @@ extension FloatingInputCard {
         // Hide the balance/credits chip while a remote agent is connecting —
         // it's not actionable yet and competes with the connect affordance.
         let showCredits = showCreditsChip && !remoteConnectionPending
-        // Mode 2 hides the context-budget chip + popover entirely: a remote
-        // agent composes its own system prompt / tools server-side, so a local
-        // token breakdown (system prompt, tools, history) doesn't reflect what
-        // actually runs and would mislead about the remote agent's budget.
-        let showTokens = displayContextTokens > 0 && !isRemoteAgentRun && !metaUltraCompact
-        if showCredits || showTokens {
-            HStack(alignment: .center, spacing: 8) {
-                if showCredits {
-                    FloatingCreditsChip(
-                        isRouterBilledSession: isRouterBilledSession,
-                        sessionSpendMicro: sessionSpendMicro,
-                        metaCompact: metaCompact,
-                        metaUltraCompact: metaUltraCompact,
-                        onAddCredits: onAddCredits
-                    )
-                }
-                if showCredits && showTokens {
-                    Rectangle()
-                        .fill(theme.primaryBorder.opacity(0.25))
-                        .frame(width: 1, height: 12)
-                }
-                if showTokens {
-                    FloatingContextChip(
-                        displayTokens: displayContextTokens,
-                        usableTokens: usableContextTokens,
-                        modelMaxTokens: maxContextTokens,
-                        windowResolution: contextWindowResolution,
-                        isStreaming: isStreaming,
-                        isNearLimit: isContextNearLimit,
-                        isHardOverflow: isContextHardOverflow,
-                        metaCompact: metaCompact,
-                        formatTokenCount: formatTokenCount,
-                        breakdown: { displayContextBreakdown },
-                        compactionState: compactionState,
-                        canCompact: canCompactConversation && !isStreaming,
-                        onCompact: onCompactConversation
-                    )
-                }
-            }
+        if showCredits {
+            FloatingCreditsChip(
+                isRouterBilledSession: isRouterBilledSession,
+                sessionSpendMicro: sessionSpendMicro,
+                metaCompact: metaCompact,
+                metaUltraCompact: metaUltraCompact,
+                onAddCredits: onAddCredits
+            )
+        }
+    }
+
+    /// Context budget as a circular progress ring in the button bar, left of
+    /// the voice button. Mode 2 hides it entirely: a remote agent composes
+    /// its own system prompt / tools server-side, so a local token breakdown
+    /// doesn't reflect what actually runs and would mislead about the remote
+    /// agent's budget.
+    @ViewBuilder
+    private var contextBudgetRing: some View {
+        if displayContextTokens > 0 && !isRemoteAgentRun {
+            FloatingContextChip(
+                displayTokens: displayContextTokens,
+                usableTokens: usableContextTokens,
+                modelMaxTokens: maxContextTokens,
+                windowResolution: contextWindowResolution,
+                isStreaming: isStreaming,
+                isNearLimit: isContextNearLimit,
+                isHardOverflow: isContextHardOverflow,
+                usageRatio: contextUsageRatio,
+                formatTokenCount: formatTokenCount,
+                breakdown: { displayContextBreakdown },
+                compactionState: compactionState,
+                canCompact: canCompactConversation && !isStreaming,
+                onCompact: onCompactConversation
+            )
         }
     }
 
@@ -5275,6 +5270,7 @@ extension FloatingInputCard {
             Spacer()
 
             HStack(spacing: 8) {
+                contextBudgetRing
                 FloatingVoiceButton(
                     voiceInputEnabled: voiceConfig.voiceInputEnabled,
                     isStreaming: isStreaming,
@@ -8167,7 +8163,9 @@ private struct FloatingContextChip: View {
     let isStreaming: Bool
     let isNearLimit: Bool
     let isHardOverflow: Bool
-    let metaCompact: Bool
+    /// Fraction of the effective budget the next send occupies, driving the
+    /// progress ring. nil when the model window is unknown (empty ring).
+    let usageRatio: Double?
     let formatTokenCount: (Int) -> String
     let breakdown: () -> ContextBreakdown
     /// LLM compaction state + manual trigger, rendered inside the popover.
@@ -8219,41 +8217,40 @@ private struct FloatingContextChip: View {
                 showContextBreakdown = true
             }
         } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                // Budget-state tinting: amber at ≥85% of the window (soft
-                // warning — compaction will engage), red when the
-                // non-compactable prefix alone can't fit (send is gated).
-                if let warningColor {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: CGFloat(theme.captionSize) - 2))
-                        .foregroundColor(warningColor)
-                        .localizedHelp(
-                            isHardOverflow
-                                ? "Context is full: the system prompt, tools, and input alone exceed this model's window. Shorten the input, disable tools, or pick a larger-context model."
-                                : "Context is nearly full (≥85% of the model window). Older messages will be compacted; consider starting a fresh chat for best quality."
-                        )
-                }
-
-                Text(tokenText)
-                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
-                    .foregroundColor(
-                        warningColor ?? (isStreaming ? theme.secondaryText : theme.tertiaryText)
+            // Circular budget gauge. Ring-state tinting: amber at ≥85% of
+            // the window (soft warning — compaction will engage), red when
+            // the non-compactable prefix alone can't fit (send is gated).
+            ZStack {
+                Circle()
+                    .stroke(theme.primaryBorder.opacity(0.4), lineWidth: 2.5)
+                Circle()
+                    .trim(from: 0, to: CGFloat(min(1, max(0, usageRatio ?? 0))))
+                    .stroke(
+                        warningColor ?? theme.accentColor,
+                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
                     )
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-
-                if !metaCompact {
-                    Text("tokens", bundle: .module)
-                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
-                        .foregroundColor(theme.tertiaryText.opacity(0.7))
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
+                    .rotationEffect(.degrees(-90))
             }
-            .contentShape(Capsule())
+            .frame(width: 15, height: 15)
+            .frame(width: 24, height: 24)
+            .contentShape(Circle())
+            .animation(.easeOut(duration: 0.2), value: usageRatio)
         }
         .buttonStyle(.plain)
         .pointingHandCursor()
+        .help(
+            isHardOverflow
+                ? String(
+                    localized:
+                        "Context is full: the system prompt, tools, and input alone exceed this model's window. Shorten the input, disable tools, or pick a larger-context model.",
+                    bundle: .module)
+                : isNearLimit
+                    ? String(
+                        localized:
+                            "Context is nearly full (≥85% of the model window). Older messages will be compacted; consider starting a fresh chat for best quality.",
+                        bundle: .module)
+                    : String(localized: "Context used: \(tokenText) tokens", bundle: .module)
+        )
         .accessibilityLabel(
             Text("Context budget: \(tokenText) tokens", bundle: .module)
         )
