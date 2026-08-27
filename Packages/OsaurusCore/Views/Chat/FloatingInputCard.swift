@@ -2572,7 +2572,8 @@ extension FloatingInputCard {
         var count = 0
         if autoSpeakAssistant { count += 1 }
         if !isRemoteAgentRun, !isDefaultConfigAgent, isSandboxAvailable { count += 1 }
-        if !isRemoteAgentRun, isDefaultConfigAgent { count += 1 }  // configuration chip
+        // Configuration chip, or the folder chip once a folder is active.
+        if !isRemoteAgentRun, isDefaultConfigAgent || folderState.hasActiveFolder { count += 1 }
         if AppConfiguration.shared.chatConfig.enableClipboardMonitoring
             && clipboardService.hasNewContent
         {
@@ -2603,10 +2604,16 @@ extension FloatingInputCard {
                 sandboxToggleChip(compact: compact)
             }
 
-            // Folder selection lives in the + attach menu now; the Default
-            // (configuration) agent keeps its quiet indicator. Hidden in Mode 2.
-            if !isRemoteAgentRun, isDefaultConfigAgent {
-                configurationOnlyChip(compact: compact)
+            // Folder selection lives in the + attach menu now, so the chip
+            // only appears once a folder is active (it still carries the
+            // change/refresh/clear affordances). The Default (configuration)
+            // agent keeps its quiet indicator. Hidden in Mode 2.
+            if !isRemoteAgentRun {
+                if isDefaultConfigAgent {
+                    configurationOnlyChip(compact: compact)
+                } else if folderState.hasActiveFolder {
+                    folderContextChip(compact: compact)
+                }
             }
 
             // Clipboard / paste chip — last in the left cluster.
