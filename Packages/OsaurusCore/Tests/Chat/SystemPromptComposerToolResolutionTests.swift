@@ -1954,11 +1954,13 @@ struct SystemPromptComposerToolResolutionTests {
             let manager = AgentManager.shared
             let oldAgent = Agent(
                 name: "Stale delegation target",
-                defaultModel: "local/old-agent-model"
+                defaultModel: "local/old-agent-model",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             let newAgent = Agent(
                 name: "Fresh delegation target",
-                defaultModel: "local/new-agent-model"
+                defaultModel: "local/new-agent-model",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             manager.add(oldAgent)
             manager.add(newAgent)

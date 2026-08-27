@@ -350,7 +350,8 @@ struct PluginDispatchToolStorePopulationTests {
         let agent = Agent(
             name: "PluginDispatchToolStoreAgent-\(UUID().uuidString.prefix(6))",
             systemPrompt: "Test identity",
-            agentAddress: "test-plugin-dispatch-\(UUID().uuidString)"
+            agentAddress: "test-plugin-dispatch-\(UUID().uuidString)",
+            autonomousExec: AutonomousExecConfig(enabled: false)
         )
         AgentManager.shared.add(agent)
         return agent.id

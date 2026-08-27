@@ -30,6 +30,7 @@ struct RemoteAgentHostWorkspaceTests {
         let path = "/Users/tester/Desktop"
         let agent = Agent(
             name: "Filer",
+            autonomousExec: AutonomousExecConfig(enabled: false),
             hostWorkspaceBookmark: bookmark,
             hostWorkspacePath: path
         )
@@ -40,7 +41,7 @@ struct RemoteAgentHostWorkspaceTests {
     }
 
     @Test func agent_nilHostWorkspaceFields_roundTripStaysNil() throws {
-        let agent = Agent(name: "NoFolder")
+        let agent = Agent(name: "NoFolder", autonomousExec: AutonomousExecConfig(enabled: false))
         let data = try JSONEncoder().encode(agent)
         let decoded = try JSONDecoder().decode(Agent.self, from: data)
         #expect(decoded.hostWorkspaceBookmark == nil)
@@ -53,6 +54,7 @@ struct RemoteAgentHostWorkspaceTests {
         // `decodeIfPresent` back-compat for agents persisted before the feature.
         let agent = Agent(
             name: "Legacy",
+            autonomousExec: AutonomousExecConfig(enabled: false),
             hostWorkspaceBookmark: Data([9, 9, 9]),
             hostWorkspacePath: "/tmp/here"
         )

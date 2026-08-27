@@ -232,7 +232,8 @@ struct ChatWindowSessionDetachTests {
             let custom = Agent(
                 name: "DetachSwitch-\(UUID().uuidString.prefix(6))",
                 systemPrompt: "test",
-                agentAddress: "test-detach-\(UUID().uuidString)"
+                agentAddress: "test-detach-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             AgentManager.shared.add(custom)
 

@@ -231,9 +231,9 @@ struct SubagentConfigurationStoreTests {
 
         let migrated = SubagentConfigurationStore.migrateLegacyAgentNames(
             using: [
-                Agent(id: coderID, name: "Coder"),
-                Agent(id: upperID, name: "Helper"),
-                Agent(id: lowerID, name: "helper"),
+                Agent(id: coderID, name: "Coder", autonomousExec: AutonomousExecConfig(enabled: false)),
+                Agent(id: upperID, name: "Helper", autonomousExec: AutonomousExecConfig(enabled: false)),
+                Agent(id: lowerID, name: "helper", autonomousExec: AutonomousExecConfig(enabled: false)),
             ]
         )
         #expect(migrated.spawnableAgentIDs == [coderID])

@@ -95,6 +95,7 @@ struct HTTPHandlerChatStreamingTests {
                 name: "HTTPStrictContext-\(UUID().uuidString.prefix(6))",
                 systemPrompt: "DO-NOT-INJECT-HTTP-CONTEXT",
                 agentAddress: "http-strict-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: false),
                 manualToolNames: ["capabilities_discover"]
             )
             AgentManager.shared.add(agent)
@@ -871,7 +872,8 @@ struct HTTPHandlerChatStreamingTests {
             let scopedAgent = Agent(
                 name: "HTTPAgentRunSentinel-\(UUID().uuidString.prefix(6))",
                 systemPrompt: "Test identity",
-                agentAddress: "http-agent-run-\(UUID().uuidString)"
+                agentAddress: "http-agent-run-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             AgentManager.shared.add(scopedAgent)
 
@@ -1157,7 +1159,8 @@ struct HTTPHandlerChatStreamingTests {
             let custom = Agent(
                 name: "HTTPAgentRunTools-\(UUID().uuidString.prefix(6))",
                 systemPrompt: "Test identity",
-                agentAddress: "http-agent-run-tools-\(UUID().uuidString)"
+                agentAddress: "http-agent-run-tools-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             AgentManager.shared.add(custom)
 

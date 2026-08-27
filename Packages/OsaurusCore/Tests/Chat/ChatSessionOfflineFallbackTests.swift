@@ -51,7 +51,7 @@ struct ChatSessionOfflineFallbackTests {
         let local = makeLocalItem()
         let remote = makeRouterItem()
 
-        let agent = Agent(name: "Offline Fallback Agent \(UUID().uuidString)")
+        let agent = Agent(name: "Offline Fallback Agent \(UUID().uuidString)", autonomousExec: AutonomousExecConfig(enabled: false))
         AgentManager.shared.add(agent)
         AgentManager.shared.updateDefaultModel(for: agent.id, model: remote.id)
         defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }

@@ -485,6 +485,7 @@ struct CapabilitiesDiscoverToolTests {
                 let agent = Agent(
                     name: "CapabilitySearchGrant-\(UUID().uuidString.prefix(6))",
                     agentAddress: "capability-search-grant-\(UUID().uuidString)",
+                    autonomousExec: AutonomousExecConfig(enabled: false),
                     manualToolNames: [allowed.name]
                 )
                 AgentManager.shared.add(agent)
@@ -524,6 +525,7 @@ struct CapabilitiesDiscoverToolTests {
                 let unseededAgent = Agent(
                     name: "CapabilitySearchLegacy-\(UUID().uuidString.prefix(6))",
                     agentAddress: "capability-search-legacy-\(UUID().uuidString)",
+                    autonomousExec: AutonomousExecConfig(enabled: false),
                     manualToolNames: nil
                 )
                 AgentManager.shared.add(unseededAgent)
@@ -820,6 +822,7 @@ struct CapabilitiesLoadToolTests {
                 let agent = Agent(
                     name: "CapabilityLoadGrant-\(UUID().uuidString.prefix(6))",
                     agentAddress: "capability-load-grant-\(UUID().uuidString)",
+                    autonomousExec: AutonomousExecConfig(enabled: false),
                     manualToolNames: []
                 )
                 AgentManager.shared.add(agent)
@@ -945,6 +948,7 @@ struct CapabilitiesLoadToolTests {
                 let agent = Agent(
                     name: "SkillAutoLoad-\(UUID().uuidString.prefix(6))",
                     agentAddress: "skill-autoload-\(UUID().uuidString)",
+                    autonomousExec: AutonomousExecConfig(enabled: false),
                     manualToolNames: [groupTool.name]
                 )
                 AgentManager.shared.add(agent)

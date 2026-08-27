@@ -332,6 +332,7 @@ struct ChatViewSandboxTests {
             var agent = Agent(
                 name: "Resync Feature",
                 agentAddress: "test-resync-feature-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: false),
                 toolSelectionMode: .auto
             )
             manager.add(agent)

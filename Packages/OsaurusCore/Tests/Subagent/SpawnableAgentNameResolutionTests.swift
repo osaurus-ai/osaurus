@@ -46,7 +46,8 @@ struct SpawnableAgentNameResolutionTests {
     @MainActor
     private static func makeLauncher(targetIDs: [UUID]) -> SubagentScope {
         var launcher = Agent(
-            name: "Article Writer", description: "launcher", systemPrompt: "stable")
+            name: "Article Writer", description: "launcher", systemPrompt: "stable",
+            autonomousExec: AutonomousExecConfig(enabled: false))
         launcher.settings.spawnDelegationEnabled = true
         launcher.settings.spawnableAgentIDs = targetIDs
         AgentStore.save(launcher)
@@ -59,7 +60,8 @@ struct SpawnableAgentNameResolutionTests {
     func nameResolvesToAllowListedId() async throws {
         try await Self.withIsolatedStore {
             let cleaner = Agent(
-                name: "Transcript Cleaner", description: "cleans", systemPrompt: "x")
+                name: "Transcript Cleaner", description: "cleans", systemPrompt: "x",
+                autonomousExec: AutonomousExecConfig(enabled: false))
             AgentStore.save(cleaner)
             AgentManager.shared.refresh()
             let scope = Self.makeLauncher(targetIDs: [cleaner.id])
@@ -79,7 +81,8 @@ struct SpawnableAgentNameResolutionTests {
     func unknownNameSurfacesValidNames() async throws {
         try await Self.withIsolatedStore {
             let cleaner = Agent(
-                name: "Transcript Cleaner", description: "cleans", systemPrompt: "x")
+                name: "Transcript Cleaner", description: "cleans", systemPrompt: "x",
+                autonomousExec: AutonomousExecConfig(enabled: false))
             AgentStore.save(cleaner)
             AgentManager.shared.refresh()
             let scope = Self.makeLauncher(targetIDs: [cleaner.id])
@@ -97,7 +100,8 @@ struct SpawnableAgentNameResolutionTests {
         try await Self.withIsolatedStore {
             // `cleaner` exists in the catalog but is NOT in the launcher's list.
             let cleaner = Agent(
-                name: "Transcript Cleaner", description: "cleans", systemPrompt: "x")
+                name: "Transcript Cleaner", description: "cleans", systemPrompt: "x",
+                autonomousExec: AutonomousExecConfig(enabled: false))
             AgentStore.save(cleaner)
             AgentManager.shared.refresh()
             let scope = Self.makeLauncher(targetIDs: [])

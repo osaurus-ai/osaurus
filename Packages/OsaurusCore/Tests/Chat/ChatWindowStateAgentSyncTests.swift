@@ -60,6 +60,7 @@ struct ChatWindowStateAgentSyncTests {
             systemPrompt: systemPrompt,
             themeId: themeId,
             agentAddress: "test-windowstate-\(UUID().uuidString)",
+            autonomousExec: AutonomousExecConfig(enabled: false),
             toolSelectionMode: toolSelectionMode,
             manualToolNames: manualToolNames,
             avatar: avatar

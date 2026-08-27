@@ -329,7 +329,8 @@ struct SpawnPermissionGateTests {
             let original = Agent(
                 name: "ScopedAuthority",
                 description: "before",
-                systemPrompt: "stable"
+                systemPrompt: "stable",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             AgentStore.save(original)
             AgentManager.shared.refresh()
@@ -407,7 +408,8 @@ struct SpawnPermissionGateTests {
 
             let target = Agent(
                 name: "DirectAuthorityTarget",
-                description: "unchanged"
+                description: "unchanged",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             AgentStore.save(target)
             AgentManager.shared.refresh()
@@ -697,12 +699,13 @@ struct SpawnPermissionGateTests {
             var permissions = SubagentPermissionDefaults()
             permissions.setPolicy(.ask, for: SubagentCapabilityRegistry.spawn.id)
             settings.subagentPermissions = permissions
-            let target = Agent(name: "SpawnPermissionTarget")
+            let target = Agent(name: "SpawnPermissionTarget", autonomousExec: AutonomousExecConfig(enabled: false))
             settings.spawnDelegationEnabled = true
             settings.spawnableAgentIDs = [target.id]
             let agent = Agent(
                 name: "SpawnPermissionCustom",
                 agentAddress: "spawn-permission-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: false),
                 settings: settings
             )
             AgentStore.save(target)
@@ -1214,7 +1217,8 @@ struct SpawnPermissionGateTests {
 
             let target = Agent(
                 name: "CustomAlwaysAllowTarget",
-                defaultModel: "target/model"
+                defaultModel: "target/model",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             var permissions = SubagentPermissionDefaults()
             permissions.setPolicy(
@@ -1230,6 +1234,7 @@ struct SpawnPermissionGateTests {
             )
             let launcher = Agent(
                 name: "CustomAlwaysAllowLauncher",
+                autonomousExec: AutonomousExecConfig(enabled: false),
                 settings: launcherSettings
             )
             AgentStore.save(target)
@@ -1419,7 +1424,8 @@ struct SpawnPermissionGateTests {
 
             let target = Agent(
                 name: "RetainedTarget",
-                defaultModel: "target/model"
+                defaultModel: "target/model",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             var permissions = SubagentPermissionDefaults()
             permissions.setPolicy(
@@ -1435,6 +1441,7 @@ struct SpawnPermissionGateTests {
             )
             let launcher = Agent(
                 name: "RevokedLauncher",
+                autonomousExec: AutonomousExecConfig(enabled: false),
                 settings: launcherSettings
             )
             AgentStore.save(target)
@@ -1541,7 +1548,8 @@ struct SpawnPermissionGateTests {
 
             let target = Agent(
                 name: "EditedTarget",
-                description: "before"
+                description: "before",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             AgentStore.save(target)
             AgentManager.shared.refresh()

@@ -212,7 +212,8 @@ struct AgentCollaborationProtocolTests {
             name: "Local Planner",
             description: "Plans work",
             systemPrompt: "Plan local work",
-            agentAddress: "0xLOCAL"
+            agentAddress: "0xLOCAL",
+            autonomousExec: AutonomousExecConfig(enabled: false)
         )
     }
 

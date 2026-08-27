@@ -75,6 +75,7 @@ struct PromptSurfaceMatrixTests {
                     description: "A deterministic runnable worker.",
                     defaultModel: workerModelID,
                     agentAddress: "test-prompt-matrix-worker-\(UUID().uuidString)",
+                    autonomousExec: AutonomousExecConfig(enabled: false),
                     memoryEnabled: false
                 )
                 manager.add(workerAgent)
@@ -83,6 +84,7 @@ struct PromptSurfaceMatrixTests {
                     name: "PromptMatrix-Default",
                     systemPrompt: "Be concise and accurate.",
                     agentAddress: "test-prompt-matrix-default-\(UUID().uuidString)",
+                    autonomousExec: AutonomousExecConfig(enabled: false),
                     memoryEnabled: false
                 )
                 manager.add(defaultAgent)
@@ -91,6 +93,7 @@ struct PromptSurfaceMatrixTests {
                     name: "PromptMatrix-Enabled",
                     systemPrompt: "Be concise and accurate.",
                     agentAddress: "test-prompt-matrix-enabled-\(UUID().uuidString)",
+                    autonomousExec: AutonomousExecConfig(enabled: false),
                     memoryEnabled: false
                 )
                 enabledAgent.settings.renderChartEnabled = true

@@ -318,7 +318,8 @@ struct HTTPHandlerEndpointTests {
                 defaultModel: "fake-metadata-model",
                 isBuiltIn: false,
                 agentIndex: 0,
-                agentAddress: address
+                agentAddress: address,
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             AgentManager.shared.add(agent)
             AgentIdentityRegistry.shared.update(
@@ -372,7 +373,8 @@ struct HTTPHandlerEndpointTests {
                 chatQuickActions: actions,
                 isBuiltIn: false,
                 agentIndex: 0,
-                agentAddress: address
+                agentAddress: address,
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             AgentManager.shared.add(agent)
             AgentIdentityRegistry.shared.update(

@@ -60,7 +60,7 @@ struct ChatSessionLocalSetupBridgeTests {
         session: ChatSession, localModelId: String, cleanup: () async -> Void
     ) {
         let localModelId = "mlx-test/pending-local-\(UUID().uuidString)"
-        let agent = Agent(name: "Bridge Test Agent \(UUID().uuidString)")
+        let agent = Agent(name: "Bridge Test Agent \(UUID().uuidString)", autonomousExec: AutonomousExecConfig(enabled: false))
         AgentManager.shared.add(agent)
         AgentManager.shared.updateDefaultModel(for: agent.id, model: localModelId)
         ModelManager.shared.downloadService.downloadStates[localModelId] =

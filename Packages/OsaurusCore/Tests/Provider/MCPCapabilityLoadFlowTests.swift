@@ -51,6 +51,7 @@ struct MCPCapabilityLoadFlowTests {
                 let agent = Agent(
                     name: "MCPFlow-\(UUID().uuidString.prefix(6))",
                     agentAddress: "mcp-flow-\(UUID().uuidString)",
+                    autonomousExec: AutonomousExecConfig(enabled: false),
                     manualToolNames: [exposedName]
                 )
                 AgentManager.shared.add(agent)
@@ -112,6 +113,7 @@ struct MCPCapabilityLoadFlowTests {
                 let agent = Agent(
                     name: "MCPDenied-\(UUID().uuidString.prefix(6))",
                     agentAddress: "mcp-denied-\(UUID().uuidString)",
+                    autonomousExec: AutonomousExecConfig(enabled: false),
                     manualToolNames: []
                 )
                 AgentManager.shared.add(agent)
