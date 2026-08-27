@@ -44,7 +44,7 @@ struct osaurusApp: SwiftUI.App {
     /// Chat settings toggle: ⌘N starts a new chat in the frontmost chat
     /// window instead of opening a new window (see `NewChatShortcutSetting`).
     @AppStorage(NewChatShortcutSetting.defaultsKey)
-    private var cmdNStartsNewChatInCurrentWindow: Bool = false
+    private var cmdNStartsNewChatInCurrentWindow: Bool = true
 
     var body: some SwiftUI.Scene {
         Settings {

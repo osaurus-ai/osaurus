@@ -133,8 +133,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// When true, the first completed exchange of a new chat triggers a
     /// background Core Model call that replaces the first-message preview
     /// title with a short generated summary (see `ChatTitleService`).
-    /// Ships default-off while the feature bakes across releases; flip the
-    /// default here once it has proven regression-free.
+    /// Default on.
     public var autoGenerateChatTitles: Bool
 
     // MARK: - Follow-Up Suggestions
@@ -142,9 +141,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// turn (rendered as clickable rows above the composer; see
     /// `FollowUpSuggestionService`). When on, follow-ups generate for every
     /// chat; per-agent tweaks to the prompt / rules / model live in
-    /// `AgentSettings.followUp` but only take effect while this is on. Like
-    /// `autoGenerateChatTitles`, ships default-off so the feature bakes across
-    /// releases before we consider flipping the default here.
+    /// `AgentSettings.followUp` but only take effect while this is on.
+    /// Default on, like `autoGenerateChatTitles`.
     public var generateFollowUpSuggestions: Bool
 
     public init(
@@ -163,8 +161,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         disableTools: Bool = false,
         enableClipboardMonitoring: Bool = true,
         warmModelsOnLoad: Bool = true,
-        autoGenerateChatTitles: Bool = false,
-        generateFollowUpSuggestions: Bool = false
+        autoGenerateChatTitles: Bool = true,
+        generateFollowUpSuggestions: Bool = true
     ) {
         self.hotkey = hotkey
         self.systemPrompt = systemPrompt
@@ -205,9 +203,9 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         enableClipboardMonitoring = try container.decodeIfPresent(Bool.self, forKey: .enableClipboardMonitoring) ?? true
         warmModelsOnLoad = try container.decodeIfPresent(Bool.self, forKey: .warmModelsOnLoad) ?? true
         autoGenerateChatTitles =
-            try container.decodeIfPresent(Bool.self, forKey: .autoGenerateChatTitles) ?? false
+            try container.decodeIfPresent(Bool.self, forKey: .autoGenerateChatTitles) ?? true
         generateFollowUpSuggestions =
-            try container.decodeIfPresent(Bool.self, forKey: .generateFollowUpSuggestions) ?? false
+            try container.decodeIfPresent(Bool.self, forKey: .generateFollowUpSuggestions) ?? true
     }
 
     public static var `default`: ChatConfiguration {
@@ -234,7 +232,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             coreModelName: defaultCoreModelNameIfAvailable,
             enableClipboardMonitoring: true,
             warmModelsOnLoad: true,
-            autoGenerateChatTitles: false
+            autoGenerateChatTitles: true
         )
     }
 

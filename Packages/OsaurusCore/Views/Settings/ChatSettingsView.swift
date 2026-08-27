@@ -36,14 +36,13 @@ struct ChatSettingsView: View {
     @State private var tempEnableClipboardMonitoring: Bool = false
     @State private var tempWarmModelsOnLoad: Bool = true
     /// AI-generated chat titles from the first completed exchange. Default
-    /// off while the feature bakes across releases (see
-    /// `ChatConfiguration.autoGenerateChatTitles`).
-    @State private var tempAutoGenerateChatTitles: Bool = false
+    /// on (see `ChatConfiguration.autoGenerateChatTitles`).
+    @State private var tempAutoGenerateChatTitles: Bool = true
     /// Master switch for AI-generated follow-up questions after a completed
-    /// turn. Default off while the feature bakes across releases (see
+    /// turn. Default on (see
     /// `ChatConfiguration.generateFollowUpSuggestions`). Per-agent prompt /
     /// rules / model tweaks live in each agent's settings.
-    @State private var tempGenerateFollowUpSuggestions: Bool = false
+    @State private var tempGenerateFollowUpSuggestions: Bool = true
     /// Smooth streaming: pace the visible reveal at ~180 tok/s regardless
     /// of how fast / bursty the network delivers tokens. Default on.
     /// Bound to `UserDefaults` key `chatSmoothStreamingEnabled` which
@@ -71,21 +70,21 @@ struct ChatSettingsView: View {
     @State private var showAutoAllowAllConfirm = false
     /// Roll up runs of consecutive thinking / tool-call rows into a single
     /// expandable "Worked for …" row so agent loops don't push the
-    /// conversation out of view. Default off. Bound to `UserDefaults` key
+    /// conversation out of view. Default on. Bound to `UserDefaults` key
     /// `ContentBlock.ActivityRollupSetting.defaultsKey`, read by
     /// `BlockMemoizer` on every display rebuild. Applied immediately (a
     /// notification rebuilds open chats), so it's excluded from the
     /// debounced save baseline.
     @AppStorage(ContentBlock.ActivityRollupSetting.defaultsKey)
-    private var activityRollupEnabled: Bool = false
+    private var activityRollupEnabled: Bool = true
     /// Make ⌘N start a new chat in the frontmost chat window (the sidebar
     /// "New Chat" action) instead of opening a new window; "New Window" then
-    /// moves to ⇧⌘N. Default off to preserve the historical ⌘N behavior.
+    /// moves to ⇧⌘N. Default on.
     /// Bound to `UserDefaults` key `NewChatShortcutSetting.defaultsKey`,
     /// read by the app's File menu commands. Applied immediately, so it's
     /// excluded from the debounced save baseline.
     @AppStorage(NewChatShortcutSetting.defaultsKey)
-    private var cmdNStartsNewChatInCurrentWindow: Bool = false
+    private var cmdNStartsNewChatInCurrentWindow: Bool = true
     /// Model that runs LLM context compaction (summarizing older messages
     /// when a chat outgrows its context window). Same provider/name split
     /// as the Core Model picker; empty = "ask on first use" (the first-run

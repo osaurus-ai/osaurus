@@ -1283,7 +1283,9 @@ extension ContentBlock {
     enum ActivityRollupSetting {
         static let defaultsKey = "chatActivityRollupEnabled"
         static var isEnabled: Bool {
-            UserDefaults.standard.bool(forKey: defaultsKey)
+            // Default ON: absent key reads as enabled, so only an explicit
+            // user opt-out (stored false) disables the rollup.
+            UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
         }
     }
 
