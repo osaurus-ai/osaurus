@@ -5277,17 +5277,17 @@ extension FloatingInputCard {
             HStack(spacing: 6) {
                 mediaButton
                 slashCommandButton
-                FloatingVoiceButton(
-                    voiceInputEnabled: voiceConfig.voiceInputEnabled,
-                    isStreaming: isStreaming,
-                    startVoiceInput: startVoiceInput
-                )
             }
 
             Spacer()
 
             HStack(spacing: 8) {
                 keyboardHint
+                FloatingVoiceButton(
+                    voiceInputEnabled: voiceConfig.voiceInputEnabled,
+                    isStreaming: isStreaming,
+                    startVoiceInput: startVoiceInput
+                )
                 if isStreaming {
                     // While the Privacy Filter review sheet is on screen,
                     // suppress Stop — the sheet owns the cancel UX. The
