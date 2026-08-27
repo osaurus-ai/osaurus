@@ -8221,8 +8221,13 @@ private struct FloatingContextChip: View {
             // the window (soft warning — compaction will engage), red when
             // the non-compactable prefix alone can't fit (send is gated).
             ZStack {
+                // Track color comes from a TEXT token, not a border token:
+                // borders are tuned to be faint against the background in
+                // many themes, while text tokens are guaranteed legible in
+                // every theme (custom themes must define them too), so the
+                // unused portion of the ring stays visible everywhere.
                 Circle()
-                    .stroke(theme.primaryBorder.opacity(0.4), lineWidth: 2.5)
+                    .stroke(theme.tertiaryText.opacity(0.45), lineWidth: 2.5)
                 Circle()
                     .trim(from: 0, to: CGFloat(min(1, max(0, usageRatio ?? 0))))
                     .stroke(
