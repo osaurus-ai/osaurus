@@ -167,7 +167,10 @@ final class SkillUpdateTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
         case failure(ResolutionFailure)
     }
 
-    /// Resolve by id first, then by unique case-insensitive name.
+    /// Resolve by id first, then by name via `skill(named:)`, whose collision
+    /// tie-break prefers a user-authored skill over a built-in or plugin skill
+    /// sharing the name — for an EDIT that precedence is exactly right, since
+    /// only the user-authored one is writable anyway.
     ///
     /// Built-in and plugin skills resolve and then fail EXPLICITLY. Relying on
     /// `SkillManager.update`'s silent guard would report success over a write
@@ -175,27 +178,12 @@ final class SkillUpdateTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
     /// eliminate.
     @MainActor
     static func resolveSkill(reference: String) -> ResolvedSkill {
-        let skills = SkillManager.shared.skills
         var matched: Skill?
         if let id = UUID(uuidString: reference) {
-            matched = skills.first(where: { $0.id == id })
+            matched = SkillManager.shared.skill(for: id)
         }
         if matched == nil {
-            let candidates = skills.filter {
-                $0.name.compare(reference, options: .caseInsensitive) == .orderedSame
-            }
-            guard candidates.count <= 1 else {
-                return .failure(
-                    ResolutionFailure(
-                        kind: .invalidArgs,
-                        message:
-                            "More than one skill is named \"\(reference)\". Pass the skill's id "
-                            + "from `osaurus_list skill` instead.",
-                        retryable: true
-                    )
-                )
-            }
-            matched = candidates.first
+            matched = SkillManager.shared.skill(named: reference)
         }
         guard let skill = matched else {
             return .failure(
