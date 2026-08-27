@@ -305,7 +305,7 @@ struct ModelDownloadView: View {
 
     private func headerView(lists: GridLists) -> some View {
         ManagerHeaderWithTabs(
-            title: L("Models"),
+            title: L("Local Models"),
             subtitle: L("\(completedDownloadedModelsCount) downloaded • \(modelManager.totalDownloadedSizeString)")
         ) {
             HStack(spacing: 12) {

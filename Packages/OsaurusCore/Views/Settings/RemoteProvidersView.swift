@@ -100,14 +100,14 @@ struct RemoteProvidersView: View {
         // as `ThemesView`).
         if userConfiguredProviders.isEmpty {
             ManagerHeaderWithActions(
-                title: L("Providers"),
+                title: L("Cloud Models"),
                 subtitle: subtitleText
             ) {
                 headerActions
             }
         } else {
             ManagerHeaderWithTabs(
-                title: L("Providers"),
+                title: L("Cloud Models"),
                 subtitle: subtitleText
             ) {
                 headerActions
@@ -124,7 +124,7 @@ struct RemoteProvidersView: View {
                 showReorderSheet = true
             }
         }
-        HeaderPrimaryButton("Add Provider", icon: "plus") {
+        HeaderPrimaryButton("Add Cloud Provider", icon: "plus") {
             addSheetConfig = AddSheetConfig(preset: nil)
         }
     }
