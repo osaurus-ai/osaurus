@@ -840,7 +840,11 @@ private struct ProviderCardView: View {
                 .background(theme.errorColor.opacity(0.05))
             }
 
-            if report.hasAttention {
+            // Diagnostics only when the provider is enabled AND actually has a
+            // problem (`isAttentionWorthy`), not for merely disabled rows —
+            // a disabled provider's "connection disabled" warning is expected
+            // state, and rendering its full diagnostics block just adds noise.
+            if report.isAttentionWorthy {
                 Divider()
                     .background(theme.primaryBorder)
                 ProviderDiagnosticsRowsView(report: report.diagnostics, maxRows: 3)
