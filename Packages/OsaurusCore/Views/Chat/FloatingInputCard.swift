@@ -8008,6 +8008,13 @@ private struct FloatingCreditsChip: View {
         .accessibilityLabel(creditsHelpText)
         .onHover { hovering in
             balanceHoverTask?.cancel()
+            // Empty state: the chip is a direct "Add credits" CTA (click opens
+            // the top-up sheet), so no hover preview — surfacing the wallet
+            // panel there just re-offers the same action with an extra hop.
+            guard level != .empty || onAddCredits == nil else {
+                if !hovering, !walletPanelPinned { scheduleWalletDismiss() }
+                return
+            }
             if hovering {
                 walletDismissTask?.cancel()
                 balanceHoverTask = Task { @MainActor in
