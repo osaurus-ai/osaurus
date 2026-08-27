@@ -7389,9 +7389,10 @@ private struct InputActionButton: View {
     }
 }
 
-/// `InputActionButton`'s circular footprint wrapped around a native menu
-/// instead of a plain action. Same hover treatment; the menu indicator is
-/// hidden so it reads as a sibling of the other action buttons.
+/// `SlashCommandTriggerButton`'s circular footprint wrapped around a native
+/// menu instead of a plain action — identical fill, border, and hover
+/// treatment so the two read as siblings. The menu chrome and indicator are
+/// suppressed so only the styled label renders.
 private struct InputActionMenuButton<Content: View>: View {
     let icon: String
     let help: String
@@ -7410,10 +7411,7 @@ private struct InputActionMenuButton<Content: View>: View {
                     Circle()
                         .fill(
                             LinearGradient(
-                                colors: [
-                                    theme.accentColor.opacity(0.1),
-                                    Color.clear,
-                                ],
+                                colors: [theme.accentColor.opacity(0.1), Color.clear],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
@@ -7421,7 +7419,7 @@ private struct InputActionMenuButton<Content: View>: View {
                 }
 
                 Image(systemName: icon)
-                    .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
+                    .font(.system(size: 16, weight: .medium))
                     .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
             }
             .frame(width: 32, height: 32)
@@ -7436,26 +7434,17 @@ private struct InputActionMenuButton<Content: View>: View {
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
-                        lineWidth: 1
+                        lineWidth: 0.5
                     )
             )
-            .shadow(
-                color: isHovered ? theme.accentColor.opacity(0.15) : .clear,
-                radius: 6,
-                x: 0,
-                y: 2
-            )
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
         .pointingHandCursor()
         .help(help)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovered = hovering
-            }
-        }
+        .onHover { isHovered = $0 }
     }
 }
 
