@@ -908,6 +908,14 @@ struct PluginsView: View {
     // characters almost always appear in order somewhere in a description,
     // so subsequence matching there surfaced completely unrelated plugins.
 
+    /// Repository plugins hidden from the Browse tab's discovery list (but
+    /// not superseded — an installed copy still loads and keeps its
+    /// Installed-tab card). Telegram connections are set up from Settings →
+    /// Channels now, so its plugin card only confused discovery.
+    nonisolated private static let hiddenFromBrowsePluginIds: Set<String> = [
+        TelegramCredentialStore.pluginId  // "osaurus.telegram"
+    ]
+
     nonisolated private static func pluginMatchesQuery(_ plugin: PluginState, query: String) -> Bool {
         guard !query.isEmpty else { return true }
         let prepared = SearchService.PreparedQuery(query)
@@ -971,9 +979,14 @@ struct PluginsView: View {
                 // shouldn't be offered a plugin whose tools never register.
                 // Existing installs keep their card (with the "Built into
                 // Osaurus" banner) so the uninstall path stays reachable.
+                // `hiddenFromBrowsePluginIds` entries are likewise discovery-
+                // hidden only: installed copies keep working and stay
+                // manageable from the Installed tab.
                 let browse = currentPlugins.filter {
                     Self.pluginMatchesQuery($0, query: query)
-                        && ($0.isInstalled || !PluginManager.supersededPluginIds.contains($0.pluginId))
+                        && ($0.isInstalled
+                            || (!PluginManager.supersededPluginIds.contains($0.pluginId)
+                                && !Self.hiddenFromBrowsePluginIds.contains($0.pluginId)))
                 }
                 let installed =
                     currentPlugins
