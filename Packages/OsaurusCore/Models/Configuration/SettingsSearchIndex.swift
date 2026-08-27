@@ -766,23 +766,24 @@ public enum SettingsSearchIndex {
                 "cryptographic identity", "keys",
             ]
         ),
-        // The Storage tab is the single home for disk concerns: the models
-        // directory + external sources moved here from the General tab.
+        // The standalone Storage tab is gone: the models directory +
+        // external sources live on the General tab, and the encryption
+        // panel lives on the Privacy tab's Storage sub-tab.
         .init(
             id: "storage.location",
-            tab: .storage,
+            tab: .settings,
             title: "Models Directory",
             keywords: ["disk", "data location", "models folder", "move models", "cleanup", "models size"]
         ),
         .init(
             id: "storage.externalModels",
-            tab: .storage,
+            tab: .settings,
             title: "External Model Sources",
             keywords: ["hugging face", "hf cache", "lm studio", "external", "import models"]
         ),
         .init(
             id: "storage.encryption",
-            tab: .storage,
+            tab: .privacy,
             title: "Encrypt Local Data at Rest",
             keywords: ["sqlcipher", "encryption", "filevault", "at rest", "storage key", "backup"]
         ),

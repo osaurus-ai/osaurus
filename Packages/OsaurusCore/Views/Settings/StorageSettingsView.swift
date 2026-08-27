@@ -2,16 +2,17 @@
 //  StorageSettingsView.swift
 //  osaurus
 //
-//  Settings panel for everything disk-related: where models live (models
-//  directory + external model sources) and how local data is protected at
-//  rest. Osaurus stores local data **plaintext by default** (relying on
-//  FileVault) for reliability, and lets users opt in to SQLCipher encryption
-//  here. The panel reflects the *actual* on-disk state, exposes the opt-in
-//  toggle (which runs a live migration), and keeps the plaintext-backup /
+//  Settings panel for how local data is protected at rest. Osaurus stores
+//  local data **plaintext by default** (relying on FileVault) for
+//  reliability, and lets users opt in to SQLCipher encryption here. The
+//  panel reflects the *actual* on-disk state, exposes the opt-in toggle
+//  (which runs a live migration), and keeps the plaintext-backup /
 //  key-rotation admin actions.
 //
-//  Surfaced by the WhatsNew page action `openStorageSettings` and reachable
-//  from the management settings sidebar.
+//  The standalone Storage sidebar tab is gone: the models-directory and
+//  external-model sections moved to the General tab, and this panel is
+//  embedded in the Privacy tab's Storage sub-tab (`embedded: true`), which
+//  is also where the WhatsNew `openStorageSettings` action lands.
 //
 
 import AppKit
@@ -43,35 +44,50 @@ public struct StorageSettingsView: View {
 
     @State private var hasAppeared = false
 
-    public init() {}
+    /// When true, renders only the section cards (no header / scroll /
+    /// background) so a host tab — the Privacy tab's Storage sub-tab — can
+    /// place them inside its own scroll region.
+    private let embedded: Bool
+
+    public init(embedded: Bool = false) {
+        self.embedded = embedded
+    }
+
+    private var sectionsContent: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            postureCard
+                .settingsLandingAnchor("storage.encryption")
+            if !storeIssues.isEmpty {
+                recoveryCard
+            }
+            tradeoffsCard
+            actionsCard
+            footnote
+        }
+    }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            headerView
-                .managerHeaderEntrance(hasAppeared: hasAppeared)
+        Group {
+            if embedded {
+                sectionsContent
+            } else {
+                VStack(spacing: 0) {
+                    headerView
+                        .managerHeaderEntrance(hasAppeared: hasAppeared)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    modelStorageSection
-                    externalModelsSection
-                    postureCard
-                        .settingsLandingAnchor("storage.encryption")
-                    if !storeIssues.isEmpty {
-                        recoveryCard
+                    ScrollView {
+                        sectionsContent
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 24)
+                            .frame(maxWidth: .infinity)
                     }
-                    tradeoffsCard
-                    actionsCard
-                    footnote
+                    .opacity(hasAppeared ? 1 : 0)
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 24)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(theme.primaryBackground)
+                .environment(\.theme, themeManager.currentTheme)
             }
-            .opacity(hasAppeared ? 1 : 0)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
         .task { await refresh() }
         .onAppear {
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
@@ -118,26 +134,6 @@ public struct StorageSettingsView: View {
             title: L("Storage"),
             subtitle: L("Where Osaurus stores data on disk — and how it's protected")
         )
-    }
-
-    // MARK: - Model storage (relocated from the General tab)
-
-    /// Where downloaded models live on disk.
-    private var modelStorageSection: some View {
-        SettingsSection(title: "Models Directory", icon: "cube.box", anchorId: "storage.location") {
-            DirectoryPickerView()
-        }
-    }
-
-    /// External model sources (HF cache, LM Studio) discovered in place.
-    private var externalModelsSection: some View {
-        SettingsSection(
-            title: "External Models",
-            icon: "square.stack.3d.up",
-            anchorId: "storage.externalModels"
-        ) {
-            ExternalModelsSettingsView()
-        }
     }
 
     // MARK: - Posture + toggle

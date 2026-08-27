@@ -252,6 +252,11 @@ struct PrivacyView: View {
 
                 PrivacyModelSelector(configuration: $configuration, save: save, layout: .sections)
             }
+        case .storage:
+            // At-rest encryption / backup / key rotation, relocated from the
+            // removed Storage sidebar tab. Embedded mode renders just the
+            // section cards inside this tab's scroll region.
+            StorageSettingsView(embedded: true)
         }
     }
 
@@ -343,6 +348,7 @@ private enum PrivacyTab: String, CaseIterable, AnimatedTabItem {
     case rules
     case providers
     case model
+    case storage
 
     var title: String {
         switch self {
@@ -350,6 +356,7 @@ private enum PrivacyTab: String, CaseIterable, AnimatedTabItem {
         case .rules: return L("Rules")
         case .providers: return L("Providers")
         case .model: return L("Models")
+        case .storage: return L("Storage")
         }
     }
 }

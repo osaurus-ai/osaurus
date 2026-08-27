@@ -103,6 +103,12 @@ struct ConfigurationView: View {
         "CLI", "Command Line", "Install", "Symlink", "Maintenance",
         "Reset", "Factory Reset", "Wipe",
     ]
+    private static let modelStorageKeywords = [
+        "Models Directory", "Storage", "Disk", "Data Location", "Models Folder", "Move Models",
+    ]
+    private static let externalModelsKeywords = [
+        "External Models", "Hugging Face", "HF Cache", "LM Studio", "Import Models",
+    ]
     private static let notificationsKeywords = [
         "Notifications", "Toast", "Position", "Timeout", "Alerts", "Concurrent", "Background",
     ]
@@ -110,7 +116,8 @@ struct ConfigurationView: View {
         "Legal", "Terms", "Terms of Service", "Privacy", "Privacy Policy", "Policy", "About",
     ]
     private static let allSearchKeywordGroups: [[String]] = [
-        generalKeywords, notificationsKeywords, legalKeywords,
+        generalKeywords, modelStorageKeywords, externalModelsKeywords, notificationsKeywords,
+        legalKeywords,
     ]
 
     /// True when an active query matches at least one section. Drives the
@@ -308,6 +315,28 @@ struct ConfigurationView: View {
                         VStack(alignment: .leading, spacing: 24) {
                             // MARK: - General Section
                             generalSection
+
+                            // MARK: - Model Storage (relocated from the
+                            // removed Storage tab)
+                            if matchesSearch(Self.modelStorageKeywords) {
+                                SettingsSection(
+                                    title: "Models Directory",
+                                    icon: "cube.box",
+                                    anchorId: "storage.location"
+                                ) {
+                                    DirectoryPickerView()
+                                }
+                            }
+
+                            if matchesSearch(Self.externalModelsKeywords) {
+                                SettingsSection(
+                                    title: "External Models",
+                                    icon: "square.stack.3d.up",
+                                    anchorId: "storage.externalModels"
+                                ) {
+                                    ExternalModelsSettingsView()
+                                }
+                            }
 
                             // MARK: - Notifications Section
                             if matchesSearch(Self.notificationsKeywords) {

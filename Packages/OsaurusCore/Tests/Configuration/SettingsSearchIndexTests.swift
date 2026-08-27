@@ -87,16 +87,17 @@ struct SettingsSearchIndexTests {
     }
 
     @Test func searchFindsRelocatedStorageEntries() {
-        // The models directory + external sources moved from General to
-        // Storage; searching for them must land on the Storage tab.
+        // The standalone Storage tab is gone: the models directory +
+        // external sources live on the General tab, and the encryption
+        // panel lives on the Privacy tab's Storage sub-tab.
         let directoryHits = SettingsSearchIndex.search("models directory")
-        #expect(directoryHits.contains { $0.id == "storage.location" && $0.tab == .storage })
+        #expect(directoryHits.contains { $0.id == "storage.location" && $0.tab == .settings })
 
         let externalHits = SettingsSearchIndex.search("lm studio")
-        #expect(externalHits.contains { $0.id == "storage.externalModels" && $0.tab == .storage })
+        #expect(externalHits.contains { $0.id == "storage.externalModels" && $0.tab == .settings })
 
         let encryptionHits = SettingsSearchIndex.search("sqlcipher")
-        #expect(encryptionHits.contains { $0.id == "storage.encryption" && $0.tab == .storage })
+        #expect(encryptionHits.contains { $0.id == "storage.encryption" && $0.tab == .privacy })
     }
 
     @Test func searchFindsAgentEntries() {

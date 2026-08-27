@@ -228,8 +228,6 @@ private extension ManagementView {
             PrivacyView()
         case .identity:
             IdentityView()
-        case .storage:
-            StorageSettingsView()
         case .chat:
             ChatSettingsView()
         case .orchestrator:

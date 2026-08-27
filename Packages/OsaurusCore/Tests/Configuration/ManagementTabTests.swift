@@ -47,11 +47,11 @@ struct ManagementTabTests {
         #expect(ManagementTab.visibleCases == flattened)
     }
 
-    @Test func generalSectionLeadsAndAccountTrails() {
+    @Test func generalSectionLeadsAndDevelopersTrails() {
         // The IA contract: General is the first group (landing area) and
-        // Account is the last. Guards accidental reordering of allCases.
+        // Developers is the last. Guards accidental reordering of allCases.
         #expect(ManagementSection.allCases.first == .general)
-        #expect(ManagementSection.allCases.last == .account)
+        #expect(ManagementSection.allCases.last == .developers)
         #expect(ManagementTab.visibleCases.first == .settings)
     }
 
@@ -62,6 +62,9 @@ struct ManagementTabTests {
         #expect(ManagementTab.resolved(from: "channels") == .agentChannels)
         #expect(ManagementTab.resolved(from: "integrations") == .agentChannels)
         #expect(ManagementTab.resolved(from: "agent-channels") == .agentChannels)
+        // The removed Storage tab: its raw value lands on Privacy, which
+        // hosts the storage-encryption panel now.
+        #expect(ManagementTab.resolved(from: "storage") == .privacy)
     }
 
     @Test func resolvedRoundTripsCurrentRawValues() {

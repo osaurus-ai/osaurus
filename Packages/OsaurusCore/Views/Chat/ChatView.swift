@@ -8958,13 +8958,15 @@ struct ChatView: View {
                     case .openSecurityDoc(let url):
                         NSWorkspace.shared.open(url)
                     case .openStorageSettings, .exportPlaintextBackup:
-                        // Both actions land on the Storage panel.
+                        // Both actions land on the storage-encryption panel,
+                        // which lives on the Privacy tab now that the
+                        // standalone Storage tab is gone.
                         // `exportPlaintextBackup` doesn't auto-open
                         // the file picker — the user clicks
                         // "Export plaintext backup…" once they're
                         // there, which is the safer flow because it
                         // forces them to pick a destination.
-                        AppDelegate.shared?.showManagementWindow(initialTab: .storage)
+                        AppDelegate.shared?.showManagementWindow(initialTab: .privacy)
                     case .openPrivacySettings:
                         AppDelegate.shared?.showManagementWindow(initialTab: .privacy)
                     case .openComputerUseSettings:
