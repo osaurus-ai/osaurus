@@ -7,7 +7,7 @@
 > `spawnable` flag, default OFF**. The flows here (`local_delegate`, `image_*`)
 > become the first spawnable KINDS; a local-only **privacy loop** is a planned
 > kind. Canonical design + operational lifecycle/cache/tokenizer/image/progress
-> nuances: **SUBAGENT_PORTABLE_DESIGN.md**. Status/TODO: SUBAGENT_ORCHESTRATION_STATUS.md.
+> nuances: **SUBAGENT_PORTABLE_DESIGN.md**.
 >
 > **IMPLEMENTED (2026-06-25):** this shipped as the unified `Subagent*` framework
 > (`SubagentSession` + `SubagentKind`). The flows here are renamed: `local_delegate`

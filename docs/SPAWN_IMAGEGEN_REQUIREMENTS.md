@@ -1,10 +1,8 @@
 # Spawn / Image-Gen Orchestration — Product Requirements
 Owner: Eric. Last updated 2026-06-25. SSOT for the user-facing feature.
-(Engineering status/log lives in SUBAGENT_ORCHESTRATION_STATUS.md.)
 
 > **Unified surface (2026-06-25).** The subagent paths were unified onto one shared
-> `SubagentSession` host + `SubagentKind` framework (see
-> SUBAGENT_ORCHESTRATION_STATUS.md → "Unified Subagent Architecture"). The tool
+> `SubagentSession` host + `SubagentKind` framework. The tool
 > surface changed: **`local_delegate` is removed (folded into `spawn`)** and
 > **`image_generate` + `image_edit` are merged into one `image` tool** (passing
 > `source_paths` switches it to edit). Config/services renamed

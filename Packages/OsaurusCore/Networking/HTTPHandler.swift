@@ -7038,7 +7038,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // N images sequentially in one job WITHOUT a GPU drain between them, which
             // reliably trips the MLX `tryCoalescingPreviousComputeCommandEncoder`
             // assertion (reproduced at n=2). Re-enable once the per-image drain lands
-            // in the multi-image loop (see docs/REMAINING_WORK.md).
+            // in the multi-image loop.
             numImages: 1,
             outputFormat: Self.imageOutputFormat(req.output_format)
         )

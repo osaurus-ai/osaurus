@@ -1,8 +1,7 @@
 # Spawn — Team Spec, Wiring & Usage
 
 Audience: osaurus contributors. **Canonical design + operational nuances:**
-[`SUBAGENT_PORTABLE_DESIGN.md`](SUBAGENT_PORTABLE_DESIGN.md). **Status/TODO + test
-matrix:** [`SUBAGENT_ORCHESTRATION_STATUS.md`](SUBAGENT_ORCHESTRATION_STATUS.md).
+[`SUBAGENT_PORTABLE_DESIGN.md`](SUBAGENT_PORTABLE_DESIGN.md).
 This file is the spec + wiring contract for the current build.
 
 > **Unified framework (2026-06-25).** All four nested subagent paths now run through
