@@ -7,6 +7,14 @@ Every chat in Osaurus starts with the Orchestrator — the built-in "Osaurus" ag
 
 It deliberately does *not* do hands-on work itself: no sandbox, no working folder, no browser or computer use. Those capabilities belong to custom agents, which keeps the Orchestrator safe and predictable.
 
+**Filesystem work is a custom-agent path.** Selecting a folder while chatting with the Orchestrator does not give it file, search, or git tools -- the composer hides the working-folder chip on this agent, and the runtime ignores any persisted folder bookmark for `Agent.defaultId`. To list, read, or edit files (for example `~/Downloads`):
+
+1. Create a custom agent (or select one you already have) from the agent picker.
+2. Pick the working folder on that agent's chat composer.
+3. Ask the custom agent to do the filesystem work. You can stay on that agent, or ask the Orchestrator to spawn it as a subagent if it is on the spawn allow-list.
+
+See [AGENT_LOOP.md](AGENT_LOOP.md) for the folder/sandbox tool contract on custom agents.
+
 ## Settings → Orchestrator
 
 The Orchestrator has its own settings tab (Management `⌘⇧M` → Orchestrator):
@@ -45,6 +53,7 @@ default_agent:
 - "What's configured?" / "Change a setting" — inspects live state and plans config changes for approval.
 - "Create a research agent with web search and switch to it."
 - "Delegate this to my coding agent and summarize the result."
+- "Create a file-organizer agent with a working folder and switch to it."
 - "Export my setup as a template."
 
 ## Scope and security

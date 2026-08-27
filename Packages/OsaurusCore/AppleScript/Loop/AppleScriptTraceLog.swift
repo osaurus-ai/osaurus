@@ -8,8 +8,8 @@
 //  tool-call arguments string, finish reason, and token usage — plus the
 //  request's message shapes, to a single append-only file in /tmp.
 //
-//  This is an INVESTIGATION AID (for the multi-step marker-leak /
-//  degeneration investigation): it observes, it never alters the request or
+//  This is an INVESTIGATION AID (MODEL_ISSUES_TRIAGE Issue 3: multi-step
+//  marker-leak / degeneration): it observes, it never alters the request or
 //  the response. All file I/O runs on a dedicated serial queue so tracing
 //  never blocks the inference path (mirrors PrefillDebugLog).
 //

@@ -22,7 +22,8 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 
 ## The Orchestrator (default agent) vs custom agents
 
-- The Orchestrator only configures and explains Osaurus, and delegates work to the agents and models you allow. It cannot use skills, knowledge, browser, computer use, or file tools — that keeps setup safe and predictable.
+- The Orchestrator only configures and explains Osaurus, and delegates work to the agents and models you allow. It cannot use skills, knowledge, browser, computer use, or file tools — that keeps setup safe and predictable. The chat composer does not offer a working-folder chip on the Orchestrator.
+- For filesystem work (list, read, or edit a folder), create or switch to a custom agent, then pick the working folder on that agent — or ask the Orchestrator to create the agent and switch to it.
 - Custom agents get the full capability surface, gated by your per-agent feature toggles and tool permissions.
 
 ## Agent identity and settings

@@ -312,7 +312,7 @@ func runAgent(name, query):
 2. Add the per-agent `spawnable` flag (default off); generate alias tools (`configure_osaurus`, `sparky`).
 3. Generalize the handoff cases (local/remote/same-model).
 4. Permission + budgets per callable agent.
-5. e2e matrix extended: cloud/local
+5. e2e matrix (per SUBAGENT_ORCHESTRATION_STATUS.md §5) extended: cloud/local
    orchestrator × {generic spawn, aliased tool} × {local, remote subagent
    model}, handoff-then-multiturn coherence, RAM.
 

@@ -76,7 +76,7 @@ Agents can also opt into a private local database and a single self-scheduled ne
 
 ### Agent Loop
 
-Every chat is an agent loop. Pick a working folder and the agent gets file, search, and git tools. Toggle the sandbox and it gets shell access in an isolated sandbox. The model writes a markdown todo list, executes against it, and closes out with a verified summary -- all in the same chat window. See the [Agent Loop Guide](docs/AGENT_LOOP.md).
+Custom agents run an agent loop. Pick a working folder and the agent gets file, search, and git tools. Toggle the sandbox and it gets shell access in an isolated sandbox. The model writes a markdown todo list, executes against it, and closes out with a verified summary -- all in the same chat window. The built-in Orchestrator is the exception: it has no working folder, sandbox, browser, or computer use. For filesystem work, create or switch to a custom agent, then pick the folder there. See the [Agent Loop Guide](docs/AGENT_LOOP.md) and [Orchestrator Guide](docs/ORCHESTRATOR.md).
 
 ### Sandbox
 
@@ -120,7 +120,7 @@ When two Osaurus agents talk -- across your LAN or across the world through the 
 
 ### Orchestrator
 
-Every chat starts with the Orchestrator -- the built-in "Osaurus" agent that runs the show. Ask it anything about the app and it answers from live state; ask it to change a setting and it plans the change, shows an approval card, and applies only after you confirm. It also delegates work: spawn your custom agents and allowed local/cloud models as subagents -- in parallel, within budgets you set -- and get their results woven back into the conversation. It deliberately does no hands-on work itself (no sandbox, working folder, browser, or computer use; those belong to custom agents), which keeps it safe and predictable. Rename it, give it a persona, and control exactly what it may delegate to in Settings → Orchestrator. See the [Orchestrator Guide](docs/ORCHESTRATOR.md).
+Every chat starts with the Orchestrator -- the built-in "Osaurus" agent that runs the show. Ask it anything about the app and it answers from live state; ask it to change a setting and it plans the change, shows an approval card, and applies only after you confirm. It also delegates work: spawn your custom agents and allowed local/cloud models as subagents -- in parallel, within budgets you set -- and get their results woven back into the conversation. It deliberately does no hands-on work itself -- no sandbox, working folder, browser, or computer use; those belong to custom agents -- which keeps it safe and predictable. The chat composer does not offer a working-folder chip on the Orchestrator; picking a folder there would not grant file tools. For filesystem work, create or switch to a custom agent, then pick the working folder on that agent. Rename the Orchestrator, give it a persona, and control exactly what it may delegate to in Settings → Orchestrator. See the [Orchestrator Guide](docs/ORCHESTRATOR.md).
 
 ### Subagents (Spawn)
 

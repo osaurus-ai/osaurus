@@ -13,6 +13,8 @@ Every chat starts with the Orchestrator — the built-in "Osaurus" agent. It has
 
 It deliberately does *not* do hands-on work itself: no sandbox, no working folder, no browser or computer use. Those capabilities belong to custom agents, which keeps the Orchestrator safe and predictable.
 
+The chat composer does not offer a working-folder chip on the Orchestrator. To list or edit files, create or switch to a custom agent, then pick the working folder on that agent. You can also ask the Orchestrator to create the agent and switch to it.
+
 ## Settings → Orchestrator
 
 The Orchestrator has its own settings tab (Management ⌘⇧M → Orchestrator):
