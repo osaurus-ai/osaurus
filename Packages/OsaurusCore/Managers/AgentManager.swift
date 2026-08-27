@@ -769,9 +769,9 @@ extension AgentManager {
     /// The built-in Default ("Osaurus") agent is configuration-only: it never
     /// runs autonomous exec, so it always resolves to `nil` (off) regardless
     /// of any stored value or sandbox availability. Custom agents carry their
-    /// own persisted value (seeded ON at creation for new agents where the
-    /// sandbox is supported, left untouched for existing ones), so they are
-    /// returned as-is.
+    /// own persisted value; an agent with no explicit choice defaults ON
+    /// where the sandbox is supported — the chat chip is gone, so agent
+    /// settings is the opt-out (which persists an explicit `enabled: false`).
     public func effectiveAutonomousExec(for agentId: UUID) -> AutonomousExecConfig? {
         guard let agent = agent(for: agentId) else {
             return nil
@@ -783,7 +783,15 @@ extension AgentManager {
             return nil
         }
 
-        return agent.autonomousExec
+        if let config = agent.autonomousExec {
+            return config
+        }
+
+        // Unconfigured agent: sandbox on by default on supported machines.
+        // Resolved via the nonisolated availability check (not the MainActor
+        // `sandboxEnabledByDefault`) because this is called off-main too.
+        guard SandboxManager.resolveAvailability().isAvailable else { return nil }
+        return AutonomousExecConfig(enabled: true)
     }
 
     /// Update sandbox execution config for an agent.

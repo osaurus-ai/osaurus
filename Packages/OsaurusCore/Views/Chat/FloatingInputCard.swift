@@ -2571,7 +2571,6 @@ extension FloatingInputCard {
     private var visibleToggleChipCount: Int {
         var count = 0
         if autoSpeakAssistant { count += 1 }
-        if !isRemoteAgentRun, !isDefaultConfigAgent, isSandboxAvailable { count += 1 }
         // Configuration chip, or the folder chip once a folder is active.
         if !isRemoteAgentRun, isDefaultConfigAgent || folderState.hasActiveFolder { count += 1 }
         if AppConfiguration.shared.chatConfig.enableClipboardMonitoring
@@ -2595,13 +2594,6 @@ extension FloatingInputCard {
         HStack(spacing: 6) {
             if autoSpeakAssistant {
                 autoSpeakToggleChip(compact: compact)
-            }
-
-            // Sandbox toggle: visible whenever the sandbox is available on
-            // this system. Hidden for the Default agent (configuration-only).
-            // Hidden in Mode 2: the remote agent runs its own tools server-side.
-            if !isRemoteAgentRun, !isDefaultConfigAgent, isSandboxAvailable {
-                sandboxToggleChip(compact: compact)
             }
 
             // Folder selection lives in the + attach menu now, so the chip
