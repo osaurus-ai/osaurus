@@ -4230,16 +4230,6 @@ extension FloatingInputCard {
         )
     }
 
-    private var keyboardHint: some View {
-        HStack(spacing: 4) {
-            Text("⏎")
-                .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
-            Text("to send", bundle: .module)
-                .font(theme.font(size: CGFloat(theme.captionSize) - 1))
-        }
-        .foregroundColor(theme.tertiaryText.opacity(0.7))
-    }
-
     private func dismissModelPicker() {
         showModelPicker = false
     }
@@ -5285,7 +5275,6 @@ extension FloatingInputCard {
             Spacer()
 
             HStack(spacing: 8) {
-                keyboardHint
                 FloatingVoiceButton(
                     voiceInputEnabled: voiceConfig.voiceInputEnabled,
                     isStreaming: isStreaming,
