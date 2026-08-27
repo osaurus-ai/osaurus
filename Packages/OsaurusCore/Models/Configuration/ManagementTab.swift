@@ -149,8 +149,8 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     public var label: String {
         switch self {
         case .credits: L("Credits")
-        case .models: L("Models")
-        case .providers: L("Providers")
+        case .models: L("Local Models")
+        case .providers: L("Cloud Models")
         case .agents: L("Agents")
         case .agentChannels: L("Channels")
         case .plugins: L("Plugins")
