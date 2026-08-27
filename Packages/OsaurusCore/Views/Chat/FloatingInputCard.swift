@@ -7935,76 +7935,40 @@ private struct FloatingCreditsChip: View {
         // hover/tap opens the wallet) so the row's toggle chips aren't clipped.
         let showLabel = !metaUltraCompact
 
-        Button {
-            balanceHoverTask?.cancel()
-            walletDismissTask?.cancel()
-            // Empty state: the chip IS the "Add credits" call to action, so a
-            // click opens the top-up sheet directly — routing it through the
-            // wallet panel just to click a second "Add credits" there was an
-            // extra hop with no information gain. The panel stays reachable
-            // via hover for the session-spend detail.
-            if level == .empty, let onAddCredits {
-                showWalletPanel = false
-                walletPanelPinned = false
-                onAddCredits()
-                return
-            }
-            // Otherwise click pins the wallet panel (rather than jumping
-            // straight to the top-up sheet) so its actions stay reachable; a
-            // second click while pinned closes it.
-            if showWalletPanel && walletPanelPinned {
-                showWalletPanel = false
-                walletPanelPinned = false
+        Group {
+            if style.pill == nil {
+                // Balance states: the same pill chrome as the model selector
+                // chip (`SelectorChip`) so the meta cluster's interactive
+                // chips read as one family.
+                SelectorChip(isActive: showWalletPanel && walletPanelPinned) {
+                    handleChipTap(level: level)
+                } content: {
+                    chipLabel(style: style, caption: caption, showIcon: showIcon, showLabel: showLabel)
+                }
             } else {
-                walletPanelPinned = true
-                showWalletPanel = true
-            }
-        } label: {
-            HStack(spacing: 4) {
-                if showIcon {
-                    Image(systemName: style.iconName)
-                        .font(.system(size: caption - 2))
-                        .foregroundColor(style.iconColor)
-                        .contentTransition(.symbolEffect(.replace))
+                // Empty state keeps its own amber "Add credits" CTA pill.
+                Button {
+                    handleChipTap(level: level)
+                } label: {
+                    chipLabel(style: style, caption: caption, showIcon: showIcon, showLabel: showLabel)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background {
+                            if let pill = style.pill {
+                                Capsule()
+                                    .fill(pill.fill)
+                                    .overlay(Capsule().strokeBorder(pill.stroke, lineWidth: 1))
+                            }
+                        }
+                        // Soft glow on the empty CTA draws the eye without a
+                        // repeating animation.
+                        .shadow(color: style.glow, radius: 5, x: 0, y: 1)
+                        .contentShape(Capsule())
                 }
-
-                if showLabel {
-                    if style.showsAmount {
-                        // Composer shows the overall router balance; this session's
-                        // spend is surfaced only in the hover popover. Abbreviated
-                        // ("212.1K credits") so six-figure balances don't crowd
-                        // the meta cluster.
-                        Text(verbatim: accountService.compactFormattedBalance)
-                            .font(.system(size: caption - 1, weight: style.weight, design: .monospaced))
-                            .foregroundColor(style.textColor)
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                    } else {
-                        Text("Add credits", bundle: .module)
-                            .font(theme.font(size: caption - 1, weight: style.weight))
-                            .foregroundColor(style.textColor)
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                    }
-                }
+                .buttonStyle(.plain)
+                .pointingHandCursor()
             }
-            // Chrome only appears in the low/empty attention states; the healthy
-            // chip stays plain text to match the token indicator's weight.
-            .padding(.horizontal, style.pill == nil ? 0 : 10)
-            .padding(.vertical, style.pill == nil ? 0 : 4)
-            .background {
-                if let pill = style.pill {
-                    Capsule()
-                        .fill(pill.fill)
-                        .overlay(Capsule().strokeBorder(pill.stroke, lineWidth: 1))
-                }
-            }
-            // Soft glow on the empty CTA draws the eye without a repeating animation.
-            .shadow(color: style.glow, radius: 5, x: 0, y: 1)
-            .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
         .accessibilityLabel(creditsHelpText)
         .onHover { hovering in
             balanceHoverTask?.cancel()
@@ -8053,6 +8017,70 @@ private struct FloatingCreditsChip: View {
             // Outside-click dismissal flips the binding directly; unpin so the
             // next hover preview behaves normally.
             if !isShown { walletPanelPinned = false }
+        }
+    }
+
+    /// The chip's icon + amount/CTA line, shared by the `SelectorChip`
+    /// (balance states) and the amber CTA pill (empty state).
+    @ViewBuilder
+    private func chipLabel(
+        style: CreditsChipStyle,
+        caption: CGFloat,
+        showIcon: Bool,
+        showLabel: Bool
+    ) -> some View {
+        HStack(spacing: 4) {
+            if showIcon {
+                Image(systemName: style.iconName)
+                    .font(.system(size: caption - 2))
+                    .foregroundColor(style.iconColor)
+                    .contentTransition(.symbolEffect(.replace))
+            }
+
+            if showLabel {
+                if style.showsAmount {
+                    // Composer shows the overall router balance; this session's
+                    // spend is surfaced only in the hover popover. Abbreviated
+                    // ("212.1K credits") so six-figure balances don't crowd
+                    // the meta cluster.
+                    Text(verbatim: accountService.compactFormattedBalance)
+                        .font(.system(size: caption - 1, weight: style.weight, design: .monospaced))
+                        .foregroundColor(style.textColor)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                } else {
+                    Text("Add credits", bundle: .module)
+                        .font(theme.font(size: caption - 1, weight: style.weight))
+                        .foregroundColor(style.textColor)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+        }
+    }
+
+    private func handleChipTap(level: BalanceLevel) {
+        balanceHoverTask?.cancel()
+        walletDismissTask?.cancel()
+        // Empty state: the chip IS the "Add credits" call to action, so a
+        // click opens the top-up sheet directly — routing it through the
+        // wallet panel just to click a second "Add credits" there was an
+        // extra hop with no information gain.
+        if level == .empty, let onAddCredits {
+            showWalletPanel = false
+            walletPanelPinned = false
+            onAddCredits()
+            return
+        }
+        // Otherwise click pins the wallet panel (rather than jumping straight
+        // to the top-up sheet) so its actions stay reachable; a second click
+        // while pinned closes it.
+        if showWalletPanel && walletPanelPinned {
+            showWalletPanel = false
+            walletPanelPinned = false
+        } else {
+            walletPanelPinned = true
+            showWalletPanel = true
         }
     }
 
