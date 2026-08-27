@@ -7862,7 +7862,7 @@ private struct FloatingCreditsChip: View {
         // quiet muted "Add credits" text instead of an amber call to action.
         guard isRouterBilledSession else {
             return CreditsChipStyle(
-                iconName: "creditcard",
+                iconName: "cloud",
                 iconColor: theme.tertiaryText,
                 textColor: theme.secondaryText,
                 weight: .medium,
@@ -7874,7 +7874,7 @@ private struct FloatingCreditsChip: View {
         switch level {
         case .healthy:
             return CreditsChipStyle(
-                iconName: "creditcard",
+                iconName: "cloud",
                 iconColor: theme.tertiaryText,
                 textColor: theme.secondaryText,
                 weight: .medium,
@@ -7887,7 +7887,7 @@ private struct FloatingCreditsChip: View {
             // chip itself to amber text (no pill) — a gentle nudge that stops
             // short of the empty-state "Add credits" call to action.
             return CreditsChipStyle(
-                iconName: "creditcard",
+                iconName: "cloud",
                 iconColor: amber,
                 textColor: amber,
                 weight: .semibold,
