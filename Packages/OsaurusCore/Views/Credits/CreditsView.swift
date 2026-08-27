@@ -316,12 +316,22 @@ struct CreditsView: View {
                     .padding(.bottom, 6)
 
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Text(verbatim: accountService.formattedBalance)
-                            .font(.system(size: 32, weight: .semibold, design: .monospaced))
-                            .foregroundColor(
-                                accountService.isFrozen ? theme.warningColor : theme.primaryText
-                            )
-                            .contentTransition(.numericText())
+                        // Hero figure only; "credits" rides along as a caption
+                        // so large balances don't blow out the 32pt monospaced
+                        // string.
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(verbatim: accountService.formattedBalanceValue)
+                                .font(.system(size: 32, weight: .semibold, design: .monospaced))
+                                .foregroundColor(
+                                    accountService.isFrozen ? theme.warningColor : theme.primaryText
+                                )
+                                .contentTransition(.numericText())
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.6)
+                            Text("credits", bundle: .module)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(theme.secondaryText)
+                        }
                         if accountService.isLoadingBalance {
                             ProgressView()
                                 .scaleEffect(0.7)
@@ -963,10 +973,10 @@ struct CreditsView: View {
         }
     }
 
-    /// Request costs render signed ("-$0.09") so the timeline reads like a
-    /// statement next to "+$5.00" transaction rows.
+    /// Request costs render signed ("-13 credits") so the timeline reads like
+    /// a statement next to "+50,000 credits" transaction rows.
     private func signedCostLabel(_ costMicro: String) -> String {
-        let formatted = OsaurusRouter.formatMicroUSDPrecise(costMicro)
+        let formatted = OsaurusRouter.formatMicroAsCredits(costMicro)
         if (Int64(costMicro) ?? 0) > 0 {
             return "-" + formatted
         }

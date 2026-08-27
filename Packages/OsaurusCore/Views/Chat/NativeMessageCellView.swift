@@ -1647,7 +1647,7 @@ final class NativeEmptyResponseNoticeView: NSView {
         titleLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) + 1, weight: .medium)
         titleLabel.textColor = NSColor(theme.primaryText)
 
-        let formattedCost = OsaurusRouter.formatMicroUSD(costMicro)
+        let formattedCost = OsaurusRouter.formatMicroAsCredits(costMicro)
         let detail: String
         if outputTokens > 0 {
             detail = String(

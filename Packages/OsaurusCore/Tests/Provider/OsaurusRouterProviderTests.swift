@@ -34,6 +34,8 @@ struct OsaurusRouterProviderTests {
         #expect(fresh.contextLength == 131072)
     }
 
+    /// Servers that don't ship the `*_credits_display` siblings yet fall back
+    /// to the legacy `$` display strings.
     @Test func routerModelPickerDescription_summarizesProviderPricingContext() throws {
         let data = Data(
             """
@@ -69,6 +71,25 @@ struct OsaurusRouterProviderTests {
         }
         #expect(name == "Osaurus")
         #expect(pid == providerId)
+    }
+
+    /// When the router ships ready-to-show credits pricing strings, the picker
+    /// prefers them over the legacy `$` display fields.
+    @Test func routerModelPickerDescription_prefersCreditsDisplayWhenPresent() throws {
+        let data = Data(
+            """
+            {"data":[
+              {"id":"venice/model-b","provider":"venice","context_length":131072,"capabilities":{"tools":true},"input_micro_per_mtok":"1000000","output_micro_per_mtok":"3000000","input_display":"$1.00/M","output_display":"$3.00/M","input_credits_display":"10,000 credits/M","output_credits_display":"30,000 credits/M","stale":false}
+            ]}
+            """.utf8
+        )
+        let discovery = try RemoteProviderService.decodeOsaurusRouterModelsDiscovery(data: data)
+        let model = try #require(discovery.catalog["venice/model-b"])
+
+        #expect(
+            model.pickerDescription
+                == "venice · 10,000 credits/M in · 30,000 credits/M out · 131K ctx"
+        )
     }
 
     @Test func routerModelContextLength_formatsCompactly() {

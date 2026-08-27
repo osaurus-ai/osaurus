@@ -5206,7 +5206,7 @@ final class ChatSession: ObservableObject {
                 let cost = generated.compactMap(\.settledCostUSD).first
                 turn.content = "\(L("Generated images")): \(generated.count)"
                 if let cost {
-                    turn.content += " · \(String(format: "$%.4f", cost))"
+                    turn.content += " · \(OsaurusRouter.formatUSDAsCredits(cost))"
                 }
             }
         } catch is CancellationError {
@@ -5317,7 +5317,10 @@ final class ChatSession: ObservableObject {
                 return
             }
 
-            turn.content = String(format: L("Queueing video (quoted $%.4f)…"), quote.usd)
+            turn.content = String(
+                format: L("Queueing video (quoted %@)…"),
+                OsaurusRouter.formatUSDAsCredits(quote.usd)
+            )
             rebuildVisibleBlocks()
             let turnID = turn.id
             let media = try await MediaGenerationCoordinator.shared.generateVideo(
@@ -5379,7 +5382,7 @@ final class ChatSession: ObservableObject {
             turn.sharedArtifacts.append(processed.artifact)
             let label = media.kind.isVideo ? L("Generated video") : L("Generated image")
             if let cost = media.settledCostUSD {
-                turn.content = "\(label) · \(String(format: "$%.4f", cost))"
+                turn.content = "\(label) · \(OsaurusRouter.formatUSDAsCredits(cost))"
             } else {
                 turn.content = label
             }

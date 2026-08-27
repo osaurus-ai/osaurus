@@ -270,7 +270,7 @@ struct ModelPickerView: View {
             mediaKind: media?.kind,
             mediaPrivacy: media?.privacy.map(Self.mediaPrivacyLabel),
             mediaPrice: media?.pricing?.minimumUSD.map {
-                String(format: "From $%.4f", $0)
+                "From \(OsaurusRouter.formatUSDAsCredits($0))"
             },
             isMLXFormat: model.isMLXFormat,
             providerLabel: providerLabel,

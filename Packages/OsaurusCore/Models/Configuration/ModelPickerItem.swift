@@ -262,7 +262,7 @@ extension ModelPickerItem {
     static func fromMediaModel(_ model: MediaModelInfo, providerId: UUID) -> ModelPickerItem {
         let details = [
             model.privacy,
-            model.pricing?.minimumUSD.map { String(format: "From $%.4f", $0) },
+            model.pricing?.minimumUSD.map { "From \(OsaurusRouter.formatUSDAsCredits($0))" },
         ]
         .compactMap { $0 }
         .joined(separator: " · ")
@@ -394,8 +394,10 @@ extension ModelPickerItem {
 
 extension OsaurusRouterModel {
     /// Compact one-line summary for the model picker: underlying provider,
-    /// input/output price, and context window. e.g.
-    /// "<upstream> · $2.00/M in · $4.00/M out · 131K ctx".
+    /// input/output price, and context window. Prefers the router's
+    /// ready-to-show credits pricing (e.g. "<upstream> · 28.8 credits/M in ·
+    /// 100 credits/M out · 131K ctx"), falling back to the legacy `$` display
+    /// strings when the server doesn't ship the credits siblings.
     var pickerDescription: String? {
         var parts: [String] = []
 
@@ -404,12 +406,18 @@ extension OsaurusRouterModel {
             parts.append(trimmedProvider)
         }
 
-        let input = inputDisplay.trimmingCharacters(in: .whitespacesAndNewlines)
+        let inputCredits = inputCreditsDisplay?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let input = inputCredits.isEmpty
+            ? inputDisplay.trimmingCharacters(in: .whitespacesAndNewlines)
+            : inputCredits
         if !input.isEmpty {
             parts.append("\(input) in")
         }
 
-        let output = outputDisplay.trimmingCharacters(in: .whitespacesAndNewlines)
+        let outputCredits = outputCreditsDisplay?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let output = outputCredits.isEmpty
+            ? outputDisplay.trimmingCharacters(in: .whitespacesAndNewlines)
+            : outputCredits
         if !output.isEmpty {
             parts.append("\(output) out")
         }

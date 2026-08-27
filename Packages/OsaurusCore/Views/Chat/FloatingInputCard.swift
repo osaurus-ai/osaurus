@@ -4800,7 +4800,7 @@ extension FloatingInputCard {
                 )
             }
             if let minimum = media.pricing?.minimumUSD {
-                Text(String(format: "From $%.4f", minimum))
+                Text("From \(OsaurusRouter.formatUSDAsCredits(minimum))", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .foregroundColor(theme.secondaryText)
                     .padding(.horizontal, 9)
@@ -6861,13 +6861,22 @@ private struct WalletPopover: View {
             }
             .padding(.bottom, 5)
 
-            Text(verbatim: accountService.formattedBalance)
-                .font(.system(size: 24, weight: .semibold, design: .monospaced))
-                .foregroundColor(
-                    (isAttention || accountService.isFrozen)
-                        ? theme.warningColor : theme.primaryText
-                )
-                .contentTransition(.numericText())
+            // Hero figure only; "credits" rides along as a caption so large
+            // balances don't truncate the oversized monospaced string.
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text(verbatim: accountService.formattedBalanceValue)
+                    .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                    .foregroundColor(
+                        (isAttention || accountService.isFrozen)
+                            ? theme.warningColor : theme.primaryText
+                    )
+                    .contentTransition(.numericText())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                Text("credits", bundle: .module)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+            }
 
             if accountService.isFrozen {
                 Text("Account paused - add credits to resume.", bundle: .module)
@@ -7723,7 +7732,7 @@ private struct FloatingCreditsChip: View {
         if micro <= 0 || accountService.isFrozen {
             return .empty
         }
-        if micro < 1_000_000 {  // < $1.00
+        if micro < 1_000_000 {  // < 10,000 credits ($1.00)
             return .low
         }
         return .healthy
@@ -7799,7 +7808,7 @@ private struct FloatingCreditsChip: View {
     /// This session's Router spend, formatted for the hover popover. The chip
     /// surfaces the account balance; spend is shown only in the popover.
     private var sessionSpendDisplay: String {
-        OsaurusRouter.formatMicroUSDPrecise(String(sessionSpendMicro))
+        OsaurusRouter.formatMicroAsCredits(String(sessionSpendMicro))
     }
 
     /// Accessibility text for the credits chip. Describes the router balance the
@@ -7848,8 +7857,10 @@ private struct FloatingCreditsChip: View {
                 if showLabel {
                     if style.showsAmount {
                         // Composer shows the overall router balance; this session's
-                        // spend is surfaced only in the hover popover.
-                        Text(verbatim: accountService.formattedBalance)
+                        // spend is surfaced only in the hover popover. Abbreviated
+                        // ("212.1K credits") so six-figure balances don't crowd
+                        // the meta cluster.
+                        Text(verbatim: accountService.compactFormattedBalance)
                             .font(.system(size: caption - 1, weight: style.weight, design: .monospaced))
                             .foregroundColor(style.textColor)
                             .lineLimit(1)
