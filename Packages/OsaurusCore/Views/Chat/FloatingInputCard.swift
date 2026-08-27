@@ -5315,26 +5315,18 @@ extension FloatingInputCard {
     // MARK: - Action Buttons
 
     private var mediaButton: some View {
-        InputActionMenuButton(icon: "plus", help: "Add folder or attach files") {
-            Button {
-                selectFolder()
-            } label: {
-                Label {
-                    Text("Add Folder", bundle: .module)
-                } icon: {
-                    Image(systemName: "folder")
-                }
-            }
-            Button {
-                pickAttachment()
-            } label: {
-                Label {
-                    Text("Attach Files", bundle: .module)
-                } icon: {
-                    Image(systemName: "paperclip")
-                }
-            }
-        }
+        InputActionMenuButton(
+            icon: "plus",
+            help: "Add folder or attach files",
+            items: [
+                .init(icon: "folder", title: Text("Add Folder", bundle: .module)) {
+                    selectFolder()
+                },
+                .init(icon: "paperclip", title: Text("Attach Files", bundle: .module)) {
+                    pickAttachment()
+                },
+            ]
+        )
     }
 
     private var slashCommandButton: some View {
@@ -7389,20 +7381,27 @@ private struct InputActionButton: View {
     }
 }
 
-/// `SlashCommandTriggerButton`'s circular footprint wrapped around a native
-/// menu instead of a plain action — identical fill, border, and hover
-/// treatment so the two read as siblings. The menu chrome and indicator are
-/// suppressed so only the styled label renders.
-private struct InputActionMenuButton<Content: View>: View {
+/// `SlashCommandTriggerButton`'s circular footprint opening a themed popover
+/// of action rows — the same idiom as the model picker's sort menu
+/// (`ModelPickerView.sortPopoverView` / `SortOptionRow`) — instead of a
+/// native NSMenu, so the dropdown matches the app's visual language.
+private struct InputActionMenuButton: View {
+    struct Item {
+        let icon: String
+        let title: Text
+        let action: () -> Void
+    }
+
     let icon: String
     let help: String
-    @ViewBuilder let content: () -> Content
+    let items: [Item]
 
     @State private var isHovered = false
+    @State private var showPopover = false
     @Environment(\.theme) private var theme
 
     var body: some View {
-        Menu(content: content) {
+        Button(action: { showPopover.toggle() }) {
             ZStack {
                 Circle()
                     .fill(theme.tertiaryBackground.opacity(isHovered ? 0.95 : 0.8))
@@ -7438,13 +7437,63 @@ private struct InputActionMenuButton<Content: View>: View {
                     )
             )
         }
-        .menuStyle(.button)
         .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
         .pointingHandCursor()
         .help(help)
         .onHover { isHovered = $0 }
+        .popover(isPresented: $showPopover, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    MenuItemRow(icon: item.icon, title: item.title) {
+                        showPopover = false
+                        item.action()
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+            .frame(width: 180)
+            .background(theme.primaryBackground)
+            .environment(\.theme, theme)
+        }
+    }
+
+    /// One popover action row, in the model picker's `SortOptionRow` idiom:
+    /// leading icon, 12pt title, hover-highlighted rounded background.
+    private struct MenuItemRow: View {
+        let icon: String
+        let title: Text
+        let action: () -> Void
+        @Environment(\.theme) private var theme
+        @State private var isHovering = false
+
+        var body: some View {
+            Button(action: action) {
+                HStack(spacing: 10) {
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(width: 16)
+                        .foregroundColor(theme.secondaryText)
+                    title
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(isHovering ? theme.tertiaryBackground.opacity(0.7) : Color.clear)
+                )
+                .padding(.horizontal, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isHovering = hovering
+                }
+            }
+        }
     }
 }
 
