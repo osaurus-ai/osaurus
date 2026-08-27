@@ -7936,11 +7936,22 @@ private struct FloatingCreditsChip: View {
         let showLabel = !metaUltraCompact
 
         Button {
-            // Click pins the wallet panel (rather than jumping straight to the
-            // top-up sheet) so its actions stay reachable; a second click while
-            // pinned closes it.
             balanceHoverTask?.cancel()
             walletDismissTask?.cancel()
+            // Empty state: the chip IS the "Add credits" call to action, so a
+            // click opens the top-up sheet directly — routing it through the
+            // wallet panel just to click a second "Add credits" there was an
+            // extra hop with no information gain. The panel stays reachable
+            // via hover for the session-spend detail.
+            if level == .empty, let onAddCredits {
+                showWalletPanel = false
+                walletPanelPinned = false
+                onAddCredits()
+                return
+            }
+            // Otherwise click pins the wallet panel (rather than jumping
+            // straight to the top-up sheet) so its actions stay reachable; a
+            // second click while pinned closes it.
             if showWalletPanel && walletPanelPinned {
                 showWalletPanel = false
                 walletPanelPinned = false
