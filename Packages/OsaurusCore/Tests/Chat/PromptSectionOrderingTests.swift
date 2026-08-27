@@ -66,7 +66,7 @@ struct PromptSectionOrderingTests {
                 name: "OrderingTestAgent-\(UUID().uuidString.prefix(6))",
                 systemPrompt: "Test identity",
                 agentAddress: "test-ordering-\(UUID().uuidString)",
-                autonomousExec: autonomous ? AutonomousExecConfig(enabled: true) : nil,
+                autonomousExec: AutonomousExecConfig(enabled: autonomous),
                 toolSelectionMode: toolSelectionMode,
                 manualToolNames: manualToolNames,
                 toolsEnabled: !toolsDisabled,

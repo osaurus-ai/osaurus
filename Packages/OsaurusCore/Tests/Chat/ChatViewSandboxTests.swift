@@ -136,7 +136,8 @@ struct ChatViewSandboxTests {
             let originalActiveAgentId = manager.activeAgentId
             let inactiveAgent = Agent(
                 name: "Chat Estimate Off",
-                agentAddress: "test-chat-estimate-off"
+                agentAddress: "test-chat-estimate-off",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             let sandboxAgent = Agent(
                 name: "Chat Estimate On",
@@ -223,7 +224,8 @@ struct ChatViewSandboxTests {
 
             let inactiveAgent = Agent(
                 name: "Chat Sandbox Off",
-                agentAddress: "test-chat-sandbox-off"
+                agentAddress: "test-chat-sandbox-off",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             let sandboxAgent = Agent(
                 name: "Chat Sandbox On",
@@ -278,7 +280,8 @@ struct ChatViewSandboxTests {
             let originalActiveAgentId = manager.activeAgentId
             var agent = Agent(
                 name: "Resync Sandbox",
-                agentAddress: "test-resync-sandbox-\(UUID().uuidString)"
+                agentAddress: "test-resync-sandbox-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             manager.add(agent)
 
@@ -304,7 +307,7 @@ struct ChatViewSandboxTests {
             #expect(onTotal > offTotal)
 
             // Disable again → resync must shrink back to the original total.
-            agent.autonomousExec = nil
+            agent.autonomousExec = AutonomousExecConfig(enabled: false)
             manager.update(agent)
             ToolRegistry.shared.unregisterAllSandboxTools()
             session.invalidateTokenCache()
