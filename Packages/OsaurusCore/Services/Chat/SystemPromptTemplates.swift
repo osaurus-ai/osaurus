@@ -1169,6 +1169,14 @@ public enum SystemPromptTemplates {
                 + "delegate a side effect that the selected worker cannot actually call."
         )
         lines.append(
+            "- Workers deliver FILES as artifacts: a worker's `share_artifact` passes through "
+                + "to THIS conversation as an artifact card once the spawn returns (the result "
+                + "carries only an `artifacts_shared` count). For a file/code deliverable, tell "
+                + "the worker to share the file with `share_artifact` and reply with a short "
+                + "summary — never ask a worker to paste full file contents into its answer; "
+                + "long replies are truncated in the digest."
+        )
+        lines.append(
             "- `input` must be the COMPLETE task as a self-contained prompt — the worker sees only that, "
                 + "not this conversation. Pick the target whose description or note best fits the task; "
                 + "if none clearly fits, just do it yourself rather than guessing."

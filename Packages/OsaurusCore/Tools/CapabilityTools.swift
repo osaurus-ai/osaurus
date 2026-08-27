@@ -57,6 +57,11 @@ actor CapabilityLoadBuffer {
         "capabilities_load",
         BuiltinSandboxTools.initPendingToolName,
         "sandbox_plugin_register",
+        // A config apply can create an agent and grow the launching
+        // conversation's spawn pool; ConfigApplier stages the constrained
+        // spawn specs so the orchestrator can run the new agent in the
+        // SAME turn instead of waiting for the next compose.
+        "osaurus_config",
     ]
 
     static func shouldActivate(after toolName: String) -> Bool {

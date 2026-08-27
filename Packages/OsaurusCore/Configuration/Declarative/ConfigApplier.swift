@@ -67,6 +67,12 @@ enum ConfigApplier {
     ) async -> [ConfigApplyResult] {
         var results: [ConfigApplyResult] = []
 
+        // Captured BEFORE any section mutates state: the live chat
+        // conversation's effective spawn pool, so the post-apply hook can
+        // detect growth (an agent created by this document, a delegation
+        // edit) and stage the spawn tools for the SAME turn.
+        let spawnBaseline = await MainActor.run { liveChatSpawnPool() }
+
         if let section = document.memory {
             results.append(await applyMemory(section))
         }
@@ -123,7 +129,117 @@ enum ConfigApplier {
             results.append(await applyActiveAgent(name))
         }
 
+        await stageSpawnToolsIfPoolGrew(baseline: spawnBaseline)
+
         return results
+    }
+
+    // MARK: - Same-turn spawn activation
+
+    /// The launching chat conversation's effective `spawn_agent` target pool
+    /// (self excluded), or `nil` when this apply does not run inside a live
+    /// interactive chat turn (CLI, HTTP, delegation, schedules).
+    @MainActor
+    private static func liveChatSpawnPool() -> [UUID]? {
+        guard let session = ChatExecutionContext.currentChatSessionBox?.session,
+            session.source == .chat
+        else { return nil }
+        // A nil session agent binds to the Default agent (main chat).
+        return effectiveSpawnableAgentIDs(for: session.agentId ?? Agent.defaultId)
+    }
+
+    @MainActor
+    private static func effectiveSpawnableAgentIDs(for agentId: UUID) -> [UUID] {
+        let caps = AgentManager.shared.effectiveCapabilities(for: agentId)
+        return SubagentToolVisibility.effectiveSpawnableAgents(
+            isDefault: agentId == Agent.defaultId,
+            config: SubagentConfigurationStore.snapshot(),
+            perAgentEnabled: caps.spawnDelegationEnabled,
+            perAgentTargets: caps.spawnableAgentIDs
+        ).filter { $0 != agentId }
+    }
+
+    /// An apply that grows the launching conversation's spawn pool (an agent
+    /// this document just created, a `delegation` edit) must make the spawn
+    /// tools callable in the SAME turn — the turn's tool schema was frozen at
+    /// compose, when the pool may have been empty, and `ToolExecutionScope`
+    /// rejects any tool absent from it. `osaurus_config` is an activation
+    /// trigger, so specs staged here are drained by the loop's
+    /// `CapabilityLoadBuffer` growth path and offered to the next iteration.
+    /// Execution independently validates targets against the live pool.
+    ///
+    /// Already-visible spawn tools keep their original (frozen) schema —
+    /// `ToolExecutionScope.activate` only appends genuinely new names — so a
+    /// stale target enum lasts at most the rest of the turn; the next compose
+    /// re-constrains it.
+    private static func stageSpawnToolsIfPoolGrew(baseline: [UUID]?) async {
+        guard let baseline else { return }
+        let staged: [Tool] = await MainActor.run {
+            guard let session = ChatExecutionContext.currentChatSessionBox?.session,
+                session.source == .chat
+            else { return [] }
+            let launchingAgentId = session.agentId ?? Agent.defaultId
+            let allowedAgentIDs = effectiveSpawnableAgentIDs(for: launchingAgentId)
+            guard !allowedAgentIDs.isEmpty,
+                !Set(allowedAgentIDs).subtracting(baseline).isEmpty
+            else { return [] }
+
+            let allowedAgentNames = allowedAgentIDs.compactMap {
+                AgentManager.shared.agent(for: $0)?.name
+            }
+            let baseSpecs = ToolRegistry.shared.specs(
+                forTools: [
+                    SubagentCapabilityRegistry.spawnAgentToolName,
+                    SubagentCapabilityRegistry.spawnBatchToolName,
+                ]
+            )
+            let byName = Dictionary(
+                uniqueKeysWithValues: baseSpecs.map { ($0.function.name, $0) }
+            )
+
+            var specs: [Tool] = []
+            if let spawnAgent = byName[SubagentCapabilityRegistry.spawnAgentToolName] {
+                specs.append(
+                    SpawnAgentTool.constrainedSpec(
+                        spawnAgent,
+                        allowedAgentIDs: allowedAgentIDs,
+                        allowedAgentNames: allowedAgentNames
+                    )
+                )
+            }
+            if let spawnBatch = byName[SubagentCapabilityRegistry.spawnBatchToolName] {
+                let isDefault = launchingAgentId == Agent.defaultId
+                let config = SubagentConfigurationStore.snapshot()
+                let caps = AgentManager.shared.effectiveCapabilities(for: launchingAgentId)
+                let allowedModelIds = SubagentToolVisibility.effectiveSpawnableModels(
+                    isDefault: isDefault,
+                    config: config,
+                    perAgentEnabled: caps.spawnDelegationEnabled,
+                    perAgentModelTargets: caps.spawnableModelNames
+                )
+                let maxParallel = SubagentToolVisibility.effectiveBudgets(
+                    isDefault: isDefault,
+                    config: config,
+                    settings: AgentManager.shared.agent(for: launchingAgentId)?.settings,
+                    sharedParallelLimit: SpawnBatchConcurrencyContract.configuredLimit(
+                        for: ServerRuntimeSettingsStore.snapshot()
+                    )
+                ).normalized.maxParallelSpawns
+                specs.append(
+                    SpawnBatchTool.constrainedSpec(
+                        spawnBatch,
+                        allowedAgentIDs: allowedAgentIDs,
+                        allowedAgentNames: allowedAgentNames,
+                        allowedModelIds: allowedModelIds,
+                        maxParallel: maxParallel
+                    )
+                )
+            }
+            return specs
+        }
+        for spec in staged {
+            _ = await CapabilityLoadBuffer.current.add(spec)
+        }
     }
 
     // MARK: - Settings scopes
@@ -275,7 +391,14 @@ enum ConfigApplier {
                         AgentManager.shared.update(agent)
                     }
                     applyRelay(entry.capabilities?.relayEnabled, to: agent.id)
-                    return ConfigApplyResult(section: "agents", target: agent.name, status: .done)
+                    // New agents join the Default spawn pool on create
+                    // (`AgentManager.add`), so the orchestrator can run one
+                    // immediately — and same-turn: the post-apply hook stages
+                    // the spawn specs for this very conversation.
+                    return ConfigApplyResult(
+                        section: "agents", target: agent.name, status: .done,
+                        message: "Created. `\(agent.name)` is spawnable now — "
+                            + "call `spawn_agent` to run a task with it.")
                 }
             }
             results.append(result)

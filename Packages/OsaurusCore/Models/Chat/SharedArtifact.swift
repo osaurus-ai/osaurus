@@ -462,6 +462,80 @@ extension SharedArtifact {
         return .success(ProcessingResult(artifact: artifact, enrichedToolResult: enriched))
     }
 
+    /// Re-home an artifact into another context's artifact store: copy the
+    /// backing file (or re-write inline content) into the destination
+    /// context's directory and return a new artifact keyed to that context.
+    ///
+    /// Used by the delegated-spawn pass-through: a delegated child chat
+    /// session shares artifacts into ITS OWN store; after the run the parent
+    /// adopts them so the cards survive the child session's deletion.
+    ///
+    /// Security: `sourceRootContextId` pins where the source file is allowed
+    /// to live — the artifact's `hostPath` must sit inside THAT context's
+    /// store directory. Transcript-carried paths never get to name an
+    /// arbitrary host location. Inline-content artifacts need no source file
+    /// and are re-written from `content`.
+    static func adoptIntoContext(
+        _ artifact: SharedArtifact,
+        contextId destinationContextId: String,
+        sourceRootContextId: String
+    ) -> SharedArtifact? {
+        let destDir = OsaurusPaths.contextArtifactsDir(contextId: destinationContextId)
+        OsaurusPaths.ensureExistsSilent(destDir)
+        guard
+            let dest = resolveDestinationPath(
+                filename: sanitizeArtifactFilename(artifact.filename),
+                contextDir: destDir
+            )
+        else { return nil }
+
+        let fm = FileManager.default
+        let sourceRoot = canonicalizedURL(
+            OsaurusPaths.contextArtifactsDir(contextId: sourceRootContextId)
+        )
+        let sourcePath = artifact.hostPath
+        let containedSource: URL? = {
+            guard !sourcePath.isEmpty else { return nil }
+            let url = canonicalizedURL(URL(fileURLWithPath: sourcePath))
+            guard isContained(url, in: sourceRoot), fm.fileExists(atPath: url.path) else {
+                return nil
+            }
+            return url
+        }()
+
+        if fm.fileExists(atPath: dest.path) { try? fm.removeItem(at: dest) }
+        if let source = containedSource {
+            do { try fm.copyItem(at: source, to: dest) } catch {
+                NSLog(
+                    "[SharedArtifact] adopt copy failed %@ → %@: %@",
+                    source.path, dest.path, error.localizedDescription
+                )
+                return nil
+            }
+        } else if let content = artifact.content {
+            do { try content.write(to: dest, atomically: true, encoding: .utf8) } catch {
+                return nil
+            }
+        } else {
+            // No in-store source file and no inline content — nothing safe
+            // to adopt (an out-of-store hostPath lands here by design).
+            return nil
+        }
+
+        return SharedArtifact(
+            contextId: destinationContextId,
+            contextType: .chat,
+            filename: dest.lastPathComponent,
+            mimeType: artifact.mimeType,
+            fileSize: artifact.fileSize,
+            hostPath: dest.path,
+            isDirectory: artifact.isDirectory,
+            content: artifact.content,
+            description: artifact.description,
+            isFinalResult: false
+        )
+    }
+
     /// Reconstructs a SharedArtifact from an enriched tool result string (for display).
     /// Only succeeds when the result has been enriched with host_path, context_id, etc.
     ///

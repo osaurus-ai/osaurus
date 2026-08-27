@@ -362,10 +362,18 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// See `ChatResidencyHandoff` / `ResidencyHandoff`.
     var localTextDelegationEnabled: Bool
     /// The DEFAULT / main-chat agent's spawnable agents (its `spawn` pool).
-    /// Empty by default → the main chat has nothing to spawn until opted in.
-    /// Custom agents carry their OWN per-agent list in `AgentSettings`; this
-    /// field governs the main chat only (edited in Settings → Subagents).
+    /// Default-on: every custom agent joins on creation (`AgentManager`
+    /// creation paths) and existing installs are seeded once (see
+    /// `spawnPoolSeeded`); the user removes entries in Settings → Subagents
+    /// and removals persist. Custom agents carry their OWN per-agent list in
+    /// `AgentSettings`; this field governs the main chat only.
     var spawnableAgentIDs: [UUID]
+    /// One-time migration sentinel: `true` once every existing custom agent
+    /// has been seeded into `spawnableAgentIDs`
+    /// (`SubagentConfigurationStore.seedSpawnPoolIfNeeded`). Seeding never
+    /// re-runs, so a user's removal from the pool persists — an empty pool is
+    /// NOT treated as "unseeded".
+    var spawnPoolSeeded: Bool
     /// Decode-only compatibility payload. It is resolved against the complete
     /// live agent catalog, then cleared before the next save. New JSON never
     /// writes this field.
@@ -453,6 +461,7 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     init(
         localTextDelegationEnabled: Bool = true,
         spawnableAgentIDs: [UUID] = [],
+        spawnPoolSeeded: Bool = false,
         spawnableAgentNames: [String] = [],
         imageDelegationEnabled: Bool = false,
         defaultImageGenerationModelId: String? = nil,
@@ -478,6 +487,7 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     ) {
         self.localTextDelegationEnabled = localTextDelegationEnabled
         self.spawnableAgentIDs = SpawnableAgentIdentity.normalizedIDs(spawnableAgentIDs)
+        self.spawnPoolSeeded = spawnPoolSeeded
         self.legacySpawnableAgentNames = spawnableAgentNames
         self.imageDelegationEnabled = imageDelegationEnabled
         self.defaultImageGenerationTarget =
@@ -532,6 +542,16 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         )
         mergeEditorField(
             \.spawnableAgentIDs,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        // Editors never touch the seed sentinel; without this merge a stale
+        // editor save would revert it to `false` and re-seed agents the user
+        // deliberately removed from the pool.
+        mergeEditorField(
+            \.spawnPoolSeeded,
             editor: editor,
             loadedBaseline: loadedBaseline,
             live: live,
@@ -745,6 +765,7 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         SubagentConfiguration(
             localTextDelegationEnabled: localTextDelegationEnabled,
             spawnableAgentIDs: spawnableAgentIDs,
+            spawnPoolSeeded: spawnPoolSeeded,
             spawnableAgentNames: legacySpawnableAgentNames,
             imageDelegationEnabled: imageDelegationEnabled,
             defaultImageGenerationTarget: Self.normalizedTarget(defaultImageGenerationTarget),
@@ -790,6 +811,7 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case localTextDelegationEnabled
         case spawnableAgentIDs
+        case spawnPoolSeeded
         /// Legacy decode-only key.
         case spawnableAgentNames
         case imageDelegationEnabled
@@ -835,6 +857,12 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
                 [UUID].self,
                 forKey: .spawnableAgentIDs
             )) ?? [],
+            // Lenient: configs written before the sentinel decode as
+            // unseeded, which is exactly what triggers the one-time seed.
+            spawnPoolSeeded: (try? container.decodeIfPresent(
+                Bool.self,
+                forKey: .spawnPoolSeeded
+            )) ?? false,
             spawnableAgentNames: try container.decodeIfPresent([String].self, forKey: .spawnableAgentNames) ?? [],
             imageDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .imageDelegationEnabled) ?? false,
             defaultImageGenerationModelId: nil,
@@ -934,6 +962,7 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(value.localTextDelegationEnabled, forKey: .localTextDelegationEnabled)
         try container.encode(value.spawnableAgentIDs, forKey: .spawnableAgentIDs)
+        try container.encode(value.spawnPoolSeeded, forKey: .spawnPoolSeeded)
         try container.encode(value.imageDelegationEnabled, forKey: .imageDelegationEnabled)
         try container.encodeIfPresent(
             value.defaultImageGenerationTarget,

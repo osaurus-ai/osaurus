@@ -82,6 +82,9 @@ struct ProviderSecureField: View {
 
     let placeholder: String
     @Binding var text: String
+    /// Optional external focus handle so hosts (e.g. the chat-driven
+    /// credential prompt) can auto-focus the key field on appear.
+    var isFocused: FocusState<Bool>.Binding? = nil
 
     var body: some View {
         HStack(spacing: 10) {
@@ -93,10 +96,11 @@ struct ProviderSecureField: View {
                         .allowsHitTesting(false)
                 }
 
-                SecureField("", text: $text)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
+                if let isFocused {
+                    secureField.focused(isFocused)
+                } else {
+                    secureField
+                }
             }
         }
         .padding(.horizontal, 12)
@@ -109,5 +113,12 @@ struct ProviderSecureField: View {
                         .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
                 )
         )
+    }
+
+    private var secureField: some View {
+        SecureField("", text: $text)
+            .textFieldStyle(.plain)
+            .font(.system(size: 13, design: .monospaced))
+            .foregroundColor(themeManager.currentTheme.primaryText)
     }
 }

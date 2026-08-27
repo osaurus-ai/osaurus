@@ -523,6 +523,7 @@ struct AgentsView: View {
 
         AgentStore.save(duplicated)
         agentManager.refresh()
+        agentManager.registerInDefaultSpawnPool(duplicated)
         showSuccess("Duplicated as \"\(newName)\"")
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {

@@ -34,6 +34,7 @@ struct ProviderCredentialPromptSheet: View {
     /// Only meaningful when `supportsApiKeyAlternative` (today: OpenRouter,
     /// whose OAuth merely mints a key we store as an API key).
     @State private var preferApiKeyEntry = false
+    @FocusState private var apiKeyFieldFocused: Bool
 
     /// Stable preset for branding/help. Falls back to `.custom` when
     /// the request didn't carry a preset (Osaurus peer agent path) —
@@ -186,7 +187,25 @@ struct ProviderCredentialPromptSheet: View {
             x: 0,
             y: 6
         )
-        .onAppear { seedPrefilledExtraFieldsIfNeeded() }
+        .onAppear {
+            seedPrefilledExtraFieldsIfNeeded()
+            autoFocusApiKeyField()
+        }
+        // OpenRouter's "Paste an API key instead" swaps the OAuth body for
+        // the key form mid-flight — focus the field then too.
+        .onChange(of: preferApiKeyEntry) { _, prefersKey in
+            if prefersKey { autoFocusApiKeyField() }
+        }
+    }
+
+    /// Focus the API key field once the hosting panel has had a beat to
+    /// become key (the service makes the panel key ~50ms after ordering
+    /// it front; focusing before that is dropped by AppKit).
+    private func autoFocusApiKeyField() {
+        guard !isOAuthFlow else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            apiKeyFieldFocused = true
+        }
     }
 
     /// Hairline divider under the header. Matches the rule
@@ -367,7 +386,11 @@ struct ProviderCredentialPromptSheet: View {
                     .foregroundColor(theme.tertiaryText)
                     .tracking(0.5)
 
-                ProviderSecureField(placeholder: "sk-…", text: $apiKey)
+                ProviderSecureField(
+                    placeholder: "sk-…",
+                    text: $apiKey,
+                    isFocused: $apiKeyFieldFocused
+                )
             }
         }
     }

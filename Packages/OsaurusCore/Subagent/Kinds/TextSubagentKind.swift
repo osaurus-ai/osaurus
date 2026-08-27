@@ -812,7 +812,12 @@ final class TextSubagentKind:
         interrupt: InterruptToken
     ) async throws -> SubagentResult {
         if isDelegatedAgentTarget {
-            return try await runDelegated(resolved, feed: feed, interrupt: interrupt)
+            return try await runDelegated(
+                resolved,
+                parentSessionId: scope.sessionId,
+                feed: feed,
+                interrupt: interrupt
+            )
         }
         feed.emitPhase("running", detail: resolved.name)
         let budgets = self.budgets.normalized
@@ -1056,6 +1061,7 @@ final class TextSubagentKind:
     /// the same exchange would distill twice.
     private func runDelegated(
         _ resolved: ResolvedModel,
+        parentSessionId: String?,
         feed: SubagentFeed,
         interrupt: InterruptToken
     ) async throws -> SubagentResult {
@@ -1072,7 +1078,8 @@ final class TextSubagentKind:
             input: input,
             maxElapsedSeconds: budgets.maxElapsedSeconds,
             feed: feed,
-            interrupt: interrupt
+            interrupt: interrupt,
+            parentSessionId: parentSessionId
         )
         let digest = outcome.finalText
         let capped =
@@ -1094,6 +1101,12 @@ final class TextSubagentKind:
             "elapsed_seconds": outcome.elapsed,
             "handoff": residencyPlan.shouldUnload,
         ]
+        // Ephemeral-path parity: compact count only — the typed artifacts
+        // were adopted into the parent's store and travel through
+        // `SpawnArtifactCollector`, never through this model-visible payload.
+        if outcome.artifactsShared > 0 {
+            payload["artifacts_shared"] = outcome.artifactsShared
+        }
         // Usage parity with the ephemeral path: measured completion tokens +
         // throughput from the child's persisted turns, and the context-saved
         // accounting (child transcript estimate vs the digest the parent

@@ -39,6 +39,38 @@ struct AgentDelegationDispatcherTests {
         #expect(AgentDelegationDispatcher.sessionTitle(for: "   ") == "Delegated: task")
     }
 
+    @Test func delegatedPromptAppendsTheDeliveryContract() {
+        let input = "Build a Three.js endless runner game."
+        let prompt = AgentDelegationDispatcher.delegatedPrompt(input: input)
+        // The task leads; the contract rides after it.
+        #expect(prompt.hasPrefix(input))
+        #expect(prompt.contains("[Delegated task]"))
+        // The child must learn that only its FINAL message returns (so it
+        // never ends the run on intermediate commentary) and that files go
+        // through share_artifact instead of being pasted into the size-capped
+        // digest.
+        #expect(prompt.contains("ONLY your final message"))
+        #expect(prompt.contains("`share_artifact`"))
+        #expect(prompt.contains("artifact card"))
+        #expect(prompt.contains("do NOT paste their content again"))
+        // Degrades gracefully for children without the tool.
+        #expect(prompt.contains("Only when `share_artifact` is unavailable"))
+
+        // The dispatcher must actually dispatch the contract-carrying prompt
+        // (while the session title stays derived from the raw input).
+        let source = try? String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()  // AgentDelegation/
+                .deletingLastPathComponent()  // Tests/
+                .deletingLastPathComponent()  // OsaurusCore/
+                .appendingPathComponent(
+                    "Services/AgentDelegation/AgentDelegationDispatcher.swift"),
+            encoding: .utf8
+        )
+        #expect(source?.contains("prompt: delegatedPrompt(input: input)") == true)
+        #expect(source?.contains("title: sessionTitle(for: input)") == true)
+    }
+
     @Test func outcomeHarvestsFinalNonEmptyAssistantTurn() {
         let session = ChatSessionData(
             id: UUID(),

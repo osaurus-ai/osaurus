@@ -257,6 +257,7 @@ public final class AgentManager: ObservableObject {
         }
         installAgentSnapshot(migrated)
         SubagentConfigurationStore.migrateLegacyAgentNames(using: migrated)
+        SubagentConfigurationStore.seedSpawnPoolIfNeeded(with: migrated)
     }
 
     /// Return one Agent plus the three Spawn-scoped generations from the same
@@ -362,6 +363,7 @@ public final class AgentManager: ObservableObject {
     public func add(_ agent: Agent) {
         AgentStore.save(agent)
         refresh()
+        registerInDefaultSpawnPool(agent)
         // KPI: a user-created agent. Count only — no name or configuration.
         // Built-in agents are seeded by the app, not created by the user.
         if !agent.isBuiltIn {
@@ -389,6 +391,7 @@ public final class AgentManager: ObservableObject {
         if !agent.isBuiltIn {
             try? assignAddress(to: agent)
             let restored = self.agent(for: agent.id) ?? agent
+            registerInDefaultSpawnPool(restored)
             NotificationCenter.default.post(
                 name: .agentAdded,
                 object: nil,
@@ -397,6 +400,22 @@ public final class AgentManager: ObservableObject {
             return restored
         }
         return agent
+    }
+
+    /// Custom agents are spawnable by the orchestrator by DEFAULT: every
+    /// creation path (create/add, config apply, duplicate, bundle import,
+    /// backup restore) appends the new agent to the DEFAULT / main-chat spawn
+    /// pool. The user can remove it in Settings → Subagents — a removal
+    /// persists because this fires only on creation and the one-time seed
+    /// (`spawnPoolSeeded`) never re-runs. Eval/test agents written straight
+    /// through `AgentStore.save` intentionally stay out.
+    func registerInDefaultSpawnPool(_ agent: Agent) {
+        guard !agent.isBuiltIn else { return }
+        _ = SubagentConfigurationStore.mutate { config in
+            if !config.spawnableAgentIDs.contains(agent.id) {
+                config.spawnableAgentIDs.append(agent.id)
+            }
+        }
     }
 
     /// Set or replace the custom avatar image for `agentId`. Writes the bytes
@@ -638,6 +657,14 @@ public final class AgentManager: ObservableObject {
         // If we deleted the active agent, switch to default
         if activeAgentId == id {
             setActiveAgent(Agent.defaultId)
+        }
+
+        // Drop the agent from the DEFAULT / main-chat spawn pool. Agent
+        // UUIDs are never reused, so a stale entry would keep the
+        // orchestrator's `spawn_agent` tool visible (pool "non-empty")
+        // while advertising a target that can no longer resolve.
+        _ = SubagentConfigurationStore.mutate { config in
+            config.spawnableAgentIDs.removeAll { $0 == id }
         }
 
         refresh()

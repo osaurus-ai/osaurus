@@ -6,7 +6,8 @@
 //  derived from the live `ConfigurationDomainRegistry` (single source of
 //  truth — it lists the registered domains' consolidated write tools), it
 //  teaches DIRECT action-tool use (no capability-search protocol), it routes
-//  out-of-scope asks to an `osaurus_config` agents apply, and it stays
+//  non-Osaurus work to delegation (create the agent via `osaurus_config`,
+//  then run it with `spawn_agent` in the same turn), and it stays
 //  byte-stable across calls within the same generation so the KV-cache
 //  reuse story holds.
 //
@@ -197,21 +198,56 @@ struct DefaultAgentSystemPromptBuilderTests {
     }
 
     @Test
-    func render_compactOutOfScopeOffersAgentHandoffExplicitly() {
-        // The out-of-scope rubric (and the product contract) is a two-part
-        // reply: say the agent only configures Osaurus AND offer the
-        // create/switch handoff. Tool-jargon-only phrasing lost the second
-        // part on small models — pin the action words, plus the declarative
-        // route (`agents:` entry / `active_agent:` via `osaurus_config`).
+    func render_compactDelegationTeachesCreateThenSpawn() {
+        // Orchestrator-first contract: the delegation rubric is a two-part
+        // ACTION, not an offer — create the fitting agent (an `agents:`
+        // entry via `osaurus_config`) and run the task with `spawn_agent`
+        // in the SAME turn. Pin the route words so small models don't fall
+        // back to offering a switch or asking permission.
         let compact = DefaultAgentSystemPromptBuilder._renderForTests(
             domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])],
             compact: true
         )
-        #expect(compact.contains("Out of scope"))
-        #expect(compact.contains("offer to create"))
-        #expect(compact.contains("switch"))
+        #expect(compact.contains("Delegation"))
         #expect(compact.contains("`agents:` entry"))
-        #expect(compact.contains("active_agent"))
+        #expect(compact.contains("spawn_agent"))
+        #expect(compact.contains("SAME turn"))
+        #expect(compact.contains("spawnable right away"))
+    }
+
+    @Test
+    func render_bothVariantsPinTheOrchestratorPersona() {
+        // Orchestrator-first persona (live regression: asked "i want to make
+        // a website", the assistant replied "Building a website is outside
+        // what I can do directly here", listed two options, and ended with
+        // "Want me to…? tell me a bit about the site…" — a decline, a menu,
+        // and questions instead of create+spawn). Both variants must:
+        // (a) identify as the orchestrator who gets anything done,
+        // (b) teach create-then-spawn in the SAME turn and reporting the
+        //     spawn result as the answer,
+        // (c) forbid suggesting an agent switch or re-sending the request
+        //     (the conversation always stays here — `active_agent` only
+        //     governs NEW chats),
+        // (d) demand brevity: no option menus, act first, assume sensibly.
+        for compact in [false, true] {
+            let rendered = DefaultAgentSystemPromptBuilder._renderForTests(
+                domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])],
+                compact: compact
+            )
+            #expect(rendered.contains("orchestrator"), "variant compact=\(compact)")
+            #expect(rendered.contains("spawn_agent"), "variant compact=\(compact)")
+            #expect(rendered.contains("SAME turn"), "variant compact=\(compact)")
+            #expect(rendered.contains("spawn result"), "variant compact=\(compact)")
+            #expect(rendered.contains("Never suggest"), "variant compact=\(compact)")
+            #expect(rendered.contains("NEW chats"), "variant compact=\(compact)")
+            #expect(rendered.contains("option menus"), "variant compact=\(compact)")
+            #expect(rendered.contains("`clarify`"), "variant compact=\(compact)")
+            // The decline framing is gone: no "Out of scope" section header,
+            // and no live-chat handoff wording ("answered by that agent")
+            // from the reverted active_agent retargeting.
+            #expect(!rendered.contains("Out of scope"), "variant compact=\(compact)")
+            #expect(!rendered.contains("answered by that agent"), "variant compact=\(compact)")
+        }
     }
 
     @Test
@@ -277,11 +313,12 @@ struct DefaultAgentSystemPromptBuilderTests {
     }
 
     @Test
-    func render_compactOutOfScopeForbidsDoingTheWorkInChat() {
+    func render_compactDelegationForbidsDoingTheWorkInChat() {
         // Ornith-9B handoff pin (handoff-non-osaurus-task): asked for a
         // Python script, the model wrote the script (or offered to co-write
-        // it) instead of offering the agent handoff. The exclusion must say
-        // to never produce the work.
+        // it) instead of delegating. The delegation rubric must still say to
+        // never produce the work in chat — the orchestrator spawns a
+        // specialist and relays the result.
         let compact = DefaultAgentSystemPromptBuilder._renderForTests(
             domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])],
             compact: true
@@ -318,15 +355,18 @@ struct DefaultAgentSystemPromptBuilderTests {
     }
 
     @Test
-    func render_routesOutOfScopeToAgentHandoff() {
+    func render_routesNonOsaurusWorkToDelegation() {
         let rendered = DefaultAgentSystemPromptBuilder._renderForTests(
             domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])]
         )
-        // Out-of-scope asks must be handed off to creating/switching an agent
-        // via an `osaurus_config` apply, not refused flatly.
-        #expect(rendered.contains("Out of scope"))
+        // Non-Osaurus asks are delegated (create the agent via an
+        // `osaurus_config` apply, then spawn it), never refused flatly and
+        // never handed off by suggesting the user switch agents.
+        #expect(rendered.contains("Delegation"))
         #expect(rendered.contains("osaurus_config"))
         #expect(rendered.contains("create"))
+        #expect(rendered.contains("spawn_agent"))
+        // `active_agent` stays documented as the NEW-chats pointer only.
         #expect(rendered.contains("active_agent"))
     }
 
@@ -340,14 +380,14 @@ struct DefaultAgentSystemPromptBuilderTests {
         let compact = DefaultAgentSystemPromptBuilder._renderForTests(domains: domains, compact: true)
 
         // Compact keeps the full tool surface + scope guardrails (read tools,
-        // every write tool by name, out-of-scope handoff, the declarative
+        // every write tool by name, the delegation contract, the declarative
         // YAML workflow) with trimmed prose. Neither variant teaches the
         // capability-search protocol.
         #expect(compact.contains("osaurus_inspect"))
         #expect(compact.contains("`osaurus_provider`"))
         #expect(compact.contains("`osaurus_model`"))
         #expect(compact.contains("action"))
-        #expect(compact.contains("Out of scope"))
+        #expect(compact.contains("Delegation"))
         #expect(compact.contains("osaurus_config"))
         #expect(!compact.contains("capabilities_load"))
         #expect(!compact.contains("capabilities_discover"))

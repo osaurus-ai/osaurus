@@ -36,6 +36,16 @@
 //  denies it) — its orchestrator/configure surface must not run under
 //  model-generated input. Tested in `AgentDelegationDispatcherTests`.
 //
+//  ARTIFACT PASS-THROUGH — the child's `share_artifact` runs the normal
+//  direct-chat path, so its artifacts land in the CHILD session's store and
+//  transcript. After the run reaches ANY terminal state, the dispatcher
+//  harvests them, copies the files into the PARENT session's store, and
+//  deposits typed `SharedArtifact`s in `SpawnArtifactCollector` — the same
+//  collector the parent chat loop drains after every spawn tool return —
+//  so the cards appear in the parent conversation and survive the child
+//  session's deletion. The spawn payload carries only an `artifacts_shared`
+//  count; no artifact bytes enter model-visible JSON.
+//
 
 import Foundation
 
@@ -62,6 +72,11 @@ struct AgentDelegationOutcome: Sendable {
     /// the delegated analogue of the ephemeral path's `worker_tokens` — what
     /// the parent's context is spared by receiving only the digest.
     let transcriptTokenEstimate: Int
+    /// Artifacts the child shared that were adopted into the parent
+    /// session's store and deposited for the parent's drain. Grounds the
+    /// spawn payload's `artifacts_shared` count. Zero when the child shared
+    /// nothing (or no parent session was supplied).
+    var artifactsShared: Int = 0
 }
 
 enum AgentDelegationDispatcher {
@@ -77,6 +92,34 @@ enum AgentDelegationDispatcher {
     static func queueGraceSeconds(runBudget: TimeInterval) -> TimeInterval {
         max(60, runBudget)
     }
+
+    /// The dispatched child's user prompt: the spawn `input` plus a delivery
+    /// contract. The child is a REAL chat session of the target agent, so
+    /// nothing else tells it that only its final message returns to the
+    /// requester (as a size-capped digest) or that `share_artifact` shares
+    /// pass through to the requesting conversation. Without the contract,
+    /// workers paste whole files into their answer (truncated by the digest
+    /// cap) or end the run on intermediate commentary that becomes the
+    /// digest. Pure, for unit tests.
+    static func delegatedPrompt(input: String) -> String {
+        input + "\n\n" + deliveryContract
+    }
+
+    /// Appended to every delegated child prompt (see `delegatedPrompt`).
+    static let deliveryContract: String =
+        "[Delegated task]\n"
+        + "You are running as a delegated subtask for another agent. The requester "
+        + "sees ONLY your final message, returned as a compact size-capped digest — "
+        + "intermediate commentary is lost, so finish with a message that stands "
+        + "alone as the result.\n"
+        + "File deliverables (code files, documents, pages, data): when a "
+        + "`share_artifact` tool is available, share each file with it "
+        + "(`content` + `filename`) — shared files reach the requesting "
+        + "conversation directly as artifact cards. After sharing, keep your "
+        + "final message a short summary that names the shared file(s); do NOT "
+        + "paste their content again. Only when `share_artifact` is unavailable, "
+        + "include the complete deliverable in your final message.\n"
+        + "[/Delegated task]"
 
     /// Compact one-line child session title derived from the spawn input.
     static func sessionTitle(for input: String) -> String {
@@ -153,11 +196,12 @@ enum AgentDelegationDispatcher {
         input: String,
         maxElapsedSeconds: Int,
         feed: SubagentFeed,
-        interrupt: InterruptToken
+        interrupt: InterruptToken,
+        parentSessionId: String? = nil
     ) async throws -> AgentDelegationOutcome {
         let started = Date()
         let request = DispatchRequest(
-            prompt: input,
+            prompt: delegatedPrompt(input: input),
             agentId: targetAgentId,
             title: sessionTitle(for: input),
             source: .delegation,
@@ -329,15 +373,26 @@ enum AgentDelegationDispatcher {
         }
         let elapsed = Date().timeIntervalSince(started)
 
+        // Artifact pass-through for EVERY terminal state: whatever the child
+        // shared before completing, failing, or being cancelled is adopted
+        // into the parent session's store and deposited for the parent's
+        // drain (the parent chat drains after failure envelopes too, so a
+        // cancelled child's artifacts still reach the user).
+        let artifactsShared = await adoptChildArtifacts(
+            childSessionId: taskId,
+            parentSessionId: parentSessionId
+        )
+
         switch result {
         case .completed:
-            guard let outcome = await harvestOutcome(sessionId: taskId, elapsed: elapsed) else {
+            guard var outcome = await harvestOutcome(sessionId: taskId, elapsed: elapsed) else {
                 throw SubagentError.executionFailed(
                     message:
                         "Delegated agent '\(targetAgentName)' finished without producing a result.",
                     retryable: true
                 )
             }
+            outcome.artifactsShared = artifactsShared
             return outcome
         case .cancelled:
             switch reasonBox.value {
@@ -397,6 +452,79 @@ enum AgentDelegationDispatcher {
         }
         guard let session = ChatSessionStore.load(id: sessionId) else { return nil }
         return outcome(from: session, elapsed: elapsed)
+    }
+
+    /// Adopt every artifact the child session shared into the PARENT
+    /// session's artifact store and deposit them in `SpawnArtifactCollector`
+    /// for the parent chat loop's post-spawn drain. Returns how many were
+    /// deposited. No-op without a parent session (HTTP/eval parents have no
+    /// drain — anything deposited would be discarded by their run loop
+    /// anyway, matching the ephemeral worker path's semantics).
+    @MainActor
+    static func adoptChildArtifacts(
+        childSessionId: UUID,
+        parentSessionId: String?
+    ) -> Int {
+        guard let parentSessionId, !parentSessionId.isEmpty else { return 0 }
+        // Same live-session preference as `harvestOutcome`: the persisted
+        // snapshot can trail the just-finished turn.
+        let turns: [ChatTurnData]
+        if let live = BackgroundTaskManager.shared.taskState(for: childSessionId)?
+            .executionContext?.chatSession,
+            live.sessionId == childSessionId
+        {
+            turns = live.toSessionData().turns
+        } else if let session = ChatSessionStore.load(id: childSessionId) {
+            turns = session.turns
+        } else {
+            return 0
+        }
+        var adopted = 0
+        for artifact in harvestArtifacts(from: turns) {
+            guard
+                let rekeyed = SharedArtifact.adoptIntoContext(
+                    artifact,
+                    contextId: parentSessionId,
+                    sourceRootContextId: childSessionId.uuidString
+                )
+            else { continue }
+            SpawnArtifactCollector.deposit(rekeyed, sessionId: parentSessionId)
+            adopted += 1
+        }
+        return adopted
+    }
+
+    /// Every artifact the child transcript carries, in turn order: typed
+    /// `sharedArtifacts` attachments (generated media promotions) plus
+    /// enriched `share_artifact` tool results. Deduped by backing file so a
+    /// result that was both enriched AND promoted adopts once. Pure.
+    static func harvestArtifacts(from turns: [ChatTurnData]) -> [SharedArtifact] {
+        var seen = Set<String>()
+        var artifacts: [SharedArtifact] = []
+        func add(_ artifact: SharedArtifact) {
+            // `fromEnrichedToolResult` mints a fresh `id` per parse, so the
+            // stable dedupe key is the backing file (falling back to the
+            // filename for inline-only artifacts).
+            let key = artifact.hostPath.isEmpty ? "name:\(artifact.filename)" : artifact.hostPath
+            guard seen.insert(key).inserted else { return }
+            artifacts.append(artifact)
+        }
+        for turn in turns {
+            for artifact in turn.sharedArtifacts {
+                add(artifact)
+            }
+            for callId in turn.toolResults.keys.sorted() {
+                // Cheap pre-filter WITHOUT the marker's trailing newline: in
+                // a stored `ToolEnvelope` the marker sits inside a JSON
+                // string, so its newline is escaped.
+                guard let result = turn.toolResults[callId],
+                    result.contains("---SHARED_ARTIFACT_START---"),
+                    let artifact = SharedArtifact.fromEnrichedToolResult(result)
+                else { continue }
+                add(artifact)
+            }
+        }
+        return artifacts
     }
 
     /// Pure harvest step, unit-testable with a synthetic `ChatSessionData`.
