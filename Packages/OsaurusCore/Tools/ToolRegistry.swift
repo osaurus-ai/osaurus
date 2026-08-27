@@ -545,6 +545,9 @@ public final class ToolRegistry: ObservableObject {
         // modal, which an external caller cannot be shown, so there is no
         // safe way to honor these off-surface.
         "write_knowledge", "delete_knowledge", "edit_knowledge",
+        // Same class: mutates the user's skills on disk, and its only gate is
+        // the interactive approval modal.
+        "update_skill",
     ]
 
     /// Tool classes that must never be invocable from EXTERNAL surfaces

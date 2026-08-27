@@ -1275,6 +1275,8 @@ final class TextSubagentKind:
         // watching as directly. Retrieval and ticket tools are unaffected, so
         // a child can still read and flag.
         if name == "write_knowledge" || name == "delete_knowledge" { return true }
+        // Skill mutation stays with the parent for the same reason.
+        if name == "update_skill" { return true }
         return name == "clarify"
     }
 
