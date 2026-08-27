@@ -2572,7 +2572,7 @@ extension FloatingInputCard {
         var count = 0
         if autoSpeakAssistant { count += 1 }
         if !isRemoteAgentRun, !isDefaultConfigAgent, isSandboxAvailable { count += 1 }
-        if !isRemoteAgentRun { count += 1 }  // folder or configuration chip
+        if !isRemoteAgentRun, isDefaultConfigAgent { count += 1 }  // configuration chip
         if AppConfiguration.shared.chatConfig.enableClipboardMonitoring
             && clipboardService.hasNewContent
         {
@@ -2603,14 +2603,10 @@ extension FloatingInputCard {
                 sandboxToggleChip(compact: compact)
             }
 
-            // Folder context selector: the Default (configuration) agent shows
-            // a quiet "Configuration" indicator instead. Hidden in Mode 2.
-            if !isRemoteAgentRun {
-                if isDefaultConfigAgent {
-                    configurationOnlyChip(compact: compact)
-                } else {
-                    folderContextChip(compact: compact)
-                }
+            // Folder selection lives in the + attach menu now; the Default
+            // (configuration) agent keeps its quiet indicator. Hidden in Mode 2.
+            if !isRemoteAgentRun, isDefaultConfigAgent {
+                configurationOnlyChip(compact: compact)
             }
 
             // Clipboard / paste chip — last in the left cluster.
@@ -5319,11 +5315,26 @@ extension FloatingInputCard {
     // MARK: - Action Buttons
 
     private var mediaButton: some View {
-        InputActionButton(
-            icon: "paperclip",
-            help: "Attach file (image, PDF, text, etc.)",
-            action: pickAttachment
-        )
+        InputActionMenuButton(icon: "plus", help: "Add folder or attach files") {
+            Button {
+                selectFolder()
+            } label: {
+                Label {
+                    Text("Add Folder", bundle: .module)
+                } icon: {
+                    Image(systemName: "folder")
+                }
+            }
+            Button {
+                pickAttachment()
+            } label: {
+                Label {
+                    Text("Attach Files", bundle: .module)
+                } icon: {
+                    Image(systemName: "paperclip")
+                }
+            }
+        }
     }
 
     private var slashCommandButton: some View {
@@ -7368,6 +7379,76 @@ private struct InputActionButton: View {
             )
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
+        .help(help)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+    }
+}
+
+/// `InputActionButton`'s circular footprint wrapped around a native menu
+/// instead of a plain action. Same hover treatment; the menu indicator is
+/// hidden so it reads as a sibling of the other action buttons.
+private struct InputActionMenuButton<Content: View>: View {
+    let icon: String
+    let help: String
+    @ViewBuilder let content: () -> Content
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Menu(content: content) {
+            ZStack {
+                Circle()
+                    .fill(theme.tertiaryBackground.opacity(isHovered ? 0.95 : 0.8))
+
+                if isHovered {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    theme.accentColor.opacity(0.1),
+                                    Color.clear,
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                }
+
+                Image(systemName: icon)
+                    .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
+                    .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
+            }
+            .frame(width: 32, height: 32)
+            .overlay(
+                Circle()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                theme.glassEdgeLight.opacity(isHovered ? 0.25 : 0.15),
+                                theme.primaryBorder.opacity(isHovered ? 0.2 : 0.1),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: isHovered ? theme.accentColor.opacity(0.15) : .clear,
+                radius: 6,
+                x: 0,
+                y: 2
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
         .pointingHandCursor()
         .help(help)
         .onHover { hovering in
