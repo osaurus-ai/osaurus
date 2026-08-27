@@ -243,6 +243,11 @@ public final class ToolRegistry: ObservableObject {
             // editing: restating a long document is slow and truncates, and a
             // truncated restatement replaces the original.
             EditKnowledgeTool(),
+            // Skill self-improvement: find/replace on a user skill's
+            // instructions, behind the same `.ask` modal. Without it, skills
+            // are read-only text in the prompt and "update my skill" gets a
+            // fabricated "Done" with nothing saved.
+            SkillUpdateTool(),
             // Knowledge curation loop: staleness tickets (annotation only,
             // same gate as the retrieval tools). Tickets remain the right
             // shape for drift the agent NOTICES but is not being asked to fix
