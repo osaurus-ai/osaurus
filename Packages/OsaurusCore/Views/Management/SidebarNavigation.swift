@@ -42,7 +42,9 @@ struct SidebarSectionData: Identifiable {
 // MARK: - Layout Constants
 
 private enum SidebarLayout {
-    static let expandedWidth: CGFloat = 220
+    // Wide enough for the longest tab labels ("Local Models", "Cloud
+    // Models") to render on one line next to their badges.
+    static let expandedWidth: CGFloat = 240
     static let collapsedWidth: CGFloat = 64
     static let topPadding: CGFloat = 26
     static let bottomPadding: CGFloat = 16
