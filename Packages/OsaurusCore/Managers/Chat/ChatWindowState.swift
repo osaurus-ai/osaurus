@@ -795,12 +795,13 @@ final class ChatWindowState: ObservableObject {
         return ThemeManager.shared.currentTheme
     }
 
-    /// Built-in default agent renders as the localized "Osaurus" brand
-    /// label so the chat header carries the product name instead of the
-    /// internal `"Default"` id; custom agents render their stored name
-    /// verbatim.
+    /// Built-in default agent renders its localized display name (the
+    /// "Osaurus" brand label, or the user's custom Orchestrator name from
+    /// Settings → Orchestrator) so the chat header carries the product
+    /// name instead of the internal `"Default"` id; custom agents render
+    /// their stored name verbatim.
     private static func displayName(for agent: Agent) -> String {
-        agent.isBuiltIn ? L("Osaurus") : agent.name
+        agent.displayName
     }
 
     /// The identity that should head the chat thread / empty state right now.

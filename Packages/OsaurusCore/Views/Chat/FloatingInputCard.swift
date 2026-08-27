@@ -3780,44 +3780,50 @@ extension FloatingInputCard {
         }
     }
 
-    // MARK: - Configuration Indicator Chip
+    // MARK: - Orchestrator Indicator Chip
 
-    /// Quiet, non-interactive pill shown for the Default ("Osaurus")
-    /// agent in place of the sandbox/folder chips. It signals that this
-    /// agent's job is to configure Osaurus — it doesn't execute code in a
-    /// sandbox or work against a host folder — so the controls are absent
-    /// by design rather than missing.
+    /// Quiet pill shown for the built-in Orchestrator ("Osaurus") agent in
+    /// place of the sandbox/folder chips. It signals that this agent's job
+    /// is to configure Osaurus and delegate work — it doesn't execute code
+    /// in a sandbox or work against a host folder — so those controls are
+    /// absent by design rather than missing. Clicking it opens Settings →
+    /// Orchestrator, where its identity and delegation helpers live.
     private func configurationOnlyChip(compact: Bool) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: "gearshape.fill")
-                .font(theme.font(size: CGFloat(theme.captionSize) - 2))
-                .foregroundColor(theme.accentColor)
+        Button {
+            AppDelegate.shared?.showManagementWindow(initialTab: .orchestrator)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
 
-            if !compact {
-                Text("Configuration", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(1)
-                    .fixedSize()
+                if !compact {
+                    Text("Orchestrator", bundle: .module)
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule()
+                    .fill(theme.accentColor.opacity(0.08))
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(theme.accentColor.opacity(0.25), lineWidth: 0.5)
+            )
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(
-            Capsule()
-                .fill(theme.secondaryBackground.opacity(0.6))
-        )
-        .overlay(
-            Capsule()
-                .strokeBorder(theme.primaryBorder.opacity(0.4), lineWidth: 0.5)
-        )
+        .buttonStyle(.plain)
         .help(
             Text(
-                "The Osaurus agent helps you configure Osaurus. It doesn't use the sandbox or a working folder.",
+                "The Orchestrator configures Osaurus and delegates work to your agents. It doesn't use the sandbox or a working folder. Click to open its settings.",
                 bundle: .module
             )
         )
-        .accessibilityLabel(Text("Configuration assistant", bundle: .module))
+        .accessibilityLabel(Text("Orchestrator", bundle: .module))
     }
 
     /// Cheap, card-level half of the screen-context gate: opt-in on, empty

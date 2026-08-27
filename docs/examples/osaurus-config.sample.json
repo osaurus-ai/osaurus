@@ -6,6 +6,7 @@
     "retention_days": 365
   },
   "default_agent": {
+    "name": null,
     "model": "foundation",
     "temperature": 0.7,
     "max_tokens": null,

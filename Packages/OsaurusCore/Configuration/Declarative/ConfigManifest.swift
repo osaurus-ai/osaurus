@@ -124,8 +124,11 @@ public enum ConfigManifest {
 
         ConfigSectionSpec(
             .defaultAgent,
-            comment: "the built-in Default agent",
+            comment: "the built-in Default agent (the Orchestrator)",
             value: .mapping([
+                ConfigKeySpec(
+                    "name", .scalar(.string, example: "null", nullable: true),
+                    comment: "custom display name; null = \"Osaurus\""),
                 ConfigKeySpec(
                     "model", .scalar(.string, example: "null", nullable: true),
                     comment: "\"foundation\", local id, or \"<provider>/<model>\"",

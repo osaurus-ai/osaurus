@@ -138,11 +138,18 @@ public enum SettingsSearchIndex {
 
         // MARK: Chat (generation knobs now live in the dedicated Chat tab)
         .init(
-            id: "settings.chat.systemPrompt",
-            tab: .chat,
-            section: "Chat",
+            id: "settings.orchestrator.systemPrompt",
+            tab: .orchestrator,
+            section: "Identity",
             title: "System Prompt",
-            keywords: ["persona", "instructions", "system prompt"]
+            keywords: ["persona", "instructions", "system prompt", "orchestrator"]
+        ),
+        .init(
+            id: "settings.orchestrator.name",
+            tab: .orchestrator,
+            section: "Identity",
+            title: "Orchestrator Name",
+            keywords: ["name", "rename", "display name", "orchestrator", "default agent", "osaurus"]
         ),
         .init(
             id: "settings.chat.autoGenerateTitles",
@@ -183,17 +190,17 @@ public enum SettingsSearchIndex {
             keywords: ["compaction", "compact", "summarize", "context", "summary model"]
         ),
         .init(
-            id: "settings.chat.temperature",
-            tab: .chat,
+            id: "settings.orchestrator.temperature",
+            tab: .orchestrator,
             section: "Generation",
             title: "Temperature",
             keywords: ["randomness", "creativity", "sampling"]
         ),
         .init(
-            id: "settings.chat.maxTokens",
-            tab: .chat,
+            id: "settings.orchestrator.maxTokens",
+            tab: .orchestrator,
             section: "Generation",
-            title: "Default Agent Max Output Tokens",
+            title: "Max Output Tokens",
             keywords: [
                 "response length", "output tokens", "generation config",
                 "max new tokens", "not context", "not kv",
@@ -705,28 +712,29 @@ public enum SettingsSearchIndex {
             subTab: "Models"
         ),
 
-        // MARK: Subagents (main-chat policy + runtime knobs in Settings)
+        // MARK: Subagents (Orchestrator delegation policy + runtime knobs)
         // There is no global master switch and no dedicated Spawn tab anymore.
         // The built-in main chat has no AgentDetailView, so its allowed agents,
         // models, notes, permission, worker tools, and budgets live alongside
-        // shared handoff/RAM-safety knobs in this card. Custom-agent spawn/image
-        // policy remains in each agent's Subagents tab. Global image-generation
-        // settings live in the Image Generation tab (indexed above).
+        // shared handoff/RAM-safety knobs on the Orchestrator tab. Custom-agent
+        // spawn/image policy remains in each agent's Subagents tab. Global
+        // image-generation settings live in the Image Generation tab (indexed
+        // above).
         .init(
-            id: "settings.subagents",
-            tab: .settings,
-            section: "Subagents",
-            title: "Subagents",
+            id: "settings.orchestrator.delegation",
+            tab: .orchestrator,
+            section: "Delegation",
+            title: "Delegation",
             keywords: [
                 "spawn", "delegate", "delegation", "subagent",
                 "helper jobs", "agent delegation", "allowed agents",
-                "allowed models", "main chat", "batch subagents",
+                "allowed models", "main chat", "batch subagents", "orchestrator",
             ]
         ),
         .init(
-            id: "settings.subagents.mainChat",
-            tab: .settings,
-            section: "Subagents",
+            id: "settings.orchestrator.delegation.mainChat",
+            tab: .orchestrator,
+            section: "Delegation",
             title: "Main Chat Spawn",
             keywords: [
                 "default agent", "built-in chat", "spawn pool", "model notes",
@@ -735,9 +743,9 @@ public enum SettingsSearchIndex {
             ]
         ),
         .init(
-            id: "settings.subagents.handoff",
-            tab: .settings,
-            section: "Subagents",
+            id: "settings.orchestrator.delegation.handoff",
+            tab: .orchestrator,
+            section: "Delegation",
             title: "Local Handoff & RAM Safety",
             keywords: ["handoff", "ram safety", "residency", "unload", "preflight"]
         ),

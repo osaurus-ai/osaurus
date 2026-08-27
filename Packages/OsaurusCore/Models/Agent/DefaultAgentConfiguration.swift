@@ -24,6 +24,12 @@ import Foundation
 /// still refuses to target it. See `AgentManager.effective*` for the
 /// routing of these values into the runtime.
 public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
+    /// Custom display name for the built-in Orchestrator agent. `nil`
+    /// or blank falls back to the localized "Osaurus". Cosmetic only:
+    /// the agent's identity (`Agent.defaultId`) and behavior are
+    /// unaffected by the name.
+    public var displayName: String?
+
     /// System prompt prepended to every turn with the Default agent.
     /// The configure-agent prompt addendum (rendered by
     /// `DefaultAgentSystemPromptBuilder`) is prepended at compose time
@@ -65,7 +71,17 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
     /// and the runtime falls back to the live registry.
     public var manualToolNames: [String]?
 
+    /// Effective display name: the trimmed custom name, or `nil` when
+    /// the built-in default ("Osaurus") should be used.
+    public var resolvedDisplayName: String? {
+        guard let name = displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !name.isEmpty
+        else { return nil }
+        return name
+    }
+
     public init(
+        displayName: String? = nil,
         systemPrompt: String = "",
         defaultModel: String? = nil,
         temperature: Float? = nil,
@@ -75,6 +91,7 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
         toolSelectionMode: ToolSelectionMode? = nil,
         manualToolNames: [String]? = nil
     ) {
+        self.displayName = displayName
         self.systemPrompt = systemPrompt
         self.defaultModel = defaultModel
         self.temperature = temperature
@@ -87,6 +104,7 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt) ?? ""
         defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)
         temperature = try c.decodeIfPresent(Float.self, forKey: .temperature)

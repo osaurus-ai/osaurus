@@ -67,14 +67,14 @@ public struct AgentQuickAction: Codable, Identifiable, Sendable, Equatable {
                 prompt: L("Help me add a cloud AI provider.")
             ),
             AgentQuickAction(
-                icon: "slider.horizontal.3",
-                text: L("Change a setting"),
-                prompt: L("I want to change an Osaurus setting.")
-            ),
-            AgentQuickAction(
                 icon: "person.2",
                 text: L("Create an agent"),
                 prompt: L("Help me create a new agent.")
+            ),
+            AgentQuickAction(
+                icon: "point.3.connected.trianglepath.dotted",
+                text: L("Delegate a task"),
+                prompt: L("Delegate a task to one of my agents.")
             ),
         ]
     }
@@ -282,16 +282,26 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         id == defaultId.uuidString
     }
 
-    /// The default agent — front door to configuring Osaurus.
-    /// Renders as "Osaurus" in chat and the picker; subtitle nudges
-    /// users toward the configure flow that's unique to this agent.
-    /// `avatar: "green"` resolves the bundled `osaurus-avatar-green`
-    /// asset in `NativeMessageCellView`/`SharedHeaderComponents`.
+    /// Custom display name for the built-in Orchestrator agent, mirrored
+    /// from `DefaultAgentConfiguration.displayName` by
+    /// `DefaultAgentConfigurationStore` on every load/save. Kept as a
+    /// nonisolated static so the value-type `default` accessor can read
+    /// it from any context; writes only happen on the main actor
+    /// (the store is `@MainActor`), so reads never race a write.
+    nonisolated(unsafe) public static var defaultAgentNameOverride: String?
+
+    /// The default agent — the built-in Orchestrator that configures
+    /// Osaurus and delegates work. Renders as "Osaurus" in chat and the
+    /// picker unless the user set a custom name in Settings →
+    /// Orchestrator; subtitle nudges users toward the configure flow
+    /// that's unique to this agent. `avatar: "green"` resolves the
+    /// bundled `osaurus-avatar-green` asset in
+    /// `NativeMessageCellView`/`SharedHeaderComponents`.
     public static var `default`: Agent {
         Agent(
             id: defaultId,
-            name: "Osaurus",
-            description: L("Sets up Osaurus and answers questions about the app"),
+            name: defaultAgentNameOverride ?? "Osaurus",
+            description: L("Configures Osaurus and delegates work to your agents"),
             systemPrompt: "",
             themeId: nil,
             defaultModel: nil,

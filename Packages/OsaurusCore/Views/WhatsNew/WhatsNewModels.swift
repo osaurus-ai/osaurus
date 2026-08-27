@@ -42,6 +42,8 @@ public enum WhatsNewAction: Hashable, Sendable {
     case openChannelsSettings
     /// Reveal the chat sidebar's Projects tab.
     case openProjects
+    /// Open Settings → Orchestrator (identity + delegation helpers).
+    case openOrchestratorSettings
 }
 
 public struct WhatsNewPage: Identifiable, Hashable, Sendable {
@@ -108,6 +110,7 @@ public enum WhatsNewContent {
         browserUse_0_22_9,
         channels_0_22_13,
         projects_0_22_23,
+        orchestrator_0_24_0,
     ]
 
     /// First-launch announcement for native Browser Use in 0.22.9.
@@ -216,6 +219,43 @@ public enum WhatsNewContent {
                 systemImage: "folder.badge.plus",
                 actionLabel: "Open Projects",
                 action: .openProjects
+            ),
+        ]
+    )
+
+    /// First-launch announcement for the Orchestrator in 0.24.0. Three
+    /// pages: the default agent's new role (declarative config + delegation),
+    /// the delegation helpers and their safety rails, and the new
+    /// Settings → Orchestrator tab for identity + delegation. The final CTA
+    /// deep-links to Settings → Orchestrator.
+    private static let orchestrator_0_24_0 = WhatsNewRelease(
+        version: "0.24.0",
+        pages: [
+            WhatsNewPage(
+                id: "orchestrator-0.24.0:summary",
+                title: "The Orchestrator",
+                titlePrefix: "Introducing",
+                description:
+                    "Your default agent grew up. Beyond setting up Osaurus and answering questions, it now manages your whole configuration as one reviewable document — it plans every change, shows you exactly what would happen, and applies only after you approve — and it can delegate real work to your agents.",
+                systemImage: "point.3.connected.trianglepath.dotted"
+            ),
+            WhatsNewPage(
+                id: "orchestrator-0.24.0:delegation",
+                title: "Delegates work to your agents",
+                eyebrow: "Introducing the Orchestrator",
+                description:
+                    "Ask for something bigger and the Orchestrator can spawn your custom agents and allowed local or cloud models as helpers — in parallel, each within budgets you set for tokens, turns, tool calls, and time. A RAM-safety preflight keeps parallel local models from overwhelming your Mac, and results flow back into one conversation.",
+                systemImage: "square.stack.3d.up.fill"
+            ),
+            WhatsNewPage(
+                id: "orchestrator-0.24.0:settings",
+                title: "Make it yours",
+                eyebrow: "Introducing the Orchestrator",
+                description:
+                    "The Orchestrator has its own home in Settings: give it a name, write its persona, tune its generation, and choose exactly which agents and models it may delegate to. Delegation stays off until you allow specific helpers.",
+                systemImage: "slider.horizontal.3",
+                actionLabel: "Open Orchestrator settings",
+                action: .openOrchestratorSettings
             ),
         ]
     )

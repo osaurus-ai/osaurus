@@ -711,6 +711,13 @@ final class ChatSession: ObservableObject {
     /// toggled or the foreground app changes, until the first send locks it.
     nonisolated(unsafe) private var screenContextCancellable: AnyCancellable?
 
+    #if DEBUG
+        /// Set only by `isolatePromptShapeReconcilerForTests()`: silences the
+        /// lifecycle `refreshContextEstimates()` tasks so a test can pin the
+        /// pre-send reconcile as the sole prompt-shape change consumer.
+        private var suppressLifecycleContextRefreshForTests = false
+    #endif
+
     init() {
         // Warm the agent-secret account memo off the main thread before the
         // first preview compose reads it synchronously — the Keychain
@@ -1713,7 +1720,7 @@ final class ChatSession: ObservableObject {
 
     private func rebuildVisibleBlocksImpl() {
         let agent = AgentManager.shared.agent(for: agentId ?? Agent.defaultId)
-        let localName = agent?.isBuiltIn == true ? L("Osaurus") : (agent?.name ?? L("Osaurus"))
+        let localName = agent?.displayName ?? L("Osaurus")
         // In Mode 2 the remote agent owns the conversation, so its name heads
         // the thread; otherwise fall back to the local agent's name.
         let displayName = threadAgentDisplayName ?? localName
@@ -2974,6 +2981,20 @@ final class ChatSession: ObservableObject {
         func reconcilePromptShapeBeforeSendForTests() -> Bool {
             reconcilePromptShapeBeforeSend()
         }
+
+        /// Test seam: make the pre-send reconcile the ONLY consumer of a
+        /// prompt-shape change by detaching the debounced budget-input
+        /// pipeline and suppressing the lifecycle `refreshContextEstimates`
+        /// tasks (session init/picker refresh) that are already enqueued on
+        /// the main actor when the test gets control. In the running app all
+        /// three consumers uphold the same contract (recompose + warm-up
+        /// invalidation on a shape change); a test that pins the pre-send
+        /// path must silence the other two to stay deterministic under a
+        /// busy main run loop.
+        func isolatePromptShapeReconcilerForTests() {
+            contextEstimateCancellable = nil
+            suppressLifecycleContextRefreshForTests = true
+        }
     #endif
 
     // MARK: - Persistence Methods
@@ -3283,7 +3304,23 @@ final class ChatSession: ObservableObject {
     /// budget-input pipeline uses `refreshPreviewEstimate()` instead so it
     /// never fans the memory DB read out across every signal.
     private func refreshContextEstimates() async {
+        #if DEBUG
+            if suppressLifecycleContextRefreshForTests { return }
+        #endif
+        // Same stale-warm-claim contract as `reconcilePromptShapeBeforeSend`:
+        // when this lifecycle refresh consumes an established preview baseline
+        // and observes a real shape change (e.g. a Settings save that landed
+        // while a storage-key rotation deferred the recompose), the previously
+        // warmed prefix is stale and must be invalidated here — the pre-send
+        // reconcile afterwards truthfully sees "no change" because this call
+        // already advanced the baseline. Session reset/load are unaffected:
+        // they clear the baseline (nil → no invalidation) and reset the
+        // warmup controller themselves.
+        let hadPromptShapeBaseline = cachedPreviewContext != nil
         let previewChanged = recomputePreviewContext()
+        if previewChanged, hadPromptShapeBaseline {
+            invalidateWarmupAfterContextShapeChange()
+        }
         let memoryChanged = await refreshMemoryTokens()
         let screenChanged = await refreshScreenContextPreview()
         if previewChanged || memoryChanged || screenChanged {
@@ -8949,6 +8986,8 @@ struct ChatView: View {
                             windowState.showSidebar = true
                         }
                         ProjectManager.shared.pendingRevealProjectsTab = true
+                    case .openOrchestratorSettings:
+                        AppDelegate.shared?.showManagementWindow(initialTab: .orchestrator)
                     case .openSubagentSettings:
                         // Land on the first custom (non-built-in) agent's
                         // Subagents tab (per-agent spawn / image config). With

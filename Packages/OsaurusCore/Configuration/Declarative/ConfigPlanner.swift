@@ -1049,6 +1049,7 @@ enum ConfigPlanner {
     ) {
         let current = current ?? DefaultAgentSection()
         var changes: [String] = []
+        diff("name", desired: desired.name, current: current.name, into: &changes)
         diff("model", desired: desired.model, current: current.model, into: &changes)
         diff("temperature", desired: desired.temperature, current: current.temperature, into: &changes)
         diff("max_tokens", desired: desired.maxTokens, current: current.maxTokens, into: &changes)

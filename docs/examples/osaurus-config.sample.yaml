@@ -27,7 +27,8 @@ memory: # cross-chat conversation memory
   budget_tokens: 1200 # 100..4000
   retention_days: 365 # 0..3650 (0 = forever)
 
-default_agent: # the built-in Default agent
+default_agent: # the built-in Default agent (the Orchestrator)
+  name: null # custom display name; null = "Osaurus"
   model: foundation # "foundation", local id, or "<provider>/<model>"
   temperature: 0.7 # 0..2 or null
   max_tokens: null # null = automatic

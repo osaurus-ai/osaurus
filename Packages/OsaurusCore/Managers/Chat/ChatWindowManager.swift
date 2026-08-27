@@ -1126,10 +1126,16 @@ private struct ChatToolbarAgentView: View {
     /// without a selection.
     private func openActiveAgentSettings() {
         let active = windowState.agents.first { $0.id == windowState.agentId }
-        let deeplinkId = (active?.isBuiltIn == false) ? active?.id : nil
+        // The built-in Orchestrator has no Agents-tab detail view; its
+        // identity + delegation settings live on the dedicated
+        // Orchestrator tab.
+        if active?.isBuiltIn != false {
+            AppDelegate.shared?.showManagementWindow(initialTab: .orchestrator)
+            return
+        }
         AppDelegate.shared?.showManagementWindow(
             initialTab: .agents,
-            deeplinkAgentId: deeplinkId
+            deeplinkAgentId: active?.id
         )
     }
 

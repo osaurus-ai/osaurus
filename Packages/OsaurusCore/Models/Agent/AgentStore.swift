@@ -68,6 +68,12 @@ public enum AgentStore {
 
     /// Load all agents sorted by name, including built-ins
     public static func loadAll() -> [Agent] {
+        // Prime the default-agent configuration cache so
+        // `Agent.defaultAgentNameOverride` (the user's custom Orchestrator
+        // name) is populated before `Agent.builtInAgents` builds the
+        // Default agent below — otherwise the first snapshot after a cold
+        // launch would render the stock "Osaurus" name.
+        _ = DefaultAgentConfigurationStore.load()
         // Cheap when the queue is idle; guarantees the listing check below
         // sees writes queued by `save` in program order.
         flushPendingWrites()

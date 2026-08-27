@@ -118,13 +118,30 @@ struct WhatsNewGateFilterTests {
         #expect(release.pages.last?.action == .openChannelsSettings)
     }
 
-    /// Catalog keeps only the three most recent announcements, sorted
+    @Test
+    func orchestratorReleaseOpensSettings() throws {
+        let release = try #require(WhatsNewContent.release(for: "0.24.0"))
+
+        #expect(
+            release.pages.map(\.id) == [
+                "orchestrator-0.24.0:summary",
+                "orchestrator-0.24.0:delegation",
+                "orchestrator-0.24.0:settings",
+            ]
+        )
+        #expect(release.pages.last?.actionLabel == "Open Orchestrator settings")
+        #expect(release.pages.last?.action == .openOrchestratorSettings)
+    }
+
+    /// Catalog keeps only the most recent announcements, sorted
     /// oldest → newest so `latest` (== `releases.last`) stays correct.
     @Test
     func catalogContainsOnlyRetainedReleasesInOrder() {
         #expect(
-            WhatsNewContent.releases.map(\.version) == ["0.22.9", "0.22.13", "0.22.23"]
+            WhatsNewContent.releases.map(\.version) == [
+                "0.22.9", "0.22.13", "0.22.23", "0.24.0",
+            ]
         )
-        #expect(WhatsNewContent.latest?.version == "0.22.23")
+        #expect(WhatsNewContent.latest?.version == "0.24.0")
     }
 }

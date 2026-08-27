@@ -553,6 +553,15 @@ struct AgentPill: View {
                     .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
                     .foregroundColor(theme.primaryText)
 
+                // Role glyph for the built-in Orchestrator: marks the pill as
+                // the orchestrating agent without widening it with a text badge.
+                if !isRemoteActive && activeAgent.isBuiltIn {
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(theme.accentColor.opacity(0.85))
+                        .localizedHelp("Orchestrator")
+                }
+
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 9, weight: .medium))
                     .foregroundColor(isHovered ? theme.secondaryText : theme.tertiaryText)

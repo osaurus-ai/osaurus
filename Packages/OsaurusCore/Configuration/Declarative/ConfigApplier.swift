@@ -143,6 +143,13 @@ enum ConfigApplier {
         _ desired: DefaultAgentSection, pendingModelIds: [String]
     ) -> ConfigApplyResult {
         var config = DefaultAgentConfigurationStore.load()
+        var nameChanged = false
+        if desired.name.isSpecified {
+            let trimmed = desired.name.valueOrNil?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let newName = (trimmed?.isEmpty ?? true) ? nil : trimmed
+            nameChanged = newName != config.displayName
+            config.displayName = newName
+        }
         if desired.model.isSpecified {
             let trimmed = desired.model.valueOrNil?.trimmingCharacters(in: .whitespacesAndNewlines)
             if let value = trimmed, !value.isEmpty {
@@ -181,6 +188,11 @@ enum ConfigApplier {
             config.systemPrompt = prompt
         }
         DefaultAgentConfigurationStore.save(config)
+        // A name change must rebuild the published agent snapshot so the
+        // picker pill and chat headers re-render with the new name.
+        if nameChanged {
+            AgentManager.shared.refresh()
+        }
         return ConfigApplyResult(section: "default_agent", target: "default_agent", status: .done)
     }
 

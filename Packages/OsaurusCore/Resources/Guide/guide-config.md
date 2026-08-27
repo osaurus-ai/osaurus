@@ -17,7 +17,7 @@ Osaurus's entities can be configured from a single YAML document that describes 
 The document has 16 sections (plus `version`):
 
 - `memory` — persistent memory: enabled, token budget, retention days.
-- `default_agent` — the built-in Default agent: model, temperature, max tokens, persona, tools on/off.
+- `default_agent` — the built-in Default agent (the Orchestrator): display name, model, temperature, max tokens, persona, tools on/off.
 - `active_agent` — which agent is active in chat (switch by name).
 - `agents` — custom agents: prompt, model, sampling, and per-agent capability toggles (tools, web search, browser, computer use, relay, knowledge collections, …).
 - `tools` — global tool enablement and per-tool policies (`auto` / `ask` / `deny`).

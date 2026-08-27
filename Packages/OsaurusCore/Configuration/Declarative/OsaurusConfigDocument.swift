@@ -208,6 +208,9 @@ public struct MemorySection: Codable, Equatable, Sendable {
 // MARK: - Default agent
 
 public struct DefaultAgentSection: Equatable, Sendable {
+    /// Custom display name for the built-in Orchestrator agent; null
+    /// clears back to the stock "Osaurus" name. Cosmetic only.
+    public var name: ConfigField<String> = .absent
     /// Installed local model id or `provider/model`; null falls back to the
     /// first available installed local model.
     public var model: ConfigField<String> = .absent
@@ -223,7 +226,7 @@ public struct DefaultAgentSection: Equatable, Sendable {
 
 extension DefaultAgentSection: Codable {
     enum CodingKeys: String, CodingKey {
-        case model, temperature
+        case name, model, temperature
         case maxTokens = "max_tokens"
         case systemPrompt = "system_prompt"
         case disableTools = "disable_tools"
@@ -231,6 +234,7 @@ extension DefaultAgentSection: Codable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.configField(String.self, forKey: .name)
         model = try c.configField(String.self, forKey: .model)
         temperature = try c.configField(Double.self, forKey: .temperature)
         maxTokens = try c.configField(Int.self, forKey: .maxTokens)
@@ -240,6 +244,7 @@ extension DefaultAgentSection: Codable {
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(configField: name, forKey: .name)
         try c.encode(configField: model, forKey: .model)
         try c.encode(configField: temperature, forKey: .temperature)
         try c.encode(configField: maxTokens, forKey: .maxTokens)

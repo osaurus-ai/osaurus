@@ -232,6 +232,8 @@ private extension ManagementView {
             StorageSettingsView()
         case .chat:
             ChatSettingsView()
+        case .orchestrator:
+            OrchestratorSettingsView()
         case .settings:
             ConfigurationView(searchText: $searchText)
         case .none:

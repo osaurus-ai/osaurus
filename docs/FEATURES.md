@@ -485,6 +485,8 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 - `Managers/AgentManager.swift` — Agent lifecycle and active agent management
 - `Views/Agent/AgentsView.swift` — Agent gallery and management UI
 
+**The Orchestrator (built-in default agent):** every chat starts with the in-memory `Agent.default` ("Osaurus", `Agent.defaultId`). It is a configuration + delegation agent: it inspects and changes Osaurus through the declarative `osaurus_config` tool (plan → approval card → apply) and delegates work to allowed custom agents and local/cloud models as subagents. It never gets a sandbox, working folder, browser, or computer use. Its identity (custom display name via `DefaultAgentConfiguration.displayName`, persona, temperature, max tokens) and delegation helpers (spawn allow-list, budgets, RAM safety — `SubagentConfiguration`) are edited in **Settings → Orchestrator** (`Views/Settings/OrchestratorSettingsView.swift`) and covered by the declarative document's `default_agent` / `delegation` sections.
+
 **Features:**
 
 - **Custom System Prompts** — Define unique instructions for each agent

@@ -66,6 +66,7 @@ enum ConfigExporter {
     private static func exportDefaultAgent() -> DefaultAgentSection {
         let config = DefaultAgentConfigurationStore.load()
         var section = DefaultAgentSection()
+        section.name = config.resolvedDisplayName.map { .value($0) } ?? .null
         section.model = config.defaultModel.map { .value($0) } ?? .null
         section.temperature = config.temperature.map { .value(Double($0)) } ?? .null
         section.maxTokens = config.maxTokens.map { .value($0) } ?? .null

@@ -15,6 +15,7 @@ import SwiftUI
 /// Labeled groups the sidebar renders tabs under, in display order.
 public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
     case general
+    case orchestrator
     case models
     case agentsAutomation
     case server
@@ -26,6 +27,7 @@ public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
     public var title: String {
         switch self {
         case .general: L("General")
+        case .orchestrator: L("Orchestrator")
         case .models: L("Models")
         case .agentsAutomation: L("Agents & Automation")
         case .server: L("Server")
@@ -38,6 +40,7 @@ public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
     public var tabs: [ManagementTab] {
         switch self {
         case .general: [.settings, .chat, .voice, .themes]
+        case .orchestrator: [.orchestrator]
         case .models: [.models, .providers, .imageGeneration]
         case .agentsAutomation:
             [
@@ -59,6 +62,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case chat
     case voice
     case themes
+    case orchestrator
     case models
     case providers
     case imageGeneration
@@ -95,6 +99,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     public var section: ManagementSection {
         switch self {
         case .settings, .chat, .voice, .themes: .general
+        case .orchestrator: .orchestrator
         case .models, .providers, .imageGeneration: .models
         case .agents, .agentChannels, .memory, .knowledge, .tools, .search, .skills, .commands,
             .plugins, .schedules, .watchers, .sandbox, .computerUse, .browser:
@@ -145,6 +150,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .storage: "externaldrive.fill.badge.checkmark"
         case .chat: "text.bubble.fill"
         case .settings: "gearshape.fill"
+        case .orchestrator: "point.3.connected.trianglepath.dotted"
         }
     }
 
@@ -178,6 +184,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .storage: L("Storage")
         case .chat: L("Chat")
         case .settings: L("General")
+        case .orchestrator: L("Orchestrator")
         }
     }
 

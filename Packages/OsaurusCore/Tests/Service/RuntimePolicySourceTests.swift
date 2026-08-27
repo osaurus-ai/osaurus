@@ -1250,11 +1250,17 @@ struct RuntimePolicySourceTests {
 
         #expect(!chat.contains(#"label: "Context Length""#))
         #expect(!chat.contains("tempChatContextLength"))
-        #expect(
-            chat.contains(#"label: "Default Agent Max Output Tokens""#)
+        // The default agent's per-response output cap moved to Settings →
+        // Orchestrator; it must keep disclaiming that it is not the context
+        // window or KV retention.
+        let orchestrator = try Self.source(
+            "Views/Settings/OrchestratorSettingsView.swift"
         )
         #expect(
-            chat.contains(
+            orchestrator.contains(#"label: "Max Output Tokens""#)
+        )
+        #expect(
+            orchestrator.contains(
                 "This is not the model context window or KV retention."
             )
         )
