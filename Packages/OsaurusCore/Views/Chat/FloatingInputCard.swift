@@ -7465,7 +7465,9 @@ private struct InputActionMenuButton: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
+                    // Match the popover's own corner radius so the hover
+                    // highlight reads as concentric with the menu chrome.
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(isHovering ? theme.tertiaryBackground.opacity(0.7) : Color.clear)
                 )
                 .padding(.horizontal, 6)
