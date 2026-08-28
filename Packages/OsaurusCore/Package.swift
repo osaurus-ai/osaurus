@@ -225,9 +225,22 @@ let package = Package(
         // no longer lock native MTP off for the model's whole residency —
         // acceptance is content, and only a below-depth-1-floor miss is a
         // property of the model.
+        // The Qwen 3.8 Flash Next revision (447a6a2b) lands the qwen4_exp
+        // native runtime: SSD-only PLE n-gram reader (pread + F_NOCACHE, the
+        // 20-29 GiB table never becomes resident), mixed-bit fused routed-MoE
+        // decode kernels (q2/q3/q4/q6, group 32/64, unit-parity tested against
+        // exact f32), six-slot PLE cache topology preserved across
+        // copy/restore (the warm-restore bounds trap), a dense-QMV fallback
+        // that returns the incoming activation dtype (JANG_2L's 6-bit trunk
+        // silently promoted the residual to f32 and halved decode), tensor-
+        // evidence MTP census with tuning-gated auto-launch, and the vision
+        // bridge (quantized Qwen3-VL tower, per-modality feature scatter,
+        // 3-channel M-RoPE with a per-conversation decode rope delta). All six
+        // JANG tiers decode at 38-44 tok/s with resident BF16 compute and the
+        // PLE table on SSD.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "affea0c4e6dea20181fdb392e694c4422b1bd131"
+            revision: "447a6a2b9a458d1e077688e6af9dc81adff941c0"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
