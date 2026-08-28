@@ -689,7 +689,9 @@ extension ContentBlock {
                     .paragraph(
                         turnId: turn.id,
                         index: 0,
-                        text: "Interrupted — stopped before a response was produced.",
+                        text: String(
+                            localized: "Interrupted — stopped before a response was produced.",
+                            bundle: .module),
                         isStreaming: false,
                         role: turn.role,
                         position: .middle
