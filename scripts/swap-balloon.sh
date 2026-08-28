@@ -21,16 +21,24 @@ if ! [[ "$GB" =~ ^[0-9]+$ ]] || [ "$GB" -lt 1 ] || [ "$GB" -gt 200 ]; then
 fi
 echo "Ballooning ${GB} GB (touching every page so it cannot stay compressed-idle)."
 echo "Ctrl-C releases everything instantly. Watch: sysctl vm.swapusage"
-exec python3 - "$GB" << 'EOF'
+exec python3 - "$GB" swap-balloon-marker << 'EOF'
 import signal, sys, time
 gb = int(sys.argv[1])
 chunk = 512 * 1024 * 1024
 blocks = []
 signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
+# INCOMPRESSIBLE fill: a constant pattern compresses to almost nothing,
+# so on a large-RAM Mac the compressor absorbs the whole balloon and swap
+# never grows (measured: an 85 GB 0xA5 balloon left vm.swapusage flat).
+# Random bytes defeat per-page WKdm compression, so the balloon exerts its
+# full nominal size. One 512 MiB urandom template is copied per block —
+# copies are separate dirty pages, and per-page content is still random.
+import os
+template = os.urandom(chunk)
 for i in range(gb * 2):
-    # bytearray of non-zero pattern: forces real dirty pages.
-    blocks.append(bytearray(b"\xA5" * chunk))
+    blocks.append(bytearray(template))
     print(f"  held {(i + 1) * 0.5:.1f} GB", flush=True)
+del template
 print("Holding. Ctrl-C to release.")
 page = 16384  # Apple Silicon page size
 while True:
