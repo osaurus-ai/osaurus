@@ -4101,23 +4101,22 @@ extension FloatingInputCard {
     ) -> some View {
         let critical = swap.severity == .critical
         let tint: Color = critical ? .red : .orange
-        let peakGB = Self.formatGigabytes(max(0, swap.peakGrowthBytes))
         let modelLabel =
             swap.modelName ?? selectedPickerItem?.displayName ?? String(localized: "this model")
         let phaseVerb =
             swap.phase == .loading
-            ? String(localized: "Loading", bundle: .module)
-            : String(localized: "Running", bundle: .module)
+            ? String(localized: "loading", bundle: .module)
+            : String(localized: "running", bundle: .module)
 
         var message: Text
         if critical {
             message = Text(
-                "\(phaseVerb) \(modelLabel) coincided with heavy system swap growth (\(peakGB) GB) — generation will slow while macOS pages memory. Closing other apps usually recovers it.",
+                "Your Mac is running low on memory while \(phaseVerb) \(modelLabel), so responses will be slower. Closing other apps usually speeds things back up.",
                 bundle: .module
             )
         } else {
             message = Text(
-                "\(phaseVerb) \(modelLabel) coincided with system swap growth (\(peakGB) GB). Generation may slow — closing other apps helps.",
+                "Your Mac is getting low on memory while \(phaseVerb) \(modelLabel). Responses may slow down, and closing other apps helps.",
                 bundle: .module
             )
         }
@@ -4175,10 +4174,10 @@ extension FloatingInputCard {
         .accessibilityLabel(
             critical
                 ? Text(
-                    "Heavy system swap growth while \(modelLabel) is loaded: generation will slow",
+                    "Your Mac is running low on memory while \(modelLabel) is loaded: responses will be slower",
                     bundle: .module)
                 : Text(
-                    "System swap growth while \(modelLabel) is loaded: generation may slow",
+                    "Your Mac is getting low on memory while \(modelLabel) is loaded: responses may slow down",
                     bundle: .module)
         )
     }
