@@ -24,8 +24,8 @@ struct DetectPIITool: OsaurusTool {
         + "Pass `path` (relative file path) OR `text`. Optionally pass `custom_rules`: an array of "
         + "{name, pattern, placeholder} regex rules for domain-specific patterns the built-in "
         + "categories miss (e.g. revenue figures) — rules apply to this call only. Returns detected "
-        + "spans grouped by category with line numbers and counts. Read-only; use `redact_file` to "
-        + "apply replacements."
+        + "spans grouped by category with line numbers and counts. This tool is always read-only "
+        + "and has no `dry_run` parameter; use `redact_file` to apply replacements."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),

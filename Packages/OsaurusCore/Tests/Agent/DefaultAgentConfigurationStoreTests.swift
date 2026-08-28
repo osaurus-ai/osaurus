@@ -96,4 +96,5 @@ struct DefaultAgentConfigurationStoreTests {
         )
         #expect(decoded.manualToolNames == ["osaurus_status"])
     }
+
 }

@@ -17,7 +17,6 @@ extension ChatSession: ChatWarmupSessionContext {
         guard selectedModelIsLocal, !isRemoteAgentTarget else { return nil }
         guard !isImageGenerationModel(model) else { return nil }
 
-        let chatCfg = ChatConfigurationStore.load()
         let effectiveAgentId = agentId ?? Agent.defaultId
         let executionMode = await prepareChatExecutionMode(agentId: effectiveAgentId)
 
@@ -75,7 +74,8 @@ extension ChatSession: ChatWarmupSessionContext {
                 modelType: selectedPickerItem?.modelType,
                 query: "",
                 messages: priorUserMessages,
-                toolsDisabled: chatCfg.disableTools,
+                // Match the send path: agent settings own tool availability.
+                toolsDisabled: false,
                 additionalToolNames: cachedSession?.loadedToolNames ?? [],
                 frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
                 frozenToolSpecs: cachedSession?.initialToolSpecs,

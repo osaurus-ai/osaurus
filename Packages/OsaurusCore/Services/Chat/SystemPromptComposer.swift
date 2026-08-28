@@ -596,8 +596,7 @@ public struct SystemPromptComposer: Sendable {
     /// toggle is off.
     ///
     /// Two signals are NOT overridable and win in every mode:
-    ///   - `globalToolsDisabled`: the session-global `ChatConfiguration`
-    ///     "Disable tools" switch, an absolute kill-switch.
+    ///   - `globalToolsDisabled`: an explicit request/surface kill-switch.
     ///   - `sizeClassDisablesTools`: the small-context auto-disable, a hard
     ///     capability limit.
     static func resolveEffectiveToolsOff(

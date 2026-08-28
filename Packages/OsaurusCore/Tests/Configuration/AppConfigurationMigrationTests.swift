@@ -395,4 +395,5 @@ struct AppConfigurationMigrationTests {
 
         #expect(result.maxTokens == 4_096)
     }
+
 }

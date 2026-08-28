@@ -5963,7 +5963,10 @@ final class ChatSession: ObservableObject {
                             modelType: selectedPickerItem?.modelType,
                             query: trimmed,
                             messages: priorUserMessages,
-                            toolsDisabled: chatCfg.disableTools,
+                            // Tool availability belongs to the active agent.
+                            // Folding in the hidden legacy chat-wide bit made
+                            // every custom agent schema-less.
+                            toolsDisabled: false,
                             additionalToolNames: (cachedSession?.loadedToolNames ?? [])
                                 .union(skillReferencedTools),
                             frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,

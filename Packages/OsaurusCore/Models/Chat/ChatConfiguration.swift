@@ -113,12 +113,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         return name
     }
 
-    // MARK: - Tool Settings
-    /// When true, no tools are passed to the model. The raw message is sent
-    /// directly, keeping the prompt stable across turns for maximum KV-cache reuse. Recommended
-    /// when osaurus is acting as a plain LLM backend for an external agent.
-    public var disableTools: Bool
-
     // MARK: - Clipboard Settings
     /// When true, Osaurus will monitor the clipboard for new text content to offer as context.
     public var enableClipboardMonitoring: Bool
@@ -160,7 +154,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         coreModelName: String? = nil,
         compactionModelProvider: String? = nil,
         compactionModelName: String? = nil,
-        disableTools: Bool = false,
         enableClipboardMonitoring: Bool = true,
         warmModelsOnLoad: Bool = true,
         autoGenerateChatTitles: Bool = false,
@@ -178,7 +171,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.coreModelName = coreModelName
         self.compactionModelProvider = compactionModelProvider
         self.compactionModelName = compactionModelName
-        self.disableTools = disableTools
         self.enableClipboardMonitoring = enableClipboardMonitoring
         self.warmModelsOnLoad = warmModelsOnLoad
         self.autoGenerateChatTitles = autoGenerateChatTitles
@@ -201,7 +193,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             String.self, forKey: .compactionModelProvider)
         compactionModelName = try container.decodeIfPresent(
             String.self, forKey: .compactionModelName)
-        disableTools = try container.decodeIfPresent(Bool.self, forKey: .disableTools) ?? false
         enableClipboardMonitoring = try container.decodeIfPresent(Bool.self, forKey: .enableClipboardMonitoring) ?? true
         warmModelsOnLoad = try container.decodeIfPresent(Bool.self, forKey: .warmModelsOnLoad) ?? true
         autoGenerateChatTitles =

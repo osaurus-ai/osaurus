@@ -13,6 +13,19 @@ import Testing
 @Suite("Retired chat configuration compatibility")
 struct ChatConfigurationDefaultsTests {
 
+    @Test("retired global disableTools key is ignored and dropped on save")
+    func retiredGlobalDisableToolsKeyIsIgnored() throws {
+        let json = #"{"systemPrompt":"","disableTools":true}"#
+        let chat = try JSONDecoder().decode(
+            ChatConfiguration.self,
+            from: Data(json.utf8)
+        )
+
+        let encoded = try JSONEncoder().encode(chat)
+        let encodedJSON = String(decoding: encoded, as: UTF8.self)
+        #expect(!encodedJSON.contains("disableTools"))
+    }
+
     @Test("retired greeting keys are ignored and dropped on save")
     func retiredGreetingKeysAreIgnored() throws {
         let agentJSON = """

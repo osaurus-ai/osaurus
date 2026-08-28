@@ -42,17 +42,14 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     public let agentId: UUID
 
     /// OR of the request-scoped `toolsDisabled` flag and the agent's
-    /// `effectiveToolsDisabled`. NOTE: the global
-    /// `ChatConfiguration.disableTools` switch is NOT read by
-    /// `effectiveToolsDisabled`; callers fold it in by passing it as
-    /// `requestToolsDisabled` to `capture(...)` (e.g. `ChatView`).
+    /// `effectiveToolsDisabled`. `requestToolsDisabled` is an explicit
+    /// request/surface override; no chat-wide persisted setting is folded into
+    /// agent-backed requests.
     public let toolsDisabled: Bool
 
-    /// The session-global `ChatConfiguration.disableTools` switch in
-    /// isolation (the `requestToolsDisabled` the caller folded in), kept
-    /// separable from the per-agent Tools toggle. This is an absolute
-    /// kill-switch: unlike the per-agent toggle, sandbox mode does NOT
-    /// override it (see `SystemPromptComposer.resolveEffectiveToolsOff`).
+    /// Explicit request/surface tool suppression in isolation, kept separable
+    /// from the per-agent Tools toggle. Unlike the per-agent toggle, sandbox
+    /// mode does not override it.
     public let globalToolsDisabled: Bool
 
     /// Mirrors `AgentManager.effectiveMemoryDisabled` (folds in the
@@ -261,11 +258,9 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
 
     /// Read every `effective*` field in one MainActor batch.
     ///
-    /// `requestToolsDisabled` is the per-request override the caller
-    /// passes through. This is where the global
-    /// `ChatConfiguration.disableTools` switch is folded in — it is NOT
-    /// read by `effectiveToolsDisabled`, so any caller that wants the
-    /// global switch honored (app chat AND the HTTP path) must pass it.
+    /// `requestToolsDisabled` is an explicit per-request override. Native chat
+    /// and `/agents/{id}/run` leave it false and use the target agent's
+    /// dedicated capability state.
     /// `modelOverride` lets the caller pin a specific model id (e.g. an
     /// HTTP request that named a model the agent doesn't default to);
     /// when nil, the agent's effective model is used.

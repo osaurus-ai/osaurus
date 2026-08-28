@@ -1,0 +1,22 @@
+{
+  "id": "agent_loop.list-folder-contents",
+  "domain": "agent_loop",
+  "label": "agent loop • list the selected folder",
+  "query": "List the files and folders in this working folder. Use the folder tools; do not claim that you lack filesystem access.",
+  "notes": "Regression for the 2026-08-27 report where a selected Downloads folder still produced a no-filesystem-access refusal. The evaluator supplies a disposable host-folder fixture and requires a real file_read call plus exact grounded names.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "invoice.txt", "contents": "fixture invoice\n" },
+      { "path": "photos/README.md", "contents": "fixture photos\n" },
+      { "path": "notes/todo.txt", "contents": "fixture notes\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "mustCallTools": ["file_read"],
+      "noToolErrors": true,
+      "finalTextContains": ["invoice.txt", "photos", "notes"]
+    }
+  }
+}

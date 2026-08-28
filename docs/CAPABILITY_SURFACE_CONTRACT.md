@@ -31,12 +31,15 @@ The native app chat and HTTP agent-run path must consume the same capability
 snapshot and subagent visibility rules. Raw `/v1/chat/completions` is a
 non-agentic surface and does not inherit an Osaurus agent's capabilities.
 
-## Global gates
+## Tool gates
 
-- `ChatConfiguration.disableTools` is an absolute tools kill switch.
-- A custom agent's `toolsEnabled` switch pauses all of its tool-backed
-  abilities. Sandbox execution may override only this per-agent switch for the
-  sandbox primitives; it never overrides the global kill switch.
+- The legacy chat-wide `disableTools` property has been removed. An old
+  `disableTools` key in `chat.json` is ignored as unknown input. Tool
+  availability belongs to the target agent or to an explicit request-surface
+  override.
+- An agent's `toolsEnabled` switch pauses all of its tool-backed abilities.
+  Sandbox execution may override only this per-agent switch for the sandbox
+  primitives; it never overrides an explicit request-surface restriction.
 - Tiny context classes may remove the whole tool surface.
 - Manual mode limits dynamic/plugin tools to the user's selection. Authoritative
   per-agent Browser Use, Computer Use, and delegation gates still apply.

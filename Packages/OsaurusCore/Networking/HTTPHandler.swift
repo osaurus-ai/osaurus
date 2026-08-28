@@ -3404,10 +3404,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         var enriched = request
         let query = request.messages.last(where: { $0.role == "user" })?.content ?? ""
-        // Honor the global "Disable tools" switch on the HTTP path too —
-        // `effectiveToolsDisabled` does not read it, so it must be folded
-        // in here (the app chat path does the same via `chatCfg.disableTools`).
-        let globalToolsDisabled = await MainActor.run { ChatConfigurationStore.load().disableTools }
         await PluginManager.shared.ensurePromptCatalogReady()
         let composed = await SystemPromptComposer.composeChatContext(
             agentId: agentUUID,
@@ -3415,7 +3411,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             model: modelOverride,
             query: query,
             messages: enriched.messages,
-            toolsDisabled: globalToolsDisabled
+            // Agent-backed requests use the target agent's dedicated setting.
+            toolsDisabled: false
         )
         if !composed.prompt.isEmpty {
             SystemPromptComposer.injectSystemContent(composed.prompt, into: &enriched.messages)

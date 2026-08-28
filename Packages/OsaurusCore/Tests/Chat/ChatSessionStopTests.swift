@@ -10,7 +10,6 @@ struct ChatSessionStopTests {
 
     private func enableDefaultAgentTools(warmModelsOnLoad: Bool) {
         var chatConfig = ChatConfigurationStore.load()
-        chatConfig.disableTools = false
         chatConfig.warmModelsOnLoad = warmModelsOnLoad
         chatConfig.autoGenerateChatTitles = false
         ChatConfigurationStore.save(chatConfig)
