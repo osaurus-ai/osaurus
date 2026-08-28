@@ -4927,8 +4927,7 @@ public actor ModelRuntime {
                 buildChat: buildChat,
                 buildToolsSpec: buildTools,
                 buildRawPrompt: rawPromptBuilder,
-                generation: Self.enforcingMTPGreedy(
-                    parameters, draftStrategy: requestStrategy),
+                generation: parameters,
                 toolChoice: toolChoice,
                 stopSequences: stopSequences,
                 draftStrategy: requestStrategy,
@@ -5577,25 +5576,11 @@ public actor ModelRuntime {
         return .nativeMTP(depth: limit, verifierMode: verifierMode)
     }
 
-    /// Any request that actually runs native MTP forces greedy sampling for
-    /// that model+session (temperature 0, top-p 1, top-k 0, min-p 0).
-    /// Measured on JANG_2L: greedy MTP is byte-exact against greedy AR and
-    /// ~10% faster than sampled MTP. The override is scoped to the MTP
-    /// request itself — bundle generation_config still governs every
-    /// non-MTP path, including spawned agents and coding loops.
-    nonisolated static func enforcingMTPGreedy(
-        _ parameters: GenerationParameters,
-        draftStrategy: MLXLMCommon.DraftStrategy?
-    ) -> GenerationParameters {
-        guard case .some(.nativeMTP) = draftStrategy else { return parameters }
-        let enforced = VMLXServerMTPSettings.mtpEnforcedGreedySampling
-        var greedy = parameters
-        greedy.temperature = enforced.temperature
-        greedy.topPOverride = enforced.topP
-        greedy.topKOverride = enforced.topK
-        greedy.minPOverride = enforced.minP
-        return greedy
-    }
+    // Greedy-while-MTP is enforced in exactly ONE place: MLXBatchAdapter,
+    // on the parameters that actually run, with a surfaced log and a
+    // "greedy enforced" marker in the strategy description below. A second
+    // upstream copy of the coercion briefly existed here and was removed —
+    // duplicate policy sites drift.
 
     private nonisolated static func describeDraftStrategy(
         _ strategy: MLXLMCommon.DraftStrategy?
@@ -5606,7 +5591,10 @@ public actor ModelRuntime {
         case .some(.none):
             return "none"
         case .some(.nativeMTP(depth: let depth, verifierMode: _)):
-            return "native_mtp:d\(depth)"
+            // The greedy marker keeps the sampler coercion SURFACED: this
+            // string reaches the Live Activity readout, cachedModelSummaries,
+            // and the load-plan log line.
+            return "native_mtp:d\(depth)·greedy-enforced"
         case .some(let strategy):
             return strategy.kindName
         }

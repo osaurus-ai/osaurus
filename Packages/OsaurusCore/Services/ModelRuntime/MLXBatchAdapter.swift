@@ -1636,12 +1636,25 @@ struct MLXBatchAdapter {
         // output-equivalence guarantee is only defined under greedy decoding.
         // Turning MTP on is therefore a request for greedy decoding. Coerced
         // on the parameters that ACTUALLY run, and only when MTP is really
-        // active, so ordinary sampling is untouched everywhere else.
+        // active, so ordinary sampling is untouched everywhere else. This is
+        // the ONLY coercion site, and it is surfaced: the log line below and
+        // the "greedy-enforced" marker in the runtime's draft-strategy
+        // description keep it out of silent-override territory. Every other
+        // generation parameter (max tokens, stops, penalties, seed) continues
+        // to follow the request/runtime/bundle resolution untouched.
         if effectiveDraftStrategy?.usesNativeMTP == true {
+            let coerced =
+                mlxParams.temperature != 0 || mlxParams.topP != 1
+                || mlxParams.topK != 0 || mlxParams.minP != 0
             mlxParams.temperature = 0
             mlxParams.topP = 1
             mlxParams.topK = 0
             mlxParams.minP = 0
+            if coerced {
+                batchAdapterLog.info(
+                    "native MTP active: greedy sampler enforced for this request model=\(modelName, privacy: .public) (bundle generation_config governs all non-MTP requests)"
+                )
+            }
         }
 
         // OpenAI-compatible API clients read `content` only —

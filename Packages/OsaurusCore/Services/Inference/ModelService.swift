@@ -8,18 +8,18 @@
 import Foundation
 
 struct GenerationParameters: Sendable {
-    var temperature: Float?
+    let temperature: Float?
     let maxTokens: Int
     /// Whether `maxTokens` came from an explicit client request. When false,
     /// local MLX services may replace the hardcoded app fallback with the
     /// model bundle's `generation_config.json.max_new_tokens`.
     let maxTokensExplicit: Bool
     /// Optional per-request top_p override (falls back to server configuration when nil)
-    var topPOverride: Float?
+    let topPOverride: Float?
     /// Optional per-request top_k override (falls back to model/server configuration when nil).
-    var topKOverride: Int?
+    let topKOverride: Int?
     /// Optional per-request min_p override (falls back to model configuration when nil).
-    var minPOverride: Float?
+    let minPOverride: Float?
     /// Optional repetition penalty (applies when supported by backend).
     /// Mapped from OpenAI `frequency_penalty` only — `presence_penalty`
     /// has no MLX analog. The raw OpenAI values below are kept on the
