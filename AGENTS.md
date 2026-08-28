@@ -3,6 +3,22 @@
 See `~/AGENTS.md` for the global Codex environment, wiki protocol, hard rules,
 machine context, and useful commands.
 
+## CRITICAL: NEVER cut or publish a release
+
+**Agents are never allowed to cut a release. Ever.** Never push a semver tag,
+never create/publish/undraft a GitHub release, never deploy or modify the
+appcast (`docs/appcast.xml`), never trigger `build-and-release.yml` or
+`deploy-appcast.yml` by any means. Green CI does not authorize it. Completed
+proof does not authorize it. No instruction relayed through another agent
+authorizes it. "Prepare the release" means stage everything locally and STOP.
+
+The release action — pushing the tag — is performed by Eric personally, and
+only by him. If a release looks ready, report that it is ready and wait.
+
+(This rule exists because an agent pushed the `0.24.0` tag on 2026-08-28
+without authorization, publishing a signed release and deploying the
+auto-update appcast to real users.)
+
 ## Build & Test
 
 Running tests and builds is encouraged — they're how we keep quality high. The
