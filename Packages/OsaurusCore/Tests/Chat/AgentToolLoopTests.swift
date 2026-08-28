@@ -624,6 +624,69 @@ struct AgentToolLoopTests {
         }
     }
 
+    // MARK: - Exit diagnostics (campaign: agent-loop premature stops)
+
+    /// Capture the diagnostics side channel for one scripted run.
+    private func runCapturingDiagnostics(
+        steps: [AgentLoopModelStep]
+    ) async throws -> (AgentToolLoop.RunResult, AgentToolLoop.ExitDiagnostics?) {
+        let surface = ScriptedLoopSurface(steps: steps)
+        var hooks = surface.makeHooks()
+        var captured: AgentToolLoop.ExitDiagnostics?
+        hooks.recordExitDiagnostics = { captured = $0 }
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: hooks
+        )
+        return (result, captured)
+    }
+
+    /// The reason this telemetry exists: a run that ANSWERED and a run that
+    /// GAVE UP after exhausting announce-only recovery return byte-identical
+    /// `RunResult`s. Behaviour is unchanged — the two runs really do end the
+    /// same way — but they are no longer indistinguishable to an operator.
+    @Test func exitDiagnosticsSeparateAnAnswerFromAnExhaustedRecovery() async throws {
+        let (ordinary, ordinaryDiagnostics) = try await runCapturingDiagnostics(
+            steps: [.finalResponse]
+        )
+        // Budget is `maxAnnouncedToolCallRetries` (2); the third announce-only
+        // turn exhausts recovery and the preamble is kept as the answer.
+        let (surrendered, surrenderedDiagnostics) = try await runCapturingDiagnostics(
+            steps: [.announcedToolCall, .announcedToolCall, .announcedToolCall]
+        )
+
+        // Both end as `.finalResponse` on iteration 1 — the ambiguity this
+        // telemetry addresses. If this assertion ever fails, BEHAVIOUR
+        // changed and that is a separate review question.
+        #expect(ordinary.exit == .finalResponse)
+        #expect(surrendered.exit == .finalResponse)
+        #expect(ordinary == surrendered)
+
+        // The diagnostics separate them.
+        #expect(ordinaryDiagnostics?.origin == .ordinaryModelFinal)
+        #expect(ordinaryDiagnostics?.counters.total == 0)
+        #expect(surrenderedDiagnostics?.origin == .announcedToolCallRecoveryExhausted)
+        #expect((surrenderedDiagnostics?.counters.announcedToolCall ?? 0) > 0)
+    }
+
+    /// Counters are RUN TOTALS, not the current streak. A successful tool
+    /// step resets the driver's `consecutive*` counters, so reading those at
+    /// exit would report zero for an alternating stall/tool pattern — the
+    /// exact shape that burns wall-clock while making no net progress.
+    @Test func exitDiagnosticsCountRecoveriesAcrossAResettingToolStep() async throws {
+        let (_, diagnostics) = try await runCapturingDiagnostics(
+            steps: [
+                .announcedToolCall,
+                .toolCalls([inv("file_read")]),
+                .announcedToolCall,
+                .finalResponse,
+            ]
+        )
+        #expect(diagnostics?.origin == .ordinaryModelFinal)
+        #expect(diagnostics?.counters.announcedToolCall == 2)
+    }
+
     // MARK: - Announce-only turns (osaurus#2439)
 
     /// The failure the user reported as "the file_write calls are not

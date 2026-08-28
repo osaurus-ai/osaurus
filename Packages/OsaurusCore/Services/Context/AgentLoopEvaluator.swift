@@ -398,6 +398,16 @@ public struct AgentLoopTranscript: Sendable, Codable {
     /// `iterationCapReached`, `toolRejected`, `cancelled`,
     /// `clarifyRequested` (clarify intercept), `endedBySurface`.
     public let exit: String
+    /// `AgentToolLoop.ExitOrigin` as a string — WHICH branch produced
+    /// `exit`. `finalResponse` is returned from six distinct sites, three of
+    /// which are give-up paths after a bounded recovery was exhausted, so
+    /// `exit` alone cannot tell an answer from a surrender. Diagnostic only.
+    public let exitOrigin: String
+    /// Bounded-recovery attempts spent over the whole run (empty-turn,
+    /// announce-only, continuation-request, repetition-loop,
+    /// incomplete-reasoning). All are uncharged against the iteration
+    /// budget, so they otherwise leave no trace.
+    public let recoveryRetryTotal: Int
     /// First-turn system prompt (post-compose) for forensics.
     public let systemPrompt: String
     /// Names of the tool schemas sent to the model on the first
@@ -470,6 +480,8 @@ public struct AgentLoopTranscript: Sendable, Codable {
         finalText: String,
         iterations: Int,
         exit: String,
+        exitOrigin: String = "unrecorded",
+        recoveryRetryTotal: Int = 0,
         systemPrompt: String,
         toolSchemaNames: [String],
         loopDurationMs: Double = 0,
@@ -491,6 +503,8 @@ public struct AgentLoopTranscript: Sendable, Codable {
         self.finalText = finalText
         self.iterations = iterations
         self.exit = exit
+        self.exitOrigin = exitOrigin
+        self.recoveryRetryTotal = recoveryRetryTotal
         self.systemPrompt = systemPrompt
         self.toolSchemaNames = toolSchemaNames
         self.loopDurationMs = loopDurationMs
@@ -849,13 +863,17 @@ public enum AgentLoopEvaluator {
             iterations: Int,
             exit: String,
             loopMs: Double,
-            error: String?
+            error: String?,
+            exitOrigin: String = "unrecorded",
+            recoveryRetryTotal: Int = 0
         ) -> AgentLoopTranscript {
             AgentLoopTranscript(
                 toolCalls: transcriptCalls,
                 finalText: finalText,
                 iterations: iterations,
                 exit: exit,
+                exitOrigin: exitOrigin,
+                recoveryRetryTotal: recoveryRetryTotal,
                 systemPrompt: systemPrompt,
                 toolSchemaNames: toolScope.modelVisibleSpecs.map { $0.function.name },
                 loopDurationMs: loopMs,
@@ -1096,7 +1114,12 @@ public enum AgentLoopEvaluator {
             return AgentLoopToolExecution(result: result, isError: isError)
         }
 
-        let hooks = AgentLoopHooks(
+        // Diagnostics side channel (observational; the loop behaves the same
+        // with or without it). Captured on the main actor like the rest of
+        // this evaluator's mutable run state.
+        var exitDiagnostics: AgentToolLoop.ExitDiagnostics?
+
+        var hooks = AgentLoopHooks(
             isCancelled: {
                 // Cancellation evals: flip cancelled once the processed-call
                 // budget is reached. Reads the same transcript array the
@@ -1566,6 +1589,10 @@ public enum AgentLoopEvaluator {
             }
         )
 
+        hooks.recordExitDiagnostics = { diagnostics in
+            exitDiagnostics = diagnostics
+        }
+
         do {
             let runResult = try await ChatExecutionContext.$currentSessionSource.withValue(
                 sessionSource
@@ -1659,7 +1686,9 @@ public enum AgentLoopEvaluator {
                 iterations: runResult.iterations,
                 exit: exitLabel,
                 loopMs: Date().timeIntervalSince(loopStarted) * 1000,
-                error: nil
+                error: nil,
+                exitOrigin: exitDiagnostics?.origin.rawValue ?? "unrecorded",
+                recoveryRetryTotal: exitDiagnostics?.counters.total ?? 0
             )
         } catch {
             // Same hygiene on the abort path — a crashed model step must

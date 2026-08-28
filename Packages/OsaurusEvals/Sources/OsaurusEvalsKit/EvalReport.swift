@@ -68,6 +68,19 @@ public struct EvalCaseTelemetry: Sendable, Codable {
     /// Number of model steps (loop iterations that called the model).
     /// `promptTokensTotal / modelSteps` is the mean per-step context size.
     public let modelSteps: Int?
+    /// How the agent loop ENDED (`AgentToolLoop.Exit`) — e.g. `finalResponse`,
+    /// `iterationCapReached`, `toolRejected`. Present on every agent-loop row,
+    /// including passing ones, so a report can group outcomes by termination
+    /// instead of only by pass/fail.
+    public let loopExit: String?
+    /// WHICH branch produced `loopExit` (`AgentToolLoop.ExitOrigin`).
+    /// `finalResponse` is returned from six distinct sites, three of them
+    /// give-up paths after a bounded recovery was exhausted, so `loopExit`
+    /// alone cannot separate an answer from a surrender.
+    public let loopExitOrigin: String?
+    /// Bounded-recovery attempts spent across the run. These are uncharged
+    /// against the iteration budget and previously left no trace at all.
+    public let loopRecoveryRetries: Int?
     /// Peak physical footprint (Activity-Monitor "Memory") sampled across
     /// the case, in megabytes — the value the AGENTS.md RAM gate reads.
     public let peakPhysFootprintMb: Double?
@@ -122,6 +135,9 @@ public struct EvalCaseTelemetry: Sendable, Codable {
         peakContextTokens: Int? = nil,
         totalModelTokens: Int? = nil,
         modelSteps: Int? = nil,
+        loopExit: String? = nil,
+        loopExitOrigin: String? = nil,
+        loopRecoveryRetries: Int? = nil,
         peakPhysFootprintMb: Double? = nil,
         meanCpuPercent: Double? = nil,
         peakCpuPercent: Double? = nil,
@@ -140,6 +156,9 @@ public struct EvalCaseTelemetry: Sendable, Codable {
         self.completionTokens = completionTokens
         self.promptTokensTotal = promptTokensTotal
         self.peakContextTokens = peakContextTokens
+        self.loopExit = loopExit
+        self.loopExitOrigin = loopExitOrigin
+        self.loopRecoveryRetries = loopRecoveryRetries
         self.totalModelTokens = totalModelTokens
         self.modelSteps = modelSteps
         self.peakPhysFootprintMb = peakPhysFootprintMb
@@ -160,6 +179,7 @@ public struct EvalCaseTelemetry: Sendable, Codable {
         decodeTokensPerSecond == nil && prefillTokensPerSecond == nil
             && ttftMs == nil && firstActionMs == nil && completionTokens == nil
             && promptTokensTotal == nil && peakContextTokens == nil
+            && loopExit == nil && loopExitOrigin == nil && loopRecoveryRetries == nil
             && totalModelTokens == nil && modelSteps == nil
             && peakPhysFootprintMb == nil && meanCpuPercent == nil
             && peakCpuPercent == nil && kvPrefixHitsDelta == nil

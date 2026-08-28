@@ -504,6 +504,13 @@ struct AgentLoopHooks {
     /// prior empty-final behavior, which is harmless off the chat surface.
     var emitFallbackText: ((_ text: String) async -> Void)?
 
+    /// Diagnostics side channel, fired once immediately before the run
+    /// returns. Optional and observational: the loop's behaviour is
+    /// identical whether or not a surface supplies it, and `RunResult`
+    /// deliberately stays free of these fields so behavioural assertions
+    /// are unaffected. See `AgentToolLoop.ExitDiagnostics`.
+    var recordExitDiagnostics: ((AgentToolLoop.ExitDiagnostics) async -> Void)?
+
     /// The user-visible text of the final response the surface just
     /// classified, for the grounded-claim check
     /// (`GroundedConfigClaimCheck`). Return nil to skip the check for this
@@ -1033,6 +1040,55 @@ enum AgentToolLoop {
         case incompleteReasoningExhausted
     }
 
+    /// WHICH decision produced the exit. `Exit` says what the run ended as;
+    /// `ExitOrigin` says which branch decided it, and the two are not 1:1.
+    ///
+    /// `.finalResponse` alone is returned from six distinct sites, three of
+    /// which are give-up paths taken only after a bounded recovery was
+    /// exhausted. Without this field an exhausted-recovery exit is
+    /// indistinguishable in telemetry from a model that simply answered —
+    /// which is why "the agent stopped mid-turn" reports have been
+    /// unfalsifiable from logs and eval reports alike.
+    ///
+    /// Diagnostic only: nothing branches on this value.
+    enum ExitOrigin: String, Sendable, Equatable {
+        /// The model produced a final answer and the driver accepted it.
+        case ordinaryModelFinal
+        /// Empty-turn recovery ran out of nudges with no completed tool work;
+        /// the fallback text was emitted and the run ended.
+        case emptyTurnRecoveryExhausted
+        /// Announce-only recovery ran out of nudges; the model's preamble is
+        /// kept as the answer.
+        case announcedToolCallRecoveryExhausted
+        /// The model asked whether to continue and no tracked work was
+        /// pending, so the question was handed to the user.
+        case continuationRequestNoPendingWork
+        /// Continuation-request recovery ran out of nudges.
+        case continuationRequestRecoveryExhausted
+        /// A malformed repeat of an already-successful desktop subagent call
+        /// was replaced by the prior tool's summary.
+        case desktopSummarySubstituted
+        /// Terminal states that are already unambiguous from `Exit` itself.
+        case typedTerminal
+    }
+
+    /// Bounded-recovery attempts actually spent during the run. All are
+    /// uncharged against the iteration budget, so without this they leave no
+    /// trace anywhere: a run that burned six nudges looks identical to one
+    /// that never stalled.
+    struct RecoveryCounters: Equatable, Sendable {
+        var emptyTurn: Int = 0
+        var announcedToolCall: Int = 0
+        var continuationRequest: Int = 0
+        var repetitionLoop: Int = 0
+        var incompleteReasoning: Int = 0
+
+        var total: Int {
+            emptyTurn + announcedToolCall + continuationRequest
+                + repetitionLoop + incompleteReasoning
+        }
+    }
+
     struct RunResult: Equatable, Sendable {
         var exit: Exit
         /// Iterations charged against the budget (transient retries are
@@ -1048,6 +1104,17 @@ enum AgentToolLoop {
             self.iterations = iterations
             self.unfinishedTodoCount = unfinishedTodoCount
         }
+    }
+
+    /// Diagnostics emitted once, immediately before the run returns.
+    /// Deliberately NOT part of `RunResult`: that type is the behavioural
+    /// contract and 41 existing assertions compare it by value, so folding
+    /// observability into it would force every one of them to restate
+    /// diagnostic data. Nothing branches on any of this.
+    struct ExitDiagnostics: Equatable, Sendable {
+        var exit: Exit
+        var origin: ExitOrigin
+        var counters: RecoveryCounters
     }
 
     /// The dedupe-replay notice staged when a held result short-circuits
@@ -1973,6 +2040,32 @@ enum AgentToolLoop {
         // A tool call between attempts must not re-arm another potentially
         // huge reasoning cycle in the same logical run.
         var incompleteReasoningRetries = 0
+        // Diagnostic-only RUN TOTALS. The three `consecutive*` counters above
+        // are reset by a successful `.toolCalls` step, so reading them at exit
+        // reports the current streak rather than what the run actually spent —
+        // an alternating stall/tool pattern would report zero. These never
+        // reset, so `RunResult.recoveryCounters` describes the whole run.
+        // Nothing branches on them.
+        var totalEmptyTurnRetries = 0
+        var totalAnnouncedToolCallRetries = 0
+        var totalContinuationRequestRetries = 0
+
+        /// Emit the exit diagnostics for this run. Called immediately before
+        /// each labelled `return`, so `origin` names the branch that actually
+        /// decided the outcome — the distinction `Exit` alone cannot make for
+        /// `.finalResponse`, which six different sites produce.
+        func recordExit(_ exit: Exit, _ origin: ExitOrigin) async {
+            await hooks.recordExitDiagnostics?(
+                ExitDiagnostics(
+                    exit: exit,
+                    origin: origin,
+                    counters: RecoveryCounters(
+                        emptyTurn: totalEmptyTurnRetries,
+                        announcedToolCall: totalAnnouncedToolCallRetries,
+                        continuationRequest: totalContinuationRequestRetries,
+                        repetitionLoop: repetitionLoopRetries,
+                        incompleteReasoning: incompleteReasoningRetries)))
+        }
         // Total oversized streamed-call recoveries. One typed retry gives a
         // model a chance to switch to bounded/chunked writes without allowing
         // another unbounded decode loop.
@@ -2104,6 +2197,7 @@ enum AgentToolLoop {
                 // An ordinary model final is authoritative. Todo is visible
                 // progress metadata; it must never override EOS/stop and make
                 // the driver regenerate the same answer until the step cap.
+                await recordExit(.finalResponse, .ordinaryModelFinal)
                 return RunResult(exit: .finalResponse, iterations: iteration)
 
             case .retryWithoutCharge:
@@ -2147,6 +2241,7 @@ enum AgentToolLoop {
                 // a temp-0 model that just emitted EOS produces text), then
                 // emit a fallback message so the user always sees something.
                 consecutiveEmptyTurns += 1
+                totalEmptyTurnRetries += 1
                 if consecutiveEmptyTurns <= Self.maxEmptyTurnRetries {
                     pendingStateNotice = Self.emptyTurnNotice
                     // Not charged against the tool-iteration budget.
@@ -2160,6 +2255,7 @@ enum AgentToolLoop {
                 // Recovery exhausted: guarantee a visible message instead of
                 // a silent dead-end, then end the run.
                 await hooks.emitFallbackText?(Self.emptyTurnFallback)
+                await recordExit(.finalResponse, .emptyTurnRecoveryExhausted)
                 return RunResult(exit: .finalResponse, iterations: iteration)
 
             case .announcedToolCall:
@@ -2170,12 +2266,14 @@ enum AgentToolLoop {
                 // empty turn, the user already has something on screen, and
                 // replacing it would retract visible content.
                 consecutiveAnnouncedToolCalls += 1
+                totalAnnouncedToolCallRetries += 1
                 if consecutiveAnnouncedToolCalls <= Self.maxAnnouncedToolCallRetries {
                     pendingStateNotice = Self.announcedToolCallNotice
                     // Not charged against the tool-iteration budget.
                     iteration -= 1
                     continue
                 }
+                await recordExit(.finalResponse, .announcedToolCallRecoveryExhausted)
                 return RunResult(exit: .finalResponse, iterations: iteration)
 
             case .continuationRequest:
@@ -2191,9 +2289,11 @@ enum AgentToolLoop {
                     pending = await pendingTodoCount()
                 }
                 guard pending > 0 else {
+                    await recordExit(.finalResponse, .continuationRequestNoPendingWork)
                     return RunResult(exit: .finalResponse, iterations: iteration)
                 }
                 consecutiveContinuationRequests += 1
+                totalContinuationRequestRetries += 1
                 if consecutiveContinuationRequests <= Self.maxContinuationRequestRetries {
                     pendingStateNotice = Self.continuationRequestNotice(pending: pending)
                     // Not charged against the tool-iteration budget.
@@ -2204,6 +2304,7 @@ enum AgentToolLoop {
                 // the question to the user rather than looping on it — the
                 // text is already on screen and is a reasonable thing to end
                 // on once we have tried twice.
+                await recordExit(.finalResponse, .continuationRequestRecoveryExhausted)
                 return RunResult(exit: .finalResponse, iterations: iteration)
 
             case .repetitionLoop(let phrase):
@@ -2280,6 +2381,7 @@ enum AgentToolLoop {
                     let emitFinalText = hooks.emitFallbackText
                 {
                     await emitFinalText(summary)
+                    await recordExit(.finalResponse, .desktopSummarySubstituted)
                     return RunResult(exit: .finalResponse, iterations: iteration)
                 }
 
@@ -2903,6 +3005,7 @@ enum AgentToolLoop {
             }
         }
 
+        await recordExit(.iterationCapReached, .typedTerminal)
         return RunResult(exit: .iterationCapReached, iterations: iteration)
     }
 }

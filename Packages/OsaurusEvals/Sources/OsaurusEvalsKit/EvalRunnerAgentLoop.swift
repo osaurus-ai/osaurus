@@ -758,7 +758,10 @@ extension EvalRunner {
             promptTokensTotal: transcript.promptTokensTotal,
             peakContextTokens: transcript.peakContextTokens,
             totalModelTokens: total,
-            modelSteps: transcript.modelSteps
+            modelSteps: transcript.modelSteps,
+            loopExit: transcript.exit,
+            loopExitOrigin: transcript.exitOrigin,
+            loopRecoveryRetries: transcript.recoveryRetryTotal
         )
         return t.isEmpty ? nil : t
     }
