@@ -1642,19 +1642,10 @@ struct MLXBatchAdapter {
         // description keep it out of silent-override territory. Every other
         // generation parameter (max tokens, stops, penalties, seed) continues
         // to follow the request/runtime/bundle resolution untouched.
-        if effectiveDraftStrategy?.usesNativeMTP == true {
-            let coerced =
-                mlxParams.temperature != 0 || mlxParams.topP != 1
-                || mlxParams.topK != 0 || mlxParams.minP != 0
-            mlxParams.temperature = 0
-            mlxParams.topP = 1
-            mlxParams.topK = 0
-            mlxParams.minP = 0
-            if coerced {
-                batchAdapterLog.info(
-                    "native MTP active: greedy sampler enforced for this request model=\(modelName, privacy: .public) (bundle generation_config governs all non-MTP requests)"
-                )
-            }
+        if Self.applyMTPGreedyIfNeeded(&mlxParams, draftStrategy: effectiveDraftStrategy) {
+            batchAdapterLog.info(
+                "native MTP active: greedy sampler enforced for this request model=\(modelName, privacy: .public) (bundle generation_config governs all non-MTP requests)"
+            )
         }
 
         // OpenAI-compatible API clients read `content` only —
@@ -2359,5 +2350,27 @@ struct MLXBatchAdapter {
             }
             return "\(key)=<\(type(of: value))>"
         }.joined(separator: ",")
+    }
+
+    /// THE single greedy-while-MTP enforcement site, factored pure so the
+    /// contract is unit-testable: a request whose effective draft strategy
+    /// actually runs native MTP decodes greedy (temperature 0, top-p 1,
+    /// top-k 0, min-p 0 — output-equivalence is only defined under greedy);
+    /// every other strategy, including no drafter and DFlash 2, leaves the
+    /// request/runtime/bundle-resolved sampler untouched. Returns whether it
+    /// changed anything so the caller can surface the coercion.
+    static func applyMTPGreedyIfNeeded(
+        _ params: inout GenerateParameters,
+        draftStrategy: DraftStrategy?
+    ) -> Bool {
+        guard draftStrategy?.usesNativeMTP == true else { return false }
+        let coerced =
+            params.temperature != 0 || params.topP != 1
+            || params.topK != 0 || params.minP != 0
+        params.temperature = 0
+        params.topP = 1
+        params.topK = 0
+        params.minP = 0
+        return coerced
     }
 }

@@ -5594,7 +5594,7 @@ public actor ModelRuntime {
             // The greedy marker keeps the sampler coercion SURFACED: this
             // string reaches the Live Activity readout, cachedModelSummaries,
             // and the load-plan log line.
-            return "native_mtp:d\(depth)·greedy-enforced"
+            return "native_mtp:d\(depth)·greedy-when-active"
         case .some(let strategy):
             return strategy.kindName
         }
