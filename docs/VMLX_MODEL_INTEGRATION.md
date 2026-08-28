@@ -78,7 +78,7 @@ explicit dependency + a consumer.
 
 ## Mistral chat (text + VLM) — looping/incoherence
 
-Tracked separately in this sweep (see PR description).
+Tracked separately in this sweep (see PR description / `FIX_SWEEP_TRIAGE.md`).
 Key surfaces that drive Mistral coherence:
 - **Chat template version** (V3 `[INST]` / V7 / V13 `[SYSTEM_PROMPT]`) selection
   and **single-BOS** invariant — double-BOS or an unclosed `[INST]` turn causes

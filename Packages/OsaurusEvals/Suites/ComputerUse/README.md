@@ -41,7 +41,9 @@ swift run --package-path Packages/OsaurusEvals osaurus-evals scorecard \
 ```
 
 The default outputs are
-`build/evals/computer-use-scorecard/scorecard.{json,md}`.
+`build/evals/computer-use-scorecard/scorecard.{json,md}`. See
+[`docs/COMPUTER_USE_EVIDENCE.md`](../../../docs/COMPUTER_USE_EVIDENCE.md) for
+the artifact contract and exit-code semantics.
 
 ## Case schema (`expect.computerUse`)
 

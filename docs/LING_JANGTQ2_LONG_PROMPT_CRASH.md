@@ -92,7 +92,7 @@ codebook entries on Metal).
    prompts. Both are stable at ~3 k-token preambles.
 2. If JANGTQ2 must be used (e.g. memory-bound machine), keep the
    request prompt tight: send minimal system prompt and rely on tools
-   instead of inline tool-schema bloat.
+   instead of inline tool-schema bloat (see `PROMPT_BLOAT_FOLLOWUP.md`).
 
 ## Pointers for the vmlx-side fix author
 
