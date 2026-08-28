@@ -386,18 +386,6 @@ struct ProvidersView: View {
                 .font(.system(size: 14))
                 .foregroundColor(theme.secondaryText)
                 .multilineTextAlignment(.center)
-
-            Button(action: { showAddSheet = true }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 14))
-                    Text("Connect a Service", bundle: .module)
-                        .font(.system(size: 14, weight: .medium))
-                }
-                .foregroundColor(theme.accentColor)
-            }
-            .buttonStyle(PlainButtonStyle())
-            .padding(.top, 8)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 60)
