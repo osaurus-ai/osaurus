@@ -148,25 +148,24 @@ private struct AnimatedTabButton<Tab: AnimatedTabItem>: View {
 enum ToolsTab: String, CaseIterable, AnimatedTabItem {
     case all = "All"
     case connections = "Connections"
-    case custom = "Custom"
 
     var title: String {
         switch self {
         case .all: return L("All Tools")
         case .connections: return L("MCP")
-        case .custom: return L("Custom")
         }
     }
 
     /// Resolves a deep-link raw value, accepting the legacy tab names
-    /// ("Available" / "Remote" / "Sandbox") that pre-date the
-    /// All / Connections / Custom information architecture.
+    /// ("Available" / "Remote" / "Sandbox") that pre-date the current
+    /// All Tools / MCP information architecture. The retired Custom tab now
+    /// lives as a section on the All Tools tab, so its deep links land there.
     static func resolved(from rawValue: String) -> ToolsTab? {
         if let tab = ToolsTab(rawValue: rawValue) { return tab }
         switch rawValue.lowercased() {
         case "available": return .all
         case "remote": return .connections
-        case "sandbox": return .custom
+        case "sandbox", "custom": return .all
         default: return nil
         }
     }

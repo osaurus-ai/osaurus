@@ -3436,23 +3436,6 @@ struct RuntimePolicySourceTests {
                 && toolsView.contains("ShowAllToolsButton("),
             "Plugin and connection cards should cap expanded rows and expose an explicit show-all control."
         )
-
-        let sandboxCardStart = try #require(toolsView.range(of: "private struct SandboxPluginToolCard"))
-        let sandboxCardEnd =
-            toolsView.range(
-                of: "// MARK: - Tool Plugin Card",
-                range: sandboxCardStart.upperBound ..< toolsView.endIndex
-            )?.lowerBound ?? toolsView.endIndex
-        let sandboxCard = String(toolsView[sandboxCardStart.lowerBound ..< sandboxCardEnd])
-
-        #expect(
-            sandboxCard.contains("@State private var showAllTools = false")
-                && sandboxCard.contains("private var visibleToolSpecs: [SandboxToolSpec]")
-                && sandboxCard.contains("toolGroupRenderCapValue")
-                && sandboxCard.contains("ForEach(visibleToolSpecs, id: \\.id)")
-                && sandboxCard.contains("ShowAllToolsButton("),
-            "Custom tool cards must use the same capped expansion path as other tool cards; otherwise a large JSON tool recipe can freeze the Tools page."
-        )
     }
 
     @Test("local decode loop keeps tool schemas for parser-side argument validation")
