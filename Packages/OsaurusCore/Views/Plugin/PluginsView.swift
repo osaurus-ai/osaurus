@@ -912,7 +912,7 @@ struct PluginsView: View {
     /// not superseded — an installed copy still loads and keeps its
     /// Installed-tab card). Telegram connections are set up from Settings →
     /// Channels now, so its plugin card only confused discovery.
-    nonisolated private static let hiddenFromBrowsePluginIds: Set<String> = [
+    nonisolated static let hiddenFromBrowsePluginIds: Set<String> = [
         TelegramCredentialStore.pluginId  // "osaurus.telegram"
     ]
 
@@ -2696,5 +2696,151 @@ struct UpdateAllPluginsBanner: View {
                         .stroke(theme.accentColor.opacity(0.2), lineWidth: 1)
                 )
         )
+    }
+}
+
+// MARK: - Native Plugins Browse (shared with the Tools manager)
+
+/// The native-plugin browse catalog (repository plugins plus the GitHub token
+/// card), extracted so the Tools manager's "Native Plugins" tab shows the same
+/// list as the Plugins section's Browse tab. Installed plugins are listed
+/// first, followed by ones not yet installed. Reuses `PluginCard` and
+/// `PluginDetailView` so behaviour stays identical to the Browse tab.
+struct NativePluginsBrowseView: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var repoService = PluginRepositoryService.shared
+
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    @State private var hasAppeared = false
+    @State private var selectedPlugin: PluginState?
+
+    /// Keep cards readable in the management window's compact layout, while
+    /// still using multiple columns when the window has enough room. Mirrors
+    /// `PluginsView.responsiveGrid`.
+    private var responsiveGrid: [GridItem] {
+        [GridItem(.adaptive(minimum: 340), spacing: 20, alignment: .top)]
+    }
+
+    /// Installed plugins first, then not-yet-installed ones. Superseded and
+    /// browse-hidden plugins are dropped unless already installed, matching the
+    /// Plugins Browse tab.
+    private var browsePlugins: [PluginState] {
+        let visible = repoService.plugins.filter {
+            $0.isInstalled
+                || (!PluginManager.supersededPluginIds.contains($0.pluginId)
+                    && !PluginsView.hiddenFromBrowsePluginIds.contains($0.pluginId))
+        }
+        func byName(_ lhs: PluginState, _ rhs: PluginState) -> Bool {
+            lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+        }
+        return visible.filter { $0.isInstalled }.sorted(by: byName)
+            + visible.filter { !$0.isInstalled }.sorted(by: byName)
+    }
+
+    var body: some View {
+        ZStack {
+            if selectedPlugin == nil {
+                browseGrid
+                    .transition(.opacity.combined(with: .move(edge: .leading)))
+            }
+            detailOverlay
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.primaryBackground)
+        .environment(\.theme, themeManager.currentTheme)
+        .onAppear {
+            // Populate the repository the first time this tab is shown so the
+            // not-installed cards appear without opening the Plugins section.
+            if repoService.plugins.isEmpty {
+                Task {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                    await repoService.refresh()
+                }
+            }
+            withAnimation(.easeOut(duration: 0.25).delay(0.1)) {
+                hasAppeared = true
+            }
+        }
+        .onReceive(repoService.$plugins) { newPlugins in
+            // Keep an open detail surface in sync with install/uninstall.
+            if let selected = selectedPlugin,
+                let updated = newPlugins.first(where: { $0.pluginId == selected.pluginId })
+            {
+                selectedPlugin = updated
+            }
+        }
+    }
+
+    private var browseGrid: some View {
+        Group {
+            if browsePlugins.isEmpty {
+                emptyState
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        GitHubTokenCard()
+                        LazyVGrid(columns: responsiveGrid, spacing: 20) {
+                            ForEach(Array(browsePlugins.enumerated()), id: \.element.id) { index, plugin in
+                                PluginCard(
+                                    plugin: plugin,
+                                    missingPermissions: [],
+                                    animationDelay: Double(index) * 0.05,
+                                    hasAppeared: hasAppeared,
+                                    onSelect: {
+                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                            selectedPlugin = plugin
+                                        }
+                                    },
+                                    onUpgrade: { try await repoService.upgrade(pluginId: plugin.pluginId) },
+                                    onUninstall: { try await repoService.uninstall(pluginId: plugin.pluginId) },
+                                    onInstall: { try await repoService.install(pluginId: plugin.pluginId) },
+                                    onChange: {}
+                                )
+                            }
+                        }
+                    }
+                    .padding(24)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var detailOverlay: some View {
+        if let plugin = selectedPlugin {
+            PluginDetailView(
+                plugin: plugin,
+                missingPermissions: [],
+                onBack: {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        selectedPlugin = nil
+                    }
+                },
+                onUpgrade: { try await repoService.upgrade(pluginId: plugin.pluginId) },
+                onUninstall: {
+                    try await repoService.uninstall(pluginId: plugin.pluginId)
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        selectedPlugin = nil
+                    }
+                },
+                onInstall: { try await repoService.install(pluginId: plugin.pluginId) },
+                onChange: {}
+            )
+            .transition(.opacity.combined(with: .move(edge: .trailing)))
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "puzzlepiece.extension")
+                .font(.system(size: 40, weight: .light))
+                .foregroundColor(theme.tertiaryText)
+            Text("No plugins available", bundle: .module)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.vertical, 60)
     }
 }

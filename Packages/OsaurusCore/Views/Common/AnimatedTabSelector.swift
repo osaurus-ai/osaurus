@@ -148,11 +148,13 @@ private struct AnimatedTabButton<Tab: AnimatedTabItem>: View {
 enum ToolsTab: String, CaseIterable, AnimatedTabItem {
     case all = "All"
     case connections = "Connections"
+    case nativePlugins = "Native Plugins"
 
     var title: String {
         switch self {
         case .all: return L("All Tools")
         case .connections: return L("MCP")
+        case .nativePlugins: return L("Native Plugins")
         }
     }
 

@@ -86,6 +86,8 @@ struct ToolsManagerView: View {
                     allToolsTabContent
                 case .connections:
                     ProvidersView()
+                case .nativePlugins:
+                    NativePluginsBrowseView()
                 }
             }
             .opacity(hasAppeared ? 1 : 0)
@@ -169,6 +171,8 @@ struct ToolsManagerView: View {
             L("Choose which tools agents can use")
         case .connections:
             L("Connect services and troubleshoot the tools they provide")
+        case .nativePlugins:
+            L("Browse and install native plugins")
         }
     }
 
