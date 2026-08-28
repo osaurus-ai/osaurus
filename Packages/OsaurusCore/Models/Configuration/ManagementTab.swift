@@ -30,7 +30,7 @@ public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
         case .agents: L("Agents")
         case .capabilities: L("Capabilities")
         case .automation: L("Automation")
-        case .developers: L("Developers")
+        case .developers: L("Developer Tools")
         }
     }
 
