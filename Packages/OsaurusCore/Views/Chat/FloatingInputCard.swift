@@ -4108,32 +4108,33 @@ extension FloatingInputCard {
         // verb-plus-name word order doesn't survive translation (German
         // splits the verb around the model name).
         //
-        // The sentence names SWAP and carries the measured growth. "Low on
-        // memory" was tried and reads as the RAM tight-fit warning — but this
-        // banner fires on episode swap GROWTH, which is a different (and
-        // sometimes concurrent-true) condition; the GB figure is the evidence
-        // that separates a 1.6 GB blip from a 25 GB thrash. Translations must
-        // keep the GB slot before the model slot — both are %@ and swapping
-        // them swaps the VALUES.
+        // The sentence names swap GROWTH ("Swap increased by N GB") and
+        // carries the measured figure. "Low on memory" was tried and reads as
+        // the RAM tight-fit warning; "started swapping" was tried and is
+        // wrong on a machine that already had swap before the episode — the
+        // monitor measures growth over the episode baseline, so the copy
+        // states exactly that. Severity rides the trailing clause
+        // (will/may slow). Translations must keep the GB slot before the
+        // model slot — both are %@ and swapping them swaps the VALUES.
         let loading = swap.phase == .loading
         let peakGB = Self.formatGigabytes(max(0, swap.peakGrowthBytes))
         let message: Text
         switch (critical, loading) {
         case (true, true):
             message = Text(
-                "Your Mac started swapping heavily (\(peakGB) GB) while loading \(modelLabel), so responses will be slower.",
+                "Swap increased by \(peakGB) GB while loading \(modelLabel), so responses will be slower.",
                 bundle: .module)
         case (true, false):
             message = Text(
-                "Your Mac started swapping heavily (\(peakGB) GB) while running \(modelLabel), so responses will be slower.",
+                "Swap increased by \(peakGB) GB while running \(modelLabel), so responses will be slower.",
                 bundle: .module)
         case (false, true):
             message = Text(
-                "Your Mac started swapping (\(peakGB) GB) while loading \(modelLabel), so responses may slow down.",
+                "Swap increased by \(peakGB) GB while loading \(modelLabel), so responses may slow down.",
                 bundle: .module)
         case (false, false):
             message = Text(
-                "Your Mac started swapping (\(peakGB) GB) while running \(modelLabel), so responses may slow down.",
+                "Swap increased by \(peakGB) GB while running \(modelLabel), so responses may slow down.",
                 bundle: .module)
         }
         var tip: Text =
@@ -4201,10 +4202,10 @@ extension FloatingInputCard {
         .accessibilityLabel(
             critical
                 ? Text(
-                    "Heavy swapping (\(peakGB) GB) while \(modelLabel) is loaded: responses will be slower",
+                    "Swap increased by \(peakGB) GB while \(modelLabel) is loaded: responses will be slower",
                     bundle: .module)
                 : Text(
-                    "Swapping (\(peakGB) GB) while \(modelLabel) is loaded: responses may slow down",
+                    "Swap increased by \(peakGB) GB while \(modelLabel) is loaded: responses may slow down",
                     bundle: .module)
         )
     }
