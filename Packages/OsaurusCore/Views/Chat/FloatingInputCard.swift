@@ -4092,27 +4092,35 @@ extension FloatingInputCard {
     }
 
     /// Same popover silhouette, tints, and typography as the tight-fit
-    /// banner. Orange = swapping started (generation may slow); red = heavy
-    /// swapping (slowdown expected). Emulated states — the designer/QA
-    /// simulation via OSAURUS_SWAP_EMULATE or the debug/swap-emulate flag
-    /// file — are labeled so screenshots stay honest.
+    /// banner. Orange = the episode coincided with swap growth (generation
+    /// may slow); red = heavy growth (slowdown expected). Wording stays
+    /// cautious — swap is host-wide, so this reports coincidence, not blame.
+    /// Emulated states — the designer/QA simulation via OSAURUS_SWAP_EMULATE
+    /// or the debug/swap-emulate flag file — are labeled so screenshots stay
+    /// honest.
     private func swapPressureBanner(
         _ swap: SwapPressureMonitor.State,
         pointerCenterX: CGFloat
     ) -> some View {
         let critical = swap.severity == .critical
         let tint: Color = critical ? .red : .orange
-        let growthGB = Self.formatGigabytes(max(0, swap.growthSinceLoadBytes))
+        let peakGB = Self.formatGigabytes(max(0, swap.peakGrowthBytes))
+        let modelLabel =
+            swap.modelName ?? selectedPickerItem?.displayName ?? String(localized: "this model")
+        let phaseVerb =
+            swap.phase == .loading
+            ? String(localized: "Loading", bundle: .module)
+            : String(localized: "Running", bundle: .module)
 
         var message: Text
         if critical {
             message = Text(
-                "macOS is swapping heavily (\(growthGB) GB since this model loaded) — generation will slow down significantly. Close other apps to recover; the model itself is fine.",
+                "\(phaseVerb) \(modelLabel) coincided with heavy system swap growth (\(peakGB) GB) — generation will slow while macOS pages memory. Closing other apps usually recovers it.",
                 bundle: .module
             )
         } else {
             message = Text(
-                "macOS started swapping while this model is loaded (\(growthGB) GB). Generation may slow — closing other apps helps.",
+                "\(phaseVerb) \(modelLabel) coincided with system swap growth (\(peakGB) GB). Generation may slow — closing other apps helps.",
                 bundle: .module
             )
         }
@@ -4126,56 +4134,70 @@ extension FloatingInputCard {
         )
         let shape = RAMBannerShape(pointerCenterX: clampedX)
 
-        return
+        return VStack(alignment: .leading, spacing: 7) {
             (Text(Image(systemName: critical
                 ? "externaldrive.fill.badge.exclamationmark" : "externaldrive.badge.timemachine"))
                 .foregroundColor(tint)
                 + Text(verbatim: "  ")
                 + message.foregroundColor(theme.primaryText))
-            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.leading, 14)
-            .padding(.trailing, 32)
-            .padding(.top, 9)
-            .padding(.bottom, 9 + RAMBannerShape.pointerHeight)
-            .background(
-                ZStack {
-                    shape.fill(.regularMaterial)
-                    shape.fill(tint.opacity(0.12))
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                swapActionButton(String(localized: "Open Activity Monitor", bundle: .module)) {
+                    NSWorkspace.shared.open(
+                        URL(fileURLWithPath:
+                            "/System/Applications/Utilities/Activity Monitor.app"))
                 }
-            )
-            .overlay(shape.stroke(tint.opacity(0.35), lineWidth: 1))
-            .overlay(alignment: .topTrailing) { swapDismissButton(current: swap.severity) }
-            .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
-            .accessibilityLabel(
-                critical
-                    ? Text("Heavy memory swapping: generation will slow down", bundle: .module)
-                    : Text("Memory swapping started: generation may slow", bundle: .module)
-            )
+                swapActionButton(String(localized: "Unload Model", bundle: .module)) {
+                    let target = swap.modelName ?? selectedModel
+                    guard let target else { return }
+                    Task { await ModelRuntime.shared.unload(name: target) }
+                }
+                swapActionButton(String(localized: "Keep Running", bundle: .module)) {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        swapBannerDismissedAtSeverity = swap.severity
+                    }
+                }
+            }
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 14)
+        .padding(.top, 9)
+        .padding(.bottom, 9 + RAMBannerShape.pointerHeight)
+        .background(
+            ZStack {
+                shape.fill(.regularMaterial)
+                shape.fill(tint.opacity(0.12))
+            }
+        )
+        .overlay(shape.stroke(tint.opacity(0.35), lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
+        .accessibilityLabel(
+            critical
+                ? Text(
+                    "Heavy system swap growth while \(modelLabel) is loaded: generation will slow",
+                    bundle: .module)
+                : Text(
+                    "System swap growth while \(modelLabel) is loaded: generation may slow",
+                    bundle: .module)
+        )
     }
 
-    /// Dismissal remembers the severity it silenced; the banner returns only
-    /// if pressure worsens, and the end of the episode re-arms it.
-    private func swapDismissButton(current: SwapPressureMonitor.Severity) -> some View {
-        Button {
-            withAnimation(.easeOut(duration: 0.2)) {
-                swapBannerDismissedAtSeverity = current
-            }
-        } label: {
-            Image(systemName: "xmark")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundColor(theme.tertiaryText)
-                .padding(5)
+    /// Small inline action for the swap banner, matching the caption
+    /// typography of the popover.
+    private func swapActionButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(verbatim: title)
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
                 .background(
-                    Circle().stroke(theme.tertiaryText.opacity(0.35), lineWidth: 1)
+                    Capsule().stroke(theme.tertiaryText.opacity(0.4), lineWidth: 1)
                 )
-                .contentShape(Rectangle())
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .padding(.top, 6)
-        .padding(.trailing, 8)
-        .help(Text("Hide this warning until swapping worsens", bundle: .module))
-        .accessibilityLabel(Text("Dismiss swap warning", bundle: .module))
     }
 
     /// Close button for the warn-level tight-fit banner. Dismissal is scoped

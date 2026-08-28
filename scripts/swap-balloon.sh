@@ -32,12 +32,14 @@ for i in range(gb * 2):
     blocks.append(bytearray(b"\xA5" * chunk))
     print(f"  held {(i + 1) * 0.5:.1f} GB", flush=True)
 print("Holding. Ctrl-C to release.")
+page = 16384  # Apple Silicon page size
 while True:
-    time.sleep(5)
-    # Re-touch a stripe of each block so the pages stay hot and the pager
-    # must keep them (or swap something else) — an idle balloon gets
-    # compressed away and defeats the test.
+    # Touch EVERY page of every block each cycle so the pager cannot leave
+    # the balloon compressed/idle — an untouched balloon gets compressed
+    # away and defeats the test. One byte per 16 KiB page ≈ 64k writes/GB,
+    # cheap on CPU but keeps all pages dirty-resident.
     for b in blocks:
-        b[0] = (b[0] + 1) % 256
-        b[len(b) // 2] = (b[len(b) // 2] + 1) % 256
+        for offset in range(0, len(b), page):
+            b[offset] = (b[offset] + 1) % 256
+    time.sleep(2)
 EOF
