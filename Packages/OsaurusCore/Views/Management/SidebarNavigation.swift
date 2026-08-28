@@ -245,8 +245,15 @@ private extension SidebarNavigation {
                 guard let sectionId = opened.first,
                     let lastItem = sections.first(where: { $0.id == sectionId })?.items.last
                 else { return }
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                    proxy.scrollTo(lastItem.id, anchor: .bottom)
+                // Let the switch's own knob animation and the row insertion
+                // (0.2s easeOut) land first, then glide down in a gentle
+                // ease — sequencing the two keeps the reveal readable
+                // instead of the scroll fighting the toggle mid-flight.
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    withAnimation(.easeInOut(duration: 0.35)) {
+                        proxy.scrollTo(lastItem.id, anchor: .bottom)
+                    }
                 }
             }
             .onAppear {
