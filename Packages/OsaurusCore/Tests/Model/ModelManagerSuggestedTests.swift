@@ -145,6 +145,25 @@ struct ModelManagerSuggestedTests {
         }
     }
 
+    @Test @MainActor func nanbeige42Entry_isJang6mTopPick() async {
+        await withIsolatedModelSizeCache {
+            let suggested = ModelManager().suggestedModels
+            let jang6 = suggested.first { $0.id == "OsaurusAI/Nanbeige4.2-3B-JANG_6M" }
+            let mxfp8 = suggested.first { $0.id == "OsaurusAI/Nanbeige4.2-3B-MXFP8" }
+
+            #expect(jang6 != nil)
+            #expect(jang6?.modelType == "nanbeige")
+            #expect(jang6?.isTopSuggestion == true)
+            #expect(jang6?.useCase == .general)
+            // Bootstrap Hub size so 8 GB machines don't see a 1.5 GB
+            // name-heuristic and auto-default this over Gemma E2B.
+            #expect(jang6?.downloadSizeBytes == 3_921_000_000)
+            #expect(jang6?.releasedAt != nil)
+            // MXFP8 is format coverage, not the recommendation.
+            #expect(mxfp8?.isTopSuggestion != true)
+        }
+    }
+
     @Test @MainActor func bonsaiEntries_areCatalogOnlyNormalizedVariants() async {
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
@@ -257,23 +276,24 @@ struct ModelManagerSuggestedTests {
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
             let topIds = Set(suggested.filter(\.isTopSuggestion).map { $0.id })
-            // Recommendation spine (2026-08-26): LFM2.5 8B-A1B hybrid MoE for
-            // mainstream RAM (took the slot from the dense Bonsai 27B, which
-            // user feedback showed decoding far too slowly for a default),
-            // Ornith 1.0 MXFP8 for the larger tiers, and official OsaurusAI
-            // Gemma 4 at the highest non-QAT/non-MXFP4 precision that exists
-            // for the smaller tiers. These are the ONLY Top Picks.
+            // Recommendation spine: LFM2.5 8B-A1B hybrid MoE for mainstream
+            // RAM, Ornith 1.5 MXFP8 for the larger tiers (the 1.0 MXFP8 Hub
+            // repos were removed), official OsaurusAI Gemma 4 for the smaller
+            // VL tiers, and Nanbeige 4.2 3B JANG_6M as the text-quality
+            // exception (JANG_6M beats that family's MXFP8). These are the
+            // ONLY Top Picks.
             let expectedTopPicks: Set<String> = [
                 "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
-                "OsaurusAI/Ornith-1.0-9B-MXFP8",
-                "OsaurusAI/Ornith-1.0-35B-MXFP8",
+                "OsaurusAI/Ornith-1.5-9B-MXFP8",
+                "OsaurusAI/Ornith-1.5-35B-A3B-MXFP8",
+                "OsaurusAI/Nanbeige4.2-3B-JANG_6M",
                 "OsaurusAI/gemma-4-12B-it-MXFP8",
                 "OsaurusAI/gemma-4-E4B-it-8bit",
                 "OsaurusAI/gemma-4-E2B-it-8bit",
             ]
             #expect(
                 topIds == expectedTopPicks,
-                "Top Picks should be exactly LFM2.5 + Ornith MXFP8 + official Gemma; got \(topIds.sorted())"
+                "Top Picks should be exactly LFM2.5 + Ornith 1.5 MXFP8 + Nanbeige JANG_6M + official Gemma; got \(topIds.sorted())"
             )
             // Gemma QAT/MXFP4, plus Qwen 3.6 / Nemotron-3 / Bonsai, are
             // catalog-only — installable and selectable, just not part of the
@@ -324,6 +344,8 @@ struct ModelManagerSuggestedTests {
             "osaurusai/gemma-4-31b-it-jang_4m",
             "osaurusai/qwen3.5-122b-a10b-jang_4k",
             "osaurusai/qwen3.5-35b-a3b-jang_2s",
+            "osaurusai/ornith-1.0-9b-mxfp8",
+            "osaurusai/ornith-1.0-35b-mxfp8",
         ] {
             #expect(!ids.contains(retired), "expected \(retired) to be removed")
         }
@@ -488,7 +510,21 @@ struct ModelManagerSuggestedTests {
             )
 
             #expect(eighteenGB?.id == "OsaurusAI/LFM2.5-8B-A1B-MXFP8")
-            #expect(twentyFourGB?.id == "OsaurusAI/Ornith-1.0-9B-MXFP8")
+            #expect(twentyFourGB?.id == "OsaurusAI/Ornith-1.5-9B-MXFP8")
+
+            // Nanbeige JANG_6M (~4.5 GB working set) is a Top Pick but must
+            // not steal the 8 GB multimodal floor (Gemma E2B) or the 16 GB
+            // E4B slot — 3B loses to every larger comfortable base.
+            let eightGB = ConfigureAIState.recommendedLocalPick(
+                from: candidates,
+                totalMemoryGB: 8
+            )
+            let sixteenGB = ConfigureAIState.recommendedLocalPick(
+                from: candidates,
+                totalMemoryGB: 16
+            )
+            #expect(eightGB?.id == "OsaurusAI/gemma-4-E2B-it-8bit")
+            #expect(sixteenGB?.id == "OsaurusAI/gemma-4-E4B-it-8bit")
         }
     }
 }

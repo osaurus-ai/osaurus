@@ -724,12 +724,15 @@ extension ModelManager {
         //                      the dense 27B decodes far too slowly for a
         //                      first-run default, so the mainstream pick is now
         //                      an MoE with a small active set.
-        //   • Larger RAM     → Ornith 1.0 MXFP8 (9B / 35B MoE, below).
+        //   • Larger RAM     → Ornith 1.5 MXFP8 (9B / 35B-A3B MoE, below).
         //   • Smaller RAM → official OsaurusAI Gemma 4 at the highest non-QAT,
         //                    non-MXFP4 precision that exists: `12B-it-MXFP8`
         //                    (the only MXFP8 Gemma the org ships) and the
         //                    `E4B/E2B-it-8bit` retention builds (no E-series
-        //                    MXFP8 exists on the HF org).
+        //                    MXFP8 exists on the HF org). Nanbeige 4.2 3B
+        //                    JANG_6M is the text-quality exception in this
+        //                    band (looped transformer; JANG_6M beats the
+        //                    family's MXFP8 on fidelity — see that entry).
         // A *recommended* Gemma build must never be `qat` or plain `MXFP4`, so
         // the 5 Gemma `qat-MXFP4` builds (E2B/E4B/12B/31B/26B-A4B) stay in the
         // catalog but are not Top Picks. Qwen 3.6 (incl. MXFP8-MTP), Nemotron-3
@@ -861,34 +864,58 @@ extension ModelManager {
             useCase: .vision
         ),
 
-        // MARK: Ornith 1.0 (DeepReinforce, Qwen 3.5 hybrid backbone)
+        // MARK: Ornith 1.5 (Qwen 3.5 hybrid backbone)
         //
-        // Vision-language agentic-coding models on the Qwen 3.5 hybrid
-        // architecture (Gated-DeltaNet linear attention + full attention),
-        // so they reuse the existing `qwen3_5` / `qwen3_5_moe` runtime
-        // classes. MXFP8 is the curated Top Pick representative per family
-        // (precision-first, matching the Qwen 3.6 convention); the MXFP4 and
-        // JANG_4M siblings stay auto-fetched and collapse into each family
-        // card's Versions picker.
+        // Successor to the 1.0 MXFP8 Top Picks. Those Hub repos
+        // (`Ornith-1.0-9B-MXFP8` / `Ornith-1.0-35B-MXFP8`) were removed, so
+        // onboarding downloads of the old IDs died at the file-list fetch
+        // ("Could not retrieve file list from Hugging Face"). 1.5 keeps the
+        // same `qwen3_5` / `qwen3_5_moe` runtime classes (Gated-DeltaNet
+        // linear attention + full attention). MXFP8 is the curated Top Pick
+        // representative per family (precision-first); JANG siblings stay
+        // auto-fetched and collapse into each family card's Versions picker.
 
         curated(
-            id: "OsaurusAI/Ornith-1.0-9B-MXFP8",
+            id: "OsaurusAI/Ornith-1.5-9B-MXFP8",
             description:
-                "Ornith 1.0 9B vision-language model, tuned for agentic coding on a Qwen 3.5 hybrid backbone. MXFP8 — near-lossless precision. 256K context.",
+                "Ornith 1.5 9B vision-language model, tuned for agentic coding on a Qwen 3.5 hybrid backbone. MXFP8 — near-lossless precision. 256K context.",
             isTopSuggestion: true,
             modelType: "qwen3_5",
-            releasedAt: date("2026-06-26"),
+            releasedAt: date("2026-08-19"),
             useCase: .vision
         ),
 
         curated(
-            id: "OsaurusAI/Ornith-1.0-35B-MXFP8",
+            id: "OsaurusAI/Ornith-1.5-35B-A3B-MXFP8",
             description:
-                "Ornith 1.0 35B vision-language MoE, state-of-the-art open agentic coding for its size. MXFP8 — near-lossless precision. 256K context.",
+                "Ornith 1.5 35B-A3B vision-language MoE, state-of-the-art open agentic coding for its size. MXFP8 — near-lossless precision. 256K context.",
             isTopSuggestion: true,
             modelType: "qwen3_5_moe",
-            releasedAt: date("2026-06-26"),
+            releasedAt: date("2026-08-19"),
             useCase: .vision
+        ),
+
+        // MARK: Nanbeige 4.2 (looped transformer — Top Pick)
+        //
+        // 22 physical layers × 2 loops (44 KV slots), text-only, 256K, tools
+        // + thinking. The MXFP8 sibling is format coverage and loses on
+        // fidelity *and* size to both JANG profiles (live card: Tokyo-capital
+        // miss on MXFP8; JANG_6M is 5/5 top-1, KL 0.001). So this family
+        // breaks the MXFP8-only Top Pick rule on purpose — JANG_6M is the
+        // one we recommend. Hub weight shard is ~3.9 GB; bootstrap that
+        // measurement so first-launch hardware selection isn't the 0.5
+        // byte/param JANG fallback (~1.5 GB), which would look comfortable
+        // on an 8 GB Mac when the real working set is ~4.5 GB.
+
+        curated(
+            id: "OsaurusAI/Nanbeige4.2-3B-JANG_6M",
+            description:
+                "Nanbeige 4.2 3B looped-transformer reasoning model (en + zh). 6-bit affine JANG — the quality pick of the family. 256K context.",
+            isTopSuggestion: true,
+            bootstrapDownloadSizeBytes: 3_921_000_000,
+            modelType: "nanbeige",
+            releasedAt: date("2026-07-28"),
+            useCase: .general
         ),
 
         // MARK: Bonsai (prism-ml, Qwen 3.5 dense backbone)
@@ -1333,6 +1360,11 @@ extension ModelManager {
         "osaurusai/gemma-4-26b-a4b-it-jang_4m",
         "osaurusai/gemma-4-26b-a4b-it-mxfp4",
         "osaurusai/diffusiongemma-26b-a4b-it-mxfp8",
+        // Ornith 1.0 MXFP8 Top Picks were removed from the Hub (404 on
+        // `/tree/main`); 1.5 MXFP8 is the replacement. Keep them retired so
+        // a re-upload or stale org listing cannot re-surface a dead download.
+        "osaurusai/ornith-1.0-9b-mxfp8",
+        "osaurusai/ornith-1.0-35b-mxfp8",
     ]
 
     /// HF `pipeline_tag` values that mark a repo as chat-capable (text or

@@ -4684,7 +4684,7 @@ public actor ModelRuntime {
         {
             return true
         }
-        // Ornith 1.0 (OsaurusAI) — same qwen3_5 / qwen3_5_moe model_type as
+        // Ornith (OsaurusAI 1.0 / 1.5) — same qwen3_5 / qwen3_5_moe model_type as
         // the block above (hybrid linear+full attention, `ArraysCache`
         // companion slots for the linear-attention layers) but the bundle
         // ids carry no "qwen" substring. 9B is the dense qwen3_5 variant,
