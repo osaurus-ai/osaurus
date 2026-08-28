@@ -4188,10 +4188,9 @@ extension FloatingInputCard {
             Text(verbatim: title)
                 .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
                 .lineLimit(1)
-                .fixedSize()
                 .foregroundColor(.white)
-                .padding(.horizontal, 12)
                 .padding(.vertical, 5)
+                .frame(maxWidth: .infinity)
                 .background(Capsule().fill(tint.opacity(0.85)))
                 .contentShape(Capsule())
         }
