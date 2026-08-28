@@ -4103,19 +4103,30 @@ extension FloatingInputCard {
         let tint: Color = critical ? .red : .orange
         let modelLabel =
             swap.modelName ?? selectedPickerItem?.displayName ?? String(localized: "this model")
-        let phaseVerb =
-            swap.phase == .loading
-            ? String(localized: "loading", bundle: .module)
-            : String(localized: "running", bundle: .module)
 
-        let message: Text =
-            critical
-            ? Text(
-                "Your Mac is running low on memory while \(phaseVerb) \(modelLabel), so responses will be slower.",
+        // Full sentences per phase rather than an interpolated verb: the
+        // verb-plus-name word order doesn't survive translation (German
+        // splits the verb around the model name).
+        let loading = swap.phase == .loading
+        let message: Text
+        switch (critical, loading) {
+        case (true, true):
+            message = Text(
+                "Your Mac is running low on memory while loading \(modelLabel), so responses will be slower.",
                 bundle: .module)
-            : Text(
-                "Your Mac is getting low on memory while \(phaseVerb) \(modelLabel), so responses may slow down.",
+        case (true, false):
+            message = Text(
+                "Your Mac is running low on memory while running \(modelLabel), so responses will be slower.",
                 bundle: .module)
+        case (false, true):
+            message = Text(
+                "Your Mac is getting low on memory while loading \(modelLabel), so responses may slow down.",
+                bundle: .module)
+        case (false, false):
+            message = Text(
+                "Your Mac is getting low on memory while running \(modelLabel), so responses may slow down.",
+                bundle: .module)
+        }
         var tip: Text =
             critical
             ? Text("Closing other apps usually speeds things back up.", bundle: .module)
