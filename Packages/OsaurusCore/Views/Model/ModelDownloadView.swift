@@ -115,6 +115,7 @@ struct ModelDownloadView: View {
 
     /// Import-from-Hugging-Face sheet state
     @State private var showImportSheet = false
+    @State private var showExternalModelsPanel = false
 
     /// Index of the leading Top Picks card the edge arrows scroll to. Desktop
     /// mice can't scroll horizontally, so the carousel is driven by these
@@ -956,6 +957,10 @@ struct ModelDownloadView: View {
                                 deprecationBanner
                             }
 
+                            if selectedTab == .downloaded {
+                                externalModelsImportPanel
+                            }
+
                             if lists.displayed.isEmpty {
                                 emptyState
                             } else {
@@ -997,6 +1002,35 @@ struct ModelDownloadView: View {
                 }
             }
         }
+    }
+
+    private var externalModelsImportPanel: some View {
+        DisclosureGroup(isExpanded: $showExternalModelsPanel) {
+            ExternalModelsSettingsView()
+                .padding(.top, 10)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "externaldrive.badge.plus")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+
+                Text("External models", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .textCase(.uppercase)
+
+                Spacer()
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.secondaryBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(theme.primaryBorder.opacity(0.16), lineWidth: 1)
+                )
+        )
     }
 
     // MARK: - Sort / Filter Bar

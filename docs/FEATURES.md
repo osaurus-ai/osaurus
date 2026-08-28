@@ -222,7 +222,7 @@ Research notes for the next local-runtime compatibility wave live in
 
 | Request | User-visible status | Next implementation step | Runtime owner |
 | --- | --- | --- | --- |
-| Hugging Face cache import | Implemented as read-only discovery for verified MLX snapshots; Settings now shows skipped candidate reasons. | Add manifest/digest verification before load if cache mutation protection becomes required. | Osaurus host discovery/storage. |
+| Hugging Face cache import | Implemented as read-only discovery for verified MLX snapshots; Models > On Device and Settings show skipped candidate reasons. | Add manifest/digest verification before load if cache mutation protection becomes required. | Osaurus host discovery/storage. |
 | Hunyuan `hunyuan_v1_dense` | Blocked with an explicit unsupported-family diagnostic until vmlx has a native Hunyuan Dense factory. | Enable only after real-model validation lands upstream. | vmlx model factory and Osaurus diagnostics. |
 | DFlash speculative decoding | Research-only; no draft/target local generation contract exists today. | Define a feature-flagged draft-model API and benchmark harness. | vmlx or dedicated MLX speculative adapter. |
 | LongCat Flash/Next | Blocked with an explicit unsupported-family diagnostic; current public repos require custom LongCat code paths and large multimodal runtimes. | Wait for native runtime support and multimodal proof before local picker enablement. | vmlx model family support. |

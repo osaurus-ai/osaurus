@@ -364,6 +364,67 @@ struct ExternalModelLocatorTests {
         #expect(report?.skipped.isEmpty == true)
     }
 
+    @Test func manifestReloadsHFCacheModelsWithoutCopyingFiles() async {
+        await OsaurusTestGlobals.withPathsLock {
+            manifestReloadsHFCacheModelsWithoutCopyingFiles_body()
+        }
+    }
+
+    private func manifestReloadsHFCacheModelsWithoutCopyingFiles_body() {
+        let previousRoot = OsaurusPaths.overrideRoot
+        let previousOverride = ExternalModelLocator.testRootsOverride
+        let manifestRoot = makeTempDir()
+        let hfRoot = makeTempDir()
+        OsaurusPaths.overrideRoot = manifestRoot
+        ExternalModelLocator.invalidateInMemory()
+        defer {
+            OsaurusPaths.overrideRoot = previousRoot
+            ExternalModelLocator.testRootsOverride = previousOverride
+            ExternalModelLocator.invalidateInMemory()
+            try? FileManager.default.removeItem(at: manifestRoot)
+            try? FileManager.default.removeItem(at: hfRoot)
+        }
+
+        let fm = FileManager.default
+        let rev = "persisted123"
+        let modelDir = hfRoot.appendingPathComponent("models--org--persisted", isDirectory: true)
+        let refsDir = modelDir.appendingPathComponent("refs", isDirectory: true)
+        try? fm.createDirectory(at: refsDir, withIntermediateDirectories: true)
+        try? Data(rev.utf8).write(to: refsDir.appendingPathComponent("main"))
+        let snapshot = modelDir.appendingPathComponent("snapshots/\(rev)", isDirectory: true)
+        writeBundle(at: snapshot)
+
+        ExternalModelLocator.testRootsOverride = [(root: hfRoot, source: .huggingFaceCache)]
+        ExternalModelLocator.rescan()
+        let manifestFile = OsaurusPaths.externalModelsManifestFile()
+        #expect(FileManager.default.fileExists(atPath: manifestFile.path))
+        let manifestData = try? Data(contentsOf: manifestFile)
+        let manifestJSON =
+            manifestData.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let persistedModels = manifestJSON?["models"] as? [[String: Any]]
+        #expect(
+            persistedModels?.contains {
+                $0["id"] as? String == "org/persisted"
+                    && $0["bundlePath"] as? String == snapshot.standardizedFileURL.path
+            } == true
+        )
+
+        ExternalModelLocator.testRootsOverride = []
+        ExternalModelLocator.invalidateInMemory()
+        let models = ExternalModelLocator.models()
+        guard let reloaded = models.first(where: { $0.id == "org/persisted" }) else {
+            Issue.record("expected persisted HF cache model to reload from manifest")
+            return
+        }
+
+        #expect(reloaded.externalSource == ExternalModelLocator.Source.huggingFaceCache.rawValue)
+        #expect(reloaded.bundleDirectory?.standardizedFileURL.path == snapshot.standardizedFileURL.path)
+        #expect(
+            ExternalModelLocator.path(forId: "org/persisted")?.standardizedFileURL.path
+                == snapshot.standardizedFileURL.path
+        )
+    }
+
     @Test func rescan_reportsHFCacheSnapshotSkipReason() async {
         await OsaurusTestGlobals.withPathsLock {
             rescan_reportsHFCacheSnapshotSkipReason_body()
