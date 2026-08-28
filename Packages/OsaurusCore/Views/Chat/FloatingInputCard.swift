@@ -4138,21 +4138,13 @@ extension FloatingInputCard {
                 + message.foregroundColor(theme.primaryText))
                 .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                 .fixedSize(horizontal: false, vertical: true)
-            // Capsules must never wrap internally, so the strip flows to a
-            // second row when the fixed banner width (or a longer localized
-            // label) can't fit all three side by side.
-            FlowLayout(spacing: 8) {
-                swapActionButton(String(localized: "Activity Monitor", bundle: .module)) {
-                    NSWorkspace.shared.open(
-                        URL(fileURLWithPath:
-                            "/System/Applications/Utilities/Activity Monitor.app"))
-                }
-                swapActionButton(String(localized: "Unload Model", bundle: .module)) {
+            VStack(alignment: .leading, spacing: 8) {
+                swapPrimaryButton(String(localized: "Unload Model", bundle: .module), tint: tint) {
                     let target = swap.modelName ?? selectedModel
                     guard let target else { return }
                     Task { await ModelRuntime.shared.unload(name: target) }
                 }
-                swapActionButton(String(localized: "Keep Running", bundle: .module)) {
+                swapTextButton(String(localized: "Keep Running", bundle: .module)) {
                     withAnimation(.easeOut(duration: 0.2)) {
                         swapBannerDismissedAtSeverity = swap.severity
                     }
@@ -4182,21 +4174,35 @@ extension FloatingInputCard {
         )
     }
 
-    /// Small inline action for the swap banner, matching the caption
-    /// typography of the popover.
-    private func swapActionButton(_ title: String, action: @escaping () -> Void) -> some View {
+    /// Filled CTA for the swap banner's primary action, tinted to match the
+    /// banner severity.
+    private func swapPrimaryButton(
+        _ title: String, tint: Color, action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Text(verbatim: title)
                 .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
                 .lineLimit(1)
                 .fixedSize()
-                .foregroundColor(theme.primaryText)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule().stroke(theme.tertiaryText.opacity(0.4), lineWidth: 1)
-                )
+                .foregroundColor(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(tint.opacity(0.85)))
                 .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Borderless secondary action for the swap banner, plain text only.
+    private func swapTextButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(verbatim: title)
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                .lineLimit(1)
+                .fixedSize()
+                .foregroundColor(theme.secondaryText)
+                .padding(.vertical, 2)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
