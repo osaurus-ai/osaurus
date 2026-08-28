@@ -254,7 +254,10 @@ private extension ManagementView {
                         badge: badgeCount(for: tab),
                         badgeHighlight: badgeHighlight(for: tab)
                     )
-                }
+                },
+                // Developer Tools hides its tabs behind the header toggle so
+                // the everyday sidebar stays lean.
+                isCollapsible: section == .developers
             )
         }
     }
