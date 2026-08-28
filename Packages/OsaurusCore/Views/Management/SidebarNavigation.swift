@@ -236,6 +236,19 @@ private extension SidebarNavigation {
                     proxy.scrollTo(newValue, anchor: .center)
                 }
             }
+            .onChange(of: expandedCollapsibleSections) { oldValue, newValue in
+                // Switching a collapsible group ON reveals rows that may sit
+                // below the fold (Developer Tools is the last group), so
+                // scroll its final row into view to show what the switch
+                // unlocked. Collapsing scrolls nowhere.
+                let opened = newValue.subtracting(oldValue)
+                guard let sectionId = opened.first,
+                    let lastItem = sections.first(where: { $0.id == sectionId })?.items.last
+                else { return }
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    proxy.scrollTo(lastItem.id, anchor: .bottom)
+                }
+            }
             .onAppear {
                 // Ensure initial selection is visible
                 proxy.scrollTo(selection, anchor: .center)
