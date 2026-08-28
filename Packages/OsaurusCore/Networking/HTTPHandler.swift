@@ -2057,6 +2057,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "draft_strategy": settings.draftStrategy as Any? ?? NSNull(),
             "mtp_fallback_reason": settings.mtpFallbackReason as Any? ?? NSNull(),
             "compiled_batch_decode": settings.compiledBatchDecode,
+            "mtp_greedy_enforced": settings.mtpGreedyEnforced,
+            "sampler_was_changed": settings.samplerWasChanged,
         ]
     }
 

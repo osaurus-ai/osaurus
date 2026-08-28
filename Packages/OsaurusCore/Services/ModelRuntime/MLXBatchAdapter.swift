@@ -116,6 +116,15 @@ struct MLXBatchAdapter {
         /// the reason the setting just appears to do nothing.
         let mtpFallbackReason: String?
         let compiledBatchDecode: Bool
+        /// True when native MTP forced this request's sampler to greedy —
+        /// the machine-readable form of the coercion, carried by the same
+        /// single resolution that builds the run parameters, the readout,
+        /// and the API diagnostics.
+        var mtpGreedyEnforced: Bool = false
+        /// True when that enforcement actually CHANGED the sampler (the
+        /// pre-coercion resolution was not already greedy) — the condition
+        /// for the surfaced log line.
+        var samplerWasChanged: Bool = false
     }
 
     static func effectiveGenerationSettings(
@@ -215,7 +224,10 @@ struct MLXBatchAdapter {
             frequencyPenalty: resolved.frequencyPenalty,
             draftStrategy: resolved.draftStrategy,
             mtpFallbackReason: resolved.mtpFallbackReason,
-            compiledBatchDecode: resolved.compiledBatchDecode)
+            compiledBatchDecode: resolved.compiledBatchDecode,
+            mtpGreedyEnforced: true,
+            samplerWasChanged: resolved.temperature != 0 || resolved.topP != 1
+                || resolved.topK != 0 || resolved.minP != 0)
     }
 
     static func recordPendingEffectiveGenerationSettings(
@@ -1633,16 +1645,16 @@ struct MLXBatchAdapter {
             modelName: modelName
         )
         // Native MTP verifies drafts against the target's own argmax, so its
-        // output-equivalence guarantee is only defined under greedy decoding.
-        // Turning MTP on is therefore a request for greedy decoding. Coerced
-        // on the parameters that ACTUALLY run, and only when MTP is really
-        // active, so ordinary sampling is untouched everywhere else. This is
-        // the ONLY coercion site, and it is surfaced: the log line below and
-        // the "greedy-enforced" marker in the runtime's draft-strategy
-        // description keep it out of silent-override territory. Every other
-        // generation parameter (max tokens, stops, penalties, seed) continues
-        // to follow the request/runtime/bundle resolution untouched.
-        if Self.applyMTPGreedyIfNeeded(&mlxParams, draftStrategy: effectiveDraftStrategy) {
+        // output-equivalence guarantee is only defined under greedy decoding —
+        // turning MTP on is a request for greedy decoding. That coercion is
+        // resolved ONCE, inside `effectiveGenerationSettings` above:
+        // `mlxParams` is built from the already-coerced values, the API's
+        // `last_effective_generation` shows them, and the flags carried on
+        // `effective` drive this log and the `mtp_greedy_enforced` diagnostic.
+        // Every other generation parameter (max tokens, stops, penalties,
+        // seed) follows the request/runtime/bundle resolution untouched, and
+        // non-MTP requests keep their sampler everywhere.
+        if effective.samplerWasChanged {
             batchAdapterLog.info(
                 "native MTP active: greedy sampler enforced for this request model=\(modelName, privacy: .public) (bundle generation_config governs all non-MTP requests)"
             )
@@ -2352,25 +2364,4 @@ struct MLXBatchAdapter {
         }.joined(separator: ",")
     }
 
-    /// THE single greedy-while-MTP enforcement site, factored pure so the
-    /// contract is unit-testable: a request whose effective draft strategy
-    /// actually runs native MTP decodes greedy (temperature 0, top-p 1,
-    /// top-k 0, min-p 0 — output-equivalence is only defined under greedy);
-    /// every other strategy, including no drafter and DFlash 2, leaves the
-    /// request/runtime/bundle-resolved sampler untouched. Returns whether it
-    /// changed anything so the caller can surface the coercion.
-    static func applyMTPGreedyIfNeeded(
-        _ params: inout GenerateParameters,
-        draftStrategy: DraftStrategy?
-    ) -> Bool {
-        guard draftStrategy?.usesNativeMTP == true else { return false }
-        let coerced =
-            params.temperature != 0 || params.topP != 1
-            || params.topK != 0 || params.minP != 0
-        params.temperature = 0
-        params.topP = 1
-        params.topK = 0
-        params.minP = 0
-        return coerced
-    }
 }

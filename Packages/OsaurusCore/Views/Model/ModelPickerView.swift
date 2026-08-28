@@ -1077,6 +1077,11 @@ struct ModelPickerView: View {
                     .font(.system(size: 10))
                     .foregroundColor(theme.tertiaryText)
                     .fixedSize(horizontal: false, vertical: true)
+            } else if let help = option.help, !help.isEmpty {
+                Text(help)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.horizontal, 16)

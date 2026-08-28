@@ -2358,7 +2358,14 @@ extension FloatingInputCard {
                 ModelOptionSegment(id: "1", label: "1"),
                 ModelOptionSegment(id: "2", label: "2"),
                 ModelOptionSegment(id: "3", label: "3"),
-            ])
+            ]),
+            // The one selector whose choice also changes SAMPLING: active
+            // MTP decodes greedy (output-equivalence is only defined under
+            // argmax). Undisclosed, "why is my temperature ignored?" is
+            // unanswerable from the UI.
+            help: L(
+                "Auto activates only from measured tuning; 1–3 activate that depth directly. While active, this model decodes greedily (temperature 0); Off restores the configured sampling."
+            )
         )
     }
 
