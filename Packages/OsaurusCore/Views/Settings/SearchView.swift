@@ -82,7 +82,7 @@ struct SearchView: View {
 
     private var headerView: some View {
         ManagerHeaderWithActions(
-            title: L("Search"),
+            title: L("Web Search"),
             subtitle: subtitleText
         ) {
             HeaderPrimaryButton("Connect Provider", icon: "plus") {
