@@ -1,0 +1,24 @@
+# Literals that reach a localized parameter but are not UI strings.
+# One exact literal per line; '#' starts a comment.
+#
+# Prefer adding the string to Localizable.xcstrings. Use this file only when
+# translating the literal would be wrong -- code samples, protocol values, and
+# identifiers that must stay verbatim in every locale.
+#
+# Example URLs, sample numbers and path fragments are skipped by shape and do
+# not need an entry here; see EXAMPLE_VALUE in check-swift-localizing-params.py.
+
+# SandboxPluginEditorView.codeField placeholder: a JSON sample shown inside a
+# monospaced editor. Translating the keys would produce invalid JSON.
+{ \"key\": \"value\" }
+
+# ProvidersView / RemoteProviderEditSheet placeholders: an API key prefix and a
+# hostname pattern. Both are literal formats the user must type as shown.
+sk-...
+resource.cognitiveservices.azure.com
+
+# AgentChannelCustomConnectionSheet: an identifier the user copies verbatim.
+ops-webhook
+
+# ConnectionSection CORS placeholder: an example list, not a sentence.
+* or https://app.example.com, https://other.example.com
