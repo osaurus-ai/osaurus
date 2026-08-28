@@ -49,6 +49,27 @@
         }
 
         @Test
+        func decode_legacyConfigWithoutSetupComplete_preservesUpgradedInstall() throws {
+            let json =
+                """
+                {
+                  "cpus": 2,
+                  "memoryGB": 4,
+                  "network": "outbound",
+                  "autoStart": true
+                }
+                """
+            let config = try JSONDecoder().decode(
+                SandboxConfiguration.self,
+                from: Data(json.utf8)
+            )
+            // Config files written before setupComplete existed came from an
+            // already provisioned install; treating them as fresh would
+            // suppress the expected warm start after upgrade.
+            #expect(config.setupComplete)
+        }
+
+        @Test
         func encode_then_decode_lastBootDurations_preservesValues() throws {
             let original = SandboxConfiguration(
                 cpus: 4,

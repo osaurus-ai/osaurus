@@ -307,6 +307,25 @@ enum FeatureTelemetry {
         )
     }
 
+    /// A sandbox startup or per-agent provisioning failure. Every property is
+    /// a closed, low-cardinality token produced by the registrar; never pass
+    /// through an error message, path, domain, environment value, or agent id.
+    static func sandboxProvisionFailure(
+        category: String,
+        backend: String,
+        phase: String,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "sandbox_provision_failure",
+            [
+                "category": category,
+                "backend": backend,
+                "phase": phase,
+            ]
+        )
+    }
+
     // MARK: - Feature adoption / scope
 
     /// A model finished downloading. The model id comes from the curated

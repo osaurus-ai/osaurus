@@ -16,12 +16,12 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.88.0"),
-        // Pinned to the 0.35 line — the same Containerization release Apple
-        // Container 1.1.0 ships — for the OCI `initfsReference` provisioning
-        // path, configurable VM overhead, filesystem freeze/thaw/trim, and
-        // the hardened mount/vmnet work. Keep the app workspace lockfiles in
-        // step when bumping.
-        .package(url: "https://github.com/apple/containerization.git", .upToNextMinor(from: "0.35.0")),
+        // Keep this exact pin aligned with SandboxRuntimeAssets.initfsReference.
+        // Containerization 0.41 is the SDK shipped by Apple container 1.3 and
+        // includes restricted OCI capability defaults, vminit secret
+        // redaction, atomic image-store state, and startup cleanup fixes.
+        // Keep both app workspace lockfiles in step when bumping.
+        .package(url: "https://github.com/apple/containerization.git", exact: "0.41.0"),
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.0"),
         // MCP pulls EventSource transitively. Enable its AsyncHTTPClient
         // trait at the root so the target's conditional AsyncHTTPClient

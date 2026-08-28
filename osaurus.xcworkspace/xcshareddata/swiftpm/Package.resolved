@@ -1,5 +1,5 @@
 {
-  "originHash": "fb2c49e2932a1f307f826c7c9a765c205dd22891a395b272ba53f83ca6462f96",
+  "originHash": "339894846d7b32ea588f8d0835e2a96b0a1dd8b13b9fbb814baa6c2eb077d13d",
   "pins": [
     {
       "identity": "aachartkit-swift",
@@ -33,8 +33,8 @@
       "kind": "remoteSourceControl",
       "location": "https://github.com/apple/containerization.git",
       "state": {
-        "revision": "44bec8b9933bc491d0cbf44abac90a1f6aaebf6b",
-        "version": "0.35.0"
+        "revision": "5427fd21ded4b84034126caef5b3182900b4776d",
+        "version": "0.41.0"
       }
     },
     {
@@ -69,8 +69,8 @@
       "kind": "remoteSourceControl",
       "location": "https://github.com/grpc/grpc-swift-nio-transport.git",
       "state": {
-        "revision": "f62a09000685b5b86ee383b63e042f286b1a5422",
-        "version": "2.7.0"
+        "revision": "eaad084d6c26ff1f2e96f9c2ab76ef84d7165ab6",
+        "version": "2.9.2"
       }
     },
     {

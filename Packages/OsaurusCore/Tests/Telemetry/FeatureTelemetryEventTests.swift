@@ -395,6 +395,26 @@ struct FeatureTelemetryEventTests {
         #expect(business(rec.events[1].props).isEmpty)
     }
 
+    @Test func sandboxProvisionFailure_emitsOnlyClosedDimensions() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        FeatureTelemetry.sandboxProvisionFailure(
+            category: "runtime_start_failed",
+            backend: "vm",
+            phase: "runtime_start",
+            service: service
+        )
+
+        #expect(rec.events.count == 1)
+        #expect(rec.events[0].name == "sandbox_provision_failure")
+        let props = business(rec.events[0].props)
+        #expect(props.count == 3)
+        #expect(props["category"] as? String == "runtime_start_failed")
+        #expect(props["backend"] as? String == "vm")
+        #expect(props["phase"] as? String == "runtime_start")
+    }
+
     // MARK: - Remote-id hashing
 
     @Test func anonymizedRemoteId_is_deterministic_truncated_and_not_raw() {

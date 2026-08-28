@@ -105,6 +105,9 @@ struct SeatbeltSandboxTests {
         #expect(profile.contains("(allow network*)"))
         // No blanket home-directory read grant.
         #expect(!profile.contains("(subpath \"/Users\")"))
+        // Filesystem confinement is not enough if arbitrary code can connect
+        // to every user-session XPC service.
+        #expect(!profile.contains("(allow mach-lookup"))
 
         // The developer tree is read-only. It must appear only in the
         // read grant, never in the workspace/scratch write section.
@@ -184,6 +187,55 @@ struct SeatbeltSandboxTests {
         #expect(!result.stderr.contains("error retrieving current directory"))
         #expect(!result.stderr.contains("couldn't create cache file"))
         #expect(!result.stderr.contains("xcrun_db-"))
+    }
+
+    @Test("real profile denies reads and writes outside confined roots")
+    func profileConfinesHostFiles() async throws {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/sandbox-exec")
+        else { return }
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-seatbelt-boundary-\(UUID().uuidString)")
+        let workspace = root.appendingPathComponent("workspace")
+        let outsideSecret = root.appendingPathComponent("outside-secret")
+        let outsideWrite = root.appendingPathComponent("outside-write")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: workspace, withIntermediateDirectories: true)
+        try Data("do-not-read".utf8).write(to: outsideSecret)
+
+        let profile = SeatbeltSandbox.profile(
+            workspaceRoot: workspace.path,
+            tempDir: SeatbeltSandbox.scratchDir,
+            network: .denied
+        )
+        let read = try await SeatbeltExecutor.run(
+            SeatbeltExecutor.Request(
+                command: "/bin/cat '\(outsideSecret.path)'",
+                env: [:],
+                cwd: workspace.path,
+                timeout: 10,
+                profile: profile,
+                stdoutTee: nil,
+                stderrTee: nil,
+                onProcessStarted: nil
+            ))
+        #expect(read.exitCode != 0)
+        #expect(!read.stdout.contains("do-not-read"))
+
+        let write = try await SeatbeltExecutor.run(
+            SeatbeltExecutor.Request(
+                command: "/usr/bin/printf 'escaped' > '\(outsideWrite.path)'",
+                env: [:],
+                cwd: workspace.path,
+                timeout: 10,
+                profile: profile,
+                stdoutTee: nil,
+                stderrTee: nil,
+                onProcessStarted: nil
+            ))
+        #expect(write.exitCode != 0)
+        #expect(!FileManager.default.fileExists(atPath: outsideWrite.path))
     }
 
     @Test("network none denies network in the profile")

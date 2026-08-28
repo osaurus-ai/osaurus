@@ -127,17 +127,13 @@ final class CreateAgentState: ObservableObject {
         if createdAgentId != nil { return true }
         guard !isSaving else { return false }
         isSaving = true
-        let agent = Agent(
-            id: UUID(),
+        var agent = AgentManager.newCustomAgentRecord(
             name: resolvedName,
             description: selectedTemplate.tagline,
-            systemPrompt: selectedTemplate.systemPrompt,
-            createdAt: Date(),
-            updatedAt: Date(),
-            autonomousExec: AgentManager.sandboxDefaultAutonomousExec,
-            toolSelectionMode: .auto,
-            avatar: selectedAvatar
+            systemPrompt: selectedTemplate.systemPrompt
         )
+        agent.toolSelectionMode = .auto
+        agent.avatar = selectedAvatar
         AgentManager.shared.add(agent)
         createdAgentId = agent.id
         isSaving = false

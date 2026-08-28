@@ -127,7 +127,10 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var agentIndex: UInt32?
     /// Derived cryptographic address for this agent (nil = no address yet)
     public var agentAddress: String?
-    /// Controls the agent's ability to run arbitrary commands in the sandbox
+    /// Controls the agent's ability to run arbitrary commands in the sandbox.
+    /// `nil` is an unconfigured custom agent and resolves default-on when a
+    /// sandbox backend is available; `enabled: false` is an explicit opt-out.
+    /// The built-in Default agent is always hard-off at effective resolution.
     public var autonomousExec: AutonomousExecConfig?
     /// Per-agent plugin instruction overrides keyed by plugin ID
     public var pluginInstructions: [String: String]?
@@ -388,15 +391,12 @@ extension Agent {
 // MARK: - Autonomous Exec Configuration
 
 public struct AutonomousExecConfig: Codable, Sendable, Equatable {
-    /// Whether the agent's sandbox (autonomous code execution) is on. Note the
+    /// Whether the agent's sandbox (autonomous code execution) is on. The
     /// *effective* default is resolved in
-    /// `AgentManager.effectiveAutonomousExec`, not by this struct: the chip
-    /// defaults ON for the Default agent and newly created agents on supported
-    /// machines (`AgentManager.sandboxEnabledByDefault`). This field's own
-    /// default below stays `false` so it remains a neutral base for
-    /// `current ?? .default` mutations in the settings UI (which only flips
-    /// individual sub-toggles) and never silently turns the sandbox on for an
-    /// existing custom agent that was left unconfigured.
+    /// `AgentManager.effectiveAutonomousExec`, not by this struct: unconfigured
+    /// custom agents default ON on supported hosts, explicit false remains
+    /// OFF, and the built-in Default agent is always OFF. This field's own
+    /// default below stays `false` as a neutral mutation base.
     public var enabled: Bool
     public var maxCommandsPerTurn: Int
     public var pluginCreate: Bool

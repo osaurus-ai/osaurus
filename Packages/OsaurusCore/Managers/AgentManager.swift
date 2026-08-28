@@ -341,7 +341,33 @@ public final class AgentManager: ObservableObject {
         temperature: Float? = nil,
         maxTokens: Int? = nil
     ) -> Agent {
-        let agent = Agent(
+        let agent = Self.newCustomAgentRecord(
+            name: name,
+            description: description,
+            systemPrompt: systemPrompt,
+            themeId: themeId,
+            defaultModel: defaultModel,
+            temperature: temperature,
+            maxTokens: maxTokens
+        )
+        add(agent)
+        return agent
+    }
+
+    /// Shared seed for every newly authored custom agent, including the
+    /// regular create flow and onboarding. Keeping sandbox policy here avoids
+    /// one entry point silently drifting back to an unconfigured record.
+    static func newCustomAgentRecord(
+        name: String,
+        description: String = "",
+        systemPrompt: String = "",
+        themeId: UUID? = nil,
+        defaultModel: String? = nil,
+        temperature: Float? = nil,
+        maxTokens: Int? = nil,
+        now: Date = Date()
+    ) -> Agent {
+        Agent(
             id: UUID(),
             name: name,
             description: description,
@@ -351,12 +377,39 @@ public final class AgentManager: ObservableObject {
             temperature: temperature,
             maxTokens: maxTokens,
             isBuiltIn: false,
-            createdAt: Date(),
-            updatedAt: Date(),
+            createdAt: now,
+            updatedAt: now,
             autonomousExec: Self.sandboxDefaultAutonomousExec
         )
-        add(agent)
-        return agent
+    }
+
+    /// Build the record used by the Agents UI's duplicate action.
+    ///
+    /// `autonomousExec` is copied verbatim rather than re-seeded from the
+    /// default-on policy: `nil` remains unconfigured/default-on, while an
+    /// explicit `enabled: false` remains an opt-out on the duplicate.
+    static func duplicateRecord(
+        from agent: Agent,
+        name: String,
+        now: Date = Date()
+    ) -> Agent {
+        Agent(
+            id: UUID(),
+            name: name,
+            description: agent.description,
+            systemPrompt: agent.systemPrompt,
+            themeId: agent.themeId,
+            defaultModel: agent.defaultModel,
+            temperature: agent.temperature,
+            maxTokens: agent.maxTokens,
+            chatQuickActions: agent.chatQuickActions,
+            chatGreeting: agent.chatGreeting,
+            chatSubtitle: agent.chatSubtitle,
+            isBuiltIn: false,
+            createdAt: now,
+            updatedAt: now,
+            autonomousExec: agent.autonomousExec
+        )
     }
 
     /// Save a pre-built agent, refresh the list, and assign a cryptographic address.
@@ -768,12 +821,11 @@ extension AgentManager {
     /// Whether the sandbox (autonomous exec) toggle should default ON for
     /// newly created custom agents.
     ///
-    /// Gated on sandbox availability: the chat chip is hidden and the Linux VM
-    /// cannot run on unsupported machines (pre-macOS 26), so defaulting on
-    /// there would only inject an unusable placeholder into the model's
-    /// schema. Reading the published availability (seeded synchronously from
-    /// the OS version in `SandboxManager.State`) keeps this stable from the
-    /// first frame and lets tests force a value via
+    /// Gated on sandbox availability: macOS 26+ uses the Linux VM and older
+    /// supported hosts use the Seatbelt fallback. If neither backend exists,
+    /// defaulting on would only inject an unusable placeholder into the
+    /// model's schema. Reading the synchronously seeded published availability
+    /// keeps this stable from the first frame and lets tests force a value via
     /// `SandboxManager.State.shared.availability`.
     @MainActor
     public static var sandboxEnabledByDefault: Bool {
@@ -803,7 +855,17 @@ extension AgentManager {
         guard let agent = agent(for: agentId) else {
             return nil
         }
+        return Self.resolvedAutonomousExec(
+            for: agent,
+            availability: SandboxManager.resolveAvailability()
+        )
+    }
 
+    /// Pure policy seam used by effective resolution and rollout tests.
+    static func resolvedAutonomousExec(
+        for agent: Agent,
+        availability: SandboxAvailability
+    ) -> AutonomousExecConfig? {
         // Single resolution point, so hard-off here also stops
         // `SandboxToolRegistrar` from provisioning a VM for the Default agent.
         if agent.id == Agent.defaultId {
@@ -815,9 +877,7 @@ extension AgentManager {
         }
 
         // Unconfigured agent: sandbox on by default on supported machines.
-        // Resolved via the nonisolated availability check (not the MainActor
-        // `sandboxEnabledByDefault`) because this is called off-main too.
-        guard SandboxManager.resolveAvailability().isAvailable else { return nil }
+        guard availability.isAvailable else { return nil }
         return AutonomousExecConfig(enabled: true)
     }
 

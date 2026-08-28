@@ -504,22 +504,7 @@ struct AgentsView: View {
             newName = "\(agent.name) Copy \(counter)"
         }
 
-        let duplicated = Agent(
-            id: UUID(),
-            name: newName,
-            description: agent.description,
-            systemPrompt: agent.systemPrompt,
-            themeId: agent.themeId,
-            defaultModel: agent.defaultModel,
-            temperature: agent.temperature,
-            maxTokens: agent.maxTokens,
-            chatQuickActions: agent.chatQuickActions,
-            chatGreeting: agent.chatGreeting,
-            chatSubtitle: agent.chatSubtitle,
-            isBuiltIn: false,
-            createdAt: Date(),
-            updatedAt: Date()
-        )
+        let duplicated = AgentManager.duplicateRecord(from: agent, name: newName)
 
         AgentStore.save(duplicated)
         agentManager.refresh()
@@ -3436,15 +3421,15 @@ struct AgentDetailView: View {
                     updateAutonomousExec(from: execConfig) { $0.enabled = enabled }
                 }
             ),
-            isInteractive: sandboxRunning,
+            isInteractive: sandboxAvailable,
             configureLabel: "Sandbox permissions & secrets",
             onConfigure: { selectedTab = .builtIn(.sandbox) }
         ) {
             if !sandboxAvailable {
-                sandboxFeatureHint("Container-based execution requires macOS 26 or later.")
+                sandboxFeatureHint("Sandboxed execution is unavailable on this device.")
             } else if !sandboxRunning {
                 sandboxFeatureHint(
-                    "Start the sandbox container from the Sandbox status bar to enable this."
+                    "This setting will apply when the sandbox starts."
                 )
             }
         }
@@ -5351,10 +5336,8 @@ struct AgentDetailView: View {
 
     /// Sandbox execution toggles, surfaced in the Sandbox tab's Execution
     /// section via the shared `featureCard` visual. `interactive` is false
-    /// when the sandbox is unavailable / not running: the rows still render
-    /// (so the capability is discoverable) but the switches are disabled
-    /// and dimmed, paired with an explanatory hint from
-    /// `sandboxExecSubsection`.
+    /// only when the sandbox is unavailable: users can configure execution
+    /// before first provisioning without triggering a runtime start.
     @ViewBuilder
     private func sandboxExecToggles(
         execConfig: AutonomousExecConfig?,
@@ -5429,9 +5412,9 @@ struct AgentDetailView: View {
     }
 
     /// Sandbox execution rows for the Sandbox tab's Execution section.
-    /// Shows the toggles in every sandbox state: dimmed + disabled (with an
-    /// explanatory hint) when the sandbox is unavailable or not running,
-    /// fully interactive once it's running. The tab gates this on
+    /// Shows the toggles in every sandbox state: disabled only when the
+    /// sandbox is unavailable, and otherwise configurable before first
+    /// provisioning. The tab gates this on
     /// `isCustomAgent`.
     @ViewBuilder
     private var sandboxExecSubsection: some View {
@@ -5441,12 +5424,12 @@ struct AgentDetailView: View {
             abilityPreviewAutonomousConfig
             ?? agentManager.effectiveAutonomousExec(for: agent.id)
 
-        sandboxExecToggles(execConfig: execConfig, interactive: sandboxRunning)
+        sandboxExecToggles(execConfig: execConfig, interactive: sandboxAvailable)
         if !sandboxAvailable {
             sandboxFeatureHint("Sandboxed execution is unavailable on this device.")
         } else if !sandboxRunning {
             sandboxFeatureHint(
-                "Start the sandbox from the Sandbox status bar to enable these."
+                "Changes will apply when the sandbox starts."
             )
         }
     }
@@ -8227,23 +8210,16 @@ private struct AgentEditorSheet: View {
         // agent so `seedEnabledCapabilitiesIfNeeded` is a no-op on first
         // Capabilities-tab open. The auto-grow path keeps these sets fresh
         // when new plugins are installed later.
-        let agent = Agent(
-            id: UUID(),
+        var agent = AgentManager.newCustomAgentRecord(
             name: trimmedName,
             description: "",
             systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
             themeId: nil,
-            defaultModel: selectedModel,
-            temperature: nil,
-            maxTokens: nil,
-            isBuiltIn: false,
-            createdAt: Date(),
-            updatedAt: Date(),
-            autonomousExec: AgentManager.sandboxDefaultAutonomousExec,
-            toolSelectionMode: draftMode,
-            manualToolNames: Array(draftToolNames),
-            avatar: selectedAvatar
+            defaultModel: selectedModel
         )
+        agent.toolSelectionMode = draftMode
+        agent.manualToolNames = Array(draftToolNames)
+        agent.avatar = selectedAvatar
 
         onSave(agent)
     }
