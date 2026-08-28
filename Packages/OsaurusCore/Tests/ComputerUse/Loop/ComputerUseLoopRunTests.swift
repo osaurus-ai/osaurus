@@ -167,6 +167,53 @@ final class ComputerUseLoopRunTests: XCTestCase {
         XCTAssertTrue(clicks.isEmpty, "An unresolved target must never reach the driver")
     }
 
+    func testAmbiguousDescribeReturnsCandidateMarksWithoutEscalating() async {
+        let d = driver([
+            el("reply-all", "button", "Reply all"),
+            el("reply-sender", "button", "Reply sender"),
+        ])
+        let provider: AgentStepProvider = { input in
+            if input.lastToolResult?.localizedCaseInsensitiveContains("ambiguous target") ?? false {
+                return ModelActionCall(
+                    id: "pick-mark",
+                    arguments: AgentAction(
+                        verb: .click,
+                        target: AgentTarget(mark: 2),
+                        note: "click reply sender"
+                    ).argumentsJSON()
+                )
+            }
+            if input.lastToolResult?.localizedCaseInsensitiveContains("action succeeded") ?? false {
+                return ModelActionCall(
+                    id: "done",
+                    arguments: AgentAction(verb: .done, reason: "resolved ambiguity").argumentsJSON()
+                )
+            }
+            return ModelActionCall(
+                id: "ambiguous",
+                arguments: AgentAction(
+                    verb: .click,
+                    target: AgentTarget(describe: "reply"),
+                    note: "ambiguous reply"
+                ).argumentsJSON()
+            )
+        }
+
+        let result = await run(d, provider: provider, limits: RunLimits(maxSteps: 6, wallClockSeconds: 30))
+
+        XCTAssertTrue(result.outcome.isSuccess, "Expected recovery via mark; got \(result.outcome)")
+        XCTAssertEqual(result.metrics.ambiguousTargets, 1)
+        XCTAssertEqual(result.metrics.targetResolveAttempts, 2)
+        XCTAssertEqual(result.metrics.targetResolveSuccesses, 1)
+        XCTAssertEqual(result.metrics.maxTier, .ax, "Ambiguity should ask for a mark, not escalate capture")
+        let clicks = await d.elementActions
+        XCTAssertEqual(clicks.count, 1, "Only the disambiguated click should reach the driver")
+        guard case let .click(id, _, _) = clicks.first else {
+            return XCTFail("Expected a click; got \(clicks)")
+        }
+        XCTAssertEqual(id, "reply-sender")
+    }
+
     // MARK: - Cancellation
 
     func testInterruptTerminatesAsInterrupted() async {
@@ -320,6 +367,30 @@ final class ComputerUseLoopRunTests: XCTestCase {
         }
         let coords = await d.coordinateActions
         XCTAssertTrue(coords.isEmpty, "An unresolved drag destination must never reach the driver")
+    }
+
+    func testDragWithAmbiguousDestinationRecordsFailedResolutionAndDoesNotDrive() async {
+        let d = driver([
+            el("card", "cell", "Card"),
+            el("trash-left", "button", "Trash"),
+            el("trash-right", "button", "Trash"),
+        ])
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .drag, target: AgentTarget(mark: 1), to: AgentTarget(describe: "Trash")),
+                AgentAction(verb: .giveUp, reason: "ambiguous destination"),
+            ]),
+            limits: RunLimits(maxSteps: 10, wallClockSeconds: 30)
+        )
+        guard case .gaveUp = result.outcome else {
+            return XCTFail("Expected gaveUp after ambiguous destination feedback; got \(result.outcome)")
+        }
+        XCTAssertEqual(result.metrics.ambiguousTargets, 1)
+        XCTAssertEqual(result.metrics.targetResolveAttempts, 2)
+        XCTAssertEqual(result.metrics.targetResolveSuccesses, 1)
+        let coords = await d.coordinateActions
+        XCTAssertTrue(coords.isEmpty, "An ambiguous drag destination must never reach the driver")
     }
 
     // MARK: - Loop robustness (Phase 3)

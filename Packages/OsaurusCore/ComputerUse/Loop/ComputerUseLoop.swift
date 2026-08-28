@@ -616,16 +616,27 @@ public enum ComputerUseLoop {
 
                 // Resolve the element for element-addressed verbs.
                 var resolvedElement: CUElement? = nil
+                var resolutionEvidence: TargetResolutionEvidence?
                 if requiresTarget(action.verb) || action.target != nil {
                     let resolution = TargetResolver.resolve(action.target, view: view, snapshot: snapshot)
                     switch resolution {
-                    case .resolved(_, let element):
+                    case .resolved(_, let element, let evidence):
                         resolvedElement = element
+                        resolutionEvidence = evidence
                         metrics.recordResolveAttempt(success: true)
                         consecutiveReobserve = 0
                         lastReobserveTargetKey = nil
                         // Resolved against the AX tree — no pixels needed; drop back to ax.
                         currentTier = .ax
+                    case .ambiguous(let reason, let candidates):
+                        metrics.recordResolveAttempt(success: false)
+                        metrics.ambiguousTargets += 1
+                        consecutiveReobserve = 0
+                        lastReobserveTargetKey = nil
+                        toolResult =
+                            "Ambiguous target: \(reason)\n"
+                            + renderResolutionCandidates(candidates)
+                            + "\nRetry with one exact `mark`."
                     case .reobserve(let reason):
                         metrics.recordResolveAttempt(success: false)
                         let key = targetKey(action.target)
@@ -696,9 +707,19 @@ public enum ComputerUseLoop {
                 if action.verb == .drag {
                     let destResolution = TargetResolver.resolve(action.to, view: view, snapshot: snapshot)
                     switch destResolution {
-                    case .resolved(_, let element):
+                    case .resolved(_, let element, _):
+                        metrics.recordResolveAttempt(success: true)
                         destinationElement = element
+                    case .ambiguous(let reason, let candidates):
+                        metrics.recordResolveAttempt(success: false)
+                        metrics.ambiguousTargets += 1
+                        toolResult =
+                            "Couldn't resolve the drag destination: \(reason)\n"
+                            + renderResolutionCandidates(candidates)
+                            + "\nRetry with one exact destination `mark`."
+                        advancedStep = false
                     case .reobserve(let reason), .deadEnd(let reason):
+                        metrics.recordResolveAttempt(success: false)
                         toolResult = "Couldn't resolve the drag destination: \(reason)"
                         advancedStep = false
                     }
@@ -740,6 +761,7 @@ public enum ComputerUseLoop {
                         action: action,
                         element: resolvedElement,
                         destinationElement: destinationElement,
+                        resolutionEvidence: resolutionEvidence,
                         pid: pid,
                         driver: driver,
                         availability: availability,
@@ -1091,6 +1113,7 @@ public enum ComputerUseLoop {
         action: AgentAction,
         element: CUElement?,
         destinationElement: CUElement? = nil,
+        resolutionEvidence: TargetResolutionEvidence? = nil,
         pid: Int32,
         driver: MacDriver,
         availability: MacDriverAvailability,
@@ -1277,6 +1300,9 @@ public enum ComputerUseLoop {
         if result.removed { out += " (the element was removed)" }
         if let delta = result.delta?.focusedElement {
             out += " Focus moved to \(delta.role)" + (delta.label.map { " \"\($0)\"" } ?? "") + "."
+        }
+        if let resolutionEvidence {
+            out += " Target resolved by \(describeResolutionEvidence(resolutionEvidence))."
         }
         switch result.routeUsed {
         case .hidFallback:
@@ -1578,6 +1604,30 @@ public enum ComputerUseLoop {
         if let mark = target.mark { return "mark:\(mark)" }
         if let d = target.describe { return "desc:\(d.lowercased())" }
         return "<empty>"
+    }
+
+    private static func renderResolutionCandidates(_ candidates: [TargetResolutionCandidate]) -> String {
+        guard !candidates.isEmpty else { return "Candidates: none." }
+        let lines = candidates.map { candidate in
+            "- mark \(candidate.mark): \(describe(candidate)) "
+                + "(confidence \(formatConfidence(candidate.confidence)), \(candidate.reason))"
+        }
+        return "Candidates:\n" + lines.joined(separator: "\n")
+    }
+
+    private static func describeResolutionEvidence(_ evidence: TargetResolutionEvidence) -> String {
+        "\(evidence.strategy.rawValue) confidence \(formatConfidence(evidence.confidence))"
+    }
+
+    private static func formatConfidence(_ value: Double) -> String {
+        String(format: "%.2f", value)
+    }
+
+    private static func describe(_ candidate: TargetResolutionCandidate) -> String {
+        var s = candidate.role
+        if let label = candidate.label, !label.isEmpty { s += " \"\(label)\"" }
+        if let value = candidate.value, !value.isEmpty { s += " value=\"\(value)\"" }
+        return s
     }
 
     private static func describe(_ element: CUElement) -> String {
