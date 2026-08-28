@@ -703,6 +703,21 @@ public enum ComputerUseLoop {
                         advancedStep = false
                     }
                     if destinationElement == nil { break }
+                    if let reason = dragBoundaryViolation(start: resolvedElement, destination: destinationElement) {
+                        metrics.blocked += 1
+                        feed.emit(
+                            SubagentActivityEvent(
+                                step: step + 1,
+                                kind: .blocked,
+                                title: "Blocked drag across boundary",
+                                detail: reason,
+                                success: false
+                            )
+                        )
+                        toolResult = "Blocked drag: \(reason)"
+                        advancedStep = false
+                        break
+                    }
                 }
 
                 // Classify the real effect (verb baseline refined upward by the
@@ -1578,6 +1593,26 @@ public enum ComputerUseLoop {
         if let mark = target.mark { return "mark:\(mark)" }
         if let d = target.describe { return "desc:\(d.lowercased())" }
         return "<empty>"
+    }
+
+    private static func dragBoundaryViolation(start: CUElement?, destination: CUElement?) -> String? {
+        guard let start, let destination else { return nil }
+        switch (start.windowId, destination.windowId) {
+        case let (startWindow?, destinationWindow?):
+            guard startWindow == destinationWindow else {
+                return "Start mark is in window \(startWindow), but destination mark is in window "
+                    + "\(destinationWindow). Choose endpoints in the same window or ask the user to drag manually."
+            }
+            return nil
+        case (nil, nil):
+            // Real app-window elements inherit a window id from capture. A nil/nil
+            // pair is reserved for non-window surfaces such as menu-bar items, so
+            // it cannot prove a cross-window drag and is allowed only by that invariant.
+            return nil
+        default:
+            return "Only one drag endpoint has a window id, so the loop cannot prove both endpoints are in "
+                + "the same window. Re-observe or choose a safer same-window target."
+        }
     }
 
     private static func describe(_ element: CUElement) -> String {

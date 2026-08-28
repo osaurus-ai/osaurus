@@ -220,6 +220,23 @@ final class ComputerUseGateInspectorTests: XCTestCase {
                 expectedCeilingContribution: nil
             ),
             ParityCase(
+                name: "dangerous launcher target",
+                input: ComputerUseGateInspectionInput(
+                    policy: AutonomyPolicy(globalPreset: .autonomous),
+                    appName: "Dock",
+                    verb: .click,
+                    targetLabel: "Terminal",
+                    targetRole: "AXButton"
+                ),
+                expectedEffect: .navigate,
+                expectedDecision: .confirm,
+                expectedFinalDisposition: .confirm,
+                expectedAllowlistAllowed: true,
+                expectedDangerousConfirm: true,
+                expectedPerAppContribution: nil,
+                expectedCeilingContribution: nil
+            ),
+            ParityCase(
                 name: "open app",
                 input: ComputerUseGateInspectionInput(
                     policy: AutonomyPolicy(globalPreset: .balanced, allowlist: ["mail"]),

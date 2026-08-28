@@ -304,16 +304,22 @@ public struct AutonomyPolicy: Codable, Sendable, Equatable {
         "disk utility", "com.apple.diskutility",
         "script editor", "com.apple.scripteditor",
         "automator", "com.apple.automator",
+        "shortcuts", "com.apple.shortcuts",
+        "docker", "orbstack", "utm", "virtualbox", "parallels",
         "1password", "bitwarden", "dashlane", "lastpass",
     ]
 
-    /// Whether driving `app` must always confirm because it's a sensitive app
-    /// (see `forcedConfirmAppNeedles`). `nil`/empty apps don't match — the
-    /// allowlist already rejects unknown apps under a restricted policy.
-    public func requiresForcedConfirm(app: String?) -> Bool {
-        guard let app else { return false }
-        let n = Self.normalize(app)
-        guard !n.isEmpty else { return false }
-        return Self.forcedConfirmAppNeedles.contains { n.contains($0) }
+    /// Whether driving `app` or a launch-like `targetLabel` must always confirm
+    /// because it references a sensitive app (see `forcedConfirmAppNeedles`).
+    /// Checking the target label covers launcher clicks from Dock, Spotlight, or
+    /// Finder, where the driven app is the launcher but the label names the app
+    /// being opened. `nil`/empty candidates do not match.
+    public func requiresForcedConfirm(app: String?, targetLabel: String? = nil) -> Bool {
+        [app, targetLabel].contains { candidate in
+            guard let candidate else { return false }
+            let n = Self.normalize(candidate)
+            guard !n.isEmpty else { return false }
+            return Self.forcedConfirmAppNeedles.contains { n.contains($0) }
+        }
     }
 }

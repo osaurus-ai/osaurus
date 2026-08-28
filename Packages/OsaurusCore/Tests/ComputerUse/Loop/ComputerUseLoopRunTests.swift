@@ -24,13 +24,32 @@ final class ComputerUseLoopRunTests: XCTestCase {
 
     // MARK: - Fixtures
 
-    private func el(_ id: String, _ role: String, _ label: String?, value: String? = nil) -> CUElement {
-        CUElement(id: id, role: role, label: label, value: value)
+    private struct RunHarnessResult {
+        let result: ComputerUseRunResult
+        let feed: SubagentFeed
+    }
+
+    private func el(
+        _ id: String,
+        _ role: String,
+        _ label: String?,
+        value: String? = nil,
+        windowId: Int? = nil,
+        x: Int = 0,
+        y: Int = 0,
+        w: Int = 0,
+        h: Int = 0
+    ) -> CUElement {
+        CUElement(id: id, role: role, label: label, value: value, windowId: windowId, x: x, y: y, w: w, h: h)
     }
 
     /// A driver with one focused app (so `currentPid` is non-nil from the
     /// start) serving a single steady-state snapshot.
-    private func driver(_ elements: [CUElement], pid: Int32 = 4242) -> MockMacDriver {
+    private func driver(
+        _ elements: [CUElement],
+        pid: Int32 = 4242,
+        windows: [CUWindowSummary]? = nil
+    ) -> MockMacDriver {
         let snap = CUSnapshot(
             snapshotId: 1,
             pid: pid,
@@ -38,7 +57,7 @@ final class ComputerUseLoopRunTests: XCTestCase {
             focusedWindow: "Main",
             tier: .ax,
             truncated: false,
-            windows: [CUWindowSummary(id: 1, title: "Main", focused: true, x: 0, y: 0, w: 800, h: 600)],
+            windows: windows ?? [CUWindowSummary(id: 1, title: "Main", focused: true, x: 0, y: 0, w: 800, h: 600)],
             elements: elements,
             image: nil
         )
@@ -56,18 +75,38 @@ final class ComputerUseLoopRunTests: XCTestCase {
         interrupt: InterruptToken = InterruptToken(),
         limits: RunLimits = RunLimits(wallClockSeconds: 30)
     ) async -> ComputerUseRunResult {
-        await ComputerUseLoop.run(
+        await runWithFeed(
+            driver,
+            provider: provider,
+            gate: gate,
+            confirm: confirm,
+            interrupt: interrupt,
+            limits: limits
+        ).result
+    }
+
+    private func runWithFeed(
+        _ driver: MockMacDriver,
+        provider: @escaping AgentStepProvider,
+        gate: ComputerUseGating = HardwiredGate(),
+        confirm: @escaping @Sendable (ActionPreview) async -> Bool = { _ in true },
+        interrupt: InterruptToken = InterruptToken(),
+        limits: RunLimits = RunLimits(wallClockSeconds: 30)
+    ) async -> RunHarnessResult {
+        let feed = SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "test goal")
+        let result = await ComputerUseLoop.run(
             goal: "test goal",
             modelId: "test-model",
             driver: driver,
             gate: gate,
-            feed: SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "test goal"),
+            feed: feed,
             interrupt: interrupt,
             confirm: confirm,
             limits: limits,
             sessionId: "cu-test",
             nextAction: provider
         )
+        return RunHarnessResult(result: result, feed: feed)
     }
 
     // MARK: - Terminal verbs
@@ -320,6 +359,89 @@ final class ComputerUseLoopRunTests: XCTestCase {
         }
         let coords = await d.coordinateActions
         XCTAssertTrue(coords.isEmpty, "An unresolved drag destination must never reach the driver")
+    }
+
+    func testDragAcrossWindowsIsBlockedBeforeDriver() async {
+        let windows = [
+            CUWindowSummary(id: 1, title: "Main", focused: true, x: 0, y: 0, w: 800, h: 600),
+            CUWindowSummary(id: 2, title: "Other", focused: false, x: 900, y: 0, w: 800, h: 600),
+        ]
+        let d = driver(
+            [
+                el("card", "cell", "Card", windowId: 1),
+                el("trash", "button", "Trash", windowId: 2),
+            ],
+            windows: windows
+        )
+        let harness = await runWithFeed(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .drag, target: AgentTarget(mark: 1), to: AgentTarget(mark: 2), note: "cross"),
+                AgentAction(verb: .giveUp, reason: "blocked"),
+            ]),
+            limits: RunLimits(maxSteps: 10, wallClockSeconds: 30)
+        )
+        let result = harness.result
+
+        guard case .gaveUp = result.outcome else {
+            return XCTFail("Expected giveUp after blocked drag; got \(result.outcome)")
+        }
+        XCTAssertEqual(result.metrics.blocked, 1)
+        let coords = await d.coordinateActions
+        XCTAssertTrue(coords.isEmpty, "A cross-window drag must never reach the driver")
+        let blocked = harness.feed.currentEvents().filter { $0.kind == .blocked }
+        XCTAssertEqual(blocked.last?.title, "Blocked drag across boundary")
+        XCTAssertEqual(blocked.last?.success, false)
+        XCTAssertTrue(blocked.last?.detail?.contains("destination mark is in window 2") == true)
+    }
+
+    func testDragWithinKnownWindowStillDrives() async {
+        let d = driver([
+            el("card", "cell", "Card", windowId: 1, x: 10, y: 20, w: 40, h: 20),
+            el("drop", "cell", "Drop", windowId: 1, x: 120, y: 20, w: 40, h: 20),
+        ])
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .drag, target: AgentTarget(mark: 1), to: AgentTarget(mark: 2), note: "same window"),
+                AgentAction(verb: .done, reason: "dragged"),
+            ]),
+            limits: RunLimits(maxSteps: 10, wallClockSeconds: 30)
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        XCTAssertEqual(result.metrics.blocked, 0)
+        let coords = await d.coordinateActions
+        XCTAssertEqual(coords.count, 1, "A same-window drag should still reach the driver")
+        guard case let .drag(fromX, fromY, toX, toY, pid)? = coords.first else {
+            return XCTFail("Expected coordinate drag; got \(coords)")
+        }
+        XCTAssertEqual(pid, 4242)
+        XCTAssertNotEqual(fromX, toX)
+        XCTAssertEqual(fromY, toY)
+    }
+
+    func testDragWithOnlyOneKnownWindowIdIsBlockedBeforeDriver() async {
+        let d = driver([
+            el("card", "cell", "Card", windowId: 1),
+            el("drop", "cell", "Drop"),
+        ])
+        let harness = await runWithFeed(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .drag, target: AgentTarget(mark: 1), to: AgentTarget(mark: 2), note: "mixed"),
+                AgentAction(verb: .giveUp, reason: "blocked"),
+            ]),
+            limits: RunLimits(maxSteps: 10, wallClockSeconds: 30)
+        )
+
+        guard case .gaveUp = harness.result.outcome else {
+            return XCTFail("Expected giveUp after unverifiable drag; got \(harness.result.outcome)")
+        }
+        XCTAssertEqual(harness.result.metrics.blocked, 1)
+        let coords = await d.coordinateActions
+        XCTAssertTrue(coords.isEmpty, "A drag with only one known window id must never reach the driver")
+        XCTAssertEqual(harness.feed.currentEvents().last(where: { $0.kind == .blocked })?.success, false)
     }
 
     // MARK: - Loop robustness (Phase 3)

@@ -50,7 +50,7 @@ public struct ComputerUseGate: ComputerUseGating {
         //    (often-empty) allowlist. Reads never reach here, so this only ever
         //    affects navigate/edit/consequential actions.
         var disposition = policy.disposition(for: effect, app: appName, ceiling: ceiling)
-        if effect >= .navigate, policy.requiresForcedConfirm(app: appName) {
+        if effect >= .navigate, policy.requiresForcedConfirm(app: appName, targetLabel: targetLabel) {
             disposition = AutonomyDisposition.strictest(disposition, .confirm)
         }
         switch disposition {
