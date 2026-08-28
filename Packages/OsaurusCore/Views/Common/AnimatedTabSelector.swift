@@ -152,8 +152,8 @@ enum ToolsTab: String, CaseIterable, AnimatedTabItem {
 
     var title: String {
         switch self {
-        case .all: return L("All")
-        case .connections: return L("Connections")
+        case .all: return L("All Tools")
+        case .connections: return L("MCP")
         case .custom: return L("Custom")
         }
     }

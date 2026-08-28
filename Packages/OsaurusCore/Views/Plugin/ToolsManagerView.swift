@@ -225,7 +225,7 @@ struct ToolsManagerView: View {
 
                     if !remoteGroups.isEmpty {
                         ToolSectionDisclosureHeader(
-                            title: L("Connections"),
+                            title: L("MCP"),
                             icon: "server.rack",
                             count: remoteGroups.reduce(0) { $0 + $1.tools.count },
                             isExpanded: isCatalogSectionExpanded(.connections),
