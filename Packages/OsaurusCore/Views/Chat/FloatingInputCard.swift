@@ -4107,24 +4107,33 @@ extension FloatingInputCard {
         // Full sentences per phase rather than an interpolated verb: the
         // verb-plus-name word order doesn't survive translation (German
         // splits the verb around the model name).
+        //
+        // The sentence names SWAP and carries the measured growth. "Low on
+        // memory" was tried and reads as the RAM tight-fit warning — but this
+        // banner fires on episode swap GROWTH, which is a different (and
+        // sometimes concurrent-true) condition; the GB figure is the evidence
+        // that separates a 1.6 GB blip from a 25 GB thrash. Translations must
+        // keep the GB slot before the model slot — both are %@ and swapping
+        // them swaps the VALUES.
         let loading = swap.phase == .loading
+        let peakGB = Self.formatGigabytes(max(0, swap.peakGrowthBytes))
         let message: Text
         switch (critical, loading) {
         case (true, true):
             message = Text(
-                "Your Mac is running low on memory while loading \(modelLabel), so responses will be slower.",
+                "Your Mac started swapping heavily (\(peakGB) GB) while loading \(modelLabel), so responses will be slower.",
                 bundle: .module)
         case (true, false):
             message = Text(
-                "Your Mac is running low on memory while running \(modelLabel), so responses will be slower.",
+                "Your Mac started swapping heavily (\(peakGB) GB) while running \(modelLabel), so responses will be slower.",
                 bundle: .module)
         case (false, true):
             message = Text(
-                "Your Mac is getting low on memory while loading \(modelLabel), so responses may slow down.",
+                "Your Mac started swapping (\(peakGB) GB) while loading \(modelLabel), so responses may slow down.",
                 bundle: .module)
         case (false, false):
             message = Text(
-                "Your Mac is getting low on memory while running \(modelLabel), so responses may slow down.",
+                "Your Mac started swapping (\(peakGB) GB) while running \(modelLabel), so responses may slow down.",
                 bundle: .module)
         }
         var tip: Text =
@@ -4158,9 +4167,19 @@ extension FloatingInputCard {
                     guard let target else { return }
                     Task { await ModelRuntime.shared.unload(name: target) }
                 }
-                swapTextButton(String(localized: "Keep Running", bundle: .module)) {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        swapBannerDismissedAtSeverity = swap.severity
+                HStack(spacing: 18) {
+                    swapTextButton(String(localized: "Keep Running", bundle: .module)) {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            swapBannerDismissedAtSeverity = swap.severity
+                        }
+                    }
+                    // The see-for-yourself affordance: the banner reports a
+                    // host-wide condition, so the user gets the tool that
+                    // shows the whole host.
+                    swapTextButton(String(localized: "Activity Monitor", bundle: .module)) {
+                        NSWorkspace.shared.open(
+                            URL(fileURLWithPath:
+                                "/System/Applications/Utilities/Activity Monitor.app"))
                     }
                 }
             }
@@ -4182,10 +4201,10 @@ extension FloatingInputCard {
         .accessibilityLabel(
             critical
                 ? Text(
-                    "Your Mac is running low on memory while \(modelLabel) is loaded: responses will be slower",
+                    "Heavy swapping (\(peakGB) GB) while \(modelLabel) is loaded: responses will be slower",
                     bundle: .module)
                 : Text(
-                    "Your Mac is getting low on memory while \(modelLabel) is loaded: responses may slow down",
+                    "Swapping (\(peakGB) GB) while \(modelLabel) is loaded: responses may slow down",
                     bundle: .module)
         )
     }
