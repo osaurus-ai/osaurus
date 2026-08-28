@@ -8,13 +8,6 @@
 import AppKit
 import SwiftUI
 
-/// Lets the connectivity filter drive the header `HeaderTabsRow`, so the
-/// Providers tab uses the same segmented control as every other settings tab.
-/// `title` maps to the existing `displayName`.
-extension ProviderConnectivityFilter: AnimatedTabItem {
-    var title: String { displayName }
-}
-
 struct RemoteProvidersView: View {
     @ObservedObject private var manager = RemoteProviderManager.shared
     @ObservedObject private var themeManager = ThemeManager.shared
@@ -94,31 +87,25 @@ struct RemoteProvidersView: View {
 
     @ViewBuilder
     private var headerView: some View {
-        // Once providers exist, the connectivity filter rides the header
-        // `tabsRow` like every other settings tab. The empty state has nothing
-        // to filter, so it falls back to the plain actions header (same pattern
-        // as `ThemesView`).
-        if userConfiguredProviders.isEmpty {
-            ManagerHeaderWithActions(
-                title: L("Cloud Models"),
-                subtitle: subtitleText
-            ) {
-                headerActions
-            }
-        } else {
-            ManagerHeaderWithTabs(
-                title: L("Cloud Models"),
-                subtitle: subtitleText
-            ) {
-                headerActions
-            } tabsRow: {
-                HeaderTabsRow(selection: $providerFilter)
-            }
+        // The connectivity states (All / Attention / Connected / Disabled)
+        // are a status filter, not content categories, so they live behind a
+        // funnel filter button in the header actions rather than a tab bar.
+        ManagerHeaderWithActions(
+            title: L("Cloud Models"),
+            subtitle: subtitleText
+        ) {
+            headerActions
         }
     }
 
     @ViewBuilder
     private var headerActions: some View {
+        if !userConfiguredProviders.isEmpty {
+            ConnectivityFilterButton(
+                selection: $providerFilter,
+                count: { connectivitySnapshot.filtered(by: $0, issueKind: nil).count }
+            )
+        }
         if userConfiguredProviders.count > 1 {
             HeaderIconButton("list.bullet.indent", help: "Reorder providers") {
                 showReorderSheet = true
@@ -953,6 +940,122 @@ private struct ProviderCardView: View {
             return theme.infoColor
         }
         return Color.orange
+    }
+}
+
+// MARK: - Connectivity Filter Button
+
+/// Funnel button in the header actions that filters the provider list by
+/// connectivity state. Uses the same themed-popover row idiom as the model
+/// picker's sort menu; the button tints accent while a non-default filter is
+/// active so a filtered list is visible at a glance.
+private struct ConnectivityFilterButton: View {
+    @Binding var selection: ProviderConnectivityFilter
+    /// Provider count for one filter, shown as the row's trailing figure.
+    let count: (ProviderConnectivityFilter) -> Int
+
+    @Environment(\.theme) private var theme
+    @State private var showPopover = false
+    @State private var isHovering = false
+
+    private var isActive: Bool { selection != .all }
+
+    var body: some View {
+        Button(action: { showPopover.toggle() }) {
+            Image(systemName: "line.3.horizontal.decrease.circle")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
+                .frame(width: 32, height: 32)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(isActive ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground)
+                        .opacity(isHovering ? 0.8 : 1)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(
+                            isActive ? theme.accentColor.opacity(0.35) : Color.clear,
+                            lineWidth: 1
+                        )
+                )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .localizedHelp("Filter by connectivity")
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovering = hovering
+            }
+        }
+        .popover(isPresented: $showPopover, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(ProviderConnectivityFilter.allCases, id: \.self) { filter in
+                    FilterOptionRow(
+                        title: filter.displayName,
+                        badge: count(filter),
+                        isSelected: filter == selection
+                    ) {
+                        selection = filter
+                        showPopover = false
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+            .frame(width: 200)
+            .background(theme.primaryBackground)
+            .environment(\.theme, theme)
+        }
+    }
+
+    /// One popover filter row: title, provider count, checkmark when active.
+    private struct FilterOptionRow: View {
+        let title: String
+        let badge: Int
+        let isSelected: Bool
+        let action: () -> Void
+        @Environment(\.theme) private var theme
+        @State private var isHovering = false
+
+        var body: some View {
+            Button(action: action) {
+                HStack(spacing: 10) {
+                    Text(title)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                        .foregroundColor(isSelected ? theme.accentColor : theme.primaryText)
+                    Spacer(minLength: 0)
+                    Text("\(badge)")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(theme.secondaryBackground))
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(theme.accentColor)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(
+                            isSelected
+                                ? theme.accentColor.opacity(0.12)
+                                : (isHovering
+                                    ? theme.tertiaryBackground.opacity(0.7)
+                                    : Color.clear)
+                        )
+                )
+                .padding(.horizontal, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isHovering = hovering
+                }
+            }
+        }
     }
 }
 
