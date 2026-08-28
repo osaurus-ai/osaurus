@@ -55,7 +55,9 @@ final class ChatWindowState: ObservableObject {
 
     // MARK: - View State
 
-    @Published var showSidebar: Bool = false
+    /// Session sidebar starts open so a fresh window surfaces chat history
+    /// immediately; the toolbar toggle still collapses it per window.
+    @Published var showSidebar: Bool = true
 
     /// True while the content area shows a project detail page instead of
     /// the chat surface. Set by `ChatView`; read by the toolbar item views
