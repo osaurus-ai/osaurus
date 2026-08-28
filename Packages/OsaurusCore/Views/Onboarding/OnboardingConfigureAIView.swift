@@ -403,6 +403,10 @@ final class ConfigureAIState: ObservableObject {
     func selectLocalModel(_ model: MLXModel) {
         selectedModel = model
         diskSpaceWarning = nil
+        // A new pick is a fresh download candidate. Clearing this latch
+        // unsticks the "Change model" affordance after a failed download of
+        // the previous selection (the latch otherwise hid it forever).
+        hasStartedLocalDownload = false
     }
 
     // MARK: Machine specs (free storage)
@@ -811,6 +815,8 @@ struct ConfigureAIStepView: View {
     @ObservedObject var state: ConfigureAIState
     let onComplete: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     /// `totalMemoryGB` is populated synchronously in
     /// `SystemMonitorService.init`, so the first onboarding frame can select a
     /// hardware-appropriate local default.
@@ -847,7 +853,7 @@ struct ConfigureAIStepView: View {
             .clipShape(
                 RoundedRectangle(cornerRadius: OnboardingLayout.panelRadius, style: .continuous)
             )
-            .animation(.spring(response: 0.5, dampingFraction: 0.85), value: substateID)
+            .animation(OnboardingMotion.gentle, value: substateID)
         }
     }
 
@@ -858,15 +864,12 @@ struct ConfigureAIStepView: View {
         }
     }
 
-    /// Direction-aware horizontal slide, sized to the panel width so the body
-    /// slides cleanly off one edge while the next slides in from the other.
+    /// Direction-aware push-fade — the same motion language as the outer
+    /// step transitions (crossfade under Reduce Motion).
     private var substateTransition: AnyTransition {
-        let dx = OnboardingMetrics.substateSlideOffset
-        let inOffset = state.substateDirection == .forward ? dx : -dx
-        let outOffset = state.substateDirection == .forward ? -dx : dx
-        return .asymmetric(
-            insertion: .offset(x: inOffset),
-            removal: .offset(x: outOffset)
+        OnboardingMotion.pushFade(
+            direction: state.substateDirection,
+            reduceMotion: reduceMotion
         )
     }
 
@@ -885,8 +888,9 @@ struct ConfigureAIStepView: View {
 
 /// Brain dino + title + subtitle + the step CTA. The CTA swaps from "Set up
 /// later" (nothing committed) to "Continue to Osaurus" once a download is
-/// running or a provider is verified. A speech bubble over the dino reassures
-/// the user that a running download continues in the background.
+/// running or a provider is verified. While a download is in flight a comic
+/// speech bubble floats above the dino reassuring the user that it continues
+/// in the background (Figma node 42:4533).
 private struct ConfigureAILeftColumn: View {
     @ObservedObject var state: ConfigureAIState
     let onComplete: () -> Void
@@ -902,19 +906,26 @@ private struct ConfigureAILeftColumn: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ZStack(alignment: .topLeading) {
-                Image("osaurus-brain", bundle: .module)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(height: 106)
-
-                if isDownloading {
-                    downloadBubble
-                        .offset(x: 44, y: -54)
-                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            Image("osaurus-brain", bundle: .module)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(height: 106)
+                // The bubble is a free-floating overlay (matching the design's
+                // absolute placement) so its appearance never reflows the
+                // column: anchored to the dino's top-right, tail pointing back
+                // down at its head.
+                .overlay(alignment: .topLeading) {
+                    if isDownloading {
+                        downloadBubble
+                            .offset(x: 90, y: -100)
+                            .transition(
+                                .scale(scale: 0.8, anchor: .bottomLeading)
+                                    .combined(with: .opacity)
+                            )
+                    }
                 }
-            }
-            .animation(.easeOut(duration: 0.2), value: isDownloading)
+                .animation(OnboardingMotion.bouncy, value: isDownloading)
+                .onboardingEntrance(0, scaleFrom: 0.96)
 
             Spacer().frame(height: 24)
 
@@ -923,6 +934,7 @@ private struct ConfigureAILeftColumn: View {
                 .tracking(0.4)
                 .foregroundColor(OnboardingPalette.labelPrimary)
                 .fixedSize(horizontal: false, vertical: true)
+                .onboardingEntrance(1)
 
             Spacer().frame(height: 16)
 
@@ -934,26 +946,36 @@ private struct ConfigureAILeftColumn: View {
             .foregroundColor(OnboardingPalette.labelSecondary)
             .lineSpacing(1.5)
             .fixedSize(horizontal: false, vertical: true)
+            .onboardingEntrance(2)
 
             Spacer().frame(height: 40)
 
             cta
+                .onboardingEntrance(3)
         }
     }
 
-    /// Speech-bubble reassurance shown while the model downloads.
+    /// The design's white comic speech bubble: 196×64 text box, 12pt
+    /// semibold black copy, thin black outline, tail sweeping down-left
+    /// toward the dino. The tail hangs 13pt below the text box via the
+    /// top-aligned background shape, so it never affects the text layout.
     private var downloadBubble: some View {
         Text("You can continue while the model downloads in the background!", bundle: .module)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(OnboardingPalette.vibrantLabel)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.black)
+            .lineSpacing(1)
+            .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
-            .frame(width: 140)
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .frame(width: 196, height: 64)
+            .background(alignment: .top) {
+                SpeechBubbleShape()
                     .fill(Color.white)
-            )
+                    .overlay(SpeechBubbleShape().stroke(Color.black, lineWidth: 1))
+                    .frame(width: 196, height: 77)
+                    .shadow(color: Color.black.opacity(0.25), radius: 10, y: 5)
+            }
     }
 
     @ViewBuilder
@@ -984,6 +1006,41 @@ private struct ConfigureAILeftColumn: View {
     }
 }
 
+/// The speech-bubble outline traced from the Figma vector (node 42:4534):
+/// a 16pt-radius rounded rectangle over the top 64pt with a curved comic
+/// tail sweeping down-left off the bottom edge. Reference canvas 196×77;
+/// the path scales to whatever rect it's given.
+private struct SpeechBubbleShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let sx = rect.width / 196
+        let sy = rect.height / 77
+        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + x * sx, y: rect.minY + y * sy)
+        }
+        var path = Path()
+        // Tail root on the bottom edge, up into the rounded rectangle…
+        path.move(to: p(21.97, 67.95))
+        path.addCurve(to: p(18.5, 64), control1: p(22.55, 65.82), control2: p(20.71, 64))
+        path.addLine(to: p(16, 64))
+        path.addCurve(to: p(0, 48), control1: p(7.16, 64), control2: p(0, 56.84))
+        path.addLine(to: p(0, 16))
+        path.addCurve(to: p(16, 0), control1: p(0, 7.16), control2: p(7.16, 0))
+        path.addLine(to: p(180, 0))
+        path.addCurve(to: p(196, 16), control1: p(188.84, 0), control2: p(196, 7.16))
+        path.addLine(to: p(196, 48))
+        path.addCurve(to: p(180, 64), control1: p(196, 56.84), control2: p(188.84, 64))
+        path.addLine(to: p(38, 64))
+        // …then the tail: bows out of the bottom edge and curls to a point.
+        path.addCurve(to: p(33.39, 67.94), control1: p(35.79, 64), control2: p(34.06, 65.83))
+        path.addCurve(to: p(21, 77), control1: p(31.72, 73.19), control2: p(26.81, 77))
+        path.addLine(to: p(16.01, 77))
+        path.addCurve(to: p(15.84, 76.44), control1: p(15.71, 77), control2: p(15.59, 76.61))
+        path.addCurve(to: p(21.97, 67.95), control1: p(18.88, 74.42), control2: p(21.03, 71.38))
+        path.closeSubpath()
+        return path
+    }
+}
+
 // MARK: - Home panel
 
 /// The right panel's home screen: recommended model card + provider chips.
@@ -994,6 +1051,7 @@ private struct ConfigureAIHomePanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             RecommendedModelCard(state: state, onComplete: onComplete)
+                .onboardingEntrance(0, scaleFrom: 0.98)
 
             if let warning = state.diskSpaceWarning {
                 Spacer().frame(height: 12)
@@ -1008,6 +1066,7 @@ private struct ConfigureAIHomePanel: View {
             Text("Prefer to connect your AI Provider?", bundle: .module)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(OnboardingPalette.labelPrimary)
+                .onboardingEntrance(2)
 
             Spacer().frame(height: 12)
 
@@ -1039,14 +1098,22 @@ private struct ConfigureAIHomePanel: View {
             : Self.featuredPresets
     }
 
+    /// Featured chips cascade in with a tight stagger after the card and
+    /// header; the chips revealed by "+ More" instead pop in with the
+    /// expansion animation itself.
     private var providerChips: some View {
         ChipFlowLayout(spacing: 8, lineSpacing: 8) {
-            ForEach(visiblePresets, id: \.id) { preset in
-                OnboardingProviderChip(
+            ForEach(Array(visiblePresets.enumerated()), id: \.element.id) { index, preset in
+                let chip = OnboardingProviderChip(
                     logo: { OnboardingProviderLogo(preset: preset, size: 16) },
                     label: preset == .google ? "Gemini" : preset.name
                 ) {
                     state.enterProvider(preset)
+                }
+                if index < Self.featuredPresets.count {
+                    chip.onboardingEntrance(3 + index)
+                } else {
+                    chip.transition(.scale(scale: 0.85).combined(with: .opacity))
                 }
             }
 
@@ -1059,10 +1126,14 @@ private struct ConfigureAIHomePanel: View {
                     },
                     label: L("More")
                 ) {
-                    withAnimation(.easeOut(duration: 0.18)) {
+                    // `smooth`: the chip grid reflows on expansion, and a
+                    // wobbling layout reads as jank rather than character.
+                    withAnimation(OnboardingMotion.smooth) {
                         state.showAllProviders = true
                     }
                 }
+                .transition(.scale(scale: 0.85).combined(with: .opacity))
+                .onboardingEntrance(3 + Self.featuredPresets.count)
             }
         }
     }
@@ -1179,14 +1250,19 @@ private struct RecommendedModelCard: View {
                     .foregroundColor(OnboardingPalette.labelSecondary)
                 OnboardingProgressBar(progress: progress)
                 HStack(spacing: 0) {
-                    Text(metricsText(for: model) ?? L("Starting download…"))
+                    let metrics = metricsText(for: model) ?? L("Starting download…")
+                    Text(metrics)
                         .font(OnboardingTypography.cardCaption)
                         .foregroundColor(OnboardingPalette.labelSecondary)
+                        .contentTransition(.numericText())
+                        .animation(.easeOut(duration: 0.3), value: metrics)
                     Spacer(minLength: 8)
                     if let remaining = remainingText(for: model, progress: progress) {
                         Text(remaining)
                             .font(OnboardingTypography.cardCaption)
                             .foregroundColor(OnboardingPalette.labelSecondary)
+                            .contentTransition(.numericText())
+                            .animation(.easeOut(duration: 0.3), value: remaining)
                     }
                 }
             }
@@ -1213,12 +1289,20 @@ private struct RecommendedModelCard: View {
                     .font(OnboardingTypography.cardCaption)
                     .foregroundColor(Color(red: 1.0, green: 0.45, blue: 0.4))
                     .fixedSize(horizontal: false, vertical: true)
-                OnboardingPillButton(
-                    title: "Try again",
-                    style: .primary,
-                    size: .compact,
-                    action: { state.startLocalDownload() }
-                )
+                HStack(spacing: 12) {
+                    OnboardingPillButton(
+                        title: "Try again",
+                        style: .primary,
+                        size: .compact,
+                        action: { state.startLocalDownload() }
+                    )
+                    OnboardingPillButton(
+                        title: "Change model",
+                        style: .text,
+                        size: .compact,
+                        action: { state.openModelChooser() }
+                    )
+                }
             }
 
         case .completed:
@@ -1736,7 +1820,7 @@ struct ConfigureModelChooserModal: View {
                 RoundedRectangle(cornerRadius: OnboardingLayout.cardRadius, style: .continuous)
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(OnboardingPressableButtonStyle(pressedScale: 0.985))
         .disabled(isDisabled)
         .opacity(isDisabled ? 0.45 : 1)
     }

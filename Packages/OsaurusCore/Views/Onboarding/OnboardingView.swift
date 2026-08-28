@@ -35,8 +35,17 @@ public struct OnboardingView: View {
 
     @State private var currentStep: OnboardingStep
     @State private var direction: OnboardingDirection = .forward
+    /// Latched by `finishOnboarding` to play the ~0.3s scale/fade farewell
+    /// beat (and block re-entry) before `onComplete` closes the window.
+    @State private var isFinishing = false
     /// Guards the one-shot `onboarding_started` + first `stepViewed` emit.
     @State private var didTrackStart = false
+    /// False after the first step navigation: the staggered content cascade
+    /// belongs only to the window's opening moment — subsequent steps ride
+    /// in whole with the slide (see `onboardingEntranceEnabled`).
+    @State private var isFirstScreen = true
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Guards the one-shot identity/Router warm-up kicked off when the user
     /// reaches the Configure AI step, and tells `configureImplicitDefaults`
     /// that identity setup is already in flight (so it doesn't start a second,
@@ -68,6 +77,7 @@ public struct OnboardingView: View {
                     .id(currentStep)
                     .transition(slideTransition)
             }
+            .environment(\.onboardingEntranceEnabled, isFirstScreen)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
 
@@ -80,25 +90,36 @@ public struct OnboardingView: View {
             // window while open, so they can't live inside a step's layout.
             if currentStep == .configureAI && configureAIState.isChoosingModel {
                 ConfigureModelChooserModal(state: configureAIState)
-                    .transition(.opacity)
+                    .transition(OnboardingMotion.modalFade)
                     .zIndex(10)
             }
 
             if currentStep == .configureAI && configureAIState.connectDialog != nil {
                 ProviderConnectDialog(state: configureAIState)
-                    .transition(.opacity)
+                    .transition(OnboardingMotion.modalFade)
                     .zIndex(10)
             }
 
         }
-        .animation(.easeOut(duration: 0.18), value: configureAIState.isChoosingModel)
-        .animation(.easeOut(duration: 0.18), value: configureAIState.connectDialog != nil)
+        // `smooth`, not `bouncy`: this drives the scrim's opacity, and an
+        // overshooting spring makes the dimming visibly pulse past its
+        // target. The dialog's own transition supplies the character.
+        .animation(OnboardingMotion.smooth, value: configureAIState.isChoosingModel)
+        .animation(OnboardingMotion.smooth, value: configureAIState.connectDialog != nil)
         .frame(width: OnboardingMetrics.windowWidth, height: OnboardingMetrics.windowHeight)
         // The host window is `.titled` + `.fullSizeContentView` with a hidden
         // titlebar, so NSHostingView still reports a ~28pt top safe-area
         // inset. Without this, the fixed 640pt content gets centered in the
         // reduced safe area — shifted ~14pt down and clipped at the bottom.
+        // NOTE: render modifiers (scale/opacity, e.g. the farewell beat)
+        // must come AFTER `.ignoresSafeArea()` — inserted between the frame
+        // and the content they broke the inset compensation and re-shifted
+        // the whole window content down.
         .ignoresSafeArea()
+        // Farewell beat: `finishOnboarding` latches `isFinishing`, the whole
+        // window content settles down/away, then `onComplete` closes it.
+        .scaleEffect(isFinishing && !reduceMotion ? 0.96 : 1)
+        .opacity(isFinishing ? 0 : 1)
         .onAppear {
             // `.onAppear` can fire more than once (window re-activation); the
             // flag keeps "started" and the first step-view to a single emit.
@@ -183,7 +204,7 @@ public struct OnboardingView: View {
             Spacer(minLength: 0)
         }
         .padding(OnboardingLayout.glassButtonInset)
-        .animation(.easeOut(duration: 0.18), value: currentStep)
+        .animation(OnboardingMotion.snappy, value: currentStep)
     }
 
     /// One-shot background warm-up for the managed Osaurus brain: create the
@@ -217,22 +238,22 @@ public struct OnboardingView: View {
         SandboxManager.State.shared.availability.isAvailable
     }
 
-    // MARK: - Slide Transition (pure horizontal)
+    // MARK: - Slide Transition (push-fade)
 
+    /// Direction-aware push-fade: the crossfade carries the step change
+    /// while a short directional drift supplies continuity. A plain
+    /// crossfade under Reduce Motion.
     private var slideTransition: AnyTransition {
-        let dx = OnboardingMetrics.slideOffset
-        let inOffset = direction == .forward ? dx : -dx
-        let outOffset = direction == .forward ? -dx : dx
-        return .asymmetric(
-            insertion: .offset(x: inOffset),
-            removal: .offset(x: outOffset)
-        )
+        OnboardingMotion.pushFade(direction: direction, reduceMotion: reduceMotion)
     }
 
     // MARK: - Navigation
 
     private func advance(to step: OnboardingStep, direction: OnboardingDirection = .forward) {
         self.direction = direction
+        // Cascade is an opening-only flourish; from the first navigation on,
+        // steps arrive as one surface with the slide.
+        isFirstScreen = false
         // Seed the Configure AI selection *before* the step is inserted.
         // `ConfigureAIStepView.onAppear` fires mid-slide, and a view inserted
         // into an in-flight offset transition renders at its final position
@@ -245,12 +266,15 @@ public struct OnboardingView: View {
             )
             configureAIState.refreshFreeDiskSpace()
         }
-        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+        withAnimation(reduceMotion ? .easeOut(duration: 0.3) : OnboardingMotion.gentle) {
             currentStep = step
         }
     }
 
     private func finishOnboarding(via: OnboardingTelemetry.Completion) {
+        // One-shot: the farewell beat below keeps the window interactive for
+        // ~0.3s, so a double-tap on Close/CTA must not re-run completion.
+        guard !isFinishing else { return }
         // Closing on any step is an explicit welcome-claim continuation
         // (idempotent when "Get started" already selected it).
         WelcomeCreditService.shared.selectForFirstLaunch()
@@ -276,13 +300,11 @@ public struct OnboardingView: View {
             TelemetryService.shared.setEnabled(false)
         }
 
-        // If the user created an agent in step 2, drop them into chat
-        // with that agent already selected — otherwise the freshly
-        // created persona is buried behind the built-in default and the
-        // user has to hunt for it in the agent switcher.
-        if let createdId = createAgentState.createdAgentId {
-            AgentManager.shared.setActiveAgent(createdId)
-        }
+        // First chat lands on the built-in Orchestrator: it introduces
+        // Osaurus, configures things, and delegates work to the Dino created
+        // in step 2 (which stays one click away in the agent switcher and
+        // already joined the default spawn pool on save).
+        AgentManager.shared.setActiveAgent(Agent.defaultId)
         configureImplicitDefaults()
 
         // Persist the brain choice so the first chat-UI `message_sent` can carry
@@ -305,16 +327,38 @@ public struct OnboardingView: View {
         pinSelectedBrainModel()
 
         OnboardingService.shared.completeOnboarding()
-        onComplete()
+
+        // Farewell beat: settle the content down/away, then hand the window
+        // back. Skipped straight to `onComplete` under Reduce Motion.
+        if reduceMotion {
+            onComplete()
+        } else {
+            withAnimation(.easeIn(duration: 0.28)) { isFinishing = true }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                onComplete()
+            }
+        }
     }
 
-    /// Pin the new/active agent's default model to the brain source the user
-    /// committed to on the Configure AI step (managed Osaurus, local, or
-    /// bring-your-own-key). Selecting local or a provider never routes through
-    /// the hosted router implicitly — only the explicit `.osaurus` choice pins
-    /// a router model.
+    /// The agents whose default model should carry the brain choice: the
+    /// Orchestrator always (the first chat after onboarding lands there),
+    /// plus the Dino created in step 2 so switching to it respects the same
+    /// choice.
+    private var brainPinTargets: [UUID] {
+        var targets = [Agent.defaultId]
+        if let createdId = createAgentState.createdAgentId {
+            targets.append(createdId)
+        }
+        return targets
+    }
+
+    /// Pin the Orchestrator's (and the created Dino's) default model to the
+    /// brain source the user committed to on the Configure AI step (managed
+    /// Osaurus, local, or bring-your-own-key). Selecting local or a provider
+    /// never routes through the hosted router implicitly — only the explicit
+    /// `.osaurus` choice pins a router model.
     private func pinSelectedBrainModel() {
-        let agentId = createAgentState.createdAgentId ?? Agent.defaultId
         switch configureAIState.selectedBrainSource {
         case .osaurus:
             // Explicit "Set up later" / start-on-Cloud path: (re-)enable the
@@ -322,18 +366,20 @@ public struct OnboardingView: View {
             // overridden by this explicit choice — then pin its first
             // chat-capable model.
             RemoteProviderManager.shared.setOsaurusRouterEnabled(true)
-            pinOsaurusRouterModel(forAgent: agentId)
+            pinOsaurusRouterModel(forAgents: brainPinTargets)
         case .local:
             // The model may still be downloading; the id is durable and
             // `ChatView.refreshPickerItems` re-resolves it once the bundle lands.
             if let localModelId = configureAIState.localDefaultModelIdToPin {
-                AgentManager.shared.updateDefaultModel(for: agentId, model: localModelId)
+                for agentId in brainPinTargets {
+                    AgentManager.shared.updateDefaultModel(for: agentId, model: localModelId)
+                }
             }
         case .providerKey:
             // The provider auto-connects, but its catalog populates async; poll
             // (bounded) for its first chat-capable model, then pin it.
             if let providerId = configureAIState.providerModelPinTarget {
-                pinProviderModel(providerId: providerId, forAgent: agentId)
+                pinProviderModel(providerId: providerId, forAgents: brainPinTargets)
             }
         case nil:
             break
@@ -346,11 +392,13 @@ public struct OnboardingView: View {
     /// the single-shot connect (a cheap no-op once connected / while
     /// connecting) before looking the model up. Gives up quietly — the hosted
     /// models still appear in the picker once the connect lands.
-    private func pinOsaurusRouterModel(forAgent agentId: UUID) {
+    private func pinOsaurusRouterModel(forAgents agentIds: [UUID]) {
         Task { @MainActor in
             for _ in 0 ..< 40 {
                 if let model = RemoteProviderManager.shared.firstRunOsaurusRouterModelId() {
-                    AgentManager.shared.updateDefaultModel(for: agentId, model: model)
+                    for agentId in agentIds {
+                        AgentManager.shared.updateDefaultModel(for: agentId, model: model)
+                    }
                     return
                 }
                 await RemoteProviderManager.shared.connectOsaurusRouterIfPossible()
@@ -360,31 +408,33 @@ public struct OnboardingView: View {
     }
 
     /// After onboarding finishes on the BYOK / OAuth path, wait (bounded) for
-    /// the just-connected provider's catalog to populate, then pin the agent's
+    /// the just-connected provider's catalog to populate, then pin the agents'
     /// default model to its first chat-capable model. Gives up quietly if the
     /// catalog never arrives (the user can still pick a model in chat).
-    private func pinProviderModel(providerId: UUID, forAgent agentId: UUID) {
+    private func pinProviderModel(providerId: UUID, forAgents agentIds: [UUID]) {
         Task { @MainActor in
-            await pinModelWhenAvailable(forAgent: agentId, attempts: 20) {
+            await pinModelWhenAvailable(forAgents: agentIds, attempts: 20) {
                 RemoteProviderManager.shared.firstChatCapableModelId(forProviderId: providerId)
             }
         }
     }
 
-    /// Poll (bounded) for a model id via `lookup`, pinning it as `agentId`'s
-    /// default the moment one resolves. Used by the BYOK/OAuth path, whose
-    /// catalog populates asynchronously after onboarding finishes. Polls every
-    /// 500ms up to `attempts` times, then gives up quietly so it never hangs
-    /// (the user can still pick in chat).
+    /// Poll (bounded) for a model id via `lookup`, pinning it as every
+    /// `agentIds` default the moment one resolves. Used by the BYOK/OAuth
+    /// path, whose catalog populates asynchronously after onboarding
+    /// finishes. Polls every 500ms up to `attempts` times, then gives up
+    /// quietly so it never hangs (the user can still pick in chat).
     @MainActor
     private func pinModelWhenAvailable(
-        forAgent agentId: UUID,
+        forAgents agentIds: [UUID],
         attempts: Int,
         lookup: () -> String?
     ) async {
         for _ in 0 ..< attempts {
             if let model = lookup() {
-                AgentManager.shared.updateDefaultModel(for: agentId, model: model)
+                for agentId in agentIds {
+                    AgentManager.shared.updateDefaultModel(for: agentId, model: model)
+                }
                 return
             }
             try? await Task.sleep(nanoseconds: 500_000_000)

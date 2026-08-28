@@ -34,21 +34,17 @@ struct WelcomeStepView: View {
     @ObservedObject var state: WelcomeState
     let onGetStarted: () -> Void
 
-    @State private var visible = false
-
     var body: some View {
         OnboardingStepLayout {
             leftColumn
         } right: {
             heroPanel
         }
-        .opacity(visible ? 1 : 0)
-        .animation(.easeOut(duration: 0.5), value: visible)
-        .onAppearAfter(0.05) { visible = true }
     }
 
     // MARK: Left column
 
+    /// Staggered cascade: title → subtitle → CTA → legal → checkbox.
     private var leftColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("A Dino for every side of your work.", bundle: .module)
@@ -56,6 +52,7 @@ struct WelcomeStepView: View {
                 .tracking(0.4)
                 .foregroundColor(OnboardingPalette.labelPrimary)
                 .fixedSize(horizontal: false, vertical: true)
+                .onboardingEntrance(0)
 
             Spacer().frame(height: 16)
 
@@ -67,6 +64,7 @@ struct WelcomeStepView: View {
             .foregroundColor(OnboardingPalette.labelSecondary)
             .lineSpacing(1.5)
             .fixedSize(horizontal: false, vertical: true)
+            .onboardingEntrance(1)
 
             Spacer().frame(height: 40)
 
@@ -77,10 +75,12 @@ struct WelcomeStepView: View {
                 trailingSymbol: "arrow.right",
                 action: onGetStarted
             )
+            .onboardingEntrance(2)
 
             Spacer().frame(height: 16)
 
             legalNotice
+                .onboardingEntrance(3)
 
             Spacer().frame(height: 10)
 
@@ -88,6 +88,7 @@ struct WelcomeStepView: View {
                 isOn: $state.shareUsageData,
                 label: "Share anonymous usage data to help improve Osaurus"
             )
+            .onboardingEntrance(4)
         }
     }
 
@@ -107,6 +108,8 @@ struct WelcomeStepView: View {
 
     // MARK: Right panel
 
+    /// Hero panel fades in alongside the left cascade — no scale settle; on
+    /// a surface this large even a 2% zoom is perceptible and adds nothing.
     private var heroPanel: some View {
         OnboardingRightPanel {
             Image("osaurus-main", bundle: .module)
@@ -115,6 +118,7 @@ struct WelcomeStepView: View {
                 .padding(.horizontal, 16)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .onboardingEntrance(1)
     }
 }
 

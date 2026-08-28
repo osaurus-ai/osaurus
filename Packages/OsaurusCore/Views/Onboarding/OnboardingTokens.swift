@@ -15,15 +15,6 @@ enum OnboardingMetrics {
     // Window — fixed for every step (Figma: 1000×640, dark-only)
     static let windowWidth: CGFloat = 1000
     static let windowHeight: CGFloat = 640
-
-    /// Horizontal offset used by step slide transitions. Sized to the full
-    /// window width so views slide cleanly off-screen instead of overlapping.
-    static let slideOffset: CGFloat = windowWidth
-
-    /// Horizontal offset used by substate slide transitions inside a step
-    /// (e.g. ConfigureAI's provider drill-in). Sized to the right panel
-    /// (window − left column) so substates slide off the panel edge.
-    static let substateSlideOffset: CGFloat = windowWidth - OnboardingLayout.leftColumnWidth
 }
 
 // MARK: - Delayed Appear Helper

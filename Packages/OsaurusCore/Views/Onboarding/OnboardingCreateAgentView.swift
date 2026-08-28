@@ -76,9 +76,10 @@ final class CreateAgentState: ObservableObject {
     @Published var isSaving: Bool = false
 
     /// ID of the agent created by `saveAgent`. Read by
-    /// `OnboardingView.finishOnboarding` to flip
-    /// `AgentManager.activeAgentId` so the user lands in chat with the
-    /// agent they just made already selected.
+    /// `OnboardingView.pinSelectedBrainModel` so the new Dino's default
+    /// model carries the brain choice too — the first chat itself lands on
+    /// the built-in Orchestrator, with this agent one click away in the
+    /// switcher.
     @Published private(set) var createdAgentId: UUID?
 
     /// The Figma default dino name.
@@ -154,6 +155,9 @@ struct CreateAgentStepView: View {
     /// Width the name field is pinned to, measured from a hidden copy of the
     /// displayed text so focusing never nudges the chip's footprint.
     @State private var nameFieldWidth: CGFloat = 0
+    /// Accumulated rotation of the randomize badge glyph — a half-turn per
+    /// roll so repeat taps keep spinning the same way.
+    @State private var badgeSpin: Double = 0
 
     private var selectedMascot: AgentMascot {
         state.selectedAvatar.flatMap(AgentMascot.init(rawValue:)) ?? .green
@@ -171,6 +175,7 @@ struct CreateAgentStepView: View {
 
     // MARK: Left column
 
+    /// Staggered cascade: title → subtitle → CTA.
     private var leftColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("What should your first Dino be great at?", bundle: .module)
@@ -178,6 +183,7 @@ struct CreateAgentStepView: View {
                 .tracking(0.4)
                 .foregroundColor(OnboardingPalette.labelPrimary)
                 .fixedSize(horizontal: false, vertical: true)
+                .onboardingEntrance(0)
 
             Spacer().frame(height: 16)
 
@@ -186,6 +192,7 @@ struct CreateAgentStepView: View {
                 .foregroundColor(OnboardingPalette.labelSecondary)
                 .lineSpacing(1.5)
                 .fixedSize(horizontal: false, vertical: true)
+                .onboardingEntrance(1)
 
             Spacer().frame(height: 40)
 
@@ -196,6 +203,7 @@ struct CreateAgentStepView: View {
                 isEnabled: state.canSave,
                 action: { if state.saveAgent() { onContinue() } }
             )
+            .onboardingEntrance(2)
         }
     }
 
@@ -208,7 +216,9 @@ struct CreateAgentStepView: View {
             VStack(spacing: 0) {
                 VStack(spacing: 16) {
                     avatarBlock
+                        .onboardingEntrance(0, scaleFrom: 0.96)
                     nameChip
+                        .onboardingEntrance(1)
                 }
                 Spacer(minLength: 24)
                 specialtyCards
@@ -231,17 +241,19 @@ struct CreateAgentStepView: View {
                 bleedsToEdge: true
             )
             .id(state.selectedAvatar)
-            .transition(.scale(scale: 0.9).combined(with: .opacity))
+            .transition(.scale(scale: 0.85).combined(with: .opacity))
 
             randomizeBadge
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.65), value: state.selectedAvatar)
+        .animation(OnboardingMotion.bouncy, value: state.selectedAvatar)
     }
 
     /// 24pt dark circular badge on the avatar's bottom-trailing edge that
-    /// rolls a different dino color (Figma "Arrow Buttons").
+    /// rolls a different dino color (Figma "Arrow Buttons"). The glyph does
+    /// a half-turn with each roll.
     private var randomizeBadge: some View {
         Button {
+            badgeSpin -= 180
             state.randomizeAvatar()
         } label: {
             ZStack {
@@ -250,11 +262,13 @@ struct CreateAgentStepView: View {
                 Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(OnboardingPalette.labelPrimary)
+                    .rotationEffect(.degrees(badgeSpin))
+                    .animation(OnboardingMotion.snappy, value: badgeSpin)
             }
             .frame(width: 24, height: 24)
             .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(OnboardingPressableButtonStyle())
         .localizedHelp("Pick a random look")
     }
 
@@ -318,17 +332,22 @@ struct CreateAgentStepView: View {
 
     private var specialtyCards: some View {
         VStack(spacing: 16) {
-            ForEach(OnboardingSpecialty.allCases) { specialty in
+            ForEach(
+                Array(OnboardingSpecialty.allCases.enumerated()), id: \.element.id
+            ) { index, specialty in
                 OnboardingSelectableCard(
                     symbol: specialty.symbol,
                     title: specialty.title,
                     caption: specialty.caption,
                     isSelected: state.selectedSpecialty == specialty
                 ) {
-                    withAnimation(.easeOut(duration: 0.15)) {
+                    // `smooth`: selection recolors borders/fills across the
+                    // card stack — overshoot here reads as flicker.
+                    withAnimation(OnboardingMotion.smooth) {
                         state.selectedSpecialty = specialty
                     }
                 }
+                .onboardingEntrance(2 + index)
             }
         }
     }

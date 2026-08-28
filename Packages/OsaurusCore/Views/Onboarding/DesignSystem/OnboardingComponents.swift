@@ -119,6 +119,8 @@ struct OnboardingPillButton: View {
                 if let symbol = trailingSymbol {
                     Image(systemName: symbol)
                         .font(.system(size: symbolSize, weight: .semibold))
+                        // "Get started →" nudge: the arrow leans into the hover.
+                        .offset(x: isHovered ? 3 : 0)
                 }
             }
             .foregroundColor(labelColor)
@@ -127,7 +129,7 @@ struct OnboardingPillButton: View {
             .background(background)
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(OnboardingPressableButtonStyle())
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.4)
         .onHover { hovering in
@@ -193,7 +195,7 @@ struct OnboardingCircleIconButton: View {
             )
             .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(OnboardingPressableButtonStyle(pressedScale: 0.9))
         .accessibilityLabel(Text(accessibilityLabelKey, bundle: .module))
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
@@ -210,7 +212,7 @@ struct OnboardingCheckboxRow: View {
 
     var body: some View {
         Button {
-            isOn.toggle()
+            withAnimation(OnboardingMotion.bouncy) { isOn.toggle() }
         } label: {
             HStack(spacing: 6) {
                 ZStack {
@@ -225,6 +227,7 @@ struct OnboardingCheckboxRow: View {
                         Image(systemName: "checkmark")
                             .font(.system(size: 7, weight: .bold))
                             .foregroundColor(.white)
+                            .transition(.scale(scale: 0.4).combined(with: .opacity))
                     }
                 }
                 .frame(width: 12, height: 12)
@@ -235,7 +238,7 @@ struct OnboardingCheckboxRow: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(OnboardingPressableButtonStyle())
         .accessibilityAddTraits(isOn ? [.isSelected] : [])
     }
 }
@@ -255,6 +258,7 @@ struct OnboardingSelectableCard: View {
     let action: () -> Void
 
     @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
@@ -265,6 +269,7 @@ struct OnboardingSelectableCard: View {
                         .foregroundColor(
                             isSelected ? accent : OnboardingPalette.labelPrimary
                         )
+                        .symbolEffect(.bounce, value: isSelected)
                     Text(title, bundle: .module)
                         .font(OnboardingTypography.cardTitleRegular)
                         .foregroundColor(OnboardingPalette.labelPrimary)
@@ -290,8 +295,11 @@ struct OnboardingSelectableCard: View {
             .contentShape(
                 RoundedRectangle(cornerRadius: OnboardingLayout.cardRadius, style: .continuous)
             )
+            // Selection pop: the chosen card springs slightly proud of its
+            // neighbors (the caller drives this change with a bouncy spring).
+            .scaleEffect(isSelected && !reduceMotion ? 1.015 : 1)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(OnboardingPressableButtonStyle())
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
@@ -368,7 +376,7 @@ struct OnboardingProviderChip<Logo: View>: View {
             )
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(OnboardingPressableButtonStyle())
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
@@ -414,7 +422,7 @@ struct OnboardingOptionRow: View {
             )
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(OnboardingPressableButtonStyle())
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
@@ -432,6 +440,17 @@ struct OnboardingDialog<Content: View>: View {
     var isDismissable: Bool = true
     let onClose: () -> Void
     @ViewBuilder let content: () -> Content
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Spring-up entrance (scale + rise + fade); a plain fade under Reduce
+    /// Motion.
+    private var dialogTransition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        return .scale(scale: 0.96)
+            .combined(with: .opacity)
+            .combined(with: .offset(y: 8))
+    }
 
     var body: some View {
         ZStack {
@@ -465,7 +484,9 @@ struct OnboardingDialog<Content: View>: View {
                     }
                 }
                 .shadow(color: Color.black.opacity(0.4), radius: 30, y: 14)
-                .transition(.scale(scale: 0.96).combined(with: .opacity))
+                // Springs up from slightly smaller and lower while the scrim
+                // simply fades — the host drives this with a bouncy spring.
+                .transition(dialogTransition)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onExitCommand {
