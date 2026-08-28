@@ -200,6 +200,18 @@ final class ComputerUseRunMetricsTests: XCTestCase {
         m.raiseTier(to: .vision)
         XCTAssertEqual(m.maxTier, .vision)
     }
+
+    func testTextInputRouteAccumulationStaysLocal() {
+        var m = ComputerUseRunMetrics()
+        m.recordTextInputRoute(.axValue)
+        m.recordTextInputRoute(.pidFocusedKeyboard)
+        m.recordTextInputRoute(.pidFocusedKeyboard)
+        m.recordTextInputRoute(.hidKeyboard)
+
+        XCTAssertEqual(m.textInputRoutes[.axValue], 1)
+        XCTAssertEqual(m.textInputRoutes[.pidFocusedKeyboard], 2)
+        XCTAssertEqual(m.textInputRoutes[.hidKeyboard], 1)
+    }
 }
 
 // MARK: - Ax-resolvable sweep

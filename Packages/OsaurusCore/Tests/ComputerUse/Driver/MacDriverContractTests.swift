@@ -107,6 +107,20 @@ final class MockMacDriverContractTests: XCTestCase {
         XCTAssertEqual(recorded.count, 2)
     }
 
+    func testActionResultRoundTripsInputRouteMetadata() throws {
+        let result = CUActionResult.ok(
+            routeUsed: .skyLight,
+            textInputRoute: .elementFocusedKeyboard
+        )
+
+        let data = try JSONEncoder().encode(result)
+        let decoded = try JSONDecoder().decode(CUActionResult.self, from: data)
+
+        XCTAssertEqual(decoded, result)
+        XCTAssertEqual(decoded.routeUsed, .skyLight)
+        XCTAssertEqual(decoded.textInputRoute, .elementFocusedKeyboard)
+    }
+
     func testFindFiltersByRoleAndText() async throws {
         let pid: Int32 = 7
         let snap = makeSnapshot(id: 3, pid: pid, labels: ["Sign in", "Cancel"], roles: ["button", "button"])

@@ -1222,6 +1222,10 @@ public enum ComputerUseLoop {
             }
         }
 
+        if let textInputRoute = result.textInputRoute {
+            metrics.recordTextInputRoute(textInputRoute)
+        }
+
         feed.emit(
             SubagentActivityEvent(
                 step: step,
@@ -1285,6 +1289,9 @@ public enum ComputerUseLoop {
             out += " (input used per-pid routing; a Chromium web-content target may not have received it)"
         case .skyLight, .none:
             break
+        }
+        if let textInputRoute = result.textInputRoute {
+            out += " " + describeTextInputRoute(textInputRoute)
         }
         out += view.hasChanges ? " The view changed." : " The view looks unchanged."
         out += "\n\nCurrent view:\n" + view.renderForModel()
@@ -1578,6 +1585,19 @@ public enum ComputerUseLoop {
         if let mark = target.mark { return "mark:\(mark)" }
         if let d = target.describe { return "desc:\(d.lowercased())" }
         return "<empty>"
+    }
+
+    private static func describeTextInputRoute(_ route: CUTextInputRoute) -> String {
+        switch route {
+        case .axValue:
+            return "(text edit used Accessibility value setting)"
+        case .elementFocusedKeyboard:
+            return "(text edit focused the target, then used keyboard input)"
+        case .pidFocusedKeyboard:
+            return "(text edit used pid-focused keyboard input)"
+        case .hidKeyboard:
+            return "(text edit used HID keyboard input, which may affect the frontmost app)"
+        }
     }
 
     private static func describe(_ element: CUElement) -> String {

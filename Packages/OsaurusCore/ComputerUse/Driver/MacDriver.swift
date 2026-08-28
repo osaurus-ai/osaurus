@@ -324,6 +324,20 @@ public struct CUFocusDelta: Sendable, Equatable, Codable {
     }
 }
 
+/// The high-level path used for text edits. This is intentionally separate
+/// from `InputRoute`: AX value writes do not synthesize keyboard events, while
+/// keyboard-based edits still carry their lower-level transport in `routeUsed`.
+public enum CUTextInputRoute: String, Codable, Sendable, CaseIterable, Hashable {
+    /// `AXValue` was set directly on the resolved element.
+    case axValue
+    /// The resolved element was focused first, then keyboard input was sent.
+    case elementFocusedKeyboard
+    /// Keyboard input was sent to the pid's current focus without an element id.
+    case pidFocusedKeyboard
+    /// Keyboard input was posted through the HID tap without a pid target.
+    case hidKeyboard
+}
+
 /// Result of an element/coordinate action. `stale`/`removed` tell the harness
 /// to re-observe rather than abandon the goal.
 public struct CUActionResult: Sendable, Equatable, Codable {
@@ -338,6 +352,10 @@ public struct CUActionResult: Sendable, Equatable, Codable {
     /// cursor warped (`hidFallback`) or a Chromium click likely missed
     /// (`perPid`), instead of the transport being invisible.
     public let routeUsed: InputRoute?
+    /// Text-edit path, when the action edited text. This distinguishes AX value
+    /// writes from focused keyboard input so verification evidence is honest
+    /// about what actually touched the app.
+    public let textInputRoute: CUTextInputRoute?
 
     public init(
         success: Bool,
@@ -345,7 +363,8 @@ public struct CUActionResult: Sendable, Equatable, Codable {
         stale: Bool = false,
         removed: Bool = false,
         delta: CUFocusDelta? = nil,
-        routeUsed: InputRoute? = nil
+        routeUsed: InputRoute? = nil,
+        textInputRoute: CUTextInputRoute? = nil
     ) {
         self.success = success
         self.error = error
@@ -353,10 +372,15 @@ public struct CUActionResult: Sendable, Equatable, Codable {
         self.removed = removed
         self.delta = delta
         self.routeUsed = routeUsed
+        self.textInputRoute = textInputRoute
     }
 
-    public static func ok(delta: CUFocusDelta? = nil, routeUsed: InputRoute? = nil) -> CUActionResult {
-        CUActionResult(success: true, delta: delta, routeUsed: routeUsed)
+    public static func ok(
+        delta: CUFocusDelta? = nil,
+        routeUsed: InputRoute? = nil,
+        textInputRoute: CUTextInputRoute? = nil
+    ) -> CUActionResult {
+        CUActionResult(success: true, delta: delta, routeUsed: routeUsed, textInputRoute: textInputRoute)
     }
 
     public static func failure(_ message: String) -> CUActionResult {
