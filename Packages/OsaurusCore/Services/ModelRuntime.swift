@@ -5584,16 +5584,16 @@ public actor ModelRuntime {
     /// request itself — bundle generation_config still governs every
     /// non-MTP path, including spawned agents and coding loops.
     nonisolated static func enforcingMTPGreedy(
-        _ parameters: GenerateParameters,
+        _ parameters: GenerationParameters,
         draftStrategy: MLXLMCommon.DraftStrategy?
-    ) -> GenerateParameters {
+    ) -> GenerationParameters {
         guard case .some(.nativeMTP) = draftStrategy else { return parameters }
         let enforced = VMLXServerMTPSettings.mtpEnforcedGreedySampling
         var greedy = parameters
         greedy.temperature = enforced.temperature
-        greedy.topP = enforced.topP
-        greedy.topK = enforced.topK
-        greedy.minP = enforced.minP
+        greedy.topPOverride = enforced.topP
+        greedy.topKOverride = enforced.topK
+        greedy.minPOverride = enforced.minP
         return greedy
     }
 
