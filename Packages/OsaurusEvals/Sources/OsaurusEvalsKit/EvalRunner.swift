@@ -545,6 +545,13 @@ public enum EvalRunner {
             peakContextTokens: existing?.peakContextTokens,
             totalModelTokens: existing?.totalModelTokens,
             modelSteps: existing?.modelSteps,
+            // Carry EVERY runner-produced field through: this constructor
+            // REPLACES the row's telemetry, so any field omitted here is
+            // silently wiped from the report (the loop-exit fields were
+            // being lost this way before the MTP fields exposed it).
+            loopExit: existing?.loopExit,
+            loopExitOrigin: existing?.loopExitOrigin,
+            loopRecoveryRetries: existing?.loopRecoveryRetries,
             peakPhysFootprintMb: sample.peakPhysFootprintMb,
             meanCpuPercent: sample.meanCpuPercent,
             peakCpuPercent: sample.peakCpuPercent,
@@ -554,7 +561,18 @@ public enum EvalRunner {
             ssmCompanionReDerivesDelta: ssmReDerivesDelta,
             diskL2HitsDelta: diskL2HitsDelta,
             diskL2MissesDelta: diskL2MissesDelta,
-            diskL2StoresDelta: diskL2StoresDelta
+            diskL2StoresDelta: diskL2StoresDelta,
+            mtpRequested: existing?.mtpRequested,
+            mtpLoadStatus: existing?.mtpLoadStatus,
+            mtpRequestStrategy: existing?.mtpRequestStrategy,
+            mtpDepth: existing?.mtpDepth,
+            mtpActiveDepth: existing?.mtpActiveDepth,
+            mtpVerifyCalls: existing?.mtpVerifyCalls,
+            mtpAcceptedDraftTokens: existing?.mtpAcceptedDraftTokens,
+            mtpBonusTokens: existing?.mtpBonusTokens,
+            mtpRejectedTokens: existing?.mtpRejectedTokens,
+            mtpARFallbackTokens: existing?.mtpARFallbackTokens,
+            mtpStepsWithMTP: existing?.mtpStepsWithMTP
         )
         guard !merged.isEmpty else { return row }
         return EvalCaseReport(

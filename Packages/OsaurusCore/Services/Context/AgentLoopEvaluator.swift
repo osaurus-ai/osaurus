@@ -194,6 +194,19 @@ public struct AgentLoopTranscript: Sendable, Codable {
         /// Honest request-resolution state without inventing a downstream
         /// bundle default when the evaluator did not explicitly override it.
         public let thinkingState: String?
+        /// Native-MTP evidence for this step, from the runtime's completion
+        /// stats. All nil = native MTP did not produce this step's tokens
+        /// (not requested, or gate-excluded) — the same meaning as vmlx's
+        /// `nativeMTPStats == nil`. Never inferred from settings.
+        public let mtpDepth: Int?
+        public let mtpActiveDepth: Int?
+        public let mtpVerifyCalls: Int?
+        public let mtpAcceptedDraftTokens: Int?
+        public let mtpBonusTokens: Int?
+        public let mtpRejectedTokens: Int?
+        public let mtpARFallbackTokens: Int?
+        public let mtpAdaptiveDownshifts: Int?
+        public let mtpAdaptiveFallbackReason: String?
 
         public init(
             step: Int,
@@ -208,7 +221,16 @@ public struct AgentLoopTranscript: Sendable, Codable {
             completionTokens: Int? = nil,
             decodeTokensPerSecond: Double? = nil,
             decodeThroughputAttribution: String? = nil,
-            requestedEnableThinking: Bool?
+            requestedEnableThinking: Bool?,
+            mtpDepth: Int? = nil,
+            mtpActiveDepth: Int? = nil,
+            mtpVerifyCalls: Int? = nil,
+            mtpAcceptedDraftTokens: Int? = nil,
+            mtpBonusTokens: Int? = nil,
+            mtpRejectedTokens: Int? = nil,
+            mtpARFallbackTokens: Int? = nil,
+            mtpAdaptiveDownshifts: Int? = nil,
+            mtpAdaptiveFallbackReason: String? = nil
         ) {
             self.step = step
             self.stopReason = stopReason
@@ -229,6 +251,15 @@ public struct AgentLoopTranscript: Sendable, Codable {
             self.thinkingState = requestedEnableThinking.map {
                 $0 ? "explicitEnabled" : "explicitDisabled"
             } ?? "runtimeDefault"
+            self.mtpDepth = mtpDepth
+            self.mtpActiveDepth = mtpActiveDepth
+            self.mtpVerifyCalls = mtpVerifyCalls
+            self.mtpAcceptedDraftTokens = mtpAcceptedDraftTokens
+            self.mtpBonusTokens = mtpBonusTokens
+            self.mtpRejectedTokens = mtpRejectedTokens
+            self.mtpARFallbackTokens = mtpARFallbackTokens
+            self.mtpAdaptiveDownshifts = mtpAdaptiveDownshifts
+            self.mtpAdaptiveFallbackReason = mtpAdaptiveFallbackReason
         }
 
         private enum CodingKeys: String, CodingKey {
@@ -246,6 +277,15 @@ public struct AgentLoopTranscript: Sendable, Codable {
             case decodeThroughputAttribution
             case requestedEnableThinking
             case thinkingState
+            case mtpDepth
+            case mtpActiveDepth
+            case mtpVerifyCalls
+            case mtpAcceptedDraftTokens
+            case mtpBonusTokens
+            case mtpRejectedTokens
+            case mtpARFallbackTokens
+            case mtpAdaptiveDownshifts
+            case mtpAdaptiveFallbackReason
         }
 
         public init(from decoder: Decoder) throws {
@@ -281,6 +321,19 @@ public struct AgentLoopTranscript: Sendable, Codable {
                 ?? requestedEnableThinking.map {
                     $0 ? "explicitEnabled" : "explicitDisabled"
                 } ?? "runtimeDefault"
+            mtpDepth = try container.decodeIfPresent(Int.self, forKey: .mtpDepth)
+            mtpActiveDepth = try container.decodeIfPresent(Int.self, forKey: .mtpActiveDepth)
+            mtpVerifyCalls = try container.decodeIfPresent(Int.self, forKey: .mtpVerifyCalls)
+            mtpAcceptedDraftTokens = try container.decodeIfPresent(
+                Int.self, forKey: .mtpAcceptedDraftTokens)
+            mtpBonusTokens = try container.decodeIfPresent(Int.self, forKey: .mtpBonusTokens)
+            mtpRejectedTokens = try container.decodeIfPresent(Int.self, forKey: .mtpRejectedTokens)
+            mtpARFallbackTokens = try container.decodeIfPresent(
+                Int.self, forKey: .mtpARFallbackTokens)
+            mtpAdaptiveDownshifts = try container.decodeIfPresent(
+                Int.self, forKey: .mtpAdaptiveDownshifts)
+            mtpAdaptiveFallbackReason = try container.decodeIfPresent(
+                String.self, forKey: .mtpAdaptiveFallbackReason)
         }
     }
 
@@ -954,7 +1007,8 @@ public enum AgentLoopEvaluator {
             toolArgumentCharacters: Int,
             completionTokens: Int? = nil,
             decodeTokensPerSecond: Double? = nil,
-            decodeThroughputAttribution: String? = nil
+            decodeThroughputAttribution: String? = nil,
+            mtp: MTPStatsSummary? = nil
         ) {
             let attribution = decodeThroughputAttribution
                 ?? (decodeTokensPerSecond != nil
@@ -974,7 +1028,16 @@ public enum AgentLoopEvaluator {
                     completionTokens: completionTokens,
                     decodeTokensPerSecond: decodeTokensPerSecond,
                     decodeThroughputAttribution: attribution,
-                    requestedEnableThinking: enableThinking
+                    requestedEnableThinking: enableThinking,
+                    mtpDepth: mtp?.depth,
+                    mtpActiveDepth: mtp?.activeDepth,
+                    mtpVerifyCalls: mtp?.verifyCalls,
+                    mtpAcceptedDraftTokens: mtp?.acceptedDraftTokens,
+                    mtpBonusTokens: mtp?.bonusTokens,
+                    mtpRejectedTokens: mtp?.rejectedTokens,
+                    mtpARFallbackTokens: mtp?.arFallbackTokens,
+                    mtpAdaptiveDownshifts: mtp?.adaptiveDownshifts,
+                    mtpAdaptiveFallbackReason: mtp?.adaptiveFallbackReason
                 )
             )
             Self.emitStepProgress(
@@ -1173,6 +1236,7 @@ public enum AgentLoopEvaluator {
                     var sawToolCallProgress = false
                     var stepCompletionTokens: Int?
                     var stepDecodeTokensPerSecond: Double?
+                    var stepMTP: MTPStatsSummary?
                     var stepThroughputAttribution = "unavailable_stream_ended_without_vmlx_info"
                     let stepStarted = Date()
                     var stepProgress = AgentLoopStepProgressTracker(
@@ -1285,6 +1349,7 @@ public enum AgentLoopEvaluator {
                             if let stats = StreamingStatsHint.decode(delta) {
                                 terminalStopReason = stats.stopReason
                                 terminalUnclosedReasoning = stats.unclosedReasoning
+                                if let mtp = stats.mtp { stepMTP = mtp }
                                 // Authoritative end-of-step runtime stats:
                                 // token-weight the decode tps, sum tokens,
                                 // and keep the first step's prefill speed.
@@ -1335,7 +1400,8 @@ public enum AgentLoopEvaluator {
                             toolArgumentCharacters: streamedToolArgumentCharacters,
                             completionTokens: stepCompletionTokens,
                             decodeTokensPerSecond: stepDecodeTokensPerSecond,
-                            decodeThroughputAttribution: stepThroughputAttribution
+                            decodeThroughputAttribution: stepThroughputAttribution,
+                            mtp: stepMTP
                         )
                         if terminalStopReason == "length",
                             sawToolCallProgress,
@@ -1369,7 +1435,8 @@ public enum AgentLoopEvaluator {
                             decodeTokensPerSecond: stepDecodeTokensPerSecond,
                             decodeThroughputAttribution: stepDecodeTokensPerSecond == nil
                                 ? "unavailable_tool_call_before_vmlx_info"
-                                : stepThroughputAttribution
+                                : stepThroughputAttribution,
+                            mtp: stepMTP
                         )
                         // Interim prose preceding tool calls is NOT the
                         // final answer (never let it go stale into the
@@ -1398,7 +1465,8 @@ public enum AgentLoopEvaluator {
                             decodeTokensPerSecond: stepDecodeTokensPerSecond,
                             decodeThroughputAttribution: stepDecodeTokensPerSecond == nil
                                 ? "unavailable_tool_call_before_vmlx_info"
-                                : stepThroughputAttribution
+                                : stepThroughputAttribution,
+                            mtp: stepMTP
                         )
                         finalText = ""
                         return .toolCalls(

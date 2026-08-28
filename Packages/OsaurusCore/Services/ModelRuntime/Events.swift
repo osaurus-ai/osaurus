@@ -46,11 +46,45 @@ enum ModelRuntimeEvent: Sendable {
     /// number") because their training data extends thought through
     /// arbitrary self-verification. `false` for non-reasoning models or
     /// for streams that emitted `</think>` cleanly.
+    /// `mtp` carries vmlx's `GenerateCompletionInfo.nativeMTPStats` when the
+    /// native-MTP iterator produced these tokens, and `nil` for every other
+    /// decode path (plain AR, dFlash-2, remote). `nil` therefore covers both
+    /// "not requested" and "requested but gate-excluded" — the distinction
+    /// still lives in the vmlx gate, but carrying the stats end-to-end is
+    /// what lets an eval report PROVE which decode path a step ran on
+    /// instead of inferring it from a stderr line.
     case completionInfo(
         tokenCount: Int,
         tokensPerSecond: Double,
         unclosedReasoning: Bool,
         stopReason: String?,
-        promptTokensPerSecond: Double
+        promptTokensPerSecond: Double,
+        mtp: MTPStatsSummary?
     )
+}
+
+/// Compact, transport-friendly projection of vmlx's
+/// `NativeMTPGenerationStats` for one generation: the depth actually in
+/// effect, the depth after adaptive downshifts, and the draft/accept/reject
+/// counters an MTP control needs to verify itself against.
+struct MTPStatsSummary: Sendable, Equatable {
+    /// Draft depth in effect at the start of generation (post policy cap).
+    let depth: Int
+    /// Draft depth at the end of generation, after adaptive downshifts.
+    let activeDepth: Int
+    /// Verify cycles executed.
+    let verifyCalls: Int
+    /// Draft tokens accepted across all verify cycles
+    /// (Σ n · acceptedByDepth[n]).
+    let acceptedDraftTokens: Int
+    /// Bonus tokens sampled from the target after full acceptance.
+    let bonusTokens: Int
+    /// Rejected draft tokens.
+    let rejectedTokens: Int
+    /// Tokens produced by the autoregressive fallback path.
+    let arFallbackTokens: Int
+    /// Number of adaptive depth downshifts.
+    let adaptiveDownshifts: Int
+    /// Why the adaptive controller fell back to AR decode, or nil.
+    let adaptiveFallbackReason: String?
 }

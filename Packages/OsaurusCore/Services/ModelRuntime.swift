@@ -5181,7 +5181,8 @@ public actor ModelRuntime {
                         let tokensPerSecond,
                         let unclosedReasoning,
                         let stopReason,
-                        let promptTokensPerSecond
+                        let promptTokensPerSecond,
+                        let mtp
                     ) = ev {
                         continuation.yield(
                             StreamingStatsHint.encode(
@@ -5189,7 +5190,8 @@ public actor ModelRuntime {
                                 tokensPerSecond: tokensPerSecond,
                                 unclosedReasoning: unclosedReasoning,
                                 stopReason: stopReason,
-                                prefillTokensPerSecond: promptTokensPerSecond
+                                prefillTokensPerSecond: promptTokensPerSecond,
+                                mtp: mtp
                             )
                         )
                         continue
@@ -5603,6 +5605,63 @@ public actor ModelRuntime {
     // "greedy enforced" marker in the strategy description below. A second
     // upstream copy of the coercion briefly existed here and was removed —
     // duplicate policy sites drift.
+
+    /// Public projection of a resident model's native-MTP RESOLUTION — the
+    /// load-time launch result and the draft strategy a request issued NOW
+    /// would run under the current settings snapshot. This is independent
+    /// evidence for harnesses that must PROVE which decode path a run was
+    /// configured for (osaurus#2526): generated-token stats alone cannot
+    /// distinguish "MTP off" from "MTP requested but gate-excluded".
+    public struct MTPResolutionSnapshot: Sendable, Equatable {
+        /// Resident model this resolution belongs to (exact holder name).
+        public let modelName: String
+        /// Load-time launch status line from the resolved MTP plan
+        /// (nil = the load recorded no MTP status).
+        public let loadStatus: String?
+        /// Load-time reason (why MTP engaged, was blocked, or was skipped).
+        public let loadReason: String?
+        /// The strategy a request would run RIGHT NOW under current
+        /// settings: "none" for plain AR, "native_mtp:dN·…" when native
+        /// MTP is configured.
+        public let requestStrategy: String
+        /// Configured native-MTP depth of `requestStrategy` (nil = not
+        /// native MTP). This is the CONFIGURED depth; adaptive execution
+        /// may run a lower/higher active depth without changing it.
+        public let requestConfiguredDepth: Int?
+    }
+
+    /// Resolution snapshot for a resident model, matched by exact name
+    /// first, then case-insensitively, then — when exactly one local model
+    /// is resident — that model (its own name is reported, so a mismatch
+    /// stays visible). nil when no resident model matches: callers must
+    /// treat that as "resolution unavailable", never as "MTP off".
+    public static func mtpResolution(forModel name: String) async -> MTPResolutionSnapshot? {
+        await shared.mtpResolutionSnapshot(forModel: name)
+    }
+
+    private func mtpResolutionSnapshot(forModel name: String) -> MTPResolutionSnapshot? {
+        let holder: SessionHolder?
+        if let exact = modelCache.values.first(where: { $0.name == name }) {
+            holder = exact
+        } else if let ci = modelCache.values.first(where: {
+            $0.name.lowercased() == name.lowercased()
+        }) {
+            holder = ci
+        } else if modelCache.count == 1 {
+            holder = modelCache.values.first
+        } else {
+            holder = nil
+        }
+        guard let holder else { return nil }
+        let strategy = Self.requestDraftStrategy(holder.draftStrategy)
+        return MTPResolutionSnapshot(
+            modelName: holder.name,
+            loadStatus: holder.nativeMTPStatus,
+            loadReason: holder.nativeMTPReason,
+            requestStrategy: Self.describeDraftStrategy(strategy),
+            requestConfiguredDepth: Self.nativeMTPDepth(strategy)
+        )
+    }
 
     private nonisolated static func describeDraftStrategy(
         _ strategy: MLXLMCommon.DraftStrategy?

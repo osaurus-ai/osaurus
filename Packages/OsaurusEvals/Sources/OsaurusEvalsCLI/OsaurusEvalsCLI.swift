@@ -237,6 +237,13 @@ struct OsaurusEvalsCLI {
             : nil
         await EvalBootstrap.run(bootstrapPlan)
         startupWatchdog?.cancel()
+        // Pin the requested native-MTP control AFTER storage isolation and
+        // the env-driven KV overrides (both may replace the settings
+        // snapshot) and BEFORE the first model load, so both the load-time
+        // launch plan and every per-request strategy resolution see it.
+        if let control = opts.mtpControl {
+            EvalMTPControlState.apply(control)
+        }
 
         // Remote-model support: the CLI process never auto-connects the
         // user's configured providers, so `--model xai/grok-4.3` (or a
@@ -856,6 +863,12 @@ struct OsaurusEvalsCLI {
         /// stamped into every report's RunEnvironment. nil → production
         /// composition.
         let experimentProfilePath: String?
+        /// Explicit native-MTP control (`--mtp off|auto|d1|d2|d3`), pinned
+        /// into the process-local runtime settings before any model load.
+        /// Fail-closed: agent-loop cases that cannot honor the request are
+        /// reported as explicit errored rows (see `EvalMTPControlState`).
+        /// nil = leave the eval process's default resolution (Auto) alone.
+        let mtpControl: EvalMTPControl?
 
         static func parse(_ args: [String]) throws -> Options {
             var suites: [URL] = []
@@ -876,6 +889,7 @@ struct OsaurusEvalsCLI {
             var startupTimeoutSeconds = EvalTimeoutReport.configuredStartupTimeoutSeconds()
             var pluginBootstrapPreference: EvalInstalledPluginBootstrapPreference = .automatic
             var experimentProfilePath: String?
+            var mtpControl: EvalMTPControl?
 
             var i = 0
             while i < args.count {
@@ -950,6 +964,13 @@ struct OsaurusEvalsCLI {
                 case "--experiment-profile":
                     experimentProfilePath = try valueForArg(args, after: i, flag: arg)
                     i += 2
+                case "--mtp":
+                    let raw = try valueForArg(args, after: i, flag: arg)
+                    guard let control = EvalMTPControl.parse(raw) else {
+                        throw CLIError.invalidValue(arg, "\(raw) (use off|auto|d1|d2|d3)")
+                    }
+                    mtpControl = control
+                    i += 2
                 case "--help", "-h":
                     printUsage()
                     exit(0)
@@ -983,7 +1004,8 @@ struct OsaurusEvalsCLI {
                 failOnFloor: failOnFloor,
                 startupTimeoutSeconds: startupTimeoutSeconds,
                 pluginBootstrapPreference: pluginBootstrapPreference,
-                experimentProfilePath: experimentProfilePath
+                experimentProfilePath: experimentProfilePath,
+                mtpControl: mtpControl
             )
         }
     }
@@ -1009,6 +1031,7 @@ struct OsaurusEvalsCLI {
                                               [--threshold <float>] [--report-forensics]
                                               [--startup-timeout <seconds>]
                                               [--experiment-profile <profile.json>]
+                                              [--mtp off|auto|d1|d2|d3]
                 osaurus-evals optimize-context --suite <dir> [--suite <dir> ...] --out-dir <dir>
                                               [--model <id>] [--filter <substr>] [--repeat <n>]
                                               [--min-savings <tok>] [--max-candidates <n>]

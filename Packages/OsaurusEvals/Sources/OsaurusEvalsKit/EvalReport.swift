@@ -124,6 +124,32 @@ public struct EvalCaseTelemetry: Sendable, Codable {
     /// Disk-L2 KV-cache stores gained during this case — proves the disk
     /// lane is actively persisting prefixes for later reuse.
     public let diskL2StoresDelta: Int?
+    /// The `--mtp` control this run was executed under (`off`/`auto`/`dN`),
+    /// echoed onto every agent-loop row so a report is self-describing.
+    /// nil = no explicit control (process default resolution).
+    public let mtpRequested: String?
+    /// Load-time MTP launch status from the runtime's resolved plan —
+    /// INDEPENDENT resolution evidence (not inferred from token stats).
+    public let mtpLoadStatus: String?
+    /// Per-request resolved draft strategy under current settings
+    /// ("none" or "native_mtp:dN·…") captured while the model was
+    /// resident — the second independent evidence layer.
+    public let mtpRequestStrategy: String?
+    /// Native-MTP evidence aggregated across the case's model steps, from
+    /// the runtime's own per-generation stats (never inferred from
+    /// settings). All nil = native MTP produced none of this case's tokens.
+    /// `mtpDepth` is the max configured depth observed; `mtpActiveDepth`
+    /// the min end-of-step depth (the most-downshifted step); the counters
+    /// are sums. Drafted tokens = accepted + rejected.
+    public let mtpDepth: Int?
+    public let mtpActiveDepth: Int?
+    public let mtpVerifyCalls: Int?
+    public let mtpAcceptedDraftTokens: Int?
+    public let mtpBonusTokens: Int?
+    public let mtpRejectedTokens: Int?
+    public let mtpARFallbackTokens: Int?
+    /// Model steps whose tokens were produced by the native-MTP iterator.
+    public let mtpStepsWithMTP: Int?
 
     public init(
         decodeTokensPerSecond: Double? = nil,
@@ -147,7 +173,18 @@ public struct EvalCaseTelemetry: Sendable, Codable {
         ssmCompanionReDerivesDelta: Int? = nil,
         diskL2HitsDelta: Int? = nil,
         diskL2MissesDelta: Int? = nil,
-        diskL2StoresDelta: Int? = nil
+        diskL2StoresDelta: Int? = nil,
+        mtpRequested: String? = nil,
+        mtpLoadStatus: String? = nil,
+        mtpRequestStrategy: String? = nil,
+        mtpDepth: Int? = nil,
+        mtpActiveDepth: Int? = nil,
+        mtpVerifyCalls: Int? = nil,
+        mtpAcceptedDraftTokens: Int? = nil,
+        mtpBonusTokens: Int? = nil,
+        mtpRejectedTokens: Int? = nil,
+        mtpARFallbackTokens: Int? = nil,
+        mtpStepsWithMTP: Int? = nil
     ) {
         self.decodeTokensPerSecond = decodeTokensPerSecond
         self.prefillTokensPerSecond = prefillTokensPerSecond
@@ -171,6 +208,17 @@ public struct EvalCaseTelemetry: Sendable, Codable {
         self.diskL2HitsDelta = diskL2HitsDelta
         self.diskL2MissesDelta = diskL2MissesDelta
         self.diskL2StoresDelta = diskL2StoresDelta
+        self.mtpRequested = mtpRequested
+        self.mtpLoadStatus = mtpLoadStatus
+        self.mtpRequestStrategy = mtpRequestStrategy
+        self.mtpDepth = mtpDepth
+        self.mtpActiveDepth = mtpActiveDepth
+        self.mtpVerifyCalls = mtpVerifyCalls
+        self.mtpAcceptedDraftTokens = mtpAcceptedDraftTokens
+        self.mtpBonusTokens = mtpBonusTokens
+        self.mtpRejectedTokens = mtpRejectedTokens
+        self.mtpARFallbackTokens = mtpARFallbackTokens
+        self.mtpStepsWithMTP = mtpStepsWithMTP
     }
 
     /// True when no field carries a measurement — used to avoid emitting
@@ -186,6 +234,12 @@ public struct EvalCaseTelemetry: Sendable, Codable {
             && kvPrefixMissesDelta == nil && ssmCompanionHitsDelta == nil
             && ssmCompanionReDerivesDelta == nil && diskL2HitsDelta == nil
             && diskL2MissesDelta == nil && diskL2StoresDelta == nil
+            && mtpRequested == nil && mtpLoadStatus == nil
+            && mtpRequestStrategy == nil
+            && mtpDepth == nil && mtpActiveDepth == nil
+            && mtpVerifyCalls == nil && mtpAcceptedDraftTokens == nil
+            && mtpBonusTokens == nil && mtpRejectedTokens == nil
+            && mtpARFallbackTokens == nil && mtpStepsWithMTP == nil
     }
 }
 

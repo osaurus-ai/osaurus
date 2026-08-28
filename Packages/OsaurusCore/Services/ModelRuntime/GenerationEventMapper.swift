@@ -107,7 +107,8 @@ enum GenerationEventMapper {
                             tokensPerSecond: info.tokensPerSecond,
                             unclosedReasoning: info.unclosedReasoning,
                             stopReason: Self.openAIStopReason(from: info.stopReason),
-                            promptTokensPerSecond: info.promptTokensPerSecond
+                            promptTokensPerSecond: info.promptTokensPerSecond,
+                            mtp: Self.mtpSummary(from: info)
                         )
                     )
                     // `.info` is vmlx's authoritative logical completion.
@@ -222,7 +223,8 @@ enum GenerationEventMapper {
                         tokensPerSecond: 0,
                         unclosedReasoning: sawReasoning,
                         stopReason: nil,
-                        promptTokensPerSecond: 0
+                        promptTokensPerSecond: 0,
+                        mtp: nil
                     )
                 )
             }
@@ -285,6 +287,26 @@ enum GenerationEventMapper {
     /// One log line + one signpost event per completion. Pulled out of
     /// `map` so the per-event switch reads as the wire-format translation
     /// it actually is.
+    /// Project vmlx's per-generation MTP stats into the transportable
+    /// summary, or nil when native MTP did not produce these tokens.
+    /// `acceptedByDepth[n]` counts verify cycles that accepted exactly `n`
+    /// draft tokens, so the accepted-token total is Σ n·count.
+    private static func mtpSummary(from info: GenerateCompletionInfo) -> MTPStatsSummary? {
+        guard let mtp = info.nativeMTPStats else { return nil }
+        let accepted = mtp.acceptedByDepth.enumerated().reduce(0) { $0 + $1.offset * $1.element }
+        return MTPStatsSummary(
+            depth: mtp.depth,
+            activeDepth: mtp.activeDepth,
+            verifyCalls: mtp.verifyCalls,
+            acceptedDraftTokens: accepted,
+            bonusTokens: mtp.bonusTokens,
+            rejectedTokens: mtp.rejectedTokens,
+            arFallbackTokens: mtp.arFallbackTokens,
+            adaptiveDownshifts: mtp.adaptiveDownshifts,
+            adaptiveFallbackReason: mtp.adaptiveFallbackReason
+        )
+    }
+
     private static func logCompletionInfo(_ info: GenerateCompletionInfo) {
         mapperLog.info(
             "[perf] mlxStats promptTokens=\(info.promptTokenCount, privacy: .public) promptTps=\(info.promptTokensPerSecond, privacy: .public) promptMs=\(Int(info.promptTime * 1000), privacy: .public) genTokens=\(info.generationTokenCount, privacy: .public) genTps=\(info.tokensPerSecond, privacy: .public) genMs=\(Int(info.generateTime * 1000), privacy: .public) stop=\(String(describing: info.stopReason), privacy: .public) unclosedReasoning=\(info.unclosedReasoning, privacy: .public)"
