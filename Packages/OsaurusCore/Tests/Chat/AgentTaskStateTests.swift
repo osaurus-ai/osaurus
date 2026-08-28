@@ -391,6 +391,132 @@ struct AgentTaskStateTests {
         #expect(state.nextStepBias()?.contains("file_search") == true)
     }
 
+    // MARK: - Truncated-read continuation budget
+
+    /// Under the limit the continuation steer is unchanged: it names the exact
+    /// resume range so the model can finish the file (issue #2098's fix).
+    @Test func bias_partialReadSteersContinuationUnderLimit() {
+        let state = AgentTaskState()
+        state.record(
+            name: "file_read",
+            argsJSON: #"{"path":"big.md","start_line":1}"#,
+            result: partialFileEnvelope(path: "big.md", nextStart: 101, nextEnd: 600)
+        )
+        let bias = state.nextStepBias() ?? ""
+        #expect(bias.contains("call `file_read` again"))
+        #expect(bias.contains(#""start_line": 101"#))
+    }
+
+    /// Each continuation costs an agent iteration, so a file that stays
+    /// truncated cannot keep buying them: past the limit the instruction
+    /// switches. Critically it must NOT go silent — silence is what let a
+    /// truncated render be reviewed as the whole file (#2098) — so the bounded
+    /// notice still requires the model to disclose the partial read.
+    @Test func bias_partialReadSwitchesToBoundedNoticeAtLimit() {
+        let state = AgentTaskState()
+        for step in 0...2 {
+            state.record(
+                name: "file_read",
+                argsJSON: #"{"path":"big.md","start_line":\#(step * 100 + 1)}"#,
+                result: partialFileEnvelope(
+                    path: "big.md",
+                    nextStart: (step + 1) * 100 + 1,
+                    nextEnd: 600
+                )
+            )
+        }
+        let bias = state.nextStepBias() ?? ""
+        #expect(bias.contains("Stop re-reading this file"))
+        #expect(bias.contains("state explicitly"))
+        #expect(bias.contains("only read part"))
+        // The whole point of the bound: it stops asking for another read.
+        #expect(!bias.contains("call `file_read` again"))
+    }
+
+    /// The budget is per file. A second file that gets truncated must still
+    /// earn its own continuations rather than inheriting the first file's
+    /// exhausted budget.
+    @Test func bias_partialReadBudgetIsPerPath() {
+        let state = AgentTaskState()
+        for step in 0...2 {
+            state.record(
+                name: "file_read",
+                argsJSON: #"{"path":"big.md","start_line":\#(step * 100 + 1)}"#,
+                result: partialFileEnvelope(
+                    path: "big.md",
+                    nextStart: (step + 1) * 100 + 1,
+                    nextEnd: 600
+                )
+            )
+        }
+        #expect(state.nextStepBias()?.contains("Stop re-reading this file") == true)
+
+        state.record(
+            name: "file_read",
+            argsJSON: #"{"path":"other.md","start_line":1}"#,
+            result: partialFileEnvelope(path: "other.md", nextStart: 101, nextEnd: 400)
+        )
+        let bias = state.nextStepBias() ?? ""
+        #expect(bias.contains("other.md"))
+        #expect(bias.contains("call `file_read` again"))
+    }
+
+    /// A read that comes back whole means the file was finished, so its
+    /// continuation budget is released — a later truncated read of the same
+    /// path starts over instead of landing straight on the bounded notice.
+    @Test func bias_completeReadReleasesPartialReadBudget() {
+        let state = AgentTaskState()
+        for step in 0...2 {
+            state.record(
+                name: "file_read",
+                argsJSON: #"{"path":"big.md","start_line":\#(step * 100 + 1)}"#,
+                result: partialFileEnvelope(
+                    path: "big.md",
+                    nextStart: (step + 1) * 100 + 1,
+                    nextEnd: 600
+                )
+            )
+        }
+        #expect(state.nextStepBias()?.contains("Stop re-reading this file") == true)
+
+        state.record(
+            name: "file_read",
+            argsJSON: #"{"path":"big.md","start_line":400}"#,
+            result: fileContentEnvelope(path: "big.md")
+        )
+        state.record(
+            name: "file_read",
+            argsJSON: #"{"path":"big.md","start_line":1,"end_line":50}"#,
+            result: partialFileEnvelope(path: "big.md", nextStart: 51, nextEnd: 600)
+        )
+        #expect(state.nextStepBias()?.contains("call `file_read` again") == true)
+    }
+
+    /// The budget is per user message: a new send starts with a full one.
+    @Test func bias_partialReadBudgetResetsPerMessage() {
+        let state = AgentTaskState()
+        for step in 0...2 {
+            state.record(
+                name: "file_read",
+                argsJSON: #"{"path":"big.md","start_line":\#(step * 100 + 1)}"#,
+                result: partialFileEnvelope(
+                    path: "big.md",
+                    nextStart: (step + 1) * 100 + 1,
+                    nextEnd: 600
+                )
+            )
+        }
+        #expect(state.nextStepBias()?.contains("Stop re-reading this file") == true)
+
+        state.beginMessage()
+        state.record(
+            name: "file_read",
+            argsJSON: #"{"path":"big.md","start_line":1}"#,
+            result: partialFileEnvelope(path: "big.md", nextStart: 101, nextEnd: 600)
+        )
+        #expect(state.nextStepBias()?.contains("call `file_read` again") == true)
+    }
+
     @Test func bias_fileContentHasNoNudge() {
         let state = AgentTaskState()
         state.record(
