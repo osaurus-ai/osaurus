@@ -4143,7 +4143,7 @@ extension FloatingInputCard {
                 .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
-                swapActionButton(String(localized: "Open Activity Monitor", bundle: .module)) {
+                swapActionButton(String(localized: "Activity Monitor", bundle: .module)) {
                     NSWorkspace.shared.open(
                         URL(fileURLWithPath:
                             "/System/Applications/Utilities/Activity Monitor.app"))

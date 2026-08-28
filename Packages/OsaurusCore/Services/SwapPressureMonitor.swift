@@ -11,20 +11,21 @@
 //  before the episode contributes nothing to the reading. Advisory only:
 //  never changes model, sampler, or cache behavior.
 //
-//  Episode lifecycle (driven by ModelRuntime):
-//  - beginResidencyEpisode(model:) on a COLD load only — a warm cache hit
-//    must not reset the baseline. While any episode is active, later cold
-//    loads keep the ORIGINAL baseline (multi-model residency accumulates
-//    into one episode) and only update the phase/model label.
-//  - markLoadCompleted(model:) flips the phase from .loading to .resident.
-//  - endEpisodeOnLoadFailure() clears a baseline left by a failed or
-//    cancelled load with nothing resident.
-//  - endEpisodeIfIdle(residentCount:) on unload clears once nothing is
-//    resident.
+//  Episode lifecycle (driven by ModelRuntime): every COLD load appends its
+//  own record (own baseline, own attribution window) — warm cache hits never
+//  touch the episode. markLoadCompleted / noteFirstOutput / failure hooks
+//  match records BY MODEL, so concurrent loads cannot corrupt each other,
+//  and a load's attribution window closes at its first output (issue #2501)
+//  — the frozen window keeps the warning honest without attributing the
+//  machine's later behavior to the model indefinitely. The episode ends when
+//  nothing is resident and no load is in flight.
 //
 
 import Darwin
 import Foundation
+import os
+
+private let swapLog = Logger(subsystem: "ai.osaurus", category: "swap-pressure")
 
 public final class SwapPressureMonitor: @unchecked Sendable {
     public static let shared = SwapPressureMonitor()
@@ -58,6 +59,8 @@ public final class SwapPressureMonitor: @unchecked Sendable {
         /// Most recent model the episode attributes to (the one whose cold
         /// load started or extended the episode).
         public let modelName: String?
+        /// Swap used at the episode's first cold-load baseline.
+        public let baselineUsedBytes: UInt64
         public let swapUsedBytes: UInt64
         public let swapTotalBytes: UInt64
         /// Current swap growth over the episode baseline (may dip negative).
@@ -83,6 +86,7 @@ public final class SwapPressureMonitor: @unchecked Sendable {
 
         public static let quiet = State(
             severity: .none, phase: .idle, modelName: nil,
+            baselineUsedBytes: 0,
             swapUsedBytes: 0, swapTotalBytes: 0,
             growthSinceBaselineBytes: 0, peakGrowthBytes: 0,
             episodeElapsedSeconds: 0, processFootprintBytes: 0,
@@ -106,14 +110,40 @@ public final class SwapPressureMonitor: @unchecked Sendable {
     /// the CURRENT growth to have receded (macOS reclaimed swap).
     static let exitStreakRequired = 3
 
-    private struct Episode {
-        var baselineUsedBytes: UInt64
-        var startedAt: Date
-        var modelName: String
+    /// One cold load inside the episode. Each keeps its OWN baseline so
+    /// growth is attributed to the load whose window it happened in — a
+    /// shared label would falsely pin earlier growth on the newest model.
+    /// The attribution window closes at the load's first output (issue
+    /// #2501): the frozen window growth keeps the warning honest afterwards
+    /// without attributing the machine's later behavior to the model
+    /// indefinitely.
+    private struct LoadRecord {
+        let id = UUID()
+        let model: String
+        let baselineUsedBytes: UInt64
+        let startedAt: Date
         var phase: Phase
+        var windowClosed = false
+        var frozenWindowGrowthBytes: Int64 = 0
+
+        func windowGrowthBytes(currentUsed: UInt64) -> Int64 {
+            windowClosed
+                ? frozenWindowGrowthBytes
+                : Int64(bitPattern: currentUsed &- baselineUsedBytes)
+        }
+    }
+
+    private struct Episode {
+        var loads: [LoadRecord]
         var peakGrowthBytes: Int64 = 0
         var lastSeverity: Severity = .none
         var exitStreak = 0
+
+        var baselineUsedBytes: UInt64 { loads.first?.baselineUsedBytes ?? 0 }
+        var startedAt: Date { loads.first?.startedAt ?? Date() }
+        /// Attribution keeps advancing only while some load's window is open.
+        var attributionOpen: Bool { loads.contains { !$0.windowClosed } }
+        var anyLoading: Bool { loads.contains { $0.phase == .loading } }
     }
 
     private let lock = NSLock()
@@ -121,51 +151,89 @@ public final class SwapPressureMonitor: @unchecked Sendable {
     private var lastVMSample: (swapins: UInt64, decompressions: UInt64, at: Date)?
     private var lastRates: (swapins: Double, decompressions: Double) = (0, 0)
 
+    /// Swap-usage source. The default reads the host sysctl; tests inject a
+    /// deterministic sequence so the attribution-window contract (growth
+    /// during load/prefill/TTFT counts, growth after first output does not)
+    /// is provable without actually thrashing the machine.
+    var swapSampler: () -> (used: UInt64, total: UInt64)? = SwapPressureMonitor.readSwapUsage
+
     // MARK: - Residency episode hooks (called by ModelRuntime)
 
-    /// Start (or extend) the episode at a COLD load. A no-op when an episode
-    /// is already active except for updating the model label and returning
-    /// the phase to `.loading`: multi-model residency accumulates into one
-    /// episode against the original baseline.
+    /// Start (or extend) the episode at a COLD load. Each cold load gets its
+    /// own record with its own baseline captured at ITS start, so growth is
+    /// attributed to the correct load's window under multi-model residency
+    /// and concurrent loads.
     public func beginResidencyEpisode(model: String) {
         lock.lock()
         defer { lock.unlock() }
-        if episode != nil {
-            episode?.modelName = model
-            episode?.phase = .loading
-            return
-        }
-        guard let usage = Self.readSwapUsage() else { return }
-        episode = Episode(
+        guard let usage = swapSampler() else { return }
+        let record = LoadRecord(
+            model: model,
             baselineUsedBytes: usage.used,
             startedAt: Date(),
-            modelName: model,
             phase: .loading)
+        if episode == nil {
+            episode = Episode(loads: [record])
+        } else {
+            episode?.loads.append(record)
+        }
     }
 
-    /// The cold load finished successfully; the episode continues in
-    /// `.resident` phase.
+    /// The named model's cold load finished; only ITS record flips to
+    /// `.resident` — concurrent completions cannot touch each other.
     public func markLoadCompleted(model: String) {
         lock.lock()
         defer { lock.unlock() }
-        episode?.phase = .resident
+        guard var current = episode,
+            let index = current.loads.lastIndex(where: {
+                $0.model == model && $0.phase == .loading
+            })
+        else { return }
+        current.loads[index].phase = .resident
+        episode = current
     }
 
-    /// A cold load failed or was cancelled. Clears the baseline only when
-    /// the caller reports nothing is resident (a failure while another
-    /// model remains loaded keeps that model's episode).
-    public func endEpisodeOnLoadFailure(residentCount: Int) {
+    /// The named model produced its first output: close ITS attribution
+    /// window, freezing the growth that coincided with its load-through-
+    /// first-output span (issue #2501's measurement bound).
+    public func noteFirstOutput(model: String) {
         lock.lock()
         defer { lock.unlock() }
-        if residentCount == 0 { episode = nil }
-        else { episode?.phase = .resident }
+        guard var current = episode,
+            let index = current.loads.lastIndex(where: {
+                $0.model == model && !$0.windowClosed
+            }),
+            let usage = swapSampler()
+        else { return }
+        current.loads[index].frozenWindowGrowthBytes =
+            current.loads[index].windowGrowthBytes(currentUsed: usage.used)
+        current.loads[index].windowClosed = true
+        episode = current
     }
 
-    /// Unload teardown: end the episode once nothing is resident.
+    /// The named model's cold load failed or was cancelled: remove ITS
+    /// record only. The episode ends when no records remain and nothing is
+    /// resident — a failure can never erase another in-flight load's
+    /// baseline.
+    public func endEpisodeOnLoadFailure(model: String, residentCount: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard var current = episode else { return }
+        if let index = current.loads.lastIndex(where: {
+            $0.model == model && $0.phase == .loading
+        }) {
+            current.loads.remove(at: index)
+        }
+        episode = current.loads.isEmpty && residentCount == 0 ? nil : current
+    }
+
+    /// Unload teardown: end the episode once nothing is resident and no
+    /// load remains in flight.
     public func endEpisodeIfIdle(residentCount: Int) {
         lock.lock()
         defer { lock.unlock() }
-        if residentCount == 0 { episode = nil }
+        guard let current = episode else { return }
+        if residentCount == 0 && !current.anyLoading { episode = nil }
     }
 
     // MARK: - Sampling
@@ -179,6 +247,7 @@ public final class SwapPressureMonitor: @unchecked Sendable {
             return State(
                 severity: override, phase: .resident,
                 modelName: "Simulated Model",
+                baselineUsedBytes: 1 << 30,
                 swapUsedBytes: UInt64(growth) + (1 << 30),
                 swapTotalBytes: 8 << 30,
                 growthSinceBaselineBytes: growth,
@@ -190,15 +259,16 @@ public final class SwapPressureMonitor: @unchecked Sendable {
                 emulated: true)
         }
 
-        guard let usage = Self.readSwapUsage() else { return .quiet }
+        guard let usage = swapSampler() else { return .quiet }
         let footprint = Self.processFootprintBytes()
         let rates = sampleVMRates()
 
         lock.lock()
         defer { lock.unlock() }
-        guard var current = episode else {
+        guard var current = episode, !current.loads.isEmpty else {
             return State(
                 severity: .none, phase: .idle, modelName: nil,
+                baselineUsedBytes: 0,
                 swapUsedBytes: usage.used, swapTotalBytes: usage.total,
                 growthSinceBaselineBytes: 0, peakGrowthBytes: 0,
                 episodeElapsedSeconds: 0,
@@ -208,7 +278,13 @@ public final class SwapPressureMonitor: @unchecked Sendable {
                 emulated: false)
         }
         let growth = Int64(bitPattern: usage.used &- current.baselineUsedBytes)
-        current.peakGrowthBytes = max(current.peakGrowthBytes, growth)
+        // Attribution stops accumulating once every load's window closed at
+        // its first output (issue #2501): the peak persists so the warning
+        // remains honest, but later machine behavior is no longer attributed
+        // to the models.
+        if current.attributionOpen {
+            current.peakGrowthBytes = max(current.peakGrowthBytes, growth)
+        }
         let severity = Self.classify(
             currentGrowthBytes: growth,
             peakGrowthBytes: current.peakGrowthBytes,
@@ -222,12 +298,25 @@ public final class SwapPressureMonitor: @unchecked Sendable {
             // growth re-triggers.
             current.peakGrowthBytes = max(0, growth)
         }
+        // Attribute to the load whose own window saw the most growth, not
+        // merely the newest one.
+        let dominant = current.loads.max {
+            $0.windowGrowthBytes(currentUsed: usage.used)
+                < $1.windowGrowthBytes(currentUsed: usage.used)
+        }
+        let phase: Phase = current.anyLoading ? .loading : .resident
+        if severity != current.lastSeverity {
+            swapLog.info(
+                "swap-pressure \(current.lastSeverity.rawValue, privacy: .public) -> \(severity.rawValue, privacy: .public) model=\(dominant?.model ?? "?", privacy: .public) phase=\(phase.rawValue, privacy: .public) baselineMB=\(current.baselineUsedBytes >> 20) usedMB=\(usage.used >> 20) growthMB=\(growth >> 20) peakMB=\(current.peakGrowthBytes >> 20) footprintMB=\(footprint >> 20) swapins_s=\(Int(rates.swapins)) decomp_s=\(Int(rates.decompressions))"
+            )
+        }
         current.lastSeverity = severity
         episode = current
         return State(
             severity: severity,
-            phase: current.phase,
-            modelName: current.modelName,
+            phase: phase,
+            modelName: dominant?.model,
+            baselineUsedBytes: current.baselineUsedBytes,
             swapUsedBytes: usage.used,
             swapTotalBytes: usage.total,
             growthSinceBaselineBytes: growth,
@@ -337,6 +426,12 @@ public final class SwapPressureMonitor: @unchecked Sendable {
         defer { lock.unlock() }
         defer { lastVMSample = (swapins, decompressions, now) }
         guard let previous = lastVMSample else { return (0, 0) }
+        // Counter regression (host_statistics64 reset, e.g. across a sleep
+        // cycle) would wrap `&-` into an astronomically large rate. Re-prime
+        // and keep the previous reading instead.
+        guard swapins >= previous.swapins, decompressions >= previous.decompressions else {
+            return lastRates
+        }
         let dt = now.timeIntervalSince(previous.at)
         guard dt > 0.2 else { return lastRates }
         let rates = (

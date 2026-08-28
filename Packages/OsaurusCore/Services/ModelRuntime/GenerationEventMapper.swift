@@ -42,7 +42,12 @@ enum GenerationEventMapper {
         modelName: String = "",
         trace: TTFTTrace? = nil,
         suppressProgressUI: Bool = false,
-        onConsumerCancellation: @escaping @Sendable () -> Void = {}
+        onConsumerCancellation: @escaping @Sendable () -> Void = {},
+        /// Fired exactly once, at the FIRST real output event (chunk,
+        /// reasoning, tool call, or tool-call progress). This is the
+        /// boundary the swap-attribution window closes on: prefill and
+        /// TTFT work happen before it, decode after.
+        onFirstModelOutput: @escaping @Sendable () -> Void = {}
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
         let task = Task {
@@ -76,6 +81,7 @@ enum GenerationEventMapper {
                 let ms = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
                 trace?.set("first_token_ms", ms)
                 trace?.mark("first_model_output")
+                onFirstModelOutput()
             }
 
             // Route the "prefill is done" signal to the surface that started

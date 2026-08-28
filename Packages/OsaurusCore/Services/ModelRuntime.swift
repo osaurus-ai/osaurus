@@ -4081,7 +4081,7 @@ public actor ModelRuntime {
             // baseline behind (unless another model remains resident, whose
             // episode continues).
             SwapPressureMonitor.shared.endEpisodeOnLoadFailure(
-                residentCount: modelCache.count)
+                model: name, residentCount: modelCache.count)
             throw error
         }
     }
@@ -4992,6 +4992,15 @@ public actor ModelRuntime {
                 // producer and releases this stream's ModelLease before a
                 // residency restore can evict the child model.
                 activeTask.cancel()
+            },
+            onFirstModelOutput: {
+                // The FIRST emitted output closes the cold load's
+                // swap-attribution window (issue #2501): swap growth during
+                // load, prefill, and TTFT is attributed to the model; growth
+                // after decode starts is not. Firing this before
+                // `MLXBatchAdapter.generate` would close the window before
+                // any prefill work happened. Later calls no-op.
+                SwapPressureMonitor.shared.noteFirstOutput(model: modelName)
             }
         )
     }
