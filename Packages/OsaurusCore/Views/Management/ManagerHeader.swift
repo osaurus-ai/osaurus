@@ -420,30 +420,58 @@ struct HeaderTabsRow<Tab: AnimatedTabItem>: View where Tab.AllCases: RandomAcces
         self.showSearch = showSearch
     }
 
+    /// Live width of the row and of the tab selector at its natural size,
+    /// driving the one-row vs. stacked layout choice below.
+    @State private var availableWidth: CGFloat = 0
+    @State private var selectorWidth: CGFloat = 0
+
+    /// Whether the selector and search field need to stack vertically.
+    ///
+    /// This used to be a `ViewThatFits(in: .horizontal)` over the two
+    /// layouts. On macOS 15, ViewThatFits sizes its candidates in a deep
+    /// re-entrant layout pass that can run on a background render thread;
+    /// re-evaluating `AnimatedTabSelector`'s MainActor-isolated `ForEach`
+    /// closure there tripped the Swift runtime's executor assertion
+    /// (`_dispatch_assert_queue_fail`) and crashed the Images / Privacy /
+    /// Server settings tabs (Sentry APPLE-MACOS-1H5, GitHub #2521).
+    /// Choosing the layout from measured widths renders each view exactly
+    /// once on the main thread, with no candidate sizing pass.
+    private var needsStackedLayout: Bool {
+        guard showSearch else { return false }
+        guard availableWidth > 0, selectorWidth > 0 else { return false }
+        // One row = selector + 12pt gap + the fixed 220pt search field.
+        return selectorWidth + 12 + 220 > availableWidth
+    }
+
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) {
-                tabSelector
+        Group {
+            if needsStackedLayout {
+                VStack(alignment: .leading, spacing: 10) {
+                    tabSelector
 
-                Spacer(minLength: 12)
-
-                if showSearch {
-                    SearchField(text: $searchText, placeholder: searchPlaceholder, width: 220)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                tabSelector
-
-                if showSearch {
                     SearchField(
                         text: $searchText,
                         placeholder: searchPlaceholder,
                         fillsAvailableWidth: true
                     )
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(spacing: 12) {
+                    tabSelector
+
+                    Spacer(minLength: 12)
+
+                    if showSearch {
+                        SearchField(text: $searchText, placeholder: searchPlaceholder, width: 220)
+                    }
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            availableWidth = width
         }
     }
 
@@ -454,6 +482,14 @@ struct HeaderTabsRow<Tab: AnimatedTabItem>: View where Tab.AllCases: RandomAcces
             counts: counts,
             badges: badges
         )
+        // Natural width in both layouts (leading-aligned in the stack, next
+        // to a Spacer in the row), so the measurement is layout-independent
+        // and the `needsStackedLayout` choice can't oscillate.
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            selectorWidth = width
+        }
     }
 }
 
