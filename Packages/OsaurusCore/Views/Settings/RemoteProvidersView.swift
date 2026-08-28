@@ -24,6 +24,9 @@ struct RemoteProvidersView: View {
     @State private var credentialPresence: [UUID: RemoteProviderCredentialPresence] = [:]
     @State private var reconnectingAll = false
     @State private var reconnectingProviderIds: Set<UUID> = []
+    /// Mirrors the sidebar's Developer Tools switch; gates the connectivity
+    /// summary card.
+    @State private var showDeveloperDetail = SidebarSectionExpansion.isDeveloperToolsOn
 
     private struct AddSheetConfig: Identifiable {
         let id = UUID()
@@ -45,7 +48,12 @@ struct RemoteProvidersView: View {
                     if userConfiguredProviders.isEmpty {
                         emptyStateView
                     } else {
-                        connectivityCenterView
+                        // The connectivity summary card is developer-grade
+                        // detail; it rides the Developer Tools switch so the
+                        // everyday page is just the provider list.
+                        if showDeveloperDetail {
+                            connectivityCenterView
+                        }
                         providerListView
                     }
                 }
@@ -61,6 +69,11 @@ struct RemoteProvidersView: View {
                 hasAppeared = true
             }
             refreshCredentialPresence()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: SidebarSectionExpansion.changed)) { _ in
+            withAnimation(.easeOut(duration: 0.2)) {
+                showDeveloperDetail = SidebarSectionExpansion.isDeveloperToolsOn
+            }
         }
         .sheet(item: $addSheetConfig) { config in
             RemoteProviderEditSheet(

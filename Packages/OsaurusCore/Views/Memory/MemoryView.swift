@@ -112,6 +112,18 @@ struct MemoryView: View {
     @State private var selectedTab: MemoryTab = .identity
     @State private var selectedAgent: Agent?
     @State private var hasAppeared = false
+    /// Mirrors the sidebar's Developer Tools switch; gates the Diagnostics
+    /// tab.
+    @State private var showDeveloperDetail = SidebarSectionExpansion.isDeveloperToolsOn
+
+    /// Diagnostics is developer-grade detail: hidden unless the Developer
+    /// Tools switch is on — or it's already the active tab (a sub-tab
+    /// request landed there), so the selection is never stranded invisibly.
+    private var visibleTabs: [MemoryTab] {
+        MemoryTab.allCases.filter {
+            $0 != .diagnostics || showDeveloperDetail || selectedTab == .diagnostics
+        }
+    }
 
     /// Text-backed mirrors of the numeric config knobs, so the Settings
     /// sub-tab can use the shared `SettingsStepperField`. Hydrated in
@@ -234,6 +246,15 @@ struct MemoryView: View {
             selectedTab = tab
             managementState.memorySubTabRequest = nil
         }
+        .onReceive(NotificationCenter.default.publisher(for: SidebarSectionExpansion.changed)) { _ in
+            withAnimation(.easeOut(duration: 0.2)) {
+                showDeveloperDetail = SidebarSectionExpansion.isDeveloperToolsOn
+                // Don't strand the selection on a tab that just disappeared.
+                if !showDeveloperDetail, selectedTab == .diagnostics {
+                    selectedTab = .identity
+                }
+            }
+        }
         // Deep link from a project page's memory section: jump to the Agents
         // subtab and open that project's shared-memory preview.
         .onChange(of: managementState.pendingMemoryProjectPreview) { _, _ in
@@ -290,6 +311,7 @@ struct MemoryView: View {
         } tabsRow: {
             HeaderTabsRow(
                 selection: $selectedTab,
+                tabs: visibleTabs,
                 counts: [
                     .memories: totalPinned + totalEpisodes,
                     // The tab hosts both the agent and project memory cards,

@@ -393,6 +393,9 @@ struct HeaderTabsRow<Tab: AnimatedTabItem>: View where Tab.AllCases: RandomAcces
     @Environment(\.theme) private var theme
 
     @Binding var selection: Tab
+    /// Optional subset of tabs to render (nil == all cases), forwarded to
+    /// `AnimatedTabSelector` for callers that hide tabs conditionally.
+    var tabs: [Tab]?
     var counts: [Tab: Int]?
     var badges: [Tab: Int]?
     @Binding var searchText: String
@@ -401,6 +404,7 @@ struct HeaderTabsRow<Tab: AnimatedTabItem>: View where Tab.AllCases: RandomAcces
 
     init(
         selection: Binding<Tab>,
+        tabs: [Tab]? = nil,
         counts: [Tab: Int]? = nil,
         badges: [Tab: Int]? = nil,
         searchText: Binding<String> = .constant(""),
@@ -408,6 +412,7 @@ struct HeaderTabsRow<Tab: AnimatedTabItem>: View where Tab.AllCases: RandomAcces
         showSearch: Bool = true
     ) {
         self._selection = selection
+        self.tabs = tabs
         self.counts = counts
         self.badges = badges
         self._searchText = searchText
@@ -445,6 +450,7 @@ struct HeaderTabsRow<Tab: AnimatedTabItem>: View where Tab.AllCases: RandomAcces
     private var tabSelector: some View {
         AnimatedTabSelector(
             selection: $selection,
+            tabs: tabs,
             counts: counts,
             badges: badges
         )
@@ -455,10 +461,12 @@ struct HeaderTabsRow<Tab: AnimatedTabItem>: View where Tab.AllCases: RandomAcces
 extension HeaderTabsRow {
     init(
         selection: Binding<Tab>,
+        tabs: [Tab]? = nil,
         counts: [Tab: Int]? = nil,
         badges: [Tab: Int]? = nil
     ) {
         self._selection = selection
+        self.tabs = tabs
         self.counts = counts
         self.badges = badges
         self._searchText = .constant("")

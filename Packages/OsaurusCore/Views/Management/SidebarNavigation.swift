@@ -45,8 +45,21 @@ struct SidebarSectionData: Identifiable {
 
 /// Persistence for collapsible-section expansion (kept outside the generic
 /// `SidebarNavigation` type, which cannot hold static stored properties).
-private enum SidebarSectionExpansion {
+///
+/// The Developer Tools switch doubles as a "developer mode" signal: other
+/// settings surfaces (provider connectivity card, memory diagnostics tab)
+/// read `isDeveloperToolsOn` and re-check on `changed` to hide their
+/// developer-grade chrome while the switch is off.
+enum SidebarSectionExpansion {
     static let defaultsKey = "settingsSidebarExpandedSections"
+    /// Posted after the expansion set persists, so open settings tabs can
+    /// react to the Developer Tools switch without relaunching.
+    static let changed = Notification.Name("sidebarSectionExpansionChanged")
+
+    static var isDeveloperToolsOn: Bool {
+        UserDefaults.standard.stringArray(forKey: defaultsKey)?
+            .contains(ManagementSection.developers.rawValue) ?? false
+    }
 }
 
 // MARK: - Layout Constants
@@ -285,6 +298,7 @@ private extension SidebarNavigation {
             Array(expandedCollapsibleSections).sorted(),
             forKey: SidebarSectionExpansion.defaultsKey
         )
+        NotificationCenter.default.post(name: SidebarSectionExpansion.changed, object: nil)
     }
 
     /// Group label when expanded; a thin divider between groups when collapsed.
