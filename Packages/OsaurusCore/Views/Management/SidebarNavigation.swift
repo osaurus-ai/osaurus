@@ -502,9 +502,9 @@ struct SidebarSectionHeader: View {
     }
 }
 
-/// Section header that doubles as a disclosure toggle for collapsible
-/// groups (Developer Tools): same typography as `SidebarSectionHeader` plus
-/// a trailing chevron that rotates with the expansion state.
+/// Section header with a literal switch for collapsible groups (Developer
+/// Tools): same typography as `SidebarSectionHeader`, plus a trailing mini
+/// toggle that shows the group's tabs while on.
 struct SidebarCollapsibleSectionHeader: View {
     @Environment(\.theme) private var theme
     let title: String
@@ -512,35 +512,31 @@ struct SidebarCollapsibleSectionHeader: View {
     var topPadding: CGFloat = 16
     let action: () -> Void
 
-    @State private var isHovering = false
-
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Text(title.uppercased())
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .bold))
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                Spacer(minLength: 0)
-            }
-            .foregroundColor(isHovering ? theme.secondaryText : theme.tertiaryText)
-            .padding(.horizontal, 12)
-            .padding(.top, topPadding)
-            .padding(.bottom, 4)
-            .contentShape(Rectangle())
+        HStack(spacing: 4) {
+            Text(title.uppercased())
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundColor(theme.tertiaryText)
+            Spacer(minLength: 0)
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { isExpanded },
+                    set: { _ in action() }
+                )
+            )
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .labelsHidden()
+            .localizedHelp("Show Developer Tools in the sidebar")
         }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
-        .localizedHelp(isExpanded ? "Hide this group" : "Show this group")
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovering = hovering
-            }
-        }
+        .padding(.horizontal, 12)
+        .padding(.top, topPadding)
+        .padding(.bottom, 4)
+        .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
         .accessibilityValue(
-            isExpanded ? Text("Expanded", bundle: .module) : Text("Collapsed", bundle: .module)
+            isExpanded ? Text("Shown", bundle: .module) : Text("Hidden", bundle: .module)
         )
     }
 }
