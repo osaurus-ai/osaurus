@@ -2367,6 +2367,12 @@ extension FloatingInputCard {
         _ mtp: VMLXServerMTPSettings
     ) -> String {
         if mtp.mode == .off { return "off" }
+        if mtp.mode == .forceOn, let depth = mtp.explicitDepth, (1...3).contains(depth) {
+            return String(depth)
+        }
+        // Legacy saved state: the old buttons wrote auto + draftTokenLimit,
+        // which never activated anything. Render it as the depth it claimed
+        // so the migration to a real press is one click, not a mystery.
         if let limit = mtp.draftTokenLimit, (1...3).contains(limit) { return String(limit) }
         return "auto"
     }
@@ -2385,12 +2391,22 @@ extension FloatingInputCard {
         case "off":
             settings.mtp.mode = .off
             settings.mtp.draftTokenLimit = nil
+            settings.mtp.explicitDepth = nil
         case "auto":
             settings.mtp.mode = .auto
             settings.mtp.draftTokenLimit = nil
+            settings.mtp.explicitDepth = nil
         default:
-            settings.mtp.mode = .auto
-            settings.mtp.draftTokenLimit = Int(segment)
+            // Explicit depth is a manual ACTIVATION contract, not an auto
+            // hint: forceOn + explicitDepth activates a tensor-complete MTP
+            // head without measured tuning (the engine validates family and
+            // tensor evidence and fails closed otherwise, e.g. JANG_1L), and
+            // the runtime enforces greedy sampling for this model+session.
+            // The old wiring (auto + draftTokenLimit) selected a depth in the
+            // UI while the engine stayed autoregressive.
+            settings.mtp.mode = .forceOn
+            settings.mtp.explicitDepth = Int(segment)
+            settings.mtp.draftTokenLimit = nil
         }
         nativeMTPSelection = segment
         Task { _ = await ServerController.applyRuntimeSettingsFromConfigureTool(settings) }

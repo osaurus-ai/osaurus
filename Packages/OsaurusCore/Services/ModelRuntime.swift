@@ -4920,16 +4920,18 @@ public actor ModelRuntime {
 
         let prepared: MLXBatchAdapter.PreparedStream
         do {
+            let requestStrategy = Self.requestDraftStrategy(holder.draftStrategy)
             prepared = try await MLXBatchAdapter.generate(
                 modelName: modelName,
                 container: holder.container,
                 buildChat: buildChat,
                 buildToolsSpec: buildTools,
                 buildRawPrompt: rawPromptBuilder,
-                generation: parameters,
+                generation: Self.enforcingMTPGreedy(
+                    parameters, draftStrategy: requestStrategy),
                 toolChoice: toolChoice,
                 stopSequences: stopSequences,
-                draftStrategy: Self.requestDraftStrategy(holder.draftStrategy),
+                draftStrategy: requestStrategy,
                 runtime: cfg,
                 maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
             )
@@ -5562,10 +5564,37 @@ public actor ModelRuntime {
         }
         let mtp = ServerRuntimeSettingsStore.snapshot().mtp
         if mtp.mode == .off { return nil }
+        // An explicit user depth (the 1/2/3 buttons) governs the request
+        // exactly — it is an activation contract, not a hint or a cap.
+        if mtp.mode == .forceOn, let manual = mtp.explicitDepth,
+            (1...3).contains(manual), manual != depth
+        {
+            return .nativeMTP(depth: manual, verifierMode: verifierMode)
+        }
         guard let limit = mtp.draftTokenLimit, limit > 0, limit < depth else {
             return loaded
         }
         return .nativeMTP(depth: limit, verifierMode: verifierMode)
+    }
+
+    /// Any request that actually runs native MTP forces greedy sampling for
+    /// that model+session (temperature 0, top-p 1, top-k 0, min-p 0).
+    /// Measured on JANG_2L: greedy MTP is byte-exact against greedy AR and
+    /// ~10% faster than sampled MTP. The override is scoped to the MTP
+    /// request itself — bundle generation_config still governs every
+    /// non-MTP path, including spawned agents and coding loops.
+    nonisolated static func enforcingMTPGreedy(
+        _ parameters: GenerateParameters,
+        draftStrategy: MLXLMCommon.DraftStrategy?
+    ) -> GenerateParameters {
+        guard case .some(.nativeMTP) = draftStrategy else { return parameters }
+        let enforced = VMLXServerMTPSettings.mtpEnforcedGreedySampling
+        var greedy = parameters
+        greedy.temperature = enforced.temperature
+        greedy.topP = enforced.topP
+        greedy.topK = enforced.topK
+        greedy.minP = enforced.minP
+        return greedy
     }
 
     private nonisolated static func describeDraftStrategy(
