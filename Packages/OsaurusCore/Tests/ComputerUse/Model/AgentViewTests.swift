@@ -196,6 +196,7 @@ final class AgentViewTests: XCTestCase {
             from: snapshot([
                 el("email", "textfield", "Email", value: "ops@example.com"),
                 el("password", "securetextfield", "Password", value: "p@ssw0rd-do-not-leak"),
+                el("token", "AXSecureTextField", "API token", value: "sk-secret"),
             ]),
             previous: nil
         )
@@ -205,7 +206,10 @@ final class AgentViewTests: XCTestCase {
         XCTAssertTrue(render.contains("ops@example.com"))
         XCTAssertTrue(render.contains("Password"))
         XCTAssertFalse(render.contains("p@ssw0rd-do-not-leak"))
+        XCTAssertTrue(render.contains("API token"))
+        XCTAssertFalse(render.contains("sk-secret"))
         XCTAssertNil(view.items.first(where: { $0.elementId == "password" })?.value)
+        XCTAssertNil(view.items.first(where: { $0.elementId == "token" })?.value)
     }
 
     func testSecureFieldValueChangeDoesNotRenderMarker() {
@@ -215,6 +219,22 @@ final class AgentViewTests: XCTestCase {
         )
         let next = AgentView.build(
             from: snapshot([el("password", "securetextfield", "Password", value: "new-secret")], id: 2),
+            previous: prev
+        )
+
+        XCTAssertFalse(next.hasChanges)
+        XCTAssertFalse(next.items.first?.changed ?? true)
+        XCTAssertFalse(next.renderForModel().contains("* ["))
+        XCTAssertFalse(next.renderForModel().contains("new-secret"))
+    }
+
+    func testSecureFieldAliasValueChangeDoesNotRenderMarker() {
+        let prev = AgentView.build(
+            from: snapshot([el("password", "securefield", "Password", value: "old-secret")]),
+            previous: nil
+        )
+        let next = AgentView.build(
+            from: snapshot([el("password", "securefield", "Password", value: "new-secret")], id: 2),
             previous: prev
         )
 

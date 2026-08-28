@@ -211,7 +211,7 @@ public struct AgentView: Sendable, Equatable {
     private static func visibleValue(for element: CUElement) -> String? {
         // Secure fields are never diffed by value; a change marker would reveal
         // that secret input changed even when the value itself is hidden.
-        CUSecureFieldRole.contains(element.role) ? nil : element.value
+        ComputerUseSecureFieldRedaction.value(role: element.role, element.value)
     }
 
     // MARK: Model rendering

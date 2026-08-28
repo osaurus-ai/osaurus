@@ -1130,6 +1130,7 @@ final class ScreenContextDistillerTests: XCTestCase {
         XCTAssertNil(snap.focusedElement?.value)
         XCTAssertNil(snap.focusedElement?.selectedText)
         XCTAssertFalse(snap.render().contains(secret))
+        XCTAssertEqual(snap.focusedElement?.role, "secure field")
         XCTAssertFalse(snap.sampledContents.contains { $0.contains(secret) })
     }
 }

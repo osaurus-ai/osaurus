@@ -399,6 +399,11 @@ final class AccessibilityManager: @unchecked Sendable {
         let app = Self.axApp(pid)
 
         func readableLength(_ element: AXUIElement) -> Int {
+            if let role = axCopyAttribute(element, kAXRoleAttribute as String) as? String,
+                ComputerUseSecureFieldRedaction.isSecureRole(role)
+            {
+                return 0
+            }
             guard let value = axCopyAttribute(element, kAXValueAttribute as String) as? String
             else { return 0 }
             return value.trimmingCharacters(in: .whitespacesAndNewlines).count
@@ -563,6 +568,9 @@ final class AccessibilityManager: @unchecked Sendable {
         "colorwell",
         "searchfield",
         "securetextfield",
+        "securefield",
+        "passwordfield",
+        "password",
         "row",
         "cell",
         "outline",
@@ -817,14 +825,18 @@ final class AccessibilityManager: @unchecked Sendable {
             ?? nonEmpty(pairedTitleValue) ?? nonEmpty(help)
 
         let roleDescription = nonEmpty(getAttribute(element, kAXRoleDescriptionAttribute) as? String)
-        let value = stringifyValue(getAttribute(element, kAXValueAttribute))
+        let isSecureField = ComputerUseSecureFieldRedaction.isSecureRole(normalizedRole)
+        let value =
+            isSecureField
+            ? nil
+            : stringifyValue(getAttribute(element, kAXValueAttribute))
         let placeholder = nonEmpty(getAttribute(element, kAXPlaceholderValueAttribute) as? String)
         // Selection only exists on text-bearing roles; gate the extra AX read
         // to those so a 200-element traversal doesn't pay an IPC per button for
         // an attribute it can't have. Secure fields are excluded so a password
         // selection is never captured.
         let selectedText =
-            Self.textSelectionRoles.contains(normalizedRole)
+            !isSecureField && Self.textSelectionRoles.contains(normalizedRole)
             ? nonEmpty(getAttribute(element, kAXSelectedTextAttribute) as? String)
             : nil
 
@@ -1081,14 +1093,19 @@ func computeFocusDelta(pid: Int32) -> FocusDelta? {
         var valueRef: CFTypeRef?
         AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
         AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &titleRef)
-        AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &valueRef)
         let rawRole = (roleRef as? String) ?? "unknown"
         let role = AccessibilityManager.normalizeRole(rawRole)
         let label = (titleRef as? String).flatMap { $0.isEmpty ? nil : $0 }
-        let value: String? = {
-            if let s = valueRef as? String { return s.isEmpty ? nil : s }
-            return nil
-        }()
+        let value: String?
+        if ComputerUseSecureFieldRedaction.isSecureRole(role) {
+            value = nil
+        } else {
+            AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &valueRef)
+            value = {
+                if let s = valueRef as? String { return s.isEmpty ? nil : s }
+                return nil
+            }()
+        }
         focused = FocusedElementSummary(role: role, label: label, value: value)
     }
 
@@ -1170,7 +1187,7 @@ func computeFocusedContent(
 
     // Never read the contents (value/selection/viewport) of a secure field —
     // that's a password.
-    if role == "securetextfield" {
+    if ComputerUseSecureFieldRedaction.isSecureRole(role) {
         if role == "unknown", label == nil, placeholder == nil { return nil }
         return FocusedContentInfo(
             role: role,
