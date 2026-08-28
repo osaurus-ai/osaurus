@@ -425,6 +425,13 @@ struct FloatingInputCard: View {
     /// `SystemMonitorService` and re-rendering on every 2s tick.
     @State private var ramBannerUsagePercent: Int = 0
     @State private var ramBannerTotalGB: Int = 0
+    /// Live swap-pressure classification for the resident model's episode.
+    /// Fed by the same 2 s memory tick as the tight-fit banner; advisory
+    /// only — never alters model, sampler, or cache behavior.
+    @State private var swapPressure: SwapPressureMonitor.State?
+    /// Dismissal is scoped to the severity it was dismissed at: the banner
+    /// returns if pressure worsens, and the episode's end re-arms it.
+    @State private var swapBannerDismissedAtSeverity: SwapPressureMonitor.Severity?
     /// Model the user hid the tight-fit banner for via its dismiss button.
     /// The banner stays hidden for that selection but returns when the pick
     /// changes or the projection escalates to a hard block.
@@ -727,6 +734,7 @@ struct FloatingInputCard: View {
             // chip it refers to and can never overlap the chip or token count.
             if !showVoiceOverlay {
                 ramPressureRow
+                swapPressureRow
             }
 
             // Read-only screen-context indicator sits on its OWN row above the
@@ -3224,6 +3232,7 @@ extension FloatingInputCard {
     /// runtime memoizes the bundle-size scan, so steady-state re-checks cost
     /// one actor hop and a `vm_statistics64` read.
     private func refreshLoadFeasibility() {
+        refreshSwapPressure()
         guard !isRemoteAgentRun, let model = selectedModel, isSelectedModelLocal else {
             if pendingLoadFeasibility != nil { pendingLoadFeasibility = nil }
             return
@@ -4043,6 +4052,130 @@ extension FloatingInputCard {
                 ? Text("Sending paused: not enough memory to load \(modelName)", bundle: .module)
                 : Text("Memory is tight for \(modelName)", bundle: .module)
         )
+    }
+
+    // MARK: - Swap-Pressure Banner
+
+    /// Re-sample the swap-pressure monitor on the same 2 s tick as the
+    /// tight-fit re-check. State only changes when the banner's content
+    /// would, so idle ticks don't re-render the card.
+    private func refreshSwapPressure() {
+        let state = SwapPressureMonitor.shared.currentState()
+        if state.severity == .none {
+            if swapPressure != nil { swapPressure = nil }
+            // Episode ended — a dismissal has served its purpose.
+            if swapBannerDismissedAtSeverity != nil { swapBannerDismissedAtSeverity = nil }
+            return
+        }
+        if swapPressure != state { swapPressure = state }
+    }
+
+    /// In-flow wrapper mirroring `ramPressureRow`. Suppressed while the RAM
+    /// tight-fit banner is visible (one popover at a time; the RAM banner
+    /// carries the more actionable message), and while dismissed at a
+    /// severity that has not worsened.
+    @ViewBuilder
+    private var swapPressureRow: some View {
+        if !configContextTooSmall,
+            (pendingLoadFeasibility?.loadPressureSeverity ?? .none) == .none,
+            let swap = swapPressure, swap.severity != .none,
+            swapBannerDismissedAtSeverity.map({ swap.severity > $0 }) ?? true
+        {
+            swapPressureBanner(swap, pointerCenterX: 28)
+                .frame(width: Self.ramBannerWidth, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 20)
+                .padding(.top, 8)
+                .padding(.bottom, -16)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+
+    /// Same popover silhouette, tints, and typography as the tight-fit
+    /// banner. Orange = swapping started (generation may slow); red = heavy
+    /// swapping (slowdown expected). Emulated states — the designer/QA
+    /// simulation via OSAURUS_SWAP_EMULATE or the debug/swap-emulate flag
+    /// file — are labeled so screenshots stay honest.
+    private func swapPressureBanner(
+        _ swap: SwapPressureMonitor.State,
+        pointerCenterX: CGFloat
+    ) -> some View {
+        let critical = swap.severity == .critical
+        let tint: Color = critical ? .red : .orange
+        let growthGB = Self.formatGigabytes(max(0, swap.growthSinceLoadBytes))
+
+        var message: Text
+        if critical {
+            message = Text(
+                "macOS is swapping heavily (\(growthGB) GB since this model loaded) — generation will slow down significantly. Close other apps to recover; the model itself is fine.",
+                bundle: .module
+            )
+        } else {
+            message = Text(
+                "macOS started swapping while this model is loaded (\(growthGB) GB). Generation may slow — closing other apps helps.",
+                bundle: .module
+            )
+        }
+        if swap.emulated {
+            message = message + Text(verbatim: "  ") + Text("(simulated)", bundle: .module)
+        }
+
+        let clampedX = min(
+            max(pointerCenterX, 14 + RAMBannerShape.pointerWidth / 2),
+            Self.ramBannerWidth - 14 - RAMBannerShape.pointerWidth / 2
+        )
+        let shape = RAMBannerShape(pointerCenterX: clampedX)
+
+        return
+            (Text(Image(systemName: critical
+                ? "externaldrive.fill.badge.exclamationmark" : "externaldrive.badge.timemachine"))
+                .foregroundColor(tint)
+                + Text(verbatim: "  ")
+                + message.foregroundColor(theme.primaryText))
+            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.leading, 14)
+            .padding(.trailing, 32)
+            .padding(.top, 9)
+            .padding(.bottom, 9 + RAMBannerShape.pointerHeight)
+            .background(
+                ZStack {
+                    shape.fill(.regularMaterial)
+                    shape.fill(tint.opacity(0.12))
+                }
+            )
+            .overlay(shape.stroke(tint.opacity(0.35), lineWidth: 1))
+            .overlay(alignment: .topTrailing) { swapDismissButton(current: swap.severity) }
+            .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
+            .accessibilityLabel(
+                critical
+                    ? Text("Heavy memory swapping: generation will slow down", bundle: .module)
+                    : Text("Memory swapping started: generation may slow", bundle: .module)
+            )
+    }
+
+    /// Dismissal remembers the severity it silenced; the banner returns only
+    /// if pressure worsens, and the end of the episode re-arms it.
+    private func swapDismissButton(current: SwapPressureMonitor.Severity) -> some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.2)) {
+                swapBannerDismissedAtSeverity = current
+            }
+        } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundColor(theme.tertiaryText)
+                .padding(5)
+                .background(
+                    Circle().stroke(theme.tertiaryText.opacity(0.35), lineWidth: 1)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 6)
+        .padding(.trailing, 8)
+        .help(Text("Hide this warning until swapping worsens", bundle: .module))
+        .accessibilityLabel(Text("Dismiss swap warning", bundle: .module))
     }
 
     /// Close button for the warn-level tight-fit banner. Dismissal is scoped

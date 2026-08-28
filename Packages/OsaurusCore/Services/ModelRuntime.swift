@@ -2019,6 +2019,8 @@ public actor ModelRuntime {
         residentMetadata.removeValue(forKey: name)
         lastUseSource.removeValue(forKey: name)
         if currentModelName == name { currentModelName = nil }
+        // End of the residency episode: stop attributing swap growth to it.
+        if modelCache.isEmpty { SwapPressureMonitor.shared.clearBaseline() }
         if didRemove {
             if let retiredCacheCounters {
                 await MLXBatchAdapter.Registry.shared.recordRetiredCacheCounters(
@@ -3509,6 +3511,10 @@ public actor ModelRuntime {
         try Task.checkCancellation()
         let policy = await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
         let loadStartedAt = CFAbsoluteTimeGetCurrent()
+        // Swap growth from here on is attributed to this residency episode —
+        // the swap-pressure banner distinguishes "this load is swapping" from
+        // a Mac that already sat deep in swap before the load.
+        SwapPressureMonitor.shared.markLoadBaseline()
         genLog.info(
             "loadContainer: begin model=\(name, privacy: .public) id=\(id, privacy: .public) policy=\(policy.rawValue, privacy: .public)"
         )
