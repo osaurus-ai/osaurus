@@ -4,7 +4,7 @@
 //
 //  Native macOS driver, brought in-core from osaurus-ai/osaurus-macos-use.
 //  Backgrounded window/display capture (works on occluded / off-Space windows)
-//  with optional element-id annotation overlay.
+//  with optional public-mark annotation overlay.
 //
 //  Refactored for in-core use: the original MCP `CallToolResult` content
 //  envelope was dropped in favor of a plain `CapturedImage` value the harness
@@ -65,8 +65,8 @@ struct ScreenshotOptions: Decodable {
     /// If specified, save screenshot to this file path in addition to returning bytes.
     var savePath: String?
 
-    /// If true, overlay element IDs from the most recent snapshot (matched by pid).
-    /// Useful for vision-augmented agents to reference IDs straight from the image.
+    /// If true, overlay public marks from the most recent snapshot (matched by pid).
+    /// Useful for vision-augmented agents to reference `target.mark` from the image.
     /// Requires `pid` to be set, and that get_ui_elements has been called for that pid.
     var annotate: Bool?
 
@@ -169,7 +169,7 @@ final class ScreenshotController: @unchecked Sendable {
             return nil
         }
 
-        // Optionally annotate with element IDs before scaling so labels stay legible.
+        // Optionally annotate with public marks before scaling so labels stay legible.
         let annotatedImage: CGImage = {
             if options.annotate == true {
                 // When the caller passed a windowId, use that to compute the
@@ -183,9 +183,9 @@ final class ScreenshotController: @unchecked Sendable {
                     options.windowId.flatMap { captureBoundsForWindowId($0)?.origin }
                     ?? captureBoundsForPid(pid)?.origin
                 if let origin = captureOrigin,
-                    let overlaid = overlayElementIds(
+                    let overlaid = SOMOverlayRenderer.overlay(
                         on: cgImage,
-                        elements: elements,
+                        marks: SOMOverlayRenderer.publicMarks(from: elements),
                         captureOrigin: origin
                     )
                 {
@@ -443,81 +443,104 @@ final class ScreenshotController: @unchecked Sendable {
 
 // MARK: - Annotation Overlay
 
-/// Draws element-ID labels on top of `image` so vision-capable agents can
-/// reference IDs visually. `captureOrigin` is the screen-space origin of the
-/// capture so we can subtract it from each element's global AX coordinates.
-private func overlayElementIds(
-    on image: CGImage,
-    elements: [(id: String, frame: CGRect)],
-    captureOrigin: CGPoint
-) -> CGImage? {
-    let width = image.width
-    let height = image.height
-    guard width > 0, height > 0, !elements.isEmpty else { return image }
+/// Public mark plus frame, the only data the SOM overlay renderer is allowed
+/// to see. Labels, values, paths, and raw AX ids stay out of the pixel channel.
+struct SOMOverlayMark: Sendable, Equatable {
+    let mark: Int
+    let frame: CGRect
+}
 
-    guard
-        let context = CGContext(
-            data: nil,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )
-    else { return nil }
-
-    // Draw original image
-    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-
-    // Set up colors: red boxes, white text on red
-    let boxStroke = CGColor(red: 1.0, green: 0.1, blue: 0.1, alpha: 0.95)
-    let labelFill = CGColor(red: 1.0, green: 0.1, blue: 0.1, alpha: 0.85)
-    context.setStrokeColor(boxStroke)
-    context.setLineWidth(1.5)
-
-    let nsContext = NSGraphicsContext(cgContext: context, flipped: false)
-    NSGraphicsContext.saveGraphicsState()
-    NSGraphicsContext.current = nsContext
-
-    let font = NSFont.boldSystemFont(ofSize: 11)
-    let textAttrs: [NSAttributedString.Key: Any] = [
-        .font: font,
-        .foregroundColor: NSColor.white,
-    ]
-
-    for element in elements {
-        let f = element.frame
-        // Convert global top-left coords to image-local coords.
-        // CGContext is bottom-left origin; flip y.
-        let localX = f.origin.x - captureOrigin.x
-        let localTopY = f.origin.y - captureOrigin.y
-        let bottomY = CGFloat(height) - localTopY - f.size.height
-        let rect = CGRect(x: localX, y: bottomY, width: f.size.width, height: f.size.height)
-        if rect.maxX <= 0 || rect.maxY <= 0 || rect.minX >= CGFloat(width)
-            || rect.minY >= CGFloat(height)
-        {
-            continue
+enum SOMOverlayRenderer {
+    /// Convert cached snapshot ids (`s<snapshot>-<element>`) into the same
+    /// public marks used by `AgentView` and `SOMResult`.
+    static func publicMarks(from elements: [(id: String, frame: CGRect)]) -> [SOMOverlayMark] {
+        let marks = SnapshotIdFormat.publicMarks(for: elements.map(\.id))
+        return zip(elements, marks).map { element, mark in
+            SOMOverlayMark(mark: mark, frame: element.frame)
         }
-
-        context.stroke(rect)
-
-        // Draw a small label in the top-left of the element with the id
-        let labelText = element.id
-        let attributed = NSAttributedString(string: labelText, attributes: textAttrs)
-        let textSize = attributed.size()
-        let pad: CGFloat = 2
-        let labelRect = CGRect(
-            x: rect.minX,
-            y: rect.maxY - textSize.height - pad * 2,
-            width: textSize.width + pad * 2,
-            height: textSize.height + pad * 2
-        )
-        context.setFillColor(labelFill)
-        context.fill(labelRect)
-        attributed.draw(at: CGPoint(x: labelRect.minX + pad, y: labelRect.minY + pad))
+        .sorted { lhs, rhs in lhs.mark < rhs.mark }
     }
 
-    NSGraphicsContext.restoreGraphicsState()
-    return context.makeImage()
+    /// The exact label text burned into a SOM image. Keep this to the public
+    /// integer mark only: no AX id, label, value, role, or path.
+    static func label(for mark: Int) -> String {
+        "\(mark)"
+    }
+
+    /// Draws public mark labels on top of `image` so vision-capable agents can
+    /// reference `target.mark` visually. `captureOrigin` is the screen-space
+    /// origin of the capture so we can subtract it from each element's global
+    /// AX coordinates.
+    static func overlay(
+        on image: CGImage,
+        marks: [SOMOverlayMark],
+        captureOrigin: CGPoint
+    ) -> CGImage? {
+        let width = image.width
+        let height = image.height
+        guard width > 0, height > 0, !marks.isEmpty else { return image }
+
+        guard
+            let context = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        else { return nil }
+
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        let boxStroke = CGColor(red: 1.0, green: 0.1, blue: 0.1, alpha: 0.95)
+        let labelFill = CGColor(red: 1.0, green: 0.1, blue: 0.1, alpha: 0.85)
+        context.setStrokeColor(boxStroke)
+        context.setLineWidth(1.5)
+
+        let nsContext = NSGraphicsContext(cgContext: context, flipped: false)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = nsContext
+
+        let font = NSFont.boldSystemFont(ofSize: 11)
+        let textAttrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.white,
+        ]
+
+        for mark in marks {
+            let f = mark.frame
+            // Convert global top-left coords to image-local coords.
+            // CGContext is bottom-left origin; flip y.
+            let localX = f.origin.x - captureOrigin.x
+            let localTopY = f.origin.y - captureOrigin.y
+            let bottomY = CGFloat(height) - localTopY - f.size.height
+            let rect = CGRect(x: localX, y: bottomY, width: f.size.width, height: f.size.height)
+            if rect.maxX <= 0 || rect.maxY <= 0 || rect.minX >= CGFloat(width)
+                || rect.minY >= CGFloat(height)
+            {
+                continue
+            }
+
+            context.stroke(rect)
+
+            let labelText = label(for: mark.mark)
+            let attributed = NSAttributedString(string: labelText, attributes: textAttrs)
+            let textSize = attributed.size()
+            let pad: CGFloat = 2
+            let labelRect = CGRect(
+                x: rect.minX,
+                y: rect.maxY - textSize.height - pad * 2,
+                width: textSize.width + pad * 2,
+                height: textSize.height + pad * 2
+            )
+            context.setFillColor(labelFill)
+            context.fill(labelRect)
+            attributed.draw(at: CGPoint(x: labelRect.minX + pad, y: labelRect.minY + pad))
+        }
+
+        NSGraphicsContext.restoreGraphicsState()
+        return context.makeImage()
+    }
 }

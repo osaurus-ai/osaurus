@@ -46,6 +46,31 @@ final class AgentViewTests: XCTestCase {
         XCTAssertEqual(view.items.map { $0.elementId }, ["a", "b", "c"])
     }
 
+    func testSnapshotIdMarksArePreservedWhenPresent() {
+        let view = AgentView.build(
+            from: snapshot([el("s9-2", "button", "A"), el("s9-5", "button", "B")]),
+            previous: nil
+        )
+        XCTAssertEqual(view.items.map { $0.mark }, [2, 5])
+        XCTAssertEqual(view.item(mark: 2)?.elementId, "s9-2")
+        XCTAssertEqual(view.item(mark: 5)?.elementId, "s9-5")
+        XCTAssertNil(view.item(mark: 1))
+    }
+
+    func testMixedSnapshotIdsKeepUniquePublicMarks() {
+        let view = AgentView.build(
+            from: snapshot([
+                el("s9-2", "button", "A"),
+                el("weird", "button", "B"),
+                el("s9-2", "button", "C"),
+                el("s9-1", "button", "D"),
+            ]),
+            previous: nil
+        )
+        XCTAssertEqual(view.items.map(\.mark), [2, 3, 4, 1])
+        XCTAssertEqual(Set(view.items.map(\.mark)).count, view.items.count)
+    }
+
     func testItemLookupByMark() {
         let view = AgentView.build(
             from: snapshot([el("a", "button", "A"), el("b", "button", "B")]),

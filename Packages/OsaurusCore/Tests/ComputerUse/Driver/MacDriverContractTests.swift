@@ -9,6 +9,7 @@
 //  exercised by the opt-in eval suite, not here.
 //
 
+import CoreGraphics
 import Foundation
 import XCTest
 
@@ -28,6 +29,13 @@ final class MacDriverSnapshotIdTests: XCTestCase {
         XCTAssertNil(SnapshotIdFormat.parse("7-12"))
         XCTAssertNil(SnapshotIdFormat.parse("s7"))
         XCTAssertNil(SnapshotIdFormat.parse("sx-12"))
+    }
+
+    func testPublicMarksUseParsedIdsWithCollisionFreeFallbacks() throws {
+        XCTAssertEqual(
+            SnapshotIdFormat.publicMarks(for: ["s9-2", "weird", "s9-2", "s9-0", "s9-1"]),
+            [2, 3, 4, 5, 1]
+        )
     }
 }
 
@@ -59,6 +67,147 @@ final class MacDriverCaptureModeTests: XCTestCase {
 
     func testCaptureTierMapsAllCases() throws {
         XCTAssertEqual(Set(CaptureTier.allCases), [.ax, .som, .vision])
+    }
+}
+
+final class SOMOverlayRendererTests: XCTestCase {
+    func testPublicMarksAreDerivedFromSnapshotIdsInMarkOrder() throws {
+        let firstFrame = CGRect(x: 10, y: 20, width: 30, height: 40)
+        let secondFrame = CGRect(x: 50, y: 60, width: 70, height: 80)
+        let fallbackFrame = CGRect(x: 1, y: 1, width: 1, height: 1)
+        let marks = SOMOverlayRenderer.publicMarks(from: [
+            (id: "s9-2", frame: secondFrame),
+            (id: "not-a-snapshot-id", frame: fallbackFrame),
+            (id: "s9-1", frame: firstFrame),
+        ])
+
+        XCTAssertEqual(marks.map(\.mark), [1, 2, 3])
+        XCTAssertEqual(marks.map(\.frame), [firstFrame, secondFrame, fallbackFrame])
+    }
+
+    func testOverlayMarksUseCanonicalFallbacksForMixedSnapshotIds() throws {
+        let firstFrame = CGRect(x: 10, y: 20, width: 30, height: 40)
+        let fallbackFrame = CGRect(x: 50, y: 60, width: 70, height: 80)
+        let duplicateFrame = CGRect(x: 90, y: 100, width: 30, height: 40)
+        let zeroFrame = CGRect(x: 130, y: 140, width: 30, height: 40)
+        let marks = SOMOverlayRenderer.publicMarks(from: [
+            (id: "s9-2", frame: firstFrame),
+            (id: "weird", frame: fallbackFrame),
+            (id: "s9-2", frame: duplicateFrame),
+            (id: "s9-0", frame: zeroFrame),
+        ])
+
+        XCTAssertEqual(marks.map(\.mark), [1, 2, 3, 4])
+        XCTAssertEqual(
+            Dictionary(uniqueKeysWithValues: marks.map { (Int($0.frame.origin.x), $0.mark) }),
+            [
+                10: 2,
+                50: 1,
+                90: 3,
+                130: 4,
+            ]
+        )
+    }
+
+    func testOverlayMarksMatchRenderedAgentViewMarksForSameSnapshot() throws {
+        let snapshot = CUSnapshot(
+            snapshotId: 9,
+            pid: 4242,
+            app: "Mail",
+            focusedWindow: "Compose",
+            tier: .som,
+            truncated: false,
+            windows: [],
+            elements: [
+                CUElement(
+                    id: "s9-5",
+                    role: "textfield",
+                    label: "Subject",
+                    x: 50,
+                    y: 54,
+                    w: 240,
+                    h: 24
+                ),
+                CUElement(
+                    id: "s9-2",
+                    role: "button",
+                    label: "Send",
+                    x: 10,
+                    y: 20,
+                    w: 80,
+                    h: 24
+                ),
+            ],
+            image: nil
+        )
+        let view = AgentView.build(from: snapshot, previous: nil)
+        let overlayMarks = SOMOverlayRenderer.publicMarks(
+            from: snapshot.elements.map {
+                (
+                    id: $0.id,
+                    frame: CGRect(x: $0.x, y: $0.y, width: $0.w, height: $0.h)
+                )
+            }
+        )
+
+        XCTAssertEqual(Set(overlayMarks.map(\.mark)), Set(view.items.map(\.mark)))
+        XCTAssertEqual(
+            Dictionary(uniqueKeysWithValues: overlayMarks.map { (Int($0.frame.origin.x), $0.mark) }),
+            [
+                10: 2,
+                50: 5,
+            ]
+        )
+        XCTAssertEqual(overlayMarks.map { SOMOverlayRenderer.label(for: $0.mark) }, ["2", "5"])
+        let renderedElements = view.renderForModel().split(separator: "\n")
+            .filter { $0.hasPrefix("  [") }
+            .map(String.init)
+        XCTAssertTrue(renderedElements.contains("  [2] button \"Send\""))
+        XCTAssertTrue(renderedElements.contains("  [5] textfield \"Subject\""))
+    }
+
+    func testOverlayLabelIsOnlyThePublicMark() throws {
+        let label = SOMOverlayRenderer.label(for: 42)
+        XCTAssertEqual(label, "42")
+        XCTAssertFalse(label.contains("s42"))
+        XCTAssertFalse(label.contains("-"))
+        XCTAssertFalse(label.localizedCaseInsensitiveContains("button"))
+    }
+
+    func testOverlayKeepsImageDimensions() throws {
+        let image = try makeSolidImage(width: 160, height: 120)
+        let overlaid = try XCTUnwrap(
+            SOMOverlayRenderer.overlay(
+                on: image,
+                marks: [
+                    SOMOverlayMark(
+                        mark: 1,
+                        frame: CGRect(x: 10, y: 10, width: 40, height: 30)
+                    )
+                ],
+                captureOrigin: .zero
+            )
+        )
+
+        XCTAssertEqual(overlaid.width, image.width)
+        XCTAssertEqual(overlaid.height, image.height)
+    }
+
+    private func makeSolidImage(width: Int, height: Int) throws -> CGImage {
+        let context = try XCTUnwrap(
+            CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        )
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return try XCTUnwrap(context.makeImage())
     }
 }
 

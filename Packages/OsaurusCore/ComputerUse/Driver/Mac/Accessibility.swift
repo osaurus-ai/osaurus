@@ -65,6 +65,33 @@ enum SnapshotIdFormat {
         else { return nil }
         return (snap, el)
     }
+
+    static func publicMark(from id: String) -> Int? {
+        guard let parsed = parse(id), parsed.element > 0 else { return nil }
+        return parsed.element
+    }
+
+    /// Canonical public marks for a snapshot-ordered id list. Valid positive
+    /// snapshot ids keep their encoded mark; malformed, zero, or duplicate ids
+    /// receive collision-free fallback marks that never steal a valid mark.
+    static func publicMarks(for ids: [String]) -> [Int] {
+        let reserved = Set(ids.compactMap(publicMark(from:)))
+        var used: Set<Int> = []
+        var nextFallback = 1
+        return ids.map { id in
+            if let parsed = publicMark(from: id), !used.contains(parsed) {
+                used.insert(parsed)
+                return parsed
+            }
+            while reserved.contains(nextFallback) || used.contains(nextFallback) {
+                nextFallback += 1
+            }
+            let fallback = nextFallback
+            used.insert(fallback)
+            nextFallback += 1
+            return fallback
+        }
+    }
 }
 
 // MARK: - Element Info
@@ -511,7 +538,9 @@ final class AccessibilityManager: @unchecked Sendable {
     }
 
     /// Returns elements from the most recent snapshot for a given pid.
-    /// Used by annotated screenshots.
+    /// Used by annotated screenshots. The production cache contains generated
+    /// snapshot ids, so public marks are derived from those ids by the overlay
+    /// renderer and display-order sorting happens after mark assignment.
     func mostRecentElements(for pid: Int32) -> [(id: String, frame: CGRect)] {
         lock.lock()
         let snapshotId: Int? =

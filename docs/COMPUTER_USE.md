@@ -155,7 +155,7 @@ can't carry the step:
 | Tier | What it captures | Permission |
 |------|------------------|------------|
 | `ax` | Accessibility tree only, no pixels. Fastest. | Accessibility |
-| `som` | Set-of-mark: AX tree **+** screenshot with element-id numbers drawn on every actionable element. **Default capture mode.** | + Screen Recording |
+| `som` | Set-of-mark: AX tree **+** screenshot with public mark numbers drawn on every actionable element. **Default capture mode.** | + Screen Recording |
 | `vision` | Un-annotated screenshot for vision-first models that ground on pixels (the AX tree is still gathered for element ids). | + Screen Recording |
 
 `CaptureRouter` decides the next tier. In production it escalates when a target
