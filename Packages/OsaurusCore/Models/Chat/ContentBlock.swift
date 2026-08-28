@@ -673,6 +673,28 @@ extension ContentBlock {
                 turnBlocks.append(
                     .emptyResponseNotice(turnId: turn.id, billing: billing, position: .middle)
                 )
+            } else if !isStreaming && !hasVisibleContent
+                && !hasSharedArtifacts && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
+                && !turn.hasRemoteToolActivity
+                && turn.terminalStopReason == "cancelled"
+            {
+                // The persistence layer records the interruption
+                // (terminal_stop_reason = cancelled), but a cancelled turn
+                // with no visible answer used to emit NO block at all — or,
+                // when reasoning had streamed, only the thinking block. The
+                // recorded outcome was invisible: an empty assistant row
+                // indistinguishable from in-flight or quietly complete
+                // (issue #2510). Render what the record says happened.
+                turnBlocks.append(
+                    .paragraph(
+                        turnId: turn.id,
+                        index: 0,
+                        text: "Interrupted — stopped before a response was produced.",
+                        isStreaming: false,
+                        role: turn.role,
+                        position: .middle
+                    )
+                )
             } else if !isStreaming && !hasVisibleContent && !hasRenderableThinking
                 && !hasSharedArtifacts && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
                 && !turn.hasRemoteToolActivity
