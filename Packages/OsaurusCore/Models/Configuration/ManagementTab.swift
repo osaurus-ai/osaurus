@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Defines all available tabs in the management sidebar, grouped into
-//  labeled sections (General, Models, Agents, Knowledge, Automation,
+//  labeled sections (General, Models, Agents, Capabilities, Automation,
 //  Developers) that drive the sidebar's visual grouping.
 //
 
@@ -17,7 +17,7 @@ public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
     case general
     case models
     case agents
-    case knowledge
+    case capabilities
     case automation
     case developers
 
@@ -28,7 +28,7 @@ public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
         case .general: L("General")
         case .models: L("Models")
         case .agents: L("Agents")
-        case .knowledge: L("Knowledge")
+        case .capabilities: L("Capabilities")
         case .automation: L("Automation")
         case .developers: L("Developers")
         }
@@ -41,7 +41,7 @@ public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
             [.settings, .chat, .voice, .themes, .credits, .identity, .permissions, .privacy]
         case .models: [.models, .providers, .imageGeneration]
         case .agents: [.orchestrator, .agents, .agentChannels]
-        case .knowledge: [.search, .knowledge, .memory, .plugins, .tools, .skills, .commands]
+        case .capabilities: [.search, .knowledge, .memory, .plugins, .tools, .skills, .commands]
         case .automation: [.schedules, .watchers, .computerUse, .browser]
         case .developers: [.server, .sandbox, .insights]
         }
@@ -95,7 +95,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
             .general
         case .models, .providers, .imageGeneration: .models
         case .orchestrator, .agents, .agentChannels: .agents
-        case .search, .knowledge, .memory, .plugins, .tools, .skills, .commands: .knowledge
+        case .search, .knowledge, .memory, .plugins, .tools, .skills, .commands: .capabilities
         case .schedules, .watchers, .computerUse, .browser: .automation
         case .server, .sandbox, .insights: .developers
         }
