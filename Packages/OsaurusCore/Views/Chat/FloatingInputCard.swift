@@ -4108,20 +4108,20 @@ extension FloatingInputCard {
             ? String(localized: "loading", bundle: .module)
             : String(localized: "running", bundle: .module)
 
-        var message: Text
-        if critical {
-            message = Text(
-                "Your Mac is running low on memory while \(phaseVerb) \(modelLabel), so responses will be slower. Closing other apps usually speeds things back up.",
-                bundle: .module
-            )
-        } else {
-            message = Text(
-                "Your Mac is getting low on memory while \(phaseVerb) \(modelLabel). Responses may slow down, and closing other apps helps.",
-                bundle: .module
-            )
-        }
+        let message: Text =
+            critical
+            ? Text(
+                "Your Mac is running low on memory while \(phaseVerb) \(modelLabel), so responses will be slower.",
+                bundle: .module)
+            : Text(
+                "Your Mac is getting low on memory while \(phaseVerb) \(modelLabel), so responses may slow down.",
+                bundle: .module)
+        var tip: Text =
+            critical
+            ? Text("Closing other apps usually speeds things back up.", bundle: .module)
+            : Text("Closing other apps helps.", bundle: .module)
         if swap.emulated {
-            message = message + Text(verbatim: "  ") + Text("(simulated)", bundle: .module)
+            tip = tip + Text(verbatim: "  ") + Text("(simulated)", bundle: .module)
         }
 
         let clampedX = min(
@@ -4130,7 +4130,7 @@ extension FloatingInputCard {
         )
         let shape = RAMBannerShape(pointerCenterX: clampedX)
 
-        return VStack(alignment: .leading, spacing: 7) {
+        return VStack(alignment: .leading, spacing: 10) {
             (Text(Image(systemName: critical
                 ? "externaldrive.fill.badge.exclamationmark" : "externaldrive.badge.timemachine"))
                 .foregroundColor(tint)
@@ -4138,7 +4138,10 @@ extension FloatingInputCard {
                 + message.foregroundColor(theme.primaryText))
                 .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                 .fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: 8) {
+            tip.foregroundColor(theme.secondaryText)
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 10) {
                 swapPrimaryButton(String(localized: "Unload Model", bundle: .module), tint: tint) {
                     let target = swap.modelName ?? selectedModel
                     guard let target else { return }
@@ -4150,11 +4153,13 @@ extension FloatingInputCard {
                     }
                 }
             }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 2)
         }
         .padding(.leading, 14)
         .padding(.trailing, 14)
-        .padding(.top, 9)
-        .padding(.bottom, 9 + RAMBannerShape.pointerHeight)
+        .padding(.top, 12)
+        .padding(.bottom, 12 + RAMBannerShape.pointerHeight)
         .background(
             ZStack {
                 shape.fill(.regularMaterial)
