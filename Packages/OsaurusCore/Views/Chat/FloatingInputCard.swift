@@ -4139,7 +4139,10 @@ extension FloatingInputCard {
                 + message.foregroundColor(theme.primaryText))
                 .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 10) {
+            // Capsules must never wrap internally, so the strip flows to a
+            // second row when the fixed banner width (or a longer localized
+            // label) can't fit all three side by side.
+            FlowLayout(spacing: 8) {
                 swapActionButton(String(localized: "Activity Monitor", bundle: .module)) {
                     NSWorkspace.shared.open(
                         URL(fileURLWithPath:
@@ -4186,6 +4189,8 @@ extension FloatingInputCard {
         Button(action: action) {
             Text(verbatim: title)
                 .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                .lineLimit(1)
+                .fixedSize()
                 .foregroundColor(theme.primaryText)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
