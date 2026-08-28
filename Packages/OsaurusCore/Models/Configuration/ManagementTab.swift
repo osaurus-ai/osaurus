@@ -123,7 +123,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .plugins: "puzzlepiece.extension.fill"
         case .sandbox: "shippingbox.fill"
         case .tools: "wrench.and.screwdriver.fill"
-        case .search: "magnifyingglass"
+        case .search: "globe"
         case .skills: "sparkles"
         case .commands: "command"
         case .memory: "brain.head.profile.fill"
@@ -156,7 +156,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .plugins: L("Plugins")
         case .sandbox: L("Sandbox")
         case .tools: L("Tools")
-        case .search: L("Search")
+        case .search: L("Web Search")
         case .skills: L("Skills")
         case .commands: L("Commands")
         case .memory: L("Memory")
