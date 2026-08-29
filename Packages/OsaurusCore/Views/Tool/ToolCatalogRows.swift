@@ -326,15 +326,16 @@ struct ToolFilterMenu<Option: ToolCatalogFilterOption>: View {
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
             }
-            .padding(.horizontal, 4)
-            .padding(.vertical, 3)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 5)
         }
         // A native bordered menu with a capsule shape gives a real pill; the
         // borderless style strips the label's own background so it can't.
+        // `.large` control size keeps the pill from rendering cramped.
         .menuStyle(.button)
         .buttonStyle(.bordered)
         .buttonBorderShape(.capsule)
-        .controlSize(.regular)
+        .controlSize(.large)
         .tint(theme.secondaryText)
         .fixedSize()
         .accessibilityLabel(Text("\(accessibilityTitle): \(selection.title)"))
