@@ -238,9 +238,16 @@ let package = Package(
         // 3-channel M-RoPE with a per-conversation decode rope delta). All six
         // JANG tiers decode at 38-44 tok/s with resident BF16 compute and the
         // PLE table on SSD.
+        // vmlx-swift#330 pins the legacy-Hermes parser regressions; #339
+        // performs the source correction, recovering Qwen 3.8 bundles from
+        // their actual template contract while failing closed without one;
+        // #331 preserves per-sequence Qwen 3.5 positions under continuous
+        // batching; #335 exposes requested and architecture-limited batch
+        // capacity; #341-#342 make AgenticTaskBench sandboxing and scoring
+        // reflect the production model/config path.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "aeb5e21c195d8519609488ef75a25ce7e48d8f88"
+            revision: "787d5966a49cfa3c9a2d91a7bb2f7d353a292a3e"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
