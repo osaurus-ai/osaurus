@@ -1,6 +1,10 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Browse and install native plugins": {
+    },
+    "Native Plugins": {
+    },
     "(simulated)": {
       "localizations": {
         "de": {
