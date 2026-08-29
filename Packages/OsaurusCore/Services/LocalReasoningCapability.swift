@@ -176,8 +176,12 @@ enum LocalReasoningCapability {
         guard let dir = localDirectory(forModelId: modelId) else {
             return .none
         }
+        let declaredCapability = readDeclaredReasoningCapability(at: dir)
         if let template = readChatTemplate(at: dir) {
-            let analyzed = analyze(template: template)
+            let analyzed = merge(
+                templateCapability: analyze(template: template),
+                declaredCapability: declaredCapability
+            )
             let declared = generationConfigDeclaredThinkingOn(at: dir)
             if let metadataDefault = declared ?? readTemplateDefaultThinkingOn(at: dir) {
                 return Capability(
@@ -200,7 +204,35 @@ enum LocalReasoningCapability {
         if let cap = readJangConfigReasoning(at: dir) {
             return cap
         }
+        // Some native families expose a structured reasoning parser and a
+        // non-boolean control (Muse Glimmer's `reasoning_strength` is the
+        // concrete example). Their bundle contract is authoritative even
+        // though the template contains neither `<think>` nor
+        // `enable_thinking`. Do not invent a toggle or a default here: only
+        // surface the channel the publisher declared.
+        if let declaredCapability {
+            return declaredCapability
+        }
         return .none
+    }
+
+    /// Merge template mechanics with an explicit bundle declaration. The
+    /// template remains the sole owner of boolean-toggle semantics; metadata
+    /// can add the existence of a structured reasoning channel, but cannot
+    /// manufacture `enable_thinking`, tag injection, or a serving default.
+    static func merge(
+        templateCapability: Capability,
+        declaredCapability: Capability?
+    ) -> Capability {
+        guard let declaredCapability else { return templateCapability }
+        return Capability(
+            supportsThinking: templateCapability.supportsThinking
+                || declaredCapability.supportsThinking,
+            hasEnableThinkingKwarg: templateCapability.hasEnableThinkingKwarg,
+            templateInjectsThinkTag: templateCapability.templateInjectsThinkTag,
+            defaultThinkingOn: templateCapability.defaultThinkingOn,
+            declaredDefaultThinkingOn: templateCapability.declaredDefaultThinkingOn
+        )
     }
 
     /// Pure, testable template analysis.
@@ -365,6 +397,40 @@ enum LocalReasoningCapability {
             hasEnableThinkingKwarg: false,
             templateInjectsThinkTag: false,
             defaultThinkingOn: jangReasoningDefaultThinkingOn(reasoning) ?? false
+        )
+    }
+
+    /// Read the publisher's generic reasoning-channel declaration from the
+    /// model bundle. This is deliberately narrower than family detection:
+    /// `supports_thinking: true` is the contract; parser names and model ids
+    /// are not guessed. Both config.json and jang_config.json are accepted
+    /// because current publishers stamp the same `capabilities` object into
+    /// either or both files.
+    static func readDeclaredReasoningCapability(at dir: URL) -> Capability? {
+        for filename in ["config.json", "jang_config.json"] {
+            guard let data = readSmallConfigFile(dir.appendingPathComponent(filename)) else {
+                continue
+            }
+            if let capability = analyzeDeclaredCapabilities(data: data) {
+                return capability
+            }
+        }
+        return nil
+    }
+
+    /// Pure parser for `capabilities.supports_thinking`. A false or missing
+    /// declaration returns nil so template / legacy JANG detection keeps its
+    /// existing behavior.
+    static func analyzeDeclaredCapabilities(data: Data) -> Capability? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let capabilities = root["capabilities"] as? [String: Any],
+            capabilities["supports_thinking"] as? Bool == true
+        else { return nil }
+        return Capability(
+            supportsThinking: true,
+            hasEnableThinkingKwarg: false,
+            templateInjectsThinkTag: false,
+            defaultThinkingOn: false
         )
     }
 
