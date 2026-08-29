@@ -319,20 +319,22 @@ struct ToolFilterMenu<Option: ToolCatalogFilterOption>: View {
                 }
             }
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                 Text(selection.title)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
             }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 3)
         }
         // A native bordered menu with a capsule shape gives a real pill; the
         // borderless style strips the label's own background so it can't.
         .menuStyle(.button)
         .buttonStyle(.bordered)
         .buttonBorderShape(.capsule)
-        .controlSize(.small)
+        .controlSize(.regular)
         .tint(theme.secondaryText)
         .fixedSize()
         .accessibilityLabel(Text("\(accessibilityTitle): \(selection.title)"))
