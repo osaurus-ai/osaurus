@@ -217,6 +217,14 @@ public enum ConfigYAML {
                 issues.append("Non-string key at \(display).")
                 continue
             }
+            // Retired compatibility key. Older exports could persist this
+            // hidden negative-polarity switch for the built-in Orchestrator.
+            // Accept and discard it so importing that document restores tools
+            // instead of either disabling them again or rejecting the whole
+            // config. It is intentionally absent from the manifest/schema.
+            if path == "default_agent", keyString == "disable_tools" {
+                continue
+            }
             if !known.contains(keyString) {
                 var message = "Unknown key `\(keyString)` at \(display)."
                 if path.isEmpty, ["server", "chat", "app"].contains(keyString) {

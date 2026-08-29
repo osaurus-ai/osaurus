@@ -218,9 +218,6 @@ public struct DefaultAgentSection: Equatable, Sendable {
     public var maxTokens: ConfigField<Int> = .absent
     /// The Default agent's persona (system prompt).
     public var systemPrompt: String?
-    /// When true, Default-agent turns carry no tools.
-    public var disableTools: Bool?
-
     public init() {}
 }
 
@@ -229,7 +226,6 @@ extension DefaultAgentSection: Codable {
         case name, model, temperature
         case maxTokens = "max_tokens"
         case systemPrompt = "system_prompt"
-        case disableTools = "disable_tools"
     }
 
     public init(from decoder: Decoder) throws {
@@ -239,7 +235,6 @@ extension DefaultAgentSection: Codable {
         temperature = try c.configField(Double.self, forKey: .temperature)
         maxTokens = try c.configField(Int.self, forKey: .maxTokens)
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
-        disableTools = try c.decodeIfPresent(Bool.self, forKey: .disableTools)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -249,7 +244,6 @@ extension DefaultAgentSection: Codable {
         try c.encode(configField: temperature, forKey: .temperature)
         try c.encode(configField: maxTokens, forKey: .maxTokens)
         try c.encodeIfPresent(systemPrompt, forKey: .systemPrompt)
-        try c.encodeIfPresent(disableTools, forKey: .disableTools)
     }
 }
 

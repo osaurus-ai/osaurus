@@ -51,7 +51,6 @@ enum ChatHistoryTestStorage {
             DefaultAgentConfigurationStore.resetCacheForTests()
             DefaultAgentConfigurationStore.save(
                 DefaultAgentConfiguration(
-                    disableTools: true,
                     autonomousExec: nil,
                     toolSelectionMode: .manual,
                     manualToolNames: []

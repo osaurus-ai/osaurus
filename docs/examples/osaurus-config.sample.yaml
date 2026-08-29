@@ -33,7 +33,6 @@ default_agent: # the built-in Default agent (the Orchestrator)
   temperature: 0.7 # 0..2 or null
   max_tokens: null # null = automatic
   system_prompt: "You are a friendly, concise assistant."
-  disable_tools: false
 
 active_agent: default # "default" or a custom agent's name
 

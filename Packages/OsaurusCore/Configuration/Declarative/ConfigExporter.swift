@@ -71,7 +71,6 @@ enum ConfigExporter {
         section.temperature = config.temperature.map { .value(Double($0)) } ?? .null
         section.maxTokens = config.maxTokens.map { .value($0) } ?? .null
         section.systemPrompt = config.systemPrompt
-        section.disableTools = config.disableTools
         return section
     }
 

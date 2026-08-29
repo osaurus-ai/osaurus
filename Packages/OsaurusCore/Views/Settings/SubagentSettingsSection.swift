@@ -129,10 +129,6 @@ struct SubagentSettingsSection: View {
         }
     }
 
-    private var defaultToolsEnabled: Bool {
-        !DefaultAgentConfigurationStore.load().disableTools
-    }
-
     private var mainSpawnReadiness: AgentCapabilityReadiness {
         let configuredAgentIDs = configuration.spawnableAgentIDs
         let configuredCount =
@@ -153,7 +149,7 @@ struct SubagentSettingsSection: View {
         return AgentCapabilityReadiness.subagent(
             flag: .spawn,
             configured: configuredCount > 0,
-            toolsEnabled: defaultToolsEnabled,
+            toolsEnabled: true,
             hasResolvedModel: true,
             configuredSpawnTargetCount: configuredCount,
             runnableSpawnTargetCount: runnableCount,
@@ -168,7 +164,7 @@ struct SubagentSettingsSection: View {
         AgentCapabilityReadiness.subagent(
             flag: .image,
             configured: configuration.imageDelegationEnabled,
-            toolsEnabled: defaultToolsEnabled,
+            toolsEnabled: true,
             hasResolvedModel: true,
             hasReadyImageModel: modelPickerCache.hasReadyImageModel,
             permission: configuration.permissionDefaults.policy(
@@ -181,7 +177,7 @@ struct SubagentSettingsSection: View {
         AgentCapabilityReadiness.subagent(
             flag: .appleScript,
             configured: configuration.appleScriptDelegationEnabled,
-            toolsEnabled: defaultToolsEnabled,
+            toolsEnabled: true,
             hasResolvedModel: true,
             hasReadyAppleScriptModel: modelPickerCache.hasReadyAppleScriptModel
         )

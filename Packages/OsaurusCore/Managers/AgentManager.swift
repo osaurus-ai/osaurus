@@ -1006,20 +1006,19 @@ extension AgentManager {
     /// the single source of truth; the narrower `effective*` accessors and
     /// `AgentConfigSnapshot.capture` all read from here.
     ///
-    /// Default agent: tools come from `DefaultAgentConfiguration`, memory
-    /// from the global switch only, and the editable per-agent capabilities
+    /// Default agent: tools are always available, memory comes from the global
+    /// switch, and the editable per-agent capabilities
     /// (DB, charts, speak, recall, self-scheduling) are hard-off — the
     /// default agent is locked to its fixed baseline.
     public func effectiveCapabilities(for agentId: UUID) -> AgentCapabilities {
         let globalMemoryEnabled = MemoryConfigurationStore.load().enabled
 
         // Unknown agent or the default agent: baseline capabilities (tools
-        // from DefaultAgentConfiguration, memory from the global switch,
+        // always available, memory from the global switch,
         // editable per-agent capabilities hard-off).
         guard let agent = agent(for: agentId), agent.id != Agent.defaultId else {
-            let cfg = DefaultAgentConfigurationStore.load()
             return AgentCapabilities(
-                toolsEnabled: !cfg.disableTools,
+                toolsEnabled: true,
                 memoryEnabled: globalMemoryEnabled,
                 dbEnabled: false,
                 renderChartEnabled: false,

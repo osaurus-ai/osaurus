@@ -144,7 +144,6 @@ public enum ConfigManifest {
                 ConfigKeySpec(
                     "system_prompt", .scalar(.string, example: "\"\""),
                     comment: "the persona"),
-                ConfigKeySpec("disable_tools", .scalar(.boolean, example: "false")),
             ])),
 
         ConfigSectionSpec(

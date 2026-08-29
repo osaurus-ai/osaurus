@@ -37,6 +37,11 @@ non-agentic surface and does not inherit an Osaurus agent's capabilities.
   `disableTools` key in `chat.json` is ignored as unknown input. Tool
   availability belongs to the target agent or to an explicit request-surface
   override.
+- The Default/Orchestrator agent no longer has a config-only `disableTools`
+  switch either. Legacy `disableTools` in `default-agent.json` and
+  `default_agent.disable_tools` in declarative input are ignored as unknown
+  fields; the Orchestrator always receives its fixed tool surface. Custom
+  agents retain their explicit positive `toolsEnabled` capability.
 - An agent's `toolsEnabled` switch pauses all of its tool-backed abilities.
   Sandbox execution may override only this per-agent switch for the sandbox
   primitives; it never overrides an explicit request-surface restriction.

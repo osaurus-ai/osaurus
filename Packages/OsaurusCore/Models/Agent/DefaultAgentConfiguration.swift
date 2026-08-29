@@ -50,14 +50,6 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
     /// a synthetic Osaurus cap.
     public var maxTokens: Int?
 
-    /// When true, no tools or preflight context are sent to the model
-    /// for Default-agent turns. Negative-polarity counterpart to a custom
-    /// agent's `Agent.toolsEnabled` (the Default agent persists its tools
-    /// switch here rather than on the `Agent`). Used by chat consumers
-    /// running Osaurus as a plain LLM backend without the agent-loop
-    /// machinery.
-    public var disableTools: Bool
-
     /// Autonomous-exec policy for the Default agent's sandbox.
     /// `nil` keeps autonomous off.
     public var autonomousExec: AutonomousExecConfig?
@@ -86,7 +78,6 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
         defaultModel: String? = nil,
         temperature: Float? = nil,
         maxTokens: Int? = nil,
-        disableTools: Bool = false,
         autonomousExec: AutonomousExecConfig? = nil,
         toolSelectionMode: ToolSelectionMode? = nil,
         manualToolNames: [String]? = nil
@@ -96,7 +87,6 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
         self.defaultModel = defaultModel
         self.temperature = temperature
         self.maxTokens = maxTokens
-        self.disableTools = disableTools
         self.autonomousExec = autonomousExec
         self.toolSelectionMode = toolSelectionMode
         self.manualToolNames = manualToolNames
@@ -109,7 +99,6 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
         defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)
         temperature = try c.decodeIfPresent(Float.self, forKey: .temperature)
         maxTokens = try c.decodeIfPresent(Int.self, forKey: .maxTokens)
-        disableTools = try c.decodeIfPresent(Bool.self, forKey: .disableTools) ?? false
         autonomousExec = try c.decodeIfPresent(AutonomousExecConfig.self, forKey: .autonomousExec)
         toolSelectionMode = try c.decodeIfPresent(ToolSelectionMode.self, forKey: .toolSelectionMode)
         manualToolNames = try c.decodeIfPresent([String].self, forKey: .manualToolNames)

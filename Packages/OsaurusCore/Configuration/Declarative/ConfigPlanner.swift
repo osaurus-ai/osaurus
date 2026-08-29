@@ -1056,7 +1056,6 @@ enum ConfigPlanner {
         diff(
             "system_prompt", desired: desired.systemPrompt,
             current: current.systemPrompt, into: &changes)
-        diff("disable_tools", desired: desired.disableTools, current: current.disableTools, into: &changes)
         guard !changes.isEmpty else { return }
         actions.append(
             ConfigPlanAction(

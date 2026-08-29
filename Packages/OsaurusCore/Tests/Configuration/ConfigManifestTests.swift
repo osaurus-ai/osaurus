@@ -183,6 +183,16 @@ struct ConfigJSONFormatTests {
     }
 
     @Test
+    func legacyDefaultAgentDisableToolsIsAcceptedButDropped() throws {
+        let json = #"{"default_agent": {"disable_tools": true, "max_tokens": 2048}}"#
+        let document = try ConfigYAML.decode(json)
+        #expect(document.defaultAgent?.maxTokens == .value(2048))
+
+        let encoded = try ConfigJSON.encode(document)
+        #expect(!encoded.contains("disable_tools"))
+    }
+
+    @Test
     func encodeJSON_roundTripsAndOmitsAbsentKeys() throws {
         var document = OsaurusConfigDocument()
         var defaultAgent = DefaultAgentSection()

@@ -503,7 +503,7 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 
 | Group | Setting | Toggle | Default | Gates |
 |---|---|---|---|---|
-| Model Access | `disableTools` (inverted) | Tools | on | All tool use |
+| Model Access | `toolsEnabled` | Tools | on | All tool use (custom agents only) |
 | Model Access | `disableMemory` (inverted) | Memory | on | Passive memory injection + recording |
 | Output | `renderChartEnabled` | Charts | off | `render_chart` |
 | Output | `speakEnabled` | Voice | off | `speak` |

@@ -10,8 +10,7 @@
     "model": "foundation",
     "temperature": 0.7,
     "max_tokens": null,
-    "system_prompt": "You are a friendly, concise assistant.",
-    "disable_tools": false
+    "system_prompt": "You are a friendly, concise assistant."
   },
   "active_agent": "default",
   "agents": [

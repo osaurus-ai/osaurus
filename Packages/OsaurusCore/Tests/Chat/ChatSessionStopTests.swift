@@ -16,7 +16,6 @@ struct ChatSessionStopTests {
 
         DefaultAgentConfigurationStore.save(
             DefaultAgentConfiguration(
-                disableTools: false,
                 autonomousExec: nil,
                 toolSelectionMode: .manual,
                 manualToolNames: ["todo"]

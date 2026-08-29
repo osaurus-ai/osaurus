@@ -297,7 +297,6 @@ enum ConfigApplier {
             config.temperature = desired.temperature.valueOrNil.map(Float.init)
         }
         if desired.maxTokens.isSpecified { config.maxTokens = desired.maxTokens.valueOrNil }
-        if let v = desired.disableTools { config.disableTools = v }
         // The persona's home is `DefaultAgentConfiguration.systemPrompt`; the
         // store's save posts `.appConfigurationChanged` so live chats re-read it.
         if let prompt = desired.systemPrompt {
