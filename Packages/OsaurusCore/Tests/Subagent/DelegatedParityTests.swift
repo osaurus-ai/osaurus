@@ -51,15 +51,19 @@ struct DelegatedParityTests {
             session.delegationBudget = contract
             session.source = .delegation
             await drainInitialCacheSnapshot()
-            // Under a full-parallel test run another suite's
-            // `ModelPickerItemCache` snapshot can land between our items
-            // and the dispatch adoption; re-apply until adoption sticks
-            // (same mechanism, race-hardened).
-            for _ in 0 ..< 5 {
+            // The session's init queues an async `ModelPickerItemCache`
+            // snapshot application that can land AFTER our items and
+            // clobber them with whatever the shared cache holds (in CI an
+            // ephemeral provider default). Re-apply until the dispatch
+            // adoption actually lands on the agent's default — same
+            // mechanism under test, hardened against the snapshot race.
+            // Exiting without adoption leaves the mismatch for the
+            // assertions to report.
+            for _ in 0 ..< 100 {
                 session.applyPickerItems(items)
                 session.applyAgentDefaultModelForDispatch()
-                if session.selectedModel != nil { break }
-                await Task.yield()
+                if session.selectedModel == "mlx-test/parity-default" { break }
+                try? await Task.sleep(nanoseconds: 10_000_000)
             }
             return session
         }
