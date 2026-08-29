@@ -45,32 +45,44 @@ struct DelegatedParityTests {
         let (agent, cleanup) = makeAgent(defaultModel: "mlx-test/parity-default")
         let items = [localItem("mlx-test/parity-default"), localItem("mlx-test/other")]
 
-        func makeSession(contract: DelegatedRunContract?) async -> ChatSession {
+        // ISOLATION, not retries. Two shared-global race sources are
+        // removed structurally:
+        //  1. `detachPickerCacheForTesting()` removes the process-global
+        //    `ModelPickerItemCache.$items` subscription so the shared
+        //    cache snapshot can never clobber the fixture's items.
+        //  2. Every `await` below happens BEFORE the decisive section;
+        //    the set-default → apply-items → adopt → capture sequence for
+        //    BOTH sessions is one synchronous MainActor run, so no other
+        //    suite's MainActor work (agent CRUD, cache rebuilds) can
+        //    interleave between the default being set and the adoptions
+        //    reading it.
+        func prepareSession(contract: DelegatedRunContract?) async -> ChatSession {
             let session = ChatSession()
             session.agentId = agent.id
             session.delegationBudget = contract
             session.source = .delegation
-            // ISOLATION, not retries: detach the process-global
-            // `ModelPickerItemCache.$items` subscription (whose async
-            // snapshot application would clobber the fixture's items with
-            // whatever the shared cache holds), drain any hop already
-            // queued by the initial emission, then install the fixture's
-            // items exactly once. Deterministic: no further emissions can
-            // reach this session.
             session.detachPickerCacheForTesting()
             await drainInitialCacheSnapshot()
-            session.applyPickerItems(items)
-            session.applyAgentDefaultModelForDispatch()
             return session
         }
 
-        let normal = await makeSession(contract: nil)
-        let delegated = await makeSession(
+        let normal = await prepareSession(contract: nil)
+        let delegated = await prepareSession(
             contract: DelegatedRunContract(
                 responseTokens: 2048, assistantTurns: 2, contextPositions: 16_684))
 
-        #expect(normal.selectedModel == "mlx-test/parity-default")
-        #expect(delegated.selectedModel == normal.selectedModel)
+        // Decisive synchronous section — no suspension points.
+        AgentManager.shared.updateDefaultModel(
+            for: agent.id, model: "mlx-test/parity-default")
+        normal.applyPickerItems(items)
+        normal.applyAgentDefaultModelForDispatch()
+        delegated.applyPickerItems(items)
+        delegated.applyAgentDefaultModelForDispatch()
+        let normalSelection = normal.selectedModel
+        let delegatedSelection = delegated.selectedModel
+
+        #expect(normalSelection == "mlx-test/parity-default")
+        #expect(delegatedSelection == normalSelection)
         await cleanup()
     }
 
