@@ -571,21 +571,30 @@ final class TextSubagentKind:
         if isDelegatedAgentTarget {
             // Same window resolution the dispatched chat session performs —
             // bundle window ∩ user context-length cap — tightened into the
-            // enforced delegated contract. `agentToolSpecs`/`toolAccess`
-            // are resolved above, so the tool posture is the real one, and
-            // the prompt/tool reservations are MEASURED from the target
-            // agent's actual persona and the exact encoded tool schemas
-            // the child will carry — no fixed overhead guess.
+            // enforced delegated contract. Reservations are measured from
+            // what the dispatched session ACTUALLY runs, not proxies: the
+            // wrapped delegated prompt (`delegatedPrompt` — the exact seed
+            // `dispatchChat` sends), the composed chat system prompt for
+            // the target agent, and the composer's own tool-schema token
+            // reservation (the same values the child's budget manager
+            // reserves). Execution mode mirrors the dispatched session's:
+            // sandbox when the agent has autonomous exec, else none.
             let window = await AgentLoopBudget.resolveContextWindow(
                 modelId: resolved.model)
-            let encodedToolSchemas =
-                (try? JSONEncoder().encode(agentToolSpecs)).map(\.count) ?? 0
+            let dispatchedPrompt = AgentDelegationDispatcher.delegatedPrompt(
+                input: input)
+            let composed = await SystemPromptComposer.composeChatContext(
+                agentId: agent.id,
+                executionMode: (agent.autonomousExec?.enabled ?? false) ? .sandbox : .none,
+                model: resolved.model,
+                query: dispatchedPrompt
+            )
             self.delegatedContract = DelegatedRunContract.derive(
-                seedCharacters: input.count,
-                systemPromptCharacters: agent.systemPrompt.count,
-                toolSchemaCharacters: encodedToolSchemas,
+                seedCharacters: dispatchedPrompt.count,
+                systemPromptCharacters: composed.prompt.count,
+                toolSchemaTokens: composed.toolTokens,
                 budgets: budgets,
-                toolEnabled: !agentToolSpecs.isEmpty || toolAccess != .none,
+                toolEnabled: !composed.tools.isEmpty,
                 resolvedContextWindow: window
             )
         }

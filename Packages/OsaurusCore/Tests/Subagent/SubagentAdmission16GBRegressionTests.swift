@@ -238,11 +238,12 @@ struct SubagentAdmission16GBRegressionTests {
             enforcedPositionCeiling: 8192)
         #expect(windowOnly.boundedPositionBudget(policyCap: 65536) == 8192)
 
-        // The 4096 wrapper/template floor still applies below it.
+        // A measured ceiling prices verbatim — no hidden floor (the 4096
+        // floor applies only to the unmeasured seed+output form).
         let tiny = SubagentChildRequestEstimate(
             seedCharacters: nil, maxOutputTokens: nil,
             enforcedPositionCeiling: 2048)
-        #expect(tiny.boundedPositionBudget(policyCap: 65536) == 4096)
+        #expect(tiny.boundedPositionBudget(policyCap: 65536) == 2048)
 
         // Policy cap clamps a huge window down.
         let huge = SubagentChildRequestEstimate(
@@ -351,13 +352,13 @@ struct SubagentAdmission16GBRegressionTests {
             DelegatedRunContract.derive(
                 seedCharacters: 800,
                 systemPromptCharacters: 2_000,
-                toolSchemaCharacters: 1_000,
+                toolSchemaTokens: 375,
                 budgets: SubagentBudgets(),  // defaults: 2048 tokens × 2 turns
                 toolEnabled: true,
                 resolvedContextWindow: 65_536
             ))
         // MEASURED reservations (no fixed overhead guess): seed 800 chars →
-        // 300 tokens, system prompt 2,000 → 750, tool schemas 1,000 → 375;
+        // 300 tokens, system prompt 2,000 → 750, composer tool reservation 375;
         // 300 + 750 + 375 + 2×(2048 + 4096 tool allowance) = 13,713.
         #expect(contract.contextPositions == 13_713)
         #expect(contract.responseTokens == 2048)
@@ -369,7 +370,7 @@ struct SubagentAdmission16GBRegressionTests {
         let toolLess = DelegatedRunContract.derive(
             seedCharacters: 800,
             systemPromptCharacters: 2_000,
-            toolSchemaCharacters: 1_000,
+            toolSchemaTokens: 375,
             budgets: SubagentBudgets(),
             toolEnabled: false,
             resolvedContextWindow: 65_536
@@ -381,7 +382,7 @@ struct SubagentAdmission16GBRegressionTests {
         let bigPrompt = DelegatedRunContract.derive(
             seedCharacters: 800,
             systemPromptCharacters: 40_000,
-            toolSchemaCharacters: 1_000,
+            toolSchemaTokens: 375,
             budgets: SubagentBudgets(),
             toolEnabled: true,
             resolvedContextWindow: 65_536
@@ -393,7 +394,7 @@ struct SubagentAdmission16GBRegressionTests {
         let smallWindow = DelegatedRunContract.derive(
             seedCharacters: 800,
             systemPromptCharacters: 2_000,
-            toolSchemaCharacters: 1_000,
+            toolSchemaTokens: 375,
             budgets: SubagentBudgets(),
             toolEnabled: true,
             resolvedContextWindow: 8_192
@@ -404,7 +405,7 @@ struct SubagentAdmission16GBRegressionTests {
         let wild = DelegatedRunContract.derive(
             seedCharacters: 0,
             systemPromptCharacters: 0,
-            toolSchemaCharacters: 0,
+            toolSchemaTokens: 0,
             budgets: SubagentBudgets(maxDelegateTokens: 999_999, maxDelegateTurns: 99),
             toolEnabled: false,
             resolvedContextWindow: 1_000_000
@@ -423,7 +424,7 @@ struct SubagentAdmission16GBRegressionTests {
             DelegatedRunContract.derive(
                 seedCharacters: Int.max,
                 systemPromptCharacters: 0,
-                toolSchemaCharacters: 0,
+                toolSchemaTokens: 0,
                 budgets: SubagentBudgets(),
                 toolEnabled: true,
                 resolvedContextWindow: 65_536
@@ -432,7 +433,7 @@ struct SubagentAdmission16GBRegressionTests {
             DelegatedRunContract.derive(
                 seedCharacters: 800,
                 systemPromptCharacters: Int.max,
-                toolSchemaCharacters: 0,
+                toolSchemaTokens: 0,
                 budgets: SubagentBudgets(),
                 toolEnabled: true,
                 resolvedContextWindow: 65_536
@@ -441,7 +442,7 @@ struct SubagentAdmission16GBRegressionTests {
             DelegatedRunContract.derive(
                 seedCharacters: 800,
                 systemPromptCharacters: 0,
-                toolSchemaCharacters: Int.max,
+                toolSchemaTokens: Int.max,
                 budgets: SubagentBudgets(),
                 toolEnabled: true,
                 resolvedContextWindow: 65_536
@@ -450,7 +451,7 @@ struct SubagentAdmission16GBRegressionTests {
             DelegatedRunContract.derive(
                 seedCharacters: 800,
                 systemPromptCharacters: 0,
-                toolSchemaCharacters: 0,
+                toolSchemaTokens: 0,
                 budgets: SubagentBudgets(),
                 toolEnabled: true,
                 resolvedContextWindow: 0
@@ -459,7 +460,7 @@ struct SubagentAdmission16GBRegressionTests {
             DelegatedRunContract.derive(
                 seedCharacters: 800,
                 systemPromptCharacters: 0,
-                toolSchemaCharacters: 0,
+                toolSchemaTokens: 0,
                 budgets: SubagentBudgets(),
                 toolEnabled: true,
                 resolvedContextWindow: -5

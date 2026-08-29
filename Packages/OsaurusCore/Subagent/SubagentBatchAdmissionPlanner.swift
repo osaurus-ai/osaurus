@@ -86,17 +86,21 @@ public struct SubagentChildRequestEstimate: Sendable, Equatable {
                 }
             }
         }
+        // The 4096 floor applies ONLY to the seed+output candidate: that
+        // form measures nothing about the child's wrapper/system/template
+        // context, so the floor absorbs it. An enforced position ceiling is
+        // fully MEASURED (dispatched prompt + composed system prompt +
+        // composer tool reservation) and enforced verbatim by the session's
+        // window clamp, so it prices as-is — no hidden floor.
+        var floored = candidates.map { max(4096, $0) }
         if let enforcedPositionCeiling, enforcedPositionCeiling > 0 {
-            candidates.append(enforcedPositionCeiling)
+            floored.append(enforcedPositionCeiling)
         }
-        guard let tightest = candidates.min() else { return nil }
-        // The 4096 floor absorbs the child wrapper/system/template overhead
-        // for small requests without inventing a per-request fudge term.
-        let floored = max(4096, tightest)
+        guard let tightest = floored.min() else { return nil }
         if let policyCap, policyCap > 0 {
-            return min(floored, max(policyCap, 4096))
+            return min(tightest, policyCap)
         }
-        return floored
+        return tightest
     }
 
     /// Conservative wave envelope for a batch: each job's safe position

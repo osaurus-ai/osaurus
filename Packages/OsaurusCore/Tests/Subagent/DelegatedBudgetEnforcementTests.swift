@@ -35,7 +35,7 @@ struct DelegatedBudgetEnforcementTests {
         DelegatedRunContract.derive(
             seedCharacters: 800,
             systemPromptCharacters: 2_000,
-            toolSchemaCharacters: 1_000,
+            toolSchemaTokens: 375,
             budgets: SubagentBudgets(),
             toolEnabled: true,
             resolvedContextWindow: 65_536

@@ -83,8 +83,8 @@ public struct DelegatedRunContract: Sendable, Equatable {
 
     /// Derive the contract from the launcher's (normalized) budgets, the
     /// delegation seed, the target agent's ACTUAL composed system prompt
-    /// and exact tool schemas (measured character counts — no fixed
-    /// overhead guess), whether the target agent runs with tools, and the
+    /// and exact tool schemas (the composer's own reservation values — no
+    /// fixed overhead guess), whether the target agent runs with tools, and the
     /// context window the dispatched session would otherwise resolve
     /// (`AgentLoopBudget.resolveContextWindow`: bundle window ∩ the user's
     /// context-length cap). The derived position ceiling only ever TIGHTENS
@@ -101,7 +101,7 @@ public struct DelegatedRunContract: Sendable, Equatable {
     public static func derive(
         seedCharacters: Int,
         systemPromptCharacters: Int,
-        toolSchemaCharacters: Int,
+        toolSchemaTokens: Int,
         budgets: SubagentBudgets,
         toolEnabled: Bool,
         resolvedContextWindow: Int
@@ -123,9 +123,12 @@ public struct DelegatedRunContract: Sendable, Equatable {
 
         guard
             let seedTokens = ceilTokens(forCharacters: seedCharacters),
-            let systemTokens = ceilTokens(forCharacters: systemPromptCharacters),
-            let toolTokens = ceilTokens(forCharacters: toolSchemaCharacters)
+            let systemTokens = ceilTokens(forCharacters: systemPromptCharacters)
         else { return nil }
+        // Tool schemas arrive as the COMPOSER'S own token estimate
+        // (`ComposedContext.toolTokens`) — the same number the dispatched
+        // session's budget manager reserves — so no re-conversion.
+        let toolTokens = max(0, toolSchemaTokens)
 
         let (perTurn, perTurnOverflow) = normalized.maxDelegateTokens
             .addingReportingOverflow(toolEnabled ? toolResultAllowancePerTurn : 0)
