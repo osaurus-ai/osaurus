@@ -30,9 +30,6 @@ struct ToolsManagerView: View {
     static let toolGroupRenderCap = toolGroupRenderCapValue
     /// Group keys the user has chosen to fully expand past the render cap.
     @State private var expandedToolGroups: Set<String> = []
-    /// User-managed sources open on first visit; the large built-in inventory
-    /// stays quiet until requested.
-    @State private var expandedCatalogSections: Set<ToolCatalogSection> = [.connections, .custom, .plugins]
 
     @State private var selectedTab: ToolsTab = .all
     @State private var searchText: String = ""
@@ -223,102 +220,62 @@ struct ToolsManagerView: View {
                             .padding(.top, 8)
                     }
 
+                    // Sources are no longer wrapped in collapsible section
+                    // cards — the source pill in the toolbar narrows the list,
+                    // and each card/row already names its own origin. Groups
+                    // render flat for a cleaner, scannable catalog.
                     if !remoteGroups.isEmpty {
-                        ToolSectionDisclosureHeader(
-                            title: L("MCP"),
-                            icon: "server.rack",
-                            count: remoteGroups.reduce(0) { $0 + $1.tools.count },
-                            isExpanded: isCatalogSectionExpanded(.connections),
-                            action: { toggleCatalogSection(.connections) }
-                        )
-                        .padding(.top, 8)
-
-                        if isCatalogSectionExpanded(.connections) {
-                            ForEach(remoteGroups, id: \.provider.id) { item in
-                                RemoteProviderToolsCard(
-                                    provider: item.provider,
-                                    tools: item.tools,
-                                    policyInfoCache: policyInfoCache,
-                                    availabilityCache: availabilityCache,
-                                    exposureRowsByName: exposureRowsByName,
-                                    onDisconnect: {
-                                        providerManager.disconnect(providerId: item.provider.id)
-                                    },
-                                    onToolMutated: { applyLocalToolMutation(name: $0) }
-                                )
-                            }
+                        ForEach(remoteGroups, id: \.provider.id) { item in
+                            RemoteProviderToolsCard(
+                                provider: item.provider,
+                                tools: item.tools,
+                                policyInfoCache: policyInfoCache,
+                                availabilityCache: availabilityCache,
+                                exposureRowsByName: exposureRowsByName,
+                                onDisconnect: {
+                                    providerManager.disconnect(providerId: item.provider.id)
+                                },
+                                onToolMutated: { applyLocalToolMutation(name: $0) }
+                            )
                         }
                     }
 
                     if !custom.isEmpty {
-                        ToolSectionDisclosureHeader(
-                            title: L("Custom"),
-                            icon: "person.crop.square.badge.wrench",
-                            count: custom.count,
-                            isExpanded: isCatalogSectionExpanded(.custom),
-                            action: { toggleCatalogSection(.custom) }
-                        )
-                        .padding(.top, 8)
-
-                        if isCatalogSectionExpanded(.custom) {
-                            cappedGroup(key: "custom", tools: custom) { entry in
-                                ToolEntryRow(
-                                    entry: entry,
-                                    sourceLabel: L("Custom"),
-                                    policyInfo: policyInfoCache[entry.name],
-                                    availability: cachedAvailability(availabilityCache, for: entry),
-                                    status: catalogStatus(for: entry.name),
-                                    onChange: { applyLocalToolMutation(name: entry.name) }
-                                )
-                            }
+                        cappedGroup(key: "custom", tools: custom) { entry in
+                            ToolEntryRow(
+                                entry: entry,
+                                sourceLabel: L("Custom"),
+                                policyInfo: policyInfoCache[entry.name],
+                                availability: cachedAvailability(availabilityCache, for: entry),
+                                status: catalogStatus(for: entry.name),
+                                onChange: { applyLocalToolMutation(name: entry.name) }
+                            )
                         }
                     }
 
                     if !pluginGroups.isEmpty {
-                        ToolSectionDisclosureHeader(
-                            title: L("Plugins"),
-                            icon: "puzzlepiece.extension",
-                            count: pluginGroups.reduce(0) { $0 + $1.tools.count },
-                            isExpanded: isCatalogSectionExpanded(.plugins),
-                            action: { toggleCatalogSection(.plugins) }
-                        )
-                        .padding(.top, 8)
-
-                        if isCatalogSectionExpanded(.plugins) {
-                            ForEach(pluginGroups, id: \.plugin.id) { item in
-                                ToolPluginCard(
-                                    plugin: item.plugin,
-                                    tools: item.tools,
-                                    policyInfoCache: policyInfoCache,
-                                    availabilityCache: availabilityCache,
-                                    exposureRowsByName: exposureRowsByName,
-                                    onToolMutated: { applyLocalToolMutation(name: $0) }
-                                )
-                            }
+                        ForEach(pluginGroups, id: \.plugin.id) { item in
+                            ToolPluginCard(
+                                plugin: item.plugin,
+                                tools: item.tools,
+                                policyInfoCache: policyInfoCache,
+                                availabilityCache: availabilityCache,
+                                exposureRowsByName: exposureRowsByName,
+                                onToolMutated: { applyLocalToolMutation(name: $0) }
+                            )
                         }
                     }
 
                     if !builtIn.isEmpty {
-                        ToolSectionDisclosureHeader(
-                            title: L("Built-in"),
-                            icon: "shippingbox",
-                            count: builtIn.count,
-                            isExpanded: isCatalogSectionExpanded(.builtIn),
-                            action: { toggleCatalogSection(.builtIn) }
-                        )
-                        .padding(.top, 8)
-
-                        if isCatalogSectionExpanded(.builtIn) {
-                            cappedGroup(key: "builtIn", tools: builtIn) { entry in
-                                RuntimeManagedToolEntryRow(
-                                    entry: entry,
-                                    badge: sourceBadge(for: entry),
-                                    policyInfo: policyInfoCache[entry.name],
-                                    availability: cachedAvailability(availabilityCache, for: entry),
-                                    status: catalogStatus(for: entry.name),
-                                    onChange: { applyLocalToolMutation(name: entry.name) }
-                                )
-                            }
+                        cappedGroup(key: "builtIn", tools: builtIn) { entry in
+                            RuntimeManagedToolEntryRow(
+                                entry: entry,
+                                badge: sourceBadge(for: entry),
+                                policyInfo: policyInfoCache[entry.name],
+                                availability: cachedAvailability(availabilityCache, for: entry),
+                                status: catalogStatus(for: entry.name),
+                                onChange: { applyLocalToolMutation(name: entry.name) }
+                            )
                         }
                     }
                 }
@@ -340,36 +297,20 @@ struct ToolsManagerView: View {
     private var filterToolbar: some View {
         HStack(spacing: 8) {
             ToolFilterMenu(
-                icon: "circle.lefthalf.filled",
-                accessibilityTitle: L("Filter by status"),
-                options: ToolCatalogStatusFilter.allCases,
-                selection: $statusFilter
-            )
-
-            ToolFilterMenu(
                 icon: "square.grid.2x2",
                 accessibilityTitle: L("Filter by source"),
                 options: ToolCatalogSourceFilter.allCases,
                 selection: $sourceFilter
             )
 
+            ToolFilterMenu(
+                icon: "circle.lefthalf.filled",
+                accessibilityTitle: L("Filter by status"),
+                options: ToolCatalogStatusFilter.allCases,
+                selection: $statusFilter
+            )
+
             Spacer(minLength: 8)
-        }
-    }
-
-    private func isCatalogSectionExpanded(_ section: ToolCatalogSection) -> Bool {
-        ToolCatalogPresentation.isSectionExpanded(
-            section,
-            explicitlyExpanded: expandedCatalogSections,
-            searchText: searchText
-        )
-    }
-
-    private func toggleCatalogSection(_ section: ToolCatalogSection) {
-        if expandedCatalogSections.contains(section) {
-            expandedCatalogSections.remove(section)
-        } else {
-            expandedCatalogSections.insert(section)
         }
     }
 
