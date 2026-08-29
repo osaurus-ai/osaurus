@@ -180,16 +180,14 @@ enum ToolsTab: String, CaseIterable, AnimatedTabItem {
 /// skill came from rather than by an enablement state.
 enum SkillsTab: String, CaseIterable, AnimatedTabItem {
     case all = "All"
-    case builtIn = "Built-in"
-    case yours = "Yours"
-    case fromPlugins = "From Plugins"
+    case custom = "Custom"
+    case claudePlugins = "Claude Plugins"
 
     var title: String {
         switch self {
         case .all: return L("All")
-        case .builtIn: return L("Built-in")
-        case .yours: return L("Yours")
-        case .fromPlugins: return L("From Plugins")
+        case .custom: return L("Custom")
+        case .claudePlugins: return L("Claude Plugins")
         }
     }
 }
