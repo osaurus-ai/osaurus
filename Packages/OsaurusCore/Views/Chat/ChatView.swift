@@ -5717,19 +5717,34 @@ final class ChatSession: ObservableObject {
         // streaming pipeline (e.g. from a sandbox plugin running on a
         // detached task) couldn't tell what agent they belonged to.
         let turnAgentId = agentId ?? Agent.defaultId
+        let turnModelId = selectedModel
         let imageSettings = imageComposerSettings
-        // Freeze prompt-affecting model controls at send time. Every model
-        // step in the agent loop reconstructs its request; reading the live UI
-        // dictionary inside that loop can change the prompt halfway through a
-        // run, and carrying only local-only `modelOptions` drops the explicit
-        // Thinking choice on any wire-encoded continuation.
-        let turnGenerationControls = ChatTurnGenerationControls.capture(
-            activeModelOptions: activeModelOptions
-        )
+        let turnModelOptions = activeModelOptions
+        let storedTurnModelOptions = turnModelId.flatMap {
+            ModelOptionsStore.shared.storedExplicitOptions(for: $0)
+        }
 
         currentTask = Task { @MainActor [weak self] in
             guard let self else { return }
             guard self.isRunActive(runId) else { return }
+            // Freeze prompt-affecting controls only after recovering a saved
+            // explicit Thinking choice that launch-time cold-cache
+            // normalization may have provisionally hidden. No default is
+            // synthesized: absent choices still defer to the bundle.
+            let turnGenerationControls = await ChatTurnGenerationControls.captureForSend(
+                modelId: turnModelId,
+                activeModelOptions: turnModelOptions,
+                storedExplicitOptions: storedTurnModelOptions
+            ) { modelId in
+                _ = await LocalReasoningCapability.resolveForDispatch(modelId: modelId)
+            }
+            guard self.isRunActive(runId) else { return }
+            if self.selectedModel == turnModelId,
+                self.activeModelOptions.isEmpty,
+                let recovered = turnGenerationControls.modelOptions
+            {
+                self.activeModelOptions = recovered
+            }
             // A send issued right after a session switch / app launch can
             // race the fire-and-forget bookmark restore; wait for it so this
             // turn composes WITH the folder instead of silently folder-less.
@@ -5765,12 +5780,12 @@ final class ChatSession: ObservableObject {
                 trimmed.isEmpty ? nil : trimmed
             ) { [self] in
             await ChatExecutionContext.$currentModelName.withValue(
-                self.selectedModel
+                turnModelId
             ) { [self] in
             await ChatExecutionContext.$currentEnableThinking.withValue(
                 turnGenerationControls.enableThinking
             ) { [self] in
-                debugLog("send: task started runId=\(runId) model=\(self.selectedModel ?? "nil")")
+                debugLog("send: task started runId=\(runId) model=\(turnModelId ?? "nil")")
                 // A Stop can land between beginRun (synchronous in send) and
                 // this task's first line: stop() has then already finalized
                 // this runId, and the deferred finalizeRun below would no-op
@@ -5802,7 +5817,7 @@ final class ChatSession: ObservableObject {
                 // (a second MLX graph, gated exclusive to LLM eval) instead of
                 // the chat engine. The same run lifecycle (defer finalizeRun,
                 // currentTask cancellation) applies.
-                                    if self.isVideoGenerationModel(self.selectedModel) {
+                                    if self.isVideoGenerationModel(turnModelId) {
                                         await self.runVideoGeneration(
                                             prompt: trimmed,
                                             attachments: attachments,
@@ -5812,7 +5827,7 @@ final class ChatSession: ObservableObject {
                                         )
                                         return
                                     }
-                if self.isImageGenerationModel(self.selectedModel) {
+                if self.isImageGenerationModel(turnModelId) {
                     await self.runImageGeneration(
                         prompt: trimmed,
                         attachments: attachments,
@@ -5973,7 +5988,7 @@ final class ChatSession: ObservableObject {
                         ComposeRequest(
                             agentId: effectiveAgentId,
                             executionMode: executionMode,
-                            model: selectedModel,
+                            model: turnModelId,
                             modelType: selectedPickerItem?.modelType,
                             query: trimmed,
                             messages: priorUserMessages,
@@ -6137,7 +6152,7 @@ final class ChatSession: ObservableObject {
                     // reuse survives compaction.
                     let loopBudgetManager: ContextBudgetManager = await {
                         var contextWindow = await AgentLoopBudget.resolveContextWindow(
-                            modelId: selectedModel ?? "default"
+                            modelId: turnModelId ?? "default"
                         )
                         if let delegationBudget = self.delegationBudget {
                             // Delegated child: the contract's position
@@ -7054,7 +7069,7 @@ final class ChatSession: ObservableObject {
                                 // `selectedModel` — it can lag the async agent pin
                                 // and would only leak a stale prefix internally.
                                 model: self.isRemoteAgentTarget
-                                    ? "default" : (self.selectedModel ?? "default"),
+                                    ? "default" : (turnModelId ?? "default"),
                                 messages: msgs,
                                 temperature: effectiveTemp,
                                 max_tokens: effectiveMaxTokensForAgent,
@@ -7158,7 +7173,7 @@ final class ChatSession: ObservableObject {
                                     runId: runId,
                                     streamStartTime: streamStartTime,
                                     ttftTrace: ttftTrace,
-                                    selectedModel: self.selectedModel
+                                    selectedModel: turnModelId
                                 )
                                 assistantTurn = finalTurn
                                 // Stream finished naturally without a tool call — reset
@@ -7495,7 +7510,7 @@ final class ChatSession: ObservableObject {
                         // advice points at the setting that decided the number
                         // rather than at a model window that had room.
                         var overBudgetWindowSource: AgentLoopBudget.ContextWindowSource?
-                        if let overBudgetModel = selectedModel {
+                        if let overBudgetModel = turnModelId {
                             overBudgetWindowSource = AgentLoopBudget
                                 .resolveContextWindowResolutionSync(modelId: overBudgetModel)
                                 .source
@@ -7572,7 +7587,7 @@ final class ChatSession: ObservableObject {
                                         to: trimmedFinalMessages
                                     )
                                 var finalReq = ChatCompletionRequest(
-                                    model: selectedModel ?? "default",
+                                    model: turnModelId ?? "default",
                                     // Same watermark-trimmed view of history the
                                     // loop iterations used — the raw array can
                                     // exceed the window precisely when the cap

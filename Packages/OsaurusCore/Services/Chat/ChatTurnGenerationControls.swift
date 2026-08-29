@@ -35,6 +35,33 @@ struct ChatTurnGenerationControls: Sendable, Equatable {
         )
     }
 
+    /// Recover a persisted explicit Thinking choice when launch-time UI
+    /// normalization raced the cold local-model capability cache. The caller
+    /// supplies the already-read versioned payload and the off-main resolver,
+    /// keeping this policy deterministic in tests and preventing unrelated
+    /// provider/model options from paying a local disk scan.
+    static func captureForSend(
+        modelId: String?,
+        activeModelOptions: [String: ModelOptionValue],
+        storedExplicitOptions: [String: ModelOptionValue]?,
+        resolveCapability: @Sendable (String) async -> Void
+    ) async -> ChatTurnGenerationControls {
+        guard activeModelOptions.isEmpty,
+            let modelId,
+            let storedExplicitOptions,
+            storedExplicitOptions["disableThinking"]?.boolValue != nil
+        else {
+            return capture(activeModelOptions: activeModelOptions)
+        }
+
+        await resolveCapability(modelId)
+        let validated = ModelProfileRegistry.normalizedOptions(
+            for: modelId,
+            persisted: storedExplicitOptions
+        )
+        return capture(activeModelOptions: validated)
+    }
+
     func apply(to request: inout ChatCompletionRequest) {
         request.modelOptions = modelOptions
         request.enable_thinking = enableThinking

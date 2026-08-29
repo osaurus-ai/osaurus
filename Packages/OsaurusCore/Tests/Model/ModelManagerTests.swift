@@ -523,6 +523,14 @@ struct ModelManagerTests {
             let first = ModelManager.discoverLocalModels()
             #expect(first.isEmpty)
 
+            // Dispatch-time validation must not inherit the UI discovery
+            // timeout: it waits for the in-flight scan's real completion so
+            // a first message cannot treat a provisional empty catalog as
+            // authoritative and drop an explicit model option.
+            await ModelManager.awaitLocalModelsCacheReadyForDispatch()
+            let dispatchResolved = ModelManager.discoverLocalModels()
+            #expect(dispatchResolved.map(\.id) == ["gemma-4-E2B-it-qat-MXFP4"])
+
             var second: [MLXModel] = []
             for _ in 0 ..< 100 {
                 second = ModelManager.discoverLocalModels()

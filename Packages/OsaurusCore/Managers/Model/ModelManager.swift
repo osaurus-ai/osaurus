@@ -1955,6 +1955,28 @@ extension ModelManager {
         }
     }
 
+    /// Wait until the launch-time managed-model scan has actually published
+    /// its cache. Unlike `discoverLocalModels()`, this dispatch-only gate does
+    /// not treat the ordinary 10-second UI protection timeout as an
+    /// authoritative empty catalog. It is used only when a request must
+    /// validate an already-persisted explicit model option before generation.
+    nonisolated static func awaitLocalModelsCacheReadyForDispatch() async {
+        if isLocalModelsCacheWarm { return }
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                localModelsCacheCondition.lock()
+                if cachedLocalModels == nil && !localModelsScanInFlight {
+                    startLocalModelsScanLocked()
+                }
+                while cachedLocalModels == nil && localModelsScanInFlight {
+                    localModelsCacheCondition.wait()
+                }
+                localModelsCacheCondition.unlock()
+                continuation.resume()
+            }
+        }
+    }
+
     /// Discover locally downloaded models. Cached until invalidated by model download/delete.
     nonisolated static func discoverLocalModels() -> [MLXModel] {
         func waitForLocalModelsScan(until deadline: Date) -> [MLXModel]? {

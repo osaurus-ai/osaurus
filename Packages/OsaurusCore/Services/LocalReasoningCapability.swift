@@ -116,6 +116,20 @@ enum LocalReasoningCapability {
         return detected
     }
 
+    /// Authoritative dispatch-time resolution that never performs model
+    /// discovery or bundle I/O on the main thread. UI lookups deliberately
+    /// return a provisional `.none` on a cold cache; a request carrying an
+    /// already-persisted explicit Thinking choice must wait for the real
+    /// answer before freezing its per-turn controls.
+    static func resolveForDispatch(modelId: String) async -> Capability {
+        await ModelManager.awaitLocalModelsCacheReadyForDispatch()
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(returning: capability(forModelId: modelId))
+            }
+        }
+    }
+
     /// Resolve a main-thread cold miss off-main. Deduped per key so a burst
     /// of body recomputes triggers one disk read, not one per frame. The
     /// provisional-miss rule from `capability(forModelId:)` applies here too:
@@ -290,7 +304,11 @@ enum LocalReasoningCapability {
             cacheOnly
             ? ModelManager.findInstalledMLXModelFromCache(named: modelId)
             : ModelManager.findInstalledMLXModel(named: modelId)
-        return found?.localDirectory
+        // Externally registered bundles can be path-resolved from their
+        // persisted manifest before the external catalog's heavier MLXModel
+        // memo finishes rebuilding. This keeps dispatch-time capability
+        // validation authoritative for HF/LM Studio/custom-folder models too.
+        return found?.localDirectory ?? ExternalModelLocator.path(forId: modelId)
     }
 
     /// Read `jang_config.json > chat > reasoning` and surface it as a

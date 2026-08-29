@@ -122,6 +122,69 @@ struct ChatTurnGenerationControlsTests {
         #expect(request.modelOptions == nil)
     }
 
+    @Test("cold first send recovers a persisted explicit Thinking choice")
+    func coldFirstSendRecoversPersistedThinkingChoice() async {
+        let modelId = "JANGQ-AI/Qwen3.6-35B-A3B-MXFP8"
+        actor ResolutionProbe {
+            var ids: [String] = []
+            func record(_ id: String) { ids.append(id) }
+        }
+        let probe = ResolutionProbe()
+
+        let controls = await ChatTurnGenerationControls.captureForSend(
+            modelId: modelId,
+            activeModelOptions: [:],
+            storedExplicitOptions: ["disableThinking": .bool(true)]
+        ) { id in
+            await probe.record(id)
+        }
+
+        #expect(await probe.ids == [modelId])
+        #expect(controls.enableThinking == false)
+        #expect(controls.modelOptions?["disableThinking"]?.boolValue == true)
+    }
+
+    @Test("an already-live control never waits for capability recovery")
+    func liveControlDoesNotWaitForCapabilityRecovery() async {
+        actor ResolutionProbe {
+            var count = 0
+            func record() { count += 1 }
+        }
+        let probe = ResolutionProbe()
+
+        let controls = await ChatTurnGenerationControls.captureForSend(
+            modelId: "JANGQ-AI/Qwen3.6-35B-A3B-MXFP8",
+            activeModelOptions: ["disableThinking": .bool(false)],
+            storedExplicitOptions: ["disableThinking": .bool(true)]
+        ) { _ in
+            await probe.record()
+        }
+
+        #expect(await probe.count == 0)
+        #expect(controls.enableThinking == true)
+    }
+
+    @Test("unrelated persisted controls do not trigger local reasoning recovery")
+    func unrelatedStoredControlDoesNotRecover() async {
+        actor ResolutionProbe {
+            var count = 0
+            func record() { count += 1 }
+        }
+        let probe = ResolutionProbe()
+
+        let controls = await ChatTurnGenerationControls.captureForSend(
+            modelId: "codex/gpt-current",
+            activeModelOptions: [:],
+            storedExplicitOptions: ["reasoningEffort": .string("high")]
+        ) { _ in
+            await probe.record()
+        }
+
+        #expect(await probe.count == 0)
+        #expect(controls.modelOptions == nil)
+        #expect(controls.enableThinking == nil)
+    }
+
     @Test("DSV4 reasoning effort reaches every reconstructed tool-loop request unchanged")
     func dsv4ReasoningEffortPropagatesAcrossIterations() {
         for effort in ["instruct", "low", "high", "max"] {
