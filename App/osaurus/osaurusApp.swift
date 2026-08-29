@@ -289,9 +289,9 @@ private extension osaurusApp {
                 Text(verbatim: L("Models"))
             }
             Button {
-                openManagementTab(.plugins)
+                openManagementTab(.tools)
             } label: {
-                Text(verbatim: L("Plugins"))
+                Text(verbatim: L("Tools"))
             }
             Button {
                 openManagementTab(.server)
