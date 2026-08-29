@@ -53,34 +53,54 @@ enum ToolPolicyStyle {
 
 // MARK: - Menu Pill
 
-/// A pill-shaped dropdown whose visible chrome is a fully custom `label`. An
-/// invisible `Menu` is overlaid on top, so SwiftUI's menu-button styling never
-/// overrides the label's spacing, padding, background, or colors — the recurring
-/// problem with `.menuStyle(.borderlessButton)` / `.button` on custom labels.
+/// Button style that wraps a menu label in a capsule without touching the
+/// label's own layout. A custom `ButtonStyle` passes `configuration.label`
+/// through verbatim, so the label's spacing/padding survive — unlike
+/// `.bordered`, which re-lays out the label and ignores its `HStack` spacing.
+private struct PillButtonStyle: ButtonStyle {
+    let fill: Color
+    let stroke: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(Capsule().fill(fill))
+            .overlay(Capsule().stroke(stroke, lineWidth: 1))
+            .contentShape(Capsule())
+            .opacity(configuration.isPressed ? 0.65 : 1)
+    }
+}
+
+/// A pill-shaped dropdown whose visible chrome is a fully custom `label`. It is
+/// a real `Menu` (so clicking works) rendered as a button with `PillButtonStyle`
+/// and the system menu indicator hidden — the label owns all spacing, padding,
+/// background, and colors.
 struct MenuPill<MenuContent: View, Label: View>: View {
+    let fill: Color
+    let stroke: Color
     private let menuContent: () -> MenuContent
     private let label: () -> Label
 
     init(
+        fill: Color,
+        stroke: Color,
         @ViewBuilder menuContent: @escaping () -> MenuContent,
         @ViewBuilder label: @escaping () -> Label
     ) {
+        self.fill = fill
+        self.stroke = stroke
         self.menuContent = menuContent
         self.label = label
     }
 
     var body: some View {
-        label()
-            .contentShape(Capsule())
-            .overlay {
-                Menu {
-                    menuContent()
-                } label: {
-                    Color.clear.contentShape(Rectangle())
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-            }
+        Menu {
+            menuContent()
+        } label: {
+            label()
+        }
+        .menuStyle(.button)
+        .buttonStyle(PillButtonStyle(fill: fill, stroke: stroke))
+        .menuIndicator(.hidden)
     }
 }
 
@@ -98,7 +118,7 @@ struct ToolPolicyMenu: View {
     }
 
     var body: some View {
-        MenuPill {
+        MenuPill(fill: color.opacity(0.14), stroke: color.opacity(0.22)) {
             ForEach([ToolPermissionPolicy.auto, .ask, .deny], id: \.self) { policy in
                 Button {
                     ToolRegistry.shared.setPolicy(policy, for: toolName)
@@ -127,8 +147,6 @@ struct ToolPolicyMenu: View {
             .foregroundStyle(color)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
-            .background(Capsule().fill(color.opacity(0.14)))
-            .overlay(Capsule().stroke(color.opacity(0.22), lineWidth: 1))
         }
         .fixedSize()
         .help(Text("Choose whether this tool runs automatically, asks first, or is blocked", bundle: .module))
@@ -337,7 +355,7 @@ struct ToolFilterMenu<Option: ToolCatalogFilterOption>: View {
     @Binding var selection: Option
 
     var body: some View {
-        MenuPill {
+        MenuPill(fill: theme.tertiaryBackground, stroke: theme.inputBorder) {
             ForEach(options, id: \.self) { option in
                 Button {
                     selection = option
@@ -364,8 +382,6 @@ struct ToolFilterMenu<Option: ToolCatalogFilterOption>: View {
             .foregroundColor(theme.primaryText)
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
-            .background(Capsule().fill(theme.tertiaryBackground))
-            .overlay(Capsule().stroke(theme.inputBorder, lineWidth: 1))
         }
         .fixedSize()
         .accessibilityLabel(Text("\(accessibilityTitle): \(selection.title)"))
