@@ -51,6 +51,39 @@ enum ToolPolicyStyle {
     }
 }
 
+// MARK: - Menu Pill
+
+/// A pill-shaped dropdown whose visible chrome is a fully custom `label`. An
+/// invisible `Menu` is overlaid on top, so SwiftUI's menu-button styling never
+/// overrides the label's spacing, padding, background, or colors — the recurring
+/// problem with `.menuStyle(.borderlessButton)` / `.button` on custom labels.
+struct MenuPill<MenuContent: View, Label: View>: View {
+    private let menuContent: () -> MenuContent
+    private let label: () -> Label
+
+    init(
+        @ViewBuilder menuContent: @escaping () -> MenuContent,
+        @ViewBuilder label: @escaping () -> Label
+    ) {
+        self.menuContent = menuContent
+        self.label = label
+    }
+
+    var body: some View {
+        label()
+            .contentShape(Capsule())
+            .overlay {
+                Menu {
+                    menuContent()
+                } label: {
+                    Color.clear.contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+            }
+    }
+}
+
 // MARK: - Tool Policy Menu
 
 /// Reusable permission-behavior selector menu for a single tool entry.
@@ -60,8 +93,12 @@ struct ToolPolicyMenu: View {
     let info: ToolRegistry.ToolPolicyInfo
     let onChange: () -> Void
 
+    private var color: Color {
+        ToolPolicyStyle.color(for: info.effectivePolicy, theme: theme)
+    }
+
     var body: some View {
-        Menu {
+        MenuPill {
             ForEach([ToolPermissionPolicy.auto, .ask, .deny], id: \.self) { policy in
                 Button {
                     ToolRegistry.shared.setPolicy(policy, for: toolName)
@@ -69,9 +106,7 @@ struct ToolPolicyMenu: View {
                 } label: {
                     HStack {
                         Image(systemName: ToolPolicyStyle.icon(for: policy))
-                            .foregroundColor(ToolPolicyStyle.color(for: policy, theme: theme))
                         Text(ToolPolicyStyle.title(for: policy))
-                            .foregroundColor(ToolPolicyStyle.color(for: policy, theme: theme))
                         if policy == info.effectivePolicy {
                             Image(systemName: "checkmark")
                         }
@@ -85,16 +120,16 @@ struct ToolPolicyMenu: View {
                 Text(ToolPolicyStyle.compactTitle(for: info.effectivePolicy))
                     .font(.system(size: 10, weight: .semibold))
                     .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+                    .opacity(0.7)
             }
+            .foregroundStyle(color)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(color.opacity(0.14)))
+            .overlay(Capsule().stroke(color.opacity(0.22), lineWidth: 1))
         }
-        // A native tinted capsule gives each permission state a real colored
-        // pill; the borderless menu style strips the label's own background so
-        // the chip would otherwise render as bare text.
-        .menuStyle(.button)
-        .buttonStyle(.bordered)
-        .buttonBorderShape(.capsule)
-        .controlSize(.small)
-        .tint(ToolPolicyStyle.color(for: info.effectivePolicy, theme: theme))
         .fixedSize()
         .help(Text("Choose whether this tool runs automatically, asks first, or is blocked", bundle: .module))
         .accessibilityLabel(
@@ -302,7 +337,7 @@ struct ToolFilterMenu<Option: ToolCatalogFilterOption>: View {
     @Binding var selection: Option
 
     var body: some View {
-        Menu {
+        MenuPill {
             ForEach(options, id: \.self) { option in
                 Button {
                     selection = option
@@ -316,26 +351,22 @@ struct ToolFilterMenu<Option: ToolCatalogFilterOption>: View {
                 }
             }
         } label: {
-            HStack(spacing: 0) {
+            HStack(spacing: 7) {
                 Image(systemName: icon)
-                    .font(.system(size: 11, weight: .semibold))
-                    // Explicit gap: the bordered menu style re-lays out the
-                    // label and ignores the HStack's own `spacing`.
-                    .padding(.trailing, 9)
+                    .font(.system(size: 10, weight: .semibold))
                 Text(selection.title)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(theme.tertiaryText)
             }
-            .padding(.vertical, 5)
+            .foregroundColor(theme.primaryText)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Capsule().fill(theme.tertiaryBackground))
+            .overlay(Capsule().stroke(theme.inputBorder, lineWidth: 1))
         }
-        // A native bordered menu with a capsule shape gives a real pill; the
-        // borderless style strips the label's own background so it can't.
-        // `.large` control size keeps the pill from rendering cramped.
-        .menuStyle(.button)
-        .buttonStyle(.bordered)
-        .buttonBorderShape(.capsule)
-        .controlSize(.large)
-        .tint(theme.secondaryText)
         .fixedSize()
         .accessibilityLabel(Text("\(accessibilityTitle): \(selection.title)"))
     }
