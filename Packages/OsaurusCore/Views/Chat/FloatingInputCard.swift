@@ -742,12 +742,12 @@ struct FloatingInputCard: View {
             // floating overlay) so it sits directly above the model picker
             // chip it refers to and can never overlap the chip or token count.
             if !showVoiceOverlay {
-                if modelSwitchContinuityWarning != nil {
-                    modelSwitchContinuityRow
-                } else {
-                    ramPressureRow
-                    swapPressureRow
-                }
+                // RAM/swap warnings are safety signals. An advisory model-
+                // continuity warning must never hide them when both states
+                // happen to be active at the same time.
+                ramPressureRow
+                swapPressureRow
+                modelSwitchContinuityRow
             }
 
             // Read-only screen-context indicator sits on its OWN row above the

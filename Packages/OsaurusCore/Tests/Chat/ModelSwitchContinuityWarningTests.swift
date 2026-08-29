@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import OsaurusCore
@@ -5,6 +6,28 @@ import Testing
 @Suite("Model switch continuity warning")
 @MainActor
 struct ModelSwitchContinuityWarningTests {
+
+    @Test("model-switch advisory never suppresses RAM or swap safety rows")
+    func safetyRowsRemainVisible() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: packageRoot.appendingPathComponent("Views/Chat/FloatingInputCard.swift"),
+            encoding: .utf8
+        )
+        let anchor = try #require(source.range(of: "if !showVoiceOverlay"))
+        let tail = String(source[anchor.lowerBound...])
+        let end = try #require(tail.range(of: "// Read-only screen-context indicator"))
+        let rows = String(tail[..<end.lowerBound])
+
+        #expect(rows.contains("ramPressureRow"))
+        #expect(rows.contains("swapPressureRow"))
+        #expect(rows.contains("modelSwitchContinuityRow"))
+        #expect(!rows.contains("if modelSwitchContinuityWarning != nil"))
+    }
+
     @Test("warns only for a real mid-conversation model change")
     func warningGate() {
         #expect(
