@@ -3375,8 +3375,10 @@ struct RuntimePolicySourceTests {
             "Tool-budget wrap-up calls use the same implicit-sampling contract as normal UI turns."
         )
         #expect(
-            chatView.contains("let turnGenerationControls = ChatTurnGenerationControls.capture("),
-            "Chat UI must freeze prompt-affecting model controls once at send time instead of rereading mutable UI state between tool iterations."
+            chatView.contains(
+                "let turnGenerationControls = await ChatTurnGenerationControls.captureForSend("
+            ),
+            "Chat UI must freeze prompt-affecting model controls once at send time, after bounded cold-cache recovery, instead of rereading mutable UI state between tool iterations."
         )
         #expect(
             chatView.contains("turnGenerationControls.apply(to: &req)"),
