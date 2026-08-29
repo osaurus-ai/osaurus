@@ -79,25 +79,22 @@ struct ToolPolicyMenu: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 Image(systemName: ToolPolicyStyle.icon(for: info.effectivePolicy))
-                    .font(.system(size: 9))
-                    .foregroundColor(ToolPolicyStyle.color(for: info.effectivePolicy, theme: theme))
+                    .font(.system(size: 9, weight: .semibold))
                 Text(ToolPolicyStyle.compactTitle(for: info.effectivePolicy))
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(ToolPolicyStyle.color(for: info.effectivePolicy, theme: theme))
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(.system(size: 10, weight: .semibold))
+                    .lineLimit(1)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                Capsule()
-                    .fill(ToolPolicyStyle.color(for: info.effectivePolicy, theme: theme).opacity(0.12))
-            )
         }
-        .menuStyle(.borderlessButton)
+        // A native tinted capsule gives each permission state a real colored
+        // pill; the borderless menu style strips the label's own background so
+        // the chip would otherwise render as bare text.
+        .menuStyle(.button)
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.capsule)
+        .controlSize(.small)
+        .tint(ToolPolicyStyle.color(for: info.effectivePolicy, theme: theme))
         .fixedSize()
         .help(Text("Choose whether this tool runs automatically, asks first, or is blocked", bundle: .module))
         .accessibilityLabel(
