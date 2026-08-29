@@ -50,6 +50,7 @@ struct ToolResultGroundingTests {
                     [
                         "wave": 0,
                         "remote_jobs": 1,
+                        "local_jobs": 0,
                         "effective_local_slots": 1,
                         "local_subwaves": [1],
                         "limited_by": [],

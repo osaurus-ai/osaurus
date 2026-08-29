@@ -78,6 +78,12 @@
       "agent_loop.write-new-file",
       "agent_loop.write-then-verify-with-shell"
     ],
+    "AgentLoopBatchNative" : [
+      "agent_loop.spawn-batch-native-two"
+    ],
+    "AgentLoopBatchSerialized" : [
+      "agent_loop.spawn-batch-safe-serialized-two"
+    ],
     "AgentLoopFrontier" : [
       "frontier.agent-db-workflow",
       "frontier.audit-file-edit",
