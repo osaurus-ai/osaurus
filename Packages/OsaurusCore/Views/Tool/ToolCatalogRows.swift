@@ -329,13 +329,13 @@ struct ToolFilterMenu<Option: ToolCatalogFilterOption>: View {
                     .font(.system(size: 8, weight: .semibold))
             }
             .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 9)
+            .padding(.horizontal, 12)
             .frame(height: 28)
             .background(
-                RoundedRectangle(cornerRadius: 7)
+                Capsule()
                     .fill(theme.tertiaryBackground)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 7)
+                        Capsule()
                             .stroke(theme.inputBorder, lineWidth: 1)
                     )
             )

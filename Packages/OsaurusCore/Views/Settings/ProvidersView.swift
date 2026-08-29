@@ -336,14 +336,16 @@ struct ProvidersView: View {
 
     private var headerSection: some View {
         HStack {
-            Text(
-                manager.configuration.providers.isEmpty
-                    ? "Add your first connection"
-                    : "\(manager.configuration.providers.count) connection\(manager.configuration.providers.count == 1 ? "" : "s")",
-                bundle: .module
-            )
-            .font(.system(size: 12, weight: .medium))
-            .foregroundColor(theme.secondaryText)
+            // The empty state already prompts the user to add a connection, so
+            // only show the running count once there is at least one.
+            if !manager.configuration.providers.isEmpty {
+                Text(
+                    "\(manager.configuration.providers.count) connection\(manager.configuration.providers.count == 1 ? "" : "s")",
+                    bundle: .module
+                )
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+            }
 
             Spacer()
 

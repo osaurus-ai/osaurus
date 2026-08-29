@@ -2532,21 +2532,35 @@ private struct MarketplaceCategoryChips: View {
     let totalCount: Int
     @Binding var selected: String?
 
+    /// Stable scroll id for the "All" chip, whose category key is `nil`.
+    private let allChipID = "__all__"
+
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                chip(key: nil, label: L("All"), count: totalCount, color: theme.accentColor)
-                ForEach(categories) { category in
-                    chip(
-                        key: category.id,
-                        label: category.displayName,
-                        count: category.count,
-                        color: ClaudeMarketplacePalette.color(for: category.id)
-                    )
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    chip(key: nil, label: L("All"), count: totalCount, color: theme.accentColor)
+                        .id(allChipID)
+                    ForEach(categories) { category in
+                        chip(
+                            key: category.id,
+                            label: category.displayName,
+                            count: category.count,
+                            color: ClaudeMarketplacePalette.color(for: category.id)
+                        )
+                        .id(category.id)
+                    }
+                }
+                .padding(.horizontal, 2)
+                .padding(.vertical, 2)
+            }
+            // Bring the tapped pill fully into view so the user can walk
+            // between the extremes of the category list.
+            .onChange(of: selected) { _, newValue in
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    proxy.scrollTo(newValue ?? allChipID, anchor: .center)
                 }
             }
-            .padding(.horizontal, 2)
-            .padding(.vertical, 2)
         }
     }
 
