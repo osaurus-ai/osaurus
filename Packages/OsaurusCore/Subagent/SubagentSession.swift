@@ -946,17 +946,34 @@ public enum SubagentSession {
                         )
                         admissionHeld = false
                     }
+                    // STABLE policy refusal, not a transient queue state:
+                    // capacity was recomputed after the admission wait and is
+                    // still zero, so nothing about retrying THIS turn can
+                    // succeed — memory/state must change first. Labeling it
+                    // retryable invited the parent model to burn its
+                    // remaining iterations re-spawning into the same wall
+                    // (observed as repeated rejections / iteration-budget
+                    // exhaustion on 16 GB Macs). Queue TIMEOUTS elsewhere
+                    // remain retryable; this is the post-wait verdict.
                     let message =
-                        "\(prepared.tool) no longer fits the current local RAM-safety "
-                        + "and batching limits after waiting for admission."
+                        "\(prepared.tool) was rejected by RAM-safety admission: the "
+                        + "local model has no free capacity for a child run under the "
+                        + "current memory and batching limits, and waiting did not "
+                        + "free any. Do not retry this turn — tell the user the "
+                        + "delegation could not run; it may succeed after memory or "
+                        + "settings change."
                     if presentation.finishFeed {
                         feed.finish(success: false, summary: message)
                     }
                     return ToolEnvelope.failure(
-                        kind: .unavailable,
+                        kind: .rejected,
                         message: message,
                         tool: prepared.tool,
-                        retryable: true
+                        retryable: false,
+                        metadata: [
+                            "admission": "stable_memory_refusal",
+                            "refreshed_capacity": refreshedCapacity,
+                        ]
                     )
                 }
             }
@@ -1150,7 +1167,8 @@ public enum SubagentSession {
 
         let memoryFacts = await ModelRuntime.shared.subagentBatchMemoryFacts(
             for: prepared.resolved.name,
-            residencyPlan: residencyPlan
+            residencyPlan: residencyPlan,
+            requestEstimate: prepared.kind.admissionRequestEstimate()
         )
         let plan = SpawnBatchTool.makeLocalAdmissionPlan(
             localJobCount: requested,

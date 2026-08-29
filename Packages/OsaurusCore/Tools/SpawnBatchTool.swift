@@ -1596,11 +1596,23 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             snapshot: engineOccupancy
         )
         let residencyPlan = residencyPlanOverride ?? first.run.textResidencyPlan
+        // Bounded pricing only when EVERY local job supplies an estimate;
+        // one unknown job reverts the whole wave to the conservative
+        // cap-priced charge (a wave must never be under-priced by its
+        // cheapest member). The wave uses the most expensive job's bounds.
+        let jobEstimates = localJobs.map { $0.run.kind.admissionRequestEstimate() }
+        let waveEstimate: SubagentChildRequestEstimate? =
+            jobEstimates.allSatisfy { $0 != nil } && !jobEstimates.isEmpty
+            ? SubagentChildRequestEstimate(
+                seedCharacters: jobEstimates.compactMap { $0?.seedCharacters }.max(),
+                maxOutputTokens: jobEstimates.compactMap { $0?.maxOutputTokens }.max())
+            : nil
         let memoryFacts: SubagentBatchMemoryFacts?
         if let residencyPlan {
             memoryFacts = await ModelRuntime.shared.subagentBatchMemoryFacts(
                 for: first.run.resolved.name,
-                residencyPlan: residencyPlan
+                residencyPlan: residencyPlan,
+                requestEstimate: waveEstimate
             )
         } else {
             // Non-text local kinds exist only in model-free test seams today.

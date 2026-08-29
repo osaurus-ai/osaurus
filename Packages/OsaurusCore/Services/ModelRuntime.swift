@@ -3080,12 +3080,14 @@ public actor ModelRuntime {
         let targetAlreadyResident: Bool
         let targetLoadFootprintBytes: Int64?
         let perActiveChildHeadroomBytes: Int64?
+        let requestBoundedChildHeadroomBytes: Int64?
         let resolvedLoadBudgetBytes: UInt64?
         let memorySafetyAllowsLoad: Bool
     }
 
     private func subagentMemoryProfile(
-        for modelName: String
+        for modelName: String,
+        requestEstimate: SubagentChildRequestEstimate? = nil
     ) async -> SubagentMemoryProfile? {
         let trimmed = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
@@ -3135,6 +3137,29 @@ public actor ModelRuntime {
                 kvRetentionCap: preliminaryPlan.cache.defaultMaxKVSize
             )
         }
+        // Request-bounded price: the SAME estimator, clamped to what this
+        // delegation can actually allocate. A bounded 2K-output child must
+        // not be charged the full retention-cap envelope — on a 16 GB Mac
+        // that difference alone drives ramSlots to 0 for an affordable
+        // same-resident-model spawn. Estimate stays conservative: seed
+        // chars/4 ×1.5, plus the child's max output, plus a 1024-token
+        // margin for the child system prompt and template overhead, never
+        // below 4096 and never above the policy cap (the planner's
+        // `effectiveChildHeadroomBytes` additionally clamps to the
+        // cap-priced value, so this can only shrink the charge).
+        let requestBoundedChildHeadroomBytes: Int64? = {
+            guard let estimate = requestEstimate,
+                let footprint = targetLoadFootprintBytes,
+                let boundedPositions = estimate.boundedPositionBudget(
+                    policyCap: preliminaryPlan.cache.defaultMaxKVSize)
+            else { return nil }
+            return Self.estimatedKVHeadroomBytes(
+                forWeights: footprint,
+                modelDirectory: localURL,
+                modelName: canonicalName,
+                kvRetentionCap: boundedPositions
+            )
+        }()
         let estimatedWorkingSetBytes = targetLoadFootprintBytes.flatMap {
             Self.estimatedMemorySafetyWorkingSetBytes(
                 loadFootprintBytes: $0,
@@ -3157,6 +3182,7 @@ public actor ModelRuntime {
             targetAlreadyResident: targetAlreadyResident,
             targetLoadFootprintBytes: targetLoadFootprintBytes,
             perActiveChildHeadroomBytes: perActiveChildHeadroomBytes,
+            requestBoundedChildHeadroomBytes: requestBoundedChildHeadroomBytes,
             resolvedLoadBudgetBytes: admissionPlan.resolvedLoadBudgetBytes,
             memorySafetyAllowsLoad: admissionPlan.blockingIssues.isEmpty
         )
@@ -3174,9 +3200,13 @@ public actor ModelRuntime {
 
     func subagentBatchMemoryFacts(
         for modelName: String,
-        residencyPlan: ResidencyPlan
+        residencyPlan: ResidencyPlan,
+        requestEstimate: SubagentChildRequestEstimate? = nil
     ) async -> SubagentBatchMemoryFacts? {
-        guard let profile = await subagentMemoryProfile(for: modelName) else {
+        guard
+            let profile = await subagentMemoryProfile(
+                for: modelName, requestEstimate: requestEstimate)
+        else {
             return nil
         }
         let releasableParentBytes: Int64 =
@@ -3205,6 +3235,8 @@ public actor ModelRuntime {
             perActiveChildHeadroomBytes: profile.perActiveChildHeadroomBytes.flatMap(
                 Self.nonnegativeUInt64
             ),
+            requestBoundedChildHeadroomBytes: profile.requestBoundedChildHeadroomBytes
+                .flatMap(Self.nonnegativeUInt64),
             // Match the existing subagent handoff preflight exactly. The
             // broader model-load estimator also counts speculative pages,
             // which are not part of the conservative handoff admission

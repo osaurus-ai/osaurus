@@ -34,6 +34,14 @@ public protocol SubagentKind: Sendable {
     /// mirror it into a duplicate notch row. Defaults to false.
     var suppressNotchMirror: Bool { get }
 
+    /// Bounded request facts for RAM-admission pricing: the seed/input size
+    /// and configured max output THIS run will actually ask the child model
+    /// to hold. nil (the default) means "unknown" and admission falls back
+    /// to the conservative model-wide retention-cap estimate — fail closed.
+    /// Kinds that know their delegation (text spawn) override this so a
+    /// bounded 2K-output child is not priced as a full 64K-retention cache.
+    func admissionRequestEstimate() -> SubagentChildRequestEstimate?
+
     /// Resolve + validate the target model BEFORE any residency eviction
     /// (reject-before-evict). Throw `SubagentError` to fail cleanly.
     func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel
@@ -102,6 +110,8 @@ protocol SubagentPostAdmissionResidencyPlanning: SubagentKind {
 }
 
 extension SubagentKind {
+    func admissionRequestEstimate() -> SubagentChildRequestEstimate? { nil }
+
     public var feedTitle: String { capability.id }
 
     /// Default: ordinary in-memory subagent runs are mirrored to the notch.

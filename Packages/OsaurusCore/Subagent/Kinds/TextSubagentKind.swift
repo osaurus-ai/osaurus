@@ -159,6 +159,20 @@ final class TextSubagentKind:
     private var resolvedAgentId: UUID?
     private var systemPrompt: String = ""
     private var budgets = SubagentBudgets()
+
+    /// Bounded RAM-admission pricing facts: this run's actual delegation
+    /// input plus its configured output ceiling. Lets admission price the
+    /// child's incremental KV/SSM at the request's bounds instead of the
+    /// model-wide retention cap (the 16 GB same-resident-model spawn
+    /// rejection). `budgets` is resolved during permission/revalidation;
+    /// before that it holds the conservative defaults, which is fine —
+    /// admission runs after preparation.
+    func admissionRequestEstimate() -> SubagentChildRequestEstimate? {
+        SubagentChildRequestEstimate(
+            seedCharacters: input.count,
+            maxOutputTokens: budgets.normalized.maxDelegateTokens
+        )
+    }
     /// The launching agent's child-tool grant (`none` = no generic read-only
     /// file tools; a target agent may still receive the cancellation-audited
     /// subset of its own enabled tools — see `agentToolSpecs`).
