@@ -27,19 +27,119 @@ public struct EvalMatrixDomainCell: Sendable, Codable, Equatable {
     /// compatibility report can distinguish "nothing skipped" (skipped == 0)
     /// from "skipped but why is unknown" (skipped > 0, skipReasons == nil).
     public let skipReasons: [String: Int]?
+    /// Privacy-safe error-category histogram. Unlike skip reasons this never
+    /// carries the raw note, which may contain a local path or provider text.
+    /// nil means either no errors or a pre-schema contribution.
+    public let errorCategories: [String: Int]?
 
     public init(
         passed: Int,
         scored: Int,
         skipped: Int,
         errored: Int,
-        skipReasons: [String: Int]? = nil
+        skipReasons: [String: Int]? = nil,
+        errorCategories: [String: Int]? = nil
     ) {
         self.passed = passed
         self.scored = scored
         self.skipped = skipped
         self.errored = errored
         self.skipReasons = skipReasons
+        self.errorCategories = errorCategories
+    }
+}
+
+/// Privacy-safe termination taxonomy for agent-loop rows. Counts only: no
+/// prompts, model output, tool arguments, paths, or case identifiers leave the
+/// contributor's machine.
+public struct EvalMatrixAgentLoopDiagnostics: Sendable, Codable, Equatable {
+    public let measuredRows: Int
+    public let rowsWithExitTelemetry: Int
+    public let exitCounts: [String: Int]
+    public let exitOriginCounts: [String: Int]
+    public let recoveryRetriesTotal: Int
+
+    public init(
+        measuredRows: Int,
+        rowsWithExitTelemetry: Int,
+        exitCounts: [String: Int],
+        exitOriginCounts: [String: Int],
+        recoveryRetriesTotal: Int
+    ) {
+        self.measuredRows = measuredRows
+        self.rowsWithExitTelemetry = rowsWithExitTelemetry
+        self.exitCounts = exitCounts
+        self.exitOriginCounts = exitOriginCounts
+        self.recoveryRetriesTotal = recoveryRetriesTotal
+    }
+}
+
+/// Additive runtime-cache counters across all telemetered rows in a model
+/// column. Keeping each architecture's companion signal separate prevents a
+/// hybrid model's valid SSM reuse from being reported as a KV-prefix miss.
+public struct EvalMatrixCacheTotals: Sendable, Codable, Equatable {
+    public let kvPrefixHits: Int?
+    public let kvPrefixMisses: Int?
+    public let ssmCompanionHits: Int?
+    public let ssmCompanionReDerives: Int?
+    public let diskL2Hits: Int?
+    public let diskL2Misses: Int?
+    public let diskL2Stores: Int?
+
+    public init(
+        kvPrefixHits: Int? = nil,
+        kvPrefixMisses: Int? = nil,
+        ssmCompanionHits: Int? = nil,
+        ssmCompanionReDerives: Int? = nil,
+        diskL2Hits: Int? = nil,
+        diskL2Misses: Int? = nil,
+        diskL2Stores: Int? = nil
+    ) {
+        self.kvPrefixHits = kvPrefixHits
+        self.kvPrefixMisses = kvPrefixMisses
+        self.ssmCompanionHits = ssmCompanionHits
+        self.ssmCompanionReDerives = ssmCompanionReDerives
+        self.diskL2Hits = diskL2Hits
+        self.diskL2Misses = diskL2Misses
+        self.diskL2Stores = diskL2Stores
+    }
+
+    public var isEmpty: Bool {
+        kvPrefixHits == nil && kvPrefixMisses == nil
+            && ssmCompanionHits == nil && ssmCompanionReDerives == nil
+            && diskL2Hits == nil && diskL2Misses == nil && diskL2Stores == nil
+    }
+}
+
+/// Native-MTP work totals across all telemetered rows. These are runtime token
+/// counters, not an inference from a selected setting.
+public struct EvalMatrixMTPTotals: Sendable, Codable, Equatable {
+    public let stepsWithMTP: Int?
+    public let verifyCalls: Int?
+    public let acceptedDraftTokens: Int?
+    public let bonusTokens: Int?
+    public let rejectedTokens: Int?
+    public let arFallbackTokens: Int?
+
+    public init(
+        stepsWithMTP: Int? = nil,
+        verifyCalls: Int? = nil,
+        acceptedDraftTokens: Int? = nil,
+        bonusTokens: Int? = nil,
+        rejectedTokens: Int? = nil,
+        arFallbackTokens: Int? = nil
+    ) {
+        self.stepsWithMTP = stepsWithMTP
+        self.verifyCalls = verifyCalls
+        self.acceptedDraftTokens = acceptedDraftTokens
+        self.bonusTokens = bonusTokens
+        self.rejectedTokens = rejectedTokens
+        self.arFallbackTokens = arFallbackTokens
+    }
+
+    public var isEmpty: Bool {
+        stepsWithMTP == nil && verifyCalls == nil && acceptedDraftTokens == nil
+            && bonusTokens == nil && rejectedTokens == nil && arFallbackTokens == nil
     }
 }
 
@@ -71,6 +171,8 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
     /// Share of completed agent-loop transcripts that avoided dedupe replays
     /// and iteration-cap exits.
     public let loopFreeRate: Double?
+    /// Exact aggregate exit/origin taxonomy behind `loopFreeRate`.
+    public let agentLoopDiagnostics: EvalMatrixAgentLoopDiagnostics?
     /// Mean case wall time across agent-loop rows.
     public let meanAgentLoopWallTimeMs: Double?
     /// Share of file-writing agent-loop rows whose scored workspace outcome
@@ -103,6 +205,10 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
     /// `name=tokens`, largest first — the "where do the tokens go" line the
     /// plan requires successful cases to surface.
     public let topContextContributors: [String]?
+    /// Architecture-aware cache and native-MTP totals retained from case
+    /// telemetry so community matrices can diagnose family-specific misses.
+    public let cacheTotals: EvalMatrixCacheTotals?
+    public let mtpTotals: EvalMatrixMTPTotals?
     /// Number of cases whose repeat trials disagreed (`--repeat N` runs) —
     /// the per-model flakiness signal. nil when no row carried trial data
     /// (single-execution runs), 0 when trials ran and all agreed.
@@ -129,6 +235,7 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
         actionCompletionCoverage: Double? = nil,
         medianModelSteps: Double? = nil,
         loopFreeRate: Double? = nil,
+        agentLoopDiagnostics: EvalMatrixAgentLoopDiagnostics? = nil,
         meanAgentLoopWallTimeMs: Double? = nil,
         correctFileDeliveryRate: Double? = nil,
         meanFrictionCalls: Double? = nil,
@@ -139,6 +246,8 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
         meanTotalTokensPerTask: Double? = nil,
         meanFirstStepContextTokens: Double? = nil,
         topContextContributors: [String]? = nil,
+        cacheTotals: EvalMatrixCacheTotals? = nil,
+        mtpTotals: EvalMatrixMTPTotals? = nil,
         flakyCases: Int? = nil,
         environment: RunEnvironment? = nil
     ) {
@@ -158,6 +267,7 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
         self.actionCompletionCoverage = actionCompletionCoverage
         self.medianModelSteps = medianModelSteps
         self.loopFreeRate = loopFreeRate
+        self.agentLoopDiagnostics = agentLoopDiagnostics
         self.meanAgentLoopWallTimeMs = meanAgentLoopWallTimeMs
         self.correctFileDeliveryRate = correctFileDeliveryRate
         self.meanFrictionCalls = meanFrictionCalls
@@ -168,6 +278,8 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
         self.meanTotalTokensPerTask = meanTotalTokensPerTask
         self.meanFirstStepContextTokens = meanFirstStepContextTokens
         self.topContextContributors = topContextContributors
+        self.cacheTotals = cacheTotals
+        self.mtpTotals = mtpTotals
         self.flakyCases = flakyCases
         self.environment = environment
     }
@@ -296,6 +408,23 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
             "| **subsystem** | "
                 + models.map { "\($0.subsystemPassed)/\($0.subsystemScored)" }.joined(separator: " | ") + " |"
         )
+        if models.contains(where: { column in
+            column.perDomain.values.contains { !($0.errorCategories ?? [:]).isEmpty }
+        }) {
+            lines.append("")
+            lines.append("## Error Categories")
+            lines.append("")
+            for col in models {
+                for domain in domains {
+                    guard let categories = col.perDomain[domain]?.errorCategories,
+                        !categories.isEmpty
+                    else { continue }
+                    lines.append(
+                        "- `\(columnTitle(col))` / `\(domain)` — \(formatCounts(categories))"
+                    )
+                }
+            }
+        }
         lines.append("")
         lines.append("## Performance")
         lines.append("")
@@ -394,6 +523,49 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
                 lines.append("- `\(columnTitle(col))` — \(top.joined(separator: ", "))")
             }
         }
+        if models.contains(where: { $0.agentLoopDiagnostics != nil }) {
+            lines.append("")
+            lines.append("## Agent Loop Termination")
+            lines.append("")
+            for col in models {
+                guard let diagnostics = col.agentLoopDiagnostics else { continue }
+                let exits = formatCounts(diagnostics.exitCounts)
+                let origins = formatCounts(diagnostics.exitOriginCounts)
+                lines.append(
+                    "- `\(columnTitle(col))` — exits \(exits); origins \(origins); "
+                        + "recovery retries \(diagnostics.recoveryRetriesTotal); "
+                        + "exit telemetry \(diagnostics.rowsWithExitTelemetry)/"
+                        + "\(diagnostics.measuredRows) measured rows"
+                )
+            }
+        }
+        if models.contains(where: { $0.cacheTotals != nil || $0.mtpTotals != nil }) {
+            lines.append("")
+            lines.append("## Runtime Cache and MTP Totals")
+            lines.append("")
+            for col in models {
+                var parts: [String] = []
+                if let c = col.cacheTotals {
+                    parts.append(
+                        "KV hit/miss \(formatPair(c.kvPrefixHits, c.kvPrefixMisses))"
+                    )
+                    parts.append(
+                        "SSM hit/rederive \(formatPair(c.ssmCompanionHits, c.ssmCompanionReDerives))"
+                    )
+                    parts.append(
+                        "L2 hit/miss/store \(formatTriple(c.diskL2Hits, c.diskL2Misses, c.diskL2Stores))"
+                    )
+                }
+                if let m = col.mtpTotals {
+                    parts.append(
+                        "MTP steps/verify/accepted/rejected/AR "
+                            + formatMTP(m)
+                    )
+                }
+                guard !parts.isEmpty else { continue }
+                lines.append("- `\(columnTitle(col))` — \(parts.joined(separator: "; "))")
+            }
+        }
         let warnings = comparabilityWarnings
         if !warnings.isEmpty {
             lines.append("")
@@ -452,6 +624,31 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
             return shortModel(column.modelId)
         }
         return "\(shortModel(column.modelId)) [\(harness)]"
+    }
+
+    private func formatCounts(_ counts: [String: Int]) -> String {
+        guard !counts.isEmpty else { return "—" }
+        return counts.keys.sorted().map { "\($0)=\(counts[$0] ?? 0)" }
+            .joined(separator: ", ")
+    }
+
+    private func formatPair(_ first: Int?, _ second: Int?) -> String {
+        "\(first.map(String.init) ?? "—")/\(second.map(String.init) ?? "—")"
+    }
+
+    private func formatTriple(_ first: Int?, _ second: Int?, _ third: Int?) -> String {
+        "\(first.map(String.init) ?? "—")/\(second.map(String.init) ?? "—")/"
+            + "\(third.map(String.init) ?? "—")"
+    }
+
+    private func formatMTP(_ totals: EvalMatrixMTPTotals) -> String {
+        [
+            totals.stepsWithMTP,
+            totals.verifyCalls,
+            totals.acceptedDraftTokens,
+            totals.rejectedTokens,
+            totals.arFallbackTokens,
+        ].map { $0.map(String.init) ?? "—" }.joined(separator: "/")
     }
 }
 
@@ -520,6 +717,46 @@ public enum EvalMatrixBuilder {
             scoredRows.filter { $0.outcome == .passed }.count,
             scoredRows.count
         )
+    }
+
+    /// Collapse a raw error note into a stable, non-sensitive category for a
+    /// shared matrix. Detailed notes remain in the contributor's local report.
+    static func errorCategory(for notes: [String]) -> String {
+        let lower = notes.joined(separator: " ").lowercased()
+        if lower.contains("watchdog timeout") || lower.contains("case exceeded") {
+            return "watchdog_timeout"
+        }
+        if lower.contains("not installed") || lower.contains("model not found")
+            || lower.contains("no local model")
+        {
+            return "model_unavailable"
+        }
+        if lower.contains("failed to load") || lower.contains("load failed")
+            || lower.contains("unhandled keys") || lower.contains("weight")
+        {
+            return "model_load"
+        }
+        if lower.contains("terminated") || lower.contains("signal")
+            || lower.contains("crash") || lower.contains("fatal")
+        {
+            return "process_termination"
+        }
+        if lower.contains("parse") || lower.contains("malformed")
+            || (lower.contains("tool call") && lower.contains("invalid"))
+        {
+            return "parser_or_protocol"
+        }
+        if lower.contains("permission") || lower.contains("denied")
+            || lower.contains("not authorized")
+        {
+            return "permission"
+        }
+        if lower.contains("out of memory") || lower.contains("memory pressure")
+            || lower.contains("metal") || lower.contains("allocation")
+        {
+            return "runtime_memory"
+        }
+        return lower.isEmpty ? "unspecified" : "runtime_other"
     }
 
     /// Load every file that decodes as an `EvalReport` under `dir`
@@ -591,6 +828,7 @@ public enum EvalMatrixBuilder {
                 let rows = samples.filter { $0.domain == domain }
                 guard !rows.isEmpty else { continue }
                 let skippedRows = rows.filter { $0.outcome == .skipped }
+                let erroredRows = rows.filter { $0.outcome == .errored }
                 var skipReasons: [String: Int] = [:]
                 for row in skippedRows {
                     let reason =
@@ -599,12 +837,17 @@ public enum EvalMatrixBuilder {
                         ?? "unspecified"
                     skipReasons[reason, default: 0] += 1
                 }
+                var errorCategories: [String: Int] = [:]
+                for row in erroredRows {
+                    errorCategories[errorCategory(for: row.notes), default: 0] += 1
+                }
                 perDomain[domain] = EvalMatrixDomainCell(
                     passed: rows.filter { $0.outcome == .passed }.count,
                     scored: rows.filter { $0.outcome == .passed || $0.outcome == .failed }.count,
                     skipped: skippedRows.count,
-                    errored: rows.filter { $0.outcome == .errored }.count,
-                    skipReasons: skipReasons.isEmpty ? nil : skipReasons
+                    errored: erroredRows.count,
+                    skipReasons: skipReasons.isEmpty ? nil : skipReasons,
+                    errorCategories: errorCategories.isEmpty ? nil : errorCategories
                 )
             }
             let telem = samples.compactMap(\.telemetry).filter { !$0.isEmpty }
@@ -642,6 +885,59 @@ public enum EvalMatrixBuilder {
             let measuredAgentCases = agentCases.filter {
                 $0.outcome != .skipped
             }
+            var exitCounts: [String: Int] = [:]
+            var exitOriginCounts: [String: Int] = [:]
+            var rowsWithExitTelemetry = 0
+            var recoveryRetriesTotal = 0
+            for row in measuredAgentCases {
+                guard let telemetry = row.telemetry else { continue }
+                var hasExitTelemetry = false
+                if let exit = telemetry.loopExit {
+                    exitCounts[exit, default: 0] += 1
+                    hasExitTelemetry = true
+                }
+                if let origin = telemetry.loopExitOrigin {
+                    exitOriginCounts[origin, default: 0] += 1
+                    hasExitTelemetry = true
+                }
+                if hasExitTelemetry { rowsWithExitTelemetry += 1 }
+                recoveryRetriesTotal += telemetry.loopRecoveryRetries ?? 0
+            }
+            let agentLoopDiagnostics: EvalMatrixAgentLoopDiagnostics? =
+                rowsWithExitTelemetry == 0
+                && measuredAgentCases.allSatisfy { $0.telemetry?.loopRecoveryRetries == nil }
+                ? nil
+                : EvalMatrixAgentLoopDiagnostics(
+                    measuredRows: measuredAgentCases.count,
+                    rowsWithExitTelemetry: rowsWithExitTelemetry,
+                    exitCounts: exitCounts,
+                    exitOriginCounts: exitOriginCounts,
+                    recoveryRetriesTotal: recoveryRetriesTotal
+                )
+
+            func sumIfMeasured(_ values: [Int?]) -> Int? {
+                let measured = values.compactMap { $0 }
+                return measured.isEmpty ? nil : measured.reduce(0, +)
+            }
+            let cacheTotalsCandidate = EvalMatrixCacheTotals(
+                kvPrefixHits: sumIfMeasured(telem.map(\.kvPrefixHitsDelta)),
+                kvPrefixMisses: sumIfMeasured(telem.map(\.kvPrefixMissesDelta)),
+                ssmCompanionHits: sumIfMeasured(telem.map(\.ssmCompanionHitsDelta)),
+                ssmCompanionReDerives: sumIfMeasured(telem.map(\.ssmCompanionReDerivesDelta)),
+                diskL2Hits: sumIfMeasured(telem.map(\.diskL2HitsDelta)),
+                diskL2Misses: sumIfMeasured(telem.map(\.diskL2MissesDelta)),
+                diskL2Stores: sumIfMeasured(telem.map(\.diskL2StoresDelta))
+            )
+            let cacheTotals = cacheTotalsCandidate.isEmpty ? nil : cacheTotalsCandidate
+            let mtpTotalsCandidate = EvalMatrixMTPTotals(
+                stepsWithMTP: sumIfMeasured(telem.map(\.mtpStepsWithMTP)),
+                verifyCalls: sumIfMeasured(telem.map(\.mtpVerifyCalls)),
+                acceptedDraftTokens: sumIfMeasured(telem.map(\.mtpAcceptedDraftTokens)),
+                bonusTokens: sumIfMeasured(telem.map(\.mtpBonusTokens)),
+                rejectedTokens: sumIfMeasured(telem.map(\.mtpRejectedTokens)),
+                arFallbackTokens: sumIfMeasured(telem.map(\.mtpARFallbackTokens))
+            )
+            let mtpTotals = mtpTotalsCandidate.isEmpty ? nil : mtpTotalsCandidate
             let actionCount = measuredAgentCases.filter { row in
                 row.telemetry?.firstActionMs != nil
                     || row.toolUsage?.contains(where: { $0.calls > 0 }) == true
@@ -725,6 +1021,7 @@ public enum EvalMatrixBuilder {
                 medianModelSteps: median(modelSteps),
                 loopFreeRate: measuredAgentCases.isEmpty
                     ? nil : Double(loopFreeCount) / Double(measuredAgentCases.count),
+                agentLoopDiagnostics: agentLoopDiagnostics,
                 meanAgentLoopWallTimeMs: agentLatencies.isEmpty
                     ? nil : agentLatencies.reduce(0, +) / Double(agentLatencies.count),
                 correctFileDeliveryRate: fileDeliveryCases.isEmpty
@@ -743,6 +1040,8 @@ public enum EvalMatrixBuilder {
                 meanFirstStepContextTokens: firstSteps.isEmpty
                     ? nil : Double(firstSteps.reduce(0, +)) / Double(firstSteps.count),
                 topContextContributors: topContributors.isEmpty ? nil : Array(topContributors),
+                cacheTotals: cacheTotals,
+                mtpTotals: mtpTotals,
                 flakyCases: trialed.isEmpty ? nil : trialed.filter(\.isFlaky).count,
                 environment: envByModel[columnKey]
             )

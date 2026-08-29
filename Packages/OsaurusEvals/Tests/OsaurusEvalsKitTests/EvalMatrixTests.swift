@@ -399,5 +399,150 @@ struct EvalMatrixTests {
         let cell = try JSONDecoder().decode(EvalMatrixDomainCell.self, from: json)
         #expect(cell.skipped == 3)
         #expect(cell.skipReasons == nil)
+        #expect(cell.errorCategories == nil)
+    }
+
+    @Test func errorCategoriesAreStableAndDoNotPublishRawNotes() {
+        let cases: [EvalCaseReport] = [
+            .init(
+                id: "agent_loop.timeout", label: "timeout", domain: "agent_loop",
+                query: nil, outcome: .errored,
+                notes: ["watchdog timeout at /Users/private/secret.txt"],
+                modelId: "m", latencyMs: 1
+            ),
+            .init(
+                id: "agent_loop.load", label: "load", domain: "agent_loop",
+                query: nil, outcome: .errored,
+                notes: ["failed to load unhandled keys from /private/model"],
+                modelId: "m", latencyMs: 1
+            ),
+            .init(
+                id: "agent_loop.parse", label: "parse", domain: "agent_loop",
+                query: nil, outcome: .errored,
+                notes: ["malformed tool call contained private arguments"],
+                modelId: "m", latencyMs: 1
+            ),
+        ]
+        let matrix = EvalMatrixBuilder.build(from: [
+            EvalReport(modelId: "m", startedAt: "2026-08-29T00:00:00Z", cases: cases)
+        ])
+        let categories = matrix.models[0].perDomain["agent_loop"]?.errorCategories
+        #expect(categories == [
+            "model_load": 1,
+            "parser_or_protocol": 1,
+            "watchdog_timeout": 1,
+        ])
+        let markdown = matrix.formatMarkdown()
+        #expect(markdown.contains("## Error Categories"))
+        #expect(markdown.contains("model_load=1"))
+        #expect(!markdown.contains("/Users/private"))
+        #expect(!markdown.contains("private arguments"))
+    }
+
+    @Test func matrixPreservesAgentExitCacheAndMTPTaxonomy() throws {
+        let cases: [EvalCaseReport] = [
+            .init(
+                id: "agent_loop.clean", label: "clean", domain: "agent_loop", query: nil,
+                outcome: .passed, notes: [], modelId: "m", latencyMs: 1,
+                telemetry: .init(
+                    loopExit: "finalResponse",
+                    loopExitOrigin: "modelFinalResponse",
+                    loopRecoveryRetries: 0,
+                    kvPrefixHitsDelta: 3,
+                    kvPrefixMissesDelta: 1,
+                    ssmCompanionHitsDelta: 4,
+                    ssmCompanionReDerivesDelta: 2,
+                    diskL2HitsDelta: 5,
+                    diskL2MissesDelta: 6,
+                    diskL2StoresDelta: 7,
+                    mtpVerifyCalls: 8,
+                    mtpAcceptedDraftTokens: 9,
+                    mtpBonusTokens: 10,
+                    mtpRejectedTokens: 11,
+                    mtpARFallbackTokens: 12,
+                    mtpStepsWithMTP: 2
+                )
+            ),
+            .init(
+                id: "agent_loop.cap", label: "cap", domain: "agent_loop", query: nil,
+                outcome: .failed, notes: [], modelId: "m", latencyMs: 1,
+                telemetry: .init(
+                    loopExit: "iterationCapReached",
+                    loopExitOrigin: "iterationBudgetExhausted",
+                    loopRecoveryRetries: 2,
+                    kvPrefixHitsDelta: 13,
+                    kvPrefixMissesDelta: 0,
+                    ssmCompanionHitsDelta: 14,
+                    ssmCompanionReDerivesDelta: 1,
+                    diskL2HitsDelta: 15,
+                    diskL2MissesDelta: 0,
+                    diskL2StoresDelta: 16,
+                    mtpVerifyCalls: 17,
+                    mtpAcceptedDraftTokens: 18,
+                    mtpBonusTokens: 19,
+                    mtpRejectedTokens: 20,
+                    mtpARFallbackTokens: 21,
+                    mtpStepsWithMTP: 3
+                )
+            ),
+        ]
+
+        let col = EvalMatrixBuilder.build(from: [
+            EvalReport(modelId: "m", startedAt: "2026-08-29T00:00:00Z", cases: cases)
+        ]).models[0]
+
+        #expect(col.agentLoopDiagnostics?.measuredRows == 2)
+        #expect(col.agentLoopDiagnostics?.rowsWithExitTelemetry == 2)
+        #expect(col.agentLoopDiagnostics?.exitCounts == [
+            "finalResponse": 1, "iterationCapReached": 1,
+        ])
+        #expect(col.agentLoopDiagnostics?.exitOriginCounts == [
+            "iterationBudgetExhausted": 1, "modelFinalResponse": 1,
+        ])
+        #expect(col.agentLoopDiagnostics?.recoveryRetriesTotal == 2)
+        #expect(col.cacheTotals?.kvPrefixHits == 16)
+        #expect(col.cacheTotals?.kvPrefixMisses == 1)
+        #expect(col.cacheTotals?.ssmCompanionHits == 18)
+        #expect(col.cacheTotals?.ssmCompanionReDerives == 3)
+        #expect(col.cacheTotals?.diskL2Hits == 20)
+        #expect(col.cacheTotals?.diskL2Misses == 6)
+        #expect(col.cacheTotals?.diskL2Stores == 23)
+        #expect(col.mtpTotals?.stepsWithMTP == 5)
+        #expect(col.mtpTotals?.verifyCalls == 25)
+        #expect(col.mtpTotals?.acceptedDraftTokens == 27)
+        #expect(col.mtpTotals?.bonusTokens == 29)
+        #expect(col.mtpTotals?.rejectedTokens == 31)
+        #expect(col.mtpTotals?.arFallbackTokens == 33)
+
+        let encoded = try JSONEncoder().encode(col)
+        let decoded = try JSONDecoder().decode(EvalMatrixModelColumn.self, from: encoded)
+        #expect(decoded == col)
+        let markdown = EvalMatrix(
+            generatedAt: "2026-08-29T00:00:00Z",
+            domains: ["agent_loop"],
+            models: [col]
+        ).formatMarkdown()
+        #expect(markdown.contains("## Agent Loop Termination"))
+        #expect(markdown.contains("iterationCapReached=1"))
+        #expect(markdown.contains("KV hit/miss 16/1"))
+        #expect(markdown.contains("MTP steps/verify/accepted/rejected/AR 5/25/27/31/33"))
+    }
+
+    @Test func preTaxonomyModelColumnDecodesWithNilDiagnostics() throws {
+        let legacy = column(model: "legacy")
+        let object = try #require(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any]
+        )
+        var stripped = object
+        stripped.removeValue(forKey: "agentLoopDiagnostics")
+        stripped.removeValue(forKey: "cacheTotals")
+        stripped.removeValue(forKey: "mtpTotals")
+        let decoded = try JSONDecoder().decode(
+            EvalMatrixModelColumn.self,
+            from: JSONSerialization.data(withJSONObject: stripped)
+        )
+        #expect(decoded.agentLoopDiagnostics == nil)
+        #expect(decoded.cacheTotals == nil)
+        #expect(decoded.mtpTotals == nil)
     }
 }
