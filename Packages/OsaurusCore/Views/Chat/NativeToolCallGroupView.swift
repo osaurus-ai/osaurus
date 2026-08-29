@@ -1663,7 +1663,8 @@ final class NativeToolCallRowView: NSView {
         // MCP servers are managed from the Tools tab's MCP section.
         case "mcp": return .tools
         case "models": return .models
-        case "plugins": return .plugins
+        // Native plugins now live under the Tools tab.
+        case "plugins": return .tools
         case "schedules": return .schedules
         case "watchers": return .watchers
         case "agents", "default_agent", "active_agent": return .agents

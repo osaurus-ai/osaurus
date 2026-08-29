@@ -204,8 +204,14 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         let modelId = info["modelId"] as? String
 
         Task { @MainActor in
+            // The standalone Plugins section was retired; native plugins now
+            // live under Tools → Native Plugins, so route plugin notifications
+            // there.
+            if isPluginNotification {
+                ManagementStateManager.shared.pendingToolsSubTab = ToolsTab.nativePlugins.rawValue
+            }
             AppDelegate.shared?.showManagementWindow(
-                initialTab: isPluginNotification ? .plugins : .models,
+                initialTab: isPluginNotification ? .tools : .models,
                 deeplinkModelId: modelId,
                 deeplinkFile: nil
             )
