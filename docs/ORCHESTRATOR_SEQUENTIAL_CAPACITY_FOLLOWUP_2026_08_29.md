@@ -276,7 +276,40 @@ Current verification on the frozen source diff:
 - This 128 GiB before arm establishes a valid production-path fixture but does
   not reproduce or disprove the reporter's 16 GiB failure.
 
-Status remains **PARTIAL**, not yet a proven root-cause fix: an exact-head
-Release build, the matching post-fix UI row, and the mandatory real 16 GB
-reporter/hardware row are still required. The existing 128 GB proof cannot
-substitute for the last item.
+At that checkpoint the lane remained **PARTIAL** pending an exact-head Release
+build, a matching post-fix UI row, and the mandatory real 16 GB
+reporter/hardware row. The first two gates are recorded below; the 16 GB gate
+remains open.
+
+### Exact-head Release proof — `55f59822d`
+
+- Release build completed with RC 0; log:
+  `/private/tmp/osaurus-sequential-capacity-release-build.log`.
+- Built executable SHA-256 before proof-bundle signing:
+  `71eb425f7d054cae9d89930098c4c9ffded247503c90f21a6f543fb591f7d80d`.
+  The isolated ad-hoc-signed proof executable is
+  `e919b58dceac2110aefcc9491d334122cc52f5f58b91197bb31aca1e3e224e79`.
+- The real UI ran two sequential same-model Gemma E2B children under RAM
+  Safety ON, Local Handoff ON, Coexistence OFF, one per batch, 2,048 output
+  tokens, two turns, 120 seconds, and persisted `Always Allow` permission.
+- First process: both children settled, parent rendered a final response at
+  0.30 s TTFT and 110.0 tok/s. Admission independently recomputed child 1 and
+  child 2 as admitted with reclaimable memory 100.28/100.13 GiB,
+  `ramSlots=56`, and `localCapacity=1`.
+- Restart process: disk state restored; two more sequential children returned
+  exact `RESTART_ONE_829` and `RESTART_TWO_829`. Parent rendered both at
+  0.25 s TTFT and 137.3 tok/s. Child completion rates were 43.7 and 27.0 tok/s;
+  admission recomputed at 100.16/100.14 GiB reclaimable with the same admitted
+  capacity. Current/peak `phys_footprint` was 2,593/3,213 MB.
+- Child envelopes recorded increasing disk-L2 counters (first child
+  hits/misses/stores 4/11/9; second 5/12/13). No
+  `stable_memory_refusal` or `refreshed_capacity` marker exists in the
+  isolated database or admission logs.
+- UI screenshots, admission logs, hashes, and the database are under
+  `/private/tmp/osaurus-sequential-capacity-evidence-20260829/` and
+  `/private/tmp/osaurus-ui-proof-seqafter829-wlEKayvi/`.
+
+This makes the source fix and 128 GiB production path **PASS**. Overall issue
+status remains **PARTIAL** because the causal acceptance row must still run on
+the reporter's real 16 GiB hardware; the larger host cannot validate its
+absolute memory-pressure boundary.
