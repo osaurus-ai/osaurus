@@ -5718,6 +5718,10 @@ final class ChatSession: ObservableObject {
         // detached task) couldn't tell what agent they belonged to.
         let turnAgentId = agentId ?? Agent.defaultId
         let turnModelId = selectedModel
+        let turnModelType = selectedPickerItem?.modelType
+        let turnSupportsImages = selectedModelSupportsImages
+        let turnSupportsAudio = selectedModelSupportsAudio
+        let turnSupportsVideo = selectedModelSupportsVideo
         let imageSettings = imageComposerSettings
         let turnModelOptions = activeModelOptions
         let storedTurnModelOptions = turnModelId.flatMap {
@@ -5989,7 +5993,7 @@ final class ChatSession: ObservableObject {
                             agentId: effectiveAgentId,
                             executionMode: executionMode,
                             model: turnModelId,
-                            modelType: selectedPickerItem?.modelType,
+                            modelType: turnModelType,
                             query: trimmed,
                             messages: priorUserMessages,
                             // Tool availability belongs to the active agent.
@@ -6206,9 +6210,9 @@ final class ChatSession: ObservableObject {
                             let base = Self.buildUserChatMessage(
                                 content: t.content,
                                 attachments: t.attachments,
-                                supportsImages: selectedModelSupportsImages,
-                                supportsAudio: selectedModelSupportsAudio,
-                                supportsVideo: selectedModelSupportsVideo
+                                supportsImages: turnSupportsImages,
+                                supportsAudio: turnSupportsAudio,
+                                supportsVideo: turnSupportsVideo
                             )
                             // Replay the frozen memory / screen-context block
                             // this turn was originally sent with, so its wire
@@ -7643,7 +7647,7 @@ final class ChatSession: ObservableObject {
                                     runId: runId,
                                     streamStartTime: Date(),
                                     ttftTrace: ttftTrace,
-                                    selectedModel: self.selectedModel
+                                    selectedModel: turnModelId
                                 )
                                 assistantTurn = finalTurn
                             } catch {

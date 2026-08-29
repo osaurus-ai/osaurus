@@ -10,6 +10,39 @@ import Testing
 
 @Suite("Chat turn generation controls")
 struct ChatTurnGenerationControlsTests {
+
+    @Test("send freezes all model-dependent request metadata before async recovery")
+    func sendFreezesModelDependentMetadata() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: packageRoot
+                .appendingPathComponent("Views/Chat/ChatView.swift"),
+            encoding: .utf8
+        )
+        guard let sendStart = source.range(of: "func send(") else {
+            Issue.record("ChatSession.send source not found")
+            return
+        }
+        let sendBody = String(source[sendStart.lowerBound...])
+
+        for snapshot in [
+            "let turnModelId = selectedModel",
+            "let turnModelType = selectedPickerItem?.modelType",
+            "let turnSupportsImages = selectedModelSupportsImages",
+            "let turnSupportsAudio = selectedModelSupportsAudio",
+            "let turnSupportsVideo = selectedModelSupportsVideo",
+        ] {
+            #expect(sendBody.contains(snapshot), "missing per-turn snapshot: \(snapshot)")
+        }
+        #expect(sendBody.contains("modelType: turnModelType"))
+        #expect(sendBody.contains("supportsImages: turnSupportsImages"))
+        #expect(sendBody.contains("supportsAudio: turnSupportsAudio"))
+        #expect(sendBody.contains("supportsVideo: turnSupportsVideo"))
+        #expect(sendBody.contains("selectedModel: turnModelId"))
+    }
     private func request() -> ChatCompletionRequest {
         ChatCompletionRequest(
             model: "JANGQ-AI/Ornith-1.0-9B-JANG_4M",
