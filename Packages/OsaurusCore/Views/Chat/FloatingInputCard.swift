@@ -66,6 +66,11 @@ struct FloatingInputCard: View {
     var isEmptyChat: Bool = false
     /// Callback to clear the current chat session (triggered by /clear command).
     var onClearChat: (() -> Void)? = nil
+    /// Set after a manual model change in a non-empty conversation. The
+    /// warning is advisory: the user may keep the selected model or start a
+    /// clean chat whose first prefix is built for it.
+    var modelSwitchContinuityWarning: ModelSwitchContinuityWarning?
+    var onDismissModelSwitchContinuityWarning: (() -> Void)?
     /// Callback to capture the current screen as a local chat artifact.
     var onCaptureScreenshot: (() -> Void)?
     /// Callback to generate an AI title for the current chat (triggered by /title command).
@@ -161,6 +166,8 @@ struct FloatingInputCard: View {
         isCompact: Bool = false,
         isEmptyChat: Bool = false,
         onClearChat: (() -> Void)? = nil,
+        modelSwitchContinuityWarning: ModelSwitchContinuityWarning? = nil,
+        onDismissModelSwitchContinuityWarning: (() -> Void)? = nil,
         onCaptureScreenshot: (() -> Void)? = nil,
         onGenerateTitle: (() -> Void)? = nil,
         onSkillSelected: ((UUID) -> Void)? = nil,
@@ -208,6 +215,8 @@ struct FloatingInputCard: View {
         self.isCompact = isCompact
         self.isEmptyChat = isEmptyChat
         self.onClearChat = onClearChat
+        self.modelSwitchContinuityWarning = modelSwitchContinuityWarning
+        self.onDismissModelSwitchContinuityWarning = onDismissModelSwitchContinuityWarning
         self.onCaptureScreenshot = onCaptureScreenshot
         self.onGenerateTitle = onGenerateTitle
         self.onSkillSelected = onSkillSelected
@@ -733,8 +742,12 @@ struct FloatingInputCard: View {
             // floating overlay) so it sits directly above the model picker
             // chip it refers to and can never overlap the chip or token count.
             if !showVoiceOverlay {
-                ramPressureRow
-                swapPressureRow
+                if modelSwitchContinuityWarning != nil {
+                    modelSwitchContinuityRow
+                } else {
+                    ramPressureRow
+                    swapPressureRow
+                }
             }
 
             // Read-only screen-context indicator sits on its OWN row above the
@@ -4048,6 +4061,88 @@ extension FloatingInputCard {
             blocked
                 ? Text("Sending paused: not enough memory to load \(modelName)", bundle: .module)
                 : Text("Memory is tight for \(modelName)", bundle: .module)
+        )
+    }
+
+    // MARK: - Model-Switch Continuity Banner
+
+    @ViewBuilder
+    private var modelSwitchContinuityRow: some View {
+        if let warning = modelSwitchContinuityWarning {
+            let previous = pickerItems.first { $0.id == warning.previousModelId }?.displayName
+                ?? warning.previousModelId
+            let next = pickerItems.first { $0.id == warning.newModelId }?.displayName
+                ?? warning.newModelId
+            modelSwitchContinuityBanner(previous: previous, next: next, pointerCenterX: 28)
+                .frame(width: Self.ramBannerWidth, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 20)
+                .padding(.top, 8)
+                .padding(.bottom, -16)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+
+    private func modelSwitchContinuityBanner(
+        previous: String,
+        next: String,
+        pointerCenterX: CGFloat
+    ) -> some View {
+        let tint = Color.orange
+        let clampedX = min(
+            max(pointerCenterX, 14 + RAMBannerShape.pointerWidth / 2),
+            Self.ramBannerWidth - 14 - RAMBannerShape.pointerWidth / 2
+        )
+        let shape = RAMBannerShape(pointerCenterX: clampedX)
+
+        return VStack(alignment: .leading, spacing: 10) {
+            (Text(Image(systemName: "arrow.triangle.2.circlepath"))
+                .foregroundColor(tint)
+                + Text(verbatim: "  ")
+                + Text(
+                    "You switched from \(previous) to \(next) in this conversation.",
+                    bundle: .module
+                ).foregroundColor(theme.primaryText))
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                .fixedSize(horizontal: false, vertical: true)
+            Text(
+                "Cached context from the previous model cannot be reused, and the new model may interpret earlier turns differently. Start a new chat for the most consistent results.",
+                bundle: .module
+            )
+            .foregroundColor(theme.secondaryText)
+            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+            .fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 10) {
+                swapPrimaryButton(String(localized: "Start New Chat", bundle: .module), tint: tint) {
+                    onDismissModelSwitchContinuityWarning?()
+                    onClearChat?()
+                }
+                swapTextButton(String(localized: "Continue with This Model", bundle: .module)) {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        onDismissModelSwitchContinuityWarning?()
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 2)
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 12 + RAMBannerShape.pointerHeight)
+        .background(
+            ZStack {
+                shape.fill(.regularMaterial)
+                shape.fill(tint.opacity(0.12))
+            }
+        )
+        .overlay(shape.stroke(tint.opacity(0.35), lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
+        .accessibilityLabel(
+            Text(
+                "Model changed from \(previous) to \(next); cached context will be rebuilt",
+                bundle: .module
+            )
         )
     }
 

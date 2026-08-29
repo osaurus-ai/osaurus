@@ -36,6 +36,15 @@ struct QueuedSend: Equatable {
     var oneOffSkillId: UUID?
 }
 
+/// A manual model change made after a conversation already has content.
+/// Prefix/KV caches are model-scoped, so the new model must rebuild context;
+/// it may also interpret the existing transcript differently. Kept as IDs so
+/// the composer resolves the freshest user-facing display names.
+struct ModelSwitchContinuityWarning: Equatable, Sendable {
+    let previousModelId: String
+    let newModelId: String
+}
+
 /// Equatable wrapper around `ChatEmptyState` so it only re-renders when one of
 /// its actual inputs changes. `ChatView` observes the whole `ChatSession`
 /// object, so its body re-evaluates on any `@Published` mutation — including
@@ -303,6 +312,7 @@ final class ChatSession: ObservableObject {
     @Published var input: String = ""
     @Published var pendingAttachments: [Attachment] = []
     @Published var selectedModel: String? = nil
+    @Published var modelSwitchContinuityWarning: ModelSwitchContinuityWarning?
     /// Proactive model + KV-cache warm-up for faster first-token latency.
     let warmupController = ChatWarmupController()
     @Published var pickerItems: [ModelPickerItem] = []
@@ -953,6 +963,20 @@ final class ChatSession: ObservableObject {
             .sink { [weak self] newModel in
                 guard let self = self, !self.isLoadingModel else { return }
                 guard let model = newModel else { return }
+                let previousModel = self.selectedModel
+                if Self.shouldWarnAboutModelSwitch(
+                    previousModel: previousModel,
+                    newModel: model,
+                    hasConversation: self.hasVisibleThreadMessages
+                ), let previousModel
+                {
+                    self.modelSwitchContinuityWarning = ModelSwitchContinuityWarning(
+                        previousModelId: previousModel,
+                        newModelId: model
+                    )
+                } else if previousModel == nil || !self.hasVisibleThreadMessages {
+                    self.modelSwitchContinuityWarning = nil
+                }
                 self.lastManualModelSelection = model
                 let pid = self.agentId ?? Agent.defaultId
                 // Mode 2 (remote agent run): the model is pinned to the remote
@@ -1081,6 +1105,15 @@ final class ChatSession: ObservableObject {
         if MockChatData.isEnabled {
             rebuildVisibleBlocks()
         }
+    }
+
+    nonisolated static func shouldWarnAboutModelSwitch(
+        previousModel: String?,
+        newModel: String,
+        hasConversation: Bool
+    ) -> Bool {
+        guard hasConversation, let previousModel else { return false }
+        return previousModel.caseInsensitiveCompare(newModel) != .orderedSame
     }
 
     deinit {
@@ -2649,6 +2682,7 @@ final class ChatSession: ObservableObject {
         pendingAttachments = []
         pendingOneOffSkillId = nil
         queuedSend = nil
+        modelSwitchContinuityWarning = nil
         voiceInputState = .idle
         showVoiceOverlay = false
         transientSessionIdForCurrentRun = nil
@@ -8716,6 +8750,11 @@ struct ChatView: View {
                                 isCompact: windowState.showSidebar,
                                 isEmptyChat: !observedSession.hasVisibleThreadMessages,
                                 onClearChat: { observedSession.reset() },
+                                modelSwitchContinuityWarning:
+                                    observedSession.modelSwitchContinuityWarning,
+                                onDismissModelSwitchContinuityWarning: {
+                                    observedSession.modelSwitchContinuityWarning = nil
+                                },
                                 onCaptureScreenshot: { observedSession.captureScreenshotFromSlashCommand() },
                                 onGenerateTitle: { observedSession.generateTitleFromSlashCommand() },
                                 onSkillSelected: { skillId in
