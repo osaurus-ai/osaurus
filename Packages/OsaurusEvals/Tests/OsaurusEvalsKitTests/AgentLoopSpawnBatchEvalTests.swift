@@ -20,11 +20,15 @@ struct AgentLoopSpawnBatchEvalTests {
         secondRowOK: Bool = true,
         secondNestedOK: Bool = true,
         remoteJobs: Int = 0,
+        engineRequestedMaximum: Int = 2,
+        engineArchitectureMaximum: Int? = nil,
+        engineEffectiveMaximum: Int = 2,
         effectiveLocalSlots: Int = 2,
         localSubwaves: [Int] = [2],
         limitingFactors: [String] = [],
         cacheAvailable: Bool = true,
-        omitEffectiveLocalSlots: Bool = false
+        omitEffectiveLocalSlots: Bool = false,
+        omitEngineProvenance: Bool = false
     ) -> String {
         var wave: [String: Any] = [
             "wave": 0,
@@ -37,6 +41,11 @@ struct AgentLoopSpawnBatchEvalTests {
         ]
         if !omitEffectiveLocalSlots {
             wave["effective_local_slots"] = effectiveLocalSlots
+        }
+        if !omitEngineProvenance {
+            wave["engine_requested_max"] = engineRequestedMaximum
+            wave["engine_architecture_max"] = engineArchitectureMaximum ?? NSNull()
+            wave["engine_effective_max"] = engineEffectiveMaximum
         }
 
         return ToolEnvelope.success(
@@ -138,6 +147,11 @@ struct AgentLoopSpawnBatchEvalTests {
         #expect(observation.aggregateStatus == "succeeded")
         #expect(observation.executionWaves?.count == 1)
         #expect(observation.executionWaves?.first?.remoteJobs == 0)
+        #expect(observation.executionWaves?.first?.localJobs == 2)
+        #expect(observation.executionWaves?.first?.engineRequestedMaximum == 2)
+        #expect(observation.executionWaves?.first?.engineArchitectureMaximum == nil)
+        #expect(observation.executionWaves?.first?.hasEngineArchitectureMaximum == true)
+        #expect(observation.executionWaves?.first?.engineEffectiveMaximum == 2)
         #expect(observation.executionWaves?.first?.effectiveLocalSlots == 2)
         #expect(observation.executionWaves?.first?.localSubwaves == [2])
         #expect(observation.executionWaves?.first?.limitingFactors == [])
@@ -305,6 +319,10 @@ struct AgentLoopSpawnBatchEvalTests {
                 .init(
                     wave: 0,
                     remoteJobs: 1,
+                    localJobs: 1,
+                    engineRequestedMaximum: 2,
+                    engineArchitectureMaximum: 1,
+                    engineEffectiveMaximum: 1,
                     effectiveLocalSlots: 1,
                     localSubwaves: [1, 1],
                     limitingFactors: ["continuous_batching_disabled"]
@@ -317,6 +335,8 @@ struct AgentLoopSpawnBatchEvalTests {
             AgentLoopTranscript.spawnBatchObservation(
                 from: Self.batchEnvelope(
                     remoteJobs: 1,
+                    engineArchitectureMaximum: 1,
+                    engineEffectiveMaximum: 1,
                     effectiveLocalSlots: 1,
                     localSubwaves: [1, 1],
                     limitingFactors: ["continuous_batching_disabled"],
@@ -350,6 +370,87 @@ struct AgentLoopSpawnBatchEvalTests {
         #expect(failing.note.contains("local_subwaves"))
         #expect(failing.note.contains("limited_by"))
         #expect(failing.note.contains("cache available"))
+    }
+
+    @MainActor
+    @Test func strictNativeAndSafeSerializedContractsRemainDistinct() throws {
+        let nativeAssertion = EvalCase.AgentLoopExpectations.SpawnBatchAssertion(
+            expectedExecutionWaves: [
+                .init(
+                    wave: 0,
+                    remoteJobs: 0,
+                    localJobs: 2,
+                    engineRequestedMaximum: 2,
+                    requireUncappedArchitecture: true,
+                    engineEffectiveMaximum: 2,
+                    effectiveLocalSlots: 2,
+                    localSubwaves: [2],
+                    limitingFactors: []
+                )
+            ],
+            requireEveryExecutionWaveWellFormed: true
+        )
+        let serializedAssertion = EvalCase.AgentLoopExpectations.SpawnBatchAssertion(
+            expectedExecutionWaves: [
+                .init(
+                    wave: 0,
+                    remoteJobs: 0,
+                    localJobs: 2,
+                    engineRequestedMaximum: 2,
+                    engineArchitectureMaximum: 1,
+                    engineEffectiveMaximum: 1,
+                    effectiveLocalSlots: 1,
+                    localSubwaves: [1, 1],
+                    limitingFactors: ["engineCapacity"]
+                )
+            ],
+            requireEveryExecutionWaveWellFormed: true
+        )
+        let native = try #require(
+            AgentLoopTranscript.spawnBatchObservation(from: Self.batchEnvelope())
+        )
+        let serialized = try #require(
+            AgentLoopTranscript.spawnBatchObservation(
+                from: Self.batchEnvelope(
+                    engineArchitectureMaximum: 1,
+                    engineEffectiveMaximum: 1,
+                    effectiveLocalSlots: 1,
+                    localSubwaves: [1, 1],
+                    limitingFactors: ["engineCapacity"]
+                )
+            )
+        )
+
+        #expect(EvalRunner.scoreSpawnBatch(
+            nativeAssertion, transcript: Self.transcript(observation: native)
+        ).passed)
+        #expect(EvalRunner.scoreSpawnBatch(
+            serializedAssertion, transcript: Self.transcript(observation: serialized)
+        ).passed)
+        #expect(!EvalRunner.scoreSpawnBatch(
+            nativeAssertion, transcript: Self.transcript(observation: serialized)
+        ).passed)
+        #expect(!EvalRunner.scoreSpawnBatch(
+            serializedAssertion, transcript: Self.transcript(observation: native)
+        ).passed)
+    }
+
+    @MainActor
+    @Test func strictContractRejectsMissingEngineProvenance() throws {
+        let observation = try #require(
+            AgentLoopTranscript.spawnBatchObservation(
+                from: Self.batchEnvelope(omitEngineProvenance: true)
+            )
+        )
+        #expect(observation.everyExecutionWaveWellFormed == false)
+        let assertion = EvalCase.AgentLoopExpectations.SpawnBatchAssertion(
+            requireEveryExecutionWaveWellFormed: true
+        )
+        let result = EvalRunner.scoreSpawnBatch(
+            assertion, transcript: Self.transcript(observation: observation)
+        )
+        #expect(!result.passed)
+        #expect(result.note.contains("execution waves were absent or malformed"))
     }
 
     @MainActor
@@ -414,8 +515,10 @@ struct AgentLoopSpawnBatchEvalTests {
         #expect(waves.count == 1)
         #expect(waves.first?.wave == 1)
         #expect(waves.first?.remoteJobs == 0)
-        #expect(waves.first?.effectiveLocalSlots == 2)
-        #expect(waves.first?.localSubwaves == [2])
+        #expect(waves.first?.localJobs == 2)
+        #expect(waves.first?.engineRequestedMaximum == 2)
+        #expect(waves.first?.effectiveLocalSlots == nil)
+        #expect(waves.first?.localSubwaves == nil)
         #expect(expectation.spawnBatch?.requireEveryExecutionWaveWellFormed == true)
         #expect(expectation.spawnBatch?.expectedCacheAvailable == true)
         #expect(expectation.maxToolCalls == 1)
@@ -470,6 +573,37 @@ struct AgentLoopSpawnBatchEvalTests {
         #expect(waves.allSatisfy { $0.remoteJobs == 0 })
         #expect(waves.allSatisfy { $0.effectiveLocalSlots == 1 })
         #expect(waves.allSatisfy { $0.localSubwaves == [1] })
+    }
+
+    @Test func dedicatedNativeAndSerializedSuitesDecodeOppositeStrictContracts() throws {
+        let nativeSuite = try EvalSuite.load(
+            from: Self.packageRoot.appendingPathComponent("Suites/AgentLoopBatchNative")
+        )
+        let serializedSuite = try EvalSuite.load(
+            from: Self.packageRoot.appendingPathComponent("Suites/AgentLoopBatchSerialized")
+        )
+        let native = try #require(nativeSuite.cases.first)
+        let serialized = try #require(serializedSuite.cases.first)
+        let nativeWave = try #require(
+            native.expect.agentLoop?.spawnBatch?.expectedExecutionWaves?.first
+        )
+        let serializedWave = try #require(
+            serialized.expect.agentLoop?.spawnBatch?.expectedExecutionWaves?.first
+        )
+
+        #expect(nativeWave.engineRequestedMaximum == 2)
+        #expect(nativeWave.requireUncappedArchitecture == true)
+        #expect(nativeWave.engineEffectiveMaximum == 2)
+        #expect(nativeWave.effectiveLocalSlots == 2)
+        #expect(nativeWave.localSubwaves == [2])
+        #expect(nativeWave.limitingFactors == [])
+
+        #expect(serializedWave.engineRequestedMaximum == 2)
+        #expect(serializedWave.engineArchitectureMaximum == 1)
+        #expect(serializedWave.engineEffectiveMaximum == 1)
+        #expect(serializedWave.effectiveLocalSlots == 1)
+        #expect(serializedWave.localSubwaves == [1, 1])
+        #expect(serializedWave.limitingFactors == ["engineCapacity"])
     }
 
     @MainActor

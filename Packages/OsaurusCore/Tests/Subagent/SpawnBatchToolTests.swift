@@ -1072,6 +1072,65 @@ struct SpawnBatchToolTests {
         #expect(rows[0].verdict == "admitted")
     }
 
+    @Test("execution diagnostics separate requested architecture and effective widths")
+    func executionDiagnosticsReportCapacityProvenanceWithoutRewritingAdmission() async {
+        let admission = ModelBatchCapacitySnapshot(
+            modelName: "Local-A",
+            requestedMaximum: 2,
+            architectureMaximum: 1,
+            configuredMaximum: 1,
+            activeCount: 1,
+            pendingCount: 1,
+            nominalAvailableCount: 0,
+            activeHighWatermark: 1,
+            isAcceptingRequests: true,
+            isShutdown: false
+        )
+        let settled = ModelBatchCapacitySnapshot(
+            modelName: "Local-A",
+            requestedMaximum: 2,
+            architectureMaximum: 1,
+            configuredMaximum: 1,
+            activeCount: 0,
+            pendingCount: 0,
+            nominalAvailableCount: 1,
+            activeHighWatermark: 1,
+            isAcceptingRequests: true,
+            isShutdown: false
+        )
+        let collector = SpawnBatchTool.BatchDiagnosticsCollector()
+        await collector.append(
+            SpawnBatchTool.BatchWaveDiagnostic(
+                wave: 1,
+                jobs: 2,
+                remoteJobs: 0,
+                localJobs: 2,
+                localModelKey: "Local-A",
+                effectiveLocalSlots: 1,
+                engineSlots: 1,
+                ramSlots: 8,
+                localSubwaveSizes: [1, 1],
+                limitingFactors: ["engineCapacity"],
+                verdict: "admitted",
+                admissionWaitSeconds: 0,
+                residencyMode: "in_place",
+                engineOccupancy: admission
+            )
+        )
+        await collector.reconcileResolvedEngineCapacity(for: "Local-A", with: settled)
+        let rows = await collector.snapshot()
+        #expect(rows.count == 1)
+        guard let row = rows.first else { return }
+        let payload = row.payload
+
+        #expect(payload["engine_requested_max"] as? Int == 2)
+        #expect(payload["engine_architecture_max"] as? Int == 1)
+        #expect(payload["engine_effective_max"] as? Int == 1)
+        #expect(payload["engine_active_at_admission"] as? Int == 1)
+        #expect(payload["engine_pending_at_admission"] as? Int == 1)
+        #expect(payload["engine_nominal_available_at_admission"] as? Int == 0)
+    }
+
     @Test("same-resident local batching retains RAM safety and computed slots")
     func sameResidentBatchUsesGlobalRAMSafety() throws {
         let gib = UInt64(1_073_741_824)

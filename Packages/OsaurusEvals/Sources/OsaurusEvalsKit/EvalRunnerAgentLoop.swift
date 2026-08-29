@@ -78,13 +78,13 @@ extension EvalRunner {
             }
             ServerRuntimeSettingsStore.overrideSnapshotInMemory(settings)
 
-            let effectiveMaxBatchSize = InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
+            let requestedMaxBatchSize = InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
             runtimeConcurrencyNote =
                 "runtimeConcurrency fixture: continuousBatching="
                 + "\(settings.concurrency.continuousBatching), "
                 + "maxConcurrentSequences="
                 + "\(settings.concurrency.maxConcurrentSequences.map(String.init) ?? "nil"), "
-                + "effectiveMaxBatchSize=\(effectiveMaxBatchSize)"
+                + "requestedMaxBatchSize=\(requestedMaxBatchSize)"
             if let runtimeConcurrencyNote {
                 FileHandle.standardError.write(
                     Data("[evals] \(testCase.id) — \(runtimeConcurrencyNote)\n".utf8)
@@ -1635,6 +1635,46 @@ extension EvalRunner {
                             + "\(String(describing: observed.remoteJobs)) != \(value)"
                     )
                 }
+                if let value = expected.localJobs, observed.localJobs != value {
+                    failures.append(
+                        "wave[\(index)].local_jobs "
+                            + "\(String(describing: observed.localJobs)) != \(value)"
+                    )
+                }
+                if let value = expected.engineRequestedMaximum,
+                    observed.engineRequestedMaximum != value
+                {
+                    failures.append(
+                        "wave[\(index)].engine_requested_max "
+                            + "\(String(describing: observed.engineRequestedMaximum)) != \(value)"
+                    )
+                }
+                if let value = expected.engineArchitectureMaximum,
+                    observed.engineArchitectureMaximum != value
+                {
+                    failures.append(
+                        "wave[\(index)].engine_architecture_max "
+                            + "\(String(describing: observed.engineArchitectureMaximum)) != \(value)"
+                    )
+                }
+                if expected.requireUncappedArchitecture == true,
+                    observed.hasEngineArchitectureMaximum != true
+                        || observed.engineArchitectureMaximum != nil
+                {
+                    failures.append(
+                        "wave[\(index)].engine_architecture_max expected explicit null "
+                            + "but got present=\(observed.hasEngineArchitectureMaximum) "
+                            + "value=\(String(describing: observed.engineArchitectureMaximum))"
+                    )
+                }
+                if let value = expected.engineEffectiveMaximum,
+                    observed.engineEffectiveMaximum != value
+                {
+                    failures.append(
+                        "wave[\(index)].engine_effective_max "
+                            + "\(String(describing: observed.engineEffectiveMaximum)) != \(value)"
+                    )
+                }
                 if let value = expected.effectiveLocalSlots,
                     observed.effectiveLocalSlots != value
                 {
@@ -1672,6 +1712,10 @@ extension EvalRunner {
         let executionWaveSummary = executionWaves.map { wave in
             "wave=\(wave.wave.map(String.init) ?? "nil")"
                 + ",remote=\(wave.remoteJobs.map(String.init) ?? "nil")"
+                + ",local=\(wave.localJobs.map(String.init) ?? "nil")"
+                + ",engineRequested=\(wave.engineRequestedMaximum.map(String.init) ?? "nil")"
+                + ",architectureMax=\(wave.engineArchitectureMaximum.map(String.init) ?? "nil")"
+                + ",engineEffective=\(wave.engineEffectiveMaximum.map(String.init) ?? "nil")"
                 + ",slots=\(wave.effectiveLocalSlots.map(String.init) ?? "nil")"
                 + ",subwaves=\(wave.localSubwaves.map { String(describing: $0) } ?? "nil")"
                 + ",limitedBy=\(wave.limitingFactors.map { String(describing: $0) } ?? "nil")"

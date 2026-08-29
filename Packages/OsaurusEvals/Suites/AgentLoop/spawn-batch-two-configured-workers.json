@@ -3,7 +3,7 @@
   "domain": "agent_loop",
   "label": "agent loop • agent-selected two-worker batch finalizes once",
   "query": "Fan out exactly two independent jobs in one spawn_batch call. Job id `math` must use target_type `agent`, target the exact allowed UUID `A11CE001-0000-4000-8000-000000000001` (Osaurus Eval Batch Math), and ask it to return exactly BATCH_ALPHA_42. Job id `writing` must use target_type `agent`, target the exact allowed UUID `A11CE001-0000-4000-8000-000000000002` (Osaurus Eval Batch Writing), and ask it to return exactly BATCH_BETA_BLUE. Preserve that job order. After both results return, answer once with both tokens and stop. Do not call spawn_agent or spawn_model.",
-  "notes": "Production agent-loop proof row for configured-target selection, same-local-model batching, ordered child settlement, aggregate counts, and one final answer. The orchestrator and temporary workers all use the selected case model with nil sampler overrides, so generation_config/JANG bundle defaults remain authoritative.",
+  "notes": "Topology-neutral production agent-loop row for configured-target selection, ordered child settlement, aggregate counts, and one final answer. Dedicated AgentLoopBatchNative and AgentLoopBatchSerialized suites own strict width contracts; this general suite must not falsely require native B=2 from an architecture-capped model. The orchestrator and temporary workers all use the selected case model with nil sampler overrides, so generation_config/JANG bundle defaults remain authoritative.",
   "fixtures": {
     "agentCapabilities": {
       "spawnAgents": [
@@ -67,8 +67,8 @@
           {
             "wave": 1,
             "remoteJobs": 0,
-            "effectiveLocalSlots": 2,
-            "localSubwaves": [2]
+            "localJobs": 2,
+            "engineRequestedMaximum": 2
           }
         ],
         "requireEveryExecutionWaveWellFormed": true,

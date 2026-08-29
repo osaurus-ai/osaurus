@@ -816,7 +816,13 @@ Field notes:
   `max_parallel`, execution waves (`effectiveLocalSlots`, `localSubwaves`,
   limiting factors), and cache availability. A configured parallel ceiling is
   not concurrency proof by itself; pin an execution wave such as
-  `{ "effectiveLocalSlots": 2, "localSubwaves": [2] }`.
+  `{ "effectiveLocalSlots": 2, "localSubwaves": [2] }`. Strict capacity
+  proof belongs in the dedicated `AgentLoopBatchNative` and
+  `AgentLoopBatchSerialized` suites. Those rows also require the production
+  envelope's `engine_requested_max`, explicit nullable
+  `engine_architecture_max`, and `engine_effective_max`; this prevents a
+  caller-requested width of two from being mislabeled as native B=2 when the
+  model safely serializes as `[1, 1]`.
 - `expect.agentLoop.finalTextContains` / `rubric` — cheap substring checks vs. LLM-judge grading of the final answer (same `JUDGE_MODEL` override as `capability_claims`).
 - `expect.agentLoop.scoredMaxPromptTokens` / `scoredMaxTotalTokens` — optional context-cost ceilings for the "saving context" lane. `scoredMaxPromptTokens` **fails the case** when `promptTokensTotal` (input summed across steps, including the frozen tool schema) exceeds the budget, so a later prompt/tool regression that re-bloats context can't pass while silently burning tokens; `scoredMaxTotalTokens` gates input + output. Both are omitted by default (reported via telemetry, not scored), and only bite a live model — scripted/deterministic runs spend `0`.
 

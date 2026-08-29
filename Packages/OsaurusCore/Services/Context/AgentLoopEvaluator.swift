@@ -50,6 +50,13 @@ public struct AgentLoopTranscript: Sendable, Codable {
         public struct ExecutionWave: Sendable, Codable, Equatable {
             public let wave: Int?
             public let remoteJobs: Int?
+            public let localJobs: Int?
+            public let engineRequestedMaximum: Int?
+            public let engineArchitectureMaximum: Int?
+            public let engineEffectiveMaximum: Int?
+            public let hasEngineRequestedMaximum: Bool?
+            public let hasEngineArchitectureMaximum: Bool?
+            public let hasEngineEffectiveMaximum: Bool?
             public let effectiveLocalSlots: Int?
             public let localSubwaves: [Int]?
             public let limitingFactors: [String]?
@@ -57,23 +64,45 @@ public struct AgentLoopTranscript: Sendable, Codable {
             public init(
                 wave: Int?,
                 remoteJobs: Int?,
+                localJobs: Int? = nil,
+                engineRequestedMaximum: Int? = nil,
+                engineArchitectureMaximum: Int? = nil,
+                engineEffectiveMaximum: Int? = nil,
+                hasEngineRequestedMaximum: Bool? = nil,
+                hasEngineArchitectureMaximum: Bool? = nil,
+                hasEngineEffectiveMaximum: Bool? = nil,
                 effectiveLocalSlots: Int?,
                 localSubwaves: [Int]?,
                 limitingFactors: [String]?
             ) {
                 self.wave = wave
                 self.remoteJobs = remoteJobs
+                self.localJobs = localJobs
+                self.engineRequestedMaximum = engineRequestedMaximum
+                self.engineArchitectureMaximum = engineArchitectureMaximum
+                self.engineEffectiveMaximum = engineEffectiveMaximum
+                self.hasEngineRequestedMaximum = hasEngineRequestedMaximum
+                self.hasEngineArchitectureMaximum = hasEngineArchitectureMaximum
+                self.hasEngineEffectiveMaximum = hasEngineEffectiveMaximum
                 self.effectiveLocalSlots = effectiveLocalSlots
                 self.localSubwaves = localSubwaves
                 self.limitingFactors = limitingFactors
             }
 
             public var isWellFormed: Bool {
-                wave != nil
+                let base = wave != nil
                     && remoteJobs != nil
+                    && localJobs != nil
                     && effectiveLocalSlots != nil
                     && localSubwaves != nil
                     && limitingFactors != nil
+                guard base else { return false }
+                guard (localJobs ?? 0) > 0 else { return true }
+                return hasEngineRequestedMaximum == true
+                    && hasEngineArchitectureMaximum == true
+                    && hasEngineEffectiveMaximum == true
+                    && engineRequestedMaximum != nil
+                    && engineEffectiveMaximum != nil
             }
         }
 
@@ -403,6 +432,17 @@ public struct AgentLoopTranscript: Sendable, Codable {
                     let parsed = SpawnBatchObservation.ExecutionWave(
                         wave: wave["wave"] as? Int,
                         remoteJobs: wave["remote_jobs"] as? Int,
+                        localJobs: wave["local_jobs"] as? Int,
+                        engineRequestedMaximum: wave["engine_requested_max"] as? Int,
+                        engineArchitectureMaximum:
+                            wave["engine_architecture_max"] as? Int,
+                        engineEffectiveMaximum: wave["engine_effective_max"] as? Int,
+                        hasEngineRequestedMaximum:
+                            wave.keys.contains("engine_requested_max"),
+                        hasEngineArchitectureMaximum:
+                            wave.keys.contains("engine_architecture_max"),
+                        hasEngineEffectiveMaximum:
+                            wave.keys.contains("engine_effective_max"),
                         effectiveLocalSlots: wave["effective_local_slots"] as? Int,
                         localSubwaves: wave["local_subwaves"] as? [Int],
                         limitingFactors: wave["limited_by"] as? [String]

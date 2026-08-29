@@ -281,6 +281,11 @@ struct ProcessLifetimeBatchCounters: Equatable, Sendable {
 /// the engine remains the sole authority that admits active decode slots.
 struct ModelBatchCapacitySnapshot: Equatable, Sendable {
     let modelName: String
+    /// Latest serving-layer width request before any model cap.
+    let requestedMaximum: Int
+    /// Model-declared hard decode-width ceiling; nil means uncapped.
+    let architectureMaximum: Int?
+    /// Effective engine width after applying the architecture ceiling.
     let configuredMaximum: Int
     let activeCount: Int
     let pendingCount: Int
@@ -288,4 +293,28 @@ struct ModelBatchCapacitySnapshot: Equatable, Sendable {
     let activeHighWatermark: Int
     let isAcceptingRequests: Bool
     let isShutdown: Bool
+
+    init(
+        modelName: String,
+        requestedMaximum: Int? = nil,
+        architectureMaximum: Int? = nil,
+        configuredMaximum: Int,
+        activeCount: Int,
+        pendingCount: Int,
+        nominalAvailableCount: Int,
+        activeHighWatermark: Int,
+        isAcceptingRequests: Bool,
+        isShutdown: Bool
+    ) {
+        self.modelName = modelName
+        self.requestedMaximum = requestedMaximum ?? configuredMaximum
+        self.architectureMaximum = architectureMaximum
+        self.configuredMaximum = configuredMaximum
+        self.activeCount = activeCount
+        self.pendingCount = pendingCount
+        self.nominalAvailableCount = nominalAvailableCount
+        self.activeHighWatermark = activeHighWatermark
+        self.isAcceptingRequests = isAcceptingRequests
+        self.isShutdown = isShutdown
+    }
 }

@@ -617,6 +617,8 @@ struct MLXBatchAdapter {
             }
             return ModelBatchCapacitySnapshot(
                 modelName: entry.0,
+                requestedMaximum: snapshot.requestedMaximum,
+                architectureMaximum: snapshot.architectureMaximum,
                 configuredMaximum: snapshot.configuredMaximum,
                 activeCount: snapshot.activeCount,
                 pendingCount: snapshot.pendingCount,

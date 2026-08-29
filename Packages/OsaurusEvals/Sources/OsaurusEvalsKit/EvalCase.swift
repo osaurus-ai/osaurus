@@ -1875,6 +1875,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             public struct ExecutionWaveAssertion: Sendable, Codable {
                 public let wave: Int?
                 public let remoteJobs: Int?
+                public let localJobs: Int?
+                public let engineRequestedMaximum: Int?
+                public let engineArchitectureMaximum: Int?
+                public let requireUncappedArchitecture: Bool?
+                public let engineEffectiveMaximum: Int?
                 public let effectiveLocalSlots: Int?
                 public let localSubwaves: [Int]?
                 public let limitingFactors: [String]?
@@ -1882,12 +1887,22 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 public init(
                     wave: Int? = nil,
                     remoteJobs: Int? = nil,
+                    localJobs: Int? = nil,
+                    engineRequestedMaximum: Int? = nil,
+                    engineArchitectureMaximum: Int? = nil,
+                    requireUncappedArchitecture: Bool? = nil,
+                    engineEffectiveMaximum: Int? = nil,
                     effectiveLocalSlots: Int? = nil,
                     localSubwaves: [Int]? = nil,
                     limitingFactors: [String]? = nil
                 ) {
                     self.wave = wave
                     self.remoteJobs = remoteJobs
+                    self.localJobs = localJobs
+                    self.engineRequestedMaximum = engineRequestedMaximum
+                    self.engineArchitectureMaximum = engineArchitectureMaximum
+                    self.requireUncappedArchitecture = requireUncappedArchitecture
+                    self.engineEffectiveMaximum = engineEffectiveMaximum
                     self.effectiveLocalSlots = effectiveLocalSlots
                     self.localSubwaves = localSubwaves
                     self.limitingFactors = limitingFactors
