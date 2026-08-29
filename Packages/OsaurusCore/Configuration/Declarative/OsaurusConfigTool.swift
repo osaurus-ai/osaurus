@@ -393,21 +393,38 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         // auto-approves, external/headless surfaces and unattended
         // schedule/watcher dispatches auto-deny (never park a card nobody
         // can answer, and never let an unattended run reconfigure the app).
-        let approved: Bool
+        let approval: ConfigApprovalOutcome
         if ChatExecutionContext.autoApproveToolPrompts {
-            approved = true
+            approval = .approved
         } else if ChatExecutionContext.denyUnapprovedToolPrompts
             || ChatExecutionContext.isExternalSurface
             || ChatExecutionContext.isUnattendedDispatch
         {
-            approved = false
+            approval = .denied
         } else {
-            approved = await ConfigApprovalService.requestApproval(plan: plan, prune: prune)
+            approval = await ConfigApprovalService.requestApproval(plan: plan, prune: prune)
         }
-        if !approved {
+        switch approval {
+        case .approved:
+            break
+        case .denied:
             return ToolEnvelope.failure(
                 kind: .userDenied,
                 message: "User declined the configuration changes. Nothing was applied.",
+                tool: name,
+                retryable: false
+            )
+        case .timedOut:
+            return ToolEnvelope.failure(
+                kind: .timeout,
+                message: "Configuration review timed out. Nothing was applied.",
+                tool: name,
+                retryable: false
+            )
+        case .cancelled:
+            return ToolEnvelope.failure(
+                kind: .userDenied,
+                message: "Configuration review was cancelled. Nothing was applied.",
                 tool: name,
                 retryable: false
             )

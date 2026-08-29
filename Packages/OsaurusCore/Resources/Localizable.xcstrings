@@ -207566,6 +207566,40 @@
         }
       }
     },
+    "The requested action was not completed.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die angeforderte Aktion wurde nicht abgeschlossen."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "요청한 작업이 완료되지 않았습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запрошенное действие не было выполнено."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请求的操作未完成。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "要求的操作未完成。"
+          }
+        }
+      }
+    },
     "The requested capture capability is not recognized.": {
       "localizations": {
         "de": {

@@ -76,10 +76,10 @@ struct ConfigPlanApprovalCard: View {
             HStack(spacing: 10) {
                 Spacer()
                 secondaryButton(L("Cancel")) {
-                    queue.resolve(id: request.id, approved: false)
+                    queue.resolve(id: request.id, outcome: .denied)
                 }
                 primaryButton(L("Apply Changes")) {
-                    queue.resolve(id: request.id, approved: true)
+                    queue.resolve(id: request.id, outcome: .approved)
                 }
             }
         }

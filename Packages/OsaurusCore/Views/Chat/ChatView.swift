@@ -7427,6 +7427,21 @@ final class ChatSession: ObservableObject {
                             }
                             self.rebuildVisibleBlocks()
                         },
+                        emitToolRejectionText: { message in
+                            // Chat intentionally stops after an interactive
+                            // denial or terminal tool failure so the model
+                            // cannot retry a side effect or hallucinate its
+                            // result. Close that stopped turn visibly with the
+                            // canonical envelope message instead of leaving a
+                            // blank assistant bubble / eternal-looking task.
+                            assistantTurn.pendingToolName = nil
+                            assistantTurn.clearPendingToolArgs()
+                            let prefix = L("The requested action was not completed.")
+                            let visible = message.isEmpty ? prefix : prefix + " " + message
+                            let separator = assistantTurn.contentIsEmpty ? "" : "\n\n"
+                            assistantTurn.appendContentAndNotify(separator + visible)
+                            self.rebuildVisibleBlocks()
+                        },
                         finalVisibleText: {
                             // Grounded-claim check scope: only runs where the
                             // configure surface is actually offered, so agents

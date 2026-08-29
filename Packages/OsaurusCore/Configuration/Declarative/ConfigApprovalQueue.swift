@@ -34,6 +34,16 @@ public struct ConfigApprovalRequest: Identifiable, Sendable, Equatable {
     }
 }
 
+/// Terminal reason for an attended configuration review. Keeping timeout and
+/// teardown distinct from an explicit button tap prevents the tool envelope
+/// from falsely claiming that the user declined a card they never answered.
+public enum ConfigApprovalOutcome: Sendable, Equatable {
+    case approved
+    case denied
+    case timedOut
+    case cancelled
+}
+
 /// MainActor-confined queue of pending config approvals. SwiftUI observes
 /// `pending` and renders the card; `requestApproval` is the async seam the
 /// tool awaits. Mirrors `ComputerUsePromptQueue`.
@@ -43,7 +53,8 @@ public final class ConfigApprovalQueue: ObservableObject {
 
     @Published public private(set) var pending: [ConfigApprovalRequest] = []
 
-    private var continuations: [UUID: CheckedContinuation<Bool, Never>] = [:]
+    private var continuations: [UUID: CheckedContinuation<ConfigApprovalOutcome, Never>] = [:]
+    private var timeoutTasks: [UUID: Task<Void, Never>] = [:]
     /// Count of chat surfaces currently able to render the card. When zero,
     /// `ConfigApprovalService` uses the modal-panel fallback instead of
     /// parking a request nobody can see.
@@ -61,30 +72,42 @@ public final class ConfigApprovalQueue: ObservableObject {
 
     /// Park an approval and suspend until the user (or teardown /
     /// cancellation) resolves it. Cancellation-aware: a cancelled chat turn
-    /// resolves as denied so the tool never hangs on a card nobody answers.
-    public func requestApproval(plan: ConfigPlan, prune: Bool) async -> Bool {
+    /// resolves as cancelled so the tool never hangs on a card nobody answers.
+    public func requestApproval(
+        plan: ConfigPlan,
+        prune: Bool,
+        timeout: Duration = .seconds(120)
+    ) async -> ConfigApprovalOutcome {
         let request = ConfigApprovalRequest(plan: plan, prune: prune)
         return await withTaskCancellationHandler {
-            await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            await withCheckedContinuation {
+                (continuation: CheckedContinuation<ConfigApprovalOutcome, Never>) in
                 if Task.isCancelled {
-                    continuation.resume(returning: false)
+                    continuation.resume(returning: .cancelled)
                     return
                 }
                 continuations[request.id] = continuation
                 pending.append(request)
+                timeoutTasks[request.id] = Task { [weak self] in
+                    try? await Task.sleep(for: timeout)
+                    guard !Task.isCancelled else { return }
+                    self?.resolve(id: request.id, outcome: .timedOut)
+                }
             }
         } onCancel: {
             Task { @MainActor in
-                self.resolve(id: request.id, approved: false)
+                self.resolve(id: request.id, outcome: .cancelled)
             }
         }
     }
 
-    /// Resolve a specific pending request (user tapped Apply / Cancel).
-    public func resolve(id: UUID, approved: Bool) {
+    /// Resolve a specific pending request (user tapped Apply / Cancel, the
+    /// bounded review deadline expired, or the owning chat was torn down).
+    public func resolve(id: UUID, outcome: ConfigApprovalOutcome) {
         pending.removeAll { $0.id == id }
+        timeoutTasks.removeValue(forKey: id)?.cancel()
         guard let continuation = continuations.removeValue(forKey: id) else { return }
-        continuation.resume(returning: approved)
+        continuation.resume(returning: outcome)
     }
 
     /// Deny + clear every pending approval (chat teardown, Stop).
@@ -92,7 +115,8 @@ public final class ConfigApprovalQueue: ObservableObject {
         let affected = pending
         pending.removeAll()
         for request in affected {
-            continuations.removeValue(forKey: request.id)?.resume(returning: false)
+            timeoutTasks.removeValue(forKey: request.id)?.cancel()
+            continuations.removeValue(forKey: request.id)?.resume(returning: .cancelled)
         }
     }
 }
@@ -101,7 +125,10 @@ public final class ConfigApprovalQueue: ObservableObject {
 /// generic modal panel when no chat surface is mounted, so an apply is
 /// always human-gated on attended surfaces.
 public enum ConfigApprovalService {
-    public static func requestApproval(plan: ConfigPlan, prune: Bool) async -> Bool {
+    public static func requestApproval(
+        plan: ConfigPlan,
+        prune: Bool
+    ) async -> ConfigApprovalOutcome {
         let useCard = await MainActor.run { ConfigApprovalQueue.shared.hasMountedSurface }
         if useCard {
             return await ConfigApprovalQueue.shared.requestApproval(plan: plan, prune: prune)
@@ -115,6 +142,6 @@ public enum ConfigApprovalService {
             description: description,
             argumentsJSON: ""
         )
-        return outcome != .denied
+        return outcome == .denied ? .denied : .approved
     }
 }
