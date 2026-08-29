@@ -46,7 +46,7 @@ struct ChatTurnGenerationControls: Sendable, Equatable {
         storedExplicitOptions: [String: ModelOptionValue]?,
         resolveCapability: @Sendable (String) async -> Void
     ) async -> ChatTurnGenerationControls {
-        guard activeModelOptions.isEmpty,
+        guard activeModelOptions["disableThinking"] == nil,
             let modelId,
             let storedExplicitOptions,
             storedExplicitOptions["disableThinking"]?.boolValue != nil
@@ -59,7 +59,12 @@ struct ChatTurnGenerationControls: Sendable, Equatable {
             for: modelId,
             persisted: storedExplicitOptions
         )
-        return capture(activeModelOptions: validated)
+        guard let recoveredThinking = validated["disableThinking"] else {
+            return capture(activeModelOptions: activeModelOptions)
+        }
+        var merged = activeModelOptions
+        merged["disableThinking"] = recoveredThinking
+        return capture(activeModelOptions: merged)
     }
 
     func apply(to request: inout ChatCompletionRequest) {

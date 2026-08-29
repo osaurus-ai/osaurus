@@ -197,6 +197,28 @@ struct ChatTurnGenerationControlsTests {
         #expect(controls.enableThinking == true)
     }
 
+    @Test("cold recovery preserves unrelated live controls")
+    func coldRecoveryPreservesUnrelatedLiveControls() async {
+        actor ResolutionProbe {
+            var count = 0
+            func record() { count += 1 }
+        }
+        let probe = ResolutionProbe()
+
+        let controls = await ChatTurnGenerationControls.captureForSend(
+            modelId: "JANGQ-AI/Qwen3.6-35B-A3B-MXFP8",
+            activeModelOptions: ["customFlag": .string("kept")],
+            storedExplicitOptions: ["disableThinking": .bool(true)]
+        ) { _ in
+            await probe.record()
+        }
+
+        #expect(await probe.count == 1)
+        #expect(controls.enableThinking == false)
+        #expect(controls.modelOptions?["disableThinking"]?.boolValue == true)
+        #expect(controls.modelOptions?["customFlag"]?.stringValue == "kept")
+    }
+
     @Test("unrelated persisted controls do not trigger local reasoning recovery")
     func unrelatedStoredControlDoesNotRecover() async {
         actor ResolutionProbe {
