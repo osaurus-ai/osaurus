@@ -325,22 +325,15 @@ struct ToolFilterMenu<Option: ToolCatalogFilterOption>: View {
                 Text(selection.title)
                     .font(.system(size: 11, weight: .medium))
                     .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
             }
-            .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 12)
-            .frame(height: 28)
-            .background(
-                Capsule()
-                    .fill(theme.tertiaryBackground)
-                    .overlay(
-                        Capsule()
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
         }
-        .menuStyle(.borderlessButton)
+        // A native bordered menu with a capsule shape gives a real pill; the
+        // borderless style strips the label's own background so it can't.
+        .menuStyle(.button)
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.capsule)
+        .controlSize(.small)
+        .tint(theme.secondaryText)
         .fixedSize()
         .accessibilityLabel(Text("\(accessibilityTitle): \(selection.title)"))
     }
