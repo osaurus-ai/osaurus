@@ -50,21 +50,17 @@ struct DelegatedParityTests {
             session.agentId = agent.id
             session.delegationBudget = contract
             session.source = .delegation
+            // ISOLATION, not retries: detach the process-global
+            // `ModelPickerItemCache.$items` subscription (whose async
+            // snapshot application would clobber the fixture's items with
+            // whatever the shared cache holds), drain any hop already
+            // queued by the initial emission, then install the fixture's
+            // items exactly once. Deterministic: no further emissions can
+            // reach this session.
+            session.detachPickerCacheForTesting()
             await drainInitialCacheSnapshot()
-            // The session's init queues an async `ModelPickerItemCache`
-            // snapshot application that can land AFTER our items and
-            // clobber them with whatever the shared cache holds (in CI an
-            // ephemeral provider default). Re-apply until the dispatch
-            // adoption actually lands on the agent's default — same
-            // mechanism under test, hardened against the snapshot race.
-            // Exiting without adoption leaves the mismatch for the
-            // assertions to report.
-            for _ in 0 ..< 100 {
-                session.applyPickerItems(items)
-                session.applyAgentDefaultModelForDispatch()
-                if session.selectedModel == "mlx-test/parity-default" { break }
-                try? await Task.sleep(nanoseconds: 10_000_000)
-            }
+            session.applyPickerItems(items)
+            session.applyAgentDefaultModelForDispatch()
             return session
         }
 

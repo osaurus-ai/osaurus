@@ -35,25 +35,16 @@ public struct DelegatedRunContract: Sendable, Equatable {
     /// manager trims to. This is the number admission prices.
     public let contextPositions: Int
 
-    /// Wrapper allowance absorbed into every contract for the child's system
-    /// prompt, chat-template scaffolding, and tool schemas. This is a
-    /// CONSERVATIVE POLICY VALUE, not a measured size — chosen to match the
-    /// 4,096-token floor `SubagentChildRequestEstimate` has always priced
-    /// for small requests. A composed prompt larger than this allowance is
-    /// not silently exceeded: the enforced window trims history, and a
-    /// prompt that cannot fit at all surfaces the loop's over-budget exit
-    /// instead of running an unpriced model step.
-    public static let promptOverheadTokens = 4_096
-
     /// Per-turn context allowance for appended tool results when the target
-    /// agent runs with tools. Also a CONSERVATIVE POLICY VALUE (one
-    /// canonical response reservation per turn, mirroring
-    /// `AgentLoopBudget.defaultResponseReservation`), not a measured tool
-    /// output size: a bounded delegation is budgeted for tool results the
-    /// size of a full response each turn; anything larger is trimmed by the
-    /// enforced window or ends in the over-budget exit — never silently
-    /// charged past the priced ceiling.
-    public static let toolResultAllowancePerTurn = 4_096
+    /// agent runs with tools. Sourced from the loop's OWN canonical
+    /// response reservation (`AgentLoopBudget.defaultResponseReservation`)
+    /// rather than an independent constant: a bounded delegation is
+    /// budgeted for tool results the size of a full response each turn;
+    /// anything larger is trimmed by the enforced window or ends in the
+    /// over-budget exit — never silently charged past the priced ceiling.
+    public static var toolResultAllowancePerTurn: Int {
+        AgentLoopBudget.defaultResponseReservation
+    }
 
     public init(responseTokens: Int, assistantTurns: Int, contextPositions: Int) {
         self.responseTokens = responseTokens
@@ -91,13 +82,17 @@ public struct DelegatedRunContract: Sendable, Equatable {
     }
 
     /// Derive the contract from the launcher's (normalized) budgets, the
-    /// delegation seed, whether the target agent runs with tools, and the
+    /// delegation seed, the target agent's ACTUAL composed system prompt
+    /// and exact tool schemas (measured character counts — no fixed
+    /// overhead guess), whether the target agent runs with tools, and the
     /// context window the dispatched session would otherwise resolve
     /// (`AgentLoopBudget.resolveContextWindow`: bundle window ∩ the user's
     /// context-length cap). The derived position ceiling only ever TIGHTENS
-    /// that resolved window. Seed token math rounds UP (chars/4 × 1.5
+    /// that resolved window. All token math rounds UP (chars/4 × 1.5
     /// safety = chars × 3 / 8, ceiling) — the same conversion
-    /// `SubagentChildRequestEstimate` uses.
+    /// `SubagentChildRequestEstimate` uses. Chat-template scaffolding is
+    /// absorbed by the 4,096-position floor `boundedPositionBudget`
+    /// applies to every estimate.
     ///
     /// Every arithmetic step is overflow-checked and the derivation FAILS
     /// CLOSED: nil means "no bounded contract" — the caller keeps the
@@ -105,6 +100,8 @@ public struct DelegatedRunContract: Sendable, Equatable {
     /// never a partially-computed or wrapped bound.
     public static func derive(
         seedCharacters: Int,
+        systemPromptCharacters: Int,
+        toolSchemaCharacters: Int,
         budgets: SubagentBudgets,
         toolEnabled: Bool,
         resolvedContextWindow: Int
@@ -114,23 +111,33 @@ public struct DelegatedRunContract: Sendable, Equatable {
         guard normalized.maxDelegateTokens > 0 else { return nil }
         let turns = max(1, normalized.maxDelegateTurns)
 
-        // ceil(seedCharacters × 3 / 8), overflow-checked.
-        let (seedTimes3, seedMulOverflow) = max(0, seedCharacters)
-            .multipliedReportingOverflow(by: 3)
-        guard !seedMulOverflow else { return nil }
-        let (seedNumerator, seedAddOverflow) = seedTimes3.addingReportingOverflow(7)
-        guard !seedAddOverflow else { return nil }
-        let seedTokens = seedNumerator / 8
+        // ceil(chars × 3 / 8), overflow-checked; nil on any overflow.
+        func ceilTokens(forCharacters characters: Int) -> Int? {
+            let (times3, mulOverflow) = max(0, characters)
+                .multipliedReportingOverflow(by: 3)
+            guard !mulOverflow else { return nil }
+            let (numerator, addOverflow) = times3.addingReportingOverflow(7)
+            guard !addOverflow else { return nil }
+            return numerator / 8
+        }
+
+        guard
+            let seedTokens = ceilTokens(forCharacters: seedCharacters),
+            let systemTokens = ceilTokens(forCharacters: systemPromptCharacters),
+            let toolTokens = ceilTokens(forCharacters: toolSchemaCharacters)
+        else { return nil }
 
         let (perTurn, perTurnOverflow) = normalized.maxDelegateTokens
             .addingReportingOverflow(toolEnabled ? toolResultAllowancePerTurn : 0)
         guard !perTurnOverflow else { return nil }
         let (turnBudget, turnMulOverflow) = perTurn.multipliedReportingOverflow(by: turns)
         guard !turnMulOverflow else { return nil }
-        let (withOverhead, overheadOverflow) = turnBudget
-            .addingReportingOverflow(promptOverheadTokens)
-        guard !overheadOverflow else { return nil }
-        let (requested, requestOverflow) = withOverhead
+        let (promptReserve, promptOverflow) = systemTokens.addingReportingOverflow(toolTokens)
+        guard !promptOverflow else { return nil }
+        let (withReserve, reserveOverflow) = turnBudget
+            .addingReportingOverflow(promptReserve)
+        guard !reserveOverflow else { return nil }
+        let (requested, requestOverflow) = withReserve
             .addingReportingOverflow(seedTokens)
         guard !requestOverflow else { return nil }
 

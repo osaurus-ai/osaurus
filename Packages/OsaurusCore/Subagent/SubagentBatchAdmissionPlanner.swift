@@ -72,9 +72,19 @@ public struct SubagentChildRequestEstimate: Sendable, Equatable {
             seedCharacters >= 0, maxOutputTokens > 0
         {
             // chars/4 tokens × 1.5 safety = chars × 3 / 8, rounded up.
-            let seedTokens = (seedCharacters * 3 + 7) / 8
-            let (requested, overflow) = seedTokens.addingReportingOverflow(maxOutputTokens)
-            if !overflow { candidates.append(requested) }
+            // Every step overflow-checked and failing CLOSED: a value that
+            // cannot be represented contributes no candidate, so the fall
+            // back is conservative cap pricing, never a wrapped bound.
+            let (seedTimes3, mulOverflow) = seedCharacters.multipliedReportingOverflow(by: 3)
+            if !mulOverflow {
+                let (numerator, addOverflow) = seedTimes3.addingReportingOverflow(7)
+                if !addOverflow {
+                    let seedTokens = numerator / 8
+                    let (requested, sumOverflow) =
+                        seedTokens.addingReportingOverflow(maxOutputTokens)
+                    if !sumOverflow { candidates.append(requested) }
+                }
+            }
         }
         if let enforcedPositionCeiling, enforcedPositionCeiling > 0 {
             candidates.append(enforcedPositionCeiling)
@@ -87,6 +97,38 @@ public struct SubagentChildRequestEstimate: Sendable, Equatable {
             return min(floored, max(policyCap, 4096))
         }
         return floored
+    }
+
+    /// Conservative wave envelope for a batch: each job's safe position
+    /// budget is resolved INDEPENDENTLY (uncapped — the policy cap clamps
+    /// later, and clamping commutes with max), and the wave is priced at
+    /// the MAXIMUM per-child bound, carried as a pure position ceiling.
+    ///
+    /// Never combine heterogeneous jobs field-by-field: an estimate built
+    /// from "max seed + max output" alongside "max ceiling" would take the
+    /// MIN of those two candidate bounds, letting one job's small ceiling
+    /// under-price another job's large seed+output request.
+    ///
+    /// nil (fail closed to cap pricing for the whole canonical-model
+    /// group) when the batch is empty or ANY job lacks a valid bound —
+    /// a wave must never be under-priced by its cheapest member.
+    static func waveEnvelope(
+        of estimates: [SubagentChildRequestEstimate?]
+    ) -> SubagentChildRequestEstimate? {
+        guard !estimates.isEmpty else { return nil }
+        var perJobBudgets: [Int] = []
+        for estimate in estimates {
+            guard let budget = estimate?.boundedPositionBudget(policyCap: nil) else {
+                return nil
+            }
+            perJobBudgets.append(budget)
+        }
+        guard let maximum = perJobBudgets.max() else { return nil }
+        return SubagentChildRequestEstimate(
+            seedCharacters: nil,
+            maxOutputTokens: nil,
+            enforcedPositionCeiling: maximum
+        )
     }
 }
 

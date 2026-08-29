@@ -233,6 +233,8 @@ struct ModelRuntimeFindDirectoryTests {
         let contract = try #require(
             DelegatedRunContract.derive(
                 seedCharacters: 800,
+                systemPromptCharacters: 2_000,
+                toolSchemaCharacters: 1_000,
                 budgets: SubagentBudgets(),
                 toolEnabled: true,
                 resolvedContextWindow: 65_536
@@ -250,7 +252,7 @@ struct ModelRuntimeFindDirectoryTests {
         )
         #expect(contractPriced < capPriced)
         // Position pricing is linear, so the ratio tracks the position ratio.
-        #expect(contractPriced <= capPriced * 16_684 / 65_536 + 1024)
+        #expect(contractPriced <= capPriced * 13_713 / 65_536 + 1024)
         #expect(contractPriced > 0)
     }
 
@@ -281,11 +283,13 @@ struct ModelRuntimeFindDirectoryTests {
         let contract = try #require(
             DelegatedRunContract.derive(
                 seedCharacters: 800,
+                systemPromptCharacters: 2_000,
+                toolSchemaCharacters: 1_000,
                 budgets: SubagentBudgets(),
                 toolEnabled: true,
                 resolvedContextWindow: 32_768
             ))
-        #expect(contract.contextPositions == 16_684)
+        #expect(contract.contextPositions == 13_713)
 
         let weights: Int64 = 3 * 1024 * 1024 * 1024
         let capPriced = ModelRuntime.estimatedKVHeadroomBytes(
@@ -299,7 +303,7 @@ struct ModelRuntimeFindDirectoryTests {
             kvRetentionCap: contract.contextPositions
         )
         #expect(contractPriced < capPriced)
-        // 30 layers × 2 (K+V) × 2 heads × 256 dim × 16,684 positions × 2 B
+        // 30 layers × 2 (K+V) × 2 heads × 256 dim × 13,713 positions × 2 B
         // ≈ 0.96 GiB (+ overheads) — under the ~3 GiB residual of the
         // report, so ONE bounded child is admittable where cap pricing
         // was not guaranteed to be.

@@ -34,6 +34,8 @@ struct DelegatedBudgetEnforcementTests {
     private var contract: DelegatedRunContract {
         DelegatedRunContract.derive(
             seedCharacters: 800,
+            systemPromptCharacters: 2_000,
+            toolSchemaCharacters: 1_000,
             budgets: SubagentBudgets(),
             toolEnabled: true,
             resolvedContextWindow: 65_536
@@ -64,10 +66,10 @@ struct DelegatedBudgetEnforcementTests {
         let contract = self.contract
         let manager = delegatedBudgetManager(contract)
 
-        // Effective budget reflects the 16,684-position ceiling × the 0.85
+        // Effective budget reflects the 13,713-position ceiling × the 0.85
         // safety margin — nowhere near the 65,536-window budget.
-        #expect(manager.effectiveBudget == Int(Double(16_684) * 0.85))
-        #expect(manager.historyBudget < 16_684)
+        #expect(manager.effectiveBudget == Int(Double(13_713) * 0.85))
+        #expect(manager.historyBudget < 13_713)
 
         // A transcript whose OLDER turns carry tool results far past the
         // per-turn allowance (100K chars ≈ 25K tokens each — the universal
@@ -117,15 +119,16 @@ struct DelegatedBudgetEnforcementTests {
         #expect(bloated.overBudget == true, "protected-tail overrun must be REPORTED")
     }
 
-    /// Gate on the allowance being POLICY, not measurement: a composed
-    /// system prompt larger than `promptOverheadTokens` does not silently
-    /// blow the ceiling — the manager absorbs it as a reservation and the
-    /// history budget shrinks instead.
-    @Test("system prompt over the overhead allowance shrinks history, never the ceiling")
+    /// A system prompt larger than the contract's MEASURED reservation
+    /// (derivation saw 2,000 chars; the live composition grew) does not
+    /// silently blow the ceiling — the manager absorbs it as a reservation
+    /// and the history budget shrinks instead, so the priced position
+    /// ceiling still holds.
+    @Test("system prompt beyond the measured reservation shrinks history, never the ceiling")
     func oversizedSystemPromptShrinksHistoryBudget() {
         let contract = self.contract
         let modest = delegatedBudgetManager(contract, systemPromptChars: 2_000)
-        // 40,000 chars ≈ 10,000 tokens — 2.4× the 4,096 overhead allowance.
+        // 40,000 chars ≈ 10,000 tokens — 20× the measured 2,000-char prompt.
         let huge = delegatedBudgetManager(contract, systemPromptChars: 40_000)
         #expect(huge.effectiveBudget == modest.effectiveBudget, "ceiling is fixed")
         #expect(huge.historyBudget < modest.historyBudget, "overrun comes out of history")

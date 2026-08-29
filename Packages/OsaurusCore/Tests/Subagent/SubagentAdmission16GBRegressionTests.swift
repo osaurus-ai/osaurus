@@ -350,28 +350,50 @@ struct SubagentAdmission16GBRegressionTests {
         let contract = try #require(
             DelegatedRunContract.derive(
                 seedCharacters: 800,
+                systemPromptCharacters: 2_000,
+                toolSchemaCharacters: 1_000,
                 budgets: SubagentBudgets(),  // defaults: 2048 tokens × 2 turns
                 toolEnabled: true,
                 resolvedContextWindow: 65_536
             ))
-        // seed 800 chars → 300 tokens; 300 + 4096 + 2×(2048+4096) = 16,684.
-        #expect(contract.contextPositions == 16_684)
+        // MEASURED reservations (no fixed overhead guess): seed 800 chars →
+        // 300 tokens, system prompt 2,000 → 750, tool schemas 1,000 → 375;
+        // 300 + 750 + 375 + 2×(2048 + 4096 tool allowance) = 13,713.
+        #expect(contract.contextPositions == 13_713)
         #expect(contract.responseTokens == 2048)
         #expect(contract.assistantTurns == 2)
         #expect(contract.contextPositions < 65_536 / 3)
 
-        // Tool-less variant drops the per-turn tool allowance.
+        // Tool-less variant drops the per-turn tool allowance:
+        // 300 + 750 + 375 + 2×2048 = 5,521.
         let toolLess = DelegatedRunContract.derive(
             seedCharacters: 800,
+            systemPromptCharacters: 2_000,
+            toolSchemaCharacters: 1_000,
             budgets: SubagentBudgets(),
             toolEnabled: false,
             resolvedContextWindow: 65_536
         )
-        #expect(toolLess?.contextPositions == 8_492)
+        #expect(toolLess?.contextPositions == 5_521)
+
+        // A bigger composed prompt raises the priced reservation — the
+        // contract tracks the ACTUAL prompt, not an allowance.
+        let bigPrompt = DelegatedRunContract.derive(
+            seedCharacters: 800,
+            systemPromptCharacters: 40_000,
+            toolSchemaCharacters: 1_000,
+            budgets: SubagentBudgets(),
+            toolEnabled: true,
+            resolvedContextWindow: 65_536
+        )
+        // 40,000 chars → 15,000 tokens: 300 + 15,000 + 375 + 12,288 = 27,963.
+        #expect(bigPrompt?.contextPositions == 27_963)
 
         // A small resolved window (user cap / small bundle) tightens further.
         let smallWindow = DelegatedRunContract.derive(
             seedCharacters: 800,
+            systemPromptCharacters: 2_000,
+            toolSchemaCharacters: 1_000,
             budgets: SubagentBudgets(),
             toolEnabled: true,
             resolvedContextWindow: 8_192
@@ -381,12 +403,14 @@ struct SubagentAdmission16GBRegressionTests {
         // Un-normalized budgets are clamped before derivation.
         let wild = DelegatedRunContract.derive(
             seedCharacters: 0,
+            systemPromptCharacters: 0,
+            toolSchemaCharacters: 0,
             budgets: SubagentBudgets(maxDelegateTokens: 999_999, maxDelegateTurns: 99),
             toolEnabled: false,
             resolvedContextWindow: 1_000_000
         )
-        // tokens clamp to 32,768, turns to 8 → 4096 + 8×32768 = 266,240.
-        #expect(wild?.contextPositions == 266_240)
+        // tokens clamp to 32,768, turns to 8 → 8×32,768 = 262,144.
+        #expect(wild?.contextPositions == 262_144)
         #expect(wild?.responseTokens == 32_768)
         #expect(wild?.assistantTurns == 8)
     }
@@ -398,6 +422,8 @@ struct SubagentAdmission16GBRegressionTests {
         #expect(
             DelegatedRunContract.derive(
                 seedCharacters: Int.max,
+                systemPromptCharacters: 0,
+                toolSchemaCharacters: 0,
                 budgets: SubagentBudgets(),
                 toolEnabled: true,
                 resolvedContextWindow: 65_536
@@ -405,6 +431,26 @@ struct SubagentAdmission16GBRegressionTests {
         #expect(
             DelegatedRunContract.derive(
                 seedCharacters: 800,
+                systemPromptCharacters: Int.max,
+                toolSchemaCharacters: 0,
+                budgets: SubagentBudgets(),
+                toolEnabled: true,
+                resolvedContextWindow: 65_536
+            ) == nil, "system-prompt overflow must fail closed")
+        #expect(
+            DelegatedRunContract.derive(
+                seedCharacters: 800,
+                systemPromptCharacters: 0,
+                toolSchemaCharacters: Int.max,
+                budgets: SubagentBudgets(),
+                toolEnabled: true,
+                resolvedContextWindow: 65_536
+            ) == nil, "tool-schema overflow must fail closed")
+        #expect(
+            DelegatedRunContract.derive(
+                seedCharacters: 800,
+                systemPromptCharacters: 0,
+                toolSchemaCharacters: 0,
                 budgets: SubagentBudgets(),
                 toolEnabled: true,
                 resolvedContextWindow: 0
@@ -412,6 +458,8 @@ struct SubagentAdmission16GBRegressionTests {
         #expect(
             DelegatedRunContract.derive(
                 seedCharacters: 800,
+                systemPromptCharacters: 0,
+                toolSchemaCharacters: 0,
                 budgets: SubagentBudgets(),
                 toolEnabled: true,
                 resolvedContextWindow: -5

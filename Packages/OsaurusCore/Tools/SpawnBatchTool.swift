@@ -1599,14 +1599,13 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         // Bounded pricing only when EVERY local job supplies an estimate;
         // one unknown job reverts the whole wave to the conservative
         // cap-priced charge (a wave must never be under-priced by its
-        // cheapest member). The wave uses the most expensive job's bounds.
-        let jobEstimates = localJobs.map { $0.run.kind.admissionRequestEstimate() }
-        let waveEstimate: SubagentChildRequestEstimate? =
-            jobEstimates.allSatisfy { $0 != nil } && !jobEstimates.isEmpty
-            ? SubagentChildRequestEstimate(
-                seedCharacters: jobEstimates.compactMap { $0?.seedCharacters }.max(),
-                maxOutputTokens: jobEstimates.compactMap { $0?.maxOutputTokens }.max())
-            : nil
+        // cheapest member). Each job's safe position budget is resolved
+        // independently — including a delegated job's enforced ceiling —
+        // and the wave is priced at the MAXIMUM per-child bound (see
+        // `SubagentChildRequestEstimate.waveEnvelope`).
+        let waveEstimate = SubagentChildRequestEstimate.waveEnvelope(
+            of: localJobs.map { $0.run.kind.admissionRequestEstimate() }
+        )
         let memoryFacts: SubagentBatchMemoryFacts?
         if let residencyPlan {
             memoryFacts = await ModelRuntime.shared.subagentBatchMemoryFacts(

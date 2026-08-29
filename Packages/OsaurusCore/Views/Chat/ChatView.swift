@@ -722,6 +722,14 @@ final class ChatSession: ObservableObject {
         /// lifecycle `refreshContextEstimates()` tasks so a test can pin the
         /// pre-send reconcile as the sole prompt-shape change consumer.
         private var suppressLifecycleContextRefreshForTests = false
+
+        /// Detach this session from the SHARED `ModelPickerItemCache.$items`
+        /// subscription so a test can install its own picker items without
+        /// the process-global cache snapshot clobbering them. Isolation
+        /// seam only — production sessions must keep tracking the cache.
+        func detachPickerCacheForTesting() {
+            modelCacheCancellable = nil
+        }
     #endif
 
     init() {

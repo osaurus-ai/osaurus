@@ -572,11 +572,18 @@ final class TextSubagentKind:
             // Same window resolution the dispatched chat session performs —
             // bundle window ∩ user context-length cap — tightened into the
             // enforced delegated contract. `agentToolSpecs`/`toolAccess`
-            // are resolved above, so the tool posture is the real one.
+            // are resolved above, so the tool posture is the real one, and
+            // the prompt/tool reservations are MEASURED from the target
+            // agent's actual persona and the exact encoded tool schemas
+            // the child will carry — no fixed overhead guess.
             let window = await AgentLoopBudget.resolveContextWindow(
                 modelId: resolved.model)
+            let encodedToolSchemas =
+                (try? JSONEncoder().encode(agentToolSpecs)).map(\.count) ?? 0
             self.delegatedContract = DelegatedRunContract.derive(
                 seedCharacters: input.count,
+                systemPromptCharacters: agent.systemPrompt.count,
+                toolSchemaCharacters: encodedToolSchemas,
                 budgets: budgets,
                 toolEnabled: !agentToolSpecs.isEmpty || toolAccess != .none,
                 resolvedContextWindow: window
