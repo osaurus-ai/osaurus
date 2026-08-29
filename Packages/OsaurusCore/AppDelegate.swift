@@ -2078,13 +2078,11 @@ extension AppDelegate {
 
     @MainActor
     fileprivate func handlePluginsInstallDeepLink(_ url: URL) {
-        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        let toolId = components?.queryItems?
-            .first(where: { $0.name.lowercased() == "tool" })?.value?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        ManagementStateManager.shared.pendingPluginDetailId = (toolId?.isEmpty == false) ? toolId : nil
-        showManagementWindow(initialTab: .plugins)
+        // The standalone Plugins section was retired; native plugins now live
+        // under Tools → Native Plugins, so route plugin-install deep links
+        // there.
+        ManagementStateManager.shared.pendingToolsSubTab = ToolsTab.nativePlugins.rawValue
+        showManagementWindow(initialTab: .tools)
     }
 
     fileprivate func handleHuggingFaceDeepLink(_ url: URL) {

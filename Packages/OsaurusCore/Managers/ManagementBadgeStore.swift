@@ -139,7 +139,6 @@ public final class ManagementBadgeStore: ObservableObject {
         var counts: [ManagementTab: Int] = [:]
         counts[.providers] =
             RemoteProviderManager.shared.providerStates.values.filter(\.isConnected).count
-        counts[.plugins] = PluginRepositoryService.shared.plugins.filter { $0.isInstalled }.count
         counts[.sandbox] = SandboxPluginLibrary.shared.plugins.count
         counts[.tools] = ToolRegistry.shared.toolCount
         counts[.skills] = SkillManager.shared.skills.count
@@ -165,9 +164,6 @@ public final class ManagementBadgeStore: ObservableObject {
         }
 
         var highlights: Set<ManagementTab> = []
-        if PluginRepositoryService.shared.updatesAvailableCount > 0 {
-            highlights.insert(.plugins)
-        }
         if snapshot.highlights.contains(.identity) {
             highlights.insert(.identity)
         }

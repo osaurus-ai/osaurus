@@ -41,7 +41,7 @@ public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
             [.settings, .chat, .voice, .themes, .credits, .identity, .permissions, .privacy]
         case .models: [.models, .providers, .imageGeneration]
         case .agents: [.orchestrator, .agents, .agentChannels]
-        case .capabilities: [.search, .knowledge, .memory, .plugins, .tools, .skills, .commands]
+        case .capabilities: [.search, .knowledge, .memory, .tools, .skills, .commands]
         case .automation: [.schedules, .watchers, .computerUse, .browser]
         case .developers: [.server, .sandbox, .insights]
         }
@@ -68,7 +68,6 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case search
     case skills
     case commands
-    case plugins
     case schedules
     case watchers
     case sandbox
@@ -95,7 +94,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
             .general
         case .models, .providers, .imageGeneration: .models
         case .orchestrator, .agents, .agentChannels: .agents
-        case .search, .knowledge, .memory, .plugins, .tools, .skills, .commands: .capabilities
+        case .search, .knowledge, .memory, .tools, .skills, .commands: .capabilities
         case .schedules, .watchers, .computerUse, .browser: .automation
         case .server, .sandbox, .insights: .developers
         }
@@ -120,7 +119,6 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .providers: "cloud.fill"
         case .agents: "person.2.fill"
         case .agentChannels: "bubble.left.and.bubble.right.fill"
-        case .plugins: "puzzlepiece.extension.fill"
         case .sandbox: "shippingbox.fill"
         case .tools: "wrench.and.screwdriver.fill"
         case .search: "globe"
@@ -153,7 +151,6 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .providers: L("Cloud Models")
         case .agents: L("Agents")
         case .agentChannels: L("Channels")
-        case .plugins: L("Plugins")
         case .sandbox: L("Sandbox")
         case .tools: L("Tools")
         case .search: L("Web Search")

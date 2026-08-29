@@ -461,7 +461,7 @@ struct PluginsView: View {
             managementState.pendingPluginDetailId = nil
             AppDelegate.shared?.showManagementWindow(
                 initialTab: PluginManager.nativeSettingsTab(forSupersededPlugin: pluginId)
-                    ?? .plugins
+                    ?? .tools
             )
             return
         }

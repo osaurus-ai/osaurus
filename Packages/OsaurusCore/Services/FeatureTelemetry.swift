@@ -392,7 +392,6 @@ enum FeatureTelemetry {
         case .search: return "search"
         case .skills: return "skills"
         case .commands: return "commands"
-        case .plugins: return "plugins"
         case .schedules: return "schedules"
         case .watchers: return "watchers"
         case .sandbox: return "sandbox"
