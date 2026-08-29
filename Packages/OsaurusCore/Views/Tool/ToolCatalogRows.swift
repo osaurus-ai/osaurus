@@ -25,7 +25,7 @@ enum ToolPolicyStyle {
 
     static func color(for policy: ToolPermissionPolicy, theme: ThemeProtocol) -> Color {
         switch policy {
-        case .auto: theme.accentColor
+        case .auto: theme.successColor
         case .ask: .orange
         case .deny: theme.errorColor
         }
