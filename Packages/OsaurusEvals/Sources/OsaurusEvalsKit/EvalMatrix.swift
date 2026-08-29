@@ -80,34 +80,44 @@ public struct EvalMatrixAgentLoopDiagnostics: Sendable, Codable, Equatable {
 public struct EvalMatrixCacheTotals: Sendable, Codable, Equatable {
     public let kvPrefixHits: Int?
     public let kvPrefixMisses: Int?
+    public let pagedEvictions: Int?
     public let ssmCompanionHits: Int?
+    public let ssmCompanionMisses: Int?
     public let ssmCompanionReDerives: Int?
     public let diskL2Hits: Int?
     public let diskL2Misses: Int?
     public let diskL2Stores: Int?
+    public let diskL2Evictions: Int?
 
     public init(
         kvPrefixHits: Int? = nil,
         kvPrefixMisses: Int? = nil,
+        pagedEvictions: Int? = nil,
         ssmCompanionHits: Int? = nil,
+        ssmCompanionMisses: Int? = nil,
         ssmCompanionReDerives: Int? = nil,
         diskL2Hits: Int? = nil,
         diskL2Misses: Int? = nil,
-        diskL2Stores: Int? = nil
+        diskL2Stores: Int? = nil,
+        diskL2Evictions: Int? = nil
     ) {
         self.kvPrefixHits = kvPrefixHits
         self.kvPrefixMisses = kvPrefixMisses
+        self.pagedEvictions = pagedEvictions
         self.ssmCompanionHits = ssmCompanionHits
+        self.ssmCompanionMisses = ssmCompanionMisses
         self.ssmCompanionReDerives = ssmCompanionReDerives
         self.diskL2Hits = diskL2Hits
         self.diskL2Misses = diskL2Misses
         self.diskL2Stores = diskL2Stores
+        self.diskL2Evictions = diskL2Evictions
     }
 
     public var isEmpty: Bool {
-        kvPrefixHits == nil && kvPrefixMisses == nil
-            && ssmCompanionHits == nil && ssmCompanionReDerives == nil
-            && diskL2Hits == nil && diskL2Misses == nil && diskL2Stores == nil
+        kvPrefixHits == nil && kvPrefixMisses == nil && pagedEvictions == nil
+            && ssmCompanionHits == nil && ssmCompanionMisses == nil
+            && ssmCompanionReDerives == nil && diskL2Hits == nil
+            && diskL2Misses == nil && diskL2Stores == nil && diskL2Evictions == nil
     }
 }
 
@@ -549,12 +559,19 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
                     parts.append(
                         "KV hit/miss \(formatPair(c.kvPrefixHits, c.kvPrefixMisses))"
                     )
+                    parts.append("paged evictions \(c.pagedEvictions.map(String.init) ?? "—")")
                     parts.append(
-                        "SSM hit/rederive \(formatPair(c.ssmCompanionHits, c.ssmCompanionReDerives))"
+                        "SSM hit/miss/rederive "
+                            + formatTriple(
+                                c.ssmCompanionHits,
+                                c.ssmCompanionMisses,
+                                c.ssmCompanionReDerives
+                            )
                     )
                     parts.append(
                         "L2 hit/miss/store \(formatTriple(c.diskL2Hits, c.diskL2Misses, c.diskL2Stores))"
                     )
+                    parts.append("L2 evictions \(c.diskL2Evictions.map(String.init) ?? "—")")
                 }
                 if let m = col.mtpTotals {
                     parts.append(
@@ -922,11 +939,14 @@ public enum EvalMatrixBuilder {
             let cacheTotalsCandidate = EvalMatrixCacheTotals(
                 kvPrefixHits: sumIfMeasured(telem.map(\.kvPrefixHitsDelta)),
                 kvPrefixMisses: sumIfMeasured(telem.map(\.kvPrefixMissesDelta)),
+                pagedEvictions: sumIfMeasured(telem.map(\.pagedEvictionsDelta)),
                 ssmCompanionHits: sumIfMeasured(telem.map(\.ssmCompanionHitsDelta)),
+                ssmCompanionMisses: sumIfMeasured(telem.map(\.ssmCompanionMissesDelta)),
                 ssmCompanionReDerives: sumIfMeasured(telem.map(\.ssmCompanionReDerivesDelta)),
                 diskL2Hits: sumIfMeasured(telem.map(\.diskL2HitsDelta)),
                 diskL2Misses: sumIfMeasured(telem.map(\.diskL2MissesDelta)),
-                diskL2Stores: sumIfMeasured(telem.map(\.diskL2StoresDelta))
+                diskL2Stores: sumIfMeasured(telem.map(\.diskL2StoresDelta)),
+                diskL2Evictions: sumIfMeasured(telem.map(\.diskL2EvictionsDelta))
             )
             let cacheTotals = cacheTotalsCandidate.isEmpty ? nil : cacheTotalsCandidate
             let mtpTotalsCandidate = EvalMatrixMTPTotals(

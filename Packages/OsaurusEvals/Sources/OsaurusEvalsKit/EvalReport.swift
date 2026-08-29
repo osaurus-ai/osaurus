@@ -103,10 +103,16 @@ public struct EvalCaseTelemetry: Sendable, Codable {
     /// KV prefix-cache misses gained during this case — pairs with hits
     /// to show whether later iterations reused or re-prefilled.
     public let kvPrefixMissesDelta: Int?
+    /// Paged-KV boundaries evicted during this case. A non-zero value is not
+    /// itself a failure, but omitting it can make an apparent prefix-hit win
+    /// hide cache churn on long or concurrent runs.
+    public let pagedEvictionsDelta: Int?
     /// SSM-companion cache hits gained during this case — the cache-reuse
     /// signal for hybrid SSM models (Qwen-style), where a KV-prefix hit
     /// alone is not sufficient proof (per AGENTS.md cache-proof rules).
     public let ssmCompanionHitsDelta: Int?
+    /// SSM-companion lookups that missed during this case.
+    public let ssmCompanionMissesDelta: Int?
     /// SSM-companion re-derivations gained during this case. A re-derive
     /// is the SSM analog of a cold prefill; rising re-derives with flat
     /// hits means the companion cache isn't being reused.
@@ -124,6 +130,8 @@ public struct EvalCaseTelemetry: Sendable, Codable {
     /// Disk-L2 KV-cache stores gained during this case — proves the disk
     /// lane is actively persisting prefixes for later reuse.
     public let diskL2StoresDelta: Int?
+    /// Disk-L2 boundaries removed by quota enforcement during this case.
+    public let diskL2EvictionsDelta: Int?
     /// The `--mtp` control this run was executed under (`off`/`auto`/`dN`),
     /// echoed onto every agent-loop row so a report is self-describing.
     /// nil = no explicit control (process default resolution).
@@ -169,11 +177,14 @@ public struct EvalCaseTelemetry: Sendable, Codable {
         peakCpuPercent: Double? = nil,
         kvPrefixHitsDelta: Int? = nil,
         kvPrefixMissesDelta: Int? = nil,
+        pagedEvictionsDelta: Int? = nil,
         ssmCompanionHitsDelta: Int? = nil,
+        ssmCompanionMissesDelta: Int? = nil,
         ssmCompanionReDerivesDelta: Int? = nil,
         diskL2HitsDelta: Int? = nil,
         diskL2MissesDelta: Int? = nil,
         diskL2StoresDelta: Int? = nil,
+        diskL2EvictionsDelta: Int? = nil,
         mtpRequested: String? = nil,
         mtpLoadStatus: String? = nil,
         mtpRequestStrategy: String? = nil,
@@ -203,11 +214,14 @@ public struct EvalCaseTelemetry: Sendable, Codable {
         self.peakCpuPercent = peakCpuPercent
         self.kvPrefixHitsDelta = kvPrefixHitsDelta
         self.kvPrefixMissesDelta = kvPrefixMissesDelta
+        self.pagedEvictionsDelta = pagedEvictionsDelta
         self.ssmCompanionHitsDelta = ssmCompanionHitsDelta
+        self.ssmCompanionMissesDelta = ssmCompanionMissesDelta
         self.ssmCompanionReDerivesDelta = ssmCompanionReDerivesDelta
         self.diskL2HitsDelta = diskL2HitsDelta
         self.diskL2MissesDelta = diskL2MissesDelta
         self.diskL2StoresDelta = diskL2StoresDelta
+        self.diskL2EvictionsDelta = diskL2EvictionsDelta
         self.mtpRequested = mtpRequested
         self.mtpLoadStatus = mtpLoadStatus
         self.mtpRequestStrategy = mtpRequestStrategy
@@ -231,9 +245,11 @@ public struct EvalCaseTelemetry: Sendable, Codable {
             && totalModelTokens == nil && modelSteps == nil
             && peakPhysFootprintMb == nil && meanCpuPercent == nil
             && peakCpuPercent == nil && kvPrefixHitsDelta == nil
-            && kvPrefixMissesDelta == nil && ssmCompanionHitsDelta == nil
+            && kvPrefixMissesDelta == nil && pagedEvictionsDelta == nil
+            && ssmCompanionHitsDelta == nil && ssmCompanionMissesDelta == nil
             && ssmCompanionReDerivesDelta == nil && diskL2HitsDelta == nil
             && diskL2MissesDelta == nil && diskL2StoresDelta == nil
+            && diskL2EvictionsDelta == nil
             && mtpRequested == nil && mtpLoadStatus == nil
             && mtpRequestStrategy == nil
             && mtpDepth == nil && mtpActiveDepth == nil
@@ -884,14 +900,19 @@ public struct EvalReport: Sendable, Codable {
             let misses = t.kvPrefixMissesDelta ?? 0
             parts.append("KV +\(hits)hit/+\(misses)miss")
         }
+        if let evictions = t.pagedEvictionsDelta, evictions != 0 {
+            parts.append("paged +\(evictions)evict")
+        }
         if let ssmHits = t.ssmCompanionHitsDelta {
+            let misses = t.ssmCompanionMissesDelta ?? 0
             let red = t.ssmCompanionReDerivesDelta ?? 0
-            parts.append("SSM +\(ssmHits)hit/+\(red)rederive")
+            parts.append("SSM +\(ssmHits)hit/+\(misses)miss/+\(red)rederive")
         }
         if let l2Hits = t.diskL2HitsDelta {
             let stores = t.diskL2StoresDelta ?? 0
-            if l2Hits != 0 || stores != 0 {
-                parts.append("L2 +\(l2Hits)hit/+\(stores)store")
+            let evictions = t.diskL2EvictionsDelta ?? 0
+            if l2Hits != 0 || stores != 0 || evictions != 0 {
+                parts.append("L2 +\(l2Hits)hit/+\(stores)store/+\(evictions)evict")
             }
         }
         if let prompt = t.promptTokensTotal {
@@ -1000,15 +1021,30 @@ public struct EvalReport: Sendable, Codable {
         }
         let kvHits = telemetered.compactMap(\.kvPrefixHitsDelta).reduce(0, +)
         let kvMisses = telemetered.compactMap(\.kvPrefixMissesDelta).reduce(0, +)
-        if kvHits != 0 || kvMisses != 0 {
-            lines.append("  KV prefix      +\(kvHits) hits  +\(kvMisses) misses (suite-wide delta)")
+        let pagedEvictions = telemetered.compactMap(\.pagedEvictionsDelta).reduce(0, +)
+        if kvHits != 0 || kvMisses != 0 || pagedEvictions != 0 {
+            lines.append(
+                "  KV prefix      +\(kvHits) hits  +\(kvMisses) misses  "
+                    + "+\(pagedEvictions) paged evictions (suite-wide delta)"
+            )
+        }
+        let ssmHits = telemetered.compactMap(\.ssmCompanionHitsDelta).reduce(0, +)
+        let ssmMisses = telemetered.compactMap(\.ssmCompanionMissesDelta).reduce(0, +)
+        let ssmReDerives = telemetered.compactMap(\.ssmCompanionReDerivesDelta).reduce(0, +)
+        if ssmHits != 0 || ssmMisses != 0 || ssmReDerives != 0 {
+            lines.append(
+                "  SSM companion  +\(ssmHits) hits  +\(ssmMisses) misses  "
+                    + "+\(ssmReDerives) rederives (suite-wide delta)"
+            )
         }
         let l2Hits = telemetered.compactMap(\.diskL2HitsDelta).reduce(0, +)
         let l2Misses = telemetered.compactMap(\.diskL2MissesDelta).reduce(0, +)
         let l2Stores = telemetered.compactMap(\.diskL2StoresDelta).reduce(0, +)
-        if l2Hits != 0 || l2Misses != 0 || l2Stores != 0 {
+        let l2Evictions = telemetered.compactMap(\.diskL2EvictionsDelta).reduce(0, +)
+        if l2Hits != 0 || l2Misses != 0 || l2Stores != 0 || l2Evictions != 0 {
             lines.append(
-                "  KV disk-L2     +\(l2Hits) hits  +\(l2Misses) misses  +\(l2Stores) stores (suite-wide delta)"
+                "  KV disk-L2     +\(l2Hits) hits  +\(l2Misses) misses  "
+                    + "+\(l2Stores) stores  +\(l2Evictions) evictions (suite-wide delta)"
             )
         }
         return lines

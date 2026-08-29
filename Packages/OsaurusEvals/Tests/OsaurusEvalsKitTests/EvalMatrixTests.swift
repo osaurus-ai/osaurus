@@ -450,11 +450,14 @@ struct EvalMatrixTests {
                     loopRecoveryRetries: 0,
                     kvPrefixHitsDelta: 3,
                     kvPrefixMissesDelta: 1,
+                    pagedEvictionsDelta: 2,
                     ssmCompanionHitsDelta: 4,
+                    ssmCompanionMissesDelta: 3,
                     ssmCompanionReDerivesDelta: 2,
                     diskL2HitsDelta: 5,
                     diskL2MissesDelta: 6,
                     diskL2StoresDelta: 7,
+                    diskL2EvictionsDelta: 4,
                     mtpVerifyCalls: 8,
                     mtpAcceptedDraftTokens: 9,
                     mtpBonusTokens: 10,
@@ -472,11 +475,14 @@ struct EvalMatrixTests {
                     loopRecoveryRetries: 2,
                     kvPrefixHitsDelta: 13,
                     kvPrefixMissesDelta: 0,
+                    pagedEvictionsDelta: 5,
                     ssmCompanionHitsDelta: 14,
+                    ssmCompanionMissesDelta: 6,
                     ssmCompanionReDerivesDelta: 1,
                     diskL2HitsDelta: 15,
                     diskL2MissesDelta: 0,
                     diskL2StoresDelta: 16,
+                    diskL2EvictionsDelta: 7,
                     mtpVerifyCalls: 17,
                     mtpAcceptedDraftTokens: 18,
                     mtpBonusTokens: 19,
@@ -502,11 +508,14 @@ struct EvalMatrixTests {
         #expect(col.agentLoopDiagnostics?.recoveryRetriesTotal == 2)
         #expect(col.cacheTotals?.kvPrefixHits == 16)
         #expect(col.cacheTotals?.kvPrefixMisses == 1)
+        #expect(col.cacheTotals?.pagedEvictions == 7)
         #expect(col.cacheTotals?.ssmCompanionHits == 18)
+        #expect(col.cacheTotals?.ssmCompanionMisses == 9)
         #expect(col.cacheTotals?.ssmCompanionReDerives == 3)
         #expect(col.cacheTotals?.diskL2Hits == 20)
         #expect(col.cacheTotals?.diskL2Misses == 6)
         #expect(col.cacheTotals?.diskL2Stores == 23)
+        #expect(col.cacheTotals?.diskL2Evictions == 11)
         #expect(col.mtpTotals?.stepsWithMTP == 5)
         #expect(col.mtpTotals?.verifyCalls == 25)
         #expect(col.mtpTotals?.acceptedDraftTokens == 27)
@@ -525,6 +534,9 @@ struct EvalMatrixTests {
         #expect(markdown.contains("## Agent Loop Termination"))
         #expect(markdown.contains("iterationCapReached=1"))
         #expect(markdown.contains("KV hit/miss 16/1"))
+        #expect(markdown.contains("paged evictions 7"))
+        #expect(markdown.contains("SSM hit/miss/rederive 18/9/3"))
+        #expect(markdown.contains("L2 evictions 11"))
         #expect(markdown.contains("MTP steps/verify/accepted/rejected/AR 5/25/27/31/33"))
     }
 

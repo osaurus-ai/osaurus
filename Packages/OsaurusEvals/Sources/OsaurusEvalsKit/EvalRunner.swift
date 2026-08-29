@@ -520,19 +520,25 @@ public enum EvalRunner {
     ) -> EvalCaseReport {
         var hitsDelta: Int?
         var missesDelta: Int?
+        var pagedEvictionsDelta: Int?
         var ssmHitsDelta: Int?
+        var ssmMissesDelta: Int?
         var ssmReDerivesDelta: Int?
         var diskL2HitsDelta: Int?
         var diskL2MissesDelta: Int?
         var diskL2StoresDelta: Int?
+        var diskL2EvictionsDelta: Int?
         if let before = kvBefore, let after = kvAfter {
             hitsDelta = after.prefixHits - before.prefixHits
             missesDelta = after.prefixMisses - before.prefixMisses
+            pagedEvictionsDelta = after.pagedEvictions - before.pagedEvictions
             ssmHitsDelta = after.ssmCompanionHits - before.ssmCompanionHits
+            ssmMissesDelta = after.ssmCompanionMisses - before.ssmCompanionMisses
             ssmReDerivesDelta = after.ssmCompanionReDerives - before.ssmCompanionReDerives
             diskL2HitsDelta = after.diskL2Hits - before.diskL2Hits
             diskL2MissesDelta = after.diskL2Misses - before.diskL2Misses
             diskL2StoresDelta = after.diskL2Stores - before.diskL2Stores
+            diskL2EvictionsDelta = after.diskL2Evictions - before.diskL2Evictions
         }
         let existing = row.telemetry
         let merged = EvalCaseTelemetry(
@@ -557,11 +563,14 @@ public enum EvalRunner {
             peakCpuPercent: sample.peakCpuPercent,
             kvPrefixHitsDelta: hitsDelta,
             kvPrefixMissesDelta: missesDelta,
+            pagedEvictionsDelta: pagedEvictionsDelta,
             ssmCompanionHitsDelta: ssmHitsDelta,
+            ssmCompanionMissesDelta: ssmMissesDelta,
             ssmCompanionReDerivesDelta: ssmReDerivesDelta,
             diskL2HitsDelta: diskL2HitsDelta,
             diskL2MissesDelta: diskL2MissesDelta,
             diskL2StoresDelta: diskL2StoresDelta,
+            diskL2EvictionsDelta: diskL2EvictionsDelta,
             mtpRequested: existing?.mtpRequested,
             mtpLoadStatus: existing?.mtpLoadStatus,
             mtpRequestStrategy: existing?.mtpRequestStrategy,

@@ -112,6 +112,35 @@ struct ContextAttributionReportTests {
         #expect(merged.telemetry?.peakPhysFootprintMb == 1024)
     }
 
+    @Test @MainActor func resourceTelemetryMergePreservesCacheChurnCounters() {
+        func snapshot(
+            paged: Int,
+            ssmMisses: Int,
+            diskEvictions: Int
+        ) -> BatchDiagnosticsSnapshot {
+            BatchDiagnosticsSnapshot(
+                pendingCount: 0,
+                activeCount: 0,
+                activeHighWatermark: 0,
+                decodeSplitCount: 0,
+                turboQuantCompressions: 0,
+                isAcceptingRequests: true,
+                pagedEvictions: paged,
+                ssmCompanionMisses: ssmMisses,
+                diskL2Evictions: diskEvictions
+            )
+        }
+        let merged = EvalRunner.mergeResourceTelemetry(
+            into: caseReport(id: "agent_loop.cache", context: nil),
+            sample: ResourceSample(peakPhysFootprintMb: 1, meanCpuPercent: 1, peakCpuPercent: 1),
+            kvBefore: snapshot(paged: 2, ssmMisses: 3, diskEvictions: 4),
+            kvAfter: snapshot(paged: 7, ssmMisses: 11, diskEvictions: 13)
+        )
+        #expect(merged.telemetry?.pagedEvictionsDelta == 5)
+        #expect(merged.telemetry?.ssmCompanionMissesDelta == 8)
+        #expect(merged.telemetry?.diskL2EvictionsDelta == 9)
+    }
+
     @Test func mergedTrialsKeepAttribution() {
         let ctx = attribution(sections: [("platform", 100)], firstStep: 130)
         let trials = [
