@@ -174,6 +174,88 @@ struct SubagentAdmission16GBRegressionTests {
         #expect(sysAdmin == research)
     }
 
+    /// SEQUENTIAL reporter shape: child 1 materializes mmap-backed weights and
+    /// file-cache pages, then child 2 rechecks RAM safety. The obsolete
+    /// free+inactive+purgeable-only reading can fall below the fixed OS reserve
+    /// and reject child 2 even though those ACTIVE file-backed pages are
+    /// reclaimable. The shared host estimator keeps both decisions identical,
+    /// and releasing child 1 leaves no admission slot behind.
+    @Test("active file cache does not collapse second-child capacity")
+    func activeFileCacheDoesNotRejectSecondChild() async {
+        let page: Int64 = 16 << 10
+        let sharedAvailable = ChatResidencyHandoff.reclaimableMemoryBytes(
+            physicalBytes: Int64(16 * gib),
+            pageSize: page,
+            wiredPages: Int64(2 * gib) / page,
+            compressorPages: Int64(1 * gib) / page,
+            internalPages: Int64(4 * gib) / page,
+            purgeablePages: Int64(1 * gib) / page
+        )
+        #expect(sharedAvailable == Int64(10 * gib))
+
+        let legacyAfterFirstChild = SubagentBatchMemoryFacts(
+            canonicalModelKey: "osaurusai/gemma-4-e2b-it-qat",
+            targetAlreadyResident: true,
+            targetLoadFootprintBytes: 3 * gib,
+            perActiveChildHeadroomBytes: 4 * gib,
+            requestBoundedChildHeadroomBytes: 400 * mib,
+            reclaimableBytes: 2500 * mib,
+            releasableParentBytes: 0,
+            resolvedLoadBudgetBytes: 13 * gib,
+            osHeadroomBytes: 3 * gib
+        )
+        let legacyPlan = SubagentBatchAdmissionPlanner.plan(
+            input(local: 1, memory: legacyAfterFirstChild)
+        )
+        #expect(legacyPlan.verdict == .rejected(.insufficientMemory))
+        #expect(legacyPlan.ramSlots == 0)
+
+        let correctedFacts = SubagentBatchMemoryFacts(
+            canonicalModelKey: legacyAfterFirstChild.canonicalModelKey,
+            targetAlreadyResident: true,
+            targetLoadFootprintBytes: 3 * gib,
+            perActiveChildHeadroomBytes: 4 * gib,
+            requestBoundedChildHeadroomBytes: 400 * mib,
+            reclaimableBytes: UInt64(sharedAvailable),
+            releasableParentBytes: 0,
+            resolvedLoadBudgetBytes: 13 * gib,
+            osHeadroomBytes: 3 * gib
+        )
+        let firstPlan = SubagentBatchAdmissionPlanner.plan(
+            input(local: 1, memory: correctedFacts)
+        )
+        #expect(firstPlan.verdict == .admitted)
+
+        let gate = SubagentAdmission(pollNanoseconds: 1_000_000)
+        let first = await gate.reserveLocalInPlace(
+            modelKey: correctedFacts.canonicalModelKey,
+            requestedSlots: 1,
+            slotCapacity: firstPlan.localCapacity
+        )
+        #expect(first == .admitted(slots: 1))
+        await gate.releaseLocalInPlace(
+            modelKey: correctedFacts.canonicalModelKey,
+            slots: 1
+        )
+        #expect(await gate.snapshot().inPlace == 0)
+
+        let secondPlan = SubagentBatchAdmissionPlanner.plan(
+            input(local: 1, memory: correctedFacts)
+        )
+        #expect(secondPlan.verdict == .admitted)
+        let second = await gate.reserveLocalInPlace(
+            modelKey: correctedFacts.canonicalModelKey,
+            requestedSlots: 1,
+            slotCapacity: secondPlan.localCapacity
+        )
+        #expect(second == .admitted(slots: 1))
+        await gate.releaseLocalInPlace(
+            modelKey: correctedFacts.canonicalModelKey,
+            slots: 1
+        )
+        #expect(await gate.snapshot().inPlace == 0)
+    }
+
     /// The bounded-position budget math itself: a 2,048-output child with a
     /// short instruction stays at the 4,096 floor, far below a 64K policy
     /// cap; a huge seed clamps to the cap, never above it; token math

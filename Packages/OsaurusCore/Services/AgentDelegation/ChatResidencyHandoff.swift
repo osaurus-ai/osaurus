@@ -112,26 +112,60 @@ enum ChatResidencyHandoff {
         var errorDescription: String? { description }
     }
 
-    /// Reclaimable physical memory (free + inactive + purgeable) in bytes.
-    /// Inactive + purgeable pages are reclaimed under pressure, so they count
-    /// as practically available for a new resident model.
+    /// Physical memory macOS can reclaim without swapping non-purgeable
+    /// anonymous state. This deliberately matches ModelRuntime's normal-load
+    /// estimator: mmap-backed model/file-cache pages can sit on the ACTIVE
+    /// queue after a child run and are still reclaimable. Counting only
+    /// free+inactive+purgeable made the exact same resident model look as if it
+    /// had lost all child capacity after its first delegated turn.
     static func availableMemoryBytes() -> Int64 {
         var vmInfo = vm_statistics64()
         var count = mach_msg_type_number_t(
-            MemoryLayout<vm_statistics64>.size / MemoryLayout<natural_t>.size
+            MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size
         )
+        let host = mach_host_self()
+        defer { mach_port_deallocate(mach_task_self_, host) }
         let kr = withUnsafeMutablePointer(to: &vmInfo) {
             $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+                host_statistics64(host, HOST_VM_INFO64, $0, &count)
             }
         }
         guard kr == KERN_SUCCESS else { return 0 }
         var rawPage: vm_size_t = 0
-        host_page_size(mach_host_self(), &rawPage)
-        let pageSize = Int64(rawPage)
-        return
-            (Int64(vmInfo.free_count) + Int64(vmInfo.inactive_count)
-            + Int64(vmInfo.purgeable_count)) * pageSize
+        host_page_size(host, &rawPage)
+        return reclaimableMemoryBytes(
+            physicalBytes: Int64(ProcessInfo.processInfo.physicalMemory),
+            pageSize: Int64(rawPage),
+            wiredPages: Int64(vmInfo.wire_count),
+            compressorPages: Int64(vmInfo.compressor_page_count),
+            internalPages: Int64(vmInfo.internal_page_count),
+            purgeablePages: Int64(vmInfo.purgeable_count)
+        )
+    }
+
+    /// Pure arithmetic seam for the shared host estimator. Saturating math is
+    /// fail-closed: malformed/overflowing kernel counters produce zero
+    /// reclaimable bytes rather than an enormous wrapped capacity.
+    static func reclaimableMemoryBytes(
+        physicalBytes: Int64,
+        pageSize: Int64,
+        wiredPages: Int64,
+        compressorPages: Int64,
+        internalPages: Int64,
+        purgeablePages: Int64
+    ) -> Int64 {
+        guard physicalBytes > 0, pageSize > 0 else { return 0 }
+        let nonPurgeableInternal = max(0, internalPages - max(0, purgeablePages))
+        let (first, overflow1) = max(0, wiredPages).addingReportingOverflow(
+            max(0, compressorPages))
+        guard !overflow1 else { return 0 }
+        let (unreclaimablePages, overflow2) = first.addingReportingOverflow(
+            nonPurgeableInternal)
+        guard !overflow2 else { return 0 }
+        let (unreclaimableBytes, overflow3) = unreclaimablePages
+            .multipliedReportingOverflow(by: pageSize)
+        guard !overflow3 else { return 0 }
+        return max(0, physicalBytes - unreclaimableBytes)
     }
 
     /// Refuse-before-evict preflight. With `requiredBytes` (the spawn model's

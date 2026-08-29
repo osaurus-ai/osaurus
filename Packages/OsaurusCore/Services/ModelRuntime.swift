@@ -3273,33 +3273,11 @@ public actor ModelRuntime {
     }
 
     private static func availableMemoryBytes() -> Int64 {
-        var stats = vm_statistics64()
-        var count = mach_msg_type_number_t(
-            MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size
-        )
-        let host = mach_host_self()
-        defer { mach_port_deallocate(mach_task_self_, host) }
-        let result = withUnsafeMutablePointer(to: &stats) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics64(host, HOST_VM_INFO64, $0, &count)
-            }
-        }
-        guard result == KERN_SUCCESS else { return 0 }
-        var rawPageSize: vm_size_t = 0
-        host_page_size(host, &rawPageSize)
-        let pageSize = Int64(rawPageSize)
-        // Count what macOS can NOT reclaim (wired, compressor-resident, and
-        // non-purgeable anonymous pages) and report the rest as available.
-        // Summing free+inactive+speculative queues instead misses the file
-        // cache sitting in the ACTIVE queue — after materializing a ~90 GB
-        // weight pack that is most of physical memory, and the shortfall
-        // guard then refuses a reload on an otherwise idle machine.
-        let unreclaimablePages =
-            Int64(stats.wire_count)
-            + Int64(stats.compressor_page_count)
-            + max(0, Int64(stats.internal_page_count) - Int64(stats.purgeable_count))
-        let physical = Int64(ProcessInfo.processInfo.physicalMemory)
-        return max(0, physical - unreclaimablePages * pageSize)
+        // One host-memory definition for normal loads, residency handoffs,
+        // and subagent admission. Do not duplicate vm_statistics arithmetic:
+        // the old handoff copy drifted and falsely refused sequential children
+        // after ACTIVE mmap/file-cache pages grew during child 1.
+        ChatResidencyHandoff.availableMemoryBytes()
     }
 
     private func residentWeightBytes(excluding excludedName: String? = nil) -> Int64 {

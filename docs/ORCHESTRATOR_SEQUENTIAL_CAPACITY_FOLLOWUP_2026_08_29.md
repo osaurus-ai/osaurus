@@ -239,9 +239,44 @@ Every row must report:
 
 Missing evidence is `PARTIAL` or `BLOCKED`, never an implicit pass.
 
-## Start gate
+## Current investigation checkpoint — 2026-08-29
 
-Do not begin these implementation PRs until Eric explicitly authorizes the
-lane. At start, first reproduce the reporter's second-child failure on 0.24.2
-or an exact-source Release build and freeze the logs before editing. The first
-code change must follow the measured lifecycle boundary, not a hypothesis.
+Eric authorized implementation and live proof. Current source trace found a
+specific estimator drift rather than a hardcoded model-family exception:
+
+- normal `ModelRuntime` load safety was corrected in `6e2c3c705` (2026-08-09)
+  to count ACTIVE mmap/file-cache pages as reclaimable by subtracting wired,
+  compressor-resident, and non-purgeable anonymous pages from physical RAM;
+- `ChatResidencyHandoff.availableMemoryBytes()` retained its older
+  free+inactive+purgeable-only formula from `a29fe877e` (2026-06-23);
+- `ModelRuntime.subagentBatchMemoryFacts()` uses the stale handoff value for
+  `reclaimableBytes`, including the post-admission refresh that emits
+  `stable_memory_refusal`;
+- after child 1 materializes mmap-backed model/cache pages, those pages may be
+  ACTIVE but reclaimable. The old formula can therefore report less than the
+  fixed OS reserve and reduce `ramSlots` to zero for child 2 while the normal
+  loader considers the same pages reclaimable.
+
+The in-progress branch centralizes both call paths on one host estimator and
+adds pure 16 GiB arithmetic plus sequential reserve/release regressions.
+
+Current verification on the frozen source diff:
+
+- 70/70 tests passed across `SubagentAdmission`, `SubagentSession admission`,
+  `Owned subagent operation cancellation`,
+  `ChatResidencyHandoffRestoreTests`, and the 16 GiB regression suite. The log
+  is `/private/tmp/osaurus-sequential-capacity-broad-tests.log`.
+- The isolated pre-fix Release app on this 128 GiB host ran two real sequential
+  Gemma 4 E2B delegated sessions and returned `SEQ_ONE_829` then
+  `SEQ_TWO_829`. The database records separate child sessions, two model/tool
+  iterations per child, and disk-L2 counters; the UI rendered the combined
+  answer at 0.39 s parent TTFT and 106.1 tok/s. Evidence is under
+  `/private/tmp/osaurus-sequential-capacity-evidence-20260829/` and
+  `/private/tmp/osaurus-sequential-before-root-829-20t9ew29/`.
+- This 128 GiB before arm establishes a valid production-path fixture but does
+  not reproduce or disprove the reporter's 16 GiB failure.
+
+Status remains **PARTIAL**, not yet a proven root-cause fix: an exact-head
+Release build, the matching post-fix UI row, and the mandatory real 16 GB
+reporter/hardware row are still required. The existing 128 GB proof cannot
+substitute for the last item.
