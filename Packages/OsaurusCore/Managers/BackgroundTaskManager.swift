@@ -1267,6 +1267,14 @@ public final class BackgroundTaskManager: ObservableObject {
             guard let state = backgroundTasks[id] else { return false }
             return state.chatSession == nil && state.executionContext == nil
         }
+
+        /// Exposes the REAL `createContext` conversion (DispatchRequest →
+        /// ExecutionContext, including the delegation-contract mapping) so
+        /// the full-chain regression can execute the production path
+        /// instead of re-deriving it.
+        func makeContextForTesting(_ request: DispatchRequest) -> ExecutionContext {
+            createContext(for: request)
+        }
     #endif
 
     private func createContext(for request: DispatchRequest) -> ExecutionContext {
@@ -1289,7 +1297,8 @@ public final class BackgroundTaskManager: ObservableObject {
             source: request.source,
             sourcePluginId: request.sourcePluginId,
             externalSessionKey: request.externalSessionKey,
-            loadIntent: request.loadIntent
+            loadIntent: request.loadIntent,
+            delegationBudget: request.delegationContract
         )
     }
 

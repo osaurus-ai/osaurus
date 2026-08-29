@@ -157,18 +157,27 @@ final class TextSubagentKind:
     // Resolved up front in `resolveModel`, read by permission/handoff/run.
     private var resolvedAgentName: String = ""
     private var resolvedAgentId: UUID?
+    /// Delegated targets only: the enforced run contract, derived ONCE during
+    /// `resolveAgentTarget` from the launcher's budgets, the seed, the target
+    /// agent's tool posture, and the context window the dispatched session
+    /// would resolve. `runDelegated` enforces it; `admissionRequestEstimate`
+    /// prices it. Internal (not private) so regression tests can inject a
+    /// contract and assert the estimator prices exactly its ceiling.
+    var delegatedContract: DelegatedRunContract?
     private var systemPrompt: String = ""
     private var budgets = SubagentBudgets()
 
-    /// Bounded RAM-admission pricing facts — ONLY for runs whose execution
-    /// contract the launcher's budgets actually govern.
+    /// Bounded RAM-admission pricing facts — ONLY for ceilings the child's
+    /// execution path actually enforces.
     ///
-    /// A DELEGATED agent target (`runDelegated`) explicitly ignores the
-    /// launcher's `SubagentBudgets` and runs the target agent's normal chat
-    /// loop — its own response allowance, tool iterations, and accumulated
-    /// context. Pricing that from the launcher's `maxDelegateTokens` would
-    /// UNDER-price the child (fail open), so delegated targets return nil
-    /// and keep the conservative model-wide cap pricing.
+    /// A DELEGATED agent target runs a real chat session of the target
+    /// agent, whose enforced ceilings are the `DelegatedRunContract` derived
+    /// at `resolveAgentTarget` time: `runDelegated` hands the contract to
+    /// the dispatched session (`ChatSession.delegationBudget` clamps
+    /// per-generation max tokens, tool-loop turns, and the budget-manager
+    /// context window), and admission prices exactly the contract's
+    /// position ceiling. No contract (resolution failed, or overflow made
+    /// `derive` fail closed) → nil → conservative cap pricing.
     ///
     /// The bare path (`spawn_model`, or an agent target with a model
     /// override) runs `AgentSubagentRunner` with exactly this kind's
@@ -177,12 +186,26 @@ final class TextSubagentKind:
     /// append tool results, so the total context is bounded by
     /// seed + turns × maxDelegateTokens — a genuine ceiling. With tool
     /// access granted, tool-result sizes are unbounded from here, so we
-    /// also return nil rather than guess.
+    /// return nil rather than guess.
     ///
     /// `budgets`/`toolAccess` are resolved during permission/revalidation;
     /// admission runs after preparation, so the resolved values are seen.
     func admissionRequestEstimate() -> SubagentChildRequestEstimate? {
-        guard !isDelegatedAgentTarget else { return nil }
+        if isDelegatedAgentTarget {
+            // Delegated target: price EXACTLY the contract the dispatched
+            // session enforces (`DelegatedRunContract` — response-token,
+            // turn, and context-position ceilings, computed once at
+            // `resolveAgentTarget` time and handed to the session by
+            // `runDelegated`). One value for enforcement and pricing means
+            // the admission charge cannot drift from the run's reality.
+            // nil before resolution — fail closed to cap pricing.
+            guard let contract = delegatedContract else { return nil }
+            return SubagentChildRequestEstimate(
+                seedCharacters: nil,
+                maxOutputTokens: nil,
+                enforcedPositionCeiling: contract.contextPositions
+            )
+        }
         guard toolAccess == .none else { return nil }
         let normalized = budgets.normalized
         let perTurn = normalized.maxDelegateTokens
@@ -545,6 +568,20 @@ final class TextSubagentKind:
             defaultModel: { AgentManager.shared.effectiveModel(for: targetAgentId) }
         )
         self.residencyPlan = resolved.decision.plan
+        if isDelegatedAgentTarget {
+            // Same window resolution the dispatched chat session performs —
+            // bundle window ∩ user context-length cap — tightened into the
+            // enforced delegated contract. `agentToolSpecs`/`toolAccess`
+            // are resolved above, so the tool posture is the real one.
+            let window = await AgentLoopBudget.resolveContextWindow(
+                modelId: resolved.model)
+            self.delegatedContract = DelegatedRunContract.derive(
+                seedCharacters: input.count,
+                budgets: budgets,
+                toolEnabled: !agentToolSpecs.isEmpty || toolAccess != .none,
+                resolvedContextWindow: window
+            )
+        }
         return ResolvedModel(
             name: resolved.model,
             id: resolved.installedModelID,
@@ -1086,10 +1123,12 @@ final class TextSubagentKind:
 
     /// TRUE delegation for production agent targets: dispatch a real
     /// persisted chat session of the target agent and await its terminal
-    /// state. The launcher's turn/tool-call/token `SubagentBudgets` are
-    /// deliberately NOT applied — the child runs the target agent's normal
-    /// chat loop and its own `settings.limits`, which `dispatchChat`
-    /// pre-seeds. Only `maxElapsedSeconds` survives as wall-clock safety.
+    /// state. The child runs the target agent's normal chat loop and its
+    /// own `settings.limits` (which `dispatchChat` pre-seeds), TIGHTENED by
+    /// the enforced `DelegatedRunContract`: the session clamps its
+    /// per-generation max tokens, tool-loop turns, and budget-manager
+    /// context window to the contract admission priced.
+    /// `maxElapsedSeconds` remains the wall-clock safety.
     ///
     /// Memory: the dispatched session IS a real chat session of the target
     /// agent, so its turns flow through the agent's ordinary memory pipeline;
@@ -1113,6 +1152,13 @@ final class TextSubagentKind:
             targetAgentName: resolvedAgentName,
             input: input,
             maxElapsedSeconds: budgets.maxElapsedSeconds,
+            // The enforced delegated contract — the SAME values admission
+            // priced. The dispatched session clamps its per-generation max
+            // tokens, its tool-loop turns, and its budget-manager context
+            // window to these (`ChatSession.delegationBudget`).
+            maxResponseTokens: delegatedContract?.responseTokens,
+            maxAssistantTurns: delegatedContract?.assistantTurns,
+            maxContextPositions: delegatedContract?.contextPositions,
             feed: feed,
             interrupt: interrupt,
             parentSessionId: parentSessionId

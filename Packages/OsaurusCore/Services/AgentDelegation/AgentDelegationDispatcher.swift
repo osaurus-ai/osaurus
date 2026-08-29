@@ -195,6 +195,9 @@ enum AgentDelegationDispatcher {
         targetAgentName: String,
         input: String,
         maxElapsedSeconds: Int,
+        maxResponseTokens: Int? = nil,
+        maxAssistantTurns: Int? = nil,
+        maxContextPositions: Int? = nil,
         feed: SubagentFeed,
         interrupt: InterruptToken,
         parentSessionId: String? = nil
@@ -211,7 +214,13 @@ enum AgentDelegationDispatcher {
             // The orchestrator turn is synchronously waiting on this run
             // (or awaiting its report-back), so its model load carries
             // interactive intent.
-            loadIntent: .interactive
+            loadIntent: .interactive,
+            // Enforced delegation budget: the chat surface clamps its
+            // per-generation max tokens and tool-loop turns to these, and
+            // RAM admission prices the child from the SAME values.
+            delegationResponseTokenCap: maxResponseTokens,
+            delegationContextPositionCap: maxContextPositions,
+            delegationAssistantTurnCap: maxAssistantTurns
         )
 
         // The child is a REAL chat session of the target agent, not a

@@ -214,16 +214,114 @@ struct SubagentAdmission16GBRegressionTests {
                 .boundedPositionBudget(policyCap: 65536) == nil)
     }
 
-    /// CAUSAL: a delegated agent target runs the TARGET agent's chat
-    /// contract (`runDelegated` ignores launcher budgets), so the launcher's
-    /// 2,048-token display limit must NOT price the child — the estimator
-    /// returns nil and admission keeps the conservative cap price. A
-    /// launcher limit of 2K pricing a 16K-capable delegated chat would be
-    /// an under-priced, fail-open admission.
-    @Test("delegated agent target is never priced by launcher budgets")
-    func delegatedAgentTargetNotPricedByLauncher() {
+    /// CAUSAL: a delegated agent target prices ONLY ceilings its execution
+    /// path enforces — the resolved context window captured during model
+    /// resolution. Before resolution no window exists, so the estimator
+    /// fails CLOSED to conservative cap pricing rather than guessing from
+    /// launcher display limits (`runDelegated`'s chat loop historically
+    /// ignored them; pricing an unenforced 2K limit against a 16K-capable
+    /// chat would be a fail-open admission).
+    @Test("unresolved delegated target fails closed to cap pricing")
+    func unresolvedDelegatedTargetFailsClosed() {
         let delegated = TextSubagentKind(agentID: UUID(), input: "audit the disk")
         #expect(delegated.admissionRequestEstimate() == nil)
+    }
+
+    /// The delegated enforced-window contract: an estimate carrying ONLY the
+    /// execution-enforced position ceiling (the resolved context window the
+    /// chat loop trims to) is a complete bound on its own — no seed/output
+    /// pair required — and the policy cap still clamps it.
+    @Test("enforced position ceiling alone is a complete bound")
+    func enforcedCeilingAloneBounds() {
+        let windowOnly = SubagentChildRequestEstimate(
+            seedCharacters: nil, maxOutputTokens: nil,
+            enforcedPositionCeiling: 8192)
+        #expect(windowOnly.boundedPositionBudget(policyCap: 65536) == 8192)
+
+        // The 4096 wrapper/template floor still applies below it.
+        let tiny = SubagentChildRequestEstimate(
+            seedCharacters: nil, maxOutputTokens: nil,
+            enforcedPositionCeiling: 2048)
+        #expect(tiny.boundedPositionBudget(policyCap: 65536) == 4096)
+
+        // Policy cap clamps a huge window down.
+        let huge = SubagentChildRequestEstimate(
+            seedCharacters: nil, maxOutputTokens: nil,
+            enforcedPositionCeiling: 262_144)
+        #expect(huge.boundedPositionBudget(policyCap: 65536) == 65536)
+    }
+
+    /// When BOTH bounds are present (tool-less delegated target: launcher
+    /// budgets enforced by the session clamp AND the resolved window), the
+    /// tighter one wins in each direction.
+    @Test("tighter of budget-bound and enforced window wins")
+    func tighterBoundWins() {
+        // seed+output (≈ 300 + 4096 → floor 4416... under window 32K) wins.
+        let budgetTighter = SubagentChildRequestEstimate(
+            seedCharacters: 800, maxOutputTokens: 4096,
+            enforcedPositionCeiling: 32_768)
+        #expect(budgetTighter.boundedPositionBudget(policyCap: 65536) == 4396)
+
+        // window (8K) tighter than seed+output (22,500 + 10,000) wins.
+        let windowTighter = SubagentChildRequestEstimate(
+            seedCharacters: 60_000, maxOutputTokens: 10_000,
+            enforcedPositionCeiling: 8192)
+        #expect(windowTighter.boundedPositionBudget(policyCap: 65536) == 8192)
+    }
+
+    /// CAUSAL, the reported 16 GiB Gemma flip: the same machine/model facts
+    /// move from the false rejection (cap-priced, no bounded estimate) to
+    /// admission once the child is priced at its ENFORCED window — while a
+    /// genuinely unsafe window-priced child stays refused. This is the
+    /// planner-level statement of "reported configuration flips
+    /// false-refusal → admission; unsafe runs remain refused".
+    @Test("enforced-window pricing flips the reported refusal to admission")
+    func enforcedWindowFlipsRefusalToAdmission() {
+        // Before: cap-priced only → the reported ramSlots == 0 rejection.
+        let before = SubagentBatchAdmissionPlanner.plan(
+            input(
+                local: 1,
+                memory: sixteenGBFacts(
+                    capPricedChildBytes: 4 * gib,
+                    boundedChildBytes: nil
+                )
+            )
+        )
+        guard case .rejected = before.verdict else {
+            Issue.record("expected the unfixed shape to reject, got \(before.verdict)")
+            return
+        }
+
+        // After: the SAME facts with the window-derived bounded price →
+        // admitted with one slot.
+        let after = SubagentBatchAdmissionPlanner.plan(
+            input(
+                local: 1,
+                memory: sixteenGBFacts(
+                    capPricedChildBytes: 4 * gib,
+                    boundedChildBytes: 600 * mib
+                )
+            )
+        )
+        #expect(after.verdict == .admitted)
+        #expect(after.localParallelism == 1)
+
+        // Unsafe control: a window-priced child that genuinely exceeds the
+        // residual is still refused — the bound is a price, not a bypass.
+        let unsafe = SubagentBatchAdmissionPlanner.plan(
+            input(
+                local: 1,
+                memory: sixteenGBFacts(
+                    capPricedChildBytes: 6 * gib,
+                    boundedChildBytes: 4 * gib
+                )
+            )
+        )
+        guard case .rejected(let reason) = unsafe.verdict else {
+            Issue.record("expected unsafe child to stay rejected, got \(unsafe.verdict)")
+            return
+        }
+        #expect(reason == .insufficientMemory)
     }
 
     /// CAUSAL: the bare `spawn_model` path IS governed by launcher budgets
@@ -238,6 +336,207 @@ struct SubagentAdmission16GBRegressionTests {
         #expect(estimate?.seedCharacters == "summarize this".count)
         // Defaults: maxDelegateTokens 2048 × maxDelegateTurns 2.
         #expect(estimate?.maxOutputTokens == 2048 * 2)
+    }
+
+    /// The enforced delegated contract, derived for the REPORTED shape: a
+    /// tool-enabled target agent (SysAdmin has tools) with the default
+    /// launcher budgets (2,048 tokens × 2 turns) against a 64K window.
+    /// The ceiling must land far below the window — seed + 4,096 overhead
+    /// + 2 × (2,048 response + 4,096 tool allowance) — because THIS is the
+    /// number both the session enforces and admission prices. Without it,
+    /// a tool-enabled delegated child collapsed back to cap pricing.
+    @Test("tool-enabled delegated contract stays far below the window")
+    func toolEnabledDelegatedContractBounded() throws {
+        let contract = try #require(
+            DelegatedRunContract.derive(
+                seedCharacters: 800,
+                budgets: SubagentBudgets(),  // defaults: 2048 tokens × 2 turns
+                toolEnabled: true,
+                resolvedContextWindow: 65_536
+            ))
+        // seed 800 chars → 300 tokens; 300 + 4096 + 2×(2048+4096) = 16,684.
+        #expect(contract.contextPositions == 16_684)
+        #expect(contract.responseTokens == 2048)
+        #expect(contract.assistantTurns == 2)
+        #expect(contract.contextPositions < 65_536 / 3)
+
+        // Tool-less variant drops the per-turn tool allowance.
+        let toolLess = DelegatedRunContract.derive(
+            seedCharacters: 800,
+            budgets: SubagentBudgets(),
+            toolEnabled: false,
+            resolvedContextWindow: 65_536
+        )
+        #expect(toolLess?.contextPositions == 8_492)
+
+        // A small resolved window (user cap / small bundle) tightens further.
+        let smallWindow = DelegatedRunContract.derive(
+            seedCharacters: 800,
+            budgets: SubagentBudgets(),
+            toolEnabled: true,
+            resolvedContextWindow: 8_192
+        )
+        #expect(smallWindow?.contextPositions == 8_192)
+
+        // Un-normalized budgets are clamped before derivation.
+        let wild = DelegatedRunContract.derive(
+            seedCharacters: 0,
+            budgets: SubagentBudgets(maxDelegateTokens: 999_999, maxDelegateTurns: 99),
+            toolEnabled: false,
+            resolvedContextWindow: 1_000_000
+        )
+        // tokens clamp to 32,768, turns to 8 → 4096 + 8×32768 = 266,240.
+        #expect(wild?.contextPositions == 266_240)
+        #expect(wild?.responseTokens == 32_768)
+        #expect(wild?.assistantTurns == 8)
+    }
+
+    /// Overflow and degenerate inputs FAIL CLOSED (nil — cap pricing, no
+    /// clamps), never a wrapped or partially-computed bound.
+    @Test("contract derivation fails closed on overflow and degenerate input")
+    func contractDerivationFailsClosed() {
+        #expect(
+            DelegatedRunContract.derive(
+                seedCharacters: Int.max,
+                budgets: SubagentBudgets(),
+                toolEnabled: true,
+                resolvedContextWindow: 65_536
+            ) == nil, "seed × 3 overflow must fail closed")
+        #expect(
+            DelegatedRunContract.derive(
+                seedCharacters: 800,
+                budgets: SubagentBudgets(),
+                toolEnabled: true,
+                resolvedContextWindow: 0
+            ) == nil, "no usable window must fail closed")
+        #expect(
+            DelegatedRunContract.derive(
+                seedCharacters: 800,
+                budgets: SubagentBudgets(),
+                toolEnabled: true,
+                resolvedContextWindow: -5
+            ) == nil, "negative window must fail closed")
+    }
+
+    /// Tighten-only clamp semantics: the contract can never RAISE a limit
+    /// the target agent or surface already set lower.
+    @Test("contract clamps tighten and never raise")
+    func contractClampsTightenOnly() {
+        let contract = DelegatedRunContract(
+            responseTokens: 2048, assistantTurns: 2, contextPositions: 16_684)
+
+        // Response: agent's smaller setting survives; larger is clamped;
+        // unset falls to the contract value.
+        #expect(contract.clampedResponseTokens(agentConfigured: 1024) == 1024)
+        #expect(contract.clampedResponseTokens(agentConfigured: 8192) == 2048)
+        #expect(contract.clampedResponseTokens(agentConfigured: nil) == 2048)
+
+        // Turns: surface's 15-attempt default clamps to 2; a surface already
+        // at 1 stays at 1; the floor keeps at least one attempt.
+        #expect(contract.clampedToolAttempts(surfaceConfigured: 15) == 2)
+        #expect(contract.clampedToolAttempts(surfaceConfigured: 1) == 1)
+        let degenerate = DelegatedRunContract(
+            responseTokens: 2048, assistantTurns: 0, contextPositions: 16_684)
+        #expect(degenerate.clampedToolAttempts(surfaceConfigured: 15) == 1)
+
+        // Window: resolved 65,536 clamps to the ceiling; a smaller resolved
+        // window survives.
+        #expect(contract.clampedContextWindow(resolved: 65_536) == 16_684)
+        #expect(contract.clampedContextWindow(resolved: 8_192) == 8_192)
+    }
+
+    /// PRODUCTION PATH: the estimator prices EXACTLY the stored contract's
+    /// ceiling — the same object `runDelegated` hands to the dispatched
+    /// session — and fails closed (nil) when no contract was derived.
+    @Test("delegated estimator prices exactly the enforced contract")
+    func delegatedEstimatorPricesContract() {
+        let kind = TextSubagentKind(agentID: UUID(), input: "audit the disk")
+        #expect(kind.admissionRequestEstimate() == nil, "no contract → cap pricing")
+
+        kind.delegatedContract = DelegatedRunContract(
+            responseTokens: 2048, assistantTurns: 2, contextPositions: 16_684)
+        let estimate = kind.admissionRequestEstimate()
+        #expect(estimate?.enforcedPositionCeiling == 16_684)
+        #expect(estimate?.seedCharacters == nil)
+        #expect(estimate?.maxOutputTokens == nil)
+        #expect(estimate?.boundedPositionBudget(policyCap: 65_536) == 16_684)
+    }
+
+    /// PROPAGATION, production path: `BackgroundTaskManager.createContext`
+    /// (via its testing seam) converts the request's three caps into the
+    /// contract stamped on the dispatched `ChatSession` — the object that
+    /// enforces them. All three must be present to form a contract; a
+    /// partial contract is no contract.
+    @Test("dispatch caps propagate onto the dispatched chat session")
+    @MainActor
+    func dispatchCapsPropagateToSession() {
+        let request = DispatchRequest(
+            prompt: "hello",
+            agentId: UUID(),
+            delegationResponseTokenCap: 2048,
+            delegationContextPositionCap: 16_684,
+            delegationAssistantTurnCap: 2
+        )
+        #expect(
+            request.delegationContract
+                == DelegatedRunContract(
+                    responseTokens: 2048, assistantTurns: 2, contextPositions: 16_684))
+
+        // The REAL conversion, not a re-derivation.
+        let context = BackgroundTaskManager.shared.makeContextForTesting(request)
+        #expect(context.chatSession.delegationBudget?.responseTokens == 2048)
+        #expect(context.chatSession.delegationBudget?.assistantTurns == 2)
+        #expect(context.chatSession.delegationBudget?.contextPositions == 16_684)
+
+        // Partial caps form NO contract anywhere in the chain.
+        let partial = DispatchRequest(
+            prompt: "hello",
+            agentId: UUID(),
+            delegationResponseTokenCap: 2048
+        )
+        #expect(partial.delegationContract == nil)
+        let partialContext = BackgroundTaskManager.shared.makeContextForTesting(partial)
+        #expect(partialContext.chatSession.delegationBudget == nil)
+
+        let none = ExecutionContext(agentId: UUID())
+        #expect(none.chatSession.delegationBudget == nil)
+    }
+
+    /// WIRING PIN: the clamped `effectiveMaxTokensForAgent` is the ONLY
+    /// value the chat surface passes as the generation request's
+    /// `max_tokens`, and the delegation clamp is applied at its single
+    /// definition site before any use. Reads the production source so a
+    /// regression that adds an unclamped `max_tokens:` feed, or drops the
+    /// clamp, fails this test.
+    @Test("clamped max tokens is the only generation-request feed")
+    func clampedMaxTokensIsOnlyRequestFeed() throws {
+        let testFile = URL(fileURLWithPath: #filePath)
+        let chatView = testFile
+            .deletingLastPathComponent()  // (file name)
+            .deletingLastPathComponent()  // Subagent
+            .deletingLastPathComponent()  // Tests
+            .appendingPathComponent("Views/Chat/ChatView.swift")
+        let source = try String(contentsOf: chatView, encoding: .utf8)
+
+        // Exactly one definition, immediately followed by the clamp.
+        let definitions = source.components(
+            separatedBy: "var effectiveMaxTokensForAgent"
+        ).count - 1
+        #expect(definitions == 1, "one definition site for the request budget")
+        #expect(
+            source.contains(
+                ".clampedResponseTokens(agentConfigured: effectiveMaxTokensForAgent)"),
+            "the delegation clamp guards the definition")
+
+        // Every `max_tokens:` the surface sends comes from that variable.
+        let feeds = source.components(separatedBy: "max_tokens:").dropFirst()
+        #expect(!feeds.isEmpty)
+        for feed in feeds {
+            let value = feed.trimmingCharacters(in: .whitespaces)
+            #expect(
+                value.hasPrefix("effectiveMaxTokensForAgent"),
+                "every request max_tokens must be the clamped value")
+        }
     }
 
     /// CAUSAL: a longer seed (system prompt + schemas + instruction all

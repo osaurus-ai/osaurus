@@ -359,6 +359,12 @@ final class ChatSession: ObservableObject {
     /// flattened into `.chatUI` on its way to the model, losing the distinction
     /// entirely.
     var loadIntent: ModelLoadIntent = .interactive
+    /// Enforced delegation budget for `.delegation`-dispatched sessions:
+    /// (per-generation response-token cap, assistant tool-loop turn cap).
+    /// Set once by `ExecutionContext` from the `DispatchRequest`; nil for
+    /// every ordinary chat. Consumed at the two loop-limit sites below —
+    /// RAM admission prices delegated children from exactly these values.
+    var delegationBudget: DelegatedRunContract?
     var sourcePluginId: String?
     var externalSessionKey: String?
     var dispatchTaskId: UUID?
@@ -6104,9 +6110,16 @@ final class ChatSession: ObservableObject {
                         )
                     }
 
-                                        let effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(
+                                        var effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(
                                             for: effectiveAgentId
                                         )
+                    if let delegationBudget = self.delegationBudget {
+                        // Delegated child: the contract's per-generation
+                        // response ceiling is ENFORCED here (admission
+                        // priced it). Tighten-only.
+                        effectiveMaxTokensForAgent = delegationBudget
+                            .clampedResponseTokens(agentConfigured: effectiveMaxTokensForAgent)
+                    }
 
                     // KV-cache-aware history compaction: shared window
                     // resolution + reservations via `AgentLoopBudget` (parity
@@ -6115,9 +6128,19 @@ final class ChatSession: ObservableObject {
                     // budget; the system prefix is never rewritten so paged-KV
                     // reuse survives compaction.
                     let loopBudgetManager: ContextBudgetManager = await {
-                        let contextWindow = await AgentLoopBudget.resolveContextWindow(
+                        var contextWindow = await AgentLoopBudget.resolveContextWindow(
                             modelId: selectedModel ?? "default"
                         )
+                        if let delegationBudget = self.delegationBudget {
+                            // Delegated child: the contract's position
+                            // ceiling is ENFORCED here — the budget manager
+                            // trims history to this window on every request,
+                            // so the ceiling holds even when tool results
+                            // grow the transcript. Admission priced exactly
+                            // this number.
+                            contextWindow = delegationBudget
+                                .clampedContextWindow(resolved: contextWindow)
+                        }
                         return AgentLoopBudget.makeBudgetManager(
                             contextWindow: contextWindow,
                             systemPromptChars: sys.count,
@@ -6219,7 +6242,13 @@ final class ChatSession: ObservableObject {
                         return msgs
                     }
 
-                    let maxAttempts = max(chatCfg.maxToolAttempts ?? 15, 1)
+                    var maxAttempts = max(chatCfg.maxToolAttempts ?? 15, 1)
+                    if let delegationBudget = self.delegationBudget {
+                        // Delegated child: the contract's turn ceiling is
+                        // ENFORCED here (admission priced it). Tighten-only.
+                        maxAttempts = delegationBudget
+                            .clampedToolAttempts(surfaceConfigured: maxAttempts)
+                    }
                     // Reset within-message dedupe/bias tracking for this user
                     // turn (lastListing intentionally persists across messages).
                     taskState.beginMessage()

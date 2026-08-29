@@ -40,28 +40,49 @@ enum SubagentBatchLimitingFactor: String, Sendable, Hashable {
 public struct SubagentChildRequestEstimate: Sendable, Equatable {
     public let seedCharacters: Int?
     public let maxOutputTokens: Int?
+    /// A position ceiling the child's execution path ENFORCES outright —
+    /// for a delegated chat session, the target agent's resolved context
+    /// window (`AgentLoopBudget.resolveContextWindow`: bundle window ∩ the
+    /// user's context-length cap), which the loop's budget manager trims
+    /// history to on every request. Unlike seed/output, this bound holds
+    /// even when tool results grow the transcript, because trimming applies
+    /// to the whole outbound context.
+    public let enforcedPositionCeiling: Int?
 
-    public init(seedCharacters: Int?, maxOutputTokens: Int?) {
+    public init(
+        seedCharacters: Int?,
+        maxOutputTokens: Int?,
+        enforcedPositionCeiling: Int? = nil
+    ) {
         self.seedCharacters = seedCharacters
         self.maxOutputTokens = maxOutputTokens
+        self.enforcedPositionCeiling = enforcedPositionCeiling
     }
 
     /// nil when nothing bounded is known (fail back to the cap-priced
     /// conservative estimate). Token math rounds UP (ceiling) — a
-    /// truncating estimate would shave the bound in the unsafe direction —
-    /// and both bounds must be present: a seed without an output ceiling
-    /// (or vice versa) is an incomplete contract, not a bound.
+    /// truncating estimate would shave the bound in the unsafe direction.
+    /// Two independent bounds can contribute and the TIGHTER one wins:
+    /// seed + output (requires BOTH — a seed without an output ceiling, or
+    /// vice versa, is an incomplete contract, not a bound) and the
+    /// execution-enforced position ceiling.
     func boundedPositionBudget(policyCap: Int?) -> Int? {
-        guard let seedCharacters, let maxOutputTokens,
+        var candidates: [Int] = []
+        if let seedCharacters, let maxOutputTokens,
             seedCharacters >= 0, maxOutputTokens > 0
-        else { return nil }
-        // chars/4 tokens × 1.5 safety = chars × 3 / 8, rounded up.
-        let seedTokens = (seedCharacters * 3 + 7) / 8
-        let (requested, overflow) = seedTokens.addingReportingOverflow(maxOutputTokens)
-        guard !overflow else { return nil }
+        {
+            // chars/4 tokens × 1.5 safety = chars × 3 / 8, rounded up.
+            let seedTokens = (seedCharacters * 3 + 7) / 8
+            let (requested, overflow) = seedTokens.addingReportingOverflow(maxOutputTokens)
+            if !overflow { candidates.append(requested) }
+        }
+        if let enforcedPositionCeiling, enforcedPositionCeiling > 0 {
+            candidates.append(enforcedPositionCeiling)
+        }
+        guard let tightest = candidates.min() else { return nil }
         // The 4096 floor absorbs the child wrapper/system/template overhead
         // for small requests without inventing a per-request fudge term.
-        let floored = max(4096, requested)
+        let floored = max(4096, tightest)
         if let policyCap, policyCap > 0 {
             return min(floored, max(policyCap, 4096))
         }
