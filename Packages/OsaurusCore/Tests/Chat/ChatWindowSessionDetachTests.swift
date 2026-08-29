@@ -92,6 +92,15 @@ struct ChatWindowSessionDetachTests {
         delayMs: Int = 500
     ) async throws -> ChatSession {
         let session = window.session
+        // This suite exercises window/session lifecycle with a scripted
+        // plain-chat engine. Once the run detaches from the originating test
+        // task, a TaskLocal value no longer describes its intent, so pin the
+        // test-only override on the session that actually owns the run.
+        session.toolsDisabledForTestingOverride = true
+        // Never let the user's installed/default model selection reroute this
+        // scripted text-engine test through an image-generation model.
+        session.selectedModel = "chat-window-detach-test-model"
+        session.forceChatEngineRouteForTests = true
         session.chatEngineFactory = { _ in SlowFinishingChatEngine(delayMs: delayMs) }
         session.send(prompt)
         try await waitUntil(timeout: .seconds(2)) { session.isStreaming }

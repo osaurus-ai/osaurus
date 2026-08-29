@@ -617,6 +617,7 @@ struct ChatSessionStopTests {
             enableDefaultAgentTools(warmModelsOnLoad: true)
 
             let session = ChatSession()
+            session.toolsDisabledForTestingOverride = false
             session.selectedModel = "chat-session-tool-loop-test-model"
             session.forceChatEngineRouteForTests = true
             let engine = PostToolEmptyExhaustionChatEngine()
@@ -666,6 +667,7 @@ struct ChatSessionStopTests {
             enableDefaultAgentTools(warmModelsOnLoad: false)
 
             let session = ChatSession()
+            session.toolsDisabledForTestingOverride = false
             session.selectedModel = "chat-session-reasoning-retry-test-model"
             session.forceChatEngineRouteForTests = true
             let engine = ReasoningRetryChatEngine()

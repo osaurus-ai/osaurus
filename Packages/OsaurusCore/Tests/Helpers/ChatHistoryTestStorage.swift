@@ -46,7 +46,14 @@ enum ChatHistoryTestStorage {
             let previousChatConfig = ChatConfigurationStore.load()
             let previousDefaultAgentOverride = DefaultAgentConfigurationStore.overrideDirectory
             OsaurusPaths.overrideRoot = root
-            ChatConfigurationStore.save(previousChatConfig)
+            var testChatConfig = previousChatConfig
+            // Persistence/lifecycle fixtures must never inherit background
+            // inference switches from the developer's real chat settings.
+            testChatConfig.warmModelsOnLoad = false
+            testChatConfig.autoGenerateChatTitles = false
+            testChatConfig.generateFollowUpSuggestions = false
+            testChatConfig.enableClipboardMonitoring = false
+            ChatConfigurationStore.save(testChatConfig)
             DefaultAgentConfigurationStore.overrideDirectory = root.appendingPathComponent("config")
             DefaultAgentConfigurationStore.resetCacheForTests()
             DefaultAgentConfigurationStore.save(
@@ -74,7 +81,12 @@ enum ChatHistoryTestStorage {
                 try? FileManager.default.removeItem(at: root)
             }
 
-            return try await body()
+            // These persistence/lifecycle tests use tiny deterministic mock
+            // engines and are not AgentLoop tests. Keep that intent explicit
+            // and task-scoped now that no persisted user kill switch exists.
+            return try await ChatSession.$toolsDisabledForTesting.withValue(true) {
+                try await body()
+            }
         }
     }
 }

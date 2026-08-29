@@ -718,6 +718,16 @@ final class ChatSession: ObservableObject {
     nonisolated(unsafe) private var screenContextCancellable: AnyCancellable?
 
     #if DEBUG
+        /// Task-scoped test seam for chat lifecycle suites whose mock engines
+        /// intentionally exercise plain generation without the built-in tool
+        /// loop. This is not persisted, user-configurable, or process-global;
+        /// child Tasks created by `send()` inherit the enclosing test value.
+        @TaskLocal static var toolsDisabledForTesting = false
+
+        /// Lets the few lifecycle tests that intentionally exercise AgentLoop
+        /// opt back in while their enclosing storage fixture stays plain-chat.
+        var toolsDisabledForTestingOverride: Bool?
+
         /// Set only by `isolatePromptShapeReconcilerForTests()`: silences the
         /// lifecycle `refreshContextEstimates()` tasks so a test can pin the
         /// pre-send reconcile as the sole prompt-shape change consumer.
@@ -5969,6 +5979,12 @@ final class ChatSession: ObservableObject {
                         }
                     }
 
+                    #if DEBUG
+                        let requestToolsDisabled =
+                            toolsDisabledForTestingOverride ?? Self.toolsDisabledForTesting
+                    #else
+                        let requestToolsDisabled = false
+                    #endif
                     let context = await SystemPromptComposer.composeChatContext(
                         ComposeRequest(
                             agentId: effectiveAgentId,
@@ -5980,7 +5996,7 @@ final class ChatSession: ObservableObject {
                             // Tool availability belongs to the active agent.
                             // Folding in the hidden legacy chat-wide bit made
                             // every custom agent schema-less.
-                            toolsDisabled: false,
+                            toolsDisabled: requestToolsDisabled,
                             additionalToolNames: (cachedSession?.loadedToolNames ?? [])
                                 .union(skillReferencedTools),
                             frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
