@@ -319,9 +319,12 @@ struct ToolFilterMenu<Option: ToolCatalogFilterOption>: View {
                 }
             }
         } label: {
-            HStack(spacing: 9) {
+            HStack(spacing: 0) {
                 Image(systemName: icon)
                     .font(.system(size: 11, weight: .semibold))
+                    // Explicit gap: the bordered menu style re-lays out the
+                    // label and ignores the HStack's own `spacing`.
+                    .padding(.trailing, 9)
                 Text(selection.title)
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
