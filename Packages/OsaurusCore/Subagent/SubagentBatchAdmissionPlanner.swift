@@ -47,11 +47,20 @@ public struct SubagentChildRequestEstimate: Sendable, Equatable {
     }
 
     /// nil when nothing bounded is known (fail back to the cap-priced
-    /// conservative estimate).
+    /// conservative estimate). Token math rounds UP (ceiling) — a
+    /// truncating estimate would shave the bound in the unsafe direction —
+    /// and both bounds must be present: a seed without an output ceiling
+    /// (or vice versa) is an incomplete contract, not a bound.
     func boundedPositionBudget(policyCap: Int?) -> Int? {
-        let seedTokens = seedCharacters.map { ($0 / 4) * 3 / 2 }
-        guard seedTokens != nil || maxOutputTokens != nil else { return nil }
-        let requested = (seedTokens ?? 0) + (maxOutputTokens ?? 0) + 1024
+        guard let seedCharacters, let maxOutputTokens,
+            seedCharacters >= 0, maxOutputTokens > 0
+        else { return nil }
+        // chars/4 tokens × 1.5 safety = chars × 3 / 8, rounded up.
+        let seedTokens = (seedCharacters * 3 + 7) / 8
+        let (requested, overflow) = seedTokens.addingReportingOverflow(maxOutputTokens)
+        guard !overflow else { return nil }
+        // The 4096 floor absorbs the child wrapper/system/template overhead
+        // for small requests without inventing a per-request fudge term.
         let floored = max(4096, requested)
         if let policyCap, policyCap > 0 {
             return min(floored, max(policyCap, 4096))

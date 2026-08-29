@@ -21,6 +21,7 @@
 //  fixed OS reserve is 3 GiB.
 //
 
+import Foundation
 import Testing
 
 @testable import OsaurusCore
@@ -174,21 +175,84 @@ struct SubagentAdmission16GBRegressionTests {
     }
 
     /// The bounded-position budget math itself: a 2,048-output child with a
-    /// short instruction stays at the 4,096 floor + margin, far below a 64K
-    /// policy cap; an unknown request yields nil (conservative fallback);
-    /// a huge seed clamps to the policy cap, never above it.
-    @Test("bounded position budget: floor, clamp, and unknown fallback")
+    /// short instruction stays at the 4,096 floor, far below a 64K policy
+    /// cap; a huge seed clamps to the cap, never above it; token math
+    /// rounds UP (ceiling), never truncates.
+    @Test("bounded position budget: floor, clamp, ceiling")
     func boundedPositionBudgetMath() {
         let small = SubagentChildRequestEstimate(
             seedCharacters: 800, maxOutputTokens: 2048)
         #expect(small.boundedPositionBudget(policyCap: 65536) == 4096)
 
-        let unknown = SubagentChildRequestEstimate(
-            seedCharacters: nil, maxOutputTokens: nil)
-        #expect(unknown.boundedPositionBudget(policyCap: 65536) == nil)
-
         let huge = SubagentChildRequestEstimate(
             seedCharacters: 1_000_000, maxOutputTokens: 2048)
         #expect(huge.boundedPositionBudget(policyCap: 65536) == 65536)
+
+        // Ceiling: 13,001 chars × 3 = 39,003; /8 truncating would give
+        // 4,875 — the estimator must round UP to 4,876.
+        let ceiling = SubagentChildRequestEstimate(
+            seedCharacters: 13_001, maxOutputTokens: 10_000)
+        #expect(ceiling.boundedPositionBudget(policyCap: 65536) == 4876 + 10_000)
+    }
+
+    /// An INCOMPLETE contract is not a bound: a missing seed OR a missing
+    /// (or non-positive) output ceiling must fall back to conservative
+    /// cap pricing, never a partial guess.
+    @Test("incomplete request bounds fall back to conservative pricing")
+    func incompleteBoundsFallBack() {
+        #expect(
+            SubagentChildRequestEstimate(seedCharacters: nil, maxOutputTokens: 2048)
+                .boundedPositionBudget(policyCap: 65536) == nil)
+        #expect(
+            SubagentChildRequestEstimate(seedCharacters: 800, maxOutputTokens: nil)
+                .boundedPositionBudget(policyCap: 65536) == nil)
+        #expect(
+            SubagentChildRequestEstimate(seedCharacters: 800, maxOutputTokens: 0)
+                .boundedPositionBudget(policyCap: 65536) == nil)
+        #expect(
+            SubagentChildRequestEstimate(seedCharacters: nil, maxOutputTokens: nil)
+                .boundedPositionBudget(policyCap: 65536) == nil)
+    }
+
+    /// CAUSAL: a delegated agent target runs the TARGET agent's chat
+    /// contract (`runDelegated` ignores launcher budgets), so the launcher's
+    /// 2,048-token display limit must NOT price the child — the estimator
+    /// returns nil and admission keeps the conservative cap price. A
+    /// launcher limit of 2K pricing a 16K-capable delegated chat would be
+    /// an under-priced, fail-open admission.
+    @Test("delegated agent target is never priced by launcher budgets")
+    func delegatedAgentTargetNotPricedByLauncher() {
+        let delegated = TextSubagentKind(agentID: UUID(), input: "audit the disk")
+        #expect(delegated.admissionRequestEstimate() == nil)
+    }
+
+    /// CAUSAL: the bare `spawn_model` path IS governed by launcher budgets
+    /// (per-generation `maxDelegateTokens` × at most `maxDelegateTurns`
+    /// iterations, no tool access) — it produces a bounded estimate whose
+    /// output ceiling reflects turns × per-turn, not a single turn.
+    @Test("bare model target produces a turns-aware bounded estimate")
+    func bareModelTargetBoundedEstimate() {
+        let bare = TextSubagentKind(model: "some/model", input: "summarize this")
+        let estimate = bare.admissionRequestEstimate()
+        #expect(estimate != nil)
+        #expect(estimate?.seedCharacters == "summarize this".count)
+        // Defaults: maxDelegateTokens 2048 × maxDelegateTurns 2.
+        #expect(estimate?.maxOutputTokens == 2048 * 2)
+    }
+
+    /// CAUSAL: a longer seed (system prompt + schemas + instruction all
+    /// arrive as seed characters) raises the priced bound monotonically —
+    /// context the child must hold is context admission must charge.
+    @Test("larger seed raises the priced bound")
+    func largerSeedRaisesBound() {
+        let short = SubagentChildRequestEstimate(
+            seedCharacters: 1_000, maxOutputTokens: 4_096)
+        let long = SubagentChildRequestEstimate(
+            seedCharacters: 60_000, maxOutputTokens: 4_096)
+        let shortBudget = short.boundedPositionBudget(policyCap: 65536)!
+        let longBudget = long.boundedPositionBudget(policyCap: 65536)!
+        #expect(longBudget > shortBudget)
+        // 60,000 chars → ceil(60000×3/8)=22,500 tokens + 4,096 = 26,596.
+        #expect(longBudget == 22_500 + 4_096)
     }
 }

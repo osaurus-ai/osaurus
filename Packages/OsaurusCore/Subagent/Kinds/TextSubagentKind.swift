@@ -160,17 +160,39 @@ final class TextSubagentKind:
     private var systemPrompt: String = ""
     private var budgets = SubagentBudgets()
 
-    /// Bounded RAM-admission pricing facts: this run's actual delegation
-    /// input plus its configured output ceiling. Lets admission price the
-    /// child's incremental KV/SSM at the request's bounds instead of the
-    /// model-wide retention cap (the 16 GB same-resident-model spawn
-    /// rejection). `budgets` is resolved during permission/revalidation;
-    /// before that it holds the conservative defaults, which is fine —
-    /// admission runs after preparation.
+    /// Bounded RAM-admission pricing facts — ONLY for runs whose execution
+    /// contract the launcher's budgets actually govern.
+    ///
+    /// A DELEGATED agent target (`runDelegated`) explicitly ignores the
+    /// launcher's `SubagentBudgets` and runs the target agent's normal chat
+    /// loop — its own response allowance, tool iterations, and accumulated
+    /// context. Pricing that from the launcher's `maxDelegateTokens` would
+    /// UNDER-price the child (fail open), so delegated targets return nil
+    /// and keep the conservative model-wide cap pricing.
+    ///
+    /// The bare path (`spawn_model`, or an agent target with a model
+    /// override) runs `AgentSubagentRunner` with exactly this kind's
+    /// budgets: `maxTokens = maxDelegateTokens` per generation and at most
+    /// `maxDelegateTurns` iterations. With NO tool access the loop cannot
+    /// append tool results, so the total context is bounded by
+    /// seed + turns × maxDelegateTokens — a genuine ceiling. With tool
+    /// access granted, tool-result sizes are unbounded from here, so we
+    /// also return nil rather than guess.
+    ///
+    /// `budgets`/`toolAccess` are resolved during permission/revalidation;
+    /// admission runs after preparation, so the resolved values are seen.
     func admissionRequestEstimate() -> SubagentChildRequestEstimate? {
-        SubagentChildRequestEstimate(
+        guard !isDelegatedAgentTarget else { return nil }
+        guard toolAccess == .none else { return nil }
+        let normalized = budgets.normalized
+        let perTurn = normalized.maxDelegateTokens
+        let turns = max(1, normalized.maxDelegateTurns)
+        guard perTurn > 0 else { return nil }
+        let (total, overflow) = perTurn.multipliedReportingOverflow(by: turns)
+        guard !overflow else { return nil }
+        return SubagentChildRequestEstimate(
             seedCharacters: input.count,
-            maxOutputTokens: budgets.normalized.maxDelegateTokens
+            maxOutputTokens: total
         )
     }
     /// The launching agent's child-tool grant (`none` = no generic read-only
