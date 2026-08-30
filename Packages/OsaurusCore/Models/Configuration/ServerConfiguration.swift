@@ -37,21 +37,6 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// Expose the server to the local network (0.0.0.0) or keep it on localhost (127.0.0.1)
     public var exposeToNetwork: Bool
 
-    /// True when `exposeToNetwork` was switched on to satisfy a Bonjour-enabled
-    /// agent rather than by the user.
-    ///
-    /// Bonjour needs the server reachable off loopback, so enabling it on an
-    /// agent forces exposure on. Without recording *why* exposure is on, that
-    /// side effect can never be undone: turning the agent's Bonjour back off
-    /// leaves the server exposed forever, because the sync cannot tell its own
-    /// doing from a deliberate `--expose`. Tracking provenance lets it retract
-    /// exactly what it set and nothing else.
-    ///
-    /// Absent from configs written before this field existed, where it decodes
-    /// as `false` — the safe reading, since an unknown-provenance exposure is
-    /// treated as the user's and left alone.
-    public var exposureAutoEnabledByBonjour: Bool = false
-
     /// Start Osaurus automatically at login
     public var startAtLogin: Bool
 
@@ -111,7 +96,6 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case port
         case exposeToNetwork
-        case exposureAutoEnabledByBonjour
         case startAtLogin
         case hideDockIcon
         case appearanceMode
@@ -135,12 +119,6 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.port = try container.decodeIfPresent(Int.self, forKey: .port) ?? defaults.port
         self.exposeToNetwork =
             try container.decodeIfPresent(Bool.self, forKey: .exposeToNetwork) ?? defaults.exposeToNetwork
-        // Missing on configs written before provenance was tracked. Decoding as
-        // false means an exposure of unknown origin is treated as the user's,
-        // so an upgrade never silently un-exposes a server someone meant to
-        // expose.
-        self.exposureAutoEnabledByBonjour =
-            try container.decodeIfPresent(Bool.self, forKey: .exposureAutoEnabledByBonjour) ?? false
         self.startAtLogin =
             try container.decodeIfPresent(Bool.self, forKey: .startAtLogin) ?? defaults.startAtLogin
         self.hideDockIcon =
@@ -196,7 +174,6 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(port, forKey: .port)
         try container.encode(exposeToNetwork, forKey: .exposeToNetwork)
-        try container.encode(exposureAutoEnabledByBonjour, forKey: .exposureAutoEnabledByBonjour)
         try container.encode(startAtLogin, forKey: .startAtLogin)
         try container.encode(hideDockIcon, forKey: .hideDockIcon)
         try container.encode(appearanceMode, forKey: .appearanceMode)

@@ -3,6 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct RouterAccountUsageCenterView: View {
+    @Environment(\.dismiss) private var dismiss
     @ObservedObject private var themeManager = ThemeManager.shared
     @StateObject private var model = RouterAccountUsageCenterViewModel()
     @State private var hasAppeared = false
@@ -36,6 +37,14 @@ struct RouterAccountUsageCenterView: View {
                 }
                 .disabled(model.isExportingSupport)
                 .opacity(model.isExportingSupport ? 0.6 : 1)
+
+                HeaderIconButton(
+                    "xmark",
+                    help: "Close"
+                ) {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
             }
 
             ScrollView {
@@ -88,7 +97,7 @@ struct RouterAccountUsageCenterView: View {
             metricTile(
                 title: L("Requests"),
                 value: snapshot.credits.requestCount.formatted(),
-                detail: OsaurusRouter.formatMicroUSDPrecise(snapshot.credits.costMicro),
+                detail: OsaurusRouter.formatMicroAsCredits(snapshot.credits.costMicro),
                 icon: "arrow.left.arrow.right",
                 color: theme.accentColor
             )
@@ -101,7 +110,7 @@ struct RouterAccountUsageCenterView: View {
             )
             metricTile(
                 title: L("Net credits"),
-                value: OsaurusRouter.formatMicroUSDPrecise(snapshot.transactions.netMicro),
+                value: OsaurusRouter.formatMicroAsCredits(snapshot.transactions.netMicro),
                 detail: snapshot.transactions.transactionCount == 1
                     ? L("1 transaction")
                     : L("\(snapshot.transactions.transactionCount) transactions"),
@@ -149,8 +158,8 @@ struct RouterAccountUsageCenterView: View {
                 keyValueGrid([
                     (L("Input tokens"), model.snapshot.credits.inputTokens.formatted()),
                     (L("Output tokens"), model.snapshot.credits.outputTokens.formatted()),
-                    (L("Usage cost"), OsaurusRouter.formatMicroUSDPrecise(model.snapshot.credits.costMicro)),
-                    (L("Top-ups"), OsaurusRouter.formatMicroUSDPrecise(model.snapshot.transactions.creditMicro)),
+                    (L("Usage cost"), OsaurusRouter.formatMicroAsCredits(model.snapshot.credits.costMicro)),
+                    (L("Top-ups"), OsaurusRouter.formatMicroAsCredits(model.snapshot.transactions.creditMicro)),
                 ])
 
                 Divider()
@@ -201,7 +210,7 @@ struct RouterAccountUsageCenterView: View {
                     Text(verbatim: "\(row.transactionCount.formatted())")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(theme.secondaryText)
-                    Text(verbatim: OsaurusRouter.formatMicroUSDPrecise(row.netAmountMicro))
+                    Text(verbatim: OsaurusRouter.formatMicroAsCredits(row.netAmountMicro))
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
                         .foregroundColor(theme.primaryText)
                         .monospacedDigit()
@@ -215,7 +224,7 @@ struct RouterAccountUsageCenterView: View {
             VStack(alignment: .leading, spacing: 14) {
                 keyValueGrid([
                     (L("Local rows"), model.snapshot.ledger.entryCount.formatted()),
-                    (L("Ledger cost"), OsaurusRouter.formatMicroUSDPrecise(model.snapshot.ledger.costMicro)),
+                    (L("Ledger cost"), OsaurusRouter.formatMicroAsCredits(model.snapshot.ledger.costMicro)),
                     (L("Pending"), model.snapshot.ledger.pendingCount.formatted()),
                     (L("Flagged"), model.snapshot.ledger.issueCount.formatted()),
                 ])
@@ -242,7 +251,7 @@ struct RouterAccountUsageCenterView: View {
                                 Text(verbatim: "\(row.entryCount.formatted())")
                                     .font(.system(size: 11, design: .monospaced))
                                     .foregroundColor(theme.secondaryText)
-                                Text(verbatim: OsaurusRouter.formatMicroUSDPrecise(row.costMicro))
+                                Text(verbatim: OsaurusRouter.formatMicroAsCredits(row.costMicro))
                                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                                     .foregroundColor(theme.primaryText)
                                     .monospacedDigit()
@@ -416,7 +425,7 @@ struct RouterAccountUsageCenterView: View {
 
             Spacer(minLength: 12)
 
-            Text(verbatim: OsaurusRouter.formatMicroUSDPrecise(row.costMicro))
+            Text(verbatim: OsaurusRouter.formatMicroAsCredits(row.costMicro))
                 .font(.system(size: 14, weight: .semibold, design: .rounded))
                 .foregroundColor(theme.primaryText)
                 .monospacedDigit()
@@ -458,7 +467,7 @@ struct RouterAccountUsageCenterView: View {
                     Text(verbatim: "\(row.requestCount.formatted())")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(theme.secondaryText)
-                    Text(verbatim: OsaurusRouter.formatMicroUSDPrecise(row.costMicro))
+                    Text(verbatim: OsaurusRouter.formatMicroAsCredits(row.costMicro))
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
                         .foregroundColor(theme.primaryText)
                         .monospacedDigit()

@@ -313,14 +313,14 @@ struct RelayStreamChunkingTests {
 @MainActor
 struct BonjourAdvertiserNameTests {
     @Test func instanceName_fitsDNSSDLimit_andKeepsUUID() {
-        let agent = Agent(name: String(repeating: "🦖", count: 40))
+        let agent = Agent(name: String(repeating: "🦖", count: 40), autonomousExec: AutonomousExecConfig(enabled: false))
         let name = BonjourAdvertiser.instanceName(for: agent)
         #expect(name.utf8.count <= BonjourAdvertiser.maxInstanceNameBytes)
         #expect(name.hasSuffix("@\(agent.id.uuidString)"))
     }
 
     @Test func instanceName_shortNameUnchanged() {
-        let agent = Agent(name: "Osaurus")
+        let agent = Agent(name: "Osaurus", autonomousExec: AutonomousExecConfig(enabled: false))
         let name = BonjourAdvertiser.instanceName(for: agent)
         #expect(name == "Osaurus@\(agent.id.uuidString)")
     }

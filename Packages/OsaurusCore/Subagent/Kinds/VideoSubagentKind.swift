@@ -135,7 +135,7 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
         }
         let source: (Data, String)? = try params.sourcePath.map(Self.loadSourceImage)
         let request = makeRequest(model: model, source: source)
-        feed.emitPhase("quoted", detail: String(format: "$%.4f", quote.usd))
+        feed.emitPhase("quoted", detail: OsaurusRouter.formatUSDAsCredits(quote.usd))
         do {
             let media = try await MediaGenerationCoordinator.shared.generateVideo(
                 request,

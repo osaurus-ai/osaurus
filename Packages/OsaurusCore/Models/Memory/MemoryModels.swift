@@ -453,3 +453,47 @@ public struct MemoryBackfillProgress: Sendable {
         self.lastSessionTitle = lastSessionTitle
     }
 }
+
+// MARK: - Memory Namespace
+
+/// Typed wrapper over the string key that partitions every memory store
+/// (episodes, pinned facts, vector buckets, assembler cache). Historically
+/// the key was always an agent UUID; projects add a second kind under a
+/// `project:` prefix. Route new key construction through this so malformed
+/// keys are impossible and every namespace-aware call site greps.
+///
+/// Collision safety: agent keys are bare 36-char UUID strings, which can
+/// never parse once prefixed, so `project-` keys cannot collide with them.
+/// (Hyphen rather than colon: the key doubles as the vector bucket's
+/// on-disk directory name.)
+public enum MemoryNamespace: Equatable, Sendable {
+    case agent(UUID)
+    case project(UUID)
+
+    private static let projectPrefix = "project-"
+
+    /// The string key used across `MemoryDatabase` / search / assembler.
+    public var key: String {
+        switch self {
+        case .agent(let id): return id.uuidString
+        case .project(let id): return Self.projectPrefix + id.uuidString
+        }
+    }
+
+    public init?(key: String) {
+        if key.hasPrefix(Self.projectPrefix),
+            let id = UUID(uuidString: String(key.dropFirst(Self.projectPrefix.count)))
+        {
+            self = .project(id)
+        } else if let id = UUID(uuidString: key) {
+            self = .agent(id)
+        } else {
+            return nil
+        }
+    }
+
+    public var isProject: Bool {
+        if case .project = self { return true }
+        return false
+    }
+}

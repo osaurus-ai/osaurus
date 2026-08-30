@@ -232,7 +232,13 @@ enum ChatSessionImportCoordinator {
             }
             var session = imported.session
             session.agentId = agentId
-            ChatSessionsManager.shared.save(session)
+            // Imported conversations are full transcripts, and the
+            // synchronous save's encode + transaction per session was a
+            // measured multi-second main-thread hang on large imports. The
+            // async save preserves write order on the DB's serial queue, and
+            // the in-memory upsert makes the rows visible to the sidebar
+            // refresh immediately.
+            ChatSessionsManager.shared.saveAsync(session)
             summary.importedSessions.append(session)
         }
         return summary

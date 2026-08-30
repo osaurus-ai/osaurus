@@ -129,8 +129,39 @@ final class ChatTurn: ObservableObject, Identifiable {
     var thinkingIsEmpty: Bool { _thinkingLength == 0 }
 
     /// Whether thinking has no renderable text.
+    ///
+    /// Blank means "nothing a reader would call reasoning", which is broader
+    /// than empty. Gemma-4 (and other Harmony-channel models) put the CHANNEL
+    /// NAME on the first line — `<|channel>thought\n…payload…<channel|>` — and
+    /// with thinking OFF the template emits, and the model echoes, a pre-closed
+    /// EMPTY block: token ids [100, 45518, 107, 101] = `<|channel>` / `thought`
+    /// / `\n` / `<channel|>`. vmlx's reasoning parser strips the delimiters and
+    /// reports 0 reasoning chars, but a bare identifier can still reach the UI
+    /// through other derivation paths, and the chrome ("Thought", an expandable
+    /// pane) then renders around nothing.
+    ///
+    /// This is catalog-wide, not one bundle: `think_in_template=false` is the
+    /// canonical stamp for every gemma4 variant, so re-stamping a bundle to
+    /// paper over it would desync that bundle from the rest of the line. The
+    /// guard belongs here — the single predicate every renderer consults via
+    /// `hasRenderableThinking` — so no entry point (cell, activity group,
+    /// subagent feed) can reach the bug independently.
     var thinkingIsBlank: Bool {
-        thinking.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let trimmed = thinking.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return true }
+        return Self.isBareChannelIdentifier(trimmed)
+    }
+
+    /// A payload that is nothing but a channel label — one short bare
+    /// identifier such as `thought`, `analysis`, `final`.
+    ///
+    /// Deliberately duplicated rather than imported: vmlx's equivalent
+    /// (`isHarmonyIdentifierChannelName`) is internal to MLXLMCommon, and
+    /// exporting it would make a six-line UI guard a cross-repo pin bump.
+    /// Kept strict — a single token of `[A-Za-z0-9_]`, length-bounded — so real
+    /// one-word reasoning is never suppressed.
+    static func isBareChannelIdentifier(_ text: String) -> Bool {
+        StringCleaning.isHarmonyChannelLabel(text)
     }
 
     /// Efficiently append thinking without triggering immediate UI update.
@@ -280,9 +311,22 @@ final class ChatTurn: ObservableObject, Identifiable {
 
     // MARK: - Generation Benchmarks
 
-    /// Wall-clock time from request start to first visible token.
+    /// Time from request start to first visible token, EXCLUDING any cold
+    /// model load that happened inside that window.
     /// Persisted with the turn for billing / latency reporting.
+    ///
+    /// The exclusion matters. Loading a container happens between the send and
+    /// the first token, so it used to be billed here: a 64 GB M3 Max reported
+    /// "TTFT 215.61s" for a ~1.8k-token prompt, which is not a prefill rate any
+    /// machine produces — it was a 27 GB bundle loading. Reporting the sum made
+    /// a healthy engine look broken. The load is now carried separately in
+    /// `modelLoadSeconds`; neither number is hidden.
     var timeToFirstToken: TimeInterval?
+
+    /// Seconds of cold model loading that fell inside this turn's
+    /// time-to-first-token window, or nil when the model was already resident
+    /// (the overwhelmingly common case, and the one that must look unchanged).
+    var modelLoadSeconds: TimeInterval?
     /// Tokens generated per second (GPU-timed for MLX, UI-estimated for
     /// remote APIs). Ephemeral — not persisted. The exporter recomputes
     /// it from token count and stream duration when needed, which
@@ -304,6 +348,11 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// The agent loop uses it to avoid treating a reasoning-only `length`
     /// completion as a successful final response.
     var terminalStopReason: String?
+    /// Set when the stream consumer cut this turn short because the model
+    /// collapsed into a phrase-repetition loop; carries the repeated phrase
+    /// for the model-facing notice. Nil for every normally-completed turn.
+    /// Transient run state — not persisted, like `unclosedReasoning`.
+    var repetitionLoopPhrase: String?
 
     /// Osaurus Router billing snapshot captured from the in-stream summary
     /// frame (cost, token counts, status). Persisted so a reloaded chat still
@@ -490,8 +539,13 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// structured call.
     var visibleContent: String {
         guard role == .assistant else { return content }
+        // Channel-label strip runs first: the label arrives on the leading line
+        // ahead of anything the other two cleaners look for, so removing it
+        // early keeps their inputs shaped the way they expect.
         return StringCleaning.stripLeakedActionJSON(
-            StringCleaning.stripGeminiDisplayMetadata(content)
+            StringCleaning.stripGeminiDisplayMetadata(
+                StringCleaning.stripLeakedChannelLabel(content)
+            )
         )
     }
 

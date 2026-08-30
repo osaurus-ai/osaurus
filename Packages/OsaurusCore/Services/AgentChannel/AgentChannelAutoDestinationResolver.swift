@@ -201,6 +201,12 @@ enum AgentChannelAutoDestinationResolver {
                 availability.hasCredential(.imessage),
                 IMessageConnectionService.shared.configuration().inboundDispatch
             ),
+            (
+                AgentChannelConnection.nativeWhatsAppConnectionId,
+                // WhatsApp's credential is the helper's linked Web session.
+                availability.hasCredential(.whatsapp),
+                WhatsAppConnectionService.shared.configuration().inboundDispatch
+            ),
         ]
         return natives.compactMap { native in
             guard let view = try? service.resolvedConnectionView(id: native.id) else { return nil }

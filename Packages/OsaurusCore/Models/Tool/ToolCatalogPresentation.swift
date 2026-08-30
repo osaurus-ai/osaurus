@@ -62,6 +62,28 @@ enum ToolCatalogSection: String, CaseIterable, Identifiable, Sendable {
 // MARK: - Mapping
 
 enum ToolCatalogPresentation {
+    /// Operational sources come first; large installed inventories are
+    /// deliberately last so the overview starts with things users manage.
+    static let orderedSections: [ToolCatalogSection] = [
+        .connections,
+        .custom,
+        .plugins,
+        .builtIn,
+    ]
+
+    /// User-owned sources are open on first visit. Search temporarily reveals
+    /// every matching section without changing the user's disclosure choices.
+    static func isSectionExpanded(
+        _ section: ToolCatalogSection,
+        explicitlyExpanded: Set<ToolCatalogSection>,
+        searchText: String
+    ) -> Bool {
+        if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        return explicitlyExpanded.contains(section)
+    }
+
     /// Maps an exact exposure state to the user-facing status. A missing
     /// system permission always wins: the tool may technically be exposed,
     /// but it cannot succeed until the user grants access.

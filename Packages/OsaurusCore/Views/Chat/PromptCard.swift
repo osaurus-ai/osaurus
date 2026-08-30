@@ -61,6 +61,24 @@ private struct PointingHandCursorModifier: ViewModifier {
     }
 }
 
+/// Cursor via AppKit's cursor-rect system rather than push/pop on hover.
+/// Needed where the window manages cursor rects itself (the title bar /
+/// NSToolbar area), which re-resolves the cursor on every mouse move and
+/// immediately overrides a pushed `NSCursor`. Place as a `.background` so
+/// it spans the interactive area.
+struct PointingHandCursorRect: NSViewRepresentable {
+    final class CursorRectView: NSView {
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .pointingHand)
+        }
+    }
+
+    func makeNSView(context: Context) -> CursorRectView { CursorRectView() }
+    func updateNSView(_ nsView: CursorRectView, context: Context) {
+        nsView.window?.invalidateCursorRects(for: nsView)
+    }
+}
+
 // MARK: - Public model
 
 /// Optional small footnote shown at the bottom of the description block

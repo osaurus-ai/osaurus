@@ -126,14 +126,64 @@ enum ChatSessionStore {
     /// While the DB is deferred, retitles the pending snapshot if one is
     /// queued; otherwise the rename is dropped, matching `saveAsync`'s
     /// best-effort contract (the preview title simply stands).
-    static func renameTitleAsync(id: UUID, title: String) {
+    static func renameTitleAsync(id: UUID, title: String, updatedAt: Date? = nil) {
         guard !pendingDeletes.contains(id) else { return }
         ensureOpen()
         guard didOpen else {
             pendingSaves[id]?.title = title
+            if let updatedAt { pendingSaves[id]?.updatedAt = updatedAt }
             return
         }
-        ChatHistoryDatabase.shared.updateSessionTitleAsync(id: id, title: title)
+        ChatHistoryDatabase.shared.updateSessionTitleAsync(
+            id: id, title: title, updatedAt: updatedAt)
+    }
+
+    /// Flag-only async updates for the sidebar's archive/pin toggles. Same
+    /// contract as `renameTitleAsync`: a targeted UPDATE that can never touch
+    /// turn rows, handed to the database's serial queue.
+    static func setArchivedAsync(id: UUID, archived: Bool) {
+        guard !pendingDeletes.contains(id) else { return }
+        ensureOpen()
+        guard didOpen else {
+            pendingSaves[id]?.archived = archived
+            return
+        }
+        ChatHistoryDatabase.shared.updateSessionArchivedAsync(id: id, archived: archived)
+    }
+
+    static func setPinnedAsync(id: UUID, pinned: Bool) {
+        guard !pendingDeletes.contains(id) else { return }
+        ensureOpen()
+        guard didOpen else {
+            pendingSaves[id]?.pinned = pinned
+            return
+        }
+        ChatHistoryDatabase.shared.updateSessionPinnedAsync(id: id, pinned: pinned)
+    }
+
+    /// Project-membership-only async update. Targeted (never `saveSession`)
+    /// for the same metadata-only-copy reason as `renameTitleAsync`.
+    static func setProjectAsync(id: UUID, projectId: UUID?) {
+        guard !pendingDeletes.contains(id) else { return }
+        ensureOpen()
+        guard didOpen else {
+            pendingSaves[id]?.projectId = projectId
+            return
+        }
+        ChatHistoryDatabase.shared.updateSessionProjectAsync(id: id, projectId: projectId)
+    }
+
+    /// Detach every session from a deleted project. Deferred-DB best-effort,
+    /// matching `setProjectAsync`; pending snapshots are patched in place.
+    static func clearProjectAsync(projectId: UUID) {
+        ensureOpen()
+        guard didOpen else {
+            for (id, session) in pendingSaves where session.projectId == projectId {
+                pendingSaves[id]?.projectId = nil
+            }
+            return
+        }
+        ChatHistoryDatabase.shared.clearProjectAsync(projectId: projectId)
     }
 
     /// Sessions whose writes were deferred because the chat-history DB wasn't
@@ -183,6 +233,45 @@ enum ChatSessionStore {
             print("[ChatSessionStore] Failed to delete session \(id): \(error)")
         }
         removeArtifacts(for: id)
+    }
+
+    /// Bulk delete for the per-agent wipe. Unlike `delete(id:)`, the DB rows
+    /// are removed behind one background hop on the database queue and the
+    /// artifact directories are removed off the main thread, so wiping a
+    /// large history can't trip the app-hang watchdog. `completion` is
+    /// invoked on the main actor once the database batch has finished.
+    static func deleteBatch(ids: [UUID], completion: (@MainActor @Sendable () -> Void)? = nil) {
+        guard !ids.isEmpty else {
+            completion?()
+            return
+        }
+        for id in ids {
+            pendingSaves.removeValue(forKey: id)
+        }
+        Task.detached(priority: .utility) {
+            for id in ids {
+                let artifactsDir = OsaurusPaths.contextArtifactsDir(contextId: id.uuidString)
+                try? FileManager.default.removeItem(at: artifactsDir)
+            }
+        }
+        ensureOpen()
+        guard didOpen else {
+            pendingDeletes.formUnion(ids)
+            completion?()
+            return
+        }
+        ChatHistoryDatabase.shared.deleteSessionsAsync(
+            ids: ids,
+            onDropped: { dropped in
+                // Same launch-race recovery as `delete(id:)`: the database
+                // closed between enqueue and dequeue (key rotation), so
+                // requeue the ids for the next readiness signal.
+                Task { @MainActor in pendingDeletes.formUnion(dropped) }
+            },
+            completion: {
+                Task { @MainActor in completion?() }
+            }
+        )
     }
 
     private static func flushPendingDeletes() {

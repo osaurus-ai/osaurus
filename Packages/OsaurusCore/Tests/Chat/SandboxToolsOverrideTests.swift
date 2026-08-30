@@ -48,7 +48,7 @@ struct SandboxToolsOverrideTests {
     }
 
     @Test
-    func globalSwitch_isAbsolute_evenInSandbox() {
+    func explicitRequestSwitch_isAbsolute_evenInSandbox() {
         let off = SystemPromptComposer.resolveEffectiveToolsOff(
             toolsDisabled: true,
             globalToolsDisabled: true,

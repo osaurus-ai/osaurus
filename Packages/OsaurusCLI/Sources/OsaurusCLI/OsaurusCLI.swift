@@ -26,6 +26,7 @@ struct OsaurusCLI {
         case manifest([String])
         case bundle([String])
         case coord([String])
+        case config([String])
         case version
         case help
     }
@@ -55,6 +56,7 @@ struct OsaurusCLI {
         case "manifest": return .manifest(rest)
         case "bundle": return .bundle(rest)
         case "coord": return .coord(rest)
+        case "config": return .config(rest)
         case "version", "--version", "-v": return .version
         case "help", "-h", "--help": return .help
         default: return nil
@@ -100,6 +102,8 @@ struct OsaurusCLI {
             await BundleCommand.execute(args: args)
         case .coord(let args):
             await CoordCommand.execute(args: args)
+        case .config(let args):
+            await ConfigCommand.execute(args: args)
         case .version:
             await VersionCommand.execute(args: [])
         case .help:
@@ -167,6 +171,13 @@ struct OsaurusCLI {
                                       Load and run an MCP Bundle (.mcpb file)
               osaurus coord <subcommand>
                                       Local coordinator orchestration foundation
+              osaurus config export [-o file.yaml]
+                                      Export the current Osaurus configuration as YAML
+              osaurus config plan <file.yaml> [--prune]
+                                      Dry-run a declarative YAML document (show the diff)
+              osaurus config apply <file.yaml> [--prune] [--yes]
+                                      Apply a declarative YAML document (--yes confirms
+                                      high-risk changes)
               osaurus help            Show this help
 
             """

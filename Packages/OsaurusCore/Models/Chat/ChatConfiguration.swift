@@ -41,7 +41,31 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// Optional per-chat override for maximum response tokens (nil uses app default)
     public var maxTokens: Int?
     /// Optional default context length for models with unknown limits (e.g. remote)
+    ///
+    /// A FALLBACK, not a cap: it applies only when neither the bundle nor the
+    /// provider declares a window. It has no effect on a model that reports its
+    /// own limit, which is every local bundle. Use `contextLengthCap` to
+    /// actually constrain a model that does declare one.
     public var contextLength: Int?
+
+    /// Optional user cap on the context window, in tokens. `nil` follows the
+    /// model.
+    ///
+    /// Distinct from `contextLength` because that one is a fallback and cannot
+    /// constrain anything: a user who lowered it saw no change on any local
+    /// model, since bundle metadata is consulted first and wins.
+    ///
+    /// Applied as `min(cap, modelWindow)`. It can only ever LOWER the window —
+    /// raising it past what the model declares is not a preference, it is a
+    /// promise the weights cannot keep, and the result is garbage rather than
+    /// more context. Lowering is a legitimate choice: a smaller window prefills
+    /// faster and costs less KV per turn.
+    ///
+    /// Deliberately a separate field rather than a reinterpretation of
+    /// `contextLength`. That one defaults to 128k, so treating it as a cap
+    /// would silently clamp every longer-context model — a 222k Qwen would drop
+    /// to 128k on update without anyone asking for it.
+    public var contextLengthCap: Int?
     /// Optional per-chat override for top_p sampling (nil uses server default)
     public var topPOverride: Float?
     /// Optional per-chat limit on consecutive tool attempts (nil uses default)
@@ -89,12 +113,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         return name
     }
 
-    // MARK: - Tool Settings
-    /// When true, no tools are passed to the model. The raw message is sent
-    /// directly, keeping the prompt stable across turns for maximum KV-cache reuse. Recommended
-    /// when osaurus is acting as a plain LLM backend for an external agent.
-    public var disableTools: Bool
-
     // MARK: - Clipboard Settings
     /// When true, Osaurus will monitor the clipboard for new text content to offer as context.
     public var enableClipboardMonitoring: Bool
@@ -109,9 +127,17 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// When true, the first completed exchange of a new chat triggers a
     /// background Core Model call that replaces the first-message preview
     /// title with a short generated summary (see `ChatTitleService`).
-    /// Ships default-off while the feature bakes across releases; flip the
-    /// default here once it has proven regression-free.
+    /// Default on.
     public var autoGenerateChatTitles: Bool
+
+    // MARK: - Follow-Up Suggestions
+    /// Master switch for AI-generated follow-up questions after a completed
+    /// turn (rendered as clickable rows above the composer; see
+    /// `FollowUpSuggestionService`). When on, follow-ups generate for every
+    /// chat; per-agent tweaks to the prompt / rules / model live in
+    /// `AgentSettings.followUp` but only take effect while this is on.
+    /// Default on, like `autoGenerateChatTitles`.
+    public var generateFollowUpSuggestions: Bool
 
     public init(
         hotkey: Hotkey?,
@@ -126,10 +152,10 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         coreModelName: String? = nil,
         compactionModelProvider: String? = nil,
         compactionModelName: String? = nil,
-        disableTools: Bool = false,
         enableClipboardMonitoring: Bool = true,
         warmModelsOnLoad: Bool = true,
-        autoGenerateChatTitles: Bool = false
+        autoGenerateChatTitles: Bool = true,
+        generateFollowUpSuggestions: Bool = true
     ) {
         self.hotkey = hotkey
         self.systemPrompt = systemPrompt
@@ -143,10 +169,10 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.coreModelName = coreModelName
         self.compactionModelProvider = compactionModelProvider
         self.compactionModelName = compactionModelName
-        self.disableTools = disableTools
         self.enableClipboardMonitoring = enableClipboardMonitoring
         self.warmModelsOnLoad = warmModelsOnLoad
         self.autoGenerateChatTitles = autoGenerateChatTitles
+        self.generateFollowUpSuggestions = generateFollowUpSuggestions
     }
 
     public init(from decoder: Decoder) throws {
@@ -165,11 +191,12 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             String.self, forKey: .compactionModelProvider)
         compactionModelName = try container.decodeIfPresent(
             String.self, forKey: .compactionModelName)
-        disableTools = try container.decodeIfPresent(Bool.self, forKey: .disableTools) ?? false
         enableClipboardMonitoring = try container.decodeIfPresent(Bool.self, forKey: .enableClipboardMonitoring) ?? true
         warmModelsOnLoad = try container.decodeIfPresent(Bool.self, forKey: .warmModelsOnLoad) ?? true
         autoGenerateChatTitles =
-            try container.decodeIfPresent(Bool.self, forKey: .autoGenerateChatTitles) ?? false
+            try container.decodeIfPresent(Bool.self, forKey: .autoGenerateChatTitles) ?? true
+        generateFollowUpSuggestions =
+            try container.decodeIfPresent(Bool.self, forKey: .generateFollowUpSuggestions) ?? true
     }
 
     public static var `default`: ChatConfiguration {
@@ -196,7 +223,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             coreModelName: defaultCoreModelNameIfAvailable,
             enableClipboardMonitoring: true,
             warmModelsOnLoad: true,
-            autoGenerateChatTitles: false
+            autoGenerateChatTitles: true
         )
     }
 

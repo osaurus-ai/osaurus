@@ -115,6 +115,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// `expect.agentLoop` assertions against the resulting tree, and
         /// deletes the directory afterwards. Other domains ignore this.
         public let workspaceFiles: [WorkspaceFile]?
+        /// Agent-loop execution-surface override. false composes a plain Chat
+        /// turn with `executionMode: .none`, which is useful for deferred
+        /// capability-manifest cases where folder tools would intentionally
+        /// suppress that manifest. nil/true preserves host-folder mode.
+        /// Ignored when `sandbox` is present.
+        public let useHostFolder: Bool?
         /// Per-case agent capability flags for `agent_loop` cases. When
         /// present, the runner registers a TEMPORARY agent carrying these
         /// flags (and a `reactive` schedule preset so self-scheduling
@@ -148,9 +154,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let sandbox: SandboxFixture?
         /// Custom agents to pre-register in the isolated config store before a
         /// `default_agent` case runs (and delete afterwards). The
-        /// schedule-create cases name an `agent_id`; without a real agent at
-        /// that id the consolidated `osaurus_schedule` create returns a typed
-        /// not-found error, and a small model can retry against it until it
+        /// schedule-create cases name an agent; without a real agent at
+        /// that id/name the `osaurus_config` plan/apply reports an
+        /// unknown-agent validation error, and a small model can retry against it until it
         /// hits the iteration cap. Seeding a matching custom agent lets create
         /// SUCCEED, so the case proves the happy path (correct frequency
         /// mapping + a real schedule) instead of an error-retry loop. Each
@@ -159,12 +165,13 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let seedAgents: [SeedAgent]?
         /// Remote providers to pre-register (non-ephemeral, so the configure
         /// READ tools surface them) in the isolated config store before a
-        /// `default_agent` case runs, then remove afterwards. The
-        /// provider-rotate-key case names a provider id; without a real
-        /// provider at that id `osaurus_provider({action:'set_credentials'})`
-        /// returns a typed not-found and the model can only report "no such
-        /// provider" instead of demonstrating rotation. Seeding the exact id
-        /// the query references turns the case into the real rotation flow.
+        /// `default_agent` case runs, then remove afterwards. Cases like
+        /// provider-remove and provider-rotate-key reference a provider by
+        /// name; without a real provider the model can only report "no such
+        /// provider" instead of demonstrating the real flow (a declarative
+        /// prune, or grounding a credential-rotation answer in live state).
+        /// Seeding the exact entity the query references makes those flows
+        /// real.
         /// Seeded providers are added with `enabled:false, autoConnect:false`
         /// so they never attempt a network connect, and the runner installs a
         /// `ProviderCredentialPromptService.bypassUI` shim for the case so a
@@ -172,6 +179,23 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// credential NSPanel. Each `id` must be a valid UUID. Other domains
         /// ignore this field.
         public let seedProviders: [SeedProvider]?
+        /// Schedules to pre-create in the isolated store before a
+        /// `default_agent` case runs, then remove afterwards. Mutation cases
+        /// (pause, retime, reassign) reference a schedule by name; with an
+        /// empty store an HONEST model that inspects first can only report
+        /// "no such schedule" — the same read-first behavior the delete
+        /// rubrics reward — so the case would punish exactly the pattern the
+        /// suite wants. Seeding the referenced schedule makes the mutation
+        /// real. `agentId` must match a `seedAgents` entry id (schedules
+        /// require a custom agent owner). Other domains ignore this field.
+        public let seedSchedules: [SeedSchedule]?
+        /// MCP servers to pre-register before a `default_agent` case runs,
+        /// then remove afterwards. Mutation cases (disable) reference a
+        /// server by name; with an empty store an honest inspect-first model
+        /// can only report "no such server". Seeded servers are added with
+        /// `autoConnect: false` and a non-routable placeholder URL so they
+        /// never dial out. Other domains ignore this field.
+        public let seedMCPServers: [SeedMCPServer]?
         /// SQL executed against the run agent's database BEFORE the loop
         /// starts (requires `agentCapabilities.dbEnabled`). Each entry may be
         /// a multi-statement script (`CREATE TABLE …; INSERT …;`) and runs
@@ -200,7 +224,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// identity overrides) for the run agent before the chat starts and
         /// wipes them afterwards. Seeds go through the same
         /// `MemoryDatabase` writes the production distiller lands, so the
-        /// read path (relevance gate → planner → `[Memory]` prefix) is the
+        /// read path (two-tier planner → `[Memory]` prefix) is the
         /// real one. Other domains ignore this.
         public let seedMemory: MemorySeeds?
 
@@ -210,11 +234,14 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             enableTools: [String]? = nil,
             ensureToolsDisabled: [String]? = nil,
             workspaceFiles: [WorkspaceFile]? = nil,
+            useHostFolder: Bool? = nil,
             agentCapabilities: AgentCapabilitiesFixture? = nil,
             runtimeConcurrency: RuntimeConcurrencyFixture? = nil,
             sandbox: SandboxFixture? = nil,
             seedAgents: [SeedAgent]? = nil,
             seedProviders: [SeedProvider]? = nil,
+            seedSchedules: [SeedSchedule]? = nil,
+            seedMCPServers: [SeedMCPServer]? = nil,
             seedSql: [String]? = nil,
             seedMemory: MemorySeeds? = nil
         ) {
@@ -223,11 +250,14 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.enableTools = enableTools
             self.ensureToolsDisabled = ensureToolsDisabled
             self.workspaceFiles = workspaceFiles
+            self.useHostFolder = useHostFolder
             self.agentCapabilities = agentCapabilities
             self.runtimeConcurrency = runtimeConcurrency
             self.sandbox = sandbox
             self.seedAgents = seedAgents
             self.seedProviders = seedProviders
+            self.seedSchedules = seedSchedules
+            self.seedMCPServers = seedMCPServers
             self.seedSql = seedSql
             self.seedMemory = seedMemory
         }
@@ -520,6 +550,47 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public init(id: String, name: String) {
             self.id = id
             self.name = name
+        }
+    }
+
+    /// A schedule to pre-create for a `default_agent` mutation case. Runs
+    /// daily at `timeOfDay` ("HH:mm", default "08:30") under the seeded
+    /// custom agent `agentId` references. `enabled` defaults to true so a
+    /// "pause" case has something real to turn off.
+    public struct SeedSchedule: Sendable, Codable {
+        public let name: String
+        public let agentId: String
+        public let instructions: String?
+        public let timeOfDay: String?
+        public let enabled: Bool?
+
+        public init(
+            name: String,
+            agentId: String,
+            instructions: String? = nil,
+            timeOfDay: String? = nil,
+            enabled: Bool? = nil
+        ) {
+            self.name = name
+            self.agentId = agentId
+            self.instructions = instructions
+            self.timeOfDay = timeOfDay
+            self.enabled = enabled
+        }
+    }
+
+    /// An MCP server to pre-register for a `default_agent` mutation case.
+    /// HTTP transport, enabled, `autoConnect: false` (never dials), with a
+    /// non-routable placeholder URL unless `url` is given.
+    public struct SeedMCPServer: Sendable, Codable {
+        public let id: String
+        public let name: String
+        public let url: String?
+
+        public init(id: String, name: String, url: String? = nil) {
+            self.id = id
+            self.name = name
+            self.url = url
         }
     }
 
@@ -1804,6 +1875,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             public struct ExecutionWaveAssertion: Sendable, Codable {
                 public let wave: Int?
                 public let remoteJobs: Int?
+                public let localJobs: Int?
+                public let engineRequestedMaximum: Int?
+                public let engineArchitectureMaximum: Int?
+                public let requireUncappedArchitecture: Bool?
+                public let engineEffectiveMaximum: Int?
                 public let effectiveLocalSlots: Int?
                 public let localSubwaves: [Int]?
                 public let limitingFactors: [String]?
@@ -1811,12 +1887,22 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 public init(
                     wave: Int? = nil,
                     remoteJobs: Int? = nil,
+                    localJobs: Int? = nil,
+                    engineRequestedMaximum: Int? = nil,
+                    engineArchitectureMaximum: Int? = nil,
+                    requireUncappedArchitecture: Bool? = nil,
+                    engineEffectiveMaximum: Int? = nil,
                     effectiveLocalSlots: Int? = nil,
                     localSubwaves: [Int]? = nil,
                     limitingFactors: [String]? = nil
                 ) {
                     self.wave = wave
                     self.remoteJobs = remoteJobs
+                    self.localJobs = localJobs
+                    self.engineRequestedMaximum = engineRequestedMaximum
+                    self.engineArchitectureMaximum = engineArchitectureMaximum
+                    self.requireUncappedArchitecture = requireUncappedArchitecture
+                    self.engineEffectiveMaximum = engineEffectiveMaximum
                     self.effectiveLocalSlots = effectiveLocalSlots
                     self.localSubwaves = localSubwaves
                     self.limitingFactors = limitingFactors
@@ -2029,8 +2115,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     /// scores:
     ///   1. **Deterministic** transcript checks — `mustCallTools` /
     ///      `mustNotCallTools` and per-call `argsMustContain` argument
-    ///      assertions (e.g. `osaurus_provider` was called with
-    ///      `action: add` and `provider: anthropic`).
+    ///      assertions (e.g. `osaurus_config` was called with
+    ///      `action: apply` and a `yaml` document containing `anthropic`).
     ///   2. **LLM judge** — every `rubric` condition (if any) graded against
     ///      the final assistant text.
     /// A case passes only when every present layer passes. `rubric` is
@@ -2085,13 +2171,27 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// stringified argument value, so `{"action": "add"}` matches whether
         /// the model emitted `add` or `ADD`, and `{"provider": "anthropic"}`
         /// matches a value of `anthropic`.
+        ///
+        /// `argsAnyOf`, when present, adds an OR layer for tools with
+        /// tolerant input handling: the same call must additionally satisfy
+        /// at least ONE of the alternative pair groups. Used where the tool
+        /// accepts more than one canonical argument spelling (e.g.
+        /// `osaurus_inspect` executes `{action:'list', filter:'providers'}`
+        /// as the providers list), so the case pins intent without failing a
+        /// shape the product deliberately accepts.
         public struct ToolArgsMatcher: Sendable, Codable {
             public let tool: String
             public let args: [String: String]
+            public let argsAnyOf: [[String: String]]?
 
-            public init(tool: String, args: [String: String]) {
+            public init(
+                tool: String,
+                args: [String: String],
+                argsAnyOf: [[String: String]]? = nil
+            ) {
                 self.tool = tool
                 self.args = args
+                self.argsAnyOf = argsAnyOf
             }
         }
     }

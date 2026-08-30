@@ -1,18 +1,19 @@
 {
   "id": "default_agent.plugin-install",
   "domain": "default_agent",
-  "label": "default agent • install a plugin by id",
-  "query": "Install the plugin osaurus.eval-fixture-nonexistent from the registry.",
-  "notes": "action 'install' with plugin_id. The id is not in the registry, so the install fails fast with a typed error (no real install / no lingering download); the selection assertion matches the emitted call.",
+  "label": "default agent • install a plugin by id (declarative apply)",
+  "query": "Install the plugin osaurus.standup-notes from the registry.",
+  "notes": "Plugins are a desired-state list of registry ids: listing one that isn't installed installs it. The id is a nonexistent fixture with a PLAUSIBLE name — the earlier 'osaurus.eval-fixture-nonexistent' id made models correctly spot the fake and refuse, so the case measured fake-name detection instead of install routing (same trap the model-download case fixed). The id is not in the registry, so the install fails fast with a typed error (no real install / no lingering download); the selection assertion matches the emitted apply.",
   "fixtures": {},
   "expect": {
     "defaultAgent": {
-      "mustCallTools": ["osaurus_plugin"],
+      "mustCallTools": ["osaurus_config"],
       "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
       "argsMustContain": [
-        { "tool": "osaurus_plugin", "args": { "action": "install", "plugin_id": "osaurus.eval-fixture-nonexistent" } }
+        { "tool": "osaurus_config", "args": { "action": "apply", "yaml": "osaurus.standup-notes" } },
+        { "tool": "osaurus_config", "args": { "yaml": "plugins" } }
       ],
-      "maxIterations": 4
+      "maxIterations": 8
     }
   }
 }

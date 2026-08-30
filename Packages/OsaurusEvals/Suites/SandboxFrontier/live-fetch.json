@@ -13,11 +13,11 @@
     "agentLoop": {
       "maxIterations": 12,
       "mustCallTools": [
-        "sandbox_exec"
+        "shell_run"
       ],
       "toolUsageAudit": [
         {
-          "tool": "sandbox_exec",
+          "tool": "shell_run",
           "argsMustContain": "curl"
         }
       ],

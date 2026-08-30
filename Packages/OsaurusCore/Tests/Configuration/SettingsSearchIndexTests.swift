@@ -87,16 +87,17 @@ struct SettingsSearchIndexTests {
     }
 
     @Test func searchFindsRelocatedStorageEntries() {
-        // The models directory + external sources moved from General to
-        // Storage; searching for them must land on the Storage tab.
+        // The standalone Storage tab is gone: the models directory +
+        // external sources live on the General tab, and the encryption
+        // panel lives on the Privacy tab's Storage sub-tab.
         let directoryHits = SettingsSearchIndex.search("models directory")
-        #expect(directoryHits.contains { $0.id == "storage.location" && $0.tab == .storage })
+        #expect(directoryHits.contains { $0.id == "storage.location" && $0.tab == .settings })
 
         let externalHits = SettingsSearchIndex.search("lm studio")
-        #expect(externalHits.contains { $0.id == "storage.externalModels" && $0.tab == .storage })
+        #expect(externalHits.contains { $0.id == "storage.externalModels" && $0.tab == .settings })
 
         let encryptionHits = SettingsSearchIndex.search("sqlcipher")
-        #expect(encryptionHits.contains { $0.id == "storage.encryption" && $0.tab == .storage })
+        #expect(encryptionHits.contains { $0.id == "storage.encryption" && $0.tab == .privacy })
     }
 
     @Test func searchFindsAgentEntries() {
@@ -122,7 +123,37 @@ struct SettingsSearchIndexTests {
         let telegramHits = SettingsSearchIndex.search("telegram bot token")
         #expect(telegramHits.contains { $0.id == "agentChannels.telegram" && $0.tab == .agentChannels })
 
+        let whatsappHits = SettingsSearchIndex.search("whatsapp qr code")
+        #expect(whatsappHits.contains { $0.id == "agentChannels.whatsapp" && $0.tab == .agentChannels })
+
         let killSwitchHits = SettingsSearchIndex.search("kill switch")
         #expect(killSwitchHits.contains { $0.id == "agentChannels.globalWrites" && $0.tab == .agentChannels })
+    }
+
+    /// Searching "sampler" returned ZERO results in the live app, even though
+    /// Settings has a "Sampling Defaults" section and Live Activity renders a
+    /// row literally labelled "Sampler last used". The matcher is substring /
+    /// token based with `allowFuzzy: false`, so "sampler" can never reach
+    /// "sampling" — no stemming bridges the two. A user who types the word
+    /// printed on screen found nothing.
+    ///
+    /// Both entries now carry the token explicitly. This test fails against
+    /// the old keyword lists.
+    @Test func searchFindsSamplerByTheWordShownOnScreen() {
+        let hits = SettingsSearchIndex.search("sampler")
+        #expect(hits.contains { $0.id == "server.generation" && $0.tab == .server })
+        #expect(hits.contains { $0.id == "server.liveActivity" && $0.tab == .server })
+
+        // The pre-existing spelling must keep working — this is an addition,
+        // not a replacement.
+        let sampling = SettingsSearchIndex.search("sampling")
+        #expect(sampling.contains { $0.id == "server.generation" })
+
+        // The other sampler knobs the Sampling Defaults panel exposes.
+        for term in ["top k", "min p", "temperature"] {
+            #expect(
+                SettingsSearchIndex.search(term).contains { $0.id == "server.generation" },
+                "\"\(term)\" should reach Sampling Defaults")
+        }
     }
 }

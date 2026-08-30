@@ -298,6 +298,16 @@ Key properties of the model:
   exposed. The model never supplies a raw connection or room for proactive
   sends; an optional `thread_id` is honored only when the binding does not pin
   a thread itself, and a conflicting thread is refused.
+- **Run-source provenance gate (0.22.17+).** Bindings are usable only from
+  run sources that map into the binding vocabulary (`chat`, `schedule`,
+  `watcher`, `self_schedule`). Runs triggered by plugins, HTTP, or an inbound
+  channel message map to none of these, so they get no Channel Destinations
+  section, no `agent_channel_publish` tool, and the publish service refuses
+  them with `run_source_not_allowed` even if the tool is somehow invoked. The
+  reply path for an inbound channel message is the relay's sanitized
+  auto-reply, gated by the connection's "Reply Automatically" toggle; with it
+  off the reply stays local and the inbound activity list records
+  `agent_replied` with reason `auto_reply_disabled`.
 - Every publish flows through a durable outbound-intent ledger keyed by
   (agent, binding, `intent_key`). Replaying an intent key returns the prior
   result instead of sending again. Provider failures are classified:

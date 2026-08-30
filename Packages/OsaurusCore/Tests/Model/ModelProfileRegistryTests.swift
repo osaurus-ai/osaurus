@@ -407,6 +407,20 @@ struct ModelProfileRegistryTests {
         ModelOptionsStore.shared.saveOptions(["disableThinking": .bool(true)], for: qwen)
         let explicitQwen = ModelOptionsStore.shared.loadOptions(for: qwen)
         #expect(explicitQwen?["disableThinking"]?.boolValue == true)
+        #expect(
+            ModelOptionsStore.shared.storedExplicitOptions(for: qwen)?["disableThinking"]?
+                .boolValue == true
+        )
+        #expect(ModelOptionsStore.shared.storedExplicitOptions(for: dsv4) != nil)
+
+        let legacy = "qwen3.6-legacy-\(UUID().uuidString)"
+        let legacyKey = "model_options_\(legacy)"
+        defer { UserDefaults.standard.removeObject(forKey: legacyKey) }
+        UserDefaults.standard.set(
+            try encoder.encode(["disableThinking": ModelOptionValue.bool(true)]),
+            forKey: legacyKey
+        )
+        #expect(ModelOptionsStore.shared.storedExplicitOptions(for: legacy) == nil)
     }
 
     @Test("Hy3 bundles expose native reasoning_effort values")
@@ -463,6 +477,44 @@ struct ModelProfileRegistryTests {
                 persisted: ["reasoningEffort": .string("high")]
             )
             #expect(explicit["reasoningEffort"]?.stringValue == "high")
+        }
+    }
+
+    @Test("Z.ai GLM hosted by Mistral exposes none/high/max reasoning effort")
+    func zaiGlm_matchesReasoningEffortProfile() {
+        for id in [
+            "zai-glm-5-2",
+            "mistral/zai-glm-5-2",
+            "zai-glm-5-2-turbo",  // forward-compat: any zai-glm revision
+        ] {
+            let profile = ModelProfileRegistry.profile(for: id)
+            #expect(profile?.displayName == ZaiGlmReasoningProfile.displayName)
+
+            guard case .segmented(let segments)? = ModelProfileRegistry.options(for: id).first?.kind
+            else {
+                Issue.record("expected segmented reasoningEffort option for \(id)")
+                continue
+            }
+            #expect(segments.map(\.id) == ["none", "high", "max"])
+            #expect(profile?.thinkingOption?.id == nil)
+
+            // Mistral rejects low/medium with HTTP 400, so unoffered values
+            // must be dropped rather than reach the wire.
+            for stale in ["low", "medium"] {
+                let normalized = ModelProfileRegistry.normalizedOptions(
+                    for: id,
+                    persisted: ["reasoningEffort": .string(stale)]
+                )
+                #expect(normalized["reasoningEffort"] == nil)
+            }
+
+            for valid in ["none", "high", "max"] {
+                let explicit = ModelProfileRegistry.normalizedOptions(
+                    for: id,
+                    persisted: ["reasoningEffort": .string(valid)]
+                )
+                #expect(explicit["reasoningEffort"]?.stringValue == valid)
+            }
         }
     }
 

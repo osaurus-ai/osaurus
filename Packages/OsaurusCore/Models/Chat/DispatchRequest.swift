@@ -62,6 +62,44 @@ public struct DispatchRequest: Sendable {
     /// hand-pressed button and every waiting API client keeps the default.
     public let loadIntent: ModelLoadIntent
 
+    /// True when this dispatch is a TRUE agent delegation (an orchestrating
+    /// agent's `spawn_agent` / `spawn_batch` call). Derived from `source` —
+    /// delegation always dispatches with `source: .delegation` — so there is
+    /// exactly one source of truth. The dispatcher binds the source as
+    /// `ChatExecutionContext.currentSessionSource` for the run (and
+    /// `ChatSession.send` rebinds it from the persisted session on every
+    /// turn), which the chat context composer uses to strip `spawn_*` tools
+    /// from the delegated child so a helper can never fan out recursively.
+    public var isDelegatedRun: Bool { source == .delegation }
+
+    /// Enforced delegation budget for `.delegation` dispatches: the child
+    /// run's per-generation response-token cap and assistant tool-loop turn
+    /// cap, from the launcher's `SubagentBudgets`. nil (every other source)
+    /// leaves the chat surface's normal limits untouched. RAM admission
+    /// prices delegated children from EXACTLY these values, so they must be
+    /// enforced — a priced-but-unenforced bound would be fail-open.
+    public let delegationResponseTokenCap: Int?
+    public let delegationAssistantTurnCap: Int?
+    public let delegationContextPositionCap: Int?
+
+    /// The enforced delegation contract carried by this request, or nil.
+    /// All three caps must be present to form a contract — a partial
+    /// contract is no contract (nothing is clamped, and admission priced
+    /// nothing bounded). This is THE conversion `BackgroundTaskManager`
+    /// uses when building the dispatched `ExecutionContext`.
+    public var delegationContract: DelegatedRunContract? {
+        guard
+            let tokens = delegationResponseTokenCap,
+            let turns = delegationAssistantTurnCap,
+            let positions = delegationContextPositionCap
+        else { return nil }
+        return DelegatedRunContract(
+            responseTokens: tokens,
+            assistantTurns: turns,
+            contextPositions: positions
+        )
+    }
+
     public init(
         id: UUID = UUID(),
         prompt: String,
@@ -76,7 +114,10 @@ public struct DispatchRequest: Sendable {
         externalSessionKey: String? = nil,
         requestedToolNames: [String] = [],
         externalSurface: Bool = false,
-        loadIntent: ModelLoadIntent = .interactive
+        loadIntent: ModelLoadIntent = .interactive,
+        delegationResponseTokenCap: Int? = nil,
+        delegationContextPositionCap: Int? = nil,
+        delegationAssistantTurnCap: Int? = nil
     ) {
         self.id = id
         self.prompt = prompt
@@ -92,6 +133,9 @@ public struct DispatchRequest: Sendable {
         self.requestedToolNames = requestedToolNames
         self.externalSurface = externalSurface
         self.loadIntent = loadIntent
+        self.delegationResponseTokenCap = delegationResponseTokenCap
+        self.delegationContextPositionCap = delegationContextPositionCap
+        self.delegationAssistantTurnCap = delegationAssistantTurnCap
     }
 }
 

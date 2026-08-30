@@ -32,7 +32,12 @@ struct CreditsView: View {
     private var routerEnabled: Bool { providerManager.isOsaurusRouterEnabled }
 
     /// Top-ups need both an active router and an identity to bill against.
-    private var canAddCredits: Bool { routerEnabled && OsaurusIdentity.exists() }
+    /// `existsCached()` because this recomputes with every body pass: the
+    /// synchronous `exists()` blocks on securityd's keychain mutex, which has
+    /// hung the main thread for seconds. Gating chrome is eventually
+    /// consistent by design; the checkout/redeem services still verify the
+    /// identity authoritatively before billing.
+    private var canAddCredits: Bool { routerEnabled && OsaurusIdentity.existsCached() }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -42,7 +47,7 @@ struct CreditsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     if routerEnabled {
-                        if !OsaurusIdentity.exists() {
+                        if !OsaurusIdentity.existsCached() {
                             identityRequiredCard
                         }
                         balanceCard
@@ -91,7 +96,7 @@ struct CreditsView: View {
         .sheet(isPresented: $showRouterUsageCenter) {
             RouterAccountUsageCenterView()
                 .environment(\.theme, themeManager.currentTheme)
-                .frame(width: 980, height: 760)
+                .fittedSheetFrame(width: 980, height: 760)
         }
         .confirmationDialog(
             Text("Turn off Osaurus Router?", bundle: .module),
@@ -311,12 +316,22 @@ struct CreditsView: View {
                     .padding(.bottom, 6)
 
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Text(verbatim: accountService.formattedBalance)
-                            .font(.system(size: 32, weight: .semibold, design: .monospaced))
-                            .foregroundColor(
-                                accountService.isFrozen ? theme.warningColor : theme.primaryText
-                            )
-                            .contentTransition(.numericText())
+                        // Hero figure only; "credits" rides along as a caption
+                        // so large balances don't blow out the 32pt monospaced
+                        // string.
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(verbatim: accountService.formattedBalanceValue)
+                                .font(.system(size: 32, weight: .semibold, design: .monospaced))
+                                .foregroundColor(
+                                    accountService.isFrozen ? theme.warningColor : theme.primaryText
+                                )
+                                .contentTransition(.numericText())
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.6)
+                            Text("credits", bundle: .module)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(theme.secondaryText)
+                        }
                         if accountService.isLoadingBalance {
                             ProgressView()
                                 .scaleEffect(0.7)
@@ -371,7 +386,7 @@ struct CreditsView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(!OsaurusIdentity.exists() || accountService.isCreatingCheckout)
+                .disabled(!OsaurusIdentity.existsCached() || accountService.isCreatingCheckout)
             }
 
             if let error = accountService.lastError, !error.isEmpty {
@@ -958,10 +973,10 @@ struct CreditsView: View {
         }
     }
 
-    /// Request costs render signed ("-$0.09") so the timeline reads like a
-    /// statement next to "+$5.00" transaction rows.
+    /// Request costs render signed ("-13 credits") so the timeline reads like
+    /// a statement next to "+50,000 credits" transaction rows.
     private func signedCostLabel(_ costMicro: String) -> String {
-        let formatted = OsaurusRouter.formatMicroUSDPrecise(costMicro)
+        let formatted = OsaurusRouter.formatMicroAsCredits(costMicro)
         if (Int64(costMicro) ?? 0) > 0 {
             return "-" + formatted
         }

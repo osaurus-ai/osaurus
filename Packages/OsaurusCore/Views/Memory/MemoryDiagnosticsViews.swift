@@ -365,6 +365,13 @@ extension MemoryView {
             cause = L(
                 "A schema migration failed, so the database couldn't be upgraded to this build's format."
             )
+        case .forwardVersion:
+            // Your memories are fine. Say so first: the previous copy read as
+            // a fault and the offered remedy was Reset, which would have
+            // destroyed exactly the data the user came here worried about.
+            cause = L(
+                "Your memories are intact. This database was written by a newer version of Osaurus, and this build is older than the format it uses. Update Osaurus to open it again, and don't reset the store."
+            )
         case .unknown:
             cause = L("The memory database failed to open for an unrecognized reason.")
         case .none:
@@ -474,6 +481,25 @@ extension MemoryView {
             statusColor: pendingSignalsStatusColor,
             detail: pendingSignalsStatusDetail
         )
+        // Inline drain: the banner used to point at a button on a
+        // different tab (Identity). Offer the action right where the
+        // backlog is reported.
+        if pendingSignals.totalSignals > 0 {
+            HStack {
+                Spacer()
+                Button(action: runDistillPending) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "wand.and.stars")
+                            .font(.system(size: 11))
+                        Text(isDistilling ? L("Distilling...") : L("Distill pending"))
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                }
+                .buttonStyle(SettingsButtonStyle())
+                .disabled(isDistilling || !config.enabled)
+                .localizedHelp("Distill buffered turns now, loading the core model if needed")
+            }
+        }
         diagnosticRow(
             label: "Distillation results",
             value:
@@ -579,7 +605,14 @@ extension MemoryView {
                     """
                 )
         }
-        return nil
+        return
+            L(
+                """
+                Buffered turns are waiting to be distilled. They drain \
+                automatically the next time the core model is loaded, or \
+                you can distill them now.
+                """
+            )
     }
 
     private var processingResultsStatusColor: Color {

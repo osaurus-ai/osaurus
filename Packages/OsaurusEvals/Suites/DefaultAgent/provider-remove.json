@@ -1,18 +1,23 @@
 {
   "id": "default_agent.provider-remove",
   "domain": "default_agent",
-  "label": "default agent • remove a provider by id",
-  "query": "Remove the cloud provider with id 1b6f3d92-7a04-4e85-9c31-2d8f5a0b7e64.",
-  "notes": "action 'remove' with the supplied id. The id does not exist in the isolated store, so the tool returns a typed not-found error (no mutation); the selection assertion matches the call the model emits first.",
-  "fixtures": {},
+  "label": "default agent • remove a provider (declarative prune)",
+  "query": "Remove my cloud provider named \"Old OpenAI\" — I don't use it anymore.",
+  "notes": "Deletion in the declarative model is prune: apply a providers list WITHOUT the entry plus prune:true. A REAL provider is seeded under the referenced name (enabled:false so it never connects) so the case tests the actual removal flow instead of dead-ending on not-found. The seeded provider is the only one in the isolated store, so `providers: []` with prune is the canonical document. The assertion pins the apply + prune selection, not the exact YAML shape.",
+  "fixtures": {
+    "seedProviders": [
+      { "id": "1b6f3d92-7a04-4e85-9c31-2d8f5a0b7e64", "name": "Old OpenAI" }
+    ]
+  },
   "expect": {
     "defaultAgent": {
-      "mustCallTools": ["osaurus_provider"],
+      "mustCallTools": ["osaurus_config"],
       "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
       "argsMustContain": [
-        { "tool": "osaurus_provider", "args": { "action": "remove" } }
+        { "tool": "osaurus_config", "args": { "action": "apply", "prune": "true" } },
+        { "tool": "osaurus_config", "args": { "yaml": "providers" } }
       ],
-      "maxIterations": 4
+      "maxIterations": 8
     }
   }
 }

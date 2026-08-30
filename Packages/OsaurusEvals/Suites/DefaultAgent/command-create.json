@@ -1,0 +1,35 @@
+{
+  "id": "default_agent.command-create",
+  "domain": "default_agent",
+  "label": "default agent • create a template slash command",
+  "query": "Create a /standup slash command that inserts a template asking me what I did yesterday, what I'm doing today, and any blockers.",
+  "notes": "Wave 3c commands scope: a `commands:` entry with `name: standup` and a `template`. Pins the section and the command name.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "commands"
+          }
+        },
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "standup"
+          }
+        }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

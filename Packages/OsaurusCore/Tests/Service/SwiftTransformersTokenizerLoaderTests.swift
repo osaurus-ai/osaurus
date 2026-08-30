@@ -775,6 +775,52 @@ struct SwiftTransformersTokenizerLoaderTests {
         )
     }
 
+    @Test func dsv4AbsentThinkingControlsDefaultToThinkingRail() async throws {
+        // DSV4's jang_config declares default_mode="thinking" with
+        // default_effort="low" (which adds no preface). A request carrying
+        // NO enable_thinking and NO reasoning_effort — exactly what the UI
+        // sends when the user never touches the Reasoning Mode segments —
+        // must render the OPEN <think> tail. Defaulting the absent case to
+        // chat produced a closed </think> tail while the model chip showed
+        // "· Low": the user saw a reasoning default and got zero reasoning.
+        let defaultPath = "/Users/eric/models/DeepSeek-V4-Flash-0731-JANG"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_DSV4_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+
+        let absentContext = try tokenizer.applyChatTemplate(
+            messages: [["role": "user", "content": "Say ok."]],
+            tools: nil,
+            additionalContext: nil
+        )
+        let absentDecoded = tokenizer.decode(
+            tokenIds: absentContext, skipSpecialTokens: false)
+        #expect(
+            absentDecoded.hasSuffix("<\u{FF5C}Assistant\u{FF5C}><think>"),
+            "Absent thinking controls must default to the bundle's thinking rail. Decoded tail: \(absentDecoded.suffix(60))"
+        )
+
+        // Explicit opt-out still selects the chat rail.
+        let offContext = try tokenizer.applyChatTemplate(
+            messages: [["role": "user", "content": "Say ok."]],
+            tools: nil,
+            additionalContext: ["enable_thinking": false]
+        )
+        let offDecoded = tokenizer.decode(tokenIds: offContext, skipSpecialTokens: false)
+        #expect(
+            offDecoded.hasSuffix("<\u{FF5C}Assistant\u{FF5C}></think>"),
+            "Explicit enable_thinking=false must keep the closed chat rail. Decoded tail: \(offDecoded.suffix(60))"
+        )
+    }
+
     @Test func dsv4LocalTokenizerUsesCanonicalNoChatTemplatePath() async throws {
         let defaultPath = "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_DSV4_TEST_MODEL"] ?? defaultPath

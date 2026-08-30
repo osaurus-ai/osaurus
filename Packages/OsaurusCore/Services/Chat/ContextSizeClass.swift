@@ -115,8 +115,8 @@ public struct ContextWindowInfo: Sendable, Equatable {
     public let contextLength: Int?
 
     /// Whether the prompt should render in its compact form (ids-only
-    /// manifest, small SOUL budget, compact family guidance, no plugin-creator
-    /// recipe). True for small/tiny windows (existing behaviour) AND for local
+    /// manifest, small SOUL budget, compact family guidance, reduced
+    /// plugin-creator recipe). True for small/tiny windows AND for local
     /// models small enough that the per-step tokenization cost of a verbose
     /// prompt outweighs the prose — even when their window is large. Kept on
     /// the SAME resolver as `sizeClass` (not a parallel classifier) but
@@ -226,26 +226,61 @@ public enum ContextSizeResolver {
 
         // Cache-only: `resolve` runs synchronously inside chat view getters
         // during layout, where `ModelInfo.load`'s cold-miss disk probe has hung
-        // the UI. A cold miss warms the memo off-main and reads as `.unknown`
-        // for this pass; a later render resolves the real window.
+        // the UI. A cold miss warms the memo off-main and reads the window as
+        // unknown for this pass; a later render resolves the real one.
+        //
+        // 🚨 But the cold pass must NOT change the compact preference, because
+        // that changes PROMPT SHAPE and therefore the KV prefix.
+        //
+        // Returning bare `.unknown` here did exactly that: `.unknown` defaults
+        // `prefersCompactPrompt` to false, while the warm branch below says the
+        // opposite for the same situation ("Unknown size on a local model also
+        // compacts"). An Ornith 9B conversation composed a VERBOSE system
+        // prompt on the first render and a COMPACT one once the memo warmed —
+        // different prefix, missed cache — on the very read sites this
+        // resolver's chokepoint exists to keep mutually consistent. A 35B model
+        // is non-compact either way, which is why it hid on the big models.
+        //
+        // The parameter count comes from the model ID, which needs no memo, so
+        // both paths can and now do agree.
         guard let info = ModelInfo.loadCachedOrWarm(modelId: modelId),
             let ctx = info.model.contextLength
-        else { return .unknown }
+        else {
+            return ContextWindowInfo(
+                sizeClass: .normal,
+                contextLength: nil,
+                prefersCompactPrompt: prefersCompactPrompt(forModelId: trimmed)
+            )
+        }
 
         let bucket = sizeClass(forContextLength: ctx)
         if bucket != .normal {
             return ContextWindowInfo(sizeClass: bucket, contextLength: ctx, prefersCompactPrompt: true)
         }
-        // Large window, local model: prefer compact when the model is small
-        // enough that verbose-prompt tokenization isn't worth it. Unknown size
-        // on a local model also compacts (the fleet skews small, and compaction
-        // only drops prose — never a capability id or a tool from the schema).
-        let billions = ModelMetadataParser.parameterCountBillions(from: trimmed)
-        let prefersCompact = billions.map { $0 <= compactParamCeilingBillions } ?? true
+        // Large window: prefer compact only when the model is small enough that
+        // verbose-prompt tokenization isn't worth it.
         return ContextWindowInfo(
             sizeClass: .normal,
             contextLength: ctx,
-            prefersCompactPrompt: prefersCompact
+            prefersCompactPrompt: prefersCompactPrompt(forModelId: trimmed)
         )
+    }
+
+    /// Compact preference from the model id alone.
+    ///
+    /// Shared by the cold-miss and warm paths so both agree — a cold pass that
+    /// disagreed with the warm one changed PROMPT SHAPE between renders and so
+    /// changed the KV prefix, which is the defect this consolidation fixes.
+    ///
+    /// An UNKNOWN parameter count resolves to `false` (verbose). Compaction is
+    /// not purely cosmetic: the compact prompt swaps the expanded management
+    /// tools for an ids-only `capabilities_load` manifest, so guessing "compact"
+    /// for a model we cannot size silently narrows the tool schema the API
+    /// advertises. Degrading capability on a guess is the wrong default; only
+    /// a model we can positively identify as small gets the compact prompt.
+    static func prefersCompactPrompt(forModelId modelId: String) -> Bool {
+        guard let billions = ModelMetadataParser.parameterCountBillions(from: modelId)
+        else { return false }
+        return billions <= compactParamCeilingBillions
     }
 }

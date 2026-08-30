@@ -10,12 +10,10 @@ import Foundation
 ///   2. `sandbox_install` appends successful installs via `record(...)`.
 ///
 /// `SystemPromptComposer` reads it (`installed(agentId:)`) and surfaces a
-/// compact, capped line in the static system-prompt prefix so the model
-/// knows what's already available without re-probing. Because the prompt
-/// line lives in the cached prefix, it reflects manifest state as of
-/// session start — within-session installs are already visible to the
-/// model through each install tool's success result, and the manifest
-/// update keeps the next session accurate. No mid-session prefix churn.
+/// compact, capped line in the dynamic system-prompt suffix so the model
+/// knows what's already available without re-probing. The install result is
+/// the same-run context carrier; the next composed turn reads this manifest
+/// without invalidating the reusable static prompt prefix.
 ///
 /// Persisted as `~/.osaurus/agents/<uuid>/installed-packages.json`.
 /// Thread-safe and synchronous so it can be called from the `@Sendable`

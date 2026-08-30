@@ -25,7 +25,7 @@ enum ToolPolicyStyle {
 
     static func color(for policy: ToolPermissionPolicy, theme: ThemeProtocol) -> Color {
         switch policy {
-        case .auto: theme.accentColor
+        case .auto: theme.successColor
         case .ask: .orange
         case .deny: theme.errorColor
         }
@@ -51,6 +51,59 @@ enum ToolPolicyStyle {
     }
 }
 
+// MARK: - Menu Pill
+
+/// Button style that wraps a menu label in a capsule without touching the
+/// label's own layout. A custom `ButtonStyle` passes `configuration.label`
+/// through verbatim, so the label's spacing/padding survive — unlike
+/// `.bordered`, which re-lays out the label and ignores its `HStack` spacing.
+private struct PillButtonStyle: ButtonStyle {
+    let fill: Color
+    let stroke: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(Capsule().fill(fill))
+            .overlay(Capsule().stroke(stroke, lineWidth: 1))
+            .contentShape(Capsule())
+            .opacity(configuration.isPressed ? 0.65 : 1)
+    }
+}
+
+/// A pill-shaped dropdown whose visible chrome is a fully custom `label`. It is
+/// a real `Menu` (so clicking works) rendered as a button with `PillButtonStyle`
+/// and the system menu indicator hidden — the label owns all spacing, padding,
+/// background, and colors.
+struct MenuPill<MenuContent: View, Label: View>: View {
+    let fill: Color
+    let stroke: Color
+    private let menuContent: () -> MenuContent
+    private let label: () -> Label
+
+    init(
+        fill: Color,
+        stroke: Color,
+        @ViewBuilder menuContent: @escaping () -> MenuContent,
+        @ViewBuilder label: @escaping () -> Label
+    ) {
+        self.fill = fill
+        self.stroke = stroke
+        self.menuContent = menuContent
+        self.label = label
+    }
+
+    var body: some View {
+        Menu {
+            menuContent()
+        } label: {
+            label()
+        }
+        .menuStyle(.button)
+        .buttonStyle(PillButtonStyle(fill: fill, stroke: stroke))
+        .menuIndicator(.hidden)
+    }
+}
+
 // MARK: - Tool Policy Menu
 
 /// Reusable permission-behavior selector menu for a single tool entry.
@@ -60,8 +113,12 @@ struct ToolPolicyMenu: View {
     let info: ToolRegistry.ToolPolicyInfo
     let onChange: () -> Void
 
+    private var color: Color {
+        ToolPolicyStyle.color(for: info.effectivePolicy, theme: theme)
+    }
+
     var body: some View {
-        Menu {
+        MenuPill(fill: color.opacity(0.14), stroke: color.opacity(0.22)) {
             ForEach([ToolPermissionPolicy.auto, .ask, .deny], id: \.self) { policy in
                 Button {
                     ToolRegistry.shared.setPolicy(policy, for: toolName)
@@ -69,9 +126,7 @@ struct ToolPolicyMenu: View {
                 } label: {
                     HStack {
                         Image(systemName: ToolPolicyStyle.icon(for: policy))
-                            .foregroundColor(ToolPolicyStyle.color(for: policy, theme: theme))
                         Text(ToolPolicyStyle.title(for: policy))
-                            .foregroundColor(ToolPolicyStyle.color(for: policy, theme: theme))
                         if policy == info.effectivePolicy {
                             Image(systemName: "checkmark")
                         }
@@ -79,25 +134,20 @@ struct ToolPolicyMenu: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 Image(systemName: ToolPolicyStyle.icon(for: info.effectivePolicy))
-                    .font(.system(size: 9))
-                    .foregroundColor(ToolPolicyStyle.color(for: info.effectivePolicy, theme: theme))
+                    .font(.system(size: 9, weight: .semibold))
                 Text(ToolPolicyStyle.compactTitle(for: info.effectivePolicy))
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(ToolPolicyStyle.color(for: info.effectivePolicy, theme: theme))
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(.system(size: 10, weight: .semibold))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+                    .opacity(0.7)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                Capsule()
-                    .fill(ToolPolicyStyle.color(for: info.effectivePolicy, theme: theme).opacity(0.12))
-            )
+            .foregroundStyle(color)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
         }
-        .menuStyle(.borderlessButton)
         .fixedSize()
         .help(Text("Choose whether this tool runs automatically, asks first, or is blocked", bundle: .module))
         .accessibilityLabel(
@@ -198,6 +248,56 @@ struct ToolSectionHeader: View {
     }
 }
 
+/// A source header that keeps large inventories out of the default scan while
+/// preserving a one-click path to every tool.
+struct ToolSectionDisclosureHeader: View {
+    @Environment(\.theme) private var theme
+    let title: String
+    let icon: String
+    let count: Int
+    let isExpanded: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+                    .frame(width: 16)
+
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundColor(theme.primaryText)
+
+                Text("\(count)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(theme.tertiaryBackground))
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            }
+            .contentShape(Rectangle())
+            .padding(.horizontal, 10)
+            .frame(height: 36)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.tertiaryBackground.opacity(0.45))
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel(Text("\(title), \(count) tools", bundle: .module))
+        .accessibilityValue(Text(isExpanded ? "Expanded" : "Collapsed", bundle: .module))
+    }
+}
+
 // MARK: - Show All Tools Button
 
 /// Disclosure control that toggles a capped tool group between its first
@@ -255,7 +355,7 @@ struct ToolFilterMenu<Option: ToolCatalogFilterOption>: View {
     @Binding var selection: Option
 
     var body: some View {
-        Menu {
+        MenuPill(fill: theme.tertiaryBackground, stroke: theme.inputBorder) {
             ForEach(options, id: \.self) { option in
                 Button {
                     selection = option
@@ -269,28 +369,20 @@ struct ToolFilterMenu<Option: ToolCatalogFilterOption>: View {
                 }
             }
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: 7) {
                 Image(systemName: icon)
                     .font(.system(size: 10, weight: .semibold))
                 Text(selection.title)
                     .font(.system(size: 11, weight: .medium))
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(theme.tertiaryText)
             }
             .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 9)
-            .frame(height: 28)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(theme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
         }
-        .menuStyle(.borderlessButton)
         .fixedSize()
         .accessibilityLabel(Text("\(accessibilityTitle): \(selection.title)"))
     }
@@ -346,47 +438,47 @@ struct RuntimeManagedToolEntryRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            ToolRowIcon(systemName: "terminal", showsWarning: hasMissingSystemPermissions)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    Text(entry.name)
-                        .font(.system(size: 13, weight: .medium, design: .rounded))
-                        .foregroundColor(theme.primaryText)
-
-                    ToolCatalogStatusPill(status: status, detail: availability.displayDetail)
-                }
-
-                Text(entry.description)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(1)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                ToolRowIcon(systemName: "terminal", showsWarning: hasMissingSystemPermissions)
+                toolInfo
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                policyMenu
             }
-            // Expand the info column instead of a trailing Spacer so the row has
-            // one fewer flexible layout child to negotiate per pass.
-            .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(badge)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Capsule().fill(theme.tertiaryBackground))
-                .help(Text("Where this tool comes from", bundle: .module))
-
-            if let info = policyInfo {
-                ToolPolicyMenu(
-                    toolName: entry.name,
-                    info: info,
-                    onChange: onChange
-                )
+            HStack(spacing: 8) {
+                ToolSourceBadge(title: badge)
+                Spacer(minLength: 8)
             }
+            .padding(.leading, 38)
         }
-        .padding(10)
+        .padding(9)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(theme.tertiaryBackground.opacity(0.5))
         )
+    }
+
+    private var toolInfo: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 4) {
+                Text(entry.name)
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                ToolCatalogStatusPill(status: status, detail: availability.displayDetail)
+            }
+            Text(entry.description)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(1)
+        }
+    }
+
+    @ViewBuilder private var policyMenu: some View {
+        if let info = policyInfo {
+            ToolPolicyMenu(toolName: entry.name, info: info, onChange: onChange)
+        }
     }
 }
 
@@ -395,6 +487,7 @@ struct RuntimeManagedToolEntryRow: View {
 struct ToolEntryRow: View {
     @Environment(\.theme) private var theme
     let entry: ToolRegistry.ToolEntry
+    var sourceLabel: String? = nil
     let policyInfo: ToolRegistry.ToolPolicyInfo?
     let availability: ToolAvailability
     var status: ToolCatalogStatus = .ready
@@ -406,24 +499,24 @@ struct ToolEntryRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            ToolRowIcon(systemName: "function", showsWarning: hasMissingSystemPermissions)
-            // Expand the info column instead of a trailing Spacer to drop one
-            // flexible layout child from the row.
-            toolInfo
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            if let info = policyInfo {
-                ToolPolicyMenu(
-                    toolName: entry.name,
-                    info: info,
-                    onChange: onChange
-                )
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                ToolRowIcon(systemName: "function", showsWarning: hasMissingSystemPermissions)
+                toolInfo
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                policyMenu
             }
 
-            ToolEnableToggle(entry: entry, onChange: onChange)
+            HStack(spacing: 8) {
+                if let sourceLabel {
+                    ToolSourceBadge(title: sourceLabel)
+                }
+                Spacer(minLength: 8)
+                ToolEnableToggle(entry: entry, onChange: onChange)
+            }
+            .padding(.leading, 38)
         }
-        .padding(10)
+        .padding(9)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(theme.tertiaryBackground.opacity(0.5))
@@ -443,6 +536,12 @@ struct ToolEntryRow: View {
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
                 .lineLimit(1)
+        }
+    }
+
+    @ViewBuilder private var policyMenu: some View {
+        if let info = policyInfo {
+            ToolPolicyMenu(toolName: entry.name, info: info, onChange: onChange)
         }
     }
 }
@@ -475,41 +574,65 @@ struct RemoteToolRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            ToolRowIcon(systemName: "function", showsWarning: false)
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    Text(displayName)
-                        .font(.system(size: 13, weight: .medium, design: .rounded))
-                        .foregroundColor(theme.primaryText)
-
-                    ToolCatalogStatusPill(status: status, detail: availability.displayDetail)
-                }
-                Text(entry.description)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
-            }
-            // Expand the info column instead of a trailing Spacer to drop one
-            // flexible layout child from the row.
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            if let info = policyInfo {
-                ToolPolicyMenu(
-                    toolName: entry.name,
-                    info: info,
-                    onChange: onChange
-                )
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                ToolRowIcon(systemName: "function", showsWarning: false)
+                toolInfo
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                policyMenu
             }
 
-            ToolEnableToggle(entry: entry, onChange: onChange)
+            HStack(spacing: 8) {
+                ToolSourceBadge(title: providerName)
+                Spacer(minLength: 8)
+                ToolEnableToggle(entry: entry, onChange: onChange)
+            }
+            .padding(.leading, 38)
         }
-        .padding(10)
+        .padding(9)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(theme.tertiaryBackground.opacity(0.5))
         )
+    }
+
+    private var toolInfo: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 4) {
+                Text(displayName)
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                ToolCatalogStatusPill(status: status, detail: availability.displayDetail)
+            }
+            Text(entry.description)
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .lineLimit(1)
+        }
+    }
+
+    @ViewBuilder private var policyMenu: some View {
+        if let info = policyInfo {
+            ToolPolicyMenu(toolName: entry.name, info: info, onChange: onChange)
+        }
+    }
+}
+
+struct ToolSourceBadge: View {
+    @Environment(\.theme) private var theme
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(theme.secondaryText)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(theme.tertiaryBackground))
+            .help(Text("Where this tool comes from", bundle: .module))
     }
 }
 

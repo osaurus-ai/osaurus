@@ -120,16 +120,121 @@ struct ToolScopeGateRecoveryTests {
         let unknown = "test_scope_gate_ghost_\(UUID().uuidString.prefix(8))"
 
         let scope = ToolExecutionScope(exposed: [])
-        let result = try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
-            try await ToolRegistry.shared.execute(name: unknown, argumentsJSON: "{}")
+        for guessed in [unknown, "plugin/\(unknown)"] {
+            let result = try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+                try await ToolRegistry.shared.execute(name: guessed, argumentsJSON: "{}")
+            }
+
+            let parsed = try envelope(result)
+            #expect(parsed?["ok"] as? Bool == false)
+            #expect(parsed?["kind"] as? String == "tool_not_found")
+            #expect(parsed?["retryable"] as? Bool == false)
+            let message = parsed?["message"] as? String ?? ""
+            #expect(!message.contains("Call capabilities"))
+        }
+    }
+
+    @Test
+    func pluginGroupIdCalledAsTool_redirectsToGatewayLoad() async throws {
+        let plugin = SandboxPlugin(
+            name: "Scope Group Rescue \(UUID().uuidString.prefix(6))",
+            description: "Scope-gate group rescue fixture"
+        )
+        let member = SandboxPluginTool(
+            spec: SandboxToolSpec(
+                id: "probe",
+                description: "Group rescue probe",
+                parameters: [:],
+                run: "echo rescued"
+            ),
+            plugin: plugin
+        )
+        ToolRegistry.shared.registerPluginTool(member)
+        ToolRegistry.shared.setEnabled(true, for: member.name)
+        defer { ToolRegistry.shared.unregister(names: [member.name]) }
+
+        let gatewaySpec = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "capabilities",
+                description: "merged gateway",
+                parameters: nil
+            )
+        )
+        let scope = ToolExecutionScope(exposed: [gatewaySpec])
+
+        for guessed in [plugin.id, "plugin/\(plugin.id)"] {
+            let result = try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+                try await ToolRegistry.shared.execute(
+                    name: guessed,
+                    argumentsJSON: #"{"date":"tomorrow"}"#
+                )
+            }
+            let parsed = try envelope(result)
+            #expect(parsed?["ok"] as? Bool == false)
+            #expect(parsed?["kind"] as? String == "tool_not_found")
+            #expect(parsed?["retryable"] as? Bool == true)
+            let message = parsed?["message"] as? String ?? ""
+            #expect(message.contains("capability id for a plugin group"))
+            #expect(message.contains(#"capabilities with {"ids":["plugin/\#(plugin.id)"]}"#))
+            #expect(!message.contains(member.name))
+        }
+    }
+
+    @Test
+    func pluginGroupIdCalledAsTool_staysOpaqueWhenAgentWithholdsEveryMember() async throws {
+        let plugin = SandboxPlugin(
+            name: "Scope Group Withheld \(UUID().uuidString.prefix(6))",
+            description: "Withheld scope-gate group fixture"
+        )
+        let member = SandboxPluginTool(
+            spec: SandboxToolSpec(
+                id: "probe",
+                description: "Withheld group probe",
+                parameters: [:],
+                run: "echo should-not-run"
+            ),
+            plugin: plugin
+        )
+        ToolRegistry.shared.registerPluginTool(member)
+        ToolRegistry.shared.setEnabled(true, for: member.name)
+        defer { ToolRegistry.shared.unregister(names: [member.name]) }
+
+        let agent = Agent(
+            name: "GroupRescueDenied-\(UUID().uuidString.prefix(6))",
+            agentAddress: "test-group-rescue-\(UUID().uuidString)",
+            autonomousExec: AutonomousExecConfig(enabled: false),
+            toolSelectionMode: .manual,
+            memoryEnabled: false
+        )
+        AgentManager.shared.add(agent)
+        AgentManager.shared.updateEnabledToolNames(["get_current_time"], for: agent.id)
+        defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
+
+        let gatewaySpec = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "capabilities",
+                description: "merged gateway",
+                parameters: nil
+            )
+        )
+        let scope = ToolExecutionScope(exposed: [gatewaySpec])
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(agent.id) {
+            try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+                try await ToolRegistry.shared.execute(
+                    name: "plugin/\(plugin.id)",
+                    argumentsJSON: "{}"
+                )
+            }
         }
 
         let parsed = try envelope(result)
-        #expect(parsed?["ok"] as? Bool == false)
-        #expect(parsed?["kind"] as? String == "tool_not_found")
         #expect(parsed?["retryable"] as? Bool == false)
         let message = parsed?["message"] as? String ?? ""
+        #expect(!message.contains("capability id for a plugin group"))
         #expect(!message.contains("Call capabilities"))
+        #expect(!message.contains(member.name))
     }
 
     @Test

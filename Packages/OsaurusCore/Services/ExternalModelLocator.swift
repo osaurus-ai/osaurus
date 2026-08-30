@@ -183,6 +183,47 @@ enum ExternalModelLocator {
     /// reports under memory pressure.
     nonisolated(unsafe) private static var modelsMemo: [MLXModel]?
     nonisolated(unsafe) private static var modelsMemoGen: UInt64 = .max
+    nonisolated(unsafe) private static var modelsRebuildInFlight = false
+
+    /// Catalog entries without waiting on disk. On a cold or stale memo this
+    /// returns the previous build (or []) immediately and rebuilds in the
+    /// background, then posts `.localModelsChanged` so consumers re-render
+    /// from the finished catalog. The memoized `models()` build reads each
+    /// bundle's `config.json` and walks its weight files for sizes, which is
+    /// seconds of I/O right after launch — too slow for the view-body call
+    /// path through `ModelManager.localModelsSnapshotNonBlocking`.
+    static func modelsSnapshotNonBlocking() -> [MLXModel] {
+        lock.lock()
+        let entriesLoaded = !loadedLocked().isEmpty
+        let gen = registryGen
+        if modelsMemoGen == gen, let memo = modelsMemo {
+            lock.unlock()
+            return memo
+        }
+        let stale = modelsMemo ?? []
+        // Nothing registered: the memo miss is vacuous, skip the rebuild hop.
+        if !entriesLoaded {
+            lock.unlock()
+            return stale
+        }
+        let shouldKick = !modelsRebuildInFlight
+        if shouldKick { modelsRebuildInFlight = true }
+        lock.unlock()
+
+        if shouldKick {
+            DispatchQueue.global(qos: .utility).async {
+                _ = models()
+                lock.lock()
+                modelsRebuildInFlight = false
+                lock.unlock()
+                // Same completion signal as the local-models scan: without it
+                // a launch-time consumer keeps its empty/stale snapshot until
+                // an unrelated event triggers a refresh.
+                NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+            }
+        }
+        return stale
+    }
 
     /// Catalog entries for every registered external model.
     static func models() -> [MLXModel] {

@@ -133,6 +133,18 @@ public enum ModelMediaCapabilities {
             supportsImage || supportsVideo || supportsAudio
         }
 
+        /// Adds audio when the bundle's checkpoint proves it, never removes it.
+        /// A name-based verdict cannot see the weights, so it may only be too
+        /// conservative here — the checkpoint is the stronger evidence.
+        public func withAudio(_ hasAudio: Bool) -> Capabilities {
+            guard hasAudio, !supportsAudio else { return self }
+            return Capabilities(
+                supportsImage: supportsImage,
+                supportsVideo: supportsVideo,
+                supportsAudio: true
+            )
+        }
+
         public var summary: String {
             var parts: [String] = []
             if supportsImage { parts.append("image") }
@@ -281,7 +293,8 @@ public enum ModelMediaCapabilities {
     public static func composerCapabilities(
         modelId: String?,
         fallbackSupportsImages: Bool,
-        localModelType: String? = nil
+        localModelType: String? = nil,
+        localHasAudioTensors: Bool = false
     ) -> Capabilities {
         guard let modelId,
             !modelId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -289,7 +302,7 @@ public enum ModelMediaCapabilities {
             return fallbackSupportsImages ? .imageOnly : .textOnly
         }
 
-        let detected = from(modelId: modelId)
+        let detected = from(modelId: modelId).withAudio(localHasAudioTensors)
         if detected == .textOnly,
             ModelFamilyNames.isNemotronThinkingFamily(modelId),
             !ModelFamilyNames.isNemotronOmniFamily(modelId)
@@ -335,14 +348,16 @@ public enum ModelMediaCapabilities {
     public static func composerDescriptor(
         modelId: String?,
         fallbackSupportsImages: Bool,
-        localModelType: String? = nil
+        localModelType: String? = nil,
+        localHasAudioTensors: Bool = false
     ) -> Descriptor {
         let normalized = modelId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let displayId = normalized.isEmpty ? "unspecified model" : normalized
         let capabilities = composerCapabilities(
             modelId: modelId,
             fallbackSupportsImages: fallbackSupportsImages,
-            localModelType: localModelType
+            localModelType: localModelType,
+            localHasAudioTensors: localHasAudioTensors
         )
         let detected = normalized.isEmpty ? Capabilities.textOnly : from(modelId: normalized)
         let source =
@@ -446,6 +461,13 @@ public enum ModelMediaCapabilities {
     /// from 26B-A4B / 31B. A raw byte scan is used instead of full JSON
     /// decoding because the 12B index is multi-MB and this runs on the
     /// capability-resolution path.
+    /// Public entry point for the same checkpoint probe `gemma4BundleSupportsAudio`
+    /// performs. The composer needs this fact and previously had no way to ask
+    /// for it, so it decided audio from the model name instead.
+    public static func bundleCarriesAudio(directory: URL) -> Bool {
+        gemma4BundleSupportsAudio(directory: directory)
+    }
+
     private static func gemma4BundleSupportsAudio(directory: URL) -> Bool {
         let indexURL = directory.appendingPathComponent("model.safetensors.index.json")
         if let data = try? Data(contentsOf: indexURL, options: .mappedIfSafe) {
@@ -474,6 +496,12 @@ public enum ModelMediaCapabilities {
         "smolvlm",
         "nemotron_h_omni",
         "NemotronH_Nano_Omni_Reasoning_V3".lowercased(),
+        // Muse Glimmer's vision tower carries `patch_temporal: 2`, i.e. it
+        // consumes frames in temporal pairs, and the chat template has a
+        // dedicated `<|video|>` placeholder alongside `<|patch|>`. Without this
+        // entry the bundle's own `has_video: true` is overruled here and video
+        // requests are rejected as unsupported.
+        "muse_glimmer",
     ]
 
     private static func buildDescriptor(

@@ -1337,7 +1337,8 @@ final class NativeToolCallRowView: NSView {
         let rv = ensureResultView()
         rv.isHidden = false
         let textW = max(0, width - Self.sectionMarkdownWidthDeduction)
-        let resultMarkdown = Self.markdownForToolResultDisplay(result)
+        let resultMarkdown = Self.markdownForToolResultDisplay(
+            result, toolName: item.call.function.name)
         rv.configure(
             text: resultMarkdown,
             width: textW,
@@ -1536,7 +1537,9 @@ final class NativeToolCallRowView: NSView {
     /// `{"text": "..."}` carrier renders as the prose verbatim (markdown).
     /// This keeps file_read / capability listings readable in the
     /// tool-call card instead of getting buried under a JSON wrapper.
-    private static func markdownForToolResultDisplay(_ result: String) -> String {
+    private static func markdownForToolResultDisplay(
+        _ result: String, toolName: String = ""
+    ) -> String {
         if ToolEnvelope.isError(result) {
             return result
         }
@@ -1545,6 +1548,14 @@ final class NativeToolCallRowView: NSView {
             return ""
         }
         if let payload = ToolEnvelope.successPayload(result) as? [String: Any] {
+            // osaurus_config plan/apply payloads are structured — render a
+            // readable outcome list (with Settings deep-links for rows the
+            // user must finish) instead of the raw JSON envelope.
+            if toolName == "osaurus_config",
+                let rendered = markdownForConfigResult(payload)
+            {
+                return rendered
+            }
             // Directory listings are structured (`kind: "listing"`) — the
             // model acts on `entries`, but the UI renders a readable tree
             // from the same structure (presentation, not the model's input).
@@ -1572,6 +1583,100 @@ final class NativeToolCallRowView: NSView {
             return "```json\n\(pretty)\n```"
         }
         return trimmed
+    }
+
+    /// Render an `osaurus_config` plan or apply payload as a readable
+    /// outcome list. Apply results become per-target status lines with a
+    /// `[Open … in Settings](osaurus://settings?tab=…)` link on rows the
+    /// user must finish; plan results reuse the plan's own summary text.
+    /// Returns nil when the payload doesn't match either shape (schema /
+    /// export / templates fall through to the generic rendering).
+    /// Internal (not private) so unit tests can pin the rendering contract.
+    static func markdownForConfigResult(_ payload: [String: Any]) -> String? {
+        // Apply: {"status": ..., "results": [{section, target, status, message}], notes}
+        if let rows = payload["results"] as? [[String: Any]], !rows.isEmpty,
+            rows.allSatisfy({ $0["section"] is String && $0["status"] is String })
+        {
+            var lines: [String] = []
+            if let status = payload["status"] as? String {
+                lines.append("**\(configTopLevelStatusLabel(status))**")
+                lines.append("")
+            }
+            for row in rows {
+                let section = row["section"] as? String ?? ""
+                let target = row["target"] as? String ?? ""
+                let status = row["status"] as? String ?? ""
+                var line = "- \(configStatusSymbol(status)) \(section): **\(target)**"
+                if let message = row["message"] as? String, !message.isEmpty {
+                    line += " — \(message)"
+                }
+                if status == "needs_user_action" || status == "cancelled",
+                    let tab = configSettingsTab(forSection: section)
+                {
+                    line += " [Open \(tab.label) in Settings](osaurus://settings?tab=\(tab.rawValue))"
+                }
+                lines.append(line)
+            }
+            if let notes = payload["notes"] as? [String], !notes.isEmpty {
+                lines.append("")
+                for note in notes { lines.append("_\(note)_") }
+            }
+            return lines.joined(separator: "\n")
+        }
+        // Plan: {"change_count": ..., "actions": [...], "summary": "..."}
+        if payload["change_count"] != nil, let summary = payload["summary"] as? String {
+            var text = "```\n\(summary)\n```"
+            if let note = payload["note"] as? String, !note.isEmpty {
+                text += "\n_\(note)_"
+            }
+            return text
+        }
+        return nil
+    }
+
+    private static func configTopLevelStatusLabel(_ status: String) -> String {
+        switch status {
+        case "applied": return "Applied"
+        case "applied_downloads_running": return "Applied — downloads still running"
+        case "partial": return "Partially applied"
+        case "no_changes": return "No changes needed"
+        default: return status
+        }
+    }
+
+    private static func configStatusSymbol(_ status: String) -> String {
+        switch status {
+        case "done": return "✓"
+        case "started": return "⏳"
+        case "failed": return "✗"
+        case "needs_user_action": return "⚠"
+        case "cancelled": return "✗"
+        default: return "•"
+        }
+    }
+
+    /// Best-fit Settings tab for a config document section, used for the
+    /// deep-link on rows the user must finish by hand.
+    private static func configSettingsTab(forSection section: String) -> ManagementTab? {
+        switch section {
+        case "providers": return .providers
+        // MCP servers are managed from the Tools tab's MCP section.
+        case "mcp": return .tools
+        case "models": return .models
+        // Native plugins now live under the Tools tab.
+        case "plugins": return .tools
+        case "schedules": return .schedules
+        case "watchers": return .watchers
+        case "agents", "default_agent", "active_agent": return .agents
+        case "tools": return .tools
+        case "search_providers": return .search
+        case "server": return .server
+        case "memory": return .memory
+        case "voice": return .voice
+        case "chat": return .chat
+        case "app": return .settings
+        default: return nil
+        }
     }
 
     /// Render a structured directory listing as an indented tree for display.

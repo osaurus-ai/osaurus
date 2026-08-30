@@ -101,19 +101,26 @@ public struct CodexModelMetadata: Sendable, Equatable, Hashable {
     /// reasoning contract for the model.
     public let supportedReasoningLevels: [CodexReasoningLevel]
     public let usesResponsesLite: Bool
+    /// Total context window in tokens, straight from the catalog's
+    /// `context_window` field. Authoritative per-model window — nil when the
+    /// entry omits it (older catalogs, fallback models). Osaurus applies its
+    /// own safety margin downstream, so this stays the raw catalog value.
+    public let contextWindow: Int?
 
     public init(
         slug: String,
         displayName: String? = nil,
         defaultReasoningLevel: String? = nil,
         supportedReasoningLevels: [CodexReasoningLevel] = [],
-        usesResponsesLite: Bool = false
+        usesResponsesLite: Bool = false,
+        contextWindow: Int? = nil
     ) {
         self.slug = slug
         self.displayName = displayName
         self.defaultReasoningLevel = defaultReasoningLevel
         self.supportedReasoningLevels = supportedReasoningLevels
         self.usesResponsesLite = usesResponsesLite
+        self.contextWindow = contextWindow
     }
 }
 
@@ -280,6 +287,19 @@ public enum OpenAICodexOAuthService {
     /// successful discovery / for fallback models that predate the catalog.
     public static func modelMetadata(forSlug slug: String) -> CodexModelMetadata? {
         lastDiscoverySummaryBox.withLock { $0?.modelMetadata[slug] }
+    }
+
+    /// Slug -> advertised context window from the latest catalog. Only slugs
+    /// whose entry carried a positive `context_window` appear. Empty before the
+    /// first successful discovery, letting callers fall back to their own
+    /// default window resolution.
+    public static var lastContextWindows: [String: Int] {
+        lastDiscoverySummaryBox.withLock { summary in
+            guard let summary else { return [:] }
+            return summary.modelMetadata.reduce(into: [:]) { map, pair in
+                if let window = pair.value.contextWindow { map[pair.key] = window }
+            }
+        }
     }
 
     /// Live model catalog fetched from the ChatGPT/Codex backend, matching what
@@ -542,6 +562,7 @@ public enum OpenAICodexOAuthService {
         let display_name: String?
         let default_reasoning_level: String?
         let supported_reasoning_levels: [ReasoningLevelEntry]?
+        let context_window: Int?
 
         /// The publishable capability slice of this entry, preserving the
         /// catalog's level order and dropping malformed (effort-less) levels.
@@ -558,7 +579,8 @@ public enum OpenAICodexOAuthService {
                     else { return nil }
                     return CodexReasoningLevel(effort: effort, description: level.description)
                 },
-                usesResponsesLite: use_responses_lite == true
+                usesResponsesLite: use_responses_lite == true,
+                contextWindow: context_window.flatMap { $0 > 0 ? $0 : nil }
             )
         }
     }

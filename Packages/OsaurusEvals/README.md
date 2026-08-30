@@ -726,7 +726,7 @@ The suite covers eleven scenarios under `Suites/CapabilityClaims/`: `confirm` (c
 >
 > **Positive cases run against an isolated `auto`-mode agent.** A case that enables a capability (`enableTools` / `requirePlugins`) is scored against a fresh isolated agent. Dynamic tools are granted through its allow-list and advertised in the loadable-capabilities manifest; authoritatively gated built-ins such as Browser Use are enabled through their real `AgentSettings` flag and injected directly into the schema. The Default configuration agent would correctly deny Browser Use. This keeps “do you have X?” a measure of shipped capability grounding, not of which agent happened to answer.
 
-The judge model defaults to the run `--model`; export `JUDGE_MODEL=...` to grade small-model output with a stronger evaluator. The runner re-ensures the ephemeral remote judge provider before each judge call, so a suite that runs a provider-mutating config tool mid-run (e.g. `default_agent`'s `osaurus_provider`, which reloads the provider registry from disk and evicts the in-memory judge) can't silently fall back to an unresolved judge.
+The judge model defaults to the run `--model`; export `JUDGE_MODEL=...` to grade small-model output with a stronger evaluator. The runner re-ensures the ephemeral remote judge provider before each judge call, so a suite that runs a provider-mutating config tool mid-run (e.g. a `default_agent` `osaurus_config` apply that touches providers, which reloads the provider registry from disk and evicts the in-memory judge) can't silently fall back to an unresolved judge.
 
 Every rubric-graded row persists a structured **judge audit** in its report JSON (`cases[].judge`): the judge model that actually graded, `selfJudge`, per-condition verdicts with reasons (passes included, not just failures), the raw judge reply (capped at 4 000 chars), and the retry-attempt count. A disputed grade is auditable from the report alone. The judge itself is measured by the `judge_calibration` domain (`Suites/JudgeCalibration/` — frozen replies with known verdicts; the optimization loop runs it once per pass as the `judge` column), so a judge-model change shows up as a scored, diffable row instead of silently shifting every rubric grade.
 
@@ -734,7 +734,7 @@ Latency semantics are uniform across judged domains: `latencyMs` is the case's o
 
 ### `default_agent` domain
 
-Behaviour evals for the built-in **"Configuring Osaurus"** agent — the one that ships on `Agent.defaultId`. The query asks the agent to inspect or change Osaurus's own configuration; it reads with `osaurus_status` / `osaurus_list` / `osaurus_describe` and mutates with the consolidated write tools (`osaurus_agent` / `osaurus_provider` / `osaurus_schedule` / `osaurus_model` / `osaurus_mcp` / `osaurus_plugin`). It reuses `CapabilityClaimsEvaluator` with the Default agent id, a frozen tool schema, and **auto-approved** tool execution (a headless run has no approval card), so the loop terminates the moment the model returns text with no tool call. Scoring mixes deterministic transcript checks (`mustCallTools` / `mustNotCallTools` / `argsMustContain`) with an optional LLM-judge `rubric`, and each case runs against an isolated config root so it never touches the user's real `~/.osaurus`.
+Behaviour evals for the built-in **"Configuring Osaurus"** agent — the one that ships on `Agent.defaultId`. The query asks the agent to inspect or change Osaurus's own configuration; it reads with `osaurus_inspect` (`status` / `list` / `describe` actions) and mutates through the single declarative write tool, `osaurus_config` (`schema` / `export` / `plan` / `apply` / `templates` — the nine legacy per-domain write tools such as `osaurus_agent` / `osaurus_provider` / `osaurus_schedule` were consolidated into it). Write cases probe the applied YAML document with `argsMustContain` (`action: apply` plus key/value substrings of the `yaml` argument); deletion/cancellation asks that the declarative model handles differently (prune semantics, no in-flight cancel) are graded as rubric-based honesty cases instead. It reuses `CapabilityClaimsEvaluator` with the Default agent id, a frozen tool schema, and **auto-approved** tool execution (a headless run has no approval card — high-risk applies are auto-denied on external surfaces), so the loop terminates the moment the model returns text with no tool call. Scoring mixes deterministic transcript checks (`mustCallTools` / `mustNotCallTools` / `argsMustContain`) with an optional LLM-judge `rubric`, and each case runs against an isolated config root so it never touches the user's real `~/.osaurus`.
 
 Two harness/prompt root-causes were fixed here so the column measures the model, not test artifacts:
 
@@ -816,7 +816,13 @@ Field notes:
   `max_parallel`, execution waves (`effectiveLocalSlots`, `localSubwaves`,
   limiting factors), and cache availability. A configured parallel ceiling is
   not concurrency proof by itself; pin an execution wave such as
-  `{ "effectiveLocalSlots": 2, "localSubwaves": [2] }`.
+  `{ "effectiveLocalSlots": 2, "localSubwaves": [2] }`. Strict capacity
+  proof belongs in the dedicated `AgentLoopBatchNative` and
+  `AgentLoopBatchSerialized` suites. Those rows also require the production
+  envelope's `engine_requested_max`, explicit nullable
+  `engine_architecture_max`, and `engine_effective_max`; this prevents a
+  caller-requested width of two from being mislabeled as native B=2 when the
+  model safely serializes as `[1, 1]`.
 - `expect.agentLoop.finalTextContains` / `rubric` — cheap substring checks vs. LLM-judge grading of the final answer (same `JUDGE_MODEL` override as `capability_claims`).
 - `expect.agentLoop.scoredMaxPromptTokens` / `scoredMaxTotalTokens` — optional context-cost ceilings for the "saving context" lane. `scoredMaxPromptTokens` **fails the case** when `promptTokensTotal` (input summed across steps, including the frozen tool schema) exceeds the budget, so a later prompt/tool regression that re-bloats context can't pass while silently burning tokens; `scoredMaxTotalTokens` gates input + output. Both are omitted by default (reported via telemetry, not scored), and only bite a live model — scripted/deterministic runs spend `0`.
 

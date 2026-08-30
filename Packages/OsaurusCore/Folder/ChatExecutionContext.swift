@@ -20,6 +20,21 @@ import Foundation
 final class AgentTodoRunScope: @unchecked Sendable {
     private let lock = NSLock()
     private var wroteTodo = false
+    /// Tools other than the loop-control ones that have actually STARTED this
+    /// run. The Todo tool reads this to tell real progress apart from a model
+    /// simply asserting it: in osaurus#2439 a model went from 2/7 to 7/7
+    /// checked with nothing but `todo` calls in between, and the tool echoed
+    /// "Todo updated: 7/7 complete" back into context, where the model then
+    /// cited it as evidence the writes had happened.
+    private var substantiveToolCalls = 0
+    /// `substantiveToolCalls` as of the previous accepted `todo` write.
+    private var toolCallsAtLastTodo = 0
+
+    /// Loop-control tools. Calling these is bookkeeping, never task progress,
+    /// so they must not count as work toward a newly checked item.
+    static let loopControlToolNames: Set<String> = [
+        "todo", "complete", "clarify", "share_artifact",
+    ]
 
     var hasCurrentRunTodo: Bool {
         lock.lock()
@@ -31,6 +46,24 @@ final class AgentTodoRunScope: @unchecked Sendable {
         lock.lock()
         wroteTodo = true
         lock.unlock()
+    }
+
+    func recordToolExecution(name: String) {
+        guard !Self.loopControlToolNames.contains(name) else { return }
+        lock.lock()
+        substantiveToolCalls += 1
+        lock.unlock()
+    }
+
+    /// Whether any non-loop-control tool has run since the previous `todo`
+    /// write, snapshotting the counter for the next comparison. Called once
+    /// per accepted `todo` write.
+    func consumeToolWorkSinceLastTodo() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let didWork = substantiveToolCalls > toolCallsAtLastTodo
+        toolCallsAtLastTodo = substantiveToolCalls
+        return didWork
     }
 }
 
@@ -50,6 +83,19 @@ final class ToolPermissionRunScope: @unchecked Sendable {
     }
 }
 
+/// Sendable weak wrapper for the MainActor `ChatSession`, carried through
+/// task locals so a background helper dispatch can address its launching
+/// session at completion time. Weak on purpose: the box never extends the
+/// session's lifetime — if the chat is gone when the helper finishes, the
+/// report-back is dropped and the notch row remains the record.
+final class WeakChatSessionBox: @unchecked Sendable {
+    @MainActor private(set) weak var session: ChatSession?
+
+    @MainActor init(_ session: ChatSession) {
+        self.session = session
+    }
+}
+
 /// TaskLocal storage carrying the active chat session / agent / batch ids
 /// down through tool execution. The chat engine seeds these in
 /// `ChatSession.send` (and equivalent headless paths) so any tool reading
@@ -59,6 +105,13 @@ public enum ChatExecutionContext {
     /// need per-conversation state (todo store, file-op undo log, method
     /// telemetry) key off this.
     @TaskLocal public static var currentSessionId: String?
+
+    /// Weak handle to the live `ChatSession` driving the current turn.
+    /// Bound by `ChatSession.send` so a `background: true` spawn dispatch
+    /// can deliver its report-back digest to the exact launching session
+    /// without a global live-session registry. Module-internal so
+    /// out-of-module callers cannot rebind the delivery target.
+    @TaskLocal static var currentChatSessionBox: WeakChatSessionBox?
 
     /// One logical AgentToolLoop run's Todo marker. Nil outside the canonical
     /// loop preserves direct/bare tool-call compatibility.
@@ -177,7 +230,7 @@ public enum ChatExecutionContext {
     /// uses it: those cases score the model's tool SELECTION and honest
     /// claims, NOT the side effects of running configure/agent WRITE tools.
     /// Auto-approving them instead (as `default_agent` intentionally does)
-    /// would let the model really execute `osaurus_agent`/configure writes
+    /// would let the model really execute `osaurus_config`/configure writes
     /// mid-eval, mutating global agent + scheduler state and deadlocking a
     /// later case's isolated-agent teardown. Denying records the call and
     /// feeds the model a typed "denied by policy" envelope — the honest
@@ -295,6 +348,13 @@ public enum ChatExecutionContext {
     /// `currentAgentId`).
     /// Module-internal so out-of-module callers cannot rebind the boundary.
     @TaskLocal static var knowledgeGrantAgentIdOverride: UUID? = nil
+
+    /// The project the active chat session belongs to, when any. Bound for
+    /// the whole turn by `ChatView`. Knowledge tools union the project's
+    /// collections into the agent's grant scope so project knowledge is
+    /// reachable from every chat in the project regardless of which agent
+    /// runs it.
+    @TaskLocal public static var currentProjectId: UUID? = nil
 
     /// The agent identity knowledge tools use for grant / curator-role
     /// resolution: the subagent override when a spawned worker is running, else

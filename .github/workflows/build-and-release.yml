@@ -86,9 +86,10 @@ jobs:
     # because Containerization needs the macOS 26 SDK.
     runs-on: macos-26
     # Release builds are intentionally cache-free (fresh cold compile of
-    # mlx-swift Cmlx + SQLCipher), so worst-case is ~37m. Cap at 60m so a hung
-    # build (e.g. a stuck notarization upload) can't run to GitHub's 6h default.
-    timeout-minutes: 60
+    # mlx-swift Cmlx + SQLCipher). Cold builds can exceed 60m on slower hosted
+    # runners, so leave enough time for signing, notarization, and publishing
+    # while still bounding a hung job well below GitHub's 6h default.
+    timeout-minutes: 90
 
     steps:
       - name: Checkout code

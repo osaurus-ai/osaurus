@@ -156,7 +156,10 @@ struct FolderToolsResilienceTests {
     @Test func fileRead_oversizedFirstLineWrappedInEnvelope() async throws {
         let root = tmpRoot()
         let path = root.appendingPathComponent("wide.txt")
-        let oversized = String(repeating: "a", count: 16_000)
+        // Above `ToolOutputCaps.fileReadMax`: files under the adaptive
+        // ceiling now serve whole, so the partial-line contract this test
+        // pins only engages past it.
+        let oversized = String(repeating: "a", count: ToolOutputCaps.fileReadMax + 10_000)
         try oversized.write(to: path, atomically: true, encoding: .utf8)
 
         let tool = FileReadTool(rootPath: root)
@@ -181,12 +184,13 @@ struct FolderToolsResilienceTests {
         #expect(payload["next_end_line"] == nil)
     }
 
-    /// Issue #2098 regression: a ~14KB, 499-line source file is fully read
-    /// from disk, but the line-number gutters push the RENDERED output past
-    /// the 15K character cap, so the model only sees a prefix (~line 426).
-    /// The payload must report truthful truncation plus an exact
-    /// continuation range, and the suggested second ranged read must reach
-    /// the end of the file.
+    /// Issue #2098 evolution: a ~14KB, 499-line source file used to be cut
+    /// by the 15K render cap (gutters pushed the render past it), forcing a
+    /// truthful-truncation + continuation contract. Under the adaptive cap
+    /// (`ToolOutputCaps.fileReadMax`) a file this size now serves WHOLE in
+    /// one call — the stronger guarantee that supersedes the original
+    /// regression. Continuation semantics for genuinely oversized files are
+    /// pinned in `FileReadAdaptiveCapTests`.
     @Test func fileRead_renderedCapTruncationCarriesExactContinuation() async throws {
         let root = tmpRoot()
         // 498 content lines with unicode (the reporter's file had unicode
@@ -203,40 +207,17 @@ struct FolderToolsResilienceTests {
         #expect(ToolEnvelope.isSuccess(first))
         let payload = try #require(EnvelopeAssertions.successPayload(first))
 
-        // The whole file was loaded — only the render was cut.
+        // The whole file was loaded AND fully rendered: no truncation, no
+        // continuation, and the model sees the last line in the first call.
         #expect(payload["raw_bytes_truncated"] as? Bool == false)
         #expect(payload["total_lines"] as? Int == 499)
         #expect(payload["total_lines_exact"] as? Bool == true)
-        #expect(payload["truncated"] as? Bool == true)
-
-        // Exact, range-safe continuation boundary.
-        let nextStart = try #require(payload["next_start_line"] as? Int)
-        let nextEnd = try #require(payload["next_end_line"] as? Int)
-        #expect(nextEnd == 499)
-        let endLine = try #require(payload["end_line"] as? Int)
-        if let partial = payload["partial_line"] as? Int {
-            #expect(nextStart == partial)
-        } else {
-            #expect(nextStart == endLine + 1)
-        }
-        // The truncation notice names the exact next range, not just a
-        // generic "use start_line/end_line" hint.
+        #expect(payload["truncated"] as? Bool == false)
+        #expect(payload["end_line"] as? Int == 499)
+        #expect(payload["next_start_line"] == nil)
+        #expect(payload["next_end_line"] == nil)
         let text = try #require(payload["text"] as? String)
-        #expect(text.contains("start_line=\(nextStart), end_line=\(nextEnd)"))
-        #expect(text.contains("FINAL_SENTINEL_LINE_499") == false)
-
-        // The suggested continuation read reaches the end of the file.
-        let second = try await tool.execute(
-            argumentsJSON:
-                #"{"path": "BeatStrip.ino", "start_line": \#(nextStart), "end_line": \#(nextEnd)}"#
-        )
-        #expect(ToolEnvelope.isSuccess(second))
-        let secondPayload = try #require(EnvelopeAssertions.successPayload(second))
-        #expect(secondPayload["truncated"] as? Bool == false)
-        #expect(secondPayload["end_line"] as? Int == 499)
-        #expect(secondPayload["next_start_line"] == nil)
-        let secondText = try #require(secondPayload["text"] as? String)
-        #expect(secondText.contains("FINAL_SENTINEL_LINE_499"))
+        #expect(text.contains("FINAL_SENTINEL_LINE_499"))
     }
 
     /// Raw text / CSV reads are part of the prompt-building hot path. A

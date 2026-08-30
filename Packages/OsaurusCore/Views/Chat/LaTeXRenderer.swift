@@ -27,9 +27,11 @@ final class LaTeXRenderer: @unchecked Sendable {
     func renderToImage(
         latex: String,
         fontSize: CGFloat,
-        textColor: NSColor
+        textColor: NSColor,
+        labelMode: MTMathUILabelMode = .text,
+        textAlignment: MTTextAlignment = .left
     ) -> NSImage? {
-        let key = "\(latex)-\(fontSize)-\(textColor.hashValue)" as NSString
+        let key = "\(latex)-\(fontSize)-\(textColor.hashValue)-\(labelMode)-\(textAlignment)" as NSString
         if let cached = cache.object(forKey: key) {
             return cached
         }
@@ -38,8 +40,8 @@ final class LaTeXRenderer: @unchecked Sendable {
             latex: latex,
             fontSize: fontSize,
             textColor: textColor,
-            labelMode: .text,
-            textAlignment: .left
+            labelMode: labelMode,
+            textAlignment: textAlignment
         )
         let (error, image) = mathImage.asImage()
         guard error == nil, let image else { return nil }

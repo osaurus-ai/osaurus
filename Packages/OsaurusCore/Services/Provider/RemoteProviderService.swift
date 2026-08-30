@@ -472,12 +472,18 @@ public actor RemoteProviderService: ToolCapableService {
         parameters: GenerationParameters
     ) async throws -> (messages: [ChatMessage], map: RedactionMap?) {
         do {
-            return try await PrivacyFilterPipeline.applyOutbound(
+            let scrubbed = try await PrivacyFilterPipeline.applyOutbound(
                 messages: messages,
                 sessionId: parameters.sessionId,
                 providerId: provider.id,
                 requestSource: parameters.requestSource
             )
+            // Every remote request funnels through here, so this is the one
+            // place attached images get sized for the wire (oversized Retina
+            // captures → relay/provider 413, mislabeled containers → 400).
+            // The local model path never enters this service and keeps
+            // full-resolution input.
+            return (RemoteImagePayloadPolicy.prepared(scrubbed.messages), scrubbed.map)
         } catch PrivacyFilterPipelineError.reviewCanceled {
             throw CancellationError()
         }
@@ -5332,6 +5338,92 @@ extension RemoteProviderService {
 
     /// Fetch models from an OpenAI-compatible `/models` endpoint.
     static func fetchOpenAICompatibleModels(from provider: RemoteProvider) async throws -> [String] {
+        try await fetchOpenAICompatibleModelsDiscovery(from: provider).models
+    }
+
+    /// Per-model context windows advertised by an OpenAI-compatible `/models`
+    /// endpoint, alongside the discovered ids. Servers outside the strict
+    /// OpenAI schema commonly report the window under a vendor key (vLLM's
+    /// `max_model_len`, OpenRouter/LM Studio's `context_length`, llama.cpp's
+    /// `max_context_length`, gateway-style `context_window`); honoring it
+    /// keeps the chat budget from collapsing to the 128k unknown-metadata
+    /// fallback.
+    struct OpenAICompatibleModelDiscovery: Sendable {
+        let models: [String]
+        /// Model id -> advertised context window in tokens. Only ids whose
+        /// entry carried a positive window appear here.
+        let contextLengths: [String: Int]
+    }
+
+    /// Like `fetchModels(from:)` but also surfaces per-model context windows
+    /// when the provider's `/models` route is the OpenAI-compatible one.
+    /// Every other provider family keeps its existing discovery path and
+    /// returns an empty context map.
+    public static func fetchModelsDiscovery(
+        from provider: RemoteProvider
+    ) async throws -> (models: [String], contextLengths: [String: Int]) {
+        // Mirror `fetchModels`' routing: only requests that would fall through
+        // to the OpenAI-compatible endpoint take the discovery variant.
+        if isOpenAICompatibleModelDiscoveryProvider(provider.providerType),
+            provider.authType != .xaiOAuth,
+            !isFireworksProvider(provider),
+            !isVeniceProvider(provider)
+        {
+            let discovery = try await fetchOpenAICompatibleModelsDiscovery(from: provider)
+            return (discovery.models, discovery.contextLengths)
+        }
+        // ChatGPT/Codex sign-in models expose their real per-model window via
+        // the same catalog `fetchModels` already queries. `fetchModels` populates
+        // `lastDiscoverySummary` as a side effect, so read the windows back from
+        // there rather than fetching the catalog twice.
+        if provider.providerType == .openAICodex {
+            let models = try await fetchModels(from: provider)
+            return (models, OpenAICodexOAuthService.lastContextWindows)
+        }
+        // Grok/SuperGrok sign-in models have no live catalog to read windows
+        // from (the OAuth token 403s on `/models`), so surface the
+        // documented windows alongside the built-in model catalog instead.
+        // If the user has also configured a separate xAI provider with an
+        // API key, that route isn't 403'd — its live discovery is preferred
+        // per model over the hardcoded table.
+        if provider.authType == .xaiOAuth {
+            let models = try await fetchModels(from: provider)
+            let contextLengths = await xaiContextWindows(preferringLiveOver: provider)
+            return (models, contextLengths)
+        }
+        return (try await fetchModels(from: provider), [:])
+    }
+
+    /// Merges `XAIOAuthService.contextWindows` with live-discovered windows
+    /// from any other connected xAI provider on the same host authenticated
+    /// via API key rather than OAuth. The API-key route can reach `/models`,
+    /// so its per-model windows — being current rather than a point-in-time
+    /// docs.x.ai snapshot — take priority where available.
+    @MainActor
+    private static func xaiContextWindows(preferringLiveOver oauthProvider: RemoteProvider) -> [String: Int] {
+        var windows = XAIOAuthService.contextWindows
+        let manager = RemoteProviderManager.shared
+        let liveProviders = manager.configuration.providers.filter { candidate in
+            candidate.id != oauthProvider.id
+                && candidate.authType != .xaiOAuth
+                && candidate.host.caseInsensitiveCompare(oauthProvider.host) == .orderedSame
+                && (manager.providerStates[candidate.id]?.isConnected ?? false)
+        }
+        for candidate in liveProviders {
+            for model in windows.keys {
+                if let liveWindow = manager.customProviderContextLength(
+                    providerId: candidate.id, unprefixedModelId: model
+                ) {
+                    windows[model] = liveWindow
+                }
+            }
+        }
+        return windows
+    }
+
+    static func fetchOpenAICompatibleModelsDiscovery(
+        from provider: RemoteProvider
+    ) async throws -> OpenAICompatibleModelDiscovery {
         // OpenAI-compatible providers use /models endpoint
         guard let url = provider.url(for: "/models") else {
             throw RemoteProviderServiceError.invalidURL
@@ -5388,7 +5480,7 @@ extension RemoteProviderService {
             throw RemoteProviderServiceError.rateLimited(retryAfter: nil, statusCode: 503)
         }
         do {
-            return try decodeOpenAICompatibleModelsResponse(
+            return try decodeOpenAICompatibleModelsDiscovery(
                 data: data,
                 statusCode: httpResponse.statusCode,
                 provider: provider
@@ -5413,22 +5505,100 @@ extension RemoteProviderService {
         statusCode: Int,
         provider: RemoteProvider
     ) throws -> [String] {
+        try decodeOpenAICompatibleModelsDiscovery(
+            data: data,
+            statusCode: statusCode,
+            provider: provider
+        ).models
+    }
+
+    /// One entry of an OpenAI-compatible `/models` list, keeping the vendor
+    /// context-window keys the shared serving struct (`OpenAIModel`) has no
+    /// business encoding back out.
+    private struct OpenAICompatibleModelEntry: Decodable {
+        let id: String
+        let maxModelLen: Int?
+        let contextLength: Int?
+        let maxContextLength: Int?
+        let contextWindow: Int?
+
+        private enum CodingKeys: String, CodingKey {
+            case id
+            case maxModelLen = "max_model_len"
+            case contextLength = "context_length"
+            case maxContextLength = "max_context_length"
+            case contextWindow = "context_window"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(String.self, forKey: .id)
+            // These keys were ignored entirely before context discovery; an
+            // off-spec value (float, numeric string) must degrade to nil, not
+            // fail the whole `/models` decode for the provider.
+            maxModelLen = Self.lenientInt(container, .maxModelLen)
+            contextLength = Self.lenientInt(container, .contextLength)
+            maxContextLength = Self.lenientInt(container, .maxContextLength)
+            contextWindow = Self.lenientInt(container, .contextWindow)
+        }
+
+        private static func lenientInt(
+            _ container: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys
+        ) -> Int? {
+            if let int = try? container.decode(Int.self, forKey: key) { return int }
+            if let double = try? container.decode(Double.self, forKey: key), double.isFinite {
+                return Int(exactly: double.rounded())
+            }
+            if let string = try? container.decode(String.self, forKey: key) {
+                return Int(string.trimmingCharacters(in: .whitespaces))
+            }
+            return nil
+        }
+
+        /// First positive vendor-reported window, in the order the keys are
+        /// most specific: vLLM, then OpenRouter/LM Studio, then llama.cpp,
+        /// then gateway-style `context_window`.
+        var advertisedContextLength: Int? {
+            [maxModelLen, contextLength, maxContextLength, contextWindow]
+                .compactMap { $0 }
+                .first { $0 > 0 }
+        }
+    }
+
+    private struct OpenAICompatibleModelList: Decodable {
+        let data: [OpenAICompatibleModelEntry]
+    }
+
+    static func decodeOpenAICompatibleModelsDiscovery(
+        data: Data,
+        statusCode: Int,
+        provider: RemoteProvider
+    ) throws -> OpenAICompatibleModelDiscovery {
         if statusCode >= 400 {
             let errorMessage = extractErrorMessage(from: data, statusCode: statusCode)
             if canUseManualModelDiscoveryFallback(for: provider, statusCode: statusCode),
                 let fallbackModels = manualModelDiscoveryFallback(for: provider)
             {
-                return fallbackModels
+                return OpenAICompatibleModelDiscovery(models: fallbackModels, contextLengths: [:])
             }
             throw RemoteProviderServiceError.requestFailed(errorMessage)
         }
 
         do {
-            let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
-            return modelsResponse.data.map { $0.id }
+            let modelsResponse = try JSONDecoder().decode(OpenAICompatibleModelList.self, from: data)
+            var contextLengths: [String: Int] = [:]
+            for entry in modelsResponse.data {
+                if let contextLength = entry.advertisedContextLength {
+                    contextLengths[entry.id] = contextLength
+                }
+            }
+            return OpenAICompatibleModelDiscovery(
+                models: modelsResponse.data.map { $0.id },
+                contextLengths: contextLengths
+            )
         } catch {
             if let fallbackModels = manualModelDiscoveryFallback(for: provider) {
-                return fallbackModels
+                return OpenAICompatibleModelDiscovery(models: fallbackModels, contextLengths: [:])
             }
             throw error
         }

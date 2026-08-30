@@ -1,0 +1,35 @@
+{
+  "id": "default_agent.mcp-add-stdio",
+  "domain": "default_agent",
+  "label": "default agent • add a stdio MCP server (declarative apply)",
+  "query": "Add a local MCP tool server named \"Files MCP\" that runs the command /usr/local/bin/files-mcp with the argument --serve.",
+  "notes": "Wave 3c stdio MCP scope: an `mcp_servers:` entry with `transport: stdio` and a `command`. Launching a local process is HIGH RISK, so the same approval flow as HTTP endpoint registration applies. Pins the stdio transport and the command path.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "stdio"
+          }
+        },
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "/usr/local/bin/files-mcp"
+          }
+        }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

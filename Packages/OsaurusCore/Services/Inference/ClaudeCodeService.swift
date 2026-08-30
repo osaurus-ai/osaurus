@@ -183,6 +183,9 @@ actor ClaudeCodeService: ToolCapableService {
                 if let bridgeGrant {
                     Task { await ClaudeCodeBridgeGrantStore.shared.revoke(bridgeGrant) }
                 }
+                if let mcpConfigURL {
+                    try? FileManager.default.removeItem(at: mcpConfigURL)
+                }
             }
             do {
                 for try await event in events {
@@ -407,9 +410,10 @@ actor ClaudeCodeService: ToolCapableService {
     /// the server down every call would fail at the transport layer with an
     /// error the model can't act on.
     ///
-    /// The file is rewritten each turn (fixed path, not a temp file) so a
-    /// setting change takes effect on the next message without cleanup
-    /// bookkeeping, and a crashed run leaves nothing to reap.
+    /// Every turn receives a unique file. A fixed filename lets concurrent
+    /// chats overwrite one another's grant between process launch and MCP
+    /// startup, crossing agent identity and write scope. The producer removes
+    /// this file on every normal, error, and cancellation exit.
     private static func makeOsaurusMCPConfig(
         options: ClaudeCodeRunOptions,
         bridgeGrant: String?
@@ -425,7 +429,10 @@ actor ClaudeCodeService: ToolCapableService {
             )
         else { return nil }
 
-        let url = scratchDirectory().appendingPathComponent("mcp-config.json", isDirectory: false)
+        let url = scratchDirectory().appendingPathComponent(
+            "mcp-config-\(UUID().uuidString).json",
+            isDirectory: false
+        )
         do {
             try Data(json.utf8).write(to: url, options: .atomic)
             // The file now carries the turn's grant, so it must not be readable

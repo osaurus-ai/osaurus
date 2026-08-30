@@ -109,7 +109,7 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
                 kind: .rejected,
                 message:
                     "`file_copy` is only available in combined sandbox + workspace mode. "
-                    + "Use `shell_run` (`cp`) in folder mode, or `sandbox_exec` (`cp`) in sandbox mode.",
+                    + "Use `shell_run` (`cp`) in folder or sandbox mode.",
                 tool: name,
                 retryable: false
             )
@@ -160,7 +160,7 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
                 message:
                     "`source` '\(source)' is a directory — `file_copy` copies a single file. "
                     + "Copy files individually (sandbox-to-sandbox directory copies can use "
-                    + "`sandbox_exec` with `cp -r`).",
+                    + "`shell_run` with `cp -r`).",
                 field: "source",
                 expected: "path to a single file",
                 tool: name,

@@ -162,10 +162,6 @@ private struct AddProviderFlow: View {
     /// (`false`) or the grouped "Use an API key" sub-list (`true`) is shown.
     @State private var showingAPIKeyPicker = false
     @State private var showingClaudeCodeSetup = false
-    /// Whether the `claude` binary is on this app's PATH. Resolved once on
-    /// appear — this is a filesystem probe, not a process spawn, so it is cheap
-    /// enough to block layout on.
-    @State private var claudeCodeInstalled = false
     @State private var apiKey: String = ""
     /// The connection method pinned for the selected provider. Set at selection
     /// time from the catalog (OAuth for top-level rows, `.apiKey` for the "Use
@@ -264,7 +260,7 @@ private struct AddProviderFlow: View {
             .animation(.spring(response: 0.35, dampingFraction: 0.85), value: showingAPIKeyPicker)
             .animation(.spring(response: 0.35, dampingFraction: 0.85), value: showingClaudeCodeSetup)
         }
-        .frame(width: 540, height: 620)
+        .fittedSheetFrame(width: 540, height: 620)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
@@ -288,7 +284,6 @@ private struct AddProviderFlow: View {
             } else if startAtAPIKeyPicker {
                 showingAPIKeyPicker = true
             }
-            claudeCodeInstalled = ClaudeCodeConfiguration.isAvailable()
             withAnimation { hasAppeared = true }
         }
         .themedAlert(
@@ -406,9 +401,6 @@ private struct AddProviderFlow: View {
                     // service driving the user's own `claude` binary — so it
                     // gets a plain row and its own step rather than a catalog
                     // entry, which would imply a host/key/Keychain record.
-                    // Only offered when the CLI is actually installed; a row
-                    // that can only ever say "not installed" is noise.
-                    //
                     // Placed second, after OpenAI, so it sits with the other
                     // subscription-backed sign-ins rather than below them.
                     ForEach(Array(ProviderCatalog.topLevel.enumerated()), id: \.element.id) {
@@ -418,7 +410,7 @@ private struct AddProviderFlow: View {
                             selectCatalogEntry(entry)
                         }
 
-                        if index == 0, claudeCodeInstalled {
+                        if index == 0 {
                             ProviderRowCard(
                                 icon: "terminal.fill",
                                 title: "Claude Code",

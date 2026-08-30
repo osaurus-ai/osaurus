@@ -14,11 +14,10 @@ import Testing
 /// plugin / MCP tool deliberately withheld from an agent would run if the model simply guessed its
 /// name.
 ///
-/// The obvious fix — freeze an immutable allowlist from the rendered schema — would have **broken a
-/// feature that works today**: `capabilities_load` and `sandbox_plugin_register` deliberately make
-/// tools callable mid-run while `<tools>` stays frozen (rewriting it would bust the paged-KV prefix
-/// for the whole conversation). So the scope has to be able to grow. These tests pin both halves:
-/// the hole is closed, AND capability loading still works.
+/// The scope has to grow when `capabilities` or `sandbox_plugin_register` activates a tool. It grows
+/// both execution authorization and the next iteration's model-visible schema so constrained
+/// decoders can emit the loaded name. These tests pin both halves: the hole is closed, AND
+/// capability loading still works.
 @Suite("A request may only execute what it exposed")
 struct ToolExecutionScopeTests {
 
@@ -59,10 +58,6 @@ struct ToolExecutionScopeTests {
 
     @Test("capabilities_load can still make a tool callable mid-run")
     func capabilityLoadGrowsTheScope() {
-        // `toolSpecs` stays FROZEN for the rest of the run — rewriting the rendered <tools> block
-        // would bust the paged-KV prefix — so a tool loaded mid-run is callable WITHOUT ever
-        // appearing in the frozen schema. An immutable allowlist would refuse the very tool the
-        // model was just handed, and capability loading would die.
         let scope = ToolExecutionScope(exposed: [spec("capabilities_load")])
         #expect(!scope.permits("web_search"))
 
@@ -72,6 +67,18 @@ struct ToolExecutionScopeTests {
         #expect(scope.permits("web_fetch"))
         // …and activating one tool must not fling the doors open for everything else.
         #expect(!scope.permits("sandbox_exec"))
+    }
+
+    @Test("Loaded schemas join the next iteration without duplicates")
+    func loadedSchemasJoinModelVisibleSpecs() {
+        let gateway = spec("capabilities")
+        let getEvents = spec("get_events")
+        let scope = ToolExecutionScope(exposed: [gateway])
+
+        scope.activate([getEvents, gateway])
+
+        #expect(scope.permits("get_events"))
+        #expect(scope.modelVisibleSpecs.map(\.function.name) == ["capabilities", "get_events"])
     }
 
     @Test("Activation is additive and never revokes the original grant")
@@ -132,7 +139,8 @@ struct ToolExecutionScopeWiringTests {
         let src = try Self.source("Views/Chat/ChatView.swift")
         #expect(src.contains("let toolScope = ToolExecutionScope(exposed: toolSpecs)"))
         #expect(src.contains("$toolExecutionScope"))
-        // …and it must grow when capabilities_load hands the model new tools.
-        #expect(src.contains("toolScope.activate(newTools.map { $0.function.name })"))
+        // …and both authorization and the next request schema must grow.
+        #expect(src.contains("toolScope.activate(newTools)"))
+        #expect(src.contains("let iterationToolSpecs = toolScope.modelVisibleSpecs"))
     }
 }

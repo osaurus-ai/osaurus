@@ -91,6 +91,22 @@ struct AgentChannelInboundActivityTests {
         }
     }
 
+    @Test func autoReplyDisabledGuidancePointsAtTheReplyAutomaticallyToggle() {
+        // Pin the relay's recorded reason to the presentation mapping: if the
+        // literal drifts, a discarded reply becomes a silent failure again.
+        let guidance = AgentChannelInboundActivityPresentation.guidance(
+            stage: .agentReplied,
+            reason: AgentChannelInboundRelay.autoReplyDisabledReason
+        )
+        #expect(guidance?.contains("Reply Automatically") == true)
+    }
+
+    @Test func everyStageRendersANonEmptyLabel() {
+        for stage in AgentChannelInboundActivityStage.allCases {
+            #expect(!AgentChannelInboundActivityPresentation.label(for: stage).isEmpty)
+        }
+    }
+
     @Test func mentionGuidanceExplainsBotUserVersusOsaurusAgentConfusion() {
         let guidance = AgentChannelInboundActivityPresentation.guidance(
             stage: .dispatchSuppressed,

@@ -135,6 +135,8 @@ struct AgentChannelConnectionCenterView: View {
                 TelegramSettingsView()
             case .native(.imessage):
                 IMessageSettingsView()
+            case .native(.whatsapp):
+                WhatsAppSettingsView()
             case .native(.customHTTP):
                 // Custom HTTP is never presented as a native channel.
                 EmptyView()
@@ -652,7 +654,9 @@ struct AgentChannelConnectionCenterView: View {
 
     // MARK: - Channel Data
 
-    private static let nativeProviderKinds: [AgentChannelKind] = [.discord, .slack, .telegram, .imessage]
+    private static let nativeProviderKinds: [AgentChannelKind] = [
+        .discord, .slack, .telegram, .imessage, .whatsapp,
+    ]
 
     private static func nativeSubtitle(for kind: AgentChannelKind) -> String {
         switch kind {
@@ -660,6 +664,7 @@ struct AgentChannelConnectionCenterView: View {
         case .slack: return L("Bot access to allowlisted channels and DMs")
         case .telegram: return L("Bot access to allowlisted chats and groups")
         case .imessage: return L("This Mac's Messages app, allowlisted chats only")
+        case .whatsapp: return L("QR-linked WhatsApp Web bridge, allowlisted chats only")
         case .customHTTP: return L("JSON-defined HTTP channel")
         }
     }
@@ -705,6 +710,14 @@ struct AgentChannelConnectionCenterView: View {
             IMessageConnectionService.shared.helperAvailable()
             && (!imessageConfig.readableChatIds.isEmpty || !imessageConfig.writableChatIds.isEmpty)
         let imessageReceiveExpected = imessageConfig.canStartReceive()
+        // WhatsApp mirrors iMessage: no remote credential, "configured" is a
+        // verified helper plus allowlisted chats. Linked-session state feeds
+        // the transport health badge instead (probing spawns the helper).
+        let whatsappConfig = WhatsAppConnectionService.shared.configuration()
+        let whatsappConfigured =
+            WhatsAppConnectionService.shared.helperAvailable()
+            && (!whatsappConfig.readableChatIds.isEmpty || !whatsappConfig.writableChatIds.isEmpty)
+        let whatsappReceiveExpected = whatsappConfig.canStartReceive()
         let discordConfig = DiscordConnectionService.shared.configuration()
         let discordReceiveExpected = discordConfigured
             && !discordConfig.readableChannelIds.isEmpty
@@ -715,10 +728,12 @@ struct AgentChannelConnectionCenterView: View {
 
         anyNativeConfigured =
             discordConfigured || slackConfigured || telegramConfigured || imessageConfigured
+            || whatsappConfigured
         nativeConfigured[.discord] = discordConfigured
         nativeConfigured[.slack] = slackConfigured
         nativeConfigured[.telegram] = telegramConfigured
         nativeConfigured[.imessage] = imessageConfigured
+        nativeConfigured[.whatsapp] = whatsappConfigured
         // Reply state only makes sense on configured channels; the
         // "Available" list would otherwise show a noisy "Replies off".
         nativeRoutingDetails[.discord] =
@@ -729,6 +744,8 @@ struct AgentChannelConnectionCenterView: View {
             telegramConfigured ? Self.routingSummary(telegramConfig.inboundDispatch) : nil
         nativeRoutingDetails[.imessage] =
             imessageConfigured ? Self.routingSummary(imessageConfig.inboundDispatch) : nil
+        nativeRoutingDetails[.whatsapp] =
+            whatsappConfigured ? Self.routingSummary(whatsappConfig.inboundDispatch) : nil
 
         Task {
             let discordHealth = await AgentChannelTransportHealthCenter.shared.state(
@@ -746,6 +763,10 @@ struct AgentChannelConnectionCenterView: View {
             let imessageHealth = await AgentChannelTransportHealthCenter.shared.state(
                 connectionId: AgentChannelConnection.nativeIMessageConnectionId,
                 transportId: IMessageWatchTransportRuntime.transportId
+            )
+            let whatsappHealth = await AgentChannelTransportHealthCenter.shared.state(
+                connectionId: AgentChannelConnection.nativeWhatsAppConnectionId,
+                transportId: WhatsAppWatchTransportRuntime.transportId
             )
             await MainActor.run {
                 nativeBadges[.discord] = Self.nativeBadge(
@@ -767,6 +788,11 @@ struct AgentChannelConnectionCenterView: View {
                     configured: imessageConfigured,
                     receiveExpected: imessageReceiveExpected,
                     health: imessageHealth
+                )
+                nativeBadges[.whatsapp] = Self.nativeBadge(
+                    configured: whatsappConfigured,
+                    receiveExpected: whatsappReceiveExpected,
+                    health: whatsappHealth
                 )
             }
         }
@@ -892,6 +918,7 @@ struct AgentChannelConnectionCenterView: View {
             AgentChannelConnection.nativeSlackConnectionId,
             AgentChannelConnection.nativeTelegramConnectionId,
             AgentChannelConnection.nativeIMessageConnectionId,
+            AgentChannelConnection.nativeWhatsAppConnectionId,
         ]
         for connection in connections where !options.contains(connection.id) {
             options.append(connection.id)
@@ -909,6 +936,8 @@ struct AgentChannelConnectionCenterView: View {
             return AgentChannelKind.telegram.displayName
         case AgentChannelConnection.nativeIMessageConnectionId:
             return AgentChannelKind.imessage.displayName
+        case AgentChannelConnection.nativeWhatsAppConnectionId:
+            return AgentChannelKind.whatsapp.displayName
         default:
             if let match = connections.first(where: { $0.id == connectionId }), !match.name.isEmpty {
                 return match.name

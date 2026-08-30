@@ -171,6 +171,17 @@ public final class AgentTaskState {
     /// keeps being nudged while it stays stuck (no premature silence).
     private static let listingReactiveThreshold = 2
 
+    /// How many times the truncated-read CONTINUATION steer may fire for one
+    /// file before it is replaced by the bounded notice. The continuation
+    /// steer costs one agent iteration per firing and a large file needs
+    /// `ceil(characters / cap)` of them, so an unbounded steer can consume the
+    /// whole iteration budget on a single `file_read` and starve the actual
+    /// task. Bounding it does NOT mean going silent — silence is exactly what
+    /// reintroduces issue #2098 (a truncated render reviewed as the whole
+    /// file). Past this many continuations the model is told to proceed and to
+    /// state explicitly that it only saw part of the file.
+    private static let partialReadSteerLimit = 2
+
     /// Repeated-call detector threshold for NON-read tools (write/exec/...):
     /// on the Nth identical (tool + canonical args) execution the bias notice
     /// fires. Reads are covered by the dedupe replay instead — they never
@@ -259,6 +270,11 @@ public final class AgentTaskState {
     public private(set) var lastReplayNotice: String?
     /// Listings recorded since the last file read; gates the listing nudge.
     private var consecutiveListingsWithoutRead = 0
+    /// Truncated reads recorded per canonical path; gates the continuation
+    /// steer against `partialReadSteerLimit`. Keyed per path so a second file
+    /// still gets its own continuations rather than inheriting the first
+    /// file's exhausted budget.
+    private var partialReadSteers: [String: Int] = [:]
     /// Execution counts per signature for NON-read tools (reads go through
     /// the dedupe replay instead). Drives the repeated-call nudge.
     private var nonReadCallCounts: [CallSignature: Int] = [:]
@@ -298,6 +314,7 @@ public final class AgentTaskState {
         transientFailureExecutions.removeAll(keepingCapacity: true)
         lastReplayNotice = nil
         consecutiveListingsWithoutRead = 0
+        partialReadSteers.removeAll(keepingCapacity: true)
         nonReadCallCounts.removeAll(keepingCapacity: true)
         repeatedCallName = nil
         planningRunName = nil
@@ -615,14 +632,24 @@ public final class AgentTaskState {
         case .emptyListing, .populatedListing, .partialListing:
             consecutiveListingsWithoutRead += 1
             lastListing = parseListing(result)
-        case .fileContent, .partialFileContent:
-            // A partial read is still a successful descent into a file —
-            // progress for the wandering counter; its continuation steer is
-            // handled by `nextStepBias`, not here.
+        case .fileContent:
             consecutiveListingsWithoutRead = 0
+            // A read that came back whole means this file is done being
+            // continued; drop its continuation budget so a later truncated
+            // read of the same path starts fresh.
+            if let target = pathArgument(argsJSON) {
+                partialReadSteers[Self.canonicalPath(target)] = nil
+            }
+        case .partialFileContent(let path, _, _):
+            // A partial read is still a successful descent into a file —
+            // progress for the wandering counter. Count it per path so
+            // `nextStepBias` can bound how many continuations one file earns.
+            consecutiveListingsWithoutRead = 0
+            let key = Self.canonicalPath(path)
+            partialReadSteers[key] = (partialReadSteers[key] ?? 0) + 1
         case .notFound, .error, .nativeImageGeneration, .other:
             break
-        }  // associated-value cases matched without binding
+        }
 
         // Mark a successful read-like result as fresh (with its exact
         // envelope) so a re-issue replays it until a write invalidates it.
@@ -742,6 +769,18 @@ public final class AgentTaskState {
             // Reactive by nature — the read is observed incomplete. Without
             // this steer, models treated the truncated render as the whole
             // file and reviewed 426 of 499 lines as complete (issue #2098).
+            //
+            // Bounded, because each continuation costs an agent iteration and
+            // a large file needs `ceil(characters / cap)` of them: left
+            // unbounded the steer alone can exhaust the iteration budget
+            // before the model ever gets to the task it was asked to do. Past
+            // the limit the instruction CHANGES rather than disappearing —
+            // the model proceeds, but is required to say what it did not see.
+            let continuations = partialReadSteers[Self.canonicalPath(path)] ?? 0
+            guard continuations <= Self.partialReadSteerLimit else {
+                return
+                    "The `file_read` of `\(path)` is still truncated after \(Self.partialReadSteerLimit) continuation reads, and each further read costs a step you need for the task. Stop re-reading this file. Continue with what you have, and state explicitly in your answer that you only read part of `\(path)` — do not describe or summarise it as though you had seen all of it."
+            }
             return
                 "The `file_read` of `\(path)` was truncated by the output cap — you have only seen part of the requested range. Before drawing conclusions about the whole file, call `file_read` again with {\"path\": \"\(path)\", \"start_line\": \(nextStart), \"end_line\": \(nextEnd)} to read the rest."
         case .fileContent, .error, .other:

@@ -1,0 +1,147 @@
+# Osaurus declarative configuration — annotated sample.
+#
+# A realistic document touching every section. Apply it with the chat
+# assistant ("apply this configuration"), the CLI
+# (`osaurus config apply osaurus-config.sample.yaml`), or the loopback
+# HTTP API (`POST /admin/config/plan` / `/apply`).
+#
+# Semantics (see the in-app "config" help topic for the full contract):
+#   * Merge by default — absent keys stay untouched; explicit null clears
+#     an optional override.
+#   * Entities match by name (case-insensitive); listed entries are
+#     created if missing, patched if present.
+#   * Deleting is opt-in: apply with the prune tool/CLI argument and only
+#     the entries you KEEP listed. Prune is never a document key.
+#   * Secrets never appear here — use env:VAR / keychain:SERVICE/ACCOUNT
+#     references or `set_api_key: true` for the native credential sheet.
+#   * Server runtime, chat behavior, and app shell settings are managed
+#     in the Settings UI, not in this document.
+#
+# This file is pinned by ConfigSampleDocumentTests: it must decode and
+# strict-validate against the live schema, so it cannot silently rot.
+
+version: 1
+
+memory: # cross-chat conversation memory
+  enabled: true
+  budget_tokens: 1200 # 100..4000
+  retention_days: 365 # 0..3650 (0 = forever)
+
+default_agent: # the built-in Default agent (the Orchestrator)
+  name: null # custom display name; null = "Osaurus"
+  model: foundation # "foundation", local id, or "<provider>/<model>"
+  temperature: 0.7 # 0..2 or null
+  max_tokens: null # null = automatic
+  system_prompt: "You are a friendly, concise assistant."
+
+active_agent: default # "default" or a custom agent's name
+
+agents: # custom agents (never the Default agent)
+  - name: Research Agent
+    description: "Web research with cited sources"
+    system_prompt: "Research topics thoroughly and cite your sources."
+    model: null # null falls back to the first installed local model
+    temperature: 0.4
+    max_tokens: 4096
+    capabilities: # only provided keys change
+      tools_enabled: true
+      web_search_enabled: true
+      knowledge_enabled: true
+      knowledge_collection_ids: [] # UUIDs from the knowledge scope
+      browser_use_enabled: false # HIGH RISK when enabled
+      computer_use_enabled: false # HIGH RISK when enabled
+      relay_enabled: false # HIGH RISK: reachable from outside
+
+tools: # global tool enablement / permission policies
+  enabled:
+    web_search: true
+  policies:
+    file_write: ask # auto | ask | deny (auto is HIGH RISK)
+
+delegation: # main-chat subagent delegation and child budgets
+  local_text_enabled: true
+  spawnable_agents: ["Research Agent"] # replaces the pool
+  spawn_tool_access: read_only # none | read_only
+  permission_defaults:
+    spawn: ask # ask | deny | always_allow (always_allow is HIGH RISK)
+  budget_max_tokens: 4096 # 256..32768 per child
+  budget_max_turns: 4 # 1..8
+  budget_max_seconds: 300 # 15..1800
+  ram_safety_preflight: true # false is HIGH RISK
+
+commands: # user template slash commands (built-ins stay)
+  - name: standup
+    description: "Draft my standup update"
+    icon: text.bubble # SF Symbol name
+    template: "Draft a three-bullet standup update from this conversation."
+
+knowledge_collections: # folder-backed knowledge collections
+  - name: Team Docs
+    folder_path: ~/Documents/TeamDocs # must exist; immutable after create
+    summary: "Internal team documentation"
+    enabled: true
+    include_globs: ["**/*.md"] # replaces the list
+    exclude_globs: ["**/drafts/**"] # replaces the list
+
+channels: # channel routing (credentials/routes stay in Settings)
+  write_enabled: true # global kill switch; re-enabling is HIGH RISK
+  telegram:
+    default_read_limit: 25 # 1..100 messages per read
+    sender_allowlist: ["123456789"] # replaces the list
+    require_mention: true
+    bot_token_ref: env:TELEGRAM_BOT_TOKEN # write-only secret reference
+
+mcp_servers: # user-added MCP servers (plugin-owned stay put)
+  - name: GitHub
+    transport: http # http | stdio; immutable after create
+    url: https://api.githubcopilot.com/mcp/
+    auth: bearer # none | bearer | oauth
+    enabled: true
+    token_ref: env:GITHUB_MCP_TOKEN # write-only secret reference
+  - name: Filesystem
+    transport: stdio # stdio launches a local process (HIGH RISK)
+    command: /usr/local/bin/mcp-filesystem
+    args: ["--root", "~/Projects"] # replaces the list
+    env:
+      NODE_ENV: production # plain env only
+    secret_env_refs:
+      API_TOKEN: env:FS_MCP_TOKEN # write-only: env KEY -> secret ref
+    execution_host: sandbox # sandbox | host (host is HIGH RISK)
+    enabled: true
+
+models: # desired installed local MLX models (HF repo ids)
+  - mlx-community/Qwen2.5-7B-Instruct-4bit
+
+plugins: # desired installed plugins (registry ids)
+  - osaurus.weather
+
+providers: # cloud LLM providers
+  - name: Anthropic
+    provider: anthropic # required to create; immutable after
+    enabled: true
+    auto_connect: true
+    api_key_ref: env:ANTHROPIC_API_KEY # write-only secret reference
+    # ...or use `set_api_key: true` for the interactive credential sheet.
+
+search_providers:
+  ranking: [tavily, ddg_scrape] # fallback order, first = primary
+  providers:
+    - id: tavily # keyed providers need the API key in Settings
+      enabled: true
+
+schedules: # scheduled runs of CUSTOM agents
+  - name: Morning news
+    agent: Research Agent # custom agent name (never "default")
+    instructions: "Summarize the top technology headlines."
+    frequency: daily # once | every_n_minutes | hourly | daily | weekly | monthly | yearly | cron
+    frequency_time_of_day: "08:00" # HH:mm
+    enabled: true
+
+watchers: # folder watchers running CUSTOM agents
+  - name: Downloads sorter
+    agent: Research Agent
+    instructions: "File new downloads into the right subfolder."
+    path: ~/Downloads # existing directory; ~ expands
+    recursive: false
+    responsiveness: balanced # fast | balanced | patient | relaxed | deferred | extended
+    enabled: true

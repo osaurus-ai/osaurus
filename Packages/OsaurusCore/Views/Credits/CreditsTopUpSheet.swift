@@ -157,8 +157,10 @@ struct CreditsTopUpSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
         } else if isValid, let micro = currentMicro {
             Label {
+                // The purchase itself is in dollars (Stripe), so the credits
+                // the user receives are shown next to the $ amount they pay.
                 Text(
-                    "You'll add \(OsaurusRouter.formatMicroUSD(String(micro)))",
+                    "You'll add \(OsaurusRouter.formatMicroAsCredits(String(micro))) (\(OsaurusRouter.formatMicroUSD(String(micro))))",
                     bundle: .module
                 )
                 .font(.system(size: 12))

@@ -796,3 +796,76 @@ struct ContextPreviewSheet: View {
         .environment(\.theme, themeManager.currentTheme)
     }
 }
+
+// MARK: - Project Memory Row
+
+/// Row for a shared project-memory namespace in the Memory view's Agents
+/// tab. `name` nil means the project record is gone (orphaned namespace) —
+/// the row says so and Forget doubles as cleanup.
+struct MemoryProjectRow: View {
+    @Environment(\.theme) private var theme
+
+    let name: String?
+    let count: Int
+    let onPreviewContext: () -> Void
+    let onForget: () -> Void
+
+    @State private var isForgetHovered = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "folder")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: name ?? L("Deleted project"))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(name == nil ? theme.secondaryText : theme.primaryText)
+                Text("Shared by every chat in this project", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Text(pluralizedMemory(count, "memory", "memories"))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(theme.tertiaryBackground))
+
+            Button(action: onPreviewContext) {
+                Image(systemName: "eye")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(width: 26, height: 26)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.tertiaryBackground)
+                    )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .localizedHelp("Preview context for this project")
+
+            Button(action: onForget) {
+                Image(systemName: "trash")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(isForgetHovered ? .red : theme.tertiaryText)
+                    .frame(width: 26, height: 26)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.tertiaryBackground)
+                    )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .onHover { isForgetHovered = $0 }
+            .localizedHelp("Forget this project's shared memory")
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 4)
+    }
+}

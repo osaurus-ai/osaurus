@@ -144,6 +144,103 @@ struct SandboxDefaultEnablementTests {
         }
     }
 
+    @Test
+    func sharedCustomAgentSeed_keepsOnboardingDefaultOn() {
+        withAvailability(.available) {
+            let onboardingRecord = AgentManager.newCustomAgentRecord(
+                name: "Onboarding",
+                description: "Template",
+                systemPrompt: "Help."
+            )
+            #expect(onboardingRecord.autonomousExec?.enabled == true)
+            #expect(!onboardingRecord.isBuiltIn)
+        }
+    }
+
+    @Test
+    func legacyUnconfiguredCustomAgent_tracksBackendAvailability() {
+        let legacy = Agent(name: "Legacy", autonomousExec: nil)
+
+        let supported = AgentManager.resolvedAutonomousExec(
+            for: legacy,
+            availability: .available
+        )
+        let unsupported = AgentManager.resolvedAutonomousExec(
+            for: legacy,
+            availability: .unavailable(reason: "test")
+        )
+
+        #expect(supported?.enabled == true)
+        #expect(unsupported == nil)
+        #expect(legacy.autonomousExec == nil)
+    }
+
+    @Test
+    func explicitOptOut_survivesReloadAndBackendTransitions() throws {
+        let optedOut = Agent(
+            name: "Opted Out",
+            autonomousExec: AutonomousExecConfig(enabled: false)
+        )
+        let reloaded = try JSONDecoder().decode(
+            Agent.self,
+            from: JSONEncoder().encode(optedOut)
+        )
+
+        #expect(reloaded.autonomousExec?.enabled == false)
+        #expect(
+            AgentManager.resolvedAutonomousExec(
+                for: reloaded,
+                availability: .available
+            )?.enabled == false
+        )
+        #expect(
+            AgentManager.resolvedAutonomousExec(
+                for: reloaded,
+                availability: .unavailable(reason: "test")
+            )?.enabled == false
+        )
+    }
+
+    @Test
+    func duplicate_preservesExplicitOptOutAndUnconfiguredState() {
+        let optedOut = Agent(
+            name: "Opted Out",
+            autonomousExec: AutonomousExecConfig(enabled: false)
+        )
+        let optedOutCopy = AgentManager.duplicateRecord(
+            from: optedOut,
+            name: "Opted Out Copy"
+        )
+        #expect(optedOutCopy.id != optedOut.id)
+        #expect(optedOutCopy.autonomousExec?.enabled == false)
+
+        let unconfigured = Agent(name: "Legacy", autonomousExec: nil)
+        let unconfiguredCopy = AgentManager.duplicateRecord(
+            from: unconfigured,
+            name: "Legacy Copy"
+        )
+        #expect(unconfiguredCopy.autonomousExec == nil)
+        #expect(
+            AgentManager.resolvedAutonomousExec(
+                for: unconfiguredCopy,
+                availability: .available
+            )?.enabled == true
+        )
+    }
+
+    @Test
+    func defaultAgent_staysHardOffInPurePolicySeam() {
+        var configuredDefault = Agent.default
+        configuredDefault.autonomousExec = AutonomousExecConfig(enabled: true)
+
+        #expect(
+            AgentManager.resolvedAutonomousExec(
+                for: configuredDefault,
+                availability: .available
+            ) == nil
+        )
+    }
+
     // MARK: - Lazy provisioning gate
 
     @Test
@@ -181,10 +278,210 @@ struct SandboxDefaultEnablementTests {
             #expect(names.contains("sandbox_exec") == false)
             #expect(SandboxManager.State.shared.status == .notProvisioned)
 
+            let firstUse = await SystemPromptComposer.composeChatContext(
+                agentId: agent.id,
+                executionMode: .none,
+                model: "gpt-5"
+            )
+            let firstUseSnapshot = AgentConfigSnapshot.capture(
+                agentId: agent.id,
+                modelOverride: "gpt-5"
+            )
+            let firstUseNames = Set(firstUse.tools.map(\.function.name))
+            #expect(firstUseSnapshot.autonomousEnabled)
+            #expect(firstUseSnapshot.canCreatePlugins)
+            #expect(firstUseNames.contains(BuiltinSandboxTools.initPendingToolName))
+            #expect(
+                !firstUse.alwaysLoadedNames.contains(
+                    BuiltinSandboxTools.initPendingToolName
+                )
+            )
+            #expect(firstUse.manifest.sections.map(\.id).contains("pluginCreator"))
+
+            let globallyDisabled = await SystemPromptComposer.composeChatContext(
+                agentId: agent.id,
+                executionMode: .none,
+                model: "gpt-5",
+                toolsDisabled: true
+            )
+            #expect(
+                !globallyDisabled.tools.contains {
+                    $0.function.name == BuiltinSandboxTools.initPendingToolName
+                }
+            )
+
+            // Simulate the successful end of the awaited handshake. Real
+            // sandbox/control schemas must join immediately despite the
+            // session's frozen first-use baseline, while the placeholder
+            // disappears and remains absent from the frozen snapshot.
+            registry.unregisterAllBuiltinSandboxTools()
+            BuiltinSandboxTools.register(
+                agentId: agent.id.uuidString,
+                agentName: SandboxAgentProvisioner.linuxName(for: agent.id.uuidString),
+                config: AutonomousExecConfig(enabled: true, pluginCreate: true)
+            )
+            let afterProvisioning = await SystemPromptComposer.composeChatContext(
+                agentId: agent.id,
+                executionMode: .sandbox,
+                model: "gpt-5",
+                frozenAlwaysLoadedNames: firstUse.alwaysLoadedNames,
+                frozenToolSpecs: firstUse.initialToolSpecs
+            )
+            let afterNames = Set(afterProvisioning.tools.map(\.function.name))
+            #expect(!afterNames.contains(BuiltinSandboxTools.initPendingToolName))
+            #expect(afterNames.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+            #expect(afterNames.contains("sandbox_plugin_register"))
+
             registry.unregisterAllSandboxTools()
             SandboxManager.State.shared.status = originalStatus
             SandboxConfigurationStore.save(originalSandboxConfig)
             manager.setActiveAgent(originalActiveAgentId)
+            _ = await manager.delete(id: agent.id)
+        }
+    }
+
+    @Test
+    func provisionOnDemand_coalescesAndAwaitsRealToolRegistration() async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            let manager = AgentManager.shared
+            let registrar = SandboxToolRegistrar.shared
+            let registry = ToolRegistry.shared
+            let originalStatus = SandboxManager.State.shared.status
+            let originalProvisionOverride = registrar.provisionAgentOverride
+
+            let agent = Agent(
+                name: "Awaited Sandbox \(UUID().uuidString)",
+                agentAddress: "test-awaited-sandbox-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: true)
+            )
+            manager.add(agent)
+            SandboxManager.State.shared.status = .running
+
+            final class Counter: @unchecked Sendable {
+                var calls = 0
+            }
+            let counter = Counter()
+            registrar.provisionAgentOverride = { @MainActor _ in
+                counter.calls += 1
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+            registry.unregisterAllBuiltinSandboxTools()
+
+            async let first: Void = registrar.provisionOnDemand(for: agent.id)
+            async let second: Void = registrar.provisionOnDemand(for: agent.id)
+            try await first
+            try await second
+
+            #expect(counter.calls == 1)
+            #expect(
+                registry.builtInSandboxToolNamesSnapshot.contains("sandbox_exec")
+            )
+            #expect(
+                !registry.builtInSandboxToolNamesSnapshot.contains(
+                    BuiltinSandboxTools.initPendingToolName
+                )
+            )
+
+            registry.unregisterAllSandboxTools()
+            registrar.provisionAgentOverride = originalProvisionOverride
+            SandboxManager.State.shared.status = originalStatus
+            _ = await manager.delete(id: agent.id)
+        }
+    }
+
+    @Test
+    func provisionOnDemand_failureClearsTaskAndAllowsRetry() async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            struct ExpectedFailure: Error {}
+
+            let manager = AgentManager.shared
+            let registrar = SandboxToolRegistrar.shared
+            let registry = ToolRegistry.shared
+            let originalStatus = SandboxManager.State.shared.status
+            let originalProvisionOverride = registrar.provisionAgentOverride
+
+            let agent = Agent(
+                name: "Retry Sandbox \(UUID().uuidString)",
+                agentAddress: "test-retry-sandbox-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: true)
+            )
+            manager.add(agent)
+            SandboxManager.State.shared.status = .running
+
+            final class Counter: @unchecked Sendable {
+                var calls = 0
+            }
+            let counter = Counter()
+            registrar.provisionAgentOverride = { @MainActor _ in
+                counter.calls += 1
+                if counter.calls == 1 { throw ExpectedFailure() }
+            }
+            registry.unregisterAllBuiltinSandboxTools()
+
+            var firstFailed = false
+            do {
+                try await registrar.provisionOnDemand(for: agent.id)
+            } catch {
+                firstFailed = true
+            }
+            #expect(firstFailed)
+
+            try await registrar.provisionOnDemand(for: agent.id)
+            #expect(counter.calls == 2)
+            #expect(registry.builtInSandboxToolNamesSnapshot.contains("sandbox_exec"))
+
+            registry.unregisterAllSandboxTools()
+            registrar.provisionAgentOverride = originalProvisionOverride
+            SandboxManager.State.shared.status = originalStatus
+            _ = await manager.delete(id: agent.id)
+        }
+    }
+
+    @Test
+    func provisionOnDemand_cancellationClearsTaskAndAllowsRetry() async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            let manager = AgentManager.shared
+            let registrar = SandboxToolRegistrar.shared
+            let registry = ToolRegistry.shared
+            let originalStatus = SandboxManager.State.shared.status
+            let originalProvisionOverride = registrar.provisionAgentOverride
+
+            let agent = Agent(
+                name: "Cancel Sandbox \(UUID().uuidString)",
+                agentAddress: "test-cancel-sandbox-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: true)
+            )
+            manager.add(agent)
+            SandboxManager.State.shared.status = .running
+
+            registrar.provisionAgentOverride = { @MainActor _ in
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+            }
+            registry.unregisterAllBuiltinSandboxTools()
+
+            let cancelled = Task {
+                try await registrar.provisionOnDemand(for: agent.id)
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+            cancelled.cancel()
+
+            var observedCancellation = false
+            do {
+                try await cancelled.value
+            } catch is CancellationError {
+                observedCancellation = true
+            } catch {
+                observedCancellation = error is SandboxToolRegistrar.OnDemandProvisionError
+            }
+            #expect(observedCancellation)
+
+            registrar.provisionAgentOverride = { @MainActor _ in }
+            try await registrar.provisionOnDemand(for: agent.id)
+            #expect(registry.builtInSandboxToolNamesSnapshot.contains("sandbox_exec"))
+
+            registry.unregisterAllSandboxTools()
+            registrar.provisionAgentOverride = originalProvisionOverride
+            SandboxManager.State.shared.status = originalStatus
             _ = await manager.delete(id: agent.id)
         }
     }

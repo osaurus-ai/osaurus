@@ -17,7 +17,6 @@ extension ChatSession: ChatWarmupSessionContext {
         guard selectedModelIsLocal, !isRemoteAgentTarget else { return nil }
         guard !isImageGenerationModel(model) else { return nil }
 
-        let chatCfg = ChatConfigurationStore.load()
         let effectiveAgentId = agentId ?? Agent.defaultId
         let executionMode = await prepareChatExecutionMode(agentId: effectiveAgentId)
 
@@ -58,21 +57,33 @@ extension ChatSession: ChatWarmupSessionContext {
             return ChatMessage(role: "user", content: t.content)
         }
 
-        let context = await SystemPromptComposer.composeChatContext(
-            agentId: effectiveAgentId,
-            executionMode: executionMode,
-            model: model,
-            modelType: selectedPickerItem?.modelType,
-            query: "",
-            messages: priorUserMessages,
-            toolsDisabled: chatCfg.disableTools,
-            additionalToolNames: cachedSession?.loadedToolNames ?? [],
-            frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
-            frozenToolSpecs: cachedSession?.initialToolSpecs,
-            frozenManifest: cachedSession?.frozenManifest,
-            frozenSoul: cachedSession?.frozenSoul,
-            trace: nil
-        )
+        let committedTurns = warmupCommittedTurns
+
+        // Compose under the SAME session source the real send binds
+        // (`ChatExecutionContext.$currentSessionSource` around the send task).
+        // Source-scoped gates — the channel publish tool and the Channel
+        // Destinations section — read that task-local; with it unset they
+        // resolve to "no usable bindings", so a channel-bound agent's warm-up
+        // built a 7-tool prompt the 8-tool send then diverged from mid-schema
+        // and the warmed prefill past the divergence was wasted every send.
+        let context = await ChatExecutionContext.$currentSessionSource.withValue(source) {
+            await SystemPromptComposer.composeChatContext(
+                agentId: effectiveAgentId,
+                executionMode: executionMode,
+                model: model,
+                modelType: selectedPickerItem?.modelType,
+                query: "",
+                messages: priorUserMessages,
+                // Match the send path: agent settings own tool availability.
+                toolsDisabled: false,
+                additionalToolNames: cachedSession?.loadedToolNames ?? [],
+                frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
+                frozenToolSpecs: cachedSession?.initialToolSpecs,
+                frozenManifest: cachedSession?.frozenManifest,
+                frozenSoul: cachedSession?.frozenSoul,
+                trace: nil
+            )
+        }
 
         var sys = context.prompt
 
@@ -86,9 +97,15 @@ extension ChatSession: ChatWarmupSessionContext {
         }
 
         let toolSpecs = context.tools
-        let messages = buildWarmupMessages(systemPrompt: sys)
+        let messages = buildWarmupMessages(systemPrompt: sys, turnsToWarm: committedTurns)
 
-        let historyFingerprint = turns.map { turn in
+        // Fingerprint over the COMMITTED turns only (same set the messages
+        // above serialize). During the DSV4 pre-send handshake the pending
+        // user turn is already in `turns`; hashing it here made the handshake
+        // fingerprint differ from the idle warm-up that just completed, so
+        // `performWarmup` could never short-circuit and one Send ran a third
+        // full prefill of bytes the real request then diverged from anyway.
+        let historyFingerprint = committedTurns.map { turn in
             "\(turn.role.rawValue):\(turn.id.uuidString):\(turn.content.count)"
         }.joined(separator: "|")
 
@@ -145,7 +162,29 @@ extension ChatSession: ChatWarmupSessionContext {
         return summary
     }
 
-    func buildWarmupMessages(systemPrompt: String) -> [ChatMessage] {
+    /// The transcript a warm-up may safely prefill: every turn EXCEPT
+    /// trailing user turns that have not been dispatched yet. A pending turn
+    /// (pre-appended by `send()` so the message is visible during the DSV4
+    /// pre-send handshake) gets its injected context prefix — the
+    /// `[Current Time]` block, memory, screen context — frozen only at
+    /// dispatch, so its final wire bytes do not exist yet. Warming it
+    /// prefills bytes the real request never composes: observed live as a
+    /// third prefill per Send whose tokens past the static prefix could
+    /// never be reused. Dropping it keeps the warm transcript a strict
+    /// byte-prefix of the real request.
+    var warmupCommittedTurns: [ChatTurn] {
+        var eligible = turns
+        while let last = eligible.last, last.role == .user, last.injectedContextPrefix == nil {
+            eligible.removeLast()
+        }
+        return eligible
+    }
+
+    func buildWarmupMessages(
+        systemPrompt: String,
+        turnsToWarm: [ChatTurn]? = nil
+    ) -> [ChatMessage] {
+        let warmable = turnsToWarm ?? warmupCommittedTurns
         var msgs: [ChatMessage] = []
         if !systemPrompt.isEmpty {
             msgs.append(ChatMessage(role: "system", content: systemPrompt))
@@ -160,7 +199,7 @@ extension ChatSession: ChatWarmupSessionContext {
         let coveredIds = summary.map { Set($0.coveredTurnIds) } ?? []
         var summaryInjected = false
 
-        for (index, turn) in turns.enumerated() {
+        for turn in warmable {
             if let summary, coveredIds.contains(turn.id) {
                 if !summaryInjected {
                     msgs.append(ChatMessage(role: "user", content: summary.contextMessageText))
@@ -168,7 +207,11 @@ extension ChatSession: ChatWarmupSessionContext {
                 }
                 continue
             }
-            let isLastTurn = index == turns.count - 1
+            // Last-turn position is judged against the FULL transcript, not
+            // the warmable slice: when a pending user turn was dropped above,
+            // the real request renders the final assistant turn as a
+            // non-last message, and the warm bytes must match that.
+            let isLastTurn = turn.id == turns.last?.id
             if let msg = warmupTurnToMessage(turn, isLastTurn: isLastTurn) {
                 msgs.append(msg)
             }
@@ -251,7 +294,23 @@ extension ChatSession: ChatWarmupSessionContext {
     }
 
     func handleWarmupAfterRunCompleted(wasCancelled: Bool, hadError: Bool) {
-        let hadToolActivity = turns.contains { turn in
+        // Scope tool-activity detection to the CURRENT run (from the last
+        // user turn onward), not the whole session. Scanning every historical
+        // turn permanently disabled post-response warmup for any chat that
+        // ever used a tool — so a session that ran one tool call at turn 5
+        // paid a cold multi-turn prefill tax on every send from turn 6
+        // through turn 500. The re-render bytes stored by a warmup for a
+        // clean assistant turn remain a valid prefix of the next send's
+        // prompt regardless of what happened many turns ago, because the
+        // committed history is what the next send re-renders and warms
+        // against on both sides of the fingerprint gate.
+        let currentRunTurns: ArraySlice<ChatTurn> = {
+            guard
+                let lastUserIndex = turns.lastIndex(where: { $0.role == .user })
+            else { return turns[...] }
+            return turns[lastUserIndex...]
+        }()
+        let hadToolActivity = currentRunTurns.contains { turn in
             turn.role == .tool
                 || !(turn.toolCalls?.isEmpty ?? true)
                 || !turn.toolResults.isEmpty

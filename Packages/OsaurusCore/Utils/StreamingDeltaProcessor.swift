@@ -58,6 +58,20 @@ final class StreamingDeltaProcessor {
     private var lastFlushTime = Date()
     private var syncCount = 0
 
+    /// Watches revealed content for a phrase-repetition collapse. Fed from
+    /// `appendContent` so it sees exactly what the user sees, in order.
+    private var repetitionDetector = StreamRepetitionDetector()
+
+    /// True once the streamed content has collapsed into a repetition loop.
+    /// The stream consumer polls this and cuts the turn short rather than
+    /// letting the model spend its whole output budget on one sentence
+    /// (osaurus#2439). Latches once set.
+    var hasDetectedRepetitionLoop: Bool { repetitionDetector.hasDetectedLoop }
+
+    /// The repeated phrase that tripped the detector, for the model-facing
+    /// notice. Nil until `hasDetectedRepetitionLoop` is true.
+    var repeatedPhrase: String? { repetitionDetector.repeatedPhrase }
+
     /// Continuation resumed by `pacingTick` the first time it observes
     /// an empty `deltaBuffer` after `finalize()` started awaiting. Lets
     /// the caller's `await processor.finalize()` block until the smooth
@@ -74,7 +88,10 @@ final class StreamingDeltaProcessor {
     /// streaming looks like a typewriter regardless of network delivery
     /// pattern. Local MLX at typical token rates is unaffected — its
     /// natural pace is below the reveal rate.
-    private var pacingTimer: Timer?
+    ///
+    /// Internal (not `private`) so tests can assert that a processor
+    /// destroyed mid-stream leaves no live run-loop timer behind.
+    var pacingTimer: Timer?
 
     /// User-facing reveal rate floor. ~12 chars per 16ms ≈ 750 chars/s ≈
     /// ~180 tok/s display rate. Fast enough not to drag, slow enough that
@@ -105,6 +122,21 @@ final class StreamingDeltaProcessor {
     ) {
         self.turn = turn
         self.onSync = onSync
+    }
+
+    isolated deinit {
+        // The pacing/flush timers retain their closures, but those closures
+        // hold `self` only weakly — so once this processor is gone, nothing
+        // can ever invalidate them. A processor destroyed mid-stream (chat
+        // window closed while smooth-streaming was revealing a buffer)
+        // therefore left a 16ms repeating run-loop timer ticking forever,
+        // spawning a no-op task every tick for the rest of the process
+        // lifetime. Invalidate both here on the main actor, where the
+        // timers were also scheduled.
+        pacingTimer?.invalidate()
+        pacingTimer = nil
+        flushTimer?.invalidate()
+        flushTimer = nil
     }
 
     // MARK: - Public API
@@ -311,6 +343,7 @@ final class StreamingDeltaProcessor {
         turn.appendContent(s)
         contentLength += s.count
         hasPendingContent = true
+        repetitionDetector.feed(s)
     }
 
     private func appendThinking(_ s: String) {

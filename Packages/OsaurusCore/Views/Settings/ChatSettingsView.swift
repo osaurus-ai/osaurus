@@ -10,8 +10,9 @@
 //  load-modify-write on `ChatConfiguration` touching only the chat-owned
 //  fields (top-P, tool attempts, clipboard, greeting
 //  persona, compaction model) so the General settings' hotkey + core-model
-//  values — which live in the same struct — are never clobbered. The default-agent
-//  persona / generation knobs persist to `DefaultAgentConfiguration`.
+//  values — which live in the same struct — are never clobbered. The
+//  default-agent persona / generation knobs live in Settings →
+//  Orchestrator (`OrchestratorSettingsView` → `DefaultAgentConfiguration`).
 //  Tools and memory are deliberately not surfaced here: the default
 //  agent's tools toggle lives in the Agents tab and the global memory
 //  switch in the Memory tab, so this view never writes either.
@@ -30,25 +31,18 @@ struct ChatSettingsView: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     // Chat settings state
-    /// Local mirror of the Default agent's Claude Code config.
-    ///
-    /// The rest of this view uses a temp-state + explicit-save flow, but these
-    /// are toggles: they persist on change (like the Agents tab's equivalents)
-    /// so the same switch doesn't mean "saved" in one place and "pending" in
-    /// another. The mirror exists only so SwiftUI re-renders — the store is the
-    /// source of truth and is written through immediately.
-    @State private var claudeCodeConfig: ClaudeCodeAgentConfig = .default
-    @State private var tempSystemPrompt: String = ""
-    @State private var tempChatTemperature: String = ""
-    @State private var tempChatMaxTokens: String = ""
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
     @State private var tempEnableClipboardMonitoring: Bool = false
     @State private var tempWarmModelsOnLoad: Bool = true
     /// AI-generated chat titles from the first completed exchange. Default
-    /// off while the feature bakes across releases (see
-    /// `ChatConfiguration.autoGenerateChatTitles`).
-    @State private var tempAutoGenerateChatTitles: Bool = false
+    /// on (see `ChatConfiguration.autoGenerateChatTitles`).
+    @State private var tempAutoGenerateChatTitles: Bool = true
+    /// Master switch for AI-generated follow-up questions after a completed
+    /// turn. Default on (see
+    /// `ChatConfiguration.generateFollowUpSuggestions`). Per-agent prompt /
+    /// rules / model tweaks live in each agent's settings.
+    @State private var tempGenerateFollowUpSuggestions: Bool = true
     /// Smooth streaming: pace the visible reveal at ~180 tok/s regardless
     /// of how fast / bursty the network delivers tokens. Default on.
     /// Bound to `UserDefaults` key `chatSmoothStreamingEnabled` which
@@ -76,13 +70,21 @@ struct ChatSettingsView: View {
     @State private var showAutoAllowAllConfirm = false
     /// Roll up runs of consecutive thinking / tool-call rows into a single
     /// expandable "Worked for …" row so agent loops don't push the
-    /// conversation out of view. Default off. Bound to `UserDefaults` key
+    /// conversation out of view. Default on. Bound to `UserDefaults` key
     /// `ContentBlock.ActivityRollupSetting.defaultsKey`, read by
     /// `BlockMemoizer` on every display rebuild. Applied immediately (a
     /// notification rebuilds open chats), so it's excluded from the
     /// debounced save baseline.
     @AppStorage(ContentBlock.ActivityRollupSetting.defaultsKey)
-    private var activityRollupEnabled: Bool = false
+    private var activityRollupEnabled: Bool = true
+    /// Make ⌘N start a new chat in the frontmost chat window (the sidebar
+    /// "New Chat" action) instead of opening a new window; "New Window" then
+    /// moves to ⇧⌘N. Default on.
+    /// Bound to `UserDefaults` key `NewChatShortcutSetting.defaultsKey`,
+    /// read by the app's File menu commands. Applied immediately, so it's
+    /// excluded from the debounced save baseline.
+    @AppStorage(NewChatShortcutSetting.defaultsKey)
+    private var cmdNStartsNewChatInCurrentWindow: Bool = true
     /// Model that runs LLM context compaction (summarizing older messages
     /// when a chat outgrows its context window). Same provider/name split
     /// as the Core Model picker; empty = "ask on first use" (the first-run
@@ -139,8 +141,6 @@ struct ChatSettingsView: View {
                             chatSection
 
                             generationSection
-
-                            claudeCodeSection
 
                             ToolPermissionsSection()
                                 .settingsLandingAnchor("settings.toolPermissions")
@@ -314,15 +314,8 @@ struct ChatSettingsView: View {
     @ViewBuilder private var chatSection: some View {
         SettingsSection(title: "Chat", icon: "text.bubble") {
             VStack(alignment: .leading, spacing: 20) {
-                // System Prompt
-                StyledSettingsTextArea(
-                    label: "System Prompt",
-                    text: $tempSystemPrompt,
-                    placeholder: "Enter the default Osaurus agent's instructions...",
-                    hint: "Optional. Persona for the built-in Osaurus agent."
-                )
-                .settingsLandingAnchor("settings.chat.systemPrompt")
-
+                // The default agent's persona / temperature / max tokens
+                // moved to Settings → Orchestrator (OrchestratorSettingsView).
                 SettingsToggle(
                     title: L("Smooth Streaming"),
                     description:
@@ -358,6 +351,14 @@ struct ChatSettingsView: View {
                 )
 
                 SettingsToggle(
+                    title: L("⌘+N Starts a New Chat in the Current Window"),
+                    description:
+                        "Make ⌘+N start a new chat in the frontmost chat window, like the sidebar's New Chat button. New Window moves to ⇧+⌘+N, matching other chat apps. Turn off to keep ⌘+N opening a new window.",
+                    isOn: $cmdNStartsNewChatInCurrentWindow
+                )
+                .settingsLandingAnchor("settings.chat.cmdNNewChat")
+
+                SettingsToggle(
                     title: L("Clipboard Monitoring"),
                     description:
                         "Automatically detect and offer text from any app as context. Includes 'grab selection' feature when summoning Osaurus.",
@@ -372,6 +373,8 @@ struct ChatSettingsView: View {
                 )
 
                 autoTitleToggleRow
+
+                followUpToggleRow
 
                 SettingsToggle(
                     title: L("Show Notch Overlay on Menu Bar"),
@@ -408,26 +411,6 @@ struct ChatSettingsView: View {
     @ViewBuilder private var generationSection: some View {
         SettingsSection(title: "Generation", icon: "slider.horizontal.3") {
             VStack(alignment: .leading, spacing: 12) {
-                SettingsSliderField(
-                    label: "Temperature",
-                    help: "Randomness (0–2). Higher = more creative",
-                    text: $tempChatTemperature,
-                    range: 0 ... 2,
-                    step: 0.1,
-                    defaultValue: 0.7,
-                    formatString: "%.1f",
-                    anchorId: "settings.chat.temperature"
-                )
-                SettingsStepperField(
-                    label: "Default Agent Max Output Tokens",
-                    help:
-                        "Optional per-response output cap for the default agent. Leave blank to inherit the active model bundle's generation_config maximum. This is not the model context window or KV retention.",
-                    text: $tempChatMaxTokens,
-                    range: 1 ... 65536,
-                    step: 1024,
-                    defaultValue: 16384,
-                    anchorId: "settings.chat.maxTokens"
-                )
                 SettingsSliderField(
                     label: "Top P Override",
                     help: "Sampling diversity (0–1)",
@@ -489,6 +472,61 @@ struct ChatSettingsView: View {
                 )
         )
         .settingsLandingAnchor("settings.chat.autoGenerateTitles")
+    }
+
+    /// Follow-up suggestions master switch, styled as the auto-title twin so
+    /// the "core model" deep link into the General tab reads the same way.
+    private var followUpToggleRow: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Suggest Follow-Up Questions", bundle: .module)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(theme.primaryText)
+                Text(followUpDescription)
+                    .font(.system(size: 11))
+                    .tint(theme.accentColor)
+                    .environment(
+                        \.openURL,
+                        OpenURLAction { _ in
+                            navigateToCoreModelSetting()
+                            return .handled
+                        }
+                    )
+            }
+
+            Spacer()
+
+            Toggle("", isOn: $tempGenerateFollowUpSuggestions)
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .labelsHidden()
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.inputBorder, lineWidth: 1)
+                )
+        )
+        .settingsLandingAnchor("settings.chat.generateFollowUps")
+    }
+
+    /// Description for the follow-up toggle, with "core model" rendered as an
+    /// underlined accent link, matching `autoTitleDescription`.
+    private var followUpDescription: AttributedString {
+        var text = AttributedString(
+            L(
+                "Use the core model to suggest a few next questions after each response, shown as clickable rows the user can tap to continue. Runs in the background and never interrupts the conversation. Each agent can tailor the prompt, rules, and model in its own settings."
+            )
+        )
+        text.foregroundColor = theme.tertiaryText
+        if let range = text.range(of: L("core model")) {
+            text[range].foregroundColor = theme.accentColor
+            text[range].underlineStyle = .single
+            text[range].link = URL(string: "osaurus-settings://core-model")
+        }
+        return text
     }
 
     /// Description for the auto-title toggle, with "core model" rendered as
@@ -637,146 +675,29 @@ struct ChatSettingsView: View {
         }
     }
 
-    // MARK: - Claude Code
-
-    /// Claude Code backend settings for the **Default agent**.
-    ///
-    /// Custom agents configure this in Agents → (agent) → Configure, but the
-    /// built-in agent is deliberately not editable there (`AgentsView` filters
-    /// `isBuiltIn` out of both the grid and `detailAgent`), so without this
-    /// section a Default-agent user has no way to widen Claude Code past the
-    /// read-only default. The store already keys the Default agent separately
-    /// — only the UI was missing.
-    ///
-    /// Hidden entirely when the CLI isn't installed: the toggles would apply to
-    /// a backend that can't run.
-    @ViewBuilder private var claudeCodeSection: some View {
-        if ClaudeCodeConfiguration.isAvailable() {
-            SettingsSection(title: L("Claude Code"), icon: "terminal.fill") {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text(
-                        "Applies when the Default agent runs a Claude Code model. Requests go through your signed-in Claude Code CLI and use your Claude subscription — Osaurus stores no Anthropic key.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                    SettingsToggle(
-                        title: L("Let Claude Code Use Its Own Tools"),
-                        description: L(
-                            "On: Claude Code runs its own agent loop and tools, and Osaurus shows a read-only trace. Off: it becomes a plain text generator with no tools at all (Osaurus's tools can't be given to it)."
-                        ),
-                        isOn: claudeCodeBinding(
-                            get: { $0.mode == .agent },
-                            set: { $0.mode = $1 ? .agent : .textOnly }
-                        )
-                    )
-
-                    if claudeCodeConfig.mode == .agent {
-                        SettingsToggle(
-                            title: L("Edit Files"),
-                            description: L(
-                                "Allow Claude Code to create and edit files in the working folder. Off keeps its run read-only."
-                            ),
-                            isOn: claudeCodeBinding(
-                                get: { $0.allowWrites },
-                                set: { $0.allowWrites = $1 }
-                            )
-                        )
-
-                        SettingsToggle(
-                            title: L("Run Shell Commands"),
-                            description: L(
-                                "Allow Claude Code to run shell commands. These run on your Mac outside Osaurus's sandbox, so leave this off unless you need it."
-                            ),
-                            isOn: claudeCodeBinding(
-                                get: { $0.allowShell },
-                                set: { $0.allowShell = $1 }
-                            )
-                        )
-
-                        SettingsToggle(
-                            title: L("Give It Osaurus's Own Tools"),
-                            description: L(
-                                "Expose Osaurus's configuration tools so it can read this app's agents, models, and providers. Requires the Osaurus server to be running."
-                            ),
-                            isOn: claudeCodeBinding(
-                                get: { $0.allowOsaurusTools },
-                                set: { $0.allowOsaurusTools = $1 }
-                            )
-                        )
-
-                        if claudeCodeConfig.allowOsaurusTools {
-                            SettingsToggle(
-                                title: L("Let It Change Osaurus Settings"),
-                                description: L(
-                                    "Also expose the tools that modify agents, providers, models, and plugins. Off keeps its view of Osaurus read-only."
-                                ),
-                                isOn: claudeCodeBinding(
-                                    get: { $0.allowOsaurusConfigWrites },
-                                    set: { $0.allowOsaurusConfigWrites = $1 }
-                                )
-                            )
-                        }
-                    }
-                }
-            }
-            .settingsLandingAnchor("settings.chat.claudeCode")
-        }
-    }
-
-    /// Binding over one field of the Default agent's Claude Code config that
-    /// persists on write. `get`/`set` operate on the config so each toggle
-    /// declares only the field it owns.
-    private func claudeCodeBinding(
-        get: @escaping (ClaudeCodeAgentConfig) -> Bool,
-        set: @escaping (inout ClaudeCodeAgentConfig, Bool) -> Void
-    ) -> Binding<Bool> {
-        Binding(
-            get: { get(claudeCodeConfig) },
-            set: { newValue in
-                var updated = claudeCodeConfig
-                set(&updated, newValue)
-                claudeCodeConfig = updated
-                AgentManager.shared.updateClaudeCodeConfig(updated, for: Agent.defaultId)
-            }
-        )
-    }
-
     // MARK: - Configuration Loading
 
     private func loadConfiguration() {
         Task { @MainActor in
             await Task.yield()
             let chat: ChatConfiguration = ChatConfigurationStore.load()
-            let defaultAgent = DefaultAgentConfigurationStore.load()
-            applyLoadedConfiguration(chat: chat, defaultAgent: defaultAgent)
+            applyLoadedConfiguration(chat: chat)
         }
     }
 
-    private func applyLoadedConfiguration(
-        chat: ChatConfiguration,
-        defaultAgent: DefaultAgentConfiguration
-    ) {
-        // The Default agent's persona and generation knobs live on
-        // `DefaultAgentConfiguration` (split off from `ChatConfiguration`);
-        // the numeric generation knobs (top-P and tool
-        // attempts) and clipboard settings live on `ChatConfiguration`.
-        // Tools and memory are intentionally NOT surfaced here: the default
-        // agent's tools toggle lives in the Agents tab and the global memory
-        // switch lives in the Memory tab.
-        // Read through the manager rather than `defaultAgent.claudeCode`
-        // directly so the nil-to-`.default` fallback stays in one place.
-        claudeCodeConfig = AgentManager.shared.effectiveClaudeCodeConfig(for: Agent.defaultId)
-        tempSystemPrompt = defaultAgent.systemPrompt
-        tempChatTemperature = defaultAgent.temperature.map { String($0) } ?? ""
-        tempChatMaxTokens = defaultAgent.maxTokens.map(String.init) ?? ""
+    private func applyLoadedConfiguration(chat: ChatConfiguration) {
+        // The Default agent's persona and generation knobs moved to
+        // Settings → Orchestrator (`DefaultAgentConfiguration`); the numeric
+        // generation knobs (top-P and tool attempts) and clipboard settings
+        // live on `ChatConfiguration`. Tools and memory are intentionally
+        // NOT surfaced here: the default agent's tools toggle lives in the
+        // Agents tab and the global memory switch lives in the Memory tab.
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
         tempEnableClipboardMonitoring = chat.enableClipboardMonitoring
         tempWarmModelsOnLoad = chat.warmModelsOnLoad
         tempAutoGenerateChatTitles = chat.autoGenerateChatTitles
+        tempGenerateFollowUpSuggestions = chat.generateFollowUpSuggestions
         tempCompactionModelProvider = chat.compactionModelProvider ?? ""
         tempCompactionModelName = chat.compactionModelName ?? ""
 
@@ -790,14 +711,12 @@ struct ChatSettingsView: View {
     private func resetToDefaults() {
         let chatDefaults = ChatConfiguration.default
 
-        tempSystemPrompt = ""
-        tempChatTemperature = ""
-        tempChatMaxTokens = ""
         tempChatTopP = ""
         tempChatMaxToolAttempts = ""
         tempEnableClipboardMonitoring = chatDefaults.enableClipboardMonitoring
         tempWarmModelsOnLoad = chatDefaults.warmModelsOnLoad
         tempAutoGenerateChatTitles = chatDefaults.autoGenerateChatTitles
+        tempGenerateFollowUpSuggestions = chatDefaults.generateFollowUpSuggestions
         tempCompactionModelProvider = chatDefaults.compactionModelProvider ?? ""
         tempCompactionModelName = chatDefaults.compactionModelName ?? ""
 
@@ -808,28 +727,24 @@ struct ChatSettingsView: View {
 
     /// Snapshot of exactly the fields that `saveConfiguration` persists.
     private struct SaveableFormState: Equatable {
-        var systemPrompt: String
-        var temperature: String
-        var maxTokens: String
         var topP: String
         var maxToolAttempts: String
         var enableClipboardMonitoring: Bool
         var warmModelsOnLoad: Bool
         var autoGenerateChatTitles: Bool
+        var generateFollowUpSuggestions: Bool
         var compactionModelProvider: String
         var compactionModelName: String
     }
 
     private var currentFormState: SaveableFormState {
         SaveableFormState(
-            systemPrompt: tempSystemPrompt,
-            temperature: tempChatTemperature,
-            maxTokens: tempChatMaxTokens,
             topP: tempChatTopP,
             maxToolAttempts: tempChatMaxToolAttempts,
             enableClipboardMonitoring: tempEnableClipboardMonitoring,
             warmModelsOnLoad: tempWarmModelsOnLoad,
             autoGenerateChatTitles: tempAutoGenerateChatTitles,
+            generateFollowUpSuggestions: tempGenerateFollowUpSuggestions,
             compactionModelProvider: tempCompactionModelProvider,
             compactionModelName: tempCompactionModelName
         )
@@ -861,18 +776,6 @@ struct ChatSettingsView: View {
     // MARK: - Configuration Saving
 
     private func saveConfiguration() {
-        let trimmedTemp = tempChatTemperature.trimmingCharacters(in: .whitespacesAndNewlines)
-        let parsedTemp: Float? = {
-            guard !trimmedTemp.isEmpty, let v = Float(trimmedTemp) else { return nil }
-            return max(0.0, min(2.0, v))
-        }()
-
-        let trimmedMax = tempChatMaxTokens.trimmingCharacters(in: .whitespacesAndNewlines)
-        let parsedMax: Int? = {
-            guard !trimmedMax.isEmpty, let v = Int(trimmedMax) else { return nil }
-            return max(1, v)
-        }()
-
         let trimmedTopPChat = tempChatTopP.trimmingCharacters(in: .whitespacesAndNewlines)
         let parsedTopP: Float? = {
             guard !trimmedTopPChat.isEmpty, let v = Float(trimmedTopPChat) else { return nil }
@@ -902,75 +805,19 @@ struct ChatSettingsView: View {
         chatCfg.enableClipboardMonitoring = tempEnableClipboardMonitoring
         chatCfg.warmModelsOnLoad = tempWarmModelsOnLoad
         chatCfg.autoGenerateChatTitles = tempAutoGenerateChatTitles
+        chatCfg.generateFollowUpSuggestions = tempGenerateFollowUpSuggestions
         chatCfg.compactionModelProvider =
             tempCompactionModelProvider.isEmpty ? nil : tempCompactionModelProvider
         chatCfg.compactionModelName =
             tempCompactionModelName.isEmpty ? nil : tempCompactionModelName
         ChatConfigurationStore.save(chatCfg)
 
-        // Persist default-agent specific fields to their own store. Tools
-        // (`disableTools`) are intentionally NOT written here — the default
-        // agent's tools toggle lives in the Agents tab, and the global memory
-        // switch lives in the Memory tab; this view leaves both untouched.
-        var defaultAgentCfg = DefaultAgentConfigurationStore.load()
-        defaultAgentCfg.systemPrompt = tempSystemPrompt
-        defaultAgentCfg.temperature = parsedTemp
-        defaultAgentCfg.maxTokens = parsedMax
-        DefaultAgentConfigurationStore.save(defaultAgentCfg)
+        // Default-agent specific fields (persona / temperature / max tokens)
+        // are owned by Settings → Orchestrator and never written here.
 
         // Re-baseline so the dirty check clears now that the live form matches
         // what's persisted.
         savedFormState = currentFormState
-    }
-}
-
-// MARK: - Styled Settings Text Area
-
-private struct StyledSettingsTextArea: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let label: String
-    @Binding var text: String
-    let placeholder: String
-    let hint: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(LocalizedStringKey(label), bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
-
-            ZStack(alignment: .topLeading) {
-                // Themed placeholder overlay
-                if text.isEmpty {
-                    Text(LocalizedStringKey(placeholder), bundle: .module)
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundColor(themeManager.currentTheme.placeholderText)
-                        .padding(.top, 12)
-                        .padding(.leading, 12)
-                        .allowsHitTesting(false)
-                }
-
-                TextEditor(text: $text)
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 100, maxHeight: 160)
-                    .padding(10)
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(themeManager.currentTheme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                    )
-            )
-
-            Text(LocalizedStringKey(hint), bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(themeManager.currentTheme.tertiaryText)
-        }
     }
 }
 

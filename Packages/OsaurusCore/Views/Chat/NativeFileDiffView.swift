@@ -262,12 +262,24 @@ final class NativeFileDiffView: NSView {
             headerView.heightAnchor.constraint(equalToConstant: Self.headerHeight),
 
             iconLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 10),
-            iconLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            // The file name is the header's single vertical reference: the icon
+            // glyph and streaming spinner align to ITS row rather than each
+            // taking their own centerY on the header. Independently centered,
+            // the spinner drifted below the text (NSProgressIndicator's drawn
+            // glyph doesn't sit where its squeezed 14pt frame's center says),
+            // leaving the collapsed card's header visibly misaligned.
+            iconLabel.firstBaselineAnchor.constraint(equalTo: fileLabel.firstBaselineAnchor),
 
             loadingIndicator.centerXAnchor.constraint(equalTo: iconLabel.centerXAnchor),
-            loadingIndicator.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            loadingIndicator.widthAnchor.constraint(equalToConstant: 14),
-            loadingIndicator.heightAnchor.constraint(equalToConstant: 14),
+            loadingIndicator.centerYAnchor.constraint(equalTo: fileLabel.centerYAnchor),
+            // Size to the `.small` spinning style's natural 16pt. A smaller frame
+            // (we used to pin 14pt) is below the indicator's intrinsic content
+            // size, so AppKit draws the animated glyph outside — below — the
+            // squeezed frame's center: the frame is centered on the file name but
+            // the visible spinner hangs ~5pt low. Matching the natural size keeps
+            // frame == drawn content so centerY actually lands on the text row.
+            loadingIndicator.widthAnchor.constraint(equalToConstant: 16),
+            loadingIndicator.heightAnchor.constraint(equalToConstant: 16),
 
             fileLabel.leadingAnchor.constraint(equalTo: iconLabel.trailingAnchor, constant: 7),
             fileLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),

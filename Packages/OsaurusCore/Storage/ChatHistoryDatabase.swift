@@ -24,7 +24,6 @@ public enum ChatHistoryDatabaseError: Error, LocalizedError {
     case failedToExecute(String)
     case failedToPrepare(String)
     case migrationFailed(String)
-    case databaseFromNewerVersion(found: Int, expected: Int)
     case notOpen
 
     public var errorDescription: String? {
@@ -33,9 +32,6 @@ public enum ChatHistoryDatabaseError: Error, LocalizedError {
         case .failedToExecute(let m): return "Failed to execute chat-history query: \(m)"
         case .failedToPrepare(let m): return "Failed to prepare chat-history statement: \(m)"
         case .migrationFailed(let m): return "Chat-history migration failed: \(m)"
-        case .databaseFromNewerVersion(let found, let expected):
-            return
-                "Chat-history database is schema v\(found) but this build supports up to v\(expected). Refusing to open to avoid forward-version corruption."
         case .notOpen: return "Chat-history database is not open"
         }
     }
@@ -173,22 +169,42 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         }
     }
 
-    /// Highest schema version this build knows how to produce. Opening a DB
-    /// stamped newer than this is refused (forward-version fail-fast).
+    /// Highest schema version this build knows how to produce.
     /// Internal (not private) so migration-repair tests assert "reconciled
     /// to the latest" against the real constant instead of a stale literal.
-    static let latestSchemaVersion = 14
+    static let latestSchemaVersion = 15
+
+    /// Forward-compatibility invariant. Every chat-history migration is
+    /// **additive** — it only `ADD COLUMN`s, `CREATE INDEX`es, or `CREATE
+    /// TABLE`s; it never drops, renames, or re-types an existing column, and
+    /// never changes the meaning of one this build already reads. That means a
+    /// DB stamped by a *newer* build is still safe for this build to open: the
+    /// extra columns are simply ignored on read, and left NULL/default on the
+    /// writes this build issues (which always name their columns explicitly).
+    ///
+    /// Because of that invariant we **open version-ahead databases instead of
+    /// refusing them**. Hard-refusing (the old behavior) is what turned a
+    /// harmless schema-ahead DB — a user who ran a projects/beta build and then
+    /// a stable build, or bounced between release channels — into the "all my
+    /// chat history is gone after updating" report: the file was untouched but
+    /// the sidebar rendered empty and looked like total data loss.
+    ///
+    /// IMPORTANT: if a future migration ever becomes destructive (drops /
+    /// renames / re-types an existing column, or changes its semantics), this
+    /// forward-open is no longer safe. Such a change MUST introduce an explicit
+    /// minimum-compatible-version gate rather than rely on this constant.
+    static let migrationsAreAdditiveOnly = true
 
     private func runMigrations() throws {
         let current = try getSchemaVersion()
-        // A database stamped by a newer build carries columns/semantics this
-        // build doesn't understand; reading/writing it as the older schema
-        // would silently corrupt forward-version rows. Refuse instead.
+        // Forward-compatible open: a DB stamped by a newer build carries only
+        // additive columns this build doesn't read (see `migrationsAreAdditiveOnly`).
+        // Open it without running the migration ladder, and leave `user_version`
+        // untouched so a future newer build still recognizes its own schema and
+        // re-applies its (idempotent) migrations. Never refuse — refusing is
+        // indistinguishable from data loss to the user.
         if current > Self.latestSchemaVersion {
-            throw ChatHistoryDatabaseError.databaseFromNewerVersion(
-                found: current,
-                expected: Self.latestSchemaVersion
-            )
+            return
         }
         // Each step runs in its own transaction: a crash/error mid-migration
         // rolls back to the prior version instead of leaving a half-applied
@@ -207,6 +223,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if current < 12 { try runMigrationStep(12, migrateToV12) }
         if current < 13 { try runMigrationStep(13, migrateToV13) }
         if current < 14 { try runMigrationStep(14, migrateToV14) }
+        if current < 15 { try runMigrationStep(15, migrateToV15) }
     }
 
     /// Run one migration body atomically. Called only from `runMigrations`,
@@ -451,6 +468,21 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         try setSchemaVersion(14)
     }
 
+    /// v15: add `project_id` so sessions can be grouped under user-created
+    /// projects. Nullable — legacy rows belong to no project.
+    ///
+    /// An earlier revision of this branch claimed v14 for `project_id` while
+    /// main's v14 shipped `shared_artifacts`, so a database stamped 14 may
+    /// carry either column but not the other. Both adds are
+    /// `addColumnIfMissing`, so this step repairs whichever half is absent
+    /// regardless of which v14 the database actually ran.
+    private func migrateToV15() throws {
+        try addColumnIfMissing("sessions", "project_id", "TEXT")
+        try executeRaw("CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions (project_id)")
+        try addColumnIfMissing("turns", "shared_artifacts", "TEXT")
+        try setSchemaVersion(15)
+    }
+
     // MARK: - Public API: sessions
 
     /// Insert or replace the session row and incrementally upsert its
@@ -537,21 +569,114 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// the empty array as truth and delete every turn row. A targeted UPDATE
     /// cannot touch turns, and deliberately leaves `updated_at` alone so the
     /// rename never reorders the recency list.
-    public func updateSessionTitleAsync(id: UUID, title: String) {
+    /// When `updatedAt` is non-nil the row's recency is bumped too (the
+    /// explicit user rename path); leaving it nil preserves ordering (the
+    /// auto-title path).
+    public func updateSessionTitleAsync(id: UUID, title: String, updatedAt: Date? = nil) {
         queue.async { [weak self] in
             guard let self, self.db != nil else { return }
             do {
                 try self.executeRaw("BEGIN TRANSACTION")
-                try self.transactionalStep(
-                    "UPDATE sessions SET title = ?1 WHERE id = ?2"
-                ) { stmt in
-                    Self.bindText(stmt, index: 1, value: title)
-                    Self.bindText(stmt, index: 2, value: id.uuidString)
+                if let updatedAt {
+                    try self.transactionalStep(
+                        "UPDATE sessions SET title = ?1, updated_at = ?2 WHERE id = ?3"
+                    ) { stmt in
+                        Self.bindText(stmt, index: 1, value: title)
+                        sqlite3_bind_double(stmt, 2, updatedAt.timeIntervalSince1970)
+                        Self.bindText(stmt, index: 3, value: id.uuidString)
+                    }
+                } else {
+                    try self.transactionalStep(
+                        "UPDATE sessions SET title = ?1 WHERE id = ?2"
+                    ) { stmt in
+                        Self.bindText(stmt, index: 1, value: title)
+                        Self.bindText(stmt, index: 2, value: id.uuidString)
+                    }
                 }
                 try self.executeRaw("COMMIT")
             } catch {
                 try? self.executeRaw("ROLLBACK")
                 print("[ChatHistoryDatabase] async title update failed for \(id): \(error)")
+            }
+        }
+    }
+
+    /// Update ONLY a session's project membership, off the caller's thread.
+    /// Targeted for the same reason as `updateSessionTitleAsync`: the caller's
+    /// in-memory copy may be metadata-only, and a full save would delete the
+    /// conversation's turn rows. Leaves `updated_at` alone so moving a chat
+    /// into a project never reorders the recency list.
+    public func updateSessionProjectAsync(id: UUID, projectId: UUID?) {
+        queue.async { [weak self] in
+            guard let self, self.db != nil else { return }
+            do {
+                try self.executeRaw("BEGIN TRANSACTION")
+                try self.transactionalStep(
+                    "UPDATE sessions SET project_id = ?1 WHERE id = ?2"
+                ) { stmt in
+                    Self.bindText(stmt, index: 1, value: projectId?.uuidString)
+                    Self.bindText(stmt, index: 2, value: id.uuidString)
+                }
+                try self.executeRaw("COMMIT")
+            } catch {
+                try? self.executeRaw("ROLLBACK")
+                print("[ChatHistoryDatabase] async project update failed for \(id): \(error)")
+            }
+        }
+    }
+
+    /// Detach every session from `projectId`, off the caller's thread.
+    /// Used when a project is deleted so its chats fall back to "no project".
+    public func clearProjectAsync(projectId: UUID) {
+        queue.async { [weak self] in
+            guard let self, self.db != nil else { return }
+            do {
+                try self.executeRaw("BEGIN TRANSACTION")
+                try self.transactionalStep(
+                    "UPDATE sessions SET project_id = NULL WHERE project_id = ?1"
+                ) { stmt in
+                    Self.bindText(stmt, index: 1, value: projectId.uuidString)
+                }
+                try self.executeRaw("COMMIT")
+            } catch {
+                try? self.executeRaw("ROLLBACK")
+                print("[ChatHistoryDatabase] async project clear failed for \(projectId): \(error)")
+            }
+        }
+    }
+
+    /// Targeted async UPDATE of a session's `archived` flag. Same rationale
+    /// as `updateSessionTitleAsync`: the sidebar's in-memory session copy is
+    /// metadata-only, so a full `saveSession` would delete every turn row,
+    /// and the synchronous write path can stall the main thread. Leaves
+    /// `updated_at` alone so archiving never reorders the recency list.
+    public func updateSessionArchivedAsync(id: UUID, archived: Bool) {
+        updateSessionFlagAsync(id: id, column: "archived", value: archived)
+    }
+
+    /// Targeted async UPDATE of a session's `pinned` flag (see
+    /// `updateSessionArchivedAsync`).
+    public func updateSessionPinnedAsync(id: UUID, pinned: Bool) {
+        updateSessionFlagAsync(id: id, column: "pinned", value: pinned)
+    }
+
+    /// `column` must be a compile-time constant from the two callers above —
+    /// never interpolate caller-provided strings into SQL.
+    private func updateSessionFlagAsync(id: UUID, column: String, value: Bool) {
+        queue.async { [weak self] in
+            guard let self, self.db != nil else { return }
+            do {
+                try self.executeRaw("BEGIN TRANSACTION")
+                try self.transactionalStep(
+                    "UPDATE sessions SET \(column) = ?1 WHERE id = ?2"
+                ) { stmt in
+                    sqlite3_bind_int(stmt, 1, value ? 1 : 0)
+                    Self.bindText(stmt, index: 2, value: id.uuidString)
+                }
+                try self.executeRaw("COMMIT")
+            } catch {
+                try? self.executeRaw("ROLLBACK")
+                print("[ChatHistoryDatabase] async \(column) update failed for \(id): \(error)")
             }
         }
     }
@@ -823,12 +948,92 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     }
 
     public func deleteSession(id: UUID) throws {
+        try MainThreadOperationLedger.shared.withMainThreadOperation(
+            subsystem: "chat-history-db", operation: "delete-session"
+        ) {
+            try queue.sync { try deleteSessionOnQueue(id: id) }
+        }
+    }
+
+    /// Delete a batch of sessions off the caller's thread. Same semantics as
+    /// `deleteSession(id:)` per id (blob GC, sandbox-change cascade), but
+    /// tuned for bulk: the whole batch runs behind one `queue.async` hop so
+    /// it never parks the caller, all row deletes share one transaction
+    /// (hundreds of per-session autocommits are hundreds of fsyncs — one
+    /// commit shrinks both the wall clock and the window in which
+    /// main-thread readers park behind this queue), and blob GC probes each
+    /// unique hash once against the surviving rows after the commit instead
+    /// of once per session (the `LIKE` probe scans `turns`).
+    ///
+    /// The batch is all-or-nothing: on error the transaction rolls back and
+    /// `onDropped` fires (on the database queue) with every id so the caller
+    /// can requeue them — the in-memory list was already cleared, and
+    /// silently losing the deletes would resurrect the sessions on next
+    /// launch. `onDropped` also fires when the database was closed at
+    /// dequeue time (the enqueue-time `ensureOpen` check races key
+    /// rotation). `completion` always fires (also on the database queue)
+    /// once the batch is finished.
+    public func deleteSessionsAsync(
+        ids: [UUID],
+        onDropped: (@Sendable ([UUID]) -> Void)? = nil,
+        completion: (@Sendable () -> Void)? = nil
+    ) {
+        guard !ids.isEmpty else {
+            completion?()
+            return
+        }
+        queue.async { [weak self] in
+            defer { completion?() }
+            guard let self, self.db != nil else {
+                onDropped?(ids)
+                return
+            }
+            var ownedRefs: Set<String> = []
+            do {
+                try self.executeRaw("BEGIN TRANSACTION")
+                for id in ids {
+                    try self.collectAttachmentRefsOnQueue(sessionId: id, into: &ownedRefs)
+                    try self.deleteSessionRowsOnQueue(id: id)
+                }
+                try self.executeRaw("COMMIT")
+            } catch {
+                try? self.executeRaw("ROLLBACK")
+                print("[ChatHistoryDatabase] async session batch delete failed: \(error)")
+                onDropped?(ids)
+                return
+            }
+            // Best-effort GC after the commit: each unique hash is re-checked
+            // against the surviving rows; anything still referenced stays.
+            for hash in ownedRefs where !self.isBlobReferencedOnQueue(hash) {
+                AttachmentBlobStore.delete(hash)
+            }
+        }
+    }
+
+    /// Body of a single-session delete. Must run on `queue`.
+    private func deleteSessionOnQueue(id: UUID) throws {
+        guard db != nil else { throw ChatHistoryDatabaseError.notOpen }
+
         // GC: collect blob refs from this session's turns *before*
         // deleting the rows, then drop any blob no other session
         // references. Conservative: only deletes when zero remaining
         // turns reference the hash.
         var ownedRefs: Set<String> = []
-        try prepareAndExecute(
+        try collectAttachmentRefsOnQueue(sessionId: id, into: &ownedRefs)
+
+        try deleteSessionRowsOnQueue(id: id)
+
+        // Best-effort GC. We re-check each hash against the surviving
+        // rows; anything still referenced stays.
+        for hash in ownedRefs where !isBlobReferencedOnQueue(hash) {
+            AttachmentBlobStore.delete(hash)
+        }
+    }
+
+    /// Collect the attachment blob hashes referenced by a session's turns.
+    /// Must run on `queue`.
+    private func collectAttachmentRefsOnQueue(sessionId id: UUID, into ownedRefs: inout Set<String>) throws {
+        try transactionalQuery(
             "SELECT attachments FROM turns WHERE session_id = ?1",
             bind: { stmt in Self.bindText(stmt, index: 1, value: id.uuidString) },
             process: { stmt in
@@ -846,23 +1051,20 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
                 }
             }
         )
+    }
 
-        _ = try executeUpdate("DELETE FROM sessions WHERE id = ?1") { stmt in
+    /// Delete a session's row plus its keyed-but-FK-less cascades. Must run
+    /// on `queue`; safe both standalone (autocommit) and inside an open
+    /// transaction.
+    private func deleteSessionRowsOnQueue(id: UUID) throws {
+        try transactionalStep("DELETE FROM sessions WHERE id = ?1") { stmt in
             Self.bindText(stmt, index: 1, value: id.uuidString)
         }
 
         // Manual cascade: sandbox change rows are keyed by session id but
         // carry no FK (they can be written before the session row exists).
-        _ = try? executeUpdate("DELETE FROM sandbox_changes WHERE session_id = ?1") { stmt in
+        try? transactionalStep("DELETE FROM sandbox_changes WHERE session_id = ?1") { stmt in
             Self.bindText(stmt, index: 1, value: id.uuidString)
-        }
-
-        // Best-effort GC. We re-check each hash against the surviving
-        // rows; anything still referenced stays.
-        for hash in ownedRefs {
-            if !isBlobReferenced(hash) {
-                AttachmentBlobStore.delete(hash)
-            }
         }
     }
 
@@ -1006,6 +1208,27 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         return found
     }
 
+    /// `isBlobReferenced` variant for callers already on `queue` (a nested
+    /// `queue.sync` would deadlock the serial queue).
+    private func isBlobReferencedOnQueue(_ hash: String) -> Bool {
+        var found = false
+        do {
+            try transactionalQuery(
+                "SELECT 1 FROM turns WHERE attachments LIKE ?1 LIMIT 1",
+                bind: { stmt in
+                    let pattern = "%\"hash\":\"\(hash)\"%"
+                    Self.bindText(stmt, index: 1, value: pattern)
+                },
+                process: { stmt in
+                    if sqlite3_step(stmt) == SQLITE_ROW { found = true }
+                }
+            )
+        } catch {
+            return true  // be conservative: never delete on error
+        }
+        return found
+    }
+
     // MARK: - Internals: rows + turns
 
     private func upsertSessionRow(_ session: ChatSessionData) throws {
@@ -1025,6 +1248,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             Self.bindBlob(stmt, index: 13, value: session.folderBookmark)
             Self.bindText(stmt, index: 14, value: session.folderPath)
             sqlite3_bind_int(stmt, 15, session.pinned ? 1 : 0)
+            Self.bindText(stmt, index: 16, value: session.projectId?.uuidString)
         }
     }
 
@@ -1240,7 +1464,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private static let baseSessionSelectSQL = """
         SELECT id, title, created_at, updated_at, selected_model, agent_id,
                source, source_plugin_id, external_session_key, dispatch_task_id,
-               archived, capabilities, folder_bookmark, folder_path, pinned
+               archived, capabilities, folder_bookmark, folder_path, pinned,
+               project_id
         FROM sessions
         """
 
@@ -1250,8 +1475,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         INSERT INTO sessions
             (id, title, created_at, updated_at, selected_model, agent_id,
              source, source_plugin_id, external_session_key, dispatch_task_id,
-             archived, capabilities, folder_bookmark, folder_path, pinned)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+             archived, capabilities, folder_bookmark, folder_path, pinned,
+             project_id)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
         ON CONFLICT(id) DO UPDATE SET
             title                = excluded.title,
             updated_at           = excluded.updated_at,
@@ -1265,7 +1491,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             capabilities         = excluded.capabilities,
             folder_bookmark      = excluded.folder_bookmark,
             folder_path          = excluded.folder_path,
-            pinned               = excluded.pinned
+            pinned               = excluded.pinned,
+            project_id           = excluded.project_id
         """
 
     private static let insertTurnSQL = """
@@ -1331,6 +1558,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         }
         let folderPath = sqlite3_column_text(stmt, 13).map { String(cString: $0) }
         let pinned = sqlite3_column_int(stmt, 14) != 0
+        let projectId = sqlite3_column_text(stmt, 15).map { String(cString: $0) }.flatMap { UUID(uuidString: $0) }
         return ChatSessionData(
             id: UUID(uuidString: idStr) ?? UUID(),
             title: title,
@@ -1347,7 +1575,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             pinned: pinned,
             capabilities: SessionCapability.decode(capabilitiesRaw),
             folderBookmark: folderBookmark,
-            folderPath: folderPath
+            folderPath: folderPath,
+            projectId: projectId
         )
     }
 

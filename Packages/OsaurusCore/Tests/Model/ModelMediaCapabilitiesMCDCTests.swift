@@ -409,4 +409,23 @@ struct ModelMediaCapabilitiesMCDCTests {
             ) == .textOnly
         )
     }
+
+    @Test("Community 6-bit Qwen3.6 name (no -vl suffix) keeps video via model_type")
+    func composerCapabilities_communityQwen36BundleKeepsVideo() {
+        // "Qwen3.6-35B-A3B-6bit" fails the name matcher's -vl requirement, so
+        // any surface gating on `from(modelId:)` alone drops the video the
+        // composer accepted — the live "I don't see any video attached" bug.
+        // The send path must resolve through composerCapabilities like the
+        // composer's attach gate does.
+        #expect(
+            ModelMediaCapabilities.from(modelId: "Qwen3.6-35B-A3B-6bit").supportsVideo == false
+        )
+        #expect(
+            ModelMediaCapabilities.composerCapabilities(
+                modelId: "Qwen3.6-35B-A3B-6bit",
+                fallbackSupportsImages: true,
+                localModelType: "qwen3_5_moe"
+            ) == .imageVideo
+        )
+    }
 }

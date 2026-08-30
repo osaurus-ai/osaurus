@@ -29,10 +29,10 @@ public struct MCPToolFilter: Equatable, Sendable {
     /// ending in `*` to match by prefix (`osaurus_*`). Blank entries are
     /// dropped so a trailing comma is harmless.
     ///
-    /// Returns nil when the value has no usable patterns, which the caller
-    /// treats the same as an absent flag — a filter that admits nothing would
-    /// silently break the server rather than surface the typo.
-    public init?(patterns raw: String) {
+    /// An explicitly empty value admits nothing. That fail-closed distinction
+    /// matters: treating `--tools ""` like an absent flag would turn a typo
+    /// into access to the entire tool surface.
+    public init(patterns raw: String) {
         var exact: Set<String> = []
         var prefixes: [String] = []
         for piece in raw.split(separator: ",") {
@@ -47,7 +47,6 @@ public struct MCPToolFilter: Equatable, Sendable {
                 exact.insert(token)
             }
         }
-        guard !exact.isEmpty || !prefixes.isEmpty else { return nil }
         self.exact = exact
         self.prefixes = prefixes
     }
@@ -62,7 +61,7 @@ public struct MCPToolFilter: Equatable, Sendable {
     /// pattern can see what was actually parsed.
     public var summary: String {
         let parts = exact.sorted() + prefixes.map { "\($0)*" }.sorted()
-        return parts.joined(separator: ", ")
+        return parts.isEmpty ? "(none)" : parts.joined(separator: ", ")
     }
 
     /// Extract the filter from an argument vector.
@@ -73,6 +72,9 @@ public struct MCPToolFilter: Equatable, Sendable {
         for (index, arg) in args.enumerated() {
             if arg == "--tools", index + 1 < args.count {
                 return MCPToolFilter(patterns: args[index + 1])
+            }
+            if arg == "--tools" {
+                return MCPToolFilter(patterns: "")
             }
             if arg.hasPrefix("--tools=") {
                 return MCPToolFilter(patterns: String(arg.dropFirst("--tools=".count)))

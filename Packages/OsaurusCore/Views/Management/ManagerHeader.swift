@@ -393,6 +393,9 @@ struct HeaderTabsRow<Tab: AnimatedTabItem>: View where Tab.AllCases: RandomAcces
     @Environment(\.theme) private var theme
 
     @Binding var selection: Tab
+    /// Optional subset of tabs to render (nil == all cases), forwarded to
+    /// `AnimatedTabSelector` for callers that hide tabs conditionally.
+    var tabs: [Tab]?
     var counts: [Tab: Int]?
     var badges: [Tab: Int]?
     @Binding var searchText: String
@@ -401,6 +404,7 @@ struct HeaderTabsRow<Tab: AnimatedTabItem>: View where Tab.AllCases: RandomAcces
 
     init(
         selection: Binding<Tab>,
+        tabs: [Tab]? = nil,
         counts: [Tab: Int]? = nil,
         badges: [Tab: Int]? = nil,
         searchText: Binding<String> = .constant(""),
@@ -408,6 +412,7 @@ struct HeaderTabsRow<Tab: AnimatedTabItem>: View where Tab.AllCases: RandomAcces
         showSearch: Bool = true
     ) {
         self._selection = selection
+        self.tabs = tabs
         self.counts = counts
         self.badges = badges
         self._searchText = searchText
@@ -415,19 +420,75 @@ struct HeaderTabsRow<Tab: AnimatedTabItem>: View where Tab.AllCases: RandomAcces
         self.showSearch = showSearch
     }
 
+    /// Live width of the row and of the tab selector at its natural size,
+    /// driving the one-row vs. stacked layout choice below.
+    @State private var availableWidth: CGFloat = 0
+    @State private var selectorWidth: CGFloat = 0
+
+    /// Whether the selector and search field need to stack vertically.
+    ///
+    /// This used to be a `ViewThatFits(in: .horizontal)` over the two
+    /// layouts. On macOS 15, ViewThatFits sizes its candidates in a deep
+    /// re-entrant layout pass that can run on a background render thread;
+    /// re-evaluating `AnimatedTabSelector`'s MainActor-isolated `ForEach`
+    /// closure there tripped the Swift runtime's executor assertion
+    /// (`_dispatch_assert_queue_fail`) and crashed the Images / Privacy /
+    /// Server settings tabs (Sentry APPLE-MACOS-1H5, GitHub #2521).
+    /// Choosing the layout from measured widths renders each view exactly
+    /// once on the main thread, with no candidate sizing pass.
+    private var needsStackedLayout: Bool {
+        guard showSearch else { return false }
+        guard availableWidth > 0, selectorWidth > 0 else { return false }
+        // One row = selector + 12pt gap + the fixed 220pt search field.
+        return selectorWidth + 12 + 220 > availableWidth
+    }
+
     var body: some View {
-        HStack(spacing: 12) {
-            AnimatedTabSelector(
-                selection: $selection,
-                counts: counts,
-                badges: badges
-            )
+        Group {
+            if needsStackedLayout {
+                VStack(alignment: .leading, spacing: 10) {
+                    tabSelector
 
-            Spacer()
+                    SearchField(
+                        text: $searchText,
+                        placeholder: searchPlaceholder,
+                        fillsAvailableWidth: true
+                    )
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(spacing: 12) {
+                    tabSelector
 
-            if showSearch {
-                SearchField(text: $searchText, placeholder: searchPlaceholder, width: 200)
+                    Spacer(minLength: 12)
+
+                    if showSearch {
+                        SearchField(text: $searchText, placeholder: searchPlaceholder, width: 220)
+                    }
+                }
             }
+        }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            availableWidth = width
+        }
+    }
+
+    private var tabSelector: some View {
+        AnimatedTabSelector(
+            selection: $selection,
+            tabs: tabs,
+            counts: counts,
+            badges: badges
+        )
+        // Natural width in both layouts (leading-aligned in the stack, next
+        // to a Spacer in the row), so the measurement is layout-independent
+        // and the `needsStackedLayout` choice can't oscillate.
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            selectorWidth = width
         }
     }
 }
@@ -436,10 +497,12 @@ struct HeaderTabsRow<Tab: AnimatedTabItem>: View where Tab.AllCases: RandomAcces
 extension HeaderTabsRow {
     init(
         selection: Binding<Tab>,
+        tabs: [Tab]? = nil,
         counts: [Tab: Int]? = nil,
         badges: [Tab: Int]? = nil
     ) {
         self._selection = selection
+        self.tabs = tabs
         self.counts = counts
         self.badges = badges
         self._searchText = .constant("")

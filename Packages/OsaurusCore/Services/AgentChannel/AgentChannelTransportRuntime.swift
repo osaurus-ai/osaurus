@@ -106,12 +106,17 @@ actor AgentChannelTransportSupervisor {
     private let imessageConfiguration: @Sendable () -> IMessageConnectionConfiguration
     private let imessageHelperAvailable: @Sendable () -> Bool
     private let imessageRuntime: any AgentChannelReceiveTransportRuntime
+    private let whatsappConfiguration: @Sendable () -> WhatsAppConnectionConfiguration
+    private let whatsappHelperAvailable: @Sendable () -> Bool
+    private let whatsappRuntime: any AgentChannelReceiveTransportRuntime
     private var additionalSlackRuntimes: [String: SlackSocketModeTransportRuntime] = [:]
     private var slackStarted = false
     private var telegramStarted = false
     private var discordStarted = false
     private var discordPresenceStarted = false
     private var imessageStarted = false
+    private var whatsappStarted = false
+    private var whatsappMediaSignature = ""
 
     init(
         slackConfiguration: @escaping @Sendable () -> SlackConnectionConfiguration = {
@@ -145,7 +150,14 @@ actor AgentChannelTransportSupervisor {
         imessageHelperAvailable: @escaping @Sendable () -> Bool = {
             IMessageConnectionService.shared.helperAvailable()
         },
-        imessageRuntime: any AgentChannelReceiveTransportRuntime = IMessageWatchTransportRuntime()
+        imessageRuntime: any AgentChannelReceiveTransportRuntime = IMessageWatchTransportRuntime(),
+        whatsappConfiguration: @escaping @Sendable () -> WhatsAppConnectionConfiguration = {
+            WhatsAppConnectionService.shared.configuration()
+        },
+        whatsappHelperAvailable: @escaping @Sendable () -> Bool = {
+            WhatsAppConnectionService.shared.helperAvailable()
+        },
+        whatsappRuntime: any AgentChannelReceiveTransportRuntime = WhatsAppWatchTransportRuntime()
     ) {
         self.slackConfiguration = slackConfiguration
         self.slackHasBotToken = slackHasBotToken
@@ -161,6 +173,9 @@ actor AgentChannelTransportSupervisor {
         self.imessageConfiguration = imessageConfiguration
         self.imessageHelperAvailable = imessageHelperAvailable
         self.imessageRuntime = imessageRuntime
+        self.whatsappConfiguration = whatsappConfiguration
+        self.whatsappHelperAvailable = whatsappHelperAvailable
+        self.whatsappRuntime = whatsappRuntime
     }
 
     func startFromLaunch() async {
@@ -168,6 +183,7 @@ actor AgentChannelTransportSupervisor {
         await refreshTelegramRuntime()
         await refreshDiscordRuntime()
         await refreshIMessageRuntime()
+        await refreshWhatsAppRuntime()
     }
 
     func refreshSlackRuntime(now: Date = Date()) async {
@@ -273,6 +289,30 @@ actor AgentChannelTransportSupervisor {
         await imessageRuntime.stop(now: now)
     }
 
+    func refreshWhatsAppRuntime(now: Date = Date()) async {
+        let configuration = whatsappConfiguration()
+        // Media-download parameters bind at `watch.subscribe` time (unlike
+        // allowlists, which the session re-reads per event), so a running
+        // session must bounce when they change.
+        let mediaSignature = "\(configuration.attachmentIngestionEnabled)|\(configuration.maxAttachmentBytes)"
+        // Linked-session state is probed inside the runtime's supervision
+        // loop (it can change at any time when the phone unlinks); the
+        // supervisor only gates on the static preconditions.
+        if whatsappHelperAvailable() && configuration.canStartReceive() {
+            if whatsappStarted {
+                guard mediaSignature != whatsappMediaSignature else { return }
+                await whatsappRuntime.stop(now: now)
+            }
+            whatsappStarted = true
+            whatsappMediaSignature = mediaSignature
+            await whatsappRuntime.start(pollInterval: 5)
+            return
+        }
+        guard whatsappStarted else { return }
+        whatsappStarted = false
+        await whatsappRuntime.stop(now: now)
+    }
+
     func stop(now: Date = Date()) async {
         if slackStarted {
             slackStarted = false
@@ -293,6 +333,10 @@ actor AgentChannelTransportSupervisor {
         if imessageStarted {
             imessageStarted = false
             await imessageRuntime.stop(now: now)
+        }
+        if whatsappStarted {
+            whatsappStarted = false
+            await whatsappRuntime.stop(now: now)
         }
         for runtime in additionalSlackRuntimes.values {
             await runtime.stop(now: now)

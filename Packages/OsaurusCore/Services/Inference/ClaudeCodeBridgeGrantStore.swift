@@ -18,6 +18,14 @@ struct ClaudeCodeBridgeGrant: Sendable, Equatable {
     /// two settings toggles. A read-only grant cannot be escalated by the
     /// child; the value is fixed when the grant is minted.
     let allowsConfigWrites: Bool
+    /// Server-side copy of the exact MCP allow-list. The CLI proxy filters
+    /// discovery and calls for ergonomics, but this is the security boundary:
+    /// even a child that learns the grant cannot use it for a wider tool.
+    let allowedToolNames: Set<String>
+
+    func allowsTool(_ name: String) -> Bool {
+        allowedToolNames.contains(name)
+    }
 }
 
 /// Mints and verifies the grants that carry chat identity across the process
@@ -78,7 +86,12 @@ actor ClaudeCodeBridgeGrantStore {
         grants[token] = ClaudeCodeBridgeGrant(
             agentId: agentId,
             expiresAt: now.addingTimeInterval(min(lifetime, Self.maxLifetime)),
-            allowsConfigWrites: allowsConfigWrites
+            allowsConfigWrites: allowsConfigWrites,
+            allowedToolNames: Set(
+                ClaudeCodeConfiguration.osaurusToolPatterns(
+                    allowConfigWrites: allowsConfigWrites
+                )
+            )
         )
         Self.log.debug("Minted bridge grant for agent \(agentId.uuidString, privacy: .public)")
         return token

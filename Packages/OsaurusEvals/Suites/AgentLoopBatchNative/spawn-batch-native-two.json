@@ -1,0 +1,68 @@
+{
+  "id": "agent_loop.spawn-batch-native-two",
+  "domain": "agent_loop",
+  "label": "agent loop • strict native two-sequence batch",
+  "query": "Fan out exactly two independent jobs in one spawn_batch call. Job id `math` must target allowed agent UUID `A11CE001-0000-4000-8000-000000000001` and return exactly BATCH_ALPHA_42. Job id `writing` must target allowed agent UUID `A11CE001-0000-4000-8000-000000000002` and return exactly BATCH_BETA_BLUE. Preserve order, then answer once with both tokens and stop.",
+  "notes": "Strict native-parallel contract. Use only for a model architecture expected to support B=2. Requested width, uncapped architecture, effective width, observed slots, and subwave must all agree.",
+  "fixtures": {
+    "agentCapabilities": {
+      "spawnAgents": [
+        {
+          "id": "A11CE001-0000-4000-8000-000000000001",
+          "name": "Osaurus Eval Batch Math",
+          "description": "Returns the requested validation token.",
+          "systemPrompt": "Return only the exact token requested."
+        },
+        {
+          "id": "A11CE001-0000-4000-8000-000000000002",
+          "name": "Osaurus Eval Batch Writing",
+          "description": "Returns the requested validation token.",
+          "systemPrompt": "Return only the exact token requested."
+        }
+      ],
+      "maxParallelSpawns": 2
+    },
+    "runtimeConcurrency": {
+      "continuousBatching": true,
+      "maxConcurrentSequences": 2
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "maxModelSteps": 4,
+      "mustCallTools": ["spawn_batch"],
+      "mustNotCallTools": ["spawn_agent", "spawn_model"],
+      "maxToolCalls": 1,
+      "noDuplicateExecutedCalls": true,
+      "noToolErrors": true,
+      "allowedExits": ["finalResponse"],
+      "finalTextContains": ["BATCH_ALPHA_42", "BATCH_BETA_BLUE"],
+      "spawnBatch": {
+        "exactCallCount": 1,
+        "expectedJobIds": ["math", "writing"],
+        "expectedSucceeded": 2,
+        "expectedFailed": 0,
+        "expectedMaxParallel": 2,
+        "requireEveryRowSettled": true,
+        "requireReportedCountsMatchRows": true,
+        "expectedAggregateStatus": "succeeded",
+        "expectedExecutionWaves": [
+          {
+            "wave": 1,
+            "remoteJobs": 0,
+            "localJobs": 2,
+            "engineRequestedMaximum": 2,
+            "requireUncappedArchitecture": true,
+            "engineEffectiveMaximum": 2,
+            "effectiveLocalSlots": 2,
+            "localSubwaves": [2],
+            "limitingFactors": []
+          }
+        ],
+        "requireEveryExecutionWaveWellFormed": true,
+        "expectedCacheAvailable": true
+      }
+    }
+  }
+}

@@ -69,6 +69,22 @@ public struct ShareArtifactTool: OsaurusTool {
 
     public init() {}
 
+    /// Cancellation audit: the body is synchronous string validation and
+    /// marker assembly — no file I/O (resolution/copy happens in the caller's
+    /// post-processing), no network, no detached work; it terminates promptly
+    /// and drains trivially. Exposed to spawned workers so a helper can
+    /// deliver its generated files: the child dispatch intercepts the result
+    /// (`SpawnArtifactCollector.processWorkerShareArtifact`), copies the
+    /// artifact into the PARENT session's store, and the parent chat promotes
+    /// it straight to the user — no orchestrator re-share step.
+    var canExposeToSpawnedOperation: Bool { true }
+
+    func spawnedOperationCancellationSupport(
+        argumentsJSON _: String
+    ) -> SpawnedOperationCancellationSupport {
+        .cooperative
+    }
+
     public func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let json) = argsReq else { return argsReq.failureEnvelope ?? "" }

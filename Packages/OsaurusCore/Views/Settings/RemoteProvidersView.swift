@@ -8,13 +8,6 @@
 import AppKit
 import SwiftUI
 
-/// Lets the connectivity filter drive the header `HeaderTabsRow`, so the
-/// Providers tab uses the same segmented control as every other settings tab.
-/// `title` maps to the existing `displayName`.
-extension ProviderConnectivityFilter: AnimatedTabItem {
-    var title: String { displayName }
-}
-
 struct RemoteProvidersView: View {
     @ObservedObject private var manager = RemoteProviderManager.shared
     @ObservedObject private var themeManager = ThemeManager.shared
@@ -31,9 +24,9 @@ struct RemoteProvidersView: View {
     @State private var credentialPresence: [UUID: RemoteProviderCredentialPresence] = [:]
     @State private var reconnectingAll = false
     @State private var reconnectingProviderIds: Set<UUID> = []
-    /// Whether the `claude` binary is on this app's PATH. A filesystem probe,
-    /// not a process spawn, so it's cheap enough to resolve on appear.
-    @State private var claudeCodeInstalled = false
+    /// Mirrors the sidebar's Developer Tools switch; gates the connectivity
+    /// summary card.
+    @State private var showDeveloperDetail = SidebarSectionExpansion.isDeveloperToolsOn
 
     private struct AddSheetConfig: Identifiable {
         let id = UUID()
@@ -41,9 +34,7 @@ struct RemoteProvidersView: View {
         /// Open the add sheet directly on the grouped "Use an API key" sub-list
         /// (only meaningful when `preset` is nil).
         var startAtAPIKeyPicker: Bool = false
-        /// Open the add sheet directly on the Claude Code setup step (only
-        /// meaningful when `preset` is nil). Claude Code has no `ProviderPreset`
-        /// because it isn't a `RemoteProvider`, so it needs its own entry point.
+        /// Open directly on Claude Code's CLI setup.
         var startAtClaudeCode: Bool = false
     }
 
@@ -59,7 +50,12 @@ struct RemoteProvidersView: View {
                     if userConfiguredProviders.isEmpty {
                         emptyStateView
                     } else {
-                        connectivityCenterView
+                        // The connectivity summary card is developer-grade
+                        // detail; it rides the Developer Tools switch so the
+                        // everyday page is just the provider list.
+                        if showDeveloperDetail {
+                            connectivityCenterView
+                        }
                         providerListView
                     }
                 }
@@ -75,7 +71,11 @@ struct RemoteProvidersView: View {
                 hasAppeared = true
             }
             refreshCredentialPresence()
-            claudeCodeInstalled = ClaudeCodeConfiguration.isAvailable()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: SidebarSectionExpansion.changed)) { _ in
+            withAnimation(.easeOut(duration: 0.2)) {
+                showDeveloperDetail = SidebarSectionExpansion.isDeveloperToolsOn
+            }
         }
         .sheet(item: $addSheetConfig) { config in
             RemoteProviderEditSheet(
@@ -103,37 +103,31 @@ struct RemoteProvidersView: View {
 
     @ViewBuilder
     private var headerView: some View {
-        // Once providers exist, the connectivity filter rides the header
-        // `tabsRow` like every other settings tab. The empty state has nothing
-        // to filter, so it falls back to the plain actions header (same pattern
-        // as `ThemesView`).
-        if userConfiguredProviders.isEmpty {
-            ManagerHeaderWithActions(
-                title: L("Providers"),
-                subtitle: subtitleText
-            ) {
-                headerActions
-            }
-        } else {
-            ManagerHeaderWithTabs(
-                title: L("Providers"),
-                subtitle: subtitleText
-            ) {
-                headerActions
-            } tabsRow: {
-                HeaderTabsRow(selection: $providerFilter)
-            }
+        // The connectivity states (All / Attention / Connected / Disabled)
+        // are a status filter, not content categories, so they live behind a
+        // funnel filter button in the header actions rather than a tab bar.
+        ManagerHeaderWithActions(
+            title: L("Cloud Models"),
+            subtitle: subtitleText
+        ) {
+            headerActions
         }
     }
 
     @ViewBuilder
     private var headerActions: some View {
+        if !userConfiguredProviders.isEmpty {
+            ConnectivityFilterButton(
+                selection: $providerFilter,
+                count: { connectivitySnapshot.filtered(by: $0, issueKind: nil).count }
+            )
+        }
         if userConfiguredProviders.count > 1 {
             HeaderIconButton("list.bullet.indent", help: "Reorder providers") {
                 showReorderSheet = true
             }
         }
-        HeaderPrimaryButton("Add Provider", icon: "plus") {
+        HeaderPrimaryButton("Add Cloud Provider", icon: "plus") {
             addSheetConfig = AddSheetConfig(preset: nil)
         }
     }
@@ -233,30 +227,19 @@ struct RemoteProvidersView: View {
             // Quick-add: OAuth providers first-class, everything else behind
             // a single "Use an API key" entry (mirrors the add-sheet picker).
             VStack(spacing: 10) {
-                // Claude Code drives the user's local `claude` binary rather
-                // than an HTTP endpoint, so it has no catalog entry and gets an
-                // explicit row. Hidden when the CLI isn't installed — a row that
-                // can only ever say "not installed" is noise.
-                //
-                // Placed second, after OpenAI, so it sits with the other
-                // subscription-backed sign-ins rather than below them.
-                ForEach(Array(ProviderCatalog.topLevel.enumerated()), id: \.element.id) {
-                    index,
-                    entry in
+                ForEach(ProviderCatalog.topLevel) { entry in
                     ProviderRowCard(entry: entry) {
                         presentAddSheet(for: entry.preset)
                     }
+                }
 
-                    if index == 0, claudeCodeInstalled {
-                        ProviderRowCard(
-                            icon: "terminal.fill",
-                            title: "Claude Code",
-                            subtitle: "Use your Claude Pro or Max subscription",
-                            gradient: ClaudeCodeConfiguration.brandGradient
-                        ) {
-                            presentClaudeCodeSetup()
-                        }
-                    }
+                ProviderRowCard(
+                    icon: "terminal.fill",
+                    title: "Claude Code",
+                    subtitle: "Use a signed-in Claude Code CLI",
+                    gradient: ClaudeCodeConfiguration.brandGradient
+                ) {
+                    presentClaudeCodeSetup()
                 }
 
                 ProviderRowCard(
@@ -735,8 +718,7 @@ private struct ProviderCardView: View {
 
                         if let primaryIssueKind = report.primaryIssueKind,
                             provider.enabled,
-                            report.hasAttention
-                        {
+                            report.hasAttention {
                             issueBadge(primaryIssueKind)
                         }
 
@@ -874,7 +856,11 @@ private struct ProviderCardView: View {
                 .background(theme.errorColor.opacity(0.05))
             }
 
-            if report.hasAttention {
+            // Diagnostics only when the provider is enabled AND actually has a
+            // problem (`isAttentionWorthy`), not for merely disabled rows —
+            // a disabled provider's "connection disabled" warning is expected
+            // state, and rendering its full diagnostics block just adds noise.
+            if report.isAttentionWorthy {
                 Divider()
                     .background(theme.primaryBorder)
                 ProviderDiagnosticsRowsView(report: report.diagnostics, maxRows: 3)
@@ -983,6 +969,122 @@ private struct ProviderCardView: View {
             return theme.infoColor
         }
         return Color.orange
+    }
+}
+
+// MARK: - Connectivity Filter Button
+
+/// Funnel button in the header actions that filters the provider list by
+/// connectivity state. Uses the same themed-popover row idiom as the model
+/// picker's sort menu; the button tints accent while a non-default filter is
+/// active so a filtered list is visible at a glance.
+private struct ConnectivityFilterButton: View {
+    @Binding var selection: ProviderConnectivityFilter
+    /// Provider count for one filter, shown as the row's trailing figure.
+    let count: (ProviderConnectivityFilter) -> Int
+
+    @Environment(\.theme) private var theme
+    @State private var showPopover = false
+    @State private var isHovering = false
+
+    private var isActive: Bool { selection != .all }
+
+    var body: some View {
+        Button(action: { showPopover.toggle() }) {
+            Image(systemName: "line.3.horizontal.decrease.circle")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
+                .frame(width: 32, height: 32)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(isActive ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground)
+                        .opacity(isHovering ? 0.8 : 1)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(
+                            isActive ? theme.accentColor.opacity(0.35) : Color.clear,
+                            lineWidth: 1
+                        )
+                )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .localizedHelp("Filter by connectivity")
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovering = hovering
+            }
+        }
+        .popover(isPresented: $showPopover, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(ProviderConnectivityFilter.allCases, id: \.self) { filter in
+                    FilterOptionRow(
+                        title: filter.displayName,
+                        badge: count(filter),
+                        isSelected: filter == selection
+                    ) {
+                        selection = filter
+                        showPopover = false
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+            .frame(width: 200)
+            .background(theme.primaryBackground)
+            .environment(\.theme, theme)
+        }
+    }
+
+    /// One popover filter row: title, provider count, checkmark when active.
+    private struct FilterOptionRow: View {
+        let title: String
+        let badge: Int
+        let isSelected: Bool
+        let action: () -> Void
+        @Environment(\.theme) private var theme
+        @State private var isHovering = false
+
+        var body: some View {
+            Button(action: action) {
+                HStack(spacing: 10) {
+                    Text(title)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                        .foregroundColor(isSelected ? theme.accentColor : theme.primaryText)
+                    Spacer(minLength: 0)
+                    Text("\(badge)")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(theme.secondaryBackground))
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(theme.accentColor)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(
+                            isSelected
+                                ? theme.accentColor.opacity(0.12)
+                                : (isHovering
+                                    ? theme.tertiaryBackground.opacity(0.7)
+                                    : Color.clear)
+                        )
+                )
+                .padding(.horizontal, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isHovering = hovering
+                }
+            }
+        }
     }
 }
 

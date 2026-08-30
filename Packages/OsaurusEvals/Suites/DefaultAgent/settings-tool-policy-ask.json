@@ -1,0 +1,35 @@
+{
+  "id": "default_agent.settings-tool-policy-ask",
+  "domain": "default_agent",
+  "label": "default agent • require approval for shell_run",
+  "query": "Set the global tool policy for the shell_run tool to require my approval before every execution.",
+  "notes": "Tools scope: `tools.policies.shell_run: ask` (auto | ask | deny). Pins the policies map and the shell_run key; the ask value is too short to probe safely as a substring. 'Set the global tool policy' phrasing: the earlier 'ask me before shell_run executes' wording made grok reason about its OWN toolkit ('no shell_run in my kit') instead of the global policy map.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "policies"
+          }
+        },
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "shell_run"
+          }
+        }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

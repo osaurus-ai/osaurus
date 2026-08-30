@@ -20,6 +20,7 @@ enum AgentChannelConnectionPresentation {
         case AgentChannelConnection.nativeSlackConnectionId: return .slack
         case AgentChannelConnection.nativeTelegramConnectionId: return .telegram
         case AgentChannelConnection.nativeIMessageConnectionId: return .imessage
+        case AgentChannelConnection.nativeWhatsAppConnectionId: return .whatsapp
         default:
             return AgentChannelConnectionManager.shared.connection(id: connectionId)?.kind
                 ?? .customHTTP
@@ -32,6 +33,7 @@ enum AgentChannelConnectionPresentation {
         case AgentChannelConnection.nativeSlackConnectionId: return "Slack"
         case AgentChannelConnection.nativeTelegramConnectionId: return "Telegram"
         case AgentChannelConnection.nativeIMessageConnectionId: return "iMessage"
+        case AgentChannelConnection.nativeWhatsAppConnectionId: return "WhatsApp"
         default:
             let connection = AgentChannelConnectionManager.shared.connection(id: connectionId)
             guard let connection, !connection.name.isEmpty else { return connectionId }
@@ -555,6 +557,15 @@ struct AgentChannelAgentRepliesSection: View {
         {
             next.append(Row(kind: .imessage, detail: detail))
         }
+        // WhatsApp's credential is the helper's linked Web session.
+        if availability.hasCredential(.whatsapp),
+            let detail = AgentChannelAgentReplySummary.detail(
+                for: agentId,
+                dispatch: WhatsAppConnectionService.shared.configuration().inboundDispatch
+            )
+        {
+            next.append(Row(kind: .whatsapp, detail: detail))
+        }
         rows = next
     }
 }
@@ -773,6 +784,7 @@ struct AgentChannelDestinationEditorSheet: View {
             AgentChannelConnection.nativeSlackConnectionId,
             AgentChannelConnection.nativeTelegramConnectionId,
             AgentChannelConnection.nativeIMessageConnectionId,
+            AgentChannelConnection.nativeWhatsAppConnectionId,
         ]
         options.append(contentsOf: manager.editableConnections().map(\.id))
         if !options.contains(connectionId) {
@@ -808,7 +820,7 @@ struct AgentChannelDestinationEditorSheet: View {
             }
             footer
         }
-        .frame(width: 560, height: 680)
+        .fittedSheetFrame(width: 560, height: 680)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
@@ -2038,7 +2050,7 @@ struct AgentChannelOutboundReviewSheet: View {
             Divider()
             footer
         }
-        .frame(width: 560, height: 520)
+        .fittedSheetFrame(width: 560, height: 520)
         .background(theme.primaryBackground)
     }
 

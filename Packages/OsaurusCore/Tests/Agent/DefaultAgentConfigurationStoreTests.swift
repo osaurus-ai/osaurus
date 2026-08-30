@@ -51,7 +51,6 @@ struct DefaultAgentConfigurationStoreTests {
                     defaultModel: "mlx-community/Qwen3-4B-Instruct",
                     temperature: 0.42,
                     maxTokens: 9_001,
-                    disableTools: true,
                     autonomousExec: nil,
                     toolSelectionMode: .manual,
                     manualToolNames: ["osaurus_status", "osaurus_list"]
@@ -79,7 +78,6 @@ struct DefaultAgentConfigurationStoreTests {
         #expect(decoded.defaultModel == nil)
         #expect(decoded.temperature == nil)
         #expect(decoded.maxTokens == nil)
-        #expect(decoded.disableTools == false)
         #expect(decoded.autonomousExec == nil)
         #expect(decoded.toolSelectionMode == nil)
         #expect(decoded.manualToolNames == nil)
@@ -96,4 +94,19 @@ struct DefaultAgentConfigurationStoreTests {
         )
         #expect(decoded.manualToolNames == ["osaurus_status"])
     }
+
+    @Test
+    func decode_legacyDisableTools_isIgnoredAndDropped() throws {
+        let json = #"{"disableTools": true, "systemPrompt": "legacy"}"#
+        let decoded = try JSONDecoder().decode(
+            DefaultAgentConfiguration.self,
+            from: Data(json.utf8)
+        )
+        #expect(decoded.systemPrompt == "legacy")
+
+        let encoded = try JSONEncoder().encode(decoded)
+        let encodedJSON = try #require(String(data: encoded, encoding: .utf8))
+        #expect(!encodedJSON.contains("disableTools"))
+    }
+
 }

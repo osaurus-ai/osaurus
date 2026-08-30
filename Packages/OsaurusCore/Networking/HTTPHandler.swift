@@ -668,6 +668,50 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     method: method,
                     path: path
                 )
+            } else if head.method == .GET, path == "/admin/config/export" {
+                handleConfigAdminEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    method: method,
+                    path: path,
+                    isLoopback: isPhysicalLoopbackConnection(context),
+                    operation: .export
+                )
+            } else if head.method == .GET, path == "/admin/config/schema" {
+                handleConfigAdminEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    method: method,
+                    path: path,
+                    isLoopback: isPhysicalLoopbackConnection(context),
+                    operation: .schema
+                )
+            } else if head.method == .POST, path == "/admin/config/plan" {
+                handleConfigAdminEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    method: method,
+                    path: path,
+                    isLoopback: isPhysicalLoopbackConnection(context),
+                    operation: .plan
+                )
+            } else if head.method == .POST, path == "/admin/config/apply" {
+                handleConfigAdminEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    method: method,
+                    path: path,
+                    isLoopback: isPhysicalLoopbackConnection(context),
+                    operation: .apply
+                )
             } else if head.method == .GET, path == "/models" {
                 handleModelsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/tags" {
@@ -1487,6 +1531,370 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    /// `/admin/config/*` — the automation companion for `osaurus_config`:
+    /// export the declarative YAML document, plan a diff, or apply one.
+    /// STRICTLY loopback-only: unlike other admin routes (where a valid
+    /// access key admits remote callers), configuration control never
+    /// leaves the machine — a leaked key must not be able to rewrite
+    /// agents, tools, or MCP endpoints. Gated on the PHYSICAL loopback
+    /// address (`isPhysicalLoopbackConnection`) rather than the
+    /// `trustLoopback` policy flag, so the local CLI keeps working when
+    /// the server binds 0.0.0.0; relay-tunnel traffic is still
+    /// excluded. Same engine as the chat tool
+    /// (`ConfigYAML` → `ConfigPlanner` → `ConfigApplier`) so validation,
+    /// merge semantics, secret handling, and high-risk classification are
+    /// identical; the interactive approval card is replaced by an explicit
+    /// `confirm_high_risk` flag that the caller must set after seeing the
+    /// plan (409 otherwise).
+    enum ConfigAdminOperation {
+        case export
+        case schema
+        case plan
+        case apply
+    }
+
+    /// Query parameter lookup for admin GET routes (`?format=json`).
+    private static func queryParameter(_ name: String, in uri: String) -> String? {
+        guard let q = uri.split(separator: "?").dropFirst().first else { return nil }
+        for pair in q.split(separator: "&") {
+            let kv = pair.split(separator: "=", maxSplits: 1).map(String.init)
+            if kv.count == 2, kv[0] == name {
+                return kv[1].removingPercentEncoding ?? kv[1]
+            }
+        }
+        return nil
+    }
+
+    private func handleConfigAdminEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        method: String,
+        path: String,
+        isLoopback: Bool,
+        operation: ConfigAdminOperation
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let version = head.version
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logMethod = method
+        let logPath = path
+        let parsedBody = head.method == .POST ? readRequestBody() : nil
+
+        func respond(status: HTTPResponseStatus, body: String) {
+            let headers: [(String, String)] =
+                [("Content-Type", "application/json; charset=utf-8")] + cors
+            hop {
+                logSelf.sendResponse(
+                    context: ctx.value,
+                    version: version,
+                    status: status,
+                    headers: headers,
+                    body: body
+                )
+            }
+            // A config document describes the user's whole setup (agent
+            // prompts, folder paths, MCP endpoints). Never persist it to the
+            // request log — record only its size.
+            let redactedRequestBody = parsedBody.map {
+                "[/admin/config body redacted — \($0.data.count) bytes]"
+            }
+            logSelf.logRequest(
+                method: logMethod,
+                path: logPath,
+                userAgent: logUserAgent,
+                requestBody: redactedRequestBody,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: logStartTime
+            )
+        }
+
+        func respondError(status: HTTPResponseStatus, message: String) {
+            respond(
+                status: status,
+                body: Self.errorBody(.openai(type: "invalid_request_error"), message: message)
+            )
+        }
+
+        guard isLoopback else {
+            respondError(
+                status: .forbidden,
+                message:
+                    "/admin/config/* is restricted to local (loopback) callers. "
+                    + "Run the osaurus CLI on this machine or use the Osaurus app."
+            )
+            return
+        }
+
+        if head.method == .POST {
+            // The YAML payload is capped at `maxDocumentBytes`; refuse JSON
+            // envelopes meaningfully beyond that instead of buffering up to
+            // the generic request limit (default 32 MB) before rejecting.
+            let envelopeLimit = OsaurusConfigTool.maxDocumentBytes + 64 * 1024
+            if let parsedBody, parsedBody.data.count > envelopeLimit {
+                respondError(
+                    status: .payloadTooLarge,
+                    message:
+                        "Request body too large (max \(envelopeLimit / 1024) KB; the YAML "
+                        + "document itself is capped at \(OsaurusConfigTool.maxDocumentBytes / 1024) KB)."
+                )
+                return
+            }
+            if let contentType = head.headers.first(name: "Content-Type"),
+                !contentType.lowercased().contains("application/json")
+            {
+                respondError(
+                    status: .unsupportedMediaType,
+                    message: "POST /admin/config/* expects Content-Type: application/json."
+                )
+                return
+            }
+        }
+
+        let requestURI = head.uri
+        runRequestTask(priority: .userInitiated) {
+            switch operation {
+            case .export:
+                guard
+                    let format = ConfigDocumentFormat.parse(
+                        Self.queryParameter("format", in: requestURI))
+                else {
+                    respondError(status: .badRequest, message: "`format` must be yaml or json.")
+                    return
+                }
+                let document = await MainActor.run { ConfigExporter.export(sections: nil) }
+                do {
+                    switch format {
+                    case .yaml:
+                        let yaml = try ConfigYAML.encode(document)
+                        respond(status: .ok, body: Self.configAdminBody(["yaml": yaml]))
+                    case .json:
+                        let json = try ConfigJSON.encode(document)
+                        respond(status: .ok, body: Self.configAdminBody(["json": json]))
+                    }
+                } catch {
+                    respondError(
+                        status: .internalServerError,
+                        message: "Failed to render the document: \(error.localizedDescription)"
+                    )
+                }
+
+            case .schema:
+                guard
+                    let format = ConfigDocumentFormat.parse(
+                        Self.queryParameter("format", in: requestURI))
+                else {
+                    respondError(status: .badRequest, message: "`format` must be yaml or json.")
+                    return
+                }
+                switch format {
+                case .yaml:
+                    respond(
+                        status: .ok,
+                        body: Self.configAdminBody([
+                            "schema": ConfigSchemaReference.text,
+                            "sections": ConfigSectionID.allNames,
+                        ]))
+                case .json:
+                    respond(
+                        status: .ok,
+                        body: Self.configAdminBody([
+                            "json_schema": ConfigManifest.jsonSchema(),
+                            "sections": ConfigSectionID.allNames,
+                        ]))
+                }
+
+            case .plan, .apply:
+                guard let parsedBody, !parsedBody.data.isEmpty,
+                    let request = try? JSONSerialization.jsonObject(with: parsedBody.data)
+                        as? [String: Any]
+                else {
+                    respondError(
+                        status: .badRequest,
+                        message:
+                            "POST a JSON body: {\"yaml\": \"<document>\"} (the document may be "
+                            + "YAML or JSON text) or {\"template\": \"<saved name>\"}, plus "
+                            + "optional \"prune\" and (for apply) \"confirm_high_risk\" booleans."
+                    )
+                    return
+                }
+                // Same coercion as the tool: accepts true/"true"/1 so raw
+                // HTTP clients sending string booleans aren't silently false.
+                let prune = ArgumentCoercion.bool(request["prune"]) ?? false
+
+                let yaml: String
+                let inline = (request["yaml"] as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let templateName = (request["template"] as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if let inline, !inline.isEmpty {
+                    guard templateName == nil || templateName?.isEmpty == true else {
+                        respondError(
+                            status: .badRequest,
+                            message: "Pass `yaml` OR `template`, not both."
+                        )
+                        return
+                    }
+                    yaml = inline
+                } else if let templateName, !templateName.isEmpty {
+                    switch ConfigTemplateStore.load(name: templateName) {
+                    case .success(let contents): yaml = contents
+                    case .failure(let message):
+                        respondError(status: .badRequest, message: message)
+                        return
+                    }
+                } else {
+                    respondError(
+                        status: .badRequest,
+                        message: "Provide the document as `yaml` (inline) or `template` (saved name)."
+                    )
+                    return
+                }
+                guard yaml.utf8.count <= OsaurusConfigTool.maxDocumentBytes else {
+                    respondError(
+                        status: .badRequest,
+                        message:
+                            "Document too large (max \(OsaurusConfigTool.maxDocumentBytes / 1024) KB)."
+                    )
+                    return
+                }
+
+                let document: OsaurusConfigDocument
+                do {
+                    document = try ConfigYAML.decode(yaml)
+                } catch let error as ConfigYAMLError {
+                    respond(
+                        status: .badRequest,
+                        body: Self.configAdminBody([
+                            "error": [
+                                "message": "Document is invalid — nothing was changed.",
+                                "type": "invalid_request_error",
+                                "issues": error.messages,
+                            ] as [String: Any]
+                        ])
+                    )
+                    return
+                } catch {
+                    respondError(
+                        status: .badRequest,
+                        message: "Could not parse YAML: \(error.localizedDescription)"
+                    )
+                    return
+                }
+
+                let plan: ConfigPlan
+                do {
+                    plan = try await MainActor.run {
+                        try ConfigPlanner.plan(document: document, prune: prune)
+                    }
+                } catch let issues as ConfigPlanIssues {
+                    respond(
+                        status: .badRequest,
+                        body: Self.configAdminBody([
+                            "error": [
+                                "message": "Document is invalid — nothing was changed.",
+                                "type": "invalid_request_error",
+                                "issues": issues.issues,
+                            ] as [String: Any]
+                        ])
+                    )
+                    return
+                } catch {
+                    respondError(status: .internalServerError, message: error.localizedDescription)
+                    return
+                }
+
+                if case .plan = operation {
+                    var payload = plan.payload()
+                    payload["summary"] = plan.summaryText()
+                    payload["prune"] = prune
+                    respond(status: .ok, body: Self.configAdminBody(payload))
+                    return
+                }
+
+                if plan.isEmpty {
+                    respond(
+                        status: .ok,
+                        body: Self.configAdminBody([
+                            "status": "no_changes",
+                            "summary": plan.summaryText(),
+                        ])
+                    )
+                    return
+                }
+
+                // The CLI/HTTP replacement for the in-app high-risk approval
+                // card: the caller must have SEEN the risks (via plan or this
+                // 409) and resend with the explicit flag.
+                let confirmed = ArgumentCoercion.bool(request["confirm_high_risk"]) ?? false
+                if plan.hasHighRiskChanges && !confirmed {
+                    respond(
+                        status: .conflict,
+                        body: Self.configAdminBody([
+                            "status": "high_risk_confirmation_required",
+                            "message":
+                                "This document contains high-risk changes. Review the risks and "
+                                + "resend with \"confirm_high_risk\": true to apply.",
+                            "risks": plan.risks,
+                            "summary": plan.summaryText(),
+                        ])
+                    )
+                    return
+                }
+
+                let results = await ConfigApplier.apply(document: document, prune: prune)
+                let failed = results.filter { $0.status == .failed }
+                let cancelled = results.filter { $0.status == .cancelled }
+                let started = results.filter { $0.status == .started }
+                // Mirror the tool: "applied" means everything landed;
+                // fire-and-forget downloads report as still running and
+                // user-cancelled steps make the apply partial, not clean.
+                let applyStatus: String
+                if !failed.isEmpty || !cancelled.isEmpty {
+                    applyStatus = "partial"
+                } else if !started.isEmpty {
+                    applyStatus = "applied_downloads_running"
+                } else {
+                    applyStatus = "applied"
+                }
+                var payload: [String: Any] = [
+                    "status": applyStatus,
+                    "results": results.map { $0.payload },
+                ]
+                var notes: [String] = []
+                if !cancelled.isEmpty {
+                    notes.append(
+                        "\(cancelled.count) change(s) were cancelled by the user and did not land.")
+                }
+                let needsAction = results.filter { $0.status == .needsUserAction }
+                if !needsAction.isEmpty {
+                    notes.append(
+                        "\(needsAction.count) change(s) need a step finished in the Osaurus app "
+                            + "(credentials never travel through this endpoint).")
+                }
+                if !started.isEmpty {
+                    notes.append(
+                        "\(started.count) download(s) started — poll `osaurus status` "
+                            + "or the app for completion.")
+                }
+                if !notes.isEmpty { payload["note"] = notes.joined(separator: " ") }
+                respond(status: .ok, body: Self.configAdminBody(payload))
+            }
+        }
+    }
+
+    private static func configAdminBody(_ object: [String: Any]) -> String {
+        let data = try? JSONSerialization.data(withJSONObject: object, options: .osaurusCanonical)
+        return data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
+    }
+
     private static func runtimeSettingsResponseBody(
         settings: VMLXServerRuntimeSettings,
         previous: VMLXServerRuntimeSettings?,
@@ -1596,7 +2004,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "paged_kv_block_size": cache.pagedKV.blockSize as Any? ?? NSNull(),
             "paged_kv_max_blocks": cache.pagedKV.maxBlocks as Any? ?? NSNull(),
             "block_disk_enabled": cache.blockDisk.enabled,
-            "block_disk_max_size_gb": cache.blockDisk.maxSizeGB as Any? ?? NSNull(),
+            // The cap is a percent of the disk now, so the stored GB field is
+            // nil on every migrated install. Reporting it raw would show
+            // `null` for a cache that in fact has a real cap. Report the share
+            // the user set AND the gigabytes it resolves to on this machine —
+            // the same figure the coordinator enforces.
+            "block_disk_max_size_percent": cache.blockDisk.maxSizePercent as Any? ?? NSNull(),
+            "block_disk_max_size_gb": VMLXServerRuntimeSettings.resolveDiskCacheMaxGB(
+                percent: cache.blockDisk.maxSizePercent,
+                legacyGB: cache.blockDisk.maxSizeGB,
+                directory: ModelRuntime.cacheDiskDirectoryOverride(for: cache)
+                    ?? OsaurusPaths.diskKVCache()),
             "block_disk_directory": cache.blockDisk.directory as Any? ?? NSNull(),
             "legacy_disk_enabled": cache.legacyDisk.enabled,
             "live_kv_codec": cache.liveKVCodec.rawValue,
@@ -1634,7 +2052,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "top_k": settings.topK,
             "min_p": settings.minP,
             "repetition_penalty": settings.repetitionPenalty as Any? ?? NSNull(),
+            "presence_penalty": settings.presencePenalty as Any? ?? NSNull(),
+            "frequency_penalty": settings.frequencyPenalty as Any? ?? NSNull(),
+            "draft_strategy": settings.draftStrategy as Any? ?? NSNull(),
+            "mtp_fallback_reason": settings.mtpFallbackReason as Any? ?? NSNull(),
             "compiled_batch_decode": settings.compiledBatchDecode,
+            "mtp_greedy_enforced": settings.mtpGreedyEnforced,
+            "sampler_was_changed": settings.samplerWasChanged,
         ]
     }
 
@@ -2849,6 +3273,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return trustLoopback && (context.channel.remoteAddress?.isLoopback ?? false)
     }
 
+    /// Whether the inbound connection physically arrived over 127.0.0.1 / ::1,
+    /// independent of the `trustLoopback` policy flag. `/admin/config/*` uses
+    /// this instead of `isLoopbackConnection`: the server flips `trustLoopback`
+    /// off when it binds 0.0.0.0 (expose-to-network), which must auth-gate the
+    /// API surface — but it must NOT lock the local CLI out of configuration
+    /// control, which never admits remote callers regardless of any key.
+    /// Relay-tunnel traffic is still excluded (loopback socket, remote origin).
+    private func isPhysicalLoopbackConnection(_ context: ChannelHandlerContext) -> Bool {
+        guard !stateRef.value.isRelayOrigin else { return false }
+        return context.channel.remoteAddress?.isLoopback ?? false
+    }
+
     /// Enforce that an agent-scoped access key only addresses its own agent.
     /// Returns a rejection when the validated key's audience is an agent
     /// address that does not match the target agent. Loopback callers,
@@ -2970,10 +3406,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         var enriched = request
         let query = request.messages.last(where: { $0.role == "user" })?.content ?? ""
-        // Honor the global "Disable tools" switch on the HTTP path too —
-        // `effectiveToolsDisabled` does not read it, so it must be folded
-        // in here (the app chat path does the same via `chatCfg.disableTools`).
-        let globalToolsDisabled = await MainActor.run { ChatConfigurationStore.load().disableTools }
         await PluginManager.shared.ensurePromptCatalogReady()
         let composed = await SystemPromptComposer.composeChatContext(
             agentId: agentUUID,
@@ -2981,7 +3413,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             model: modelOverride,
             query: query,
             messages: enriched.messages,
-            toolsDisabled: globalToolsDisabled
+            // Agent-backed requests use the target agent's dedicated setting.
+            toolsDisabled: false
         )
         if !composed.prompt.isEmpty {
             SystemPromptComposer.injectSystemContent(composed.prompt, into: &enriched.messages)
@@ -5016,6 +5449,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             let maxIterations = max(1, min(configuredMaxToolAttempts, 120))
             let requestId = UUID().uuidString
+            // Spawned workers deposit `share_artifact` results keyed by this
+            // request's session id (the batch executor binds it as the
+            // parent session). This surface has no chat turn to attach them
+            // to, so discard the bucket — files included — however the run
+            // ends; otherwise every HTTP spawn leaks an undrained bucket
+            // plus orphaned files in the artifact store.
+            defer { SpawnArtifactCollector.discard(sessionId: requestId) }
             // Per-request harness state. The agent-run endpoint is stateless
             // across requests by design (see the divergence note above), so a
             // per-request instance is correct — there is no prior listing to
@@ -6597,7 +7037,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // N images sequentially in one job WITHOUT a GPU drain between them, which
             // reliably trips the MLX `tryCoalescingPreviousComputeCommandEncoder`
             // assertion (reproduced at n=2). Re-enable once the per-image drain lands
-            // in the multi-image loop (see docs/REMAINING_WORK.md).
+            // in the multi-image loop.
             numImages: 1,
             outputFormat: Self.imageOutputFormat(req.output_format)
         )
@@ -7934,11 +8374,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let created = Int(Date().timeIntervalSince1970)
         let responseId = Self.shortId(prefix: "chatcmpl-", length: 12)
         let model = req.model
-        #if DEBUG
-            let ttftTrace: TTFTTrace? = TTFTTrace()
-        #else
-            let ttftTrace: TTFTTrace? = nil
-        #endif
+        let ttftTrace: TTFTTrace? = TTFTTrace.makeIfEnabled()
         let httpTrace = HTTPTraceRecorder(ttftTrace)
         req.ttftTrace = ttftTrace
         // Billing dedupe for Router-bound requests: header-supplied or
@@ -10117,6 +10553,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             "general.architecture": "foundation",
                             "general.name": "Apple Foundation Model",
                         ],
+                        "capabilities": ["completion"],
                     ]
                     let jsonData =
                         (try? JSONSerialization.data(withJSONObject: response, options: .osaurusCanonical))
@@ -10562,17 +10999,45 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // still out of process, so every other external restriction
                 // (the deny list above, unattended-prompt refusal) continues to
                 // apply. This grants attribution, not trust.
+                let bridgeGrantToken = head.headers.first(
+                    name: ClaudeCodeBridgeGrantStore.headerName
+                )
                 let bridgeGrant: ClaudeCodeBridgeGrant? = await {
-                    guard
-                        let token = head.headers.first(name: ClaudeCodeBridgeGrantStore.headerName)
-                    else { return nil }
-                    return await ClaudeCodeBridgeGrantStore.shared.resolve(token)
+                    guard let bridgeGrantToken else { return nil }
+                    return await ClaudeCodeBridgeGrantStore.shared.resolve(bridgeGrantToken)
                 }()
 
-                let result = try await ChatExecutionContext.$isExternalSurface.withValue(true) {
-                    try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
-                        try await ChatExecutionContext.$currentAgentId.withValue(bridgeGrant?.agentId) {
-                            try await ToolRegistry.shared.execute(name: toolName, argumentsJSON: argsJSON)
+                let result: String
+                if bridgeGrantToken != nil, bridgeGrant == nil {
+                    // A caller that opts into bridge attribution must present a
+                    // live token. Falling back to ordinary loopback semantics
+                    // would let expired/revoked grants silently shed scope.
+                    result = ToolEnvelope.failure(
+                        kind: .rejected,
+                        message: "This Claude Code bridge grant is invalid or expired.",
+                        tool: toolName,
+                        retryable: false
+                    )
+                } else if let bridgeGrant, !bridgeGrant.allowsTool(toolName) {
+                    // The stdio proxy also filters this surface, but it is not
+                    // the trust boundary: a child with Bash can make a direct
+                    // loopback request. Enforce the grant's immutable scope at
+                    // the receiving server before binding agent identity.
+                    result = ToolEnvelope.failure(
+                        kind: .rejected,
+                        message: "Tool '\(toolName)' is outside this Claude Code turn's grant.",
+                        tool: toolName,
+                        retryable: false
+                    )
+                } else {
+                    result = try await ChatExecutionContext.$isExternalSurface.withValue(true) {
+                        try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
+                            try await ChatExecutionContext.$currentAgentId.withValue(bridgeGrant?.agentId) {
+                                try await ToolRegistry.shared.execute(
+                                    name: toolName,
+                                    argumentsJSON: argsJSON
+                                )
+                            }
                         }
                     }
                 }

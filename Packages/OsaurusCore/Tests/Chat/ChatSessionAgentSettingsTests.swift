@@ -26,7 +26,8 @@ struct ChatSessionAgentSettingsTests {
             let agent = Agent(
                 name: "Sampling Agent \(UUID().uuidString)",
                 temperature: 0.23,
-                maxTokens: 321
+                maxTokens: 321,
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             manager.add(agent)
 

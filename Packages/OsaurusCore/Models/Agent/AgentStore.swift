@@ -35,22 +35,65 @@ public enum AgentStore {
         }
     }
 
+    // MARK: - Write serialization
+
+    /// Serial queue for agent JSON writes. `save` runs on the main actor
+    /// (every settings edit and autosave lands here) and an atomic write to a
+    /// slow or pressured disk has shown up as a multi-second app hang, so the
+    /// disk write happens here instead of the calling thread. The queue is
+    /// serial so writes land in call order, and readers flush it first so a
+    /// save immediately followed by `refresh()`/`loadAll()` observes its own
+    /// write.
+    private nonisolated static let writeQueue = DispatchQueue(
+        label: "com.dinoki.osaurus.agent-store-writes", qos: .utility)
+
+    /// Barrier for read paths: waits for queued writes only, which are single
+    /// small JSON files — bounded, unlike the read scan they unblock.
+    private nonisolated static func flushPendingWrites() {
+        writeQueue.sync {}
+    }
+
     // MARK: - Public API
+
+    // Decoded custom agents by id, populated by the first `loadAll` disk
+    // scan and maintained in place by `save`/`delete`. Every debounced
+    // settings save runs `AgentManager.refresh()` → `loadAll()`, and
+    // re-reading + decoding every agent file there was a measured
+    // multi-second main-thread hang on contended disks. In-process record
+    // mutations all go through this type (main-actor); files written
+    // out-of-band (tests, manual edits) are caught by revalidating the memo
+    // against the directory listing — one enumeration instead of N file
+    // reads + JSON decodes.
+    private static var loadedCustomAgents: [UUID: Agent]?
 
     /// Load all agents sorted by name, including built-ins
     public static func loadAll() -> [Agent] {
+        // Prime the default-agent configuration cache so
+        // `Agent.defaultAgentNameOverride` (the user's custom Orchestrator
+        // name) is populated before `Agent.builtInAgents` builds the
+        // Default agent below — otherwise the first snapshot after a cold
+        // launch would render the stock "Osaurus" name.
+        _ = DefaultAgentConfigurationStore.load()
+        // Cheap when the queue is idle; guarantees the listing check below
+        // sees writes queued by `save` in program order.
+        flushPendingWrites()
+        if let cached = loadedCustomAgents, cachedListingMatchesDisk(cached) {
+            return sortedForDisplay(Agent.builtInAgents + Array(cached.values))
+        }
+        loadedCustomAgents = nil
+
         // Consolidate any records stranded in the legacy `Personas/` directory
         // before resolving where to read from — enabling a per-agent Database
         // or writing a custom avatar creates `agents/`, which flips path
         // resolution away from `Personas/`. Idempotent + conflict-safe.
         OsaurusPaths.migrateLegacyPersonasIfNeeded()
-        var agents = Agent.builtInAgents
+        var custom: [UUID: Agent] = [:]
         let directory = agentsDirectory()
         OsaurusPaths.ensureExistsSilent(directory)
 
         guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
         else {
-            return agents
+            return sortedForDisplay(Agent.builtInAgents)
         }
 
         let decoder = JSONDecoder()
@@ -61,14 +104,38 @@ public enum AgentStore {
                 let data = try Data(contentsOf: file)
                 let agent = try decoder.decode(Agent.self, from: data)
                 if !Agent.builtInAgents.contains(where: { $0.id == agent.id }) {
-                    agents.append(agent)
+                    custom[agent.id] = agent
                 }
             } catch {
                 print("[Osaurus] Failed to load agent from \(file.lastPathComponent): \(error)")
             }
         }
 
-        return agents.sorted { a, b in
+        loadedCustomAgents = custom
+        return sortedForDisplay(Agent.builtInAgents + Array(custom.values))
+    }
+
+    /// Whether the memoized agent set still matches the `.json` records on
+    /// disk (by filename). Catches out-of-band file adds/removes; an
+    /// out-of-band content edit of an existing record is only picked up on
+    /// the next cold launch, as before the memo existed.
+    private static func cachedListingMatchesDisk(_ cached: [UUID: Agent]) -> Bool {
+        guard
+            let files = try? FileManager.default.contentsOfDirectory(
+                at: agentsDirectory(), includingPropertiesForKeys: nil)
+        else { return cached.isEmpty }
+        let builtInNames = Set(Agent.builtInAgents.map { "\($0.id.uuidString).json" })
+        var onDisk = Set<String>()
+        for file in files where file.pathExtension == "json" {
+            let name = file.lastPathComponent
+            if !builtInNames.contains(name) { onDisk.insert(name) }
+        }
+        let expected = Set(cached.keys.map { "\($0.uuidString).json" })
+        return onDisk == expected
+    }
+
+    private static func sortedForDisplay(_ agents: [Agent]) -> [Agent] {
+        agents.sorted { a, b in
             if a.isBuiltIn != b.isBuiltIn { return a.isBuiltIn }
             if a.isBuiltIn && b.isBuiltIn {
                 if a.id == Agent.defaultId { return true }
@@ -168,7 +235,12 @@ public enum AgentStore {
         if let builtIn = Agent.builtInAgents.first(where: { $0.id == id }) {
             return builtIn
         }
-
+        if let cached = loadedCustomAgents?[id] {
+            return cached
+        }
+        // Cache miss falls through to disk: the record may have been written
+        // out-of-band (tests, manual edits) since the memo was built.
+        flushPendingWrites()
         let url = agentFileURL(for: id)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
 
@@ -191,14 +263,24 @@ public enum AgentStore {
         }
 
         let url = agentFileURL(for: agent.id)
-        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
+        loadedCustomAgents?[agent.id] = agent
 
         do {
+            // Encode on the caller (cheap, and `Agent` needn't be Sendable);
+            // only the disk write moves to the background queue.
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             encoder.dateEncodingStrategy = .iso8601
             let data = try encoder.encode(agent)
-            try data.write(to: url, options: [.atomic])
+            let agentId = agent.id
+            writeQueue.async {
+                OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
+                do {
+                    try data.write(to: url, options: [.atomic])
+                } catch {
+                    print("[Osaurus] Failed to save agent \(agentId): \(error)")
+                }
+            }
         } catch {
             print("[Osaurus] Failed to save agent \(agent.id): \(error)")
         }
@@ -211,6 +293,10 @@ public enum AgentStore {
             print("[Osaurus] Cannot delete built-in agent")
             return false
         }
+
+        // Serialize against queued saves so a pending write can't recreate
+        // the file after removal.
+        flushPendingWrites()
 
         // Best-effort cleanup of any custom avatar file before removing the JSON.
         if let agent = load(id: id), let url = agent.customAvatarURL {
@@ -231,6 +317,7 @@ public enum AgentStore {
 
         do {
             try FileManager.default.removeItem(at: agentFileURL(for: id))
+            loadedCustomAgents?.removeValue(forKey: id)
             return true
         } catch {
             print("[Osaurus] Failed to delete agent \(id): \(error)")
@@ -286,8 +373,11 @@ public enum AgentStore {
     /// `fileExists` (that hop can deadlock when the main thread is itself
     /// waiting on the background queue, and stalls behind a busy run loop).
     public nonisolated static func exists(id: UUID) -> Bool {
-        Agent.builtInAgents.contains(where: { $0.id == id })
-            || FileManager.default.fileExists(atPath: agentFileURL(for: id).path)
+        if Agent.builtInAgents.contains(where: { $0.id == id }) { return true }
+        // A just-saved agent may still be in the write queue; wait for it so
+        // existence matches program order (`nonisolated`, so callable here).
+        flushPendingWrites()
+        return FileManager.default.fileExists(atPath: agentFileURL(for: id).path)
     }
 
     // MARK: - Private
@@ -356,6 +446,9 @@ public enum AgentStore {
     }
 
     private static func removeAgentRecord(id: UUID) {
+        // The record may still be a queued write; serialize before removal.
+        flushPendingWrites()
+        loadedCustomAgents?.removeValue(forKey: id)
         let url = agentFileURL(for: id)
         guard FileManager.default.fileExists(atPath: url.path) else { return }
         do {

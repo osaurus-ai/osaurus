@@ -4,9 +4,14 @@
 //
 //  Launch-time entry point that registers every shipped
 //  `ConfigurationDomain`. Called once from
-//  `AppDelegate.applicationDidFinishLaunching`. Adding a new domain
-//  is one new file under `Tools/Configuration/` plus one register
-//  call here.
+//  `AppDelegate.applicationDidFinishLaunching`.
+//
+//  Since the declarative-config consolidation there is exactly ONE
+//  configure write surface: `osaurus_config` (export / plan / apply a
+//  YAML document). The nine legacy per-domain write tools
+//  (osaurus_settings, osaurus_agent, osaurus_mcp, osaurus_model,
+//  osaurus_plugin, osaurus_provider, osaurus_search, osaurus_schedule,
+//  osaurus_watcher) were removed in its favor.
 //
 
 import Foundation
@@ -22,16 +27,7 @@ enum ConfigurationDomainBootstrap {
         guard !didBootstrap else { return }
         didBootstrap = true
 
-        let registry = ConfigurationDomainRegistry.shared
-        registry.register(ProviderConfigurationDomain.domain)
-        registry.register(ModelConfigurationDomain.domain)
-        registry.register(MCPProviderConfigurationDomain.domain)
-        registry.register(SearchProviderConfigurationDomain.domain)
-        registry.register(PluginConfigurationDomain.domain)
-        registry.register(ScheduleConfigurationDomain.domain)
-        registry.register(WatcherConfigurationDomain.domain)
-        registry.register(AgentConfigurationDomain.domain)
-        registry.register(SettingsConfigurationDomain.domain)
+        ConfigurationDomainRegistry.shared.register(ConfigDeclarativeDomain.domain)
     }
 
     /// Test-only: reset the latch so a fresh `registerBuiltIns()`

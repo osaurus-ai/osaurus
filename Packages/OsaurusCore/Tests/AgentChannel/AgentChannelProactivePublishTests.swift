@@ -222,13 +222,27 @@ struct AgentChannelBindingConfigurationTests {
         let configuration = AgentChannelConfiguration(
             bindings: [
                 makeBinding(id: "usable"),
+                makeBinding(id: "schedule-only", allowedSources: [.schedule]),
                 makeBinding(id: "off-mode", outboundMode: .off),
                 makeBinding(id: "disabled", enabled: false),
                 makeBinding(id: "other-agent", agentId: agentB),
             ]
         )
-        #expect(configuration.usableBindings(agentId: agentA).map(\.id) == ["usable"])
-        #expect(configuration.bindings(agentId: agentA).count == 3)
+        #expect(
+            configuration.usableBindings(agentId: agentA).map(\.id)
+                == ["usable", "schedule-only"]
+        )
+        #expect(
+            configuration.usableBindings(agentId: agentA, source: .chat).map(\.id)
+                == ["usable"]
+        )
+        #expect(
+            configuration.usableBindings(agentId: agentA, source: .schedule).map(\.id)
+                == ["usable", "schedule-only"]
+        )
+        #expect(configuration.usableBindings(agentId: agentA, source: .plugin).isEmpty)
+        #expect(configuration.usableBindings(agentId: agentA, source: nil).isEmpty)
+        #expect(configuration.bindings(agentId: agentA).count == 4)
     }
 
     @Test func runSourceMappingRejectsExternalAndLateralSources() {

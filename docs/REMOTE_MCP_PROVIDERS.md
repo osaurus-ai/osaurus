@@ -37,7 +37,9 @@ The Add Provider sheet is a two-step flow.
 
 ### Step 1 — Pick a service
 
-`⌘ Shift M` → **Providers** → **+ Add Provider**.
+`⌘ Shift M` → **Tools** → **Connections** tab → **+ Add Provider**.
+
+> Note: this is the **Tools** sidebar item (under Agents & Automation), not the top-level **Providers** item — that one manages _inference_ endpoints (Ollama, OpenAI-compatible, etc.), not MCP tool servers. See [Remote Providers](REMOTE_PROVIDERS.md) for the difference.
 
 You land on a catalog grid with a search bar at the top. Type to filter by name or tagline ("issues" finds Linear, "search" finds Exa). The first card is always **Custom Server** for any HTTP(S) MCP endpoint you want to point at; the rest are pre-vetted well-known providers (see [Provider Catalog](#provider-catalog) below).
 

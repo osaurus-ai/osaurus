@@ -9,6 +9,8 @@
 import Foundation
 import os
 
+private let downloadLog = Logger(subsystem: "com.dinoki.osaurus", category: "ModelDownload")
+
 /// Manages MLX model file downloads, cancellation, deletion, and progress tracking.
 @MainActor
 final class ModelDownloadService: ObservableObject {
@@ -1346,6 +1348,31 @@ final class ModelDownloadService: ObservableObject {
 
     private static let sentinelFilename = ".topup_done"
 
+    /// Why a completeness check is running. The two modes differ in what they
+    /// are allowed to pull, and the difference is the user's intent.
+    ///
+    /// A local bundle that disagrees with the Hub is not necessarily broken —
+    /// it is frequently deliberate. Users strip tensors they do not need and
+    /// hand-edit `config.json`. Before this split, every model load ran the
+    /// same restore-to-the-repo logic as the Repair button, so a stripped
+    /// bundle silently re-grew its weights on the next load and an edited
+    /// config was overwritten with the Hub's.
+    enum CompletenessIntent {
+        /// The user pressed Repair. Restore the bundle to match the repo:
+        /// weights included, and files whose size differs from the remote.
+        case explicitRepair
+        /// A load or a launch-time sweep. May only fill in small metadata
+        /// that is ABSENT — never a weight shard, and never a file that
+        /// already exists locally at any size.
+        case automatic
+    }
+
+    /// Extensions treated as model weights. Automatic top-up never fetches
+    /// these; only an explicit Repair does.
+    nonisolated static let weightFileExtensions: Set<String> = [
+        "safetensors", "bin", "gguf", "npz", "pt", "pth", "mlx",
+    ]
+
     /// Checks for missing files and downloads them if the sentinel is absent.
     /// Writes the sentinel only when the remote check succeeds. Passing
     /// `clearSentinel: true` forces a fresh remote check (used by Repair).
@@ -1353,25 +1380,77 @@ final class ModelDownloadService: ObservableObject {
     static func ensureComplete(
         for model: MLXModel,
         directory: URL,
-        clearSentinel: Bool = false
+        clearSentinel: Bool = false,
+        intent: CompletenessIntent = .automatic
     ) async -> Bool {
         let sentinel = directory.appendingPathComponent(sentinelFilename)
         if clearSentinel {
             try? FileManager.default.removeItem(at: sentinel)
         }
         guard !FileManager.default.fileExists(atPath: sentinel.path) else { return true }
-        let success = await downloadMissingFiles(for: model, to: directory)
+        let success = await downloadMissingFiles(for: model, to: directory, intent: intent)
         if success {
             FileManager.default.createFile(atPath: sentinel.path, contents: nil)
         }
         return success
     }
 
+    /// Which of `remote` this pass is allowed to write into `directory`.
+    ///
+    /// Pure so the intent rule is pinned by a test rather than only by a live
+    /// run: the whole point is what does NOT get fetched, and an omission is
+    /// invisible in a screenshot.
+    nonisolated static func filesToFetch(
+        remote: [HuggingFaceService.MatchedFile],
+        under directory: URL,
+        intent: CompletenessIntent
+    ) -> [HuggingFaceService.MatchedFile] {
+        let fm = FileManager.default
+        return remote.filter { file in
+            guard
+                let local = HuggingFaceService.destinationURL(
+                    forRemotePath: file.path,
+                    under: directory
+                )
+            else { return true }
+
+            let exists = fm.fileExists(atPath: local.path)
+
+            if intent == .automatic {
+                // Two things an automatic pass must never do, because both
+                // undo deliberate work:
+                //
+                //   - refetch a weight shard the user deleted on purpose. A
+                //     stripped bundle re-grew itself on the next load, which
+                //     is what the user actually saw and reported.
+                //   - overwrite a file that is present but differs from the
+                //     Hub. "Differs" is the signature of a hand-edited
+                //     config.json, not of damage.
+                //
+                // Both stay available behind the Repair button, which is the
+                // surface that says out loud what it is about to do.
+                let ext = (file.path as NSString).pathExtension.lowercased()
+                if weightFileExtensions.contains(ext) { return false }
+                return !exists
+            }
+
+            guard exists,
+                let attrs = try? fm.attributesOfItem(atPath: local.path),
+                let localSize = (attrs[.size] as? NSNumber)?.int64Value
+            else { return true }
+            return localSize != file.size
+        }
+    }
+
     /// Downloads any missing config/tokenizer files for a model into `directory`.
     /// Returns `true` if the remote file list was successfully fetched
     /// (regardless of whether anything was missing), `false` on network failure.
     @discardableResult
-    static func downloadMissingFiles(for model: MLXModel, to directory: URL) async -> Bool {
+    static func downloadMissingFiles(
+        for model: MLXModel,
+        to directory: URL,
+        intent: CompletenessIntent = .automatic
+    ) async -> Bool {
         let remoteFiles = await HuggingFaceService.shared.fetchMatchingFiles(
             repoId: model.id,
             patterns: downloadFilePatterns,
@@ -1379,20 +1458,12 @@ final class ModelDownloadService: ObservableObject {
         )
         guard let remoteFiles else { return false }
 
-        let fm = FileManager.default
-        let missing = remoteFiles.filter { file in
-            guard
-                let local = HuggingFaceService.destinationURL(
-                    forRemotePath: file.path,
-                    under: directory
-                )
-            else {
-                return true
-            }
-            guard let attrs = try? fm.attributesOfItem(atPath: local.path),
-                let localSize = (attrs[.size] as? NSNumber)?.int64Value
-            else { return true }
-            return localSize != file.size
+        let missing = filesToFetch(remote: remoteFiles, under: directory, intent: intent)
+        let suppressed = remoteFiles.count - missing.count
+        if intent == .automatic, suppressed > 0 {
+            downloadLog.debug(
+                "top-up: \(suppressed) remote file(s) not fetched for \(model.id, privacy: .public) — already present, or weights that only Repair may restore"
+            )
         }
         guard !missing.isEmpty else { return true }
 
@@ -1450,7 +1521,11 @@ final class ModelDownloadService: ObservableObject {
             // the surrounding task is cancelled (e.g. app teardown) instead of
             // walking the full candidate list.
             if Task.isCancelled { return }
-            await Self.downloadMissingFiles(for: model, to: model.localDirectory)
+            await Self.downloadMissingFiles(
+                for: model,
+                to: model.localDirectory,
+                intent: .automatic
+            )
         }
     }
 
@@ -1555,6 +1630,9 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
     private var isInvalidated = false
     private static let progressInterval: CFAbsoluteTime = 0.25
 
+    /// Non-nil while a large file is being fetched as parallel Range requests.
+    private var chunked: ChunkedFileDownloader?
+
     private lazy var session: URLSession = {
         GlobalProxySettings.makeSession(base: .default, delegate: self, delegateQueue: nil)
     }()
@@ -1571,6 +1649,47 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
             at: destination.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+
+        // A pause from a *previous* transfer must not bleed into this one:
+        // the chunked branch below reads `pauseRequested` after the probe, so
+        // a stale flag on a reused downloader would pause every future call
+        // on sight. Clearing it here means only a pause that arrives during
+        // this call counts — the legacy path re-clears under its own lock.
+        lock.withLock { pauseRequested = false }
+
+        // Large weight shards go out as parallel Range requests; a single
+        // connection to the Hugging Face CDN caps well below most links.
+        // `resumeData` means the caller is continuing a legacy single-task
+        // transfer, so honor that rather than restarting it as chunks.
+        if resumeData == nil, expectedSize >= ChunkedFileDownloader.minimumChunkableSize,
+            let metadata = try? await ChunkedFileDownloader.probe(url: url),
+            metadata.isChunkable
+        {
+            let downloader = ChunkedFileDownloader()
+            enum Gate { case proceed, paused, invalidated }
+            let gate = lock.withLock { () -> Gate in
+                if isInvalidated { return .invalidated }
+                if pauseRequested { return .paused }
+                chunked = downloader
+                return .proceed
+            }
+            switch gate {
+            case .invalidated:
+                throw URLError(.cancelled)
+            case .paused:
+                throw PauseInfo(resumeData: nil, bytesDownloaded: 0)
+            case .proceed:
+                break
+            }
+            defer { lock.withLock { chunked = nil } }
+            try await downloader.download(
+                from: url,
+                to: destination,
+                metadata: metadata,
+                onProgress: onProgress
+            )
+            return
+        }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             lock.lock()
             if self.isInvalidated {
@@ -1608,13 +1727,24 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
     /// Suspends the in-flight download, capturing `URLSession`-level resume
     /// data so a future `download(...resumeData:)` call can continue from
     /// the same byte offset. If no download is in flight, this is a no-op.
+    ///
+    /// The chunked path needs no resume blob — its `.part.json` manifest
+    /// already records which chunks are durable — so it reports `nil` resume
+    /// data and picks up from the manifest on the next `download` call. The
+    /// flag is set unconditionally so a pause landing during the metadata
+    /// probe, before any task exists, still stops the transfer.
     func pause() {
         lock.lock()
+        self.pauseRequested = true
+        if let chunked = self.chunked {
+            lock.unlock()
+            chunked.pause()
+            return
+        }
         guard let task = self.currentDownloadTask else {
             lock.unlock()
             return
         }
-        self.pauseRequested = true
         lock.unlock()
         task.cancel(byProducingResumeData: { [weak self] data in
             self?.handlePauseCompletion(resumeData: data)
@@ -1645,7 +1775,9 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
     func invalidate() {
         lock.lock()
         isInvalidated = true
+        let chunked = self.chunked
         lock.unlock()
+        chunked?.invalidate()
         session.invalidateAndCancel()
     }
 

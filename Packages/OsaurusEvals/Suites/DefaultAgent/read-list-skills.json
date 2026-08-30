@@ -3,14 +3,18 @@
   "domain": "default_agent",
   "label": "default agent • list installed skills (new read scope)",
   "query": "What skills do I have installed?",
-  "notes": "Gap-closure read scope: the motivating query for expanding osaurus_list beyond the original six scopes. Pins scope 'skills' — a model that answers from the guide (osaurus_help) instead of live state is the exact failure the scope closes.",
+  "notes": "Gap-closure read scope: the motivating query for expanding the list read beyond the original six scopes. Pins osaurus_inspect action 'list' scope 'skills' — a model that answers from the guide (osaurus_help) instead of live state is the exact failure the scope closes. The tool tolerantly executes {action:'list', filter:'skills'} as the skills list (deliberate API design), so either argument spelling satisfies the intent.",
   "fixtures": {},
   "expect": {
     "defaultAgent": {
-      "mustCallTools": ["osaurus_list"],
+      "mustCallTools": ["osaurus_inspect"],
       "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
       "argsMustContain": [
-        { "tool": "osaurus_list", "args": { "scope": "skills" } }
+        {
+          "tool": "osaurus_inspect",
+          "args": { "action": "list" },
+          "argsAnyOf": [{ "scope": "skills" }, { "filter": "skills" }]
+        }
       ],
       "maxIterations": 3
     }

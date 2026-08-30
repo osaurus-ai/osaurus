@@ -19,257 +19,356 @@ import SwiftUI
 
 // MARK: - Overview Container
 
-/// Hero + caller-provided ability cards. The container owns the live
-/// context estimate: it recomputes off the `draft` fingerprint (debounced,
-/// never inside a view body) and feeds the hero, including a short-lived
-/// `+/- tokens` delta after each change so toggling feels causal.
+/// Ability cards for the Overview tab. Context usage lives in the shared
+/// fixed card above every Abilities tab, including this one.
 struct AgentAbilitiesOverviewView<Cards: View>: View {
-    let agentId: UUID
-    let draft: AgentAbilityContextPreview.Draft
-    let enabledCount: Int
-    let totalCount: Int
     @ViewBuilder let cards: () -> Cards
 
-    @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    @State private var preview: AgentAbilityContextPreview?
-    /// Token delta flashed next to the estimate after the last change.
-    @State private var lastDelta: Int?
-    @State private var deltaDismissTask: Task<Void, Never>?
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            AgentAbilitiesHeroCard(
-                enabledCount: enabledCount,
-                totalCount: totalCount,
-                preview: preview,
-                delta: lastDelta
-            )
-            cards()
-        }
-        // Recompute only when a budget input actually changes — compose
-        // reads AgentManager / ToolRegistry and can touch the agent DB, so
-        // it must never run per-render.
-        .task(id: draft) { await refreshPreview() }
-        .onDisappear { deltaDismissTask?.cancel() }
-    }
-
-    @MainActor
-    private func refreshPreview() async {
-        // Debounce so rapid flips coalesce into one compose; `.task(id:)`
-        // cancels the previous sleep when the draft changes again.
-        try? await Task.sleep(nanoseconds: 140_000_000)
-        guard !Task.isCancelled else { return }
-        // Composing can open the agent DB; opening parks on the storage
-        // gate during a key rotation, which would hang the UI (same guard
-        // ChatView's preview path uses). Skip; the next draft change or
-        // tab visit retries.
-        guard !StorageMutationGate.isRotationInFlight else { return }
-
-        let next = AgentAbilityContextPreview.compute(agentId: agentId, draft: draft)
-        if let previous = preview {
-            let delta = next.highTokens - previous.highTokens
-            if delta != 0 {
-                lastDelta = delta
-                deltaDismissTask?.cancel()
-                deltaDismissTask = Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 2_600_000_000)
-                    guard !Task.isCancelled else { return }
-                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
-                        lastDelta = nil
-                    }
-                }
-            }
-        }
-        withAnimation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.9)) {
-            preview = next
-        }
+        cards()
     }
 }
 
-// MARK: - Hero Card
+// MARK: - Shared Context Card
 
-/// Accent-tinted summary card: enabled-ability count, the live startup
-/// context estimate (a range when memory can inject), share of the model
-/// window when known, the warm-up/TTFT trade-off line, and the composer's
-/// small-window auto-disable notice.
-struct AgentAbilitiesHeroCard: View {
-    let enabledCount: Int
-    let totalCount: Int
+/// Compact Abilities-navigation status. Details live in a popover instead of
+/// expanding inline, preserving the destination's vertical workspace.
+struct AgentAbilityContextPreviewBar: View {
     let preview: AgentAbilityContextPreview?
     let delta: Int?
+    let enabledCount: Int
+    let totalCount: Int
 
     @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var showsDetails = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(
-                        totalCount == 1
-                            ? L("\(enabledCount) of 1 ability on")
-                            : L("\(enabledCount) of \(totalCount) abilities on")
-                    )
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                        .contentTransition(.numericText())
-                    Text(
-                        "Every ability this agent carries adds instructions or tool schemas to each new chat.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
+        Button {
+            showsDetails.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "brain.head.profile")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundColor(statusColor)
+                Text("Context", bundle: .module)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+
+                if let delta {
+                    deltaChip(delta)
+                        .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                }
+
+                Text(compactEstimateText)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundColor(theme.primaryText)
+                    .contentTransition(.numericText())
+
+                Text(compactImpactLabel)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(statusColor)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(statusColor.opacity(0.11)))
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7.5, weight: .semibold))
                     .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 16)
-                VStack(alignment: .trailing, spacing: 2) {
-                    HStack(spacing: 6) {
-                        if let delta {
-                            deltaChip(delta)
-                                .transition(.opacity.combined(with: .scale(scale: 0.85)))
-                        }
-                        Text(estimateText)
-                            .font(.system(size: 16, weight: .semibold, design: .monospaced))
-                            .foregroundColor(theme.primaryText)
-                            .contentTransition(.numericText())
-                    }
-                    Text("Estimated startup context", bundle: .module)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(
-                    Text("Estimated startup context: \(estimateText)", bundle: .module)
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            Capsule()
+                .fill(controlFill)
+                .overlay(
+                    Capsule()
+                        .stroke(controlBorder, lineWidth: 1)
                 )
+        )
+        .localizedHelp("Show how much model context this agent uses")
+        .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
+            contextPopover
+        }
+    }
+
+    private var contextPopover: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "brain.head.profile")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(statusColor)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(statusColor.opacity(0.12))
+                    )
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text("Context impact", bundle: .module)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                            .fixedSize()
+                        Text(abilityCountText)
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(theme.tertiaryBackground))
+                    }
+                    Text(summaryText)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 8)
+
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text(fullEstimateText)
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundColor(theme.primaryText)
+                    Text(impactLabel)
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundColor(statusColor)
+                }
             }
 
             if let preview {
-                windowBar(preview)
-            }
-
-            HStack(alignment: .top, spacing: 6) {
-                Image(systemName: "gauge.with.needle")
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
-                Text(
-                    "A bigger starting context means longer model warm-up and a slower first token.",
-                    bundle: .module
-                )
-                .font(.system(size: 10.5))
-                .foregroundColor(theme.tertiaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if let notice = autoDisableNotice {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.warningColor)
-                    Text(notice)
-                        .font(.system(size: 10.5).italic())
-                        .foregroundColor(theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                AgentAbilityContextDetailsView(preview: preview)
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            theme.accentColor.opacity(0.10),
-                            theme.accentColor.opacity(0.03),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.accentColor.opacity(0.25), lineWidth: 1)
-                )
-        )
+        .padding(14)
+        .frame(width: 390)
     }
 
-    /// "~2.1K tokens" for a fixed estimate, "~2.1K–2.9K tokens" when memory
-    /// can inject up to its budget on a turn. "—" until the first compute.
-    private var estimateText: String {
-        guard let preview else { return "—" }
+    private var compactEstimateText: String {
+        guard let preview else { return "…" }
         let low = AgentAbilityContextPreview.format(tokens: preview.lowTokens)
         if preview.isRange {
             let high = AgentAbilityContextPreview.format(tokens: preview.highTokens)
-            return "~\(low)–\(high) tok"
+            return "~\(low)–\(high)"
         }
-        return "~\(low) tok"
+        return "~\(low)"
+    }
+
+    private var fullEstimateText: String {
+        guard preview != nil else { return L("Estimating…") }
+        return "\(compactEstimateText) tokens"
+    }
+
+    private var abilityCountText: String {
+        totalCount == 1
+            ? L("\(enabledCount) of 1 ability on")
+            : L("\(enabledCount) of \(totalCount) abilities on")
+    }
+
+    private var summaryText: String {
+        guard let preview else {
+            return L("Estimating how much of the model's working space this agent uses.")
+        }
+        if let fraction = preview.usableWindowFraction {
+            return L(
+                "This agent uses \(windowPercent(fraction)) of the model's working space before you start chatting."
+            )
+        }
+        return L("This setup is loaded into the model before you start chatting.")
+    }
+
+    private var statusColor: Color {
+        guard let preview else { return theme.accentColor }
+        switch preview.severity {
+        case .normal: return theme.accentColor
+        case .warning: return theme.warningColor
+        case .critical: return theme.errorColor
+        }
+    }
+
+    private var impactLabel: String {
+        guard let preview else { return L("Estimating") }
+        switch preview.severity {
+        case .warning:
+            return L("High impact")
+        case .critical:
+            return L("At the limit")
+        case .normal:
+            guard let fraction = preview.usableWindowFraction else {
+                return L("Estimated")
+            }
+            return fraction < 0.10 ? L("Low impact") : L("Moderate impact")
+        }
+    }
+
+    private var compactImpactLabel: String {
+        guard let preview else { return "…" }
+        switch preview.severity {
+        case .warning: return L("High")
+        case .critical: return L("Limit")
+        case .normal:
+            guard let fraction = preview.usableWindowFraction else { return L("Estimate") }
+            return fraction < 0.10 ? L("Low") : L("Moderate")
+        }
+    }
+
+    private var controlFill: Color {
+        guard let preview else { return theme.cardBackground }
+        switch preview.severity {
+        case .normal: return theme.cardBackground
+        case .warning: return theme.warningColor.opacity(0.055)
+        case .critical: return theme.errorColor.opacity(0.055)
+        }
+    }
+
+    private var controlBorder: Color {
+        guard let preview else { return theme.cardBorder }
+        switch preview.severity {
+        case .normal: return theme.cardBorder
+        case .warning: return theme.warningColor.opacity(0.45)
+        case .critical: return theme.errorColor.opacity(0.45)
+        }
     }
 
     private func deltaChip(_ delta: Int) -> some View {
         let magnitude = AgentAbilityContextPreview.format(tokens: abs(delta))
-        let text = delta > 0 ? "+~\(magnitude)" : "−~\(magnitude)"
+        let text = delta > 0 ? "+\(magnitude)" : "−\(magnitude)"
         let color = delta > 0 ? theme.warningColor : theme.accentColor
         return Text(text)
-            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
             .foregroundColor(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Capsule().fill(color.opacity(0.12)))
     }
 
-    /// Thin usage bar against the model window when the window is known.
-    /// Composition (share-of-window), not a budget gauge — headroom is
-    /// almost always large, which is exactly the message.
-    @ViewBuilder
-    private func windowBar(_ preview: AgentAbilityContextPreview) -> some View {
-        if let window = preview.contextWindow, let fraction = preview.windowFraction {
-            VStack(alignment: .leading, spacing: 4) {
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(theme.tertiaryBackground.opacity(0.5))
-                        Capsule()
-                            .fill(theme.accentColor.opacity(0.75))
-                            .frame(width: max(3, geo.size.width * CGFloat(fraction)))
+    private func windowPercent(_ fraction: Double) -> String {
+        let pct = fraction * 100
+        return pct < 1 ? "<1%" : "\(Int(pct.rounded()))%"
+    }
+}
+
+/// Plain-language explanation and grouped costs. Raw manifest labels such as
+/// "Platform" and "Enabled Capabilities" are intentionally not user-facing.
+private struct AgentAbilityContextDetailsView: View {
+    let preview: AgentAbilityContextPreview
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Divider().foregroundColor(theme.cardBorder)
+
+            Text(
+                "Context is the model's working space. Agent instructions and tool descriptions use some of it before your first message; memory can add more on each turn. A larger setup can slow the first reply and leave less room for a very long conversation.",
+                bundle: .module
+            )
+            .font(.system(size: 10.5))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(displayRows) { row in
+                    HStack(spacing: 8) {
+                        Text(row.label, bundle: .module)
+                            .font(.system(size: 10.5))
+                            .foregroundColor(theme.secondaryText)
+                        Spacer()
+                        Text("~\(AgentAbilityContextPreview.format(tokens: row.tokens)) tokens")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(theme.tertiaryText)
                     }
                 }
-                .frame(height: 5)
-                .animation(
-                    reduceMotion ? nil : .easeOut(duration: 0.3),
-                    value: preview.highTokens
-                )
+            }
 
-                Text(
-                    "of the model's ~\(AgentAbilityContextPreview.format(tokens: window)) token window (\(windowPercent(fraction)))"
-                )
+            Text(toolModeExplanation, bundle: .module)
                 .font(.system(size: 10))
                 .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let notice = autoDisableNotice {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.warningColor)
+                    Text(notice)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
 
-    private func windowPercent(_ fraction: Double) -> String {
-        let pct = fraction * 100
-        if pct < 1 { return "<1%" }
-        return "\(Int(pct.rounded()))%"
+    private struct DisplayRow: Identifiable {
+        let id: String
+        let label: LocalizedStringKey
+        let tokens: Int
     }
 
-    /// Mirrors the chat popover's auto-disable notice: which knobs the
-    /// small-context size class turned off, and why.
+    private var displayRows: [DisplayRow] {
+        let entries = preview.breakdown.context
+        let instructions = entries
+            .filter { $0.id == "platform" || $0.id == "persona" }
+            .reduce(0) { $0 + $1.tokens }
+        let tools = entries
+            .filter { $0.id == "tools" }
+            .reduce(0) { $0 + $1.tokens }
+        let abilities = entries
+            .filter {
+                $0.id != "platform"
+                    && $0.id != "persona"
+                    && $0.id != "tools"
+                    && $0.id != "memory"
+            }
+            .reduce(0) { $0 + $1.tokens }
+
+        var rows: [DisplayRow] = []
+        if instructions > 0 {
+            rows.append(DisplayRow(id: "instructions", label: "Agent instructions", tokens: instructions))
+        }
+        if abilities > 0 {
+            rows.append(DisplayRow(id: "abilities", label: "Enabled abilities", tokens: abilities))
+        }
+        if tools > 0 {
+            rows.append(DisplayRow(id: "tools", label: "Tool descriptions", tokens: tools))
+        }
+        if preview.memoryUpperTokens > 0 {
+            rows.append(
+                DisplayRow(
+                    id: "memory",
+                    label: "Memory added per message (up to)",
+                    tokens: preview.memoryUpperTokens
+                )
+            )
+        }
+        return rows
+    }
+
+    private var toolModeExplanation: LocalizedStringKey {
+        switch preview.toolMode {
+        case .auto:
+            return "Auto-discover keeps this smaller by loading other assigned tools only when they are needed."
+        case .manual:
+            return "Manual mode includes every assigned tool, so assigning more tools increases context use."
+        }
+    }
+
     private var autoDisableNotice: String? {
-        guard let info = preview?.disable, info.disabledTools || info.disabledMemory else {
+        guard let info = preview.disable, info.disabledTools || info.disabledMemory else {
             return nil
         }
         let what: String
         switch (info.disabledTools, info.disabledMemory) {
-        case (true, true): what = L("Tools and Memory are")
-        case (true, false): what = L("Tools are")
-        default: what = L("Memory is")
+        case (true, true): what = L("Tools and Memory were")
+        case (true, false): what = L("Tools were")
+        default: what = L("Memory was")
         }
         let model = info.modelId ?? L("this model")
         return String(
-            format: L("%@ auto-disabled for %@ — its context window is too small to carry them."),
+            format: L("%@ turned off for %@ because its working space is too small."),
             what,
             model
         )

@@ -2,31 +2,28 @@
 //  OnboardingConfigureAIView.swift
 //  osaurus
 //
-//  Onboarding step 3 — "Give your dino a brain". One path, no fork: the home
-//  screen features the local model Osaurus picked for this Mac (name, use
-//  case, download size) with a single "Download model" CTA. Pressing it starts
-//  the background download and advances immediately; the dedicated chat setup
-//  state owns progress feedback later. Quiet supporting text explains that
-//  Osaurus Cloud is included automatically with the free welcome credit, so
-//  they can chat immediately while the model lands. The footer keeps the two
-//  outcomes together: download the recommended model, or skip it and use Cloud.
-//  Bring-your-own-provider stays available as a tertiary path, and "Change
-//  model" opens the chooser.
+//  Onboarding step 3 — Figma screen 3 ("A private brain that runs on your
+//  Mac"). Left column: brain dino, title, subtitle, and the step CTA ("Set
+//  up later" until a brain is committed, then "Continue to Osaurus"). Right
+//  panel: the recommended-model card ("Picked for your Mac" badge, meta
+//  chips, Download + Change model) with an in-card downloading state, then
+//  the provider chips (OpenAI, Anthropic, xAI, OpenRouter, Gemini, + More)
+//  that drill into a per-provider connect screen whose option rows open the
+//  connect dialog (browser sign-in or pasted API key).
+//
+//  Split into:
+//   - `ConfigureAIState`: ObservableObject holding the committed brain
+//     source, the provider drill-in, connection-test progress, and dialog
+//     state (lives at the OnboardingView level so it survives step
+//     transitions).
+//   - `ConfigureAIStepView`: the full-window step layout.
+//   - `ProviderConnectDialog` / `ConfigureModelChooserModal`: window-root
+//     dialogs hosted by `OnboardingView`.
 //
 //  Apple Intelligence was removed from this step: it's too limited (no tools,
 //  no web, no agent work) to be a first-class first-run option. Users with
 //  `FoundationModelService` available can still configure it post-onboarding
 //  from Settings.
-//
-//  Split into:
-//   - `ConfigureAIState`: ObservableObject holding the committed brain source,
-//     the bring-your-own-provider drill-in, connection-test
-//     progress, and the slide direction (lives at the OnboardingView level so
-//     it survives step transitions).
-//   - `ConfigureAIBody`: the body slot — a two-column shell whose right column
-//     shows the recommended local model, included Cloud bridge, and the
-//     bring-your-own-provider drill-in.
-//   - `ConfigureAICTA`: the footer primary action, dispatched per screen.
 //
 
 import SwiftUI
@@ -34,10 +31,12 @@ import SwiftUI
 // MARK: - Screen / substates
 
 /// The top-level screen within the Configure AI step. `home` recommends a
-/// local model with Cloud included; `byok` is the tertiary provider drill-in.
+/// local model with the provider chips below; `byok` is the per-provider
+/// connect drill-in.
 enum ConfigureScreen: Equatable {
     case home
     case byok
+    case claudeCode
 }
 
 /// Bring-your-own-key drill-in depth (inside `ConfigureScreen.byok`).
@@ -48,15 +47,18 @@ enum APISubstate: Equatable {
     case apiKeyPicker
     case keyForm(ProviderPreset)
     case customForm
-    /// Claude Code sign-in status. Not a `keyForm`: there is no key to enter
-    /// and no `RemoteProvider` to build — the CLI owns the session, so this
-    /// screen only reports state and offers to start the CLI's own sign-in.
-    case claudeCode
 }
 
 enum APITestResult: Equatable {
     case success
     case failure(String)
+}
+
+/// Which connect dialog is open over the provider drill-in: the browser
+/// sign-in confirmation or the paste-an-API-key form.
+enum ConnectDialogKind: Equatable {
+    case oauth
+    case apiKey
 }
 
 // MARK: - Resolved provider config
@@ -115,7 +117,7 @@ struct CustomProviderForm {
 @MainActor
 final class ConfigureAIState: ObservableObject {
     /// The screen currently shown. Starts at `home` with the recommended local
-    /// model, included Cloud bridge, and explicit Cloud-only escape hatch.
+    /// model and the provider chips.
     @Published var screen: ConfigureScreen = .home
 
     /// Bring-your-own-key drill-in depth. Only meaningful while
@@ -155,16 +157,35 @@ final class ConfigureAIState: ObservableObject {
     /// continuation of the outer navigation language.
     @Published var substateDirection: OnboardingDirection = .forward
 
-    // Local
+    // MARK: Connect dialog / provider chips
+
+    /// The connect dialog open over the provider drill-in, if any. Hosted at
+    /// the OnboardingView window root so it dims the whole window.
+    @Published var connectDialog: ConnectDialogKind? = nil
+
+    /// Whether the "+ More" chip has expanded the provider grid with the
+    /// remaining API-key presets.
+    @Published var showAllProviders = false
+
+    /// Whether the user committed the Local path this run (download started
+    /// or already-on-disk model chosen) — drives the left CTA swap to
+    /// "Continue to Osaurus".
+    var hasCommittedLocal: Bool {
+        if case .local = selectedBrainSource { return true }
+        return false
+    }
+
+    // MARK: Local
+
     @Published var selectedModel: MLXModel? = nil
 
     /// Free bytes on the volume that will host the model download, refreshed
     /// one-shot (`refreshFreeDiskSpace`) on appear / chooser open / CTA press.
     /// Deliberately not `SystemMonitorService.availableStorageGB`: subscribing
     /// this deep onboarding tree to the monitor's 2s publishes forced a full
-    /// re-render every tick (see the note on `ConfigureAIBody.systemMonitor`),
-    /// and the stat lines only need a point-in-time value. `nil` means the
-    /// query failed — render stats without the free-space context.
+    /// re-render every tick, and the stat lines only need a point-in-time
+    /// value. `nil` means the query failed — render stats without the
+    /// free-space context.
     @Published var freeDiskBytes: Int64? = nil
 
     /// Inline "not enough disk space" warning shown under the local card when
@@ -172,18 +193,18 @@ final class ConfigureAIState: ObservableObject {
     /// passing preflight, so it never sticks to a different selection.
     @Published var diskSpaceWarning: String? = nil
 
-    /// Set the moment the home CTA starts the background download. The flow
-    /// advances immediately, but this durable latch keeps the card safe if the
-    /// user navigates back: no model swap, duplicate download, or Cloud-only
-    /// recommit while bytes are already moving.
+    /// Set the moment the Download button starts the background download.
+    /// This durable latch keeps the card safe if the user navigates around:
+    /// no model swap, duplicate download, or Cloud-only recommit while bytes
+    /// are already moving.
     @Published var hasStartedLocalDownload = false
 
     // API
     @Published var apiKey: String = ""
-    /// The connection method pinned for the selected provider, set from the
-    /// catalog at selection time (OAuth for top-level rows, `.apiKey` for the
-    /// "Use an API key" sub-list). There is no in-form fork; this drives the
-    /// CTA, key field, save/test branches, and back-routing.
+    /// The connection method pinned for the selected provider, set at
+    /// option-row tap time (OAuth for the browser sign-in row, `.apiKey` for
+    /// the paste-a-key row). Drives the dialog CTA, key field, and
+    /// save/test branches.
     @Published var selectedAuthMethod: ProviderPickerAuthMethod = .apiKey
     @Published var oauthTokens: RemoteProviderOAuthTokens? = nil
     /// The id of the provider added by `saveProviderAndContinue`. Read by
@@ -201,25 +222,9 @@ final class ConfigureAIState: ObservableObject {
     @Published var isTesting = false
     @Published var isSaving = false
     @Published var testResult: APITestResult? = nil
-    /// One-shot latch so the auto-advance-on-green and a manual CTA press can't
-    /// both finalize. Reset whenever credentials are cleared (back / reselect).
+    /// One-shot latch so the Continue CTA can't finalize twice. Reset whenever
+    /// credentials are cleared (back / reselect).
     var hasFinalizedAPI = false
-
-    // No footer caption. The reassurance copy crowded the footer, and a caption
-    // present on one screen but not another makes the footer (and thus the
-    // centered left-column dino) jump in height.
-    var footerCaption: LocalizedStringKey? { nil }
-
-    // MARK: Back handling
-
-    /// The global header back button always exits the Configure AI step.
-    /// Sub-screens (download, bring-your-own-key forms) have their own
-    /// in-section back rows, so the header back button doesn't double as both
-    /// global-step nav AND sub-screen nav — that ambiguity used to confuse
-    /// users.
-    func handleBack(parentBack: () -> Void) {
-        parentBack()
-    }
 
     // MARK: Local
 
@@ -266,11 +271,12 @@ final class ConfigureAIState: ObservableObject {
     /// the larger resident footprint as the higher-quality precision.
     /// Every curated Top Pick is a GUI-verified-good model — coherent output
     /// with clean tool-calling and reasoning and no control-marker leakage
-    /// (verified live in the dev app across the curated families). Ranking by
-    /// base parameters rather than quantized bytes matters for Bonsai: its 27B
-    /// 1-bit build is smaller on disk than a 9B MXFP8 model without becoming a
-    /// 4B-class model. When nothing is comfortable (very low RAM), fall back
-    /// to the smallest candidate overall so onboarding never dead-ends.
+    /// (verified live in the dev app across the curated families). Bonsai 27B
+    /// is no longer a Top Pick: as a dense model (every parameter active per
+    /// token) it decoded far too slowly per user feedback, so the mainstream
+    /// slot recommends the LFM2.5 8B-A1B hybrid MoE instead. When nothing is
+    /// comfortable (very low RAM), fall back to the smallest candidate overall
+    /// so onboarding never dead-ends.
     ///
     /// This replaced the earlier Gemma-4-QAT auto-default spine: the Gemma 4
     /// `qat-MXFP4` builds are no longer curated Top Picks, so they are neither
@@ -390,14 +396,18 @@ final class ConfigureAIState: ObservableObject {
         return variants.min(by: { sizeBytes($0) < sizeBytes($1) })
     }
 
-    /// Tapping a local model row (in the "Change" popover) makes it the active
-    /// local brain. Kept side-effect-light (no `withAnimation`) so the footer
-    /// CTA doesn't morph through the shared transaction. Clears any disk-space
+    /// Tapping a local model row (in the chooser) makes it the active
+    /// local brain. Kept side-effect-light (no `withAnimation`) so the CTA
+    /// doesn't morph through the shared transaction. Clears any disk-space
     /// warning raised for the previous selection — the new model has its own
     /// footprint and gets its own preflight at the next CTA press.
     func selectLocalModel(_ model: MLXModel) {
         selectedModel = model
         diskSpaceWarning = nil
+        // A new pick is a fresh download candidate. Clearing this latch
+        // unsticks the "Change model" affordance after a failed download of
+        // the previous selection (the latch otherwise hid it forever).
+        hasStartedLocalDownload = false
     }
 
     // MARK: Machine specs (free storage)
@@ -420,21 +430,21 @@ final class ConfigureAIState: ObservableObject {
 
     // MARK: Resource stat formatting
 
-    /// Chooser-row stat line ("7.5 GB download · needs ~9.4 GB memory") —
-    /// the size moved out of the badge cluster into a labeled, scannable
-    /// line. `nil` when neither stat is known so the row omits it entirely.
+    /// Chooser-row stat line ("Download: 7.5 GB · Est. memory while running:
+    /// 9.4 GB"). Explicit labels keep disk space and RAM from reading as one
+    /// interchangeable size. `nil` when neither stat is known.
     static func chooserStatsLine(for model: MLXModel) -> String? {
         var parts: [String] = []
         if let size = model.formattedDownloadSize {
-            parts.append(model.isDownloaded ? L("\(size) on disk") : L("\(size) download"))
+            parts.append(model.isDownloaded ? L("On disk: \(size)") : L("Download: \(size)"))
         }
         if let memory = model.formattedEstimatedMemory {
-            parts.append(L("needs \(memory) memory"))
+            parts.append(L("Est. memory while running: \(memory)"))
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    /// Plain-language one-liner for a chooser row, derived from the curated
+    /// Plain-language one-liner for a model, derived from the curated
     /// use case instead of the catalog description. The raw descriptions are
     /// written for the Models tab and lean on exactly the vocabulary
     /// first-timers shouldn't have to parse (MoE, MXFP8, context windows);
@@ -483,8 +493,8 @@ final class ConfigureAIState: ObservableObject {
     // MARK: Model chooser state
 
     // Draft-then-confirm state for `ConfigureModelChooserModal`, opened by
-    // the featured model card's "Change" button (only before a download has
-    // started — switching models mid-download would orphan the bytes in
+    // the featured model card's "Change model" button (only before a download
+    // has started — switching models mid-download would orphan the bytes in
     // flight).
     @Published var isChoosingModel: Bool = false
     @Published var draftModel: MLXModel? = nil
@@ -510,7 +520,7 @@ final class ConfigureAIState: ObservableObject {
         isChoosingModel = false
     }
 
-    /// "Skip download": start on Osaurus Cloud (with the free welcome credit)
+    /// "Set up later": start on Osaurus Cloud (with the free welcome credit)
     /// instead of downloading anything. There is nothing to download or
     /// connect here — identity + router connect are prepared in the
     /// background by `OnboardingView` and finalized at finish.
@@ -520,10 +530,10 @@ final class ConfigureAIState: ObservableObject {
         onComplete()
     }
 
-    /// Commit the local brain and advance immediately. If the model is not on
-    /// disk, start its background download first; chat owns the visible
-    /// progress state, so onboarding never asks for a redundant second press.
-    /// The disk preflight is the only refusal and remains inline on this step.
+    /// Commit the local brain. If the model is not on disk, start its
+    /// background download first (the card shows in-place progress and the
+    /// left CTA becomes "Continue to Osaurus"). The disk preflight is the
+    /// only refusal and remains inline on this step.
     func chooseLocalAndContinue(onComplete: () -> Void) {
         if selectedModel?.isDownloaded != true, let warning = evaluateDiskShortfall() {
             diskSpaceWarning = warning
@@ -576,7 +586,54 @@ final class ConfigureAIState: ObservableObject {
         screen = .byok
     }
 
-    /// BYOK top-level picker → the recommended local setup (backward slide).
+    /// Provider-chip tap: drill straight into the provider's connect screen
+    /// (no intermediate picker — the chips on the home screen ARE the picker).
+    func enterProvider(_ preset: ProviderPreset) {
+        substateDirection = .forward
+        clearAPICredentials()
+        apiSubstate = .keyForm(preset)
+        screen = .byok
+    }
+
+    func enterClaudeCode() {
+        substateDirection = .forward
+        screen = .claudeCode
+    }
+
+    func chooseClaudeCodeAndContinue(onComplete: () -> Void) {
+        selectedBrainSource = .claudeCode
+        OnboardingTelemetry.brainSourceSelected(.claudeCode)
+        onComplete()
+    }
+
+    /// Open the connect dialog for the current provider, pinning the auth
+    /// method the tapped option row represents.
+    func openConnectDialog(_ kind: ConnectDialogKind) {
+        guard let preset = currentAPIProvider else { return }
+        testResult = nil
+        if kind == .oauth,
+            let entry = ProviderCatalog.entry(for: preset),
+            let oauthKind = entry.primaryOAuthKind
+        {
+            selectedAuthMethod = .oauth(oauthKind)
+        } else {
+            selectedAuthMethod = .apiKey
+        }
+        connectDialog = kind
+    }
+
+    /// Close the connect dialog. A failed / abandoned attempt clears the
+    /// stale result so re-opening starts fresh; a verified connection keeps
+    /// its green state for the drill-in's check and the Continue CTA.
+    func closeConnectDialog() {
+        connectDialog = nil
+        if !isAPISuccess {
+            testResult = nil
+            apiKey = ""
+        }
+    }
+
+    /// Provider drill-in → the recommended local setup (backward slide).
     /// Clears any entered credentials so a stale secret never leaks across
     /// selections.
     func popBYOKToHome() {
@@ -590,9 +647,7 @@ final class ConfigureAIState: ObservableObject {
         switch apiSubstate {
         case .keyForm(let p): return p
         case .customForm: return .custom
-        // Claude Code has no `ProviderPreset`: it builds no `RemoteProvider`,
-        // so every preset-keyed path (test, save, telemetry) must skip it.
-        case .picker, .apiKeyPicker, .claudeCode: return nil
+        case .picker, .apiKeyPicker: return nil
         }
     }
 
@@ -622,15 +677,6 @@ final class ConfigureAIState: ObservableObject {
         return false
     }
 
-    var apiButtonState: OnboardingButtonState {
-        if isTesting || isSaving { return .loading }
-        switch testResult {
-        case .success: return .success
-        case .failure(let m): return .error(m)
-        case nil: return .idle
-        }
-    }
-
     /// Resets the API substate back to the picker. Direction defaults to
     /// `.backward` so the slide reads as "popping out", but callers can pass
     /// `.forward` when this is invoked as a side-effect of a forward switch.
@@ -641,8 +687,8 @@ final class ConfigureAIState: ObservableObject {
     }
 
     /// Clear entered credentials, auth-mode selections, and the last test
-    /// result. Shared by every "back out of a form" path so stale secrets
-    /// never leak across provider selections.
+    /// result. Shared by every "back out" path so stale secrets never leak
+    /// across provider selections.
     private func clearAPICredentials() {
         apiKey = ""
         selectedAuthMethod = .apiKey
@@ -651,93 +697,6 @@ final class ConfigureAIState: ObservableObject {
         customForm.reset()
         testResult = nil
         hasFinalizedAPI = false
-    }
-
-    /// Top-level "Use an API key" drill-in (OAuth-first picker → grouped
-    /// API-key sub-list).
-    func showAPIKeyPicker() {
-        substateDirection = .forward
-        apiSubstate = .apiKeyPicker
-    }
-
-    /// Back out of the API-key sub-list to the OAuth-first top level.
-    func popAPIKeyPickerToTop() {
-        substateDirection = .backward
-        apiSubstate = .picker
-    }
-
-    /// Back out of a provider form. A form entered via the OAuth-first top level
-    /// returns there; everything reached through the "Use an API key" sub-list
-    /// (key vendors including the dual-mode OAuth presets, Ollama, Custom)
-    /// returns to that sub-list. Routing is read from the pinned auth mode
-    /// *before* `clearAPICredentials()` resets it to the OAuth defaults.
-    func popFormToPicker(for preset: ProviderPreset) {
-        substateDirection = .backward
-        // A form reached via OAuth lives at the top level; everything else
-        // (pasted-key vendors, dual-mode presets in api-key mode, Ollama,
-        // Custom) was reached through the "Use an API key" sub-list. Read the
-        // pinned method before `clearAPICredentials()` resets it.
-        let returnToTop = selectedAuthMethod.isOAuth
-        clearAPICredentials()
-        apiSubstate = returnToTop ? .picker : .apiKeyPicker
-    }
-
-    /// Picker → form drill-in. Tapping a provider card immediately advances
-    /// to its key form (or the custom-provider form), no "Continue" press
-    /// required.
-    ///
-    /// The connection method for dual-mode providers (OpenAI, OpenRouter, xAI)
-    /// is decided by where the card lives: the OAuth-first top level uses OAuth,
-    /// the "Use an API key" sub-list (`preferAPIKey`) uses the pasted key. There
-    /// is no in-form fork, so we pin the auth mode here at selection time.
-    /// Claude Code sign-in status, resolved when its screen appears. Lives on
-    /// the shared state rather than the body view because the footer CTA is a
-    /// separate struct and has to read the same answer.
-    @Published var claudeCodeAuth: ClaudeCodeAuthStatus?
-    @Published var isCheckingClaudeCode = false
-    @Published var isSigningInClaudeCode = false
-
-    func refreshClaudeCodeAuth() async {
-        isCheckingClaudeCode = true
-        claudeCodeAuth = await ClaudeCodeConfiguration.authStatus()
-        isCheckingClaudeCode = false
-    }
-
-    /// Run the CLI's own browser sign-in, then re-read the status.
-    func signInClaudeCode() async {
-        isSigningInClaudeCode = true
-        defer { isSigningInClaudeCode = false }
-        if let status = await ClaudeCodeConfiguration.login(), status.loggedIn {
-            claudeCodeAuth = status
-        } else {
-            // Cancelled or failed — re-probe rather than asserting a failure we
-            // can't distinguish from the user closing the browser.
-            await refreshClaudeCodeAuth()
-        }
-    }
-
-    /// Drill into the Claude Code screen. No preset and no auth method: the
-    /// choice doesn't flow through `ProviderCatalog` at all.
-    func selectClaudeCode() {
-        substateDirection = .forward
-        apiSubstate = .claudeCode
-    }
-
-    func popClaudeCodeToPicker() {
-        substateDirection = .backward
-        apiSubstate = .picker
-    }
-
-    func selectAPIPreset(_ preset: ProviderPreset, preferAPIKey: Bool = false) {
-        substateDirection = .forward
-        if let entry = ProviderCatalog.entry(for: preset) {
-            selectedAuthMethod = preferAPIKey ? .apiKey : (entry.authMethods.first ?? .apiKey)
-        }
-        if preset == .custom {
-            apiSubstate = .customForm
-        } else {
-            apiSubstate = .keyForm(preset)
-        }
     }
 
     func resolvedAPIConfig() -> ResolvedProviderConfig? {
@@ -803,9 +762,9 @@ final class ConfigureAIState: ObservableObject {
     }
 
     func saveProviderAndContinue(onComplete: () -> Void) {
-        // One-shot: a successful test auto-advances, but the CTA is also still
-        // tappable during the brief green window, so both routes funnel through
-        // this latch to avoid adding the provider (and advancing) twice.
+        // One-shot: the Continue CTA remains tappable briefly while saving, so
+        // both routes funnel through this latch to avoid adding the provider
+        // (and advancing) twice.
         guard !hasFinalizedAPI else { return }
         guard let config = resolvedAPIConfig() else { return }
         hasFinalizedAPI = true
@@ -862,12 +821,14 @@ final class ConfigureAIState: ObservableObject {
     }
 }
 
-// MARK: - Body
+// MARK: - Step view
 
-struct ConfigureAIBody: View {
+struct ConfigureAIStepView: View {
     @ObservedObject var state: ConfigureAIState
+    let onComplete: () -> Void
 
-    @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     /// `totalMemoryGB` is populated synchronously in
     /// `SystemMonitorService.init`, so the first onboarding frame can select a
     /// hardware-appropriate local default.
@@ -880,27 +841,10 @@ struct ConfigureAIBody: View {
     private let systemMonitor = SystemMonitorService.shared
 
     var body: some View {
-        OnboardingTwoColumnBody(
-            illustrationAsset: "osaurus-brain",
-            leftHeadline: "A brain that runs on your Mac",
-            leftBody:
-                "Your chats stay private and work offline. We picked the best fit for this Mac — all you have to do is download it.",
-            // We manage our own inner scroll: each screen owns its scrolling so
-            // the slide transition stays crisp.
-            useScrollView: false
-        ) {
-            // Screen envelope. Clipped horizontally so the slide transition
-            // never bleeds into the left column, but vertically scaled (`y: 4`)
-            // so card hover shadows can escape the screen region without being
-            // trimmed at the scroll-area edges.
-            ZStack(alignment: .topLeading) {
-                screenContainer
-                    .id(substateID)
-                    .transition(substateTransition)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .clipShape(Rectangle().scale(x: 1, y: 4))
-            .animation(.spring(response: 0.5, dampingFraction: 0.85), value: substateID)
+        OnboardingStepLayout {
+            ConfigureAILeftColumn(state: state, onComplete: onComplete)
+        } right: {
+            rightPanel
         }
         .onAppear {
             state.ensureLocalSelection(totalMemoryGB: systemMonitor.totalMemoryGB)
@@ -908,610 +852,375 @@ struct ConfigureAIBody: View {
         }
     }
 
-    // MARK: - Screen dispatch
+    // MARK: Right panel
+
+    private var rightPanel: some View {
+        OnboardingRightPanel {
+            ZStack {
+                screenContainer
+                    .id(substateID)
+                    .transition(substateTransition)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipShape(
+                RoundedRectangle(cornerRadius: OnboardingLayout.panelRadius, style: .continuous)
+            )
+            .animation(OnboardingMotion.gentle, value: substateID)
+        }
+    }
 
     private var substateID: String {
         switch state.screen {
         case .home: return "home"
-        case .byok:
-            switch state.apiSubstate {
-            case .picker: return "byok-picker"
-            case .apiKeyPicker: return "byok-key-picker"
-            case .keyForm(let p): return "byok-key-\(p.rawValue)"
-            case .customForm: return "byok-custom"
-            case .claudeCode: return "byok-claude-code"
-            }
+        case .byok: return "provider-\(state.currentAPIProvider?.rawValue ?? "none")"
+        case .claudeCode: return "claude-code"
         }
     }
 
-    /// Direction-aware horizontal slide that mirrors the global step
-    /// transition's vocabulary: pure offset, no opacity. Sized to the screen
-    /// region width so the body slides cleanly off one edge while the next
-    /// slides in from the opposite edge.
+    /// Direction-aware push-fade — the same motion language as the outer
+    /// step transitions (crossfade under Reduce Motion).
     private var substateTransition: AnyTransition {
-        let dx = OnboardingMetrics.substateSlideOffset
-        let inOffset = state.substateDirection == .forward ? dx : -dx
-        let outOffset = state.substateDirection == .forward ? -dx : dx
-        return .asymmetric(
-            insertion: .offset(x: inOffset),
-            removal: .offset(x: outOffset)
+        OnboardingMotion.pushFade(
+            direction: state.substateDirection,
+            reduceMotion: reduceMotion
         )
     }
 
-    /// Screen container — owns its own scrolling and in-section back row when
-    /// the user has drilled into bring-your-own-provider.
     @ViewBuilder
     private var screenContainer: some View {
         switch state.screen {
         case .home:
-            OnboardingScrollContainer { homeView }
+            ConfigureAIHomePanel(state: state, onComplete: onComplete)
         case .byok:
-            byokContainer
-        }
-    }
-
-    @ViewBuilder
-    private var byokContainer: some View {
-        switch state.apiSubstate {
-        case .picker:
-            substateWithBackBar(onBack: { state.popBYOKToHome() }) {
-                apiPickerView
-            }
-        case .apiKeyPicker:
-            substateWithBackBar(onBack: { state.popAPIKeyPickerToTop() }) {
-                apiKeyPickerView
-            }
-        case .keyForm(let provider):
-            substateWithBackBar(onBack: { state.popFormToPicker(for: provider) }) {
-                apiKeyFormView
-            }
-        case .customForm:
-            substateWithBackBar(onBack: { state.popFormToPicker(for: .custom) }) {
-                apiCustomFormView
-            }
+            ConfigureAIProviderPanel(state: state)
         case .claudeCode:
-            substateWithBackBar(onBack: { state.popClaudeCodeToPicker() }) {
-                claudeCodeView
-            }
-        }
-    }
-
-    /// Sub-screen frame: an in-context back row (drills out to home / one level
-    /// up) followed by the body wrapped in the shared scroll container for any
-    /// overflow (key forms, custom-provider form, etc.).
-    private func substateWithBackBar<C: View>(
-        onBack: @escaping () -> Void,
-        @ViewBuilder content: () -> C
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            substateBackRow(onBack: onBack)
-            OnboardingScrollContainer { content() }
-        }
-    }
-
-    private func substateBackRow(onBack: @escaping () -> Void) -> some View {
-        // Always a plain "Back" — a section title was redundant breadcrumb
-        // noise (and truncated awkwardly, e.g. "Use an API k…").
-        Button(action: onBack) {
-            HStack(spacing: 6) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 11, weight: .semibold))
-                Text("Back", bundle: .module)
-                    .font(theme.font(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            .foregroundColor(theme.secondaryText)
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .localizedHelp("Back")
-    }
-
-    // MARK: - Home screen
-
-    /// Landing screen: the recommended local model first, followed by the
-    /// included no-wait Cloud benefit and a clearly tertiary provider path.
-    /// The actual local-vs-Cloud-only actions stay together in the footer.
-    private var homeView: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            LocalModelFeatureCard(state: state)
-            cloudIncludedNote
-            if let warning = state.diskSpaceWarning {
-                OnboardingCalloutBanner(tone: .error, rawMessage: warning)
-            }
-            providerLink
-        }
-    }
-
-    /// Supporting copy without option-card styling or interaction: Cloud is an
-    /// included benefit, not a competing setup choice. Keep the $2.50 promise
-    /// stable across repeated onboarding runs so QA can verify first-run copy
-    /// even after this development wallet has already claimed or been refused.
-    /// Claim/retry behavior remains owned by `WelcomeCreditService`.
-    private var cloudIncludedNote: some View {
-        HStack(alignment: .top, spacing: 9) {
-            ZStack {
-                Circle().fill(theme.accentColor.opacity(0.12))
-                Image(systemName: "bolt.fill")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(theme.accentColor)
-            }
-            .frame(width: 22, height: 22)
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 7) {
-                    Text("Start chatting right away", bundle: .module)
-                        .font(theme.font(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    OnboardingBadgeChip(
-                        badge: OnboardingRowBadge(L("Cloud included"), style: .accent)
-                    )
-                }
-                Text(
-                    "Your free $2.50 credit lets you start immediately. Osaurus switches to your private model automatically when it's ready.",
-                    bundle: .module
-                )
-                .font(theme.font(size: 11))
-                .foregroundColor(theme.secondaryText)
-                .lineSpacing(2)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 4)
-    }
-
-    /// Tertiary escape hatch for existing provider users. Deliberately styled
-    /// as a text action so it doesn't compete with the single download path.
-    private var providerLink: some View {
-        Button {
-            state.showBYOK()
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: "key.fill")
-                    .font(.system(size: 11, weight: .medium))
-                Text("Already have a provider? Connect it", bundle: .module)
-                    .font(theme.font(size: 12, weight: .semibold))
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .bold))
-            }
-            .foregroundColor(theme.secondaryText)
-            .padding(.vertical, 5)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .localizedHelp("Connect a provider")
-    }
-
-    // MARK: - API picker
-
-    /// The bring-your-own-key body: OAuth-first sign-in rows plus the "Use an
-    /// API key" drill-in.
-    private var apiPickerView: some View {
-        VStack(alignment: .leading, spacing: OnboardingMetrics.cardSpacing) {
-            ForEach(Array(ProviderPreset.oauthProviders.enumerated()), id: \.element.id) {
-                index,
-                preset in
-                apiPresetCard(preset)
-
-                // Second, next to the other subscription sign-ins. Only when
-                // the CLI is installed: onboarding shouldn't send a new user
-                // off to install other software mid-flow.
-                if index == 0, ClaudeCodeConfiguration.isAvailable() {
-                    claudeCodeCard
-                }
-            }
-            useAPIKeyCard
-        }
-    }
-
-    /// Drill-in entry to the grouped API-key sub-list. Titled "Use an API key"
-    /// even though it also houses Ollama (local) and Custom, because API-key
-    /// vendors are the dominant case; the sub-list section headers disambiguate.
-    private var useAPIKeyCard: some View {
-        OnboardingRowCard(
-            icon: .symbol("key.fill"),
-            title: L("Use an API key"),
-            subtitle: L("Anthropic, Google, Ollama, and more — paste a key to connect"),
-            accessory: .chevron
-        ) {
-            state.showAPIKeyPicker()
-        }
-    }
-
-    /// Claude Code entry. Sits with the OAuth sign-ins rather than under "Use
-    /// an API key" because it is subscription-backed and stores no key.
-    private var claudeCodeCard: some View {
-        OnboardingRowCard(
-            icon: .symbol("terminal.fill"),
-            title: L("Claude Code"),
-            subtitle: L("Use your Claude Pro or Max subscription — no API key"),
-            accessory: .chevron
-        ) {
-            state.selectClaudeCode()
-        }
-    }
-
-    /// Claude Code sign-in status.
-    ///
-    /// Deliberately thin next to the key forms: there is nothing to type and
-    /// nothing to test. Either the CLI is signed in — in which case the only
-    /// action is to continue — or it isn't, and the fix is the CLI's own
-    /// browser sign-in.
-    @ViewBuilder
-    private var claudeCodeView: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Claude Code", bundle: .module)
-                .font(theme.font(size: 20, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-            Text(
-                "Osaurus runs your local `claude` command, so requests use your Claude subscription and Osaurus never stores an Anthropic key.",
-                bundle: .module
+            ClaudeCodeSetupStep(
+                onBack: {
+                    state.substateDirection = .backward
+                    state.screen = .home
+                },
+                onDone: {
+                    state.chooseClaudeCodeAndContinue(onComplete: onComplete)
+                },
+                completionTitle: "Use Claude Code",
+                requiresUsableCLI: true
             )
-            .font(theme.font(size: 13))
-            .foregroundColor(theme.secondaryText)
-            .fixedSize(horizontal: false, vertical: true)
-
-            if let status = state.claudeCodeAuth, status.loggedIn {
-                OnboardingRowCard(
-                    icon: .symbol("checkmark.circle.fill"),
-                    title: status.email ?? L("Signed in and ready"),
-                    subtitle: status.displayPlan.map { String(format: L("Claude %@"), $0) },
-                    accessory: .none
-                ) {}
-            } else if state.isCheckingClaudeCode {
-                HStack(spacing: 10) {
-                    ProgressView().controlSize(.small)
-                    Text("Checking Claude Code…", bundle: .module)
-                        .font(theme.font(size: 13))
-                        .foregroundColor(theme.secondaryText)
-                }
-            } else {
-                Text(
-                    "Sign in with the Anthropic account that has your Pro or Max subscription.",
-                    bundle: .module
-                )
-                .font(theme.font(size: 12))
-                .foregroundColor(theme.tertiaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .task { await state.refreshClaudeCodeAuth() }
-    }
-
-    /// Grouped API-key sub-list (key vendors / Local / Custom). Azure OpenAI is
-    /// omitted in onboarding (it needs extra endpoint + deployment fields).
-    private var apiKeyPickerView: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ForEach(ProviderPreset.apiKeyPickerGroups(includeAzure: false)) { section in
-                VStack(alignment: .leading, spacing: OnboardingMetrics.cardSpacing) {
-                    Text(LocalizedStringKey(section.title), bundle: .module)
-                        .font(theme.font(size: 11, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                        .textCase(.uppercase)
-                    ForEach(section.presets, id: \.id) { preset in
-                        apiPresetCard(preset, preferAPIKey: true)
-                    }
-                }
-            }
-        }
-    }
-
-    /// `preferAPIKey` distinguishes the "Use an API key" sub-list rows (pasted
-    /// key) from the OAuth-first top-level rows for the dual-mode presets.
-    private func apiPresetCard(_ preset: ProviderPreset, preferAPIKey: Bool = false) -> some View {
-        OnboardingRowCard(
-            icon: .custom {
-                ProviderIcon(preset: preset, size: 18, color: theme.secondaryText)
-            },
-            title: presetTitle(for: preset),
-            subtitle: presetSubtitle(for: preset, preferAPIKey: preferAPIKey),
-            badges: presetBadges(for: preset),
-            accessory: .chevron
-        ) {
-            // Drill-in: tapping a card commits the choice and advances
-            // straight to the matching key form. No "Continue" press needed.
-            state.selectAPIPreset(preset, preferAPIKey: preferAPIKey)
-        }
-    }
-
-    private func presetTitle(for preset: ProviderPreset) -> String {
-        switch preset {
-        case .custom:
-            return L("Custom / OpenAI-compatible")
-        default:
-            return preset.name
-        }
-    }
-
-    /// Onboarding-specific subtitle. Diverges from the generic
-    /// `preset.description` for the custom card (concrete example providers) and
-    /// for the dual-mode presets, whose subtitle reflects the entry point: the
-    /// OAuth-first top level describes the browser sign-in, the "Use an API key"
-    /// sub-list (`preferAPIKey`) describes the pasted key.
-    private func presetSubtitle(for preset: ProviderPreset, preferAPIKey: Bool = false) -> String {
-        // Returns localization *keys*; the row card localizes via
-        // `LocalizedStringKey(subtitle)`, so don't pre-localize here.
-        ProviderCatalog.entry(for: preset)?.pickerSubtitle(preferAPIKey: preferAPIKey)
-            ?? preset.description
-    }
-
-    /// Lift selected provider badges to a richer style so the provider
-    /// picker stays scannable. Ollama's "Local" label specifically gets
-    /// the success-green chip — it lives in the bring-your-own-key tab for
-    /// routing reasons (same HTTP code path), but the row needs to read as
-    /// "this is the local-server option" at a glance.
-    private func presetBadges(for preset: ProviderPreset) -> [OnboardingRowBadge] {
-        guard let label = preset.badge else { return [] }
-        let style: OnboardingRowBadge.Style = (preset == .ollama) ? .success : .neutral
-        return [OnboardingRowBadge(label, style: style)]
-    }
-
-    // MARK: - API key form
-
-    @ViewBuilder
-    private var apiKeyFormView: some View {
-        if case .keyForm(let provider) = state.apiSubstate {
-            apiKeyForm(provider: provider)
-        }
-    }
-
-    private func apiKeyForm(provider: ProviderPreset) -> some View {
-        // Compute once — both the key field and the help section condition
-        // depend on the same answer.
-        let showsKeyField = shouldShowKeyField(for: provider)
-        let isNoAuth = provider.configuration.authType == .none
-
-        return VStack(spacing: 14) {
-            if isNoAuth {
-                noAuthEndpointBanner(for: provider)
-            } else if let kind = state.selectedOAuthKind {
-                // Dual-mode preset reached via the OAuth-first top level: the
-                // browser sign-in IS the action (footer CTA), so the body just
-                // explains what's about to happen.
-                oauthInfoBanner(for: kind)
-            }
-            if showsKeyField {
-                apiKeyField(provider: provider)
-            }
-            if showsKeyField || isNoAuth {
-                helpSection(for: provider)
-            }
-        }
-    }
-
-    /// Body shown for the OAuth-first entry of a dual-mode preset. There's no
-    /// key field — the footer button starts the browser flow — so this banner
-    /// carries the short "here's how this works" context the auth-choice card
-    /// used to provide.
-    private func oauthInfoBanner(for kind: ProviderOAuthKind) -> some View {
-        OnboardingGlassCard {
-            HStack(spacing: 10) {
-                Image(systemName: kind.icon)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-                Text(LocalizedStringKey(kind.subtitle), bundle: .module)
-                    .font(theme.font(size: 13))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(14)
-        }
-    }
-
-    /// Replaces the API key field for presets that authenticate locally (no
-    /// key required — Ollama, etc.). Shows the resolved endpoint so the user
-    /// can confirm where Osaurus will look.
-    private func noAuthEndpointBanner(for preset: ProviderPreset) -> some View {
-        let cfg = preset.configuration
-        var url = cfg.providerProtocol.rawValue + "://" + cfg.host
-        if let port = cfg.port { url += ":\(port)" }
-        url += cfg.basePath
-        return OnboardingGlassCard {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.successColor)
-                    Text("No API key required", bundle: .module)
-                        .font(theme.font(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Spacer(minLength: 0)
-                }
-                HStack(spacing: 8) {
-                    Image(systemName: "link")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.accentColor)
-                    Text(url)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(theme.secondaryText)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(14)
-        }
-    }
-
-    /// Whether the key form should expose the raw API key field + help
-    /// section. Both OpenAI and OpenRouter offer an OAuth alternative, and
-    /// the field is only relevant when the user picks the paste-key mode.
-    private func shouldShowKeyField(for provider: ProviderPreset) -> Bool {
-        // Dual-mode providers only show the raw key field in api-key mode;
-        // everything else falls back to whether the preset uses an API key.
-        if let entry = ProviderCatalog.entry(for: provider), entry.primaryOAuthKind != nil {
-            return state.selectedAuthMethod == .apiKey
-        }
-        return provider.configuration.authType == .apiKey
-    }
-
-    private var apiCustomFormView: some View {
-        VStack(spacing: 14) {
-            OnboardingGlassCard {
-                customProviderForm.padding(14)
-            }
-            apiKeyField(provider: .custom)
-            if state.customForm.isLocalhost {
-                customFormLocalhostHint
-            }
-        }
-    }
-
-    private var customFormLocalhostHint: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "info.circle")
-                .font(.system(size: 11))
-            Text(
-                "Local endpoints don't usually need a key — leave blank to skip auth.",
-                bundle: .module
-            )
-            .font(theme.font(size: 11))
-            Spacer(minLength: 0)
-        }
-        .foregroundColor(theme.tertiaryText)
-        .padding(.horizontal, 4)
-    }
-
-    private var customProviderForm: some View {
-        VStack(spacing: 12) {
-            OnboardingTextField(
-                label: "Name",
-                placeholder: "e.g. My Provider",
-                text: $state.customForm.name
-            )
-
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Protocol", bundle: .module)
-                        .font(theme.font(size: 11, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                    OnboardingSegmentedControl(
-                        selection: $state.customForm.protocolKind,
-                        items: [
-                            OnboardingSegmentItem(tag: .https, title: "HTTPS"),
-                            OnboardingSegmentItem(tag: .http, title: "HTTP"),
-                        ],
-                        style: .compact
-                    )
-                }
-                .frame(width: 130)
-
-                OnboardingTextField(
-                    label: "Host",
-                    placeholder: "api.example.com",
-                    text: $state.customForm.host,
-                    isMonospaced: true
-                )
-            }
-
-            HStack(spacing: 12) {
-                OnboardingTextField(
-                    label: "Port",
-                    placeholder: state.customForm.protocolKind == .https ? "443" : "80",
-                    text: $state.customForm.port,
-                    isMonospaced: true
-                )
-                .frame(width: 100)
-
-                OnboardingTextField(
-                    label: "Base Path",
-                    placeholder: "/v1",
-                    text: $state.customForm.basePath,
-                    isMonospaced: true
-                )
-            }
-
-            if !state.customForm.host.isEmpty {
-                endpointPreview
-            }
-        }
-    }
-
-    private func apiKeyField(provider: ProviderPreset) -> some View {
-        OnboardingSecureField(
-            placeholder: "sk-...",
-            text: $state.apiKey,
-            label: provider == .openai ? "OpenAI Platform API Key" : "API Key"
-        )
-        .onChange(of: state.apiKey) { _, _ in state.testResult = nil }
-    }
-
-    private var endpointPreview: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "link")
-                .font(.system(size: 11))
-                .foregroundColor(theme.accentColor)
-            Text(state.customForm.endpointPreview)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(theme.secondaryText)
-        }
-        .padding(.horizontal, OnboardingMetrics.bannerPaddingH)
-        .padding(.vertical, OnboardingMetrics.bannerPaddingV)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: OnboardingMetrics.bannerCornerRadius)
-                .fill(theme.accentColor.opacity(0.1))
-        )
-    }
-
-    private func helpSection(for preset: ProviderPreset) -> some View {
-        let heading: LocalizedStringKey =
-            preset.configuration.authType == .none
-            ? "Don't have it set up yet?"
-            : "Don't have a key?"
-        return OnboardingGlassCard {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(heading, bundle: .module)
-                    .font(theme.font(size: 13, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(preset.helpSteps.enumerated()), id: \.offset) { index, text in
-                        HelpStepRow(number: index + 1, text: text)
-                    }
-                }
-
-                ProviderHelpLinks(
-                    preset: preset,
-                    accentColor: theme.accentColor,
-                    secondaryTextColor: theme.secondaryText
-                )
-                .padding(.top, 2)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(14)
         }
     }
 }
 
-// MARK: - Featured local model card
+// MARK: - Left column
 
-/// The home screen's hero: the local model Osaurus picked for this Mac, with
-/// its use case, download size, and memory requirement. If the user navigates
-/// back after starting the download, this card also reflects live progress and
-/// recovery state. Isolated so only the card re-renders on `ModelManager`'s
-/// frequent progress publishes.
-private struct LocalModelFeatureCard: View {
+/// Brain dino + title + subtitle + the step CTA. The CTA swaps from "Set up
+/// later" (nothing committed) to "Continue to Osaurus" once a download is
+/// running or a provider is verified. While a download is in flight a comic
+/// speech bubble floats above the dino reassuring the user that it continues
+/// in the background (Figma node 42:4533).
+private struct ConfigureAILeftColumn: View {
     @ObservedObject var state: ConfigureAIState
+    let onComplete: () -> Void
 
-    @Environment(\.theme) private var theme
+    @ObservedObject private var modelManager = ModelManager.shared
+
+    /// Whether the featured model's download is currently in flight.
+    private var isDownloading: Bool {
+        guard let id = state.selectedModel?.id else { return false }
+        if case .downloading = modelManager.downloadStates[id] { return true }
+        return false
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Image("osaurus-brain", bundle: .module)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(height: 106)
+                // The bubble is a free-floating overlay (matching the design's
+                // absolute placement) so its appearance never reflows the
+                // column: anchored to the dino's top-right, tail pointing back
+                // down at its head.
+                .overlay(alignment: .topLeading) {
+                    if isDownloading {
+                        downloadBubble
+                            .offset(x: 90, y: -100)
+                            .transition(
+                                .scale(scale: 0.8, anchor: .bottomLeading)
+                                    .combined(with: .opacity)
+                            )
+                    }
+                }
+                .animation(OnboardingMotion.bouncy, value: isDownloading)
+                .onboardingEntrance(0, scaleFrom: 0.96)
+
+            Spacer().frame(height: 24)
+
+            Text("A private brain that runs on your Mac", bundle: .module)
+                .font(OnboardingTypography.heroTitle)
+                .tracking(0.4)
+                .foregroundColor(OnboardingPalette.labelPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .onboardingEntrance(1)
+
+            Spacer().frame(height: 16)
+
+            Text(
+                "We've picked the best fit for your Mac and the specialty you chose, so your Dino can work locally — even offline.",
+                bundle: .module
+            )
+            .font(OnboardingTypography.subtitle)
+            .foregroundColor(OnboardingPalette.labelSecondary)
+            .lineSpacing(1.5)
+            .fixedSize(horizontal: false, vertical: true)
+            .onboardingEntrance(2)
+
+            Spacer().frame(height: 40)
+
+            cta
+                .onboardingEntrance(3)
+        }
+    }
+
+    /// The design's white comic speech bubble: 196×64 text box, 12pt
+    /// semibold black copy, thin black outline, tail sweeping down-left
+    /// toward the dino. The tail hangs 13pt below the text box via the
+    /// top-aligned background shape, so it never affects the text layout.
+    private var downloadBubble: some View {
+        Text("You can continue while the model downloads in the background!", bundle: .module)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.black)
+            .lineSpacing(1)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .frame(width: 196, height: 64)
+            .background(alignment: .top) {
+                SpeechBubbleShape()
+                    .fill(Color.white)
+                    .overlay(SpeechBubbleShape().stroke(Color.black, lineWidth: 1))
+                    .frame(width: 196, height: 77)
+                    .shadow(color: Color.black.opacity(0.25), radius: 10, y: 5)
+            }
+    }
+
+    @ViewBuilder
+    private var cta: some View {
+        if state.isAPISuccess {
+            OnboardingPillButton(
+                title: "Continue to Osaurus",
+                style: .primary,
+                size: .large,
+                isEnabled: !state.isSaving,
+                action: { state.saveProviderAndContinue(onComplete: onComplete) }
+            )
+        } else if state.hasCommittedLocal {
+            OnboardingPillButton(
+                title: "Continue to Osaurus",
+                style: .primary,
+                size: .large,
+                action: onComplete
+            )
+        } else {
+            OnboardingPillButton(
+                title: "Set up later",
+                style: .secondary,
+                size: .large,
+                action: { state.chooseOsaurusAndContinue(onComplete: onComplete) }
+            )
+        }
+    }
+}
+
+/// The speech-bubble outline traced from the Figma vector (node 42:4534):
+/// a 16pt-radius rounded rectangle over the top 64pt with a curved comic
+/// tail sweeping down-left off the bottom edge. Reference canvas 196×77;
+/// the path scales to whatever rect it's given.
+private struct SpeechBubbleShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let sx = rect.width / 196
+        let sy = rect.height / 77
+        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + x * sx, y: rect.minY + y * sy)
+        }
+        var path = Path()
+        // Tail root on the bottom edge, up into the rounded rectangle…
+        path.move(to: p(21.97, 67.95))
+        path.addCurve(to: p(18.5, 64), control1: p(22.55, 65.82), control2: p(20.71, 64))
+        path.addLine(to: p(16, 64))
+        path.addCurve(to: p(0, 48), control1: p(7.16, 64), control2: p(0, 56.84))
+        path.addLine(to: p(0, 16))
+        path.addCurve(to: p(16, 0), control1: p(0, 7.16), control2: p(7.16, 0))
+        path.addLine(to: p(180, 0))
+        path.addCurve(to: p(196, 16), control1: p(188.84, 0), control2: p(196, 7.16))
+        path.addLine(to: p(196, 48))
+        path.addCurve(to: p(180, 64), control1: p(196, 56.84), control2: p(188.84, 64))
+        path.addLine(to: p(38, 64))
+        // …then the tail: bows out of the bottom edge and curls to a point.
+        path.addCurve(to: p(33.39, 67.94), control1: p(35.79, 64), control2: p(34.06, 65.83))
+        path.addCurve(to: p(21, 77), control1: p(31.72, 73.19), control2: p(26.81, 77))
+        path.addLine(to: p(16.01, 77))
+        path.addCurve(to: p(15.84, 76.44), control1: p(15.71, 77), control2: p(15.59, 76.61))
+        path.addCurve(to: p(21.97, 67.95), control1: p(18.88, 74.42), control2: p(21.03, 71.38))
+        path.closeSubpath()
+        return path
+    }
+}
+
+// MARK: - Home panel
+
+/// The right panel's home screen: recommended model card + provider chips.
+private struct ConfigureAIHomePanel: View {
+    @ObservedObject var state: ConfigureAIState
+    let onComplete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            RecommendedModelCard(state: state, onComplete: onComplete)
+                .onboardingEntrance(0, scaleFrom: 0.98)
+
+            if let warning = state.diskSpaceWarning {
+                Spacer().frame(height: 12)
+                Text(warning)
+                    .font(OnboardingTypography.cardCaption)
+                    .foregroundColor(Color(red: 1.0, green: 0.45, blue: 0.4))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer().frame(height: 28)
+
+            Text("Prefer to connect your AI Provider?", bundle: .module)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(OnboardingPalette.labelPrimary)
+                .onboardingEntrance(2)
+
+            Spacer().frame(height: 12)
+
+            providerChips
+
+            Spacer(minLength: 0)
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// The five Figma-featured providers, in frame order.
+    private static let featuredPresets: [ProviderPreset] = [
+        .openai, .anthropic, .xai, .openrouter, .google,
+    ]
+
+    /// Remaining connectable presets revealed by "+ More": every API-key
+    /// picker preset not already featured. The custom OpenAI-compatible form
+    /// stays out of onboarding (it needs a multi-field form; Settings owns it).
+    private static var morePresets: [ProviderPreset] {
+        ProviderPreset.apiKeyPickerGroups(includeAzure: false)
+            .flatMap(\.presets)
+            .filter { !featuredPresets.contains($0) && $0 != .custom }
+    }
+
+    private var visiblePresets: [ProviderPreset] {
+        state.showAllProviders
+            ? Self.featuredPresets + Self.morePresets
+            : Self.featuredPresets
+    }
+
+    /// Featured chips cascade in with a tight stagger after the card and
+    /// header; the chips revealed by "+ More" instead pop in with the
+    /// expansion animation itself.
+    private var providerChips: some View {
+        ChipFlowLayout(spacing: 8, lineSpacing: 8) {
+            ForEach(Array(visiblePresets.enumerated()), id: \.element.id) { index, preset in
+                let chip = OnboardingProviderChip(
+                    logo: { OnboardingProviderLogo(preset: preset, size: 16) },
+                    label: preset == .google ? "Gemini" : preset.name
+                ) {
+                    state.enterProvider(preset)
+                }
+                if index < Self.featuredPresets.count {
+                    chip.onboardingEntrance(3 + index)
+                } else {
+                    chip.transition(.scale(scale: 0.85).combined(with: .opacity))
+                }
+            }
+
+            OnboardingProviderChip(
+                logo: {
+                    Image(systemName: "terminal.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(OnboardingPalette.labelPrimary)
+                },
+                label: "Claude Code"
+            ) {
+                state.enterClaudeCode()
+            }
+            .onboardingEntrance(3 + Self.featuredPresets.count)
+
+            if !state.showAllProviders {
+                OnboardingProviderChip(
+                    logo: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(OnboardingPalette.labelPrimary)
+                    },
+                    label: L("More")
+                ) {
+                    // `smooth`: the chip grid reflows on expansion, and a
+                    // wobbling layout reads as jank rather than character.
+                    withAnimation(OnboardingMotion.smooth) {
+                        state.showAllProviders = true
+                    }
+                }
+                .transition(.scale(scale: 0.85).combined(with: .opacity))
+                .onboardingEntrance(4 + Self.featuredPresets.count)
+            }
+        }
+    }
+}
+
+// MARK: - Recommended model card
+
+/// The elevated recommended-model card: "Picked for your Mac" badge, model
+/// name, plain-language description, then a per-download-state block —
+/// meta chips + Download/Change buttons, in-card progress, pause/failure
+/// recovery, or the already-on-disk state. Isolated so only the card
+/// re-renders on `ModelManager`'s frequent progress publishes.
+private struct RecommendedModelCard: View {
+    @ObservedObject var state: ConfigureAIState
+    let onComplete: () -> Void
+
     @ObservedObject private var modelManager = ModelManager.shared
 
     var body: some View {
         if let model = state.selectedModel {
-            OnboardingGlassCard(isSelected: state.hasStartedLocalDownload) {
-                VStack(alignment: .leading, spacing: 12) {
-                    header(model)
-                    statusBlock(model)
+            VStack(alignment: .leading, spacing: 0) {
+                OnboardingPickedBadge(text: "Picked for your Mac")
+
+                Spacer().frame(height: 12)
+
+                titleRow(model)
+
+                Spacer().frame(height: 6)
+
+                if let subtitle = ConfigureAIState.chooserSubtitle(for: model) {
+                    Text(subtitle)
+                        .font(OnboardingTypography.cardCaption)
+                        .foregroundColor(OnboardingPalette.labelSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(16)
+
+                Spacer().frame(height: 14)
+
+                statusBlock(model)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
+            .background(
+                RoundedRectangle(cornerRadius: OnboardingLayout.cardRadius, style: .continuous)
+                    .fill(OnboardingPalette.fill5)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: OnboardingLayout.cardRadius, style: .continuous)
+                    .strokeBorder(OnboardingPalette.fill8, lineWidth: 1)
+            )
         }
     }
 
@@ -1522,150 +1231,160 @@ private struct LocalModelFeatureCard: View {
         return modelManager.downloadStates[model.id] ?? .notStarted
     }
 
-    // MARK: Header
+    private func titleRow(_ model: MLXModel) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(model.simplifiedName)
+                .font(OnboardingTypography.modelTitle)
+                .foregroundColor(OnboardingPalette.labelWhite)
+                .fixedSize(horizontal: false, vertical: true)
 
-    private func header(_ model: MLXModel) -> some View {
-        HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Picked for your Mac", bundle: .module)
-                    .font(theme.font(size: 10, weight: .bold))
-                    .foregroundColor(theme.accentColor)
-                    .tracking(0.7)
-                    .textCase(.uppercase)
-
-                Text(model.simplifiedName)
-                    .font(theme.font(size: 18, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if let subtitle = ConfigureAIState.chooserSubtitle(for: model) {
-                    Text(LocalizedStringKey(subtitle), bundle: .module)
-                        .font(theme.font(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                        .lineSpacing(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            Spacer(minLength: 8)
-
-            // Model swaps are only offered before bytes start moving —
-            // switching mid-download would orphan the download in flight.
-            if !state.hasStartedLocalDownload, case .notStarted = downloadState(for: model) {
-                OnboardingCompactButton(title: "Change model", style: .ghost) {
-                    state.openModelChooser()
-                }
+            // The size moves inline next to the name once the meta chips are
+            // replaced by the progress block (per the downloading frame).
+            if isInProgress(model), let size = model.formattedDownloadSize {
+                Text(size)
+                    .font(.system(size: 15))
+                    .foregroundColor(OnboardingPalette.labelSecondary)
             }
         }
     }
 
-    // MARK: Status
+    private func isInProgress(_ model: MLXModel) -> Bool {
+        switch downloadState(for: model) {
+        case .downloading, .paused: return true
+        default: return false
+        }
+    }
+
+    // MARK: Status block
 
     @ViewBuilder
     private func statusBlock(_ model: MLXModel) -> some View {
         switch downloadState(for: model) {
         case .notStarted:
-            modelFacts(model)
+            VStack(alignment: .leading, spacing: 16) {
+                metaChips(model)
+                HStack(spacing: 12) {
+                    OnboardingPillButton(
+                        title: "Download",
+                        style: .primary,
+                        size: .compact,
+                        leadingSymbol: "arrow.down.circle",
+                        action: { state.chooseLocalAndContinue(onComplete: {}) }
+                    )
+                    OnboardingPillButton(
+                        title: "Change model",
+                        style: .text,
+                        size: .compact,
+                        action: { state.openModelChooser() }
+                    )
+                }
+            }
 
         case .downloading(let progress):
-            progressBlock(model, progress: progress)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Downloading..", bundle: .module)
+                    .font(OnboardingTypography.cardCaption)
+                    .foregroundColor(OnboardingPalette.labelSecondary)
+                OnboardingProgressBar(progress: progress)
+                HStack(spacing: 0) {
+                    let metrics = metricsText(for: model) ?? L("Starting download…")
+                    Text(metrics)
+                        .font(OnboardingTypography.cardCaption)
+                        .foregroundColor(OnboardingPalette.labelSecondary)
+                        .contentTransition(.numericText())
+                        .animation(.easeOut(duration: 0.3), value: metrics)
+                    Spacer(minLength: 8)
+                    if let remaining = remainingText(for: model, progress: progress) {
+                        Text(remaining)
+                            .font(OnboardingTypography.cardCaption)
+                            .foregroundColor(OnboardingPalette.labelSecondary)
+                            .contentTransition(.numericText())
+                            .animation(.easeOut(duration: 0.3), value: remaining)
+                    }
+                }
+            }
 
         case .paused(let progress):
-            VStack(alignment: .leading, spacing: 8) {
-                progressBar(progress)
-                HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 10) {
+                OnboardingProgressBar(progress: progress)
+                HStack(spacing: 12) {
                     Text("Download paused", bundle: .module)
-                        .font(theme.font(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                    OnboardingCompactButton(title: "Resume download", style: .accent) {
-                        modelManager.resumeDownload(model.id)
-                    }
-                    Spacer(minLength: 0)
+                        .font(OnboardingTypography.cardCaption)
+                        .foregroundColor(OnboardingPalette.labelSecondary)
+                    OnboardingPillButton(
+                        title: "Resume download",
+                        style: .primary,
+                        size: .compact,
+                        action: { modelManager.resumeDownload(model.id) }
+                    )
                 }
             }
 
         case .failed(let error):
-            VStack(alignment: .leading, spacing: 8) {
-                OnboardingCalloutBanner.error(prefix: "Download hit a snag", detail: error)
-                OnboardingCompactButton(title: "Try again", style: .accent) {
-                    state.startLocalDownload()
+            VStack(alignment: .leading, spacing: 10) {
+                Text(L("Download hit a snag — \(error)"))
+                    .font(OnboardingTypography.cardCaption)
+                    .foregroundColor(Color(red: 1.0, green: 0.45, blue: 0.4))
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 12) {
+                    OnboardingPillButton(
+                        title: "Try again",
+                        style: .primary,
+                        size: .compact,
+                        action: { state.startLocalDownload() }
+                    )
+                    OnboardingPillButton(
+                        title: "Change model",
+                        style: .text,
+                        size: .compact,
+                        action: { state.openModelChooser() }
+                    )
                 }
             }
 
         case .completed:
-            HStack(spacing: 6) {
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.successColor)
-                Text("Already on your Mac — ready to go", bundle: .module)
-                    .font(theme.font(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-            }
-        }
-    }
-
-    /// A short, visual answer to the three first-run questions: how large is
-    /// the download, will it fit in memory, and where do chats run? Kept out
-    /// of badge chrome so the card reads like one recommendation, not a row of
-    /// settings.
-    private func modelFacts(_ model: MLXModel) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 18) {
-                if let size = model.formattedDownloadSize {
-                    modelFact(icon: "arrow.down.circle", text: L("\(size) download"))
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(OnboardingPalette.dinoGreen)
+                    Text("Already on your Mac — ready to go", bundle: .module)
+                        .font(OnboardingTypography.cardCaption)
+                        .foregroundColor(OnboardingPalette.labelSecondary)
                 }
-                if let memory = model.formattedEstimatedMemory {
-                    modelFact(icon: "memorychip", text: L("needs \(memory) memory"))
+                HStack(spacing: 12) {
+                    OnboardingPillButton(
+                        title: "Use this model",
+                        style: .primary,
+                        size: .compact,
+                        action: { state.chooseLocalAndContinue(onComplete: onComplete) }
+                    )
+                    if !state.hasStartedLocalDownload {
+                        OnboardingPillButton(
+                            title: "Change model",
+                            style: .text,
+                            size: .compact,
+                            action: { state.openModelChooser() }
+                        )
+                    }
                 }
             }
-            modelFact(icon: "lock.fill", text: L("Private and offline"))
         }
     }
 
-    private func modelFact(icon: String, text: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.accentColor)
-            Text(text)
-                .font(theme.font(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private func progressBlock(_ model: MLXModel, progress: Double) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            progressBar(progress)
-
-            HStack(spacing: 0) {
-                Text(metricsText(for: model) ?? L("Downloading…"))
-                    .font(theme.font(size: 12))
-                    .foregroundColor(theme.tertiaryText)
-                Spacer(minLength: 8)
-                Text("\(Int(progress * 100))%", bundle: .module)
-                    .font(theme.font(size: 12, weight: .medium).monospaced())
-                    .foregroundColor(theme.tertiaryText)
+    private func metaChips(_ model: MLXModel) -> some View {
+        HStack(spacing: 8) {
+            if let size = model.formattedDownloadSize {
+                OnboardingMetaChip(text: L("Download : \(size)"))
             }
-
-            Text(
-                "You can continue — the download keeps going in the background.",
-                bundle: .module
-            )
-            .font(theme.font(size: 11))
-            .foregroundColor(theme.tertiaryText)
-            .fixedSize(horizontal: false, vertical: true)
+            if let memory = model.formattedEstimatedMemory {
+                OnboardingMetaChip(text: L("Est memory usage : \(memory)"))
+            }
         }
     }
 
-    private func progressBar(_ progress: Double) -> some View {
-        ProgressView(value: progress)
-            .progressViewStyle(.linear)
-            .tint(theme.accentColor)
-    }
-
-    /// "3.1 GB of 7.5 GB · 12 MB/s" from the live download metrics, or `nil`
-    /// before the first metrics tick (the block falls back to "Downloading…").
+    /// "341.3 MB of 13.39 GB · 38.5 MB/s" from the live download metrics, or
+    /// `nil` before the first metrics tick.
     private func metricsText(for model: MLXModel) -> String? {
         guard let metrics = modelManager.downloadMetrics[model.id] else { return nil }
         var parts: [String] = []
@@ -1681,196 +1400,498 @@ private struct LocalModelFeatureCard: View {
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
+
+    /// "~11min remaining" estimated from the live byte rate; `nil` until the
+    /// rate settles.
+    private func remainingText(for model: MLXModel, progress: Double) -> String? {
+        guard let metrics = modelManager.downloadMetrics[model.id],
+            let received = metrics.bytesReceived,
+            let total = metrics.totalBytes,
+            let speed = metrics.bytesPerSecond,
+            speed > 1024, total > received
+        else { return nil }
+        let seconds = Double(total - received) / speed
+        if seconds < 90 { return L("~1min remaining") }
+        let minutes = Int((seconds / 60).rounded())
+        if minutes >= 90 {
+            let hours = Int((seconds / 3600).rounded())
+            return L("~\(hours)h remaining")
+        }
+        return L("~\(minutes)min remaining")
+    }
+}
+
+// MARK: - Provider drill-in panel
+
+/// Per-provider connect screen: back row, centered logo card, then the
+/// connect option rows (browser sign-in and/or API key). A verified method
+/// shows the green check; the left CTA (outside this panel) becomes
+/// "Continue to Osaurus".
+private struct ConfigureAIProviderPanel: View {
+    @ObservedObject var state: ConfigureAIState
+
+    private var preset: ProviderPreset? { state.currentAPIProvider }
+
+    private var oauthKind: ProviderOAuthKind? {
+        guard let preset else { return nil }
+        return ProviderCatalog.entry(for: preset)?.primaryOAuthKind
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            backRow
+
+            if let preset {
+                Spacer().frame(height: 24)
+
+                HStack {
+                    Spacer(minLength: 0)
+                    OnboardingLogoCard(
+                        logo: { OnboardingProviderLogo(preset: preset, size: 28) },
+                        caption: displayName(preset)
+                    )
+                    Spacer(minLength: 0)
+                }
+
+                Spacer().frame(height: 40)
+
+                optionRows(preset)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var backRow: some View {
+        Button {
+            state.popBYOKToHome()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.left")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("Back", bundle: .module)
+                    .font(OnboardingTypography.cardCaption)
+            }
+            .foregroundColor(OnboardingPalette.labelSecondary)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .localizedHelp("Back")
+    }
+
+    private func displayName(_ preset: ProviderPreset) -> String {
+        preset == .google ? "Gemini" : preset.name
+    }
+
+    @ViewBuilder
+    private func optionRows(_ preset: ProviderPreset) -> some View {
+        VStack(spacing: 12) {
+            if oauthKind != nil {
+                OnboardingOptionRow(
+                    title: oauthRowTitle(preset),
+                    caption: oauthRowCaption(preset),
+                    isVerified: state.isAPISuccess && state.selectedAuthMethod.isOAuth
+                ) {
+                    state.openConnectDialog(.oauth)
+                }
+            }
+
+            if preset.configuration.authType == .none {
+                // Local presets (Ollama) — no key, one connect action.
+                OnboardingOptionRow(
+                    title: LocalizedStringKey(L("Connect to \(displayName(preset))")),
+                    caption: "No API key required — connects to your local server",
+                    isVerified: state.isAPISuccess && !state.selectedAuthMethod.isOAuth
+                ) {
+                    state.openConnectDialog(.apiKey)
+                }
+            } else {
+                OnboardingOptionRow(
+                    title: LocalizedStringKey(L("Provide an \(displayName(preset)) API Key")),
+                    caption: keyRowCaption(preset),
+                    isVerified: state.isAPISuccess && !state.selectedAuthMethod.isOAuth
+                ) {
+                    state.openConnectDialog(.apiKey)
+                }
+            }
+        }
+    }
+
+    private func oauthRowTitle(_ preset: ProviderPreset) -> LocalizedStringKey {
+        switch oauthKind {
+        case .openAICodex: return "Sign in with a ChatGPT account"
+        case .openRouter: return "Sign in with your OpenRouter account"
+        case .xai: return "Sign in with your Grok account"
+        case nil: return ""
+        }
+    }
+
+    private func oauthRowCaption(_ preset: ProviderPreset) -> LocalizedStringKey {
+        switch oauthKind {
+        case .openAICodex: return "This will use your ChatGPT Plus/Pro subscription"
+        case .openRouter: return "This will use your OpenRouter account"
+        case .xai: return "This will use your SuperGrok or X Premium+ subscription"
+        case nil: return ""
+        }
+    }
+
+    private func keyRowCaption(_ preset: ProviderPreset) -> LocalizedStringKey {
+        switch preset {
+        case .openai: return "Paste a key from platform.openai.com"
+        case .anthropic: return "Paste a key from console.anthropic.com"
+        case .google: return "Paste a key from aistudio.google.com"
+        case .xai: return "Paste a key from console.x.ai"
+        case .openrouter: return "Paste a key from openrouter.ai"
+        default: return "Paste a key from your provider dashboard"
+        }
+    }
+}
+
+// MARK: - Connect dialog
+
+/// Centered connect dialog over the whole window (Figma connect frames):
+/// provider logo card, title, caption, then either the browser sign-in
+/// button (idle → "Authenticating…" with spinner) or the API-key field +
+/// Connect button. Success closes the dialog; the drill-in shows the green
+/// check and the left CTA becomes "Continue to Osaurus".
+struct ProviderConnectDialog: View {
+    @ObservedObject var state: ConfigureAIState
+
+    private var preset: ProviderPreset? { state.currentAPIProvider }
+    private var isOAuth: Bool { state.connectDialog == .oauth }
+
+    var body: some View {
+        OnboardingDialog(
+            isDismissable: !state.isTesting,
+            onClose: { state.closeConnectDialog() }
+        ) {
+            VStack(spacing: 0) {
+                if let preset {
+                    OnboardingLogoCard(
+                        logo: { OnboardingProviderLogo(preset: preset, size: 24) },
+                        caption: displayName(preset),
+                        logoSize: 24
+                    )
+
+                    Spacer().frame(height: 24)
+
+                    Text(title(preset))
+                        .font(OnboardingTypography.cardTitle)
+                        .foregroundColor(OnboardingPalette.labelWhite)
+                        .multilineTextAlignment(.center)
+
+                    Spacer().frame(height: 8)
+
+                    Text(caption(preset))
+                        .font(OnboardingTypography.cardCaption)
+                        .foregroundColor(OnboardingPalette.labelSecondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if !isOAuth && preset.configuration.authType == .apiKey {
+                        Spacer().frame(height: 20)
+                        keyField(preset)
+                    }
+
+                    if case .failure(let message) = state.testResult {
+                        Spacer().frame(height: 12)
+                        Text(message)
+                            .font(.system(size: 11))
+                            .foregroundColor(Color(red: 1.0, green: 0.45, blue: 0.4))
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: 320)
+                    }
+
+                    Spacer().frame(height: 24)
+
+                    actionButton(preset)
+                }
+            }
+            .padding(.horizontal, 40)
+            .padding(.vertical, 36)
+        }
+        .onChange(of: state.isAPISuccess) { _, success in
+            // A verified connection closes the dialog after a beat so the
+            // user sees the state settle; the drill-in's check + the left
+            // "Continue to Osaurus" CTA carry it from there.
+            guard success else { return }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                state.closeConnectDialog()
+            }
+        }
+    }
+
+    private func displayName(_ preset: ProviderPreset) -> String {
+        preset == .google ? "Gemini" : preset.name
+    }
+
+    private func title(_ preset: ProviderPreset) -> String {
+        if isOAuth {
+            // Authenticating shortens the title to the account brand, per the
+            // Figma authenticating frame.
+            if state.isTesting, state.selectedOAuthKind == .openAICodex {
+                return "ChatGPT"
+            }
+            switch state.selectedOAuthKind {
+            case .openAICodex: return L("Sign in with a ChatGPT account")
+            case .openRouter: return L("Sign in with your OpenRouter account")
+            case .xai: return L("Sign in with your Grok account")
+            case nil: return ""
+            }
+        }
+        if preset.configuration.authType == .none {
+            return L("Connect to \(displayName(preset))")
+        }
+        return L("Provide an \(displayName(preset)) API Key")
+    }
+
+    private func caption(_ preset: ProviderPreset) -> String {
+        if isOAuth {
+            switch state.selectedOAuthKind {
+            case .openAICodex: return L("This will use your ChatGPT Plus/Pro subscription")
+            case .openRouter: return L("This will use your OpenRouter account")
+            case .xai: return L("This will use your SuperGrok or X Premium+ subscription")
+            case nil: return ""
+            }
+        }
+        if preset.configuration.authType == .none {
+            return L("No API key required — connects to your local server")
+        }
+        return L("Your key is stored securely in the macOS Keychain")
+    }
+
+    private func keyField(_ preset: ProviderPreset) -> some View {
+        SecureField(L("sk-..."), text: $state.apiKey)
+            .textFieldStyle(.plain)
+            .font(.system(size: 13, design: .monospaced))
+            .foregroundColor(OnboardingPalette.labelPrimary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(OnboardingPalette.fill5)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(OnboardingPalette.fill10, lineWidth: 1)
+            )
+            .frame(maxWidth: 300)
+            .onChange(of: state.apiKey) { _, _ in state.testResult = nil }
+    }
+
+    @ViewBuilder
+    private func actionButton(_ preset: ProviderPreset) -> some View {
+        if state.isTesting {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(
+                    isOAuth
+                        ? LocalizedStringKey("Authenticating...")
+                        : LocalizedStringKey("Connecting..."),
+                    bundle: .module
+                )
+                .font(OnboardingTypography.chip)
+                .foregroundColor(OnboardingPalette.labelPrimary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Capsule().fill(OnboardingPalette.fill8))
+        } else if state.isAPISuccess {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Connected", bundle: .module)
+                    .font(OnboardingTypography.chip)
+            }
+            .foregroundColor(OnboardingPalette.dinoGreen)
+            .padding(.vertical, 8)
+        } else {
+            OnboardingPillButton(
+                title: idleButtonTitle,
+                style: .primary,
+                size: .compact,
+                isEnabled: state.canTestAPI,
+                action: { state.testAPIConnection() }
+            )
+        }
+    }
+
+    private var idleButtonTitle: LocalizedStringKey {
+        if isOAuth, let kind = state.selectedOAuthKind {
+            return LocalizedStringKey(kind.ctaTitle)
+        }
+        if case .failure = state.testResult { return "Try again" }
+        return "Connect"
+    }
 }
 
 // MARK: - Model chooser modal
 
 /// Centered "Choose your model" dialog, hosted at the OnboardingView window
-/// root over a dimmed scrim. It replaces the old floating "Change" popover,
-/// which crammed a tall scrolling list into the small, clipped body region —
-/// overflowing the window and covering the footer CTA.
-///
-/// Forgiving draft-then-confirm so brand-new users can browse without
-/// committing: tapping a row only highlights it (`state.draftModel`); "Use this
-/// model" commits, while Cancel / X / Esc / scrim-tap dismiss without touching
-/// the active selection. Copy and rows are written for first-timers — no
-/// `LLM`/`VLM` jargon, one hardware-chosen build per model family, a
-/// "Picked for your Mac" pill on the safe default, and per-row cost stats
-/// read against this Mac's specs in the footer.
+/// root over the scrim. Forgiving draft-then-confirm so brand-new users can
+/// browse without committing: tapping a row only highlights it
+/// (`state.draftModel`); "Use this model" commits, while Cancel / X / Esc /
+/// scrim-tap dismiss without touching the active selection. Copy and rows
+/// are written for first-timers — no `LLM`/`VLM` jargon, one
+/// hardware-chosen build per model family, a "Picked for your Mac" pill on
+/// the safe default, and per-row cost stats read against this Mac's specs.
 struct ConfigureModelChooserModal: View {
     @ObservedObject var state: ConfigureAIState
 
-    @Environment(\.theme) private var theme
     @ObservedObject private var modelManager = ModelManager.shared
 
-    /// See `ConfigureAIBody.systemMonitor`: a plain reference (not an
+    /// See `ConfigureAIStepView.systemMonitor`: a plain reference (not an
     /// `@ObservedObject`) so the dialog doesn't re-render on every 2s
     /// CPU/memory publish — `totalMemoryGB` is constant for the session.
     private let systemMonitor = SystemMonitorService.shared
 
-    private let dialogWidth: CGFloat = 520
-    private let dialogCornerRadius: CGFloat = 20
-
     var body: some View {
-        ZStack {
-            scrim
-            dialog
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // Esc closes the dialog without changing the selection.
-        .onExitCommand { state.cancelModelChooser() }
-    }
-
-    // MARK: Scrim
-
-    /// Dims the whole step behind the dialog and acts as a tap-to-cancel
-    /// target, so a background click reads as "never mind".
-    private var scrim: some View {
-        Color.black.opacity(0.3)
-            .ignoresSafeArea()
-            .contentShape(Rectangle())
-            .onTapGesture { state.cancelModelChooser() }
-    }
-
-    // MARK: Dialog
-
-    private var dialog: some View {
-        VStack(spacing: 0) {
-            header
-            hairline
-            modelList
-            hairline
-            footer
-        }
-        .frame(width: dialogWidth)
-        .background(dialogSurface)
-        .clipShape(RoundedRectangle(cornerRadius: dialogCornerRadius, style: .continuous))
-        .overlay(dialogBorder)
-        .shadow(color: theme.shadowColor.opacity(0.28), radius: 30, y: 14)
-        .transition(.scale(scale: 0.96).combined(with: .opacity))
-    }
-
-    private var dialogSurface: some View {
-        ZStack {
-            if theme.glassEnabled {
-                Rectangle().fill(.ultraThinMaterial)
+        OnboardingDialog(width: 520, onClose: { state.cancelModelChooser() }) {
+            VStack(spacing: 0) {
+                header
+                modelList
+                footer
             }
-            theme.cardBackground.opacity(
-                theme.glassEnabled
-                    ? (theme.isDark
-                        ? OnboardingStyle.glassOpacityDark
-                        : OnboardingStyle.glassOpacityLight)
-                    : 1.0
-            )
         }
-    }
-
-    private var dialogBorder: some View {
-        RoundedRectangle(cornerRadius: dialogCornerRadius, style: .continuous)
-            .strokeBorder(
-                LinearGradient(
-                    colors: [
-                        theme.glassEdgeLight.opacity(theme.isDark ? 0.35 : 0.6),
-                        theme.primaryBorder.opacity(theme.isDark ? 0.4 : 0.5),
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
-            )
-    }
-
-    private var hairline: some View {
-        Rectangle()
-            .fill(theme.primaryBorder.opacity(0.18))
-            .frame(height: 1)
     }
 
     // MARK: Header
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Choose your model", bundle: .module)
-                    .font(theme.font(size: 18, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text(
-                    "Every model here runs privately on your Mac. Not sure? Keep the one we picked for your Mac's specs — you can switch anytime.",
-                    bundle: .module
-                )
-                .font(theme.font(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-                .lineSpacing(2)
-            }
-            Spacer(minLength: 8)
-            OnboardingCloseButton { state.cancelModelChooser() }
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Choose your model", bundle: .module)
+                .font(OnboardingTypography.cardTitle)
+                .foregroundColor(OnboardingPalette.labelWhite)
+            Text(
+                "Every model here runs privately on your Mac. Not sure? Keep the one we picked for your Mac's specs — you can switch anytime.",
+                bundle: .module
+            )
+            .font(OnboardingTypography.cardCaption)
+            .foregroundColor(OnboardingPalette.labelSecondary)
+            .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 18)
-        .padding(.bottom, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 24)
+        .padding(.top, 24)
+        .padding(.trailing, 44)
+        .padding(.bottom, 16)
     }
 
     // MARK: List
 
     private var modelList: some View {
         ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: OnboardingMetrics.cardSpacing) {
+            VStack(spacing: 8) {
                 ForEach(pickerModels, id: \.model.id) { pair in
-                    // Too-large models stay visible so the badge can explain
-                    // why, but can't be selected — committing to a model that
-                    // won't run is the one unsafe choice this list can offer.
-                    OnboardingRowCard(
-                        icon: .symbol(pair.model.isVLM ? "eye" : "cpu"),
-                        title: pair.model.simplifiedName,
-                        subtitle: ConfigureAIState.chooserSubtitle(for: pair.model),
-                        secondaryLine: ConfigureAIState.chooserStatsLine(for: pair.model),
-                        badges: badges(for: pair.model, compatibility: pair.compatibility),
-                        badgesBelowTitle: true,
-                        accessory: .radio(isSelected: isDraftSelected(pair.model)),
-                        isSelected: isDraftSelected(pair.model),
-                        isDisabled: pair.compatibility == .tooLarge
-                    ) {
-                        state.selectDraftModel(pair.model)
-                    }
+                    modelRow(pair.model, compatibility: pair.compatibility)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 4)
         }
-        .frame(maxHeight: 380)
+        .frame(maxHeight: 360)
+    }
+
+    /// One selectable model row. Too-large models stay visible so the tag can
+    /// explain why, but can't be selected — committing to a model that won't
+    /// run is the one unsafe choice this list can offer.
+    private func modelRow(_ model: MLXModel, compatibility: ModelCompatibility) -> some View {
+        let isSelected = state.draftModel?.id == model.id
+        let isDisabled = compatibility == .tooLarge
+        return Button {
+            state.selectDraftModel(model)
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(model.simplifiedName)
+                        .font(OnboardingTypography.optionTitle)
+                        .foregroundColor(OnboardingPalette.labelPrimary)
+                    if model.id == recommendedRowId {
+                        OnboardingPickedBadge(text: "Picked for your Mac")
+                    }
+                    if model.isDownloaded {
+                        OnboardingMetaChip(text: L("Downloaded"))
+                    }
+                    if compatibility == .tooLarge {
+                        OnboardingMetaChip(text: compatibility.displayName)
+                    }
+                    Spacer(minLength: 0)
+                    if isSelected {
+                        Image(systemName: "checkmark.circle")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(OnboardingPalette.dinoGreen)
+                    }
+                }
+                if let subtitle = ConfigureAIState.chooserSubtitle(for: model) {
+                    Text(subtitle)
+                        .font(OnboardingTypography.cardCaption)
+                        .foregroundColor(OnboardingPalette.labelSecondary)
+                }
+                if let stats = ConfigureAIState.chooserStatsLine(for: model) {
+                    Text(stats)
+                        .font(.system(size: 11))
+                        .foregroundColor(OnboardingPalette.labelSecondary.opacity(0.8))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: OnboardingLayout.cardRadius, style: .continuous)
+                    .fill(isSelected ? OnboardingPalette.fill5 : OnboardingPalette.fill2)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: OnboardingLayout.cardRadius, style: .continuous)
+                    .strokeBorder(
+                        isSelected ? OnboardingPalette.dinoGreen : OnboardingPalette.fill8,
+                        lineWidth: 1
+                    )
+            )
+            .contentShape(
+                RoundedRectangle(cornerRadius: OnboardingLayout.cardRadius, style: .continuous)
+            )
+        }
+        .buttonStyle(OnboardingPressableButtonStyle(pressedScale: 0.985))
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.45 : 1)
     }
 
     // MARK: Footer
 
     private var footer: some View {
         VStack(spacing: 12) {
-            HStack(spacing: 6) {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 11, weight: .medium))
-                Text(footerHint)
-                    .font(theme.font(size: 11))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .foregroundColor(theme.tertiaryText)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            Text(footerHint)
+                .font(.system(size: 11))
+                .foregroundColor(OnboardingPalette.labelSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: 10) {
                 Spacer(minLength: 0)
-                OnboardingCompactButton(title: "Cancel", style: .ghost) {
-                    state.cancelModelChooser()
-                }
-                OnboardingBrandButton(
-                    title: "Use this model",
-                    action: { state.commitModelChooser() },
-                    isEnabled: state.draftModel != nil
+                OnboardingPillButton(
+                    title: "Cancel",
+                    style: .secondary,
+                    size: .compact,
+                    action: { state.cancelModelChooser() }
                 )
-                .frame(width: 190)
+                OnboardingPillButton(
+                    title: "Use this model",
+                    style: .primary,
+                    size: .compact,
+                    isEnabled: state.draftModel != nil,
+                    action: { state.commitModelChooser() }
+                )
             }
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 24)
         .padding(.top, 14)
-        .padding(.bottom, 18)
+        .padding(.bottom, 20)
     }
 
     /// Footer hint carrying the Mac's actual specs, so every row's download /
@@ -1882,13 +1903,21 @@ struct ConfigureModelChooserModal: View {
             return L("Bigger models are smarter but use more memory.")
         }
         let memoryGB = Int(totalMemoryGB.rounded())
+        let comfortableGB = GPUMemoryBudget.assessment(
+            modelSizeBytes: nil,
+            sizeSource: nil,
+            physicalMemoryGB: totalMemoryGB
+        ).comfortableModelBudgetGB
+        let comfortableText = String(format: "%.0f GB", comfortableGB)
         if let free = state.freeDiskBytes {
             let freeText = free.formatted(.byteCount(style: .file, allowedUnits: [.gb, .mb]))
             return L(
-                "Bigger models are smarter but need more memory — your Mac has \(memoryGB) GB memory and \(freeText) free storage."
+                "Your Mac has \(memoryGB) GB unified memory; for smooth performance, choose models estimated below \(comfortableText) while running. \(freeText) storage is free."
             )
         }
-        return L("Bigger models are smarter but need more memory — your Mac has \(memoryGB) GB memory.")
+        return L(
+            "Your Mac has \(memoryGB) GB unified memory; for smooth performance, choose models estimated below \(comfortableText) while running."
+        )
     }
 
     // MARK: Catalog (modal-local)
@@ -1908,22 +1937,32 @@ struct ConfigureModelChooserModal: View {
     }
 
     /// Onboarding is intentionally opinionated — it surfaces only our curated
-    /// top picks (downloaded ones still appear, badged "Downloaded"), so the
+    /// top picks (downloaded ones still appear, tagged "Downloaded"), so the
     /// first-run list never balloons with ad-hoc / auto-fetched models on disk.
     /// The full catalog lives in the Models tab. Each row is paired with its
     /// compatibility verdict (`.unknown` fails open so the list isn't blank
     /// before the system monitor reports), and the hardware-aware
     /// recommendation is pinned first so the safe default is the first thing
-    /// a first-timer sees; everything else keeps catalog order.
+    /// a first-timer sees; everything else keeps catalog order, except LFM
+    /// rows, which always sink to the bottom (the recommendation pin wins
+    /// when LFM itself is the hardware pick — the "Picked for your Mac"
+    /// badge must stay on the first row).
     private var pickerModels: [(model: MLXModel, compatibility: ModelCompatibility)] {
         let totalMemoryGB = systemMonitor.totalMemoryGB
-        let items = dedupedTopPicks.map {
+        var items = dedupedTopPicks.map {
             (model: $0, compatibility: $0.compatibility(totalMemoryGB: totalMemoryGB))
         }
-        guard let recommendedId = recommendedRowId else { return items }
-        let recommended = items.filter { $0.model.id == recommendedId }
-        let rest = items.filter { $0.model.id != recommendedId }
-        return recommended + rest
+        if let recommendedId = recommendedRowId {
+            let recommended = items.filter { $0.model.id == recommendedId }
+            let rest = items.filter { $0.model.id != recommendedId }
+            items = recommended + rest
+        }
+        let lfm = items.filter { $0.model.id != recommendedRowId && isLFM($0.model) }
+        return items.filter { $0.model.id == recommendedRowId || !isLFM($0.model) } + lfm
+    }
+
+    private func isLFM(_ model: MLXModel) -> Bool {
+        model.id.lowercased().contains("lfm")
     }
 
     /// The row carrying the "Picked for your Mac" pill — the exact build
@@ -1942,244 +1981,21 @@ struct ConfigureModelChooserModal: View {
         return dedupedTopPicks.contains(where: { $0.id == recommended.id })
             ? recommended.id : nil
     }
-
-    private func isDraftSelected(_ model: MLXModel) -> Bool {
-        state.draftModel?.id == model.id
-    }
-
-    /// Friendlier than the inline card badges: leads with a hardware-aware
-    /// "Picked for your Mac" pill for first-timers, keeps the use-case
-    /// category and a Downloaded chip, and surfaces the capability warnings —
-    /// but drops the `LLM`/`VLM` jargon (the eye/cpu icon already signals
-    /// modality). Sizes moved out of the badges into each row's labeled stat
-    /// line (`ConfigureAIState.chooserStatsLine`), and precision chips went
-    /// away entirely: dedupe guarantees one build per family, so there is no
-    /// same-title pair left to tell apart.
-    private func badges(
-        for model: MLXModel,
-        compatibility: ModelCompatibility
-    ) -> [OnboardingRowBadge] {
-        var result: [OnboardingRowBadge] = []
-        if model.id == recommendedRowId {
-            result.append(OnboardingRowBadge(L("Picked for your Mac"), style: .accent))
-        }
-        if let useCase = model.useCase {
-            result.append(.useCase(useCase))
-        }
-        if model.isDownloaded {
-            result.append(OnboardingRowBadge(L("Downloaded"), style: .success))
-        }
-        switch compatibility {
-        case .tight:
-            result.append(OnboardingRowBadge(L("Tight fit"), style: .warning))
-        case .tooLarge:
-            result.append(OnboardingRowBadge(L("Too large for this Mac"), style: .error))
-        case .compatible, .unknown:
-            break
-        }
-        return result
-    }
 }
 
-// MARK: - CTA
-
-/// Primary CTA for the Configure AI step, dispatched per screen:
-///   - Home: "Download model" begins the background download and advances in
-///     one press. A model already on disk uses "Continue".
-///   - BYOK picker / API-key hub: cards drill in on tap, so a quiet hint
-///     stands in for the (absent) Continue button.
-///   - BYOK forms: the stateful Connect/Test/Continue button.
-struct ConfigureAICTA: View {
-    @ObservedObject var state: ConfigureAIState
-    let onComplete: () -> Void
-
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        primaryButton
-            .onChange(of: state.isAPISuccess) { _, success in
-                // Auto-advance once connected (green): a successful test/sign-in
-                // is the confirmation, so move to the next onboarding step
-                // without a second "Continue" press. The brief pause lets the
-                // green success state register first.
-                guard success else { return }
-                switch state.apiSubstate {
-                case .keyForm, .customForm:
-                    Task {
-                        try? await Task.sleep(nanoseconds: 400_000_000)
-                        await MainActor.run {
-                            state.saveProviderAndContinue(onComplete: onComplete)
-                        }
-                    }
-                // Claude Code never runs the connection test — there is no
-                // endpoint to probe — so it can't reach this auto-advance.
-                case .picker, .apiKeyPicker, .claudeCode:
-                    break
-                }
-            }
-    }
-
-    @ViewBuilder
-    private var primaryButton: some View {
-        switch state.screen {
-        case .home:
-            homeCTA
-
-        case .byok:
-            switch state.apiSubstate {
-            case .picker, .apiKeyPicker:
-                // Provider cards drill in on tap — no Continue press required.
-                // A subtle hint replaces the dead disabled button so the footer
-                // reads as guidance, not a broken control.
-                providerPickerHint
-            case .keyForm, .customForm:
-                apiActionButton
-            case .claudeCode:
-                claudeCodeActionButton
-            }
-        }
-    }
-
-    /// Footer CTA for the Claude Code screen. Signed in, it continues; signed
-    /// out, it starts the CLI's own browser sign-in. There is no "test" step —
-    /// `claude auth status` already answered the only question.
-    @ViewBuilder
-    private var claudeCodeActionButton: some View {
-        if let status = state.claudeCodeAuth, status.loggedIn {
-            OnboardingBrandButton(
-                title: L("Continue"),
-                action: {
-                    state.selectedBrainSource = .claudeCode
-                    onComplete()
-                },
-                isEnabled: true
-            )
-            .fixedSize(horizontal: true, vertical: false)
-        } else {
-            OnboardingBrandButton(
-                title: state.isSigningInClaudeCode
-                    ? L("Waiting for your browser…") : L("Sign in with Claude"),
-                action: { Task { await state.signInClaudeCode() } },
-                isEnabled: !state.isSigningInClaudeCode && !state.isCheckingClaudeCode
-            )
-            .fixedSize(horizontal: true, vertical: false)
-        }
-    }
-
-    /// One decision cluster for the home screen. The dominant action starts
-    /// the private-model download and advances immediately; the quiet
-    /// secondary action explicitly skips the download and starts on included
-    /// Cloud.
-    private var homeCTA: some View {
-        VStack(spacing: 9) {
-            OnboardingBrandButton(
-                title: homeCTATitle,
-                action: handleHomeCTA,
-                isEnabled: state.selectedModel != nil && !state.isChoosingModel
-            )
-            .fixedSize(horizontal: true, vertical: false)
-
-            if !state.hasStartedLocalDownload,
-                state.selectedModel?.isDownloaded != true
-            {
-                OnboardingTextButton(title: "Skip download and use Cloud only") {
-                    state.chooseOsaurusAndContinue(onComplete: onComplete)
-                }
-                .localizedHelp(
-                    "Start on free Osaurus Cloud credits — you can download a model anytime later."
-                )
-            }
-        }
-    }
-
-    // Raw localization keys — `OnboardingBrandButton` localizes internally.
-    private var homeCTATitle: String {
-        guard let model = state.selectedModel else { return "Continue" }
-        if model.isDownloaded { return "Continue" }
-        if state.hasStartedLocalDownload { return "Continue" }
-        return "Download model"
-    }
-
-    private func handleHomeCTA() {
-        guard state.selectedModel != nil else { return }
-        if state.hasStartedLocalDownload {
-            // The user navigated back after committing the download; don't
-            // restart it, just return to the next step.
-            onComplete()
-        } else {
-            state.chooseLocalAndContinue(onComplete: onComplete)
-        }
-    }
-
-    /// Footer text shown on the bring-your-own-key provider list / API-key hub,
-    /// where the cards themselves are the action. A quiet hint reads better than
-    /// a dead disabled "Continue".
-    private var providerPickerHint: some View {
-        Text("Pick a provider to continue", bundle: .module)
-            .font(theme.font(size: OnboardingMetrics.captionSize))
-            .foregroundColor(theme.tertiaryText)
-            .frame(height: OnboardingMetrics.buttonHeight)
-    }
-
-    private var apiActionButton: some View {
-        let oauthKind = state.selectedOAuthKind
-        let isBrowserSignIn = oauthKind != nil
-        let idleTitle: LocalizedStringKey =
-            oauthKind.map { LocalizedStringKey($0.ctaTitle) } ?? "Connect"
-        return OnboardingStatefulButton(
-            state: state.apiButtonState,
-            idleTitle: idleTitle,
-            loadingTitle: isBrowserSignIn ? "Signing in..." : (state.isSaving ? "Connecting..." : "Testing..."),
-            successTitle: "Continue",
-            errorTitle: "Try Again",
-            action: {
-                if state.isAPISuccess {
-                    state.saveProviderAndContinue(onComplete: onComplete)
-                } else {
-                    state.testAPIConnection()
-                }
-            },
-            isEnabled: state.canTestAPI
-        )
-        .fixedSize(horizontal: true, vertical: false)
-    }
-}
-
-// MARK: - Help Step Row
-
-private struct HelpStepRow: View {
-    let number: Int
-    let text: String
-
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text("\(number).", bundle: .module)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundColor(theme.tertiaryText)
-                .frame(width: 14, alignment: .trailing)
-            Text(text)
-                .font(theme.font(size: 11))
-                .foregroundColor(theme.secondaryText)
-        }
-    }
-}
+// The provider chip rows reuse `ChipFlowLayout` from
+// Views/Chat/ClarifyPromptOverlay.swift (internal, same wrap semantics).
 
 // MARK: - Preview
 
 #if DEBUG
     struct OnboardingConfigureAIView_Previews: PreviewProvider {
         static var previews: some View {
-            let state = ConfigureAIState()
-            return VStack {
-                ConfigureAIBody(state: state).frame(height: 460)
-                HStack {
-                    Spacer()
-                    ConfigureAICTA(state: state, onComplete: {})
-                }
+            ZStack {
+                OnboardingPalette.windowBackground
+                ConfigureAIStepView(state: ConfigureAIState(), onComplete: {})
             }
-            .frame(width: OnboardingMetrics.windowWidth, height: 660)
+            .frame(width: OnboardingMetrics.windowWidth, height: OnboardingMetrics.windowHeight)
         }
     }
 #endif

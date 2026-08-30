@@ -520,19 +520,25 @@ public enum EvalRunner {
     ) -> EvalCaseReport {
         var hitsDelta: Int?
         var missesDelta: Int?
+        var pagedEvictionsDelta: Int?
         var ssmHitsDelta: Int?
+        var ssmMissesDelta: Int?
         var ssmReDerivesDelta: Int?
         var diskL2HitsDelta: Int?
         var diskL2MissesDelta: Int?
         var diskL2StoresDelta: Int?
+        var diskL2EvictionsDelta: Int?
         if let before = kvBefore, let after = kvAfter {
             hitsDelta = after.prefixHits - before.prefixHits
             missesDelta = after.prefixMisses - before.prefixMisses
+            pagedEvictionsDelta = after.pagedEvictions - before.pagedEvictions
             ssmHitsDelta = after.ssmCompanionHits - before.ssmCompanionHits
+            ssmMissesDelta = after.ssmCompanionMisses - before.ssmCompanionMisses
             ssmReDerivesDelta = after.ssmCompanionReDerives - before.ssmCompanionReDerives
             diskL2HitsDelta = after.diskL2Hits - before.diskL2Hits
             diskL2MissesDelta = after.diskL2Misses - before.diskL2Misses
             diskL2StoresDelta = after.diskL2Stores - before.diskL2Stores
+            diskL2EvictionsDelta = after.diskL2Evictions - before.diskL2Evictions
         }
         let existing = row.telemetry
         let merged = EvalCaseTelemetry(
@@ -545,16 +551,37 @@ public enum EvalRunner {
             peakContextTokens: existing?.peakContextTokens,
             totalModelTokens: existing?.totalModelTokens,
             modelSteps: existing?.modelSteps,
+            // Carry EVERY runner-produced field through: this constructor
+            // REPLACES the row's telemetry, so any field omitted here is
+            // silently wiped from the report (the loop-exit fields were
+            // being lost this way before the MTP fields exposed it).
+            loopExit: existing?.loopExit,
+            loopExitOrigin: existing?.loopExitOrigin,
+            loopRecoveryRetries: existing?.loopRecoveryRetries,
             peakPhysFootprintMb: sample.peakPhysFootprintMb,
             meanCpuPercent: sample.meanCpuPercent,
             peakCpuPercent: sample.peakCpuPercent,
             kvPrefixHitsDelta: hitsDelta,
             kvPrefixMissesDelta: missesDelta,
+            pagedEvictionsDelta: pagedEvictionsDelta,
             ssmCompanionHitsDelta: ssmHitsDelta,
+            ssmCompanionMissesDelta: ssmMissesDelta,
             ssmCompanionReDerivesDelta: ssmReDerivesDelta,
             diskL2HitsDelta: diskL2HitsDelta,
             diskL2MissesDelta: diskL2MissesDelta,
-            diskL2StoresDelta: diskL2StoresDelta
+            diskL2StoresDelta: diskL2StoresDelta,
+            diskL2EvictionsDelta: diskL2EvictionsDelta,
+            mtpRequested: existing?.mtpRequested,
+            mtpLoadStatus: existing?.mtpLoadStatus,
+            mtpRequestStrategy: existing?.mtpRequestStrategy,
+            mtpDepth: existing?.mtpDepth,
+            mtpActiveDepth: existing?.mtpActiveDepth,
+            mtpVerifyCalls: existing?.mtpVerifyCalls,
+            mtpAcceptedDraftTokens: existing?.mtpAcceptedDraftTokens,
+            mtpBonusTokens: existing?.mtpBonusTokens,
+            mtpRejectedTokens: existing?.mtpRejectedTokens,
+            mtpARFallbackTokens: existing?.mtpARFallbackTokens,
+            mtpStepsWithMTP: existing?.mtpStepsWithMTP
         )
         guard !merged.isEmpty else { return row }
         return EvalCaseReport(
@@ -983,7 +1010,8 @@ public enum EvalRunner {
         let hint = shellCommandFailureHint(
             command: exp.command,
             exitCode: Int32(exp.exitCode),
-            stderr: exp.stderr
+            stderr: exp.stderr,
+            sandboxInstallAvailable: true
         )
         let fired = hint != nil
         var passed = fired == exp.expectHint
@@ -1497,10 +1525,10 @@ public enum EvalRunner {
         // tool. capability_claims cases score the model's tool SELECTION and the
         // honesty of its final answer — never the side effects of running a
         // configure/agent WRITE tool. A tool-eager local model (Qwen) calls
-        // `.ask` tools (`osaurus_agent`, the `Osaurus Browser` plugin tools);
+        // `.ask` tools (`osaurus_config`, the `Osaurus Browser` plugin tools);
         // the headless harness has no [Allow] button. Auto-APPROVING them (as
         // `default_agent` intentionally does — it measures the configure surface
-        // executing) is wrong here: it let `osaurus_agent` really mutate global
+        // executing) is wrong here: it let a config write really mutate global
         // agent + scheduler state mid-eval, which deadlocked a later case's
         // isolated-agent teardown (the suite hung partway through the FIRST
         // multi-model matrix run; Apple Foundation skips these cases — tiny
@@ -1658,7 +1686,11 @@ public enum EvalRunner {
                 query: query,
                 systemPrompt: transcript.systemPrompt,
                 toolCalls: transcript.toolCalls.map {
-                    EvalCaseTranscript.ToolEvent(name: $0.name, arguments: $0.arguments)
+                    EvalCaseTranscript.ToolEvent(
+                        name: $0.name,
+                        arguments: $0.arguments,
+                        resultPreview: $0.resultPreview
+                    )
                 },
                 loadedToolNames: transcript.loadedToolNames,
                 finalText: transcript.finalText,
@@ -1745,16 +1777,53 @@ public enum EvalRunner {
         // Seed any fixture agents so create cases can target a real agent
         // (and not loop on a not-found id), then tear them down once the run
         // is done — the seeded agent is only needed during the model loop.
+        // Registry snapshot BEFORE the fixtures: the post-case sweep then
+        // removes both model-created entities and any fixture a dedicated
+        // cleanup helper misses.
+        let registriesBeforeCase = await MainActor.run { snapshotDefaultAgentRegistries() }
         let seededAgentIds = seedDefaultAgentFixtures(testCase.fixtures.seedAgents)
         let seededProviderIds = seedDefaultAgentProviderFixtures(testCase.fixtures.seedProviders)
+        let seededScheduleIds = seedDefaultAgentScheduleFixtures(testCase.fixtures.seedSchedules)
+        let seededMCPIds = seedDefaultAgentMCPFixtures(testCase.fixtures.seedMCPServers)
+        // The lane pins the RUN model per case instead of re-reading the
+        // chat-config core-model binding: when the core model was still
+        // declaratively writable, a case that rewrote it rebound every
+        // later case in the run — grok silently became foundation
+        // mid-suite, which strips the tool schema and fails every
+        // subsequent write case. The section is Settings-UI-only now, but
+        // the pin + restore stay as cheap insurance against any store
+        // mutation leaking into another lane sharing this process.
+        let chatConfigBeforeCase = await MainActor.run { ChatConfigurationStore.load() }
+        // Same leak class, different store: a case whose apply ENABLES the
+        // outbound privacy filter (settings-privacy-filter) blocks every
+        // later remote-model request in this non-interactive process
+        // ("cannot show the review sheet"). Snapshot + restore around the
+        // loop; `.default` (filter off) is the pre-case state when the
+        // store had never been written.
+        let privacyConfigBeforeCase = PrivacyFilterStore.load()
+        // `modelId` is the run label: a routable id for explicit/foundation
+        // selections, or the pre-run binding for keep-current ("(unset)"
+        // when nothing was configured — fall back to the store for that).
+        let pinnedModel = modelId == "(unset)" ? nil : modelId
         let transcript = await DefaultAgentConfigurationEvaluator.run(
             query: testCase.query,
-            maxIterations: exp.maxIterations ?? 6
+            maxIterations: exp.maxIterations ?? 6,
+            model: pinnedModel
         )
+        await MainActor.run { ChatConfigurationStore.save(chatConfigBeforeCase) }
+        PrivacyFilterStore.save(privacyConfigBeforeCase ?? .default)
         // Normalized latency: loop-only (judge timed separately below).
         let elapsed = Date().timeIntervalSince(started) * 1000
+        cleanupDefaultAgentMCPFixtures(seededMCPIds)
+        cleanupDefaultAgentScheduleFixtures(seededScheduleIds)
         cleanupDefaultAgentProviderFixtures(seededProviderIds)
         cleanupDefaultAgentFixtures(seededAgentIds)
+        await MainActor.run { sweepDefaultAgentRegistries(before: registriesBeforeCase) }
+        // A models prune this case applied can only unlink symlinks in the
+        // isolated models store — re-seed them so the SERVING model stays
+        // resolvable for every later case, then drop the stale catalog scan.
+        EvalBootstrap.repairIsolatedModelsStore()
+        ModelManager.invalidateLocalModelsCache()
 
         var verdicts: [CapabilityClaimsJudgement] = []
         var judgeAudit: EvalJudgeAudit?
@@ -1922,6 +1991,138 @@ public enum EvalRunner {
         AgentManager.shared.refresh()
     }
 
+    /// Ids of every mutable registry a `default_agent` write case can touch.
+    /// Captured before the loop and diffed after so entities the MODEL
+    /// creates (an applied agent, provider, MCP server, schedule, watcher,
+    /// command, or knowledge collection) never leak into later cases in the
+    /// shared isolated root. Leaks are not hypothetical: mcp-add's
+    /// "Acme Tools" server persisted into mcp-remove, whose judge is told no
+    /// such server exists, and a schedule-create case's inbox schedule
+    /// collided with schedule-enable's seeded "Inbox Check".
+    private struct DefaultAgentRegistrySnapshot {
+        let agentIds: Set<UUID>
+        let providerIds: Set<UUID>
+        let mcpProviderIds: Set<UUID>
+        let scheduleIds: Set<UUID>
+        let watcherIds: Set<UUID>
+        let commandIds: Set<UUID>
+        let knowledgeCollectionIds: Set<UUID>
+    }
+
+    @MainActor
+    private static func snapshotDefaultAgentRegistries() -> DefaultAgentRegistrySnapshot {
+        DefaultAgentRegistrySnapshot(
+            agentIds: Set(AgentManager.shared.agents.map { $0.id }),
+            providerIds: Set(RemoteProviderManager.shared.configuration.providers.map { $0.id }),
+            mcpProviderIds: Set(MCPProviderManager.shared.configuration.providers.map { $0.id }),
+            scheduleIds: Set(ScheduleManager.shared.schedules.map { $0.id }),
+            watcherIds: Set(WatcherManager.shared.watchers.map { $0.id }),
+            commandIds: Set(SlashCommandRegistry.shared.customCommands.map { $0.id }),
+            knowledgeCollectionIds: Set(KnowledgeManager.shared.collections.map { $0.id })
+        )
+    }
+
+    /// Delete every registry entity created after `before` was captured.
+    /// Deletions are best-effort: a fixture id already cleaned up by its own
+    /// helper just no-ops here.
+    @MainActor
+    private static func sweepDefaultAgentRegistries(before: DefaultAgentRegistrySnapshot) {
+        var removedAgents = false
+        for agent in AgentManager.shared.agents
+        where !agent.isBuiltIn && !before.agentIds.contains(agent.id) {
+            _ = AgentStore.delete(id: agent.id)
+            removedAgents = true
+        }
+        if removedAgents { AgentManager.shared.refresh() }
+        for provider in RemoteProviderManager.shared.configuration.providers
+        where !before.providerIds.contains(provider.id) {
+            RemoteProviderManager.shared.removeProvider(id: provider.id)
+        }
+        for provider in MCPProviderManager.shared.configuration.providers
+        where !before.mcpProviderIds.contains(provider.id) {
+            MCPProviderManager.shared.removeProvider(id: provider.id)
+        }
+        for schedule in ScheduleManager.shared.schedules
+        where !before.scheduleIds.contains(schedule.id) {
+            _ = ScheduleManager.shared.delete(id: schedule.id)
+        }
+        for watcher in WatcherManager.shared.watchers
+        where !before.watcherIds.contains(watcher.id) {
+            _ = WatcherManager.shared.delete(id: watcher.id)
+        }
+        for command in SlashCommandRegistry.shared.customCommands
+        where !before.commandIds.contains(command.id) {
+            _ = SlashCommandRegistry.shared.delete(id: command.id)
+        }
+        for collection in KnowledgeManager.shared.collections
+        where !before.knowledgeCollectionIds.contains(collection.id) {
+            KnowledgeManager.shared.delete(id: collection.id)
+        }
+    }
+
+    /// Pre-create the case's fixture schedules (daily, bound to a seeded
+    /// custom agent) so a mutation case targets a REAL schedule instead of
+    /// dead-ending on not-found. Returns created ids for cleanup.
+    @MainActor
+    private static func seedDefaultAgentScheduleFixtures(
+        _ seeds: [EvalCase.SeedSchedule]?
+    ) -> [UUID] {
+        guard let seeds, !seeds.isEmpty else { return [] }
+        var ids: [UUID] = []
+        for seed in seeds {
+            guard let agentId = UUID(uuidString: seed.agentId) else { continue }
+            let parts = (seed.timeOfDay ?? "08:30").split(separator: ":")
+            let hour = parts.first.flatMap { Int($0) } ?? 8
+            let minute = parts.count > 1 ? (Int(parts[1]) ?? 30) : 30
+            let schedule = ScheduleManager.shared.create(
+                name: seed.name,
+                instructions: seed.instructions ?? "Seeded by OsaurusEvals; safe to delete.",
+                agentId: agentId,
+                frequency: .daily(hour: hour, minute: minute),
+                isEnabled: seed.enabled ?? true
+            )
+            ids.append(schedule.id)
+        }
+        return ids
+    }
+
+    /// Remove fixture schedules seeded by `seedDefaultAgentScheduleFixtures`.
+    /// (Agent cleanup would cascade-delete them too; explicit removal keeps
+    /// the shared isolated root clean even if agent seeds change later.)
+    @MainActor
+    private static func cleanupDefaultAgentScheduleFixtures(_ ids: [UUID]) {
+        for id in ids { _ = ScheduleManager.shared.delete(id: id) }
+    }
+
+    /// Pre-register the case's fixture MCP servers so a mutation case (e.g.
+    /// disable) targets a REAL server instead of dead-ending on not-found.
+    @MainActor
+    private static func seedDefaultAgentMCPFixtures(
+        _ seeds: [EvalCase.SeedMCPServer]?
+    ) -> [UUID] {
+        guard let seeds, !seeds.isEmpty else { return [] }
+        var ids: [UUID] = []
+        for seed in seeds {
+            guard let id = UUID(uuidString: seed.id) else { continue }
+            let provider = MCPProvider(
+                id: id,
+                name: seed.name,
+                url: seed.url ?? "https://mcp.eval-fixture.invalid/mcp",
+                enabled: true,
+                autoConnect: false
+            )
+            MCPProviderManager.shared.addProvider(provider, token: nil)
+            ids.append(id)
+        }
+        return ids
+    }
+
+    /// Remove fixture MCP servers seeded by `seedDefaultAgentMCPFixtures`.
+    @MainActor
+    private static func cleanupDefaultAgentMCPFixtures(_ ids: [UUID]) {
+        for id in ids { MCPProviderManager.shared.removeProvider(id: id) }
+    }
+
     /// Pre-register the case's fixture providers in the isolated config store
     /// so a `default_agent` rotation case can target a REAL provider (and
     /// demonstrate `set_credentials`) instead of dead-ending on a not-found id.
@@ -1968,7 +2169,13 @@ public enum EvalRunner {
         matcher: EvalCase.DefaultAgentExpectations.ToolArgsMatcher,
         transcript: CapabilityClaimsTranscript
     ) -> (passed: Bool, note: String) {
-        let pairs = matcher.args.map { "\($0)=\($1)" }.sorted().joined(separator: ",")
+        var pairs = matcher.args.map { "\($0)=\($1)" }.sorted().joined(separator: ",")
+        if let groups = matcher.argsAnyOf, !groups.isEmpty {
+            let rendered = groups
+                .map { "{" + $0.map { "\($0)=\($1)" }.sorted().joined(separator: ",") + "}" }
+                .joined(separator: "|")
+            pairs += " anyOf " + rendered
+        }
         let calls = transcript.toolCalls.filter { $0.name == matcher.tool }
         guard !calls.isEmpty else {
             return (false, "argsMustContain FAIL: \(matcher.tool) was never called")
@@ -1978,11 +2185,20 @@ public enum EvalRunner {
                 let data = call.arguments.data(using: .utf8),
                 let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             else { continue }
-            let satisfiesAll = matcher.args.allSatisfy { key, expected in
-                guard let actual = obj[key] else { return false }
-                return argValueString(actual).lowercased().contains(expected.lowercased())
+            func satisfies(_ requirements: [String: String]) -> Bool {
+                requirements.allSatisfy { key, expected in
+                    guard let actual = obj[key] else { return false }
+                    return argValueString(actual).lowercased().contains(expected.lowercased())
+                }
             }
-            if satisfiesAll {
+            let satisfiesAll = satisfies(matcher.args)
+            // Tolerant-input OR layer: the same call must also match at
+            // least one alternative pair group when the case declares them.
+            let satisfiesAlternatives =
+                matcher.argsAnyOf.map { groups in
+                    groups.contains(where: satisfies)
+                } ?? true
+            if satisfiesAll, satisfiesAlternatives {
                 return (true, "argsMustContain ok: \(matcher.tool){\(pairs)}")
             }
         }
@@ -2148,13 +2364,14 @@ public enum EvalRunner {
     /// Re-establish the ephemeral remote judge provider if a configuration
     /// WRITE tool evicted it from the in-process registry mid-suite. Only the
     /// `default_agent` surface executes provider/registry mutations
-    /// (`osaurus_provider` add/remove/update reload the provider registry),
+    /// (an `osaurus_config` apply that adds/removes/updates providers reloads
+    /// the provider registry),
     /// which drops the memory-only ephemeral judge provider that
     /// `EvalRemoteProviderBootstrap` connected at CLI start. The judge then
     /// fails every subsequent grade with "model not registered", silently
     /// FAILING correct cases (observed: 8 Qwen `default_agent` rubric cases
     /// scored as FAIL purely because the judge provider was gone after the
-    /// first `osaurus_provider` call). `connectIfNeeded` is idempotent — it
+    /// first provider-mutating call). `connectIfNeeded` is idempotent — it
     /// no-ops while the judge model is still routable (the common path) and
     /// only reconnects after an eviction — so calling it before each judge
     /// batch self-heals the registry without touching the production

@@ -160,6 +160,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // fatally on `kqueue(): Too many open files` (APPLE-MACOS-19T).
         FileDescriptorLimit.raiseToMaximum()
 
+        // Attribute the PREVIOUS instance's end before anything else can
+        // fail: a clean quit left a marker, a crash/SIGKILL/watchdog did not.
+        // The verdict lands in `last-exit-verdict.json` + a breadcrumb, so
+        // the next "app restarts silently with no crash report" report is
+        // attributable instead of unfalsifiable.
+        TerminationForensics.evaluateAtLaunch()
+
         // sequoia fallback. Tahoe already ran this in
         // `applicationWillFinishLaunching`.
         if #unavailable(macOS 26.0) {
@@ -191,11 +198,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // path can run. Idempotent; safe if a future migration moves this.
         DocumentAdaptersBootstrap.registerBuiltIns()
 
-        // Register every default-agent configure-tool domain. This is what
-        // wires the consolidated `osaurus_provider`, `osaurus_model`, etc.
-        // into `ToolRegistry` and feeds the system-prompt domain menu. Adding
-        // a new domain is one new file under `Tools/Configuration/` plus one
-        // register call in `ConfigurationDomainBootstrap`.
+        // Register the default-agent configure-tool domain. This is what
+        // wires the declarative `osaurus_config` write into `ToolRegistry`
+        // and feeds the system-prompt domain menu. Adding a new domain is
+        // one new file plus one register call in
+        // `ConfigurationDomainBootstrap`.
         ConfigurationDomainBootstrap.registerBuiltIns()
 
         // Warm the GitHub API token cache off the main thread so the first
@@ -296,6 +303,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // even when Osaurus is itself frontmost at send time. Cheap: a single
         // NSWorkspace activation observer.
         FrontmostAppTracker.shared.start()
+
+        // Mirror spawned-helper runs into the notch's background tasks so
+        // orchestrated dispatches are visible and stoppable outside the
+        // launching transcript.
+        SubagentBackgroundTaskBridge.shared.start()
 
         // Set up distributed control listeners (local-only management)
         setupControlNotifications()
@@ -532,6 +544,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 // loop escalated past the distillation threshold.
                 if !LaunchGuard.shouldSkip(.distillation) {
                     await MemoryConsolidator.shared.start()
+                    // Large local core models fail the launch drain's
+                    // residency gate; re-drain whenever the model
+                    // actually gets loaded (see MemoryService).
+                    await MemoryService.shared.armResidencyDrainOnModelLoad()
                 }
             }
         }
@@ -1237,6 +1253,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             return .terminateLater
         }
         isTerminating = true
+        // First choke point every intentional quit passes through (Cmd-Q,
+        // status-panel Quit, onboarding quit, Sparkle relaunch). Later
+        // markers on the same shutdown overwrite with a more specific reason.
+        TerminationForensics.recordIntentionalExit(reason: "app-terminate")
 
         // Global watchdog: hard ceiling on the entire quit. Independent of
         // the ordered chain below, so it fires even if a step blocks the
@@ -1269,6 +1289,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             log.error(
                 "Exit backstop fired 45s after termination began — main thread presumed stuck; forcing exit"
             )
+            TerminationForensics.recordIntentionalExit(reason: "exit-backstop-45s")
             Darwin._exit(0)
         }
 
@@ -1455,6 +1476,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // SIGSEGV that macOS reports as a crash on quit. `_exit` skips all of
         // that: the kernel reclaims the address space and GPU resources
         // atomically, so no in-flight thread can lose its objects mid-call.
+        TerminationForensics.recordIntentionalExit(reason: "quit-complete")
         Darwin._exit(0)
     }
 
@@ -1958,12 +1980,8 @@ extension AppDelegate {
         let targetPort = desiredPort ?? (ServerConfigurationStore.load()?.port ?? 1337)
         guard (1 ..< 65536).contains(targetPort) else { return }
 
-        // Apply exposure policy based on request (default localhost-only).
-        // An explicit flag is the user speaking, so it takes ownership of the
-        // setting away from the Bonjour sync — otherwise removing the last
-        // Bonjour agent would close a port the user asked to have open.
+        // Apply exposure policy based on request (default localhost-only)
         serverController.configuration.exposeToNetwork = exposeFlag
-        serverController.configuration.exposureAutoEnabledByBonjour = false
         serverController.port = targetPort
         serverController.saveConfiguration()
 
@@ -2028,12 +2046,23 @@ extension AppDelegate {
     /// `osaurus://<addr>?pair=<base64url(invite)>` — incoming agent share link.
     /// `osaurus://plugins-install?tool=<plugin_id>` — open Plugins tab on a plugin's detail page.
     /// `osaurus://themes-install?hash=<sha256>` — open Themes tab and install a shared theme.
+    /// `osaurus://settings?tab=<tab>` — open the management window on a tab
+    /// (used by the in-chat osaurus_config result card's "Open in Settings"
+    /// links for rows the user must finish by hand).
     fileprivate func handleOsaurusDeepLink(_ url: URL) {
         Task { @MainActor in
             NSApp.activate(ignoringOtherApps: true)
 
             if url.host?.lowercased() == "plugins-install" {
                 handlePluginsInstallDeepLink(url)
+                return
+            }
+
+            if url.host?.lowercased() == "settings" {
+                let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                    .queryItems?
+                    .first(where: { $0.name.lowercased() == "tab" })?.value ?? ""
+                showManagementWindow(initialTab: ManagementTab.resolved(from: raw))
                 return
             }
 
@@ -2052,13 +2081,11 @@ extension AppDelegate {
 
     @MainActor
     fileprivate func handlePluginsInstallDeepLink(_ url: URL) {
-        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        let toolId = components?.queryItems?
-            .first(where: { $0.name.lowercased() == "tool" })?.value?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        ManagementStateManager.shared.pendingPluginDetailId = (toolId?.isEmpty == false) ? toolId : nil
-        showManagementWindow(initialTab: .plugins)
+        // The standalone Plugins section was retired; native plugins now live
+        // under Tools → Native Plugins, so route plugin-install deep links
+        // there.
+        ManagementStateManager.shared.pendingToolsSubTab = ToolsTab.nativePlugins.rawValue
+        showManagementWindow(initialTab: .tools)
     }
 
     fileprivate func handleHuggingFaceDeepLink(_ url: URL) {
@@ -2245,16 +2272,12 @@ extension AppDelegate {
                 Self.onboardingWindow = nil
             }
 
-            let themeManager = ThemeManager.shared
             // Read before building the view: `completeOnboarding()` flips
             // `hasCompletedOnboarding` before `onComplete` runs, so freshness
             // must be captured up front. Re-onboarding users (version bump)
             // are not fresh and never see the import prompt.
             let wasFreshInstall = OnboardingService.shared.isFreshInstall
             let contentView = OnboardingView(
-                onPreferredSizeChange: { [weak self] newSize in
-                    self?.resizeOnboardingWindow(to: newSize)
-                },
                 onComplete: { [weak self] in
                     // Close the onboarding window when complete
                     Self.onboardingWindow?.close()
@@ -2280,21 +2303,24 @@ extension AppDelegate {
                     }
                 }
             )
-            .environment(\.theme, themeManager.currentTheme)
 
-            // Use NSHostingView directly in an NSView container to avoid auto-sizing issues.
-            // Start the window at the welcome step's preferred height so the first frame
-            // doesn't visibly snap into place from a different size.
-            let windowWidth: CGFloat = onboardingPreferredWidth(for: .welcome)
-            let windowHeight: CGFloat = onboardingPreferredHeight(for: .welcome)
+            // Use NSHostingView directly in an NSView container to avoid
+            // auto-sizing issues. The onboarding window is a fixed 1000×640
+            // for every step (Figma kit).
+            let windowWidth: CGFloat = OnboardingMetrics.windowWidth
+            let windowHeight: CGFloat = OnboardingMetrics.windowHeight
 
-            let hostingView = NSHostingView(rootView: contentView)
+            // The redesigned onboarding is dark-only (Figma kit). Inject an
+            // explicit dark theme so nested theme consumers (the model-chooser
+            // dialog) match the forced `.darkAqua` appearance.
+            let hostingView = NSHostingView(
+                rootView: contentView.environment(\.theme, DarkTheme())
+            )
             hostingView.translatesAutoresizingMaskIntoConstraints = false
-            // Disable SwiftUI-driven auto-sizing of the hosting view; AppDelegate
-            // owns the window's size via `resizeOnboardingWindow(toHeight:)`.
-            // Without this, NSHostingView (macOS 14+) reports the SwiftUI content's
-            // intrinsic size and can grow the hosting view past the container,
-            // producing a tall narrow window.
+            // Disable SwiftUI-driven auto-sizing of the hosting view; the
+            // window size is fixed. Without this, NSHostingView (macOS 14+)
+            // reports the SwiftUI content's intrinsic size and can grow the
+            // hosting view past the container, producing a tall narrow window.
             if #available(macOS 13.0, *) {
                 hostingView.sizingOptions = []
             }
@@ -2325,7 +2351,10 @@ extension AppDelegate {
             window.standardWindowButton(.closeButton)?.isHidden = true
             window.standardWindowButton(.miniaturizeButton)?.isHidden = true
             window.standardWindowButton(.zoomButton)?.isHidden = true
-            window.backgroundColor = NSColor(themeManager.currentTheme.primaryBackground)
+            // Dark-only window per the Figma onboarding kit, regardless of
+            // the system or in-app theme.
+            window.appearance = NSAppearance(named: .darkAqua)
+            window.backgroundColor = NSColor(OnboardingPalette.windowBackground)
             window.isMovableByWindowBackground = true
             window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
@@ -2336,37 +2365,6 @@ extension AppDelegate {
         }
     }
 
-    /// Resize the onboarding window to a new height (width stays fixed),
-    /// anchoring the window at its current top edge so the title bar stays put
-    /// and growth happens downward.
-    @MainActor
-    fileprivate func resizeOnboardingWindow(to newSize: CGSize) {
-        guard let window = Self.onboardingWindow else { return }
-        let clampedHeight = min(max(newSize.height, OnboardingMetrics.minHeight), OnboardingMetrics.maxHeight)
-        let newWidth = newSize.width
-        let currentFrame = window.frame
-        // Skip changes smaller than a couple of points to avoid jitter from
-        // SwiftUI re-publishing the same preference during transitions.
-        guard abs(currentFrame.height - clampedHeight) > 2 || abs(currentFrame.width - newWidth) > 2 else { return }
-
-        // Anchor the window by its top-centre so the resize feels natural.
-        let deltaH = clampedHeight - currentFrame.height
-        let deltaW = newWidth - currentFrame.width
-        let newFrame = NSRect(
-            x: currentFrame.origin.x - deltaW / 2,
-            y: currentFrame.origin.y - deltaH,
-            width: newWidth,
-            height: clampedHeight
-        )
-
-        // Animate alongside the SwiftUI slide transition.
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.32
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            context.allowsImplicitAnimation = true
-            window.animator().setFrame(newFrame, display: true)
-        }
-    }
 }
 
 // MARK: Management Window

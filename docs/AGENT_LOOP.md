@@ -1,8 +1,10 @@
 # Agent Loop & Folder Context
 
-Every chat in Osaurus is an agent loop. The agent picks a model, decides what to do next, calls tools, and either finishes (`complete`), pauses for input (`clarify`), or keeps iterating until its task list is empty.
+Every **custom-agent** chat in Osaurus is an agent loop. The agent picks a model, decides what to do next, calls tools, and either finishes (`complete`), pauses for input (`clarify`), or keeps iterating until its task list is empty.
 
-There is no separate "Agent" or "Work" tab — the same chat window handles a one-line question and a multi-step refactor. What changes between the two is the tool kit: pick a working folder to give the agent file tools, or toggle the Linux Sandbox to give it shell access. The four "always-on" loop tools (`todo`, `complete`, `clarify`, `share_artifact`) are global built-ins and present in every chat regardless of mode.
+The built-in [Orchestrator](ORCHESTRATOR.md) is the exception: it configures Osaurus and delegates work, and it never receives a working folder, sandbox, browser, or computer use. Folder and sandbox tools described below apply only after you create or switch to a custom agent.
+
+There is no separate "Agent" or "Work" tab — the same chat window handles a one-line question and a multi-step refactor. What changes between the two is the tool kit: pick a working folder to give the custom agent file tools, or toggle the Linux Sandbox to give it shell access. The four "always-on" loop tools (`todo`, `complete`, `clarify`, `share_artifact`) are global built-ins and present in every custom-agent chat regardless of mode.
 
 ---
 

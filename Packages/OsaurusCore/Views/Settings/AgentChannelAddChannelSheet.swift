@@ -34,6 +34,8 @@ struct AgentChannelAddChannelSheet: View {
                 TelegramSettingsView(onBack: goBack)
             case .imessage:
                 IMessageSettingsView(onBack: goBack)
+            case .whatsapp:
+                WhatsAppSettingsView(onBack: goBack)
             case .customHTTP:
                 AgentChannelCustomConnectionSheet(
                     connection: nil,
@@ -91,7 +93,7 @@ struct AgentChannelAddChannelSheet: View {
                 .padding(24)
             }
         }
-        .frame(width: 560, height: 520)
+        .fittedSheetFrame(width: 560, height: 520)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(

@@ -1,0 +1,35 @@
+{
+  "id": "default_agent.channels-kill-switch",
+  "domain": "default_agent",
+  "label": "default agent • flip the global channel write kill switch off",
+  "query": "Stop agents from sending any messages on chat platforms (Discord, Slack, Telegram, everything) until I say otherwise.",
+  "notes": "Wave 3c channels scope: `channels.write_enabled: false` — the global kill switch. Disabling is the SAFE direction (only re-enabling is HIGH RISK), so a direct apply is expected. Pins the channels section and the write_enabled key.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "channels"
+          }
+        },
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "write_enabled"
+          }
+        }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

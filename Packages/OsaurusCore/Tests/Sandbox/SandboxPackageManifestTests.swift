@@ -2,8 +2,8 @@
 //  SandboxPackageManifestTests.swift
 //
 //  Pin the host-side installed-package manifest (record / reconcile /
-//  clear) and the compact, capped prompt line it feeds into the static
-//  sandbox system-prompt prefix.
+//  clear) and the compact, capped prompt line it feeds into the dynamic
+//  sandbox system-prompt suffix.
 //
 
 import Foundation
@@ -95,7 +95,8 @@ struct SandboxPackageManifestTests {
         let block = SystemPromptTemplates.installedPackagesPromptBlock(
             .init(apk: ["ffmpeg"], pip: ["flask", "numpy"], npm: [])
         )
-        #expect(block.contains("Already installed"))
+        #expect(block.contains("Installed sandbox packages"))
+        #expect(block.contains("not capability ids"))
         #expect(block.contains("System (apk): ffmpeg"))
         #expect(block.contains("Python (pip): flask, numpy"))
         // npm is empty -> its line is omitted entirely.
@@ -107,13 +108,14 @@ struct SandboxPackageManifestTests {
         let many = (1 ... (cap + 5)).map { "pkg\($0)" }
         let block = SystemPromptTemplates.installedPackagesPromptBlock(.init(pip: many))
         #expect(block.contains("+5 more"))
+        #expect(block.contains("verify an unlisted package with `shell_run`"))
     }
 
     @Test func sandboxStateIncludesInstalledLineWhenManifestNonEmpty() {
         let section = SystemPromptTemplates.sandboxState(
             installedPackages: .init(pip: ["flask"])
         )
-        #expect(section.contains("Already installed"))
+        #expect(section.contains("Installed sandbox packages"))
         #expect(section.contains("flask"))
     }
 
@@ -121,7 +123,7 @@ struct SandboxPackageManifestTests {
         // Relocated out of the static `sandbox` framing: the framing never
         // carries package state now, and an empty manifest yields an empty
         // `sandboxState` section (dropped by the composer).
-        #expect(!SystemPromptTemplates.sandbox().contains("Already installed"))
+        #expect(!SystemPromptTemplates.sandbox().contains("Installed sandbox packages"))
         #expect(SystemPromptTemplates.sandboxState().isEmpty)
     }
 }

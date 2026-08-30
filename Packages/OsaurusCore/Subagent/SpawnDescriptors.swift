@@ -27,6 +27,12 @@ enum SpawnInputContract {
         + "or infer what an opaque label means. Never refer to a previous/earlier message, content "
         + "above, or prior conversation; copy the exact required information into this input."
 
+    static let backgroundParameterDescription =
+        "Optional; default false. When true, the tool returns immediately and the helper keeps "
+        + "running in the background; its result arrives later as a follow-up message in this "
+        + "conversation. Use for long-running work. Do not wait, poll, or re-dispatch the same "
+        + "task — acknowledge to the user that the helper will report back."
+
     /// Enforce only the structural part of the standalone-input contract.
     ///
     /// Whether prose depends on parent-chat state cannot be decided safely by

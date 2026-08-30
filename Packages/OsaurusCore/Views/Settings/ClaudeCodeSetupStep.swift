@@ -28,6 +28,8 @@ struct ClaudeCodeSetupStep: View {
 
     let onBack: () -> Void
     let onDone: () -> Void
+    var completionTitle: LocalizedStringKey = "Done"
+    var requiresUsableCLI = false
 
     @Environment(\.theme) private var theme
     @State private var phase: Phase = .probing
@@ -45,6 +47,8 @@ struct ClaudeCodeSetupStep: View {
                         probingCard
                     case .resolved(.notInstalled(let searchedPath)):
                         notInstalledCard(searchedPath: searchedPath)
+                    case .resolved(.statusUnavailable(let cliVersion)):
+                        statusUnavailableCard(cliVersion: cliVersion)
                     case .resolved(.signedOut):
                         signedOutCard
                     case .resolved(.signedIn(let status)):
@@ -212,6 +216,48 @@ struct ClaudeCodeSetupStep: View {
         }
     }
 
+    private func statusUnavailableCard(cliVersion: String?) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            card {
+                statusRow(
+                    icon: "terminal.fill",
+                    tint: theme.warningColor,
+                    title: Text("Sign-in status needs a terminal check", bundle: .module),
+                    detail: Text(
+                        "This Claude Code version doesn't provide machine-readable sign-in status. Osaurus won't guess or inspect its credentials.",
+                        bundle: .module
+                    )
+                )
+            }
+
+            if let cliVersion {
+                detailRow(label: Text("Installed version", bundle: .module), value: cliVersion)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Open Claude Code and complete sign-in:", bundle: .module)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                Text(verbatim: "claude")
+                    .font(.system(size: 12, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground)
+                    )
+            }
+
+            Text(
+                "You can use the Claude Code models after signing in. Updating Claude Code enables status checks and browser sign-in from this screen.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private func signedInCard(_ status: ClaudeCodeAuthStatus) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             card {
@@ -286,7 +332,7 @@ struct ClaudeCodeSetupStep: View {
             .disabled(phase == .probing || isSigningIn)
 
             Button(action: onDone) {
-                Text("Done", bundle: .module)
+                Text(completionTitle, bundle: .module)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.white)
                     .padding(.horizontal, 20)
@@ -294,6 +340,8 @@ struct ClaudeCodeSetupStep: View {
                     .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
             }
             .buttonStyle(.plain)
+            .disabled(requiresUsableCLI && !canComplete)
+            .opacity(requiresUsableCLI && !canComplete ? 0.5 : 1)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 16)
@@ -360,6 +408,15 @@ struct ClaudeCodeSetupStep: View {
 
     // MARK: - Actions
 
+    private var canComplete: Bool {
+        switch phase {
+        case .resolved(.signedIn), .resolved(.statusUnavailable):
+            return true
+        case .probing, .resolved(.notInstalled), .resolved(.signedOut):
+            return false
+        }
+    }
+
     private func probe() async {
         phase = .probing
         let state = await ClaudeCodeConfiguration.setupState()
@@ -379,7 +436,7 @@ struct ClaudeCodeSetupStep: View {
         let status = await ClaudeCodeConfiguration.login()
         if let status, status.loggedIn {
             phase = .resolved(.signedIn(status))
-            ModelPickerItemCache.shared.invalidateCache()
+            await ModelPickerItemCache.shared.prewarmModelCache()
         } else {
             // Cancelled or failed — re-probe so the UI reflects reality instead
             // of asserting a failure we can't actually distinguish.

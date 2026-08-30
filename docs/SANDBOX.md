@@ -74,11 +74,11 @@ Open the Management window (`⌘ Shift M`) → **Sandbox**.
 
 ### 2. Provision the Container
 
-Click **Provision** to download the Linux kernel and initial filesystem, then boot the container. This is a one-time setup that takes about a minute.
+Click **Provision** to download the Linux kernel and initial filesystem, then boot the container. This is a one-time setup that takes about a minute. You can also leave setup deferred: the first custom-agent chat that needs sandbox execution receives the transient `sandbox_init_pending` tool. Calling it waits for provisioning and, on success, adds the real sandbox schemas to the next model step in that same run. A startup failure returns an actionable `unavailable` envelope instead of requiring a blind retry.
 
 ### 3. Start Using Sandbox Tools
 
-Once the container is running, sandbox tools are automatically registered for the active agent. The agent can now execute commands, read/write files, install packages, and more — all inside the VM.
+Once the container is running, sandbox tools are registered as one canonical process-wide runtime surface. Every call resolves the requesting agent from its chat/work execution context, so concurrent and non-active agent runs keep their own Linux user, home, config, secrets, package manifest, and plugin scope. Calls without an authorized request configuration fail closed. The model sees the stable public workspace names (`file_read`, `file_search`, `file_write`, `file_edit`, `shell_run`) plus enabled control-plane tools such as `sandbox_install` and `sandbox_plugin_register`; backend-specific `sandbox_read_file` / `sandbox_exec` adapters stay private. Capability ids name Osaurus tools/skills; sandbox commands and Python/Node libraries are separate and are checked with `shell_run` or installed with `sandbox_install`.
 
 ### 4. Install Sandbox Tools (Optional)
 
@@ -153,7 +153,7 @@ swift test --package-path Packages/OsaurusCore --filter SandboxProvisioningDiagn
 
 | Component | Description |
 |-----------|-------------|
-| **Linux VM** | Alpine Linux with Kata Containers 3.17.0 ARM64 kernel, 8 GiB root filesystem |
+| **Linux VM** | Alpine Linux with Kata Containers 3.32.0 production ARM64 kernel, 8 GiB root filesystem |
 | **VirtioFS Mounts** | `/workspace` maps to `~/.osaurus/container/workspace/`, `/output` maps to `~/.osaurus/container/output/` |
 | **Networking** | vmnet-backed interface: shared NAT in `outbound` mode, host-only + filtering egress proxy in `proxy` mode, absent in `none` mode |
 | **Vsock Bridge** | Unix socket relayed via vsock connects the container to the Host API Bridge server |
@@ -239,7 +239,7 @@ Every sandboxed agent gets a `SOUL.md` file at `~/SOUL.md` inside its home (host
 |------|------|--------------|
 | Seed | First sandbox provision for an agent | A documented seed is written to `~/SOUL.md` (idempotent — never overwrites an existing soul). |
 | Read | Every chat compose in sandbox mode | Composer reads the file, caps it at 8 KB on a line boundary, and emits a `## SOUL` section into the system prompt between persona and operational directives. |
-| Edit | Any time during a sandbox session | The agent edits its own soul via `sandbox_write_file` (whole-file write, or in-place edit via `old_string`+`new_string`). Edits apply on the **next** session — within the active turn the cached system prompt stays byte-stable for KV-cache reuse. |
+| Edit | Any time during a sandbox session | The agent edits its own soul via `file_write` or `file_edit`. Edits apply on the **next** session — within the active turn the cached system prompt stays byte-stable for KV-cache reuse. |
 
 ### Precedence with persona
 
@@ -255,35 +255,33 @@ Sandbox-only by design — folder-mode agents are short-lived and project-bound.
 
 ## Built-in Tools
 
-When the container is running, sandbox tools are automatically registered for the active agent. Read-only tools are always available. Write and execution tools require `autonomous_exec` to be enabled on the agent.
+When the container is running, sandbox tools are automatically registered for the active agent. Model-facing file and shell operations use the same five names as folder mode and route to the sandbox backend through the request execution scope. Write and execution tools require `autonomous_exec` to be enabled on the agent.
 
-> **Default ON (where supported):** On macOS 26+ the sandbox chip defaults **on** for the built-in Default agent and for newly created agents. To avoid a surprise multi-GB download for users who never touch it, the container is **not** booted eagerly — a never-set-up sandbox stays un-provisioned until first use. The first time the model reaches for a sandbox tool (the transient `sandbox_init_pending` placeholder), the container boots and provisions on demand; once `setupComplete` is recorded, later launches auto-start as normal. Provisioning the container from the Sandbox tab, or toggling the chip off→on, also boots it immediately. Existing agents that were left unconfigured keep their previous (off) state, and unsupported machines (pre-macOS 26) stay off.
+> **Default ON for new custom agents (where supported):** The built-in Default agent is configuration-only and never receives autonomous execution. On supported machines, newly created custom agents default on. To avoid a surprise multi-GB download, a never-set-up sandbox stays un-provisioned until first use. The model initially sees only `sandbox_init_pending`; that call awaits boot and per-agent provisioning, then replaces itself with the real public tools in the same run. The placeholder is never frozen into the session baseline. Provisioning from the Sandbox tab or toggling a custom agent off→on also boots immediately; later launches auto-start after `setupComplete`.
 
 ### Anti-confusion cheat sheet (always prefer the dedicated tool)
 
 | Don't                                | Do                                                                                                              |
 |--------------------------------------|------------------------------------------------------------------------------------------------------------------|
-| `cat` / `head` / `tail` in `sandbox_exec` | `sandbox_read_file`                                                                                              |
-| `grep` / `rg` / `find` / `ls` in `sandbox_exec` | `sandbox_search_files` — `target="content"` (rg) or `target="files"` (find).                                     |
-| `sed` / `awk`                        | `sandbox_write_file` with `old_string` → `new_string` (in-place edit)                                            |
-| `echo` / `cat` heredoc to create files | `sandbox_write_file` with `content` (whole file)                                                               |
-| `&` / `nohup` / `disown` for backgrounding | `sandbox_exec(background:true)` — pid + log_file ride back, manage with `sandbox_process` (poll/wait/kill)        |
+| `cat` / `head` / `tail` in `shell_run` | `file_read`                                                                                                    |
+| `grep` / `rg` / `find` / `ls` in `shell_run` | `file_search`                                                                                             |
+| `sed` / `awk`                        | `file_edit` with `old_string` → `new_string`                                                                    |
+| `echo` / `cat` heredoc to create files | `file_write` with `content`                                                                                   |
+| `&` / `nohup` / `disown` for backgrounding | `shell_run` with its background option, then `sandbox_process` (poll/wait/kill)                         |
 
-Reserve `sandbox_exec` for builds, installs, git, processes, network calls, package managers, and any work that doesn't have a dedicated tool above. For multi-line scripts (Python, Node, etc.), `sandbox_write_file` the script then run it with `sandbox_exec` (e.g. `python3 script.py`) — never inline multi-line code in `python3 -c` / `node -e`.
+Reserve `shell_run` for builds, git, processes, network calls, and work without a dedicated tool. Use `sandbox_install` for package installation. For multi-line scripts, write the script with `file_write`, then run it with `shell_run`.
 
 ### Always Available (Read-Only)
 
 | Tool | Description |
 |------|-------------|
-| `sandbox_read_file` | Read a file's contents from the sandbox (supports line ranges, tail, char cap) |
-| `sandbox_search_files` | Search file contents (`target="content"`, ripgrep) **or** find files by name (`target="files"`, glob). Folded the previously-separate `sandbox_find_files` and `sandbox_list_directory` here. |
+| `file_read` | Read a file or list a directory in the sandbox |
+| `file_search` | Search sandbox file contents or find files by name |
 
-Folder-mode `file_read` uses a bounded raw path for plain text, source, and
+`file_read` uses a bounded raw path for plain text, source, and
 CSV/TSV: it reads at most 5 MiB before UTF-8 decoding and returns explicit
 metadata when that cap truncates the preview. Rich documents and XLSX previews
-use the document-adapter limits instead. `sandbox_read_file` remains a raw
-sandbox utility with its own character/range controls; it does not currently
-share the folder `file_read` document-adapter path.
+use the document-adapter limits instead.
 
 When `file_read` is pointed at a **directory** (host or, in combined mode, a
 `/workspace/...` sandbox path), it returns a structured `kind: "listing"`
@@ -298,15 +296,15 @@ model descends by copying a field rather than parsing a tree. The agent loop's
 
 | Tool | Description |
 |------|-------------|
-| `sandbox_write_file` | Write a whole file via `content` (creates parent directories), **or** edit in place via `old_string`+`new_string` (exact match, must match exactly once). The presence of `old_string` selects the edit path; folds in the previously-separate `sandbox_edit_file`. |
-| `sandbox_exec` | Run a shell command. Foreground (default, max 300s) **or** `background:true` for servers/long tasks (the spawn shim returns immediately with `pid` + `log_file`). Pair the background form with `sandbox_process`. |
+| `file_write` / `file_edit` | Create or replace files, or make an exact in-place edit |
+| `shell_run` | Run a shell command in the sandbox; background jobs pair with `sandbox_process` |
 | `sandbox_process` | Manage background jobs: `action="poll"` (alive + log tail), `"wait"` (block until exit, capped by `timeout`), `"kill"` (`force:true` for SIGKILL). |
-| `sandbox_install` | Install packages, one tool for all three managers via the required `manager` argument: `apk` (system packages, runs as root, auto-refreshes the index, serializes globally on apk's container-wide lock), `pip` (Python packages into the agent venv at `~/.venv/`, auto-created on first use, `--disable-pip-version-check --no-input`), or `npm` (Node packages into a per-agent workspace at `~/.osaurus/node_workspace/`, bootstraps `package.json`, `--no-audit --no-fund --no-update-notifier`). Installed `python3`/CLI binaries are on PATH from any `sandbox_exec` cwd. 240s timeout for pip/npm, 120s for apk. |
+| `sandbox_install` | Install exact package specifiers, one tool for all three managers via the required `manager` argument: `apk` (system packages, runs as root, auto-refreshes the index, serializes globally on apk's container-wide lock), `pip` (Python packages into the agent venv at `~/.venv/`, auto-created on first use, `--disable-pip-version-check --no-input`), or `npm` (Node packages into a per-agent workspace at `~/.osaurus/node_workspace/`, bootstraps `package.json`, `--no-audit --no-fund --no-update-notifier`). Try guessed alternative package names in separate calls; one invalid specifier fails a multi-package request. Python/Node libraries and CLI binaries resolve from any `shell_run` cwd (`NODE_PATH` includes the per-agent npm workspace). 240s timeout for pip/npm, 120s for apk. |
 | `sandbox_secret_check` | Check whether a secret exists for this agent (never reveals the value) |
 | `sandbox_secret_set` | Store a secret securely — pass `value` directly or omit to prompt the user |
 | `sandbox_plugin_register` | Register an agent-created plugin (requires `pluginCreate` permission) |
 
-The previously-discrete `sandbox_list_directory`, `sandbox_find_files`, `sandbox_move`, `sandbox_delete`, `sandbox_exec_background`, `sandbox_run_script`, `sandbox_edit_file`, and `sandbox_execute_code` tools were dropped. Their behaviour now comes from a flag (`background:true` on `sandbox_exec`, `target` on `sandbox_search_files`), an argument (`old_string`+`new_string` on `sandbox_write_file` for in-place edits), or a direct shell invocation (`mv` / `rm` in `sandbox_exec`). `sandbox_run_script` and `sandbox_execute_code`'s use case — multi-step scripts/orchestration — is now `sandbox_write_file` the script then `sandbox_exec` to run it (e.g. `python3 script.py`). The separate `sandbox_pip_install` / `sandbox_npm_install` tools were folded into `sandbox_install` (select with `manager:"pip"` / `"npm"`); a bare `apk add` / `pip install` / `npm install` run through `sandbox_exec` that fails surfaces a self-heal hint pointing back at `sandbox_install`.
+The backend-specific `sandbox_read_file`, `sandbox_search_files`, `sandbox_write_file`, and `sandbox_exec` implementations remain registered but private. The public workspace tools route to them only after request mode, path, and execution-scope checks. Control-plane tools stay public only under their owning gates: process management requires background jobs, and registration requires Plugin Creation. Direct manual selection or a stale loaded-tool name cannot restore a hidden adapter or disabled control.
 
 `share_artifact` is a global built-in (registered in `ToolRegistry`) and is the only way for sandbox-generated content to reach the chat thread. It's not in this sandbox-specific list because it's available everywhere, not just in sandbox mode.
 
@@ -319,15 +317,22 @@ All file paths are validated on the host side before container execution by `San
 | Layer | Behaviour |
 |---|---|
 | **Per-agent serialization** | `SandboxInstallLock` queues install operations behind each other per agent so two concurrent calls can't race on `node_modules/` / venv / apk db. **apk's lock is container-wide**, so `sandbox_install` calls serialize *globally across every agent* under a synthetic key — a slow `apk add` on agent A briefly blocks agent B's `apk add`. npm/pip installs are isolated per-agent and run concurrently across agents. |
-| **Auto-recovery** | If the first attempt fails AND its output matches a known stale-state signature (`Tracker "idealTree" already exists`, `EEXIST`, `ELOCKED` for npm; `Could not install packages due to an OSError`, `ReadTimeoutError` for pip; `temporary error`, `unable to lock database` for apk), the tool runs a tool-specific cleanup and retries once. The result envelope includes `retried: true` so the model can see the recovery happened. |
+| **Request validation** | A shared normalizer caps package count and specifier length, rejects empty/control-character/option-injection values, and POSIX-quotes every accepted apk/pip/npm argument. Plugin-declared `dependencies` use the same path. Malformed requests return `invalid_args` before agent or root execution. |
+| **Network preflight** | A disabled network setting returns a non-retryable `rejected` envelope. Configured-but-unavailable egress returns retryable `unavailable` before invoking a package manager. Plugin dependency failures carry the same actionable setting/readiness detail. |
+| **Auto-recovery** | If the first attempt fails AND its output matches a known stale/transient signature (`Tracker "idealTree" already exists`, `EEXIST`, `ELOCKED` for npm; `ReadTimeoutError`, temporary DNS/network failure, or a stale distutils install for pip; `temporary error`, `unable to lock database` for apk), the tool runs a tool-specific cleanup and retries once. The result envelope includes `retried: true` so the model can see the recovery happened. |
+| **Failure classification** | Package/version-not-found and malformed-specifier failures are deterministic and return `retryable:false` with `failure_class:"package_resolution"`. Known network/lock failures remain retryable. Every failed attempt identifies the manager, requested specifiers, retry status, exit code, failure class, and a correction hint. |
 | **Cleanup actions** | npm: `rm -rf node_modules/.package-lock.json && npm cache clean --force`. pip: `pip cache purge`. apk: `apk update`. All run in the same exec context (agent for npm/pip, root for apk) as the install attempt. |
-| **Workspace isolation** | npm installs into `~/.osaurus/node_workspace/` (bootstraps `package.json` on first use). pip installs into the agent's venv at `~/.venv/`. Both have their `bin/` on PATH from any `sandbox_exec` cwd. |
+| **Workspace isolation** | npm installs into `~/.osaurus/node_workspace/` (bootstraps `package.json` on first use). Its `node_modules/.bin` is on `PATH`, `node_modules` is on `NODE_PATH`, and an absent home-level `node_modules` is linked to the workspace so CommonJS and ESM files under the agent home use normal upward module lookup. pip installs into the agent's venv at `~/.venv/`, whose `bin/` is also on `PATH`. |
 | **Stable flags** | npm: `--no-audit --no-fund --no-update-notifier`. pip: `--disable-pip-version-check --no-input`. apk: `--no-cache` plus a leading `apk update --quiet`. |
 | **Timeouts** | npm/pip: 240s (covers cold-cache installs of large packages like torch / pandas / scoped npm packages). apk: 120s. |
 
 ### Installed-package awareness
 
-So the model doesn't re-probe or reinstall what it already has, `SandboxPackageManifest` keeps a host-side, per-agent record (`~/.osaurus/agents/<uuid>/installed-packages.json`) of installed packages by manager. Two writers feed it: `SandboxAgentProvisioner` seeds it once per provision via a cheap lazy reconcile (lists the agent's pip venv and reads its npm `package.json` — `apk` is skipped because the base image carries hundreds of system packages and bare `apk add` can't succeed unprivileged), and `sandbox_install` appends successful installs. `SystemPromptComposer` renders it as a compact, capped **"Already installed"** block inside the *dynamic* `## Sandbox state` section (alongside configured secrets), which sits after the static prefix break — so a mid-session `sandbox_install` or new secret stays fresh turn-to-turn without rewriting the cached KV prefix. The static sandbox framing above it never changes mid-session. The manifest is cleared on unprovision so a rebuilt container starts from observed truth.
+So the model doesn't re-probe or reinstall what it already has, `SandboxPackageManifest` keeps a host-side, per-agent record (`~/.osaurus/agents/<uuid>/installed-packages.json`) of installed packages by manager. Three writers feed it: `SandboxAgentProvisioner` seeds it once per provision via a cheap lazy reconcile (lists only top-level packages from the agent's pip venv and reads direct npm dependencies from `package.json` — `apk` is skipped because the base image carries hundreds of system packages and bare `apk add` can't succeed unprivileged), `sandbox_install` appends successful installs, and successful plugin-declared apk dependencies are attributed to the owning agent.
+
+Context propagation has two deliberate phases. In the same tool loop, the successful install result carries `installed`, `manager`, `summary`, and `exit_code` (plugin registration carries `installed_dependencies`). The system prompt is not recomposed between tool steps. On the next composed turn, `SystemPromptComposer` renders the persisted state as a compact, capped **"Installed sandbox packages"** block inside the *dynamic* `## Sandbox state` section (alongside configured secrets). It states that packages are used from shell/code rather than loaded as capability ids, and directs the model to verify any capped/unlisted name with `shell_run`. That section sits after the static prefix break, so package/secret changes stay fresh without invalidating the reusable prefix. The manifest is cleared on unprovision so a rebuilt container starts from observed truth.
+
+`apk` modifies the shared container, so an installed system package is physically visible to every agent even though the prompt manifest records which agent requested it. Plugin registration rolls back failed library/install records and files, but it cannot safely uninstall an apk package that may already be used by another agent; that shared side effect remains explicit and recorded.
 
 ### Result shape
 
@@ -337,15 +342,15 @@ Every sandbox tool returns a [ToolEnvelope](TOOL_CONTRACT.md) JSON string. Succe
 - Search: `{pattern, target, path, matches}` — `target` is `"content"` or `"files"`.
 - Exec foreground: `{stdout, stderr, exit_code, cwd}`. Background (`background:true`): `{pid, log_file, cwd, background:true}`.
 - Process management: `{pid, alive|exited|killed, log_file, log_tail, ...}`.
-- Install (`sandbox_install`): `{installed, exit_code, summary}` on success — the verbose installer log is trimmed (it's pure context noise); the failure path returns an `execution_error` envelope that *does* carry the combined output for debugging. Both shapes carry `retried: true` when the auto-recovery harness ran a cleanup + second attempt. Failure envelopes additionally carry `cleanup_failed: true` if the cleanup step itself threw — that signals to the model that it should not retry the same operation right away. On success, the installed names are recorded in a host-side manifest surfaced as an "Already installed" line in the system prompt (see below).
+- Install (`sandbox_install`): `{installed, manager, exit_code, summary}` on success — the verbose installer log is trimmed (it's pure context noise); the failure path returns an `execution_error` envelope with combined output plus `{manager, requested, retried, failure_class, exit_code}`. Deterministic resolution errors are non-retryable and tell the model to correct/remove the invalid specifier and try alternatives separately. Failure envelopes additionally carry `cleanup_failed: true` if the cleanup step itself threw. On success, the installed names are recorded in the host-side package manifest described above.
 
-Failures use `kind: invalid_args` with `field` pointing at the offending argument (`path`, `cwd`, `content`, etc.) so the model can self-correct on the next turn.
+Malformed inputs use `kind: invalid_args` with `field` pointing at the offending argument (`path`, `cwd`, `content`, `packages`, etc.) so the model can self-correct on the next turn. Configuration refusals use `rejected`; transient network/backend readiness uses `unavailable`.
 
 ---
 
 ## Streaming Exec & Terminate
 
-`sandbox_exec` (foreground OR `background: true`) and folder-mode `shell_run` stream their live output into the chat tool-call card while the process runs. The model still gets the final `{stdout, stderr, exit_code}` blob when the process exits — streaming is purely a side-channel for the user.
+Model-facing `shell_run` (foreground or `background:true`) routes to the private `sandbox_exec` backend in sandbox mode; both routes stream live output into the chat tool-call card while the process runs. The model still gets the final `{stdout, stderr, exit_code}` blob when the process exits — streaming is purely a side-channel for the user.
 
 ### What the user sees
 
@@ -389,7 +394,7 @@ Two related changes catch the silent-pipeline-failure pattern that used to surfa
 - **Empty-output warning**. When `exit_code == 0` AND stdout AND stderr are all empty AND the command contained `|` or `2>/dev/null`, the result envelope's `warnings:` array carries a hint pointing at the suppressed-stderr / pipeline pattern.
 - **SIGPIPE soft note**. `cmd | head -n N` legitimately kills `cmd` with SIGPIPE (exit 141) once `head` reaches its limit. The result envelope flags this with a softer "captured stdout is still trustworthy" warning so the model doesn't treat it as a failure.
 
-**Don't use `2>/dev/null` in pipelines.** It hides errors from the result envelope. If you genuinely need silent stderr, redirect to a log file you can `sandbox_read_file` later.
+**Don't use `2>/dev/null` in pipelines.** It hides errors from the result envelope. If you genuinely need silent stderr, redirect to a log file you can inspect with `file_read` later.
 
 ---
 
@@ -464,11 +469,15 @@ Plugins are installed per agent. Each agent can have a different set of plugins 
 
 **Managing plugins:**
 
-- Open Management window → **Sandbox** → **Plugins** tab
+- Open Settings → **Tools** → **Custom**
 - **Import** plugins from JSON files, URLs, or GitHub repos
 - **Create** new plugins with the built-in editor
-- **Install** plugins to specific agents
 - **Export** and **duplicate** plugins for sharing
+
+Saving or importing a custom tool publishes its schemas immediately, and app
+startup republishes every recipe in the library. The recipe is installed into
+an agent's isolated workspace on that agent's first invocation; no separate
+manual install step is required.
 
 ### Plugin Tools
 
@@ -525,7 +534,7 @@ Storing a secret is only half the problem — the other half is keeping its **va
 
 ## Building New Tools (Agent-Authored Plugins)
 
-Agents can author, package, and register new sandbox plugins at runtime. The plugin-authoring recipe is injected into the system prompt as a **`## Building new tools`** section whenever plugin creation is enabled for the session (it is not modeled as a loadable skill, so it never appears in the capabilities manifest, discover, search, or load). Both the in-process `sandbox_plugin_register` tool and the host-API `POST /api/plugin/create` endpoint funnel through one shared registration pipeline (`SandboxPluginRegistration.register`) so they cannot drift.
+Agents can author, package, and register new sandbox plugins at runtime. The plugin-authoring recipe is injected into the system prompt as a **`## Building new tools`** section whenever plugin creation is enabled for the session (compact local models receive a shorter but complete manifest/register recipe). It is not modeled as a loadable skill, so it never appears in the capabilities manifest, discover, search, or load. Both the in-process `sandbox_plugin_register` tool and the host-API `POST /api/plugin/create` endpoint funnel through one shared registration pipeline (`SandboxPluginRegistration.register`) so they cannot drift.
 
 ### Requirements
 
@@ -534,11 +543,12 @@ Agents can author, package, and register new sandbox plugins at runtime. The plu
 
 ### Workflow
 
-1. Agent writes script files to `~/plugins/{plugin-id}/scripts/` (or any subdirectory)
-2. Agent writes a `plugin.json` manifest defining the plugin name, description, tools, and dependencies
-3. Agent calls `sandbox_plugin_register` with the `plugin_id` (or the host-CLI calls `POST /api/plugin/create`)
-4. The shared registration pipeline validates the plugin, applies restricted defaults, persists to `SandboxPluginLibrary`, runs the install, and hot-registers the tools via `CapabilityLoadBuffer`
-5. A non-blocking toast notifies the user with a **Remove** action for later review
+1. Agent writes script files with `file_write` to `~/plugins/{plugin-id}/scripts/` (or any subdirectory).
+2. Agent writes a `plugin.json` manifest defining the required `name` and `description`, plus tools using `id`, simplified parameter specs, and `run`.
+3. Agent calls `sandbox_plugin_register({"plugin_id":"<plugin-id>"})` (or the host CLI calls `POST /api/plugin/create`).
+4. The shared registration pipeline validates the plugin, applies restricted defaults, persists to `SandboxPluginLibrary`, runs the install, and hot-registers the tools.
+5. The in-process tool awaits schema buffering before it returns; chat and eval loops activate exactly those schemas for the next model step, so the agent can immediately call and verify the returned prefixed tool.
+6. A non-blocking toast notifies the user with a **Remove** action for later review.
 
 ### File Auto-Packaging
 
@@ -657,10 +667,11 @@ Every external artifact the sandbox depends on is pinned to an immutable digest,
 | Artifact | Pin |
 |----------|-----|
 | GHCR image (`ghcr.io/osaurus-ai/sandbox`) | Multi-arch index digest (`@sha256:...`); the `:latest` tag is never used at runtime |
-| Kata kernel tarball | SHA-256 verified after download against an in-source constant |
-| Initfs blob | SHA-256 verified after download against an in-source constant |
+| Containerization SDK | Exact SwiftPM pin: 0.41.0 (the SDK used by Apple container 1.3.0) |
+| Kata kernel | Kata 3.32.0, Linux `6.18.35-197` production/non-debug binary; both the release tarball and extracted kernel have pinned SHA-256 digests |
+| vminit initfs | Containerization `vminit:0.41.0` OCI index pinned by digest |
 
-A digest mismatch is **fail-closed**: the temp file is deleted, alternate mirrors are not tried (silent fallback would mask exactly the upstream-compromise scenario this defends against), and provisioning aborts with `SandboxError.integrityCheckFailed`. The hashing pass is bounded at 512 MiB to stop a runaway download from turning into a multi-GB hash job.
+A digest mismatch is **fail-closed**: the temp file is deleted, alternate mirrors are not tried (silent fallback would mask exactly the upstream-compromise scenario this defends against), and provisioning aborts with `SandboxError.integrityCheckFailed`. The hashing pass is bounded at 768 MiB to accommodate the pinned Kata archive while stopping a runaway download from turning into a multi-GB hash job.
 
 To rotate a pin (e.g. after intentionally bumping the sandbox image): fetch the new digest with `crane digest …` or `docker buildx imagetools inspect …`, paste the multi-arch index digest into `containerImage` in `SandboxManager.swift`, and update the corresponding SHA-256 constants alongside the URL in the same file.
 

@@ -20,12 +20,12 @@ struct SubagentSettingsSection: View {
     }
 
     private var systemSection: some View {
-        SettingsSection(title: "Subagents", icon: "wand.and.stars") {
+        SettingsSection(title: "Delegation", icon: "point.3.connected.trianglepath.dotted") {
             VStack(alignment: .leading, spacing: 16) {
                 SettingsSubsection(label: "Main Chat Capabilities") {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(
-                            "The built-in Default agent may use these model-backed helpers. Browser Use and Computer Use remain custom-agent-only.",
+                            "The Orchestrator may use these model-backed helpers. Browser Use and Computer Use remain custom-agent-only.",
                             bundle: .module
                         )
                         .font(.system(size: 11))
@@ -53,10 +53,13 @@ struct SubagentSettingsSection: View {
                 Divider()
                     .overlay(themeManager.currentTheme.inputBorder)
 
-                SettingsSubsection(label: "Main Chat Spawn") {
+                SettingsSubsection(
+                    label: "Main Chat Spawn",
+                    anchorId: "settings.orchestrator.delegation.mainChat"
+                ) {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(
-                            "Choose the agents and local or cloud models the built-in chat may delegate to. The agent selects among this allow-list for each job; an empty allow-list keeps Spawn unavailable.",
+                            "Choose the agents and local or cloud models the Orchestrator may delegate to. It selects among this allow-list for each job; an empty allow-list keeps delegation unavailable.",
                             bundle: .module
                         )
                         .font(.system(size: 11))
@@ -95,7 +98,10 @@ struct SubagentSettingsSection: View {
                 Divider()
                     .overlay(themeManager.currentTheme.inputBorder)
 
-                SettingsSubsection(label: "Local Handoff & RAM Safety") {
+                SettingsSubsection(
+                    label: "Local Handoff & RAM Safety",
+                    anchorId: "settings.orchestrator.delegation.handoff"
+                ) {
                     VStack(alignment: .leading, spacing: 12) {
                         SettingsToggle(
                             title: "Local Orchestrator Handoff",
@@ -123,10 +129,6 @@ struct SubagentSettingsSection: View {
         }
     }
 
-    private var defaultToolsEnabled: Bool {
-        !DefaultAgentConfigurationStore.load().disableTools
-    }
-
     private var mainSpawnReadiness: AgentCapabilityReadiness {
         let configuredAgentIDs = configuration.spawnableAgentIDs
         let configuredCount =
@@ -147,7 +149,7 @@ struct SubagentSettingsSection: View {
         return AgentCapabilityReadiness.subagent(
             flag: .spawn,
             configured: configuredCount > 0,
-            toolsEnabled: defaultToolsEnabled,
+            toolsEnabled: true,
             hasResolvedModel: true,
             configuredSpawnTargetCount: configuredCount,
             runnableSpawnTargetCount: runnableCount,
@@ -162,7 +164,7 @@ struct SubagentSettingsSection: View {
         AgentCapabilityReadiness.subagent(
             flag: .image,
             configured: configuration.imageDelegationEnabled,
-            toolsEnabled: defaultToolsEnabled,
+            toolsEnabled: true,
             hasResolvedModel: true,
             hasReadyImageModel: modelPickerCache.hasReadyImageModel,
             permission: configuration.permissionDefaults.policy(
@@ -175,7 +177,7 @@ struct SubagentSettingsSection: View {
         AgentCapabilityReadiness.subagent(
             flag: .appleScript,
             configured: configuration.appleScriptDelegationEnabled,
-            toolsEnabled: defaultToolsEnabled,
+            toolsEnabled: true,
             hasResolvedModel: true,
             hasReadyAppleScriptModel: modelPickerCache.hasReadyAppleScriptModel
         )

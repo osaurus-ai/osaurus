@@ -24,7 +24,7 @@ import CryptoKit
 import Foundation
 import OsaurusSQLCipher
 
-public enum MemoryDatabaseError: Error, LocalizedError {
+public enum MemoryDatabaseError: Error, LocalizedError, ForwardVersionStoreError {
     case failedToOpen(String)
     case failedToExecute(String)
     case failedToPrepare(String)
@@ -43,6 +43,13 @@ public enum MemoryDatabaseError: Error, LocalizedError {
                 "Memory database is schema v\(found) but this build supports up to v\(expected). Refusing to open to avoid forward-version corruption."
         case .notOpen: return "Memory database is not open"
         }
+    }
+
+    /// Only the forward-version refusal is a healthy-file downgrade; every
+    /// other case here is a real fault.
+    public var isForwardVersion: Bool {
+        if case .databaseFromNewerVersion = self { return true }
+        return false
     }
 }
 
@@ -1311,6 +1318,16 @@ public final class MemoryDatabase: @unchecked Sendable {
         }
     }
 
+    /// Delete every pinned fact for an agent, regardless of status. Used by
+    /// the agent detail "Delete All Data" flow. Callers are responsible for
+    /// dropping the matching vector-index entries (or the whole per-agent
+    /// index) so search can't keep surfacing deleted facts.
+    public func deletePinnedFacts(forAgent agentId: String) throws {
+        _ = try executeUpdate("DELETE FROM pinned_facts WHERE agent_id = ?1") { stmt in
+            Self.bindText(stmt, index: 1, value: agentId)
+        }
+    }
+
     public func evictPinnedFacts(belowSalience floor: Double, idleDays: Int) throws -> Int {
         var evicted = 0
         try prepareAndExecute(
@@ -1566,6 +1583,65 @@ public final class MemoryDatabase: @unchecked Sendable {
             }
         )
         return count
+    }
+
+    /// Memory counts per `project-*` namespace: episodes + active pinned
+    /// facts combined. Separate from `agentIdsWithPinnedFacts` because a
+    /// young project usually has episodes before any fact has been
+    /// promoted, and a facts-only count would hide it from the Memory view.
+    public func projectNamespaceCounts() throws -> [(namespaceKey: String, count: Int)] {
+        var results: [(String, Int)] = []
+        try prepareAndExecute(
+            """
+            SELECT agent_id, SUM(n) FROM (
+                SELECT agent_id, COUNT(*) AS n FROM episodes
+                    WHERE agent_id LIKE 'project-%' GROUP BY agent_id
+                UNION ALL
+                SELECT agent_id, COUNT(*) AS n FROM pinned_facts
+                    WHERE agent_id LIKE 'project-%' AND status = 'active' GROUP BY agent_id
+                UNION ALL
+                SELECT agent_id, COUNT(*) AS n FROM transcript
+                    WHERE agent_id LIKE 'project-%' GROUP BY agent_id
+            ) GROUP BY agent_id ORDER BY 2 DESC
+            """,
+            bind: { _ in },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    let key = String(cString: sqlite3_column_text(stmt, 0))
+                    let count = Int(sqlite3_column_int(stmt, 1))
+                    results.append((key, count))
+                }
+            }
+        )
+        return results
+    }
+
+    /// Episodes + active pinned facts per agent namespace, excluding
+    /// project namespaces. Same union the project rows use — an agent
+    /// whose memory is all episodes (no pinned facts yet) must still
+    /// appear in the Agents card.
+    public func agentNamespaceCounts() throws -> [(agentId: String, count: Int)] {
+        var results: [(String, Int)] = []
+        try prepareAndExecute(
+            """
+            SELECT agent_id, SUM(n) FROM (
+                SELECT agent_id, COUNT(*) AS n FROM episodes
+                    WHERE agent_id NOT LIKE 'project-%' GROUP BY agent_id
+                UNION ALL
+                SELECT agent_id, COUNT(*) AS n FROM pinned_facts
+                    WHERE agent_id NOT LIKE 'project-%' AND status = 'active' GROUP BY agent_id
+            ) GROUP BY agent_id ORDER BY 2 DESC
+            """,
+            bind: { _ in },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    let key = String(cString: sqlite3_column_text(stmt, 0))
+                    let count = Int(sqlite3_column_int(stmt, 1))
+                    results.append((key, count))
+                }
+            }
+        )
+        return results
     }
 
     public func agentIdsWithPinnedFacts() throws -> [(agentId: String, count: Int)] {
@@ -1916,6 +1992,27 @@ public final class MemoryDatabase: @unchecked Sendable {
         return count
     }
 
+    /// Remove every episode and pinned fact stored under a memory
+    /// namespace. Used when a project is deleted to drop its shared
+    /// `project-<uuid>` namespace. Transcripts and pending signals are
+    /// never written under project namespaces, so those tables are not
+    /// touched.
+    public func deleteNamespaceData(agentId: String) throws {
+        try inTransaction { connection in
+            try Self.executeUpdate(on: connection, "DELETE FROM episodes WHERE agent_id = ?1") { stmt in
+                Self.bindText(stmt, index: 1, value: agentId)
+            }
+            try Self.executeUpdate(on: connection, "DELETE FROM pinned_facts WHERE agent_id = ?1") { stmt in
+                Self.bindText(stmt, index: 1, value: agentId)
+            }
+            // Project namespaces also hold mirrored raw transcript rows
+            // (immediate project memory), keyed by the same namespace id.
+            try Self.executeUpdate(on: connection, "DELETE FROM transcript WHERE agent_id = ?1") { stmt in
+                Self.bindText(stmt, index: 1, value: agentId)
+            }
+        }
+    }
+
     public func deleteEpisode(id: Int) throws {
         _ = try executeUpdate("DELETE FROM episodes WHERE id = ?1") { stmt in
             sqlite3_bind_int(stmt, 1, Int32(id))
@@ -2119,6 +2216,55 @@ public final class MemoryDatabase: @unchecked Sendable {
         _ = try executeUpdate("DELETE FROM transcript WHERE conversation_id = ?1") { stmt in
             Self.bindText(stmt, index: 1, value: conversationId)
         }
+    }
+
+    /// Drop a conversation's older transcript rows within one namespace,
+    /// keeping the `keepLast` most recent (by chunk index). Returns the
+    /// chunk indexes deleted so the caller can evict the matching vector
+    /// docs. Used to compact a project namespace's immediate-memory
+    /// transcripts once a distilled episode has superseded them — bounding
+    /// growth without touching namespaces whose distillation never runs
+    /// (no episode → this is never called → transcripts persist as their
+    /// only memory). No-op when nothing exceeds `keepLast`.
+    public func pruneTranscript(
+        agentId: String,
+        conversationId: String,
+        keepLast: Int
+    ) throws -> [Int] {
+        var deleted: [Int] = []
+        try prepareAndExecute(
+            """
+            SELECT chunk_index FROM transcript
+            WHERE agent_id = ?1 AND conversation_id = ?2
+            ORDER BY chunk_index DESC
+            LIMIT -1 OFFSET ?3
+            """,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: agentId)
+                Self.bindText(stmt, index: 2, value: conversationId)
+                sqlite3_bind_int(stmt, 3, Int32(max(0, keepLast)))
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    deleted.append(Int(sqlite3_column_int(stmt, 0)))
+                }
+            }
+        )
+        guard !deleted.isEmpty else { return [] }
+        let placeholders = deleted.indices.map { "?\($0 + 3)" }.joined(separator: ", ")
+        _ = try executeUpdate(
+            """
+            DELETE FROM transcript
+            WHERE agent_id = ?1 AND conversation_id = ?2 AND chunk_index IN (\(placeholders))
+            """
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: agentId)
+            Self.bindText(stmt, index: 2, value: conversationId)
+            for (i, idx) in deleted.enumerated() {
+                sqlite3_bind_int(stmt, Int32(i + 3), Int32(idx))
+            }
+        }
+        return deleted
     }
 
     public func loadTranscript(
@@ -2618,6 +2764,33 @@ public final class MemoryDatabase: @unchecked Sendable {
             "DELETE FROM episodes WHERE conversation_id = ?1"
         ) { stmt in
             Self.bindText(stmt, index: 1, value: conversationId)
+        }
+    }
+
+    /// Delete every episode for an agent, regardless of status. Same
+    /// FTS/vector semantics as `deleteEpisode(id:)`: FTS stays
+    /// trigger-synced and stale vector rows resolve to a missing SQL row
+    /// and are filtered on read. Used by the agent detail "Delete All
+    /// Data" flow.
+    public func deleteEpisodes(forAgent agentId: String) throws {
+        _ = try executeUpdate("DELETE FROM episodes WHERE agent_id = ?1") { stmt in
+            Self.bindText(stmt, index: 1, value: agentId)
+        }
+    }
+
+    /// Delete an agent's raw conversation memory: transcript chunks,
+    /// buffered pending signals, and processing-log rows. Paired with a
+    /// chat-history wipe so the memory pipeline can't re-distill
+    /// conversations the user just deleted.
+    public func deleteConversationMemory(forAgent agentId: String) throws {
+        for sql in [
+            "DELETE FROM transcript WHERE agent_id = ?1",
+            "DELETE FROM pending_signals WHERE agent_id = ?1",
+            "DELETE FROM processing_log WHERE agent_id = ?1",
+        ] {
+            _ = try executeUpdate(sql) { stmt in
+                Self.bindText(stmt, index: 1, value: agentId)
+            }
         }
     }
 

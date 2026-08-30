@@ -35,6 +35,14 @@ struct SandboxSecretCheckTool: OsaurusTool, @unchecked Sendable {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
+        let context = await SandboxToolRequestContext.resolve(
+            fallbackAgentId: agentId
+        )
+        if let rejection = context.rejection(for: .autonomous, tool: name) {
+            return rejection
+        }
+        let agentId = context.agentId
+
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
@@ -115,6 +123,14 @@ struct SandboxSecretSetTool: OsaurusTool, @unchecked Sendable {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
+        let context = await SandboxToolRequestContext.resolve(
+            fallbackAgentId: agentId
+        )
+        if let rejection = context.rejection(for: .autonomous, tool: name) {
+            return rejection
+        }
+        let agentId = context.agentId
+
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 

@@ -208,6 +208,109 @@ struct ModelRuntimeFindDirectoryTests {
         #expect(uncapped == strictCap * 16)
     }
 
+    /// The delegated-contract price is genuinely below cap pricing on real
+    /// architecture facts: the same estimator, once at the model-wide 64K
+    /// retention cap and once at the enforced delegated ceiling (tool-enabled
+    /// default contract → 16,684 positions), must charge proportionally less
+    /// — this is the byte-level statement of the 16 GiB refusal→admission
+    /// flip for a tool-enabled delegated agent.
+    @Test("delegated contract ceiling prices below the retention cap")
+    func delegatedContractCeilingPricesBelowCap() throws {
+        let dir = try makeIsolatedDir()
+        let config = """
+            {
+              "model_type": "qwen3_5",
+              "num_hidden_layers": 48,
+              "num_attention_heads": 32,
+              "num_key_value_heads": 8,
+              "head_dim": 128,
+              "max_position_embeddings": 262144,
+              "torch_dtype": "bfloat16"
+            }
+            """
+        try Data(config.utf8).write(to: dir.appendingPathComponent("config.json"))
+
+        let contract = try #require(
+            DelegatedRunContract.derive(
+                seedCharacters: 800,
+                systemPromptCharacters: 2_000,
+                toolSchemaTokens: 375,
+                budgets: SubagentBudgets(),
+                toolEnabled: true,
+                resolvedContextWindow: 65_536
+            ))
+        let weights: Int64 = 3 * 1024 * 1024 * 1024
+        let capPriced = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: weights,
+            modelDirectory: dir,
+            kvRetentionCap: 65_536
+        )
+        let contractPriced = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: weights,
+            modelDirectory: dir,
+            kvRetentionCap: contract.contextPositions
+        )
+        #expect(contractPriced < capPriced)
+        // Position pricing is linear, so the ratio tracks the position ratio.
+        #expect(contractPriced <= capPriced * 13_713 / 65_536 + 1024)
+        #expect(contractPriced > 0)
+    }
+
+    /// The REPORTED 16 GiB shape on Gemma-class topology: an E2B-scale
+    /// config (GQA, 2 KV heads, 32K declared window). The same estimator
+    /// prices the child at the model-wide retention policy versus the
+    /// enforced delegated contract; the contract charge must be materially
+    /// below the cap charge AND small enough to fit the report's ~3 GiB
+    /// post-reserve residual — the byte-level admission flip for the
+    /// tool-enabled Gemma delegation.
+    @Test("Gemma E2B-class topology: contract pricing fits the 16GiB residual")
+    func gemmaE2BContractPricingFitsSixteenGBResidual() throws {
+        let dir = try makeIsolatedDir()
+        let config = """
+            {
+              "model_type": "gemma4",
+              "num_hidden_layers": 30,
+              "num_attention_heads": 8,
+              "num_key_value_heads": 2,
+              "head_dim": 256,
+              "hidden_size": 2048,
+              "max_position_embeddings": 32768,
+              "torch_dtype": "bfloat16"
+            }
+            """
+        try Data(config.utf8).write(to: dir.appendingPathComponent("config.json"))
+
+        let contract = try #require(
+            DelegatedRunContract.derive(
+                seedCharacters: 800,
+                systemPromptCharacters: 2_000,
+                toolSchemaTokens: 375,
+                budgets: SubagentBudgets(),
+                toolEnabled: true,
+                resolvedContextWindow: 32_768
+            ))
+        #expect(contract.contextPositions == 13_713)
+
+        let weights: Int64 = 3 * 1024 * 1024 * 1024
+        let capPriced = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: weights,
+            modelDirectory: dir,
+            kvRetentionCap: 65_536  // Safe Auto — clamps to the 32K window
+        )
+        let contractPriced = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: weights,
+            modelDirectory: dir,
+            kvRetentionCap: contract.contextPositions
+        )
+        #expect(contractPriced < capPriced)
+        // 30 layers × 2 (K+V) × 2 heads × 256 dim × 13,713 positions × 2 B
+        // ≈ 0.96 GiB (+ overheads) — under the ~3 GiB residual of the
+        // report, so ONE bounded child is admittable where cap pricing
+        // was not guaranteed to be.
+        #expect(contractPriced < 3 * 1024 * 1024 * 1024)
+        #expect(contractPriced > 0)
+    }
+
     @Test("Nanbeige KV RAM preflight counts every loop-layer cache slot")
     func nanbeigeKVHeadroomUsesLoopedCacheTopology() throws {
         let oneLoop = try makeIsolatedDir()

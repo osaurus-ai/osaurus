@@ -6,10 +6,13 @@
 //  after the consolidation:
 //
 //   * For the Default agent (`Agent.defaultId`), `resolveTools` returns
-//     EXACTLY `defaultAgentAllowedToolNames` — the consolidated configure
-//     surface (`osaurus_status` / `osaurus_list` / `osaurus_describe` reads
-//     + the per-domain `osaurus_*` write tools) plus the three agent-loop
-//     tools, native `web_search`, and `get_current_time`. The writes load
+//     EXACTLY `orchestratorAllowedToolNames` — the consolidated configure
+//     surface (the `osaurus_inspect` read
+//     + the single declarative `osaurus_config` write) plus the three
+//     agent-loop tools, `get_current_time`, and the native search pair
+//     (`web_search` / `search_and_extract`) for quick lookups. Worker-owned
+//     tools (`share_artifact`) are NEVER present — workers deliver their own
+//     artifacts. The writes load
 //     DIRECTLY (no `capabilities_load` step), and the
 //     capability-search gateway (`capabilities_discover` /
 //     `capabilities_load`) is NOT present for the Default agent.
@@ -52,17 +55,44 @@ struct ConfigureToolExposureTests {
     @Test
     func defaultAgent_seesExactlyConsolidatedConfigureSurface() async {
         Self.ensureBootstrapped()
+        // Isolate the global delegation snapshot: the default-agent schema
+        // gates `spawn_*` on `SubagentConfigurationStore.snapshot()`, so a
+        // parallel suite that populates the main-chat pool would otherwise
+        // leak spawn tools into this exact-equality baseline.
+        let lease = await acquireSubagentStoreSandbox("configure-exposure-exact")
+        defer { lease.release() }
         let snapshot = Self.makeSnapshot(agentId: Agent.defaultId)
         let tools = SystemPromptComposer.resolveTools(
             snapshot: snapshot,
             executionMode: .none
         )
         let names = Set(tools.map { $0.function.name })
-        #expect(names == ToolRegistry.defaultAgentAllowedToolNames)
+        #expect(names == ToolRegistry.orchestratorAllowedToolNames)
         // Structural: the allowed set is the configure surface (reads +
-        // writes) plus exactly the three agent-loop tools, native
-        // `web_search`, and `get_current_time`, with no overlap.
-        #expect(names.count == ToolRegistry.configureToolNames.count + 5)
+        // writes) plus exactly the three agent-loop tools,
+        // `get_current_time`, and the two native search tools, with no
+        // overlap.
+        #expect(names.count == ToolRegistry.configureToolNames.count + 6)
+    }
+
+    /// Orchestrator invariant: the Default agent's schema never carries the
+    /// worker-owned tools — artifact delivery belongs to spawned helpers
+    /// (see `ToolRegistry.orchestratorExcludedToolNames`).
+    @Test
+    func defaultAgent_neverCarriesWorkerOwnedTools() async {
+        Self.ensureBootstrapped()
+        let snapshot = Self.makeSnapshot(agentId: Agent.defaultId)
+        let tools = SystemPromptComposer.resolveTools(
+            snapshot: snapshot,
+            executionMode: .none
+        )
+        let names = Set(tools.map { $0.function.name })
+        for excluded in ToolRegistry.orchestratorExcludedToolNames {
+            #expect(
+                !names.contains(excluded),
+                "worker-owned tool \(excluded) leaked into the orchestrator schema"
+            )
+        }
     }
 
     @Test
@@ -79,14 +109,12 @@ struct ConfigureToolExposureTests {
         for write in ToolRegistry.configureWriteToolNames {
             #expect(names.contains(write), "consolidated write \(write) missing from default-agent schema")
         }
-        // And the three generic reads.
-        #expect(names.contains("osaurus_status"))
-        #expect(names.contains("osaurus_list"))
-        #expect(names.contains("osaurus_describe"))
+        // And the consolidated generic read.
+        #expect(names.contains("osaurus_inspect"))
     }
 
     @Test
-    func defaultAgent_includesTheConsolidatedWrites() async {
+    func defaultAgent_includesTheDeclarativeWrite() async {
         Self.ensureBootstrapped()
         let snapshot = Self.makeSnapshot(agentId: Agent.defaultId)
         let tools = SystemPromptComposer.resolveTools(
@@ -94,19 +122,18 @@ struct ConfigureToolExposureTests {
             executionMode: .none
         )
         let names = Set(tools.map { $0.function.name })
-        let expectedWrites: Set<String> = [
+        #expect(
+            names.contains("osaurus_config"),
+            "expected the declarative write tool; got \(names.sorted())"
+        )
+        // The pre-consolidation per-domain write tools are gone.
+        for legacy in [
             "osaurus_provider", "osaurus_model", "osaurus_mcp",
             "osaurus_search", "osaurus_plugin", "osaurus_schedule",
-            "osaurus_agent",
-        ]
-        #expect(
-            expectedWrites.isSubset(of: names),
-            "expected the seven consolidated write tools; got \(names.sorted())"
-        )
-        // The pre-consolidation write set is gone — no `osaurus_*_<verb>`.
-        #expect(!names.contains("osaurus_provider_add"))
-        #expect(!names.contains("osaurus_model_download"))
-        #expect(!names.contains("osaurus_schedule_create"))
+            "osaurus_watcher", "osaurus_agent", "osaurus_settings",
+        ] {
+            #expect(!names.contains(legacy), "legacy write tool \(legacy) leaked into the schema")
+        }
     }
 
     @Test
@@ -172,11 +199,12 @@ struct ConfigureToolExposureTests {
             executionMode: .none
         )
         let names = Set(tools.map { $0.function.name })
-        // osaurus_status / osaurus_list / osaurus_describe live in
-        // ToolRegistry as built-ins for indexing, but the composer
-        // strips them from custom-agent schemas. Verifying this so
-        // future "make them globally available" changes are forced
-        // to come through a review.
+        // osaurus_inspect lives in ToolRegistry as a built-in for
+        // indexing, but the composer strips it from custom-agent
+        // schemas. Verifying this so future "make it globally
+        // available" changes are forced to come through a review.
+        #expect(!names.contains("osaurus_inspect"))
+        // The pre-consolidation read names must never come back either.
         #expect(!names.contains("osaurus_status"))
         #expect(!names.contains("osaurus_list"))
         #expect(!names.contains("osaurus_describe"))

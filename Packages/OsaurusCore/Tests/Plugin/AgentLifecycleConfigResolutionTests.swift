@@ -167,7 +167,8 @@ struct AgentDeletionPluginTeardownOrderingTests {
             let agent = Agent(
                 name: "TeardownOrder-\(UUID().uuidString.prefix(6))",
                 systemPrompt: "Test identity",
-                agentAddress: "test-teardown-\(UUID().uuidString)"
+                agentAddress: "test-teardown-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             AgentManager.shared.add(agent)
             recorder.agentId = agent.id

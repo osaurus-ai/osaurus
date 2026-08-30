@@ -26,7 +26,7 @@ struct DiagnosticWarningsTests {
         #expect(warnings.contains { $0.contains("already starts in the working directory") })
     }
 
-    @Test func absoluteCdOutsideWorkspaceSurfacesWrongDirectoryHint() {
+    @Test func standardTemporaryDirectoryCdDoesNotWarn() {
         let warnings = diagnosticWarnings(
             command: "cd /tmp && python3 -m unittest discover -q",
             exitCode: 5,
@@ -34,7 +34,7 @@ struct DiagnosticWarningsTests {
             stderr: "NO TESTS RAN",
             workingDirectory: "/tmp/workspace"
         )
-        #expect(warnings.contains { $0.contains("leaves the selected workspace") })
+        #expect(!warnings.contains { $0.contains("leaves the selected workspace") })
     }
 
     @Test func workspaceSubdirectoryCdDoesNotWarn() {
@@ -130,7 +130,8 @@ struct DiagnosticWarningsTests {
             stdout: "",
             stderr: "bash: -c: line 3: syntax error near unexpected token `('"
         )
-        #expect(warnings.contains { $0.contains("sandbox_write_file") })
+        #expect(warnings.contains { $0.contains("file_write") })
+        #expect(warnings.contains { $0.contains("shell_run") })
         #expect(warnings.contains { $0.contains("shell `-c` / `-e`") })
     }
 
@@ -141,7 +142,7 @@ struct DiagnosticWarningsTests {
             stdout: "",
             stderr: "SyntaxError: Unexpected end of file"
         )
-        #expect(warnings.contains { $0.contains("sandbox_write_file") })
+        #expect(warnings.contains { $0.contains("file_write") })
     }
 
     @Test func cleanInlinePythonOneLinerDoesNotTriggerEscapeHint() {
@@ -153,7 +154,7 @@ struct DiagnosticWarningsTests {
             stdout: "1\n",
             stderr: ""
         )
-        #expect(warnings.allSatisfy { !$0.contains("sandbox_write_file") })
+        #expect(warnings.allSatisfy { !$0.contains("file_write") })
     }
 
     @Test func pythonRuntimeErrorDoesNotTriggerEscapeHint() {
@@ -166,7 +167,7 @@ struct DiagnosticWarningsTests {
             stderr:
                 "Traceback (most recent call last):\n  File \"<string>\", line 1\nModuleNotFoundError: No module named 'nope'"
         )
-        #expect(warnings.allSatisfy { !$0.contains("sandbox_write_file") })
+        #expect(warnings.allSatisfy { !$0.contains("file_write") })
     }
 
     @Test func shellSyntaxErrorWithoutInlineCodeFlagDoesNotTriggerEscapeHint() {
@@ -179,7 +180,7 @@ struct DiagnosticWarningsTests {
             stdout: "",
             stderr: "bash: command substitution: line 1: syntax error: unexpected end of file"
         )
-        #expect(warnings.allSatisfy { !$0.contains("sandbox_write_file") })
+        #expect(warnings.allSatisfy { !$0.contains("file_write") })
     }
 
     // MARK: - Unbalanced-quote hint
@@ -219,7 +220,7 @@ struct DiagnosticWarningsTests {
                 "bash: -c: line 2: warning: here-document at line 1 delimited by end-of-file (wanted `EOF')"
         )
         #expect(warnings.contains { $0.contains("heredoc") })
-        #expect(warnings.contains { $0.contains("sandbox_write_file") })
+        #expect(warnings.contains { $0.contains("file_write") })
     }
 
     @Test func inlineCodeTakesPrecedenceOverQuoteWhenBothSignaturesPresent() {
@@ -232,7 +233,7 @@ struct DiagnosticWarningsTests {
             stdout: "",
             stderr: "bash: -c: line 2: unexpected EOF while looking for matching `\"'"
         )
-        #expect(warnings.contains { $0.contains("sandbox_write_file") })
+        #expect(warnings.contains { $0.contains("file_write") })
         #expect(warnings.allSatisfy { !$0.contains("unbalanced") })
     }
 
@@ -243,7 +244,8 @@ struct DiagnosticWarningsTests {
             command: "apk add curl ffmpeg",
             exitCode: 1,
             stdout: "",
-            stderr: "ERROR: Unable to lock database: Permission denied"
+            stderr: "ERROR: Unable to lock database: Permission denied",
+            sandboxInstallAvailable: true
         )
         #expect(warnings.contains { $0.contains("sandbox_install") })
         #expect(warnings.contains { $0.contains("\"apk\"") })
@@ -254,7 +256,8 @@ struct DiagnosticWarningsTests {
             command: "pip install numpy flask",
             exitCode: 1,
             stdout: "",
-            stderr: "ERROR: Could not install packages due to an OSError: [Errno 13] Permission denied"
+            stderr: "ERROR: Could not install packages due to an OSError: [Errno 13] Permission denied",
+            sandboxInstallAvailable: true
         )
         #expect(warnings.contains { $0.contains("sandbox_install") })
         #expect(warnings.contains { $0.contains("\"pip\"") })
@@ -265,10 +268,35 @@ struct DiagnosticWarningsTests {
             command: "cd /tmp && npm install express",
             exitCode: 1,
             stdout: "",
-            stderr: "npm error code EACCES"
+            stderr: "npm error code EACCES",
+            sandboxInstallAvailable: true
         )
         #expect(warnings.contains { $0.contains("sandbox_install") })
         #expect(warnings.contains { $0.contains("\"npm\"") })
+    }
+
+    @Test func hostInstallDoesNotNameUnavailableSandboxInstaller() {
+        let warnings = diagnosticWarnings(
+            command: "python3 -m pip install --user cairosvg",
+            exitCode: 1,
+            stdout: "",
+            stderr: "ModuleNotFoundError: No module named 'pip'",
+            sandboxInstallAvailable: false
+        )
+        #expect(warnings.allSatisfy { !$0.contains("sandbox_install") })
+    }
+
+    @Test func hostInstallWithTailRequestsCompleteDiagnostics() {
+        let warnings = diagnosticWarnings(
+            command: "python3 -m pip install --user cairosvg 2>&1 | tail -3",
+            exitCode: 1,
+            stdout: "ModuleNotFoundError: No module named 'pip'",
+            stderr: "",
+            sandboxInstallAvailable: false
+        )
+        #expect(warnings.contains { $0.contains("truncated its own output") })
+        #expect(warnings.contains { $0.contains("complete stdout/stderr") })
+        #expect(warnings.contains { $0.contains("not callable in this request") })
     }
 
     @Test func successfulInstallIsNotNagged() {

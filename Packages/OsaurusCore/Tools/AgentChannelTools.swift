@@ -356,7 +356,7 @@ final class AgentChannelDiagnosticsTool: OsaurusTool, PermissionedTool, AgentCha
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
                 ),
             ])
         ]),
@@ -390,7 +390,7 @@ final class AgentChannelListSpacesTool: OsaurusTool, PermissionedTool, AgentChan
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
                 ),
             ])
         ]),
@@ -431,7 +431,7 @@ final class AgentChannelListRoomsTool: OsaurusTool, PermissionedTool, AgentChann
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
                 ),
             ]),
             "space_id": .object([
@@ -481,7 +481,7 @@ final class AgentChannelReadMessagesTool: OsaurusTool, PermissionedTool, AgentCh
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
                 ),
             ]),
             "room_id": .object([
@@ -536,7 +536,7 @@ final class AgentChannelReadThreadTool: OsaurusTool, PermissionedTool, AgentChan
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
                 ),
             ]),
             "thread_id": .object([
@@ -591,7 +591,7 @@ final class AgentChannelSearchMessagesTool: OsaurusTool, PermissionedTool, Agent
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
                 ),
             ]),
             "query": .object([
@@ -657,7 +657,7 @@ final class AgentChannelDraftMessageTool: OsaurusTool, PermissionedTool, AgentCh
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
                 ),
             ]),
             "room_id": .object([
@@ -711,7 +711,7 @@ final class AgentChannelSendMessageTool: OsaurusTool, PermissionedTool, AgentCha
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
                 ),
             ]),
             "room_id": .object([
@@ -773,12 +773,14 @@ final class AgentChannelReplyThreadTool: OsaurusTool, PermissionedTool, AgentCha
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, `whatsapp`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
                 ),
             ]),
             "thread_id": .object([
                 "type": .string("string"),
-                "description": .string("Thread id allowlisted for write access."),
+                "description": .string(
+                    "Thread id allowlisted for write access. Slack: `<channel_id>:<thread_ts>`. WhatsApp: `<chat_id>:<message_id>` of the message to quote-reply to (read results expose it as `reply_thread_id`)."
+                ),
             ]),
             "content": .object([
                 "type": .string("string"),
@@ -1104,6 +1106,84 @@ final class AgentChannelIMessageSendAttachmentTool: OsaurusTool, PermissionedToo
                     connectionId: connectionId,
                     roomId: roomId,
                     path: path,
+                    confirmSend: coerceBool(args["confirm_send"]) ?? false
+                )
+            )
+        } catch {
+            return agentChannelFailure(error, tool: name)
+        }
+    }
+}
+
+// MARK: - WhatsApp-only tools
+//
+// Media sends have no provider-neutral standard action. Enforcement lives in
+// WhatsAppConnectionService: write allowlist, `confirm_send`, attachment-root
+// path fencing, and the configured size cap, plus the global write kill
+// switch in the dispatcher. The name is in `agentChannelToolNames`, so the
+// tool is automatically denied on external HTTP/MCP surfaces.
+
+final class AgentChannelWhatsAppSendAttachmentTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable {
+    let name = "agent_channel_whatsapp_send_attachment"
+    let description =
+        "WhatsApp only: send a file (image, video, audio, or document — picked by MIME type) "
+        + "to a write-allowlisted chat, with an optional caption. Requires `confirm_send: true`, "
+        + "attachment support enabled in WhatsApp settings, and a `path` inside an allowlisted "
+        + "attachment root."
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "connection_id": .object([
+                "type": .string("string"),
+                "description": .string("Channel connection id. Defaults to `whatsapp`."),
+            ]),
+            "room_id": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "WhatsApp chat id allowlisted for write access (E.164 phone number or group JID)."
+                ),
+            ]),
+            "path": .object([
+                "type": .string("string"),
+                "description": .string("Absolute file path inside an allowlisted attachment root."),
+            ]),
+            "caption": .object([
+                "type": .string("string"),
+                "description": .string("Optional caption shown with the media."),
+            ]),
+            "confirm_send": .object([
+                "type": .string("boolean"),
+                "description": .string("Must be true to send. False or omitted refuses."),
+            ]),
+        ]),
+        "required": .array([.string("room_id"), .string("path"), .string("confirm_send")]),
+    ])
+    let service: AgentChannelConnectionService
+    var requirements: [String] { AgentChannelToolPolicy.writeRequirements }
+    var defaultPermissionPolicy: ToolPermissionPolicy { AgentChannelToolPolicy.defaultPolicy }
+
+    init(service: AgentChannelConnectionService = .shared) { self.service = service }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let connectionReq = optionalString(args, "connection_id", expected: "channel connection id", tool: name)
+        guard case .value(let connectionId) = connectionReq else { return connectionReq.failureEnvelope ?? "" }
+        let roomReq = requireString(args, "room_id", expected: "WhatsApp chat id", tool: name)
+        guard case .value(let roomId) = roomReq else { return roomReq.failureEnvelope ?? "" }
+        let pathReq = requireString(args, "path", expected: "attachment file path", tool: name)
+        guard case .value(let path) = pathReq else { return pathReq.failureEnvelope ?? "" }
+        let captionReq = optionalString(args, "caption", expected: "attachment caption", tool: name)
+        guard case .value(let caption) = captionReq else { return captionReq.failureEnvelope ?? "" }
+        do {
+            return ToolEnvelope.success(
+                tool: name,
+                result: try await service.whatsappSendAttachment(
+                    connectionId: connectionId,
+                    roomId: roomId,
+                    path: path,
+                    caption: caption,
                     confirmSend: coerceBool(args["confirm_send"]) ?? false
                 )
             )

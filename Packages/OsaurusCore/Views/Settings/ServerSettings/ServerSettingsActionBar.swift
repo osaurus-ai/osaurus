@@ -13,6 +13,7 @@ import SwiftUI
 
 struct ServerSettingsActionBar: View {
     let hasUnsavedChanges: Bool
+    let hasBlockingIssues: Bool
     let requiresRestart: Bool
     let requiresModelReload: Bool
     let saving: Bool
@@ -53,7 +54,7 @@ struct ServerSettingsActionBar: View {
                 }
             }
             .buttonStyle(SettingsButtonStyle(isPrimary: true))
-            .disabled(saving || !hasUnsavedChanges)
+            .disabled(saving || !hasUnsavedChanges || hasBlockingIssues)
             .keyboardShortcut("s", modifiers: .command)
         }
         .padding(.horizontal, 24)

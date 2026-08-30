@@ -16,12 +16,12 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.88.0"),
-        // Pinned to the 0.35 line — the same Containerization release Apple
-        // Container 1.1.0 ships — for the OCI `initfsReference` provisioning
-        // path, configurable VM overhead, filesystem freeze/thaw/trim, and
-        // the hardened mount/vmnet work. Keep the app workspace lockfiles in
-        // step when bumping.
-        .package(url: "https://github.com/apple/containerization.git", .upToNextMinor(from: "0.35.0")),
+        // Keep this exact pin aligned with SandboxRuntimeAssets.initfsReference.
+        // Containerization 0.41 is the SDK shipped by Apple container 1.3 and
+        // includes restricted OCI capability defaults, vminit secret
+        // redaction, atomic image-store state, and startup cleanup fixes.
+        // Keep both app workspace lockfiles in step when bumping.
+        .package(url: "https://github.com/apple/containerization.git", exact: "0.41.0"),
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.0"),
         // MCP pulls EventSource transitively. Enable its AsyncHTTPClient
         // trait at the root so the target's conditional AsyncHTTPClient
@@ -33,6 +33,10 @@ let package = Package(
             traits: [.trait(name: "AsyncHTTPClient")]
         ),
         .package(url: "https://github.com/orlandos-nl/IkigaJSON", from: "2.3.2"),
+        // YAML for the declarative `osaurus_config` document (export / plan /
+        // apply). Used only by Configuration/Declarative; skills keep their
+        // hand-rolled frontmatter parser.
+        .package(url: "https://github.com/jpsim/Yams.git", from: "5.1.0"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.7.0"),
         // Single consolidated vMLX dependency. This package vendors the MLX,
         // MLXLMCommon, MLXLLM, MLXVLM, Tokenizers, Jinja, cache, parser,
@@ -136,9 +140,120 @@ let package = Package(
         // vmlx-swift#186-#188 correct FalconH1 key
         // projection scaling, prefixed output-head loading, and gated RMSNorm
         // group normalization without changing the shared unload/cache APIs.
+        // vmlx-swift#210 round-trips LFM2/LFM2.5 short-conv prefix-cache
+        // state: the v2 disk payload persists the single occupied MambaCache
+        // slot (a stateless tagged mamba layer is an atomic required miss,
+        // retiring KV-only pseudo-hits), the paged companion rail recovers
+        // per-layer arity so 1-slot conv layers no longer cross-wire, and
+        // LFM2Configuration reads stock intermediate_size configs. It also
+        // pins the LFM2.5-2.6B template ({% generation %}, Pythonic tool
+        // envelope, unconditional <think> generation prompt) and the
+        // qwen3-reasoning + lfm2-tool capability stamp resolution.
+        // vmlx-swift#211 advances LFM2/LFM2.5 short-conv cache offsets each
+        // forward so the #208 boundary-offset guard admits the family's
+        // paged/disk stores instead of vetoing every one (conv layers were
+        // stuck at offset 0; observed live as zero kv_v2 entries).
+        // vmlx-swift#212 honors DSV4's bundle thinking default (absent
+        // enable_thinking = thinking rail), publishes the N-1 disk seed for
+        // reusable-prefix warmups on the solo path (a DSV4 warmup otherwise
+        // published nothing and the visible send re-prefilled the identical
+        // prefix), aligns the post-answer boundary key with the consumed
+        // stop token the async pipeline already forwarded, and hardens SSD
+        // q8 pool blocks (empty-pool round-trip, non-q8 poison-to-miss,
+        // atomic .qkv record refusal).
+        // The DSV4 decode-fastpath revision defaults the quantized lm_head to
+        // fused 8-bit quantizedMatmul instead of dequantizing the whole head
+        // to FP32 every forward (greedy-identical, turn-1 wall 37.4s -> 8.9s;
+        // VMLX_DSV4_LM_HEAD_MODE=exact restores the old path), shares exact
+        // RoPE cos/sin tables across equal-frequency instances, and projects
+        // the Metal live-buffer ceiling (iogpu.rsrc_limit) into a generated-
+        // token cap for cache topologies that retain per-token buffers —
+        // DSV4's cumulative pools retained ~1 buffer/layer/token and long
+        // generations died mid-stream at the 499000 allocator wall.
+        // Conventional KV topologies report zero retention and are never
+        // capped (VMLX_METAL_BUFFER_COUNT_GUARD=0 disables).
+        // vmlx-swift#228 parses GLM/DeepSeek tool calls that take no
+        // arguments. `GLM4ToolCallParser` read the function name as
+        // everything before the first <arg_key> and returned nil when there
+        // was none, so `<tool_call>list_mailboxes</tool_call>` — the only way
+        // to invoke a tool that declares no parameters — was discarded.
+        // Nothing downstream can tell that from a silent model: the envelope
+        // is consumed as non-content, the turn carries no text and no tool
+        // work, the empty-turn nudges re-elicit the same correct call, and
+        // the run ends on `emptyToolTaskFallback`. Reproduced on Raptor 1.0
+        // 16B with the Mail capability loaded. The route covers GLM-4.x/5,
+        // DeepSeek V3 aliases, Laguna/Raptor, Poolside and Ling/Bailing.
+        // vmlx-swift#229 halts generation when the visible output collapses
+        // into a verbatim cycle. Observed on Raptor after two consecutive
+        // `invalid_args` rejections: the turn repeated one sentence pair to
+        // the token cap and recorded no terminal stop reason at all. Firing
+        // needs a unit repeated 4x, 32+ characters, AND primitive at that
+        // scale — a run of `---` or `| | |` repeats at period 32 too, so a
+        // length floor alone would truncate real answers. VMLX_REPETITION_STOP=0
+        // disables it.
+        // vmlx-swift#230 consumes Muse Glimmer's tool-recipient channel
+        // headers. The parser knew `to=self` and `to=user`; a tool call names
+        // the TOOL as recipient, so `to=<tool><|message|>` matched no spelling
+        // and streamed verbatim into the reasoning rail — consistently at the
+        // end of the first think block, and stored in `thinking` where history
+        // replayed it back to the model as prose. `to=user` still closes
+        // reasoning and `to=self` still opens it.
+        // vmlx-swift#234 implements the Nemotron-H native MTP head (270
+        // `mtp.*` tensors that `sanitize` previously dropped) and declines
+        // speculation whenever the KV window is bounded, since a
+        // `RotatingKVCache` cannot un-write a rejected draft.
+        //
+        // The head is DEFAULT OFF behind `VMLX_NEMOTRON_MTP`. Measured on
+        // Lightning 30B-A3B: D2 is 0.84x — 16 % SLOWER than plain
+        // autoregressive at 72.4 % accept — and D3 is 0.48x, both
+        // token-identical. A 3 B-active model is not purely bandwidth-bound,
+        // so the two-token verify batch costs +46 % instead of ~0 %. D1 is the
+        // shipped path; turning MTP on is an explicit per-machine decision.
+        // vmlx-swift#250 makes LFM2.5-VL usable: the `<image>` id was resolved
+        // with `convertTokenToId`, which returns the UNK id rather than nil for
+        // a bundle that spells the token differently, so every image expanded
+        // against the wrong placeholder; the expansion also ran once per turn
+        // instead of once per placeholder, which trapped in
+        // `mergeInputIdsWithImageFeatures` as soon as a turn carried two
+        // images. Tool schemas now reach `LMInput` on both the text and image
+        // paths, and the pythonic parser accepts the `function`/`parameters`
+        // spelling this bundle emits, so an offered tool is no longer dropped.
+        // vmlx-swift#283 re-arms the adaptive MTP depth controller upward
+        // (demote-only never recovered a transient dip) and gives restored
+        // sessions a 4x warmup grace window; #284 scopes the hybrid warmup
+        // memo to catastrophic misses only, so a prose-grade first turn can
+        // no longer lock native MTP off for the model's whole residency —
+        // acceptance is content, and only a below-depth-1-floor miss is a
+        // property of the model.
+        // The Qwen 3.8 Flash Next revision (447a6a2b) lands the qwen4_exp
+        // native runtime: SSD-only PLE n-gram reader (pread + F_NOCACHE, the
+        // 20-29 GiB table never becomes resident), mixed-bit fused routed-MoE
+        // decode kernels (q2/q3/q4/q6, group 32/64, unit-parity tested against
+        // exact f32), six-slot PLE cache topology preserved across
+        // copy/restore (the warm-restore bounds trap), a dense-QMV fallback
+        // that returns the incoming activation dtype (JANG_2L's 6-bit trunk
+        // silently promoted the residual to f32 and halved decode), tensor-
+        // evidence MTP census with tuning-gated auto-launch, and the vision
+        // bridge (quantized Qwen3-VL tower, per-modality feature scatter,
+        // 3-channel M-RoPE with a per-conversation decode rope delta). All six
+        // JANG tiers decode at 38-44 tok/s with resident BF16 compute and the
+        // PLE table on SSD.
+        // vmlx-swift#330 pins the legacy-Hermes parser regressions; #339
+        // performs the source correction, recovering Qwen 3.8 bundles from
+        // their actual template contract while failing closed without one;
+        // #331 preserves per-sequence Qwen 3.5 positions under continuous
+        // batching; #335 exposes requested and architecture-limited batch
+        // capacity; #341-#342 make AgenticTaskBench sandboxing and scoring
+        // reflect the production model/config path; #337 loads the real
+        // per-expert Ornith-35B MTP-MoE layout without dropping tensors; #343
+        // prevents prompt-scoped tuning rows from authorizing global MTP Auto;
+        // and #344 keeps manual MTP available to other families while honoring
+        // an explicit bundle-level manual safety block for Ornith 1.5 35B;
+        // #346 restores the architecture-scoped compiled GDN/MoE decode path
+        // for that model and adds its real q5/q5/q4 affine expert layout.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "8e2c3d6ebca6a43be6a516eb3dc55ef49c174a5d"
+            revision: "bf8b31995195fffd833968658f14c707317eaa70"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
@@ -279,6 +394,7 @@ let package = Package(
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "MCP", package: "swift-sdk"),
                 .product(name: "IkigaJSON", package: "IkigaJSON"),
+                .product(name: "Yams", package: "Yams"),
                 .product(name: "Sparkle", package: "Sparkle"),
                 .product(name: "MLX", package: "vmlx-swift"),
                 .product(name: "MLXLLM", package: "vmlx-swift"),

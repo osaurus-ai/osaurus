@@ -39,7 +39,7 @@ enum ModelListTab: String, CaseIterable, AnimatedTabItem {
 /// Manages MLX model catalog, discovery, and resolution.
 /// Download orchestration is handled by ModelDownloadService.
 @MainActor
-final class ModelManager: NSObject, ObservableObject {
+public final class ModelManager: NSObject, ObservableObject {
     static let shared = ModelManager()
 
     /// Diagnostics logger usable from the `nonisolated static` discovery paths.
@@ -108,7 +108,7 @@ final class ModelManager: NSObject, ObservableObject {
 
         /// Filters the list by `MLXModel.compatibility(totalMemoryGB:)` —
         /// the same hardware-fit assessment used for the per-row
-        /// "Runs Well / Tight Fit / Too Large" badges. Exposes the
+        /// "Runs Well / Memory May Be Tight / Not Recommended" badges. Exposes the
         /// already-computed attribute rather than introducing a new one.
         /// When `totalMemoryGB == 0` (monitor hasn't reported yet) this
         /// filter is treated as a no-op so the list isn't emptied during
@@ -117,24 +117,24 @@ final class ModelManager: NSObject, ObservableObject {
         enum PerformanceFilter: String, CaseIterable, Identifiable {
             /// Only include models whose `compatibility` is `.compatible`
             /// (working set at or below 85 % of the GPU memory budget).
-            case runsWell = "Runs Well"
+            case runsWell = "Runs well"
             /// Only include models whose `compatibility` is `.tight`
             /// (working set between 85 % and 110 % of the GPU memory budget).
-            case tightFit = "Tight Fit"
+            case tightFit = "Memory may be tight"
             /// Exclude models whose advisory `compatibility` is `.tooLarge`
             /// (working set above 110 % of the GPU memory budget — macOS would
             /// page the weights). This filter is user-selected catalog triage
             /// only; runtime load/download does not block RAM pressure from
             /// this estimate.
-            case hideTooLarge = "Hide Too Large"
+            case hideTooLarge = "Hide not recommended"
 
             var id: String { rawValue }
 
             var displayName: String {
                 switch self {
-                case .runsWell: return L("Runs Well")
-                case .tightFit: return L("Tight Fit")
-                case .hideTooLarge: return L("Hide Too Large")
+                case .runsWell: return ModelCompatibility.compatible.displayName
+                case .tightFit: return ModelCompatibility.tight.displayName
+                case .hideTooLarge: return L("Hide not recommended")
                 }
             }
 
@@ -479,10 +479,11 @@ final class ModelManager: NSObject, ObservableObject {
     /// Resolve a model only if the Hugging Face repository is MLX-compatible.
     /// Policy:
     ///   - `mlx-community/*`: trust the org; HF compat check confirms.
-    ///   - `OsaurusAI/*`: must already exist in the registry (curated or org-fetched)
-    ///     unknown OsaurusAI ids are rejected.
-    ///   - Other orgs: require an MLX/vMLX artifact-family hint in the repo id
-    ///     AND HF metadata confirming MLX compatibility.
+    ///   - `OsaurusAI/*`: public repos must already exist in the registry;
+    ///     authenticated private repos may be imported directly.
+    ///   - Other orgs: authenticated HF metadata must confirm MLX compatibility.
+    ///     Private repos may use their actual file layout instead of a public
+    ///     naming/tag convention.
     func resolveModelIfMLXCompatible(byRepoId repoId: String) async -> MLXModel? {
         let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -490,17 +491,12 @@ final class ModelManager: NSObject, ObservableObject {
         if let existing = findExistingModel(id: trimmed).model { return existing }
 
         let lower = trimmed.lowercased()
-        if lower.hasPrefix("osaurusai/") {
-            // Not in registry (would have returned above) — reject.
+        let compatibility = await HuggingFaceService.shared.mlxCompatibility(repoId: trimmed)
+        guard compatibility.isCompatible else { return nil }
+        if lower.hasPrefix("osaurusai/"), !compatibility.isPrivate {
+            // Unknown public OsaurusAI repos remain registry-gated so other
+            // product bundles do not leak into the language-model catalog.
             return nil
-        }
-
-        if lower.hasPrefix("mlx-community/") {
-            guard await HuggingFaceService.shared.isMLXCompatible(repoId: trimmed) else { return nil }
-        } else {
-            guard Self.nameLooksLikeMLX(trimmed),
-                await HuggingFaceService.shared.isMLXCompatible(repoId: trimmed)
-            else { return nil }
         }
 
         let model = MLXModel(
@@ -555,6 +551,32 @@ final class ModelManager: NSObject, ObservableObject {
 
     func estimateDownloadSize(for model: MLXModel) async -> Int64? {
         await downloadService.estimateSize(for: model)
+    }
+
+    /// Publish a size resolved on demand by the detail sheet back into the
+    /// in-memory catalog. `ModelSizeCache` already persists the measurement;
+    /// this keeps cards, filters, onboarding, and a reopened sheet from
+    /// continuing to render the name-derived fallback until the next launch.
+    func applyResolvedDownloadSize(_ bytes: Int64, for modelId: String) {
+        guard bytes > 0 else { return }
+
+        func updating(_ models: [MLXModel]) -> ([MLXModel], Bool) {
+            var changed = false
+            let updated = models.map { model in
+                guard model.id.caseInsensitiveCompare(modelId) == .orderedSame,
+                    model.downloadSizeBytes != bytes
+                else { return model }
+                changed = true
+                return model.withDownloadSize(bytes)
+            }
+            return (updated, changed)
+        }
+
+        let available = updating(availableModels)
+        if available.1 { availableModels = available.0 }
+
+        let suggested = updating(suggestedModels)
+        if suggested.1 { suggestedModels = suggested.0 }
     }
 
     func effectiveDownloadState(for model: MLXModel) -> DownloadState {
@@ -690,35 +712,32 @@ extension ModelManager {
     /// Order is a fallback only — `ModelDownloadView.filteredSuggestedModels`
     /// sorts by curated-first → top-pick → `releasedAt` desc → name.
     nonisolated fileprivate static let curatedSuggestedModels: [MLXModel] = [
-        // MARK: Top Picks
-
-        curated(
-            id: "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
-            description:
-                "Liquid AI LFM2.5 8B hybrid MoE (~1B active), MXFP8 — high-precision, fast Apple Silicon chat. 128K context.",
-            modelType: "lfm2_moe",
-            releasedAt: date("2026-05-29"),
-            useCase: .general
-        ),
-
         // MARK: Gemma 4 — multimodal
         //
-        // Onboarding recommendation spine (2026-07-08, GUI-verified in the
-        // dev-built app — every model below loads, calls tools, reasons with
-        // thinking on, and leaks no markup into visible content):
-        //   • Mainstream RAM → Bonsai 27B, selecting its 1-bit or ternary
-        //                      variant from the machine's model-memory budget.
-        //   • Larger RAM     → Ornith 1.0 MXFP8 (9B / 35B, below).
+        // Onboarding recommendation spine (2026-08-26; the 2026-07-08 set was
+        // GUI-verified in the dev-built app — every model below loads, calls
+        // tools, reasons with thinking on, and leaks no markup into visible
+        // content):
+        //   • Mainstream RAM → LFM2.5 8B-A1B MXFP8 hybrid MoE (~1B active) and
+        //                      Gemma 4 12B-it-MXFP8 as RAM allows. Bonsai 27B
+        //                      was demoted from this slot: user feedback showed
+        //                      the dense 27B decodes far too slowly for a
+        //                      first-run default, so the mainstream pick is now
+        //                      an MoE with a small active set.
+        //   • Larger RAM     → Ornith 1.5 MXFP8 (9B / 35B-A3B MoE, below).
         //   • Smaller RAM → official OsaurusAI Gemma 4 at the highest non-QAT,
         //                    non-MXFP4 precision that exists: `12B-it-MXFP8`
         //                    (the only MXFP8 Gemma the org ships) and the
         //                    `E4B/E2B-it-8bit` retention builds (no E-series
-        //                    MXFP8 exists on the HF org).
+        //                    MXFP8 exists on the HF org). Nanbeige 4.2 3B
+        //                    JANG_6M is the text-quality exception in this
+        //                    band (looped transformer; JANG_6M beats the
+        //                    family's MXFP8 on fidelity — see that entry).
         // A *recommended* Gemma build must never be `qat` or plain `MXFP4`, so
         // the 5 Gemma `qat-MXFP4` builds (E2B/E4B/12B/31B/26B-A4B) stay in the
         // catalog but are not Top Picks. Qwen 3.6 (incl. MXFP8-MTP), Nemotron-3
-        // and LFM2.5 also remain catalog-only for now: they are installable and
-        // selectable, just not part of the auto-default recommendation spine.
+        // and Bonsai remain catalog-only: they are installable and selectable,
+        // just not part of the auto-default recommendation spine.
 
         curated(
             id: "OsaurusAI/gemma-4-12B-it-MXFP8",
@@ -845,34 +864,58 @@ extension ModelManager {
             useCase: .vision
         ),
 
-        // MARK: Ornith 1.0 (DeepReinforce, Qwen 3.5 hybrid backbone)
+        // MARK: Ornith 1.5 (Qwen 3.5 hybrid backbone)
         //
-        // Vision-language agentic-coding models on the Qwen 3.5 hybrid
-        // architecture (Gated-DeltaNet linear attention + full attention),
-        // so they reuse the existing `qwen3_5` / `qwen3_5_moe` runtime
-        // classes. MXFP8 is the curated Top Pick representative per family
-        // (precision-first, matching the Qwen 3.6 convention); the MXFP4 and
-        // JANG_4M siblings stay auto-fetched and collapse into each family
-        // card's Versions picker.
+        // Successor to the 1.0 MXFP8 Top Picks. Those Hub repos
+        // (`Ornith-1.0-9B-MXFP8` / `Ornith-1.0-35B-MXFP8`) were removed, so
+        // onboarding downloads of the old IDs died at the file-list fetch
+        // ("Could not retrieve file list from Hugging Face"). 1.5 keeps the
+        // same `qwen3_5` / `qwen3_5_moe` runtime classes (Gated-DeltaNet
+        // linear attention + full attention). MXFP8 is the curated Top Pick
+        // representative per family (precision-first); JANG siblings stay
+        // auto-fetched and collapse into each family card's Versions picker.
 
         curated(
-            id: "OsaurusAI/Ornith-1.0-9B-MXFP8",
+            id: "OsaurusAI/Ornith-1.5-9B-MXFP8",
             description:
-                "Ornith 1.0 9B vision-language model, tuned for agentic coding on a Qwen 3.5 hybrid backbone. MXFP8 — near-lossless precision. 256K context.",
+                "Ornith 1.5 9B vision-language model, tuned for agentic coding on a Qwen 3.5 hybrid backbone. MXFP8 — near-lossless precision. 256K context.",
             isTopSuggestion: true,
             modelType: "qwen3_5",
-            releasedAt: date("2026-06-26"),
+            releasedAt: date("2026-08-19"),
             useCase: .vision
         ),
 
         curated(
-            id: "OsaurusAI/Ornith-1.0-35B-MXFP8",
+            id: "OsaurusAI/Ornith-1.5-35B-A3B-MXFP8",
             description:
-                "Ornith 1.0 35B vision-language MoE, state-of-the-art open agentic coding for its size. MXFP8 — near-lossless precision. 256K context.",
+                "Ornith 1.5 35B-A3B vision-language MoE, state-of-the-art open agentic coding for its size. MXFP8 — near-lossless precision. 256K context.",
             isTopSuggestion: true,
             modelType: "qwen3_5_moe",
-            releasedAt: date("2026-06-26"),
+            releasedAt: date("2026-08-19"),
             useCase: .vision
+        ),
+
+        // MARK: Nanbeige 4.2 (looped transformer — Top Pick)
+        //
+        // 22 physical layers × 2 loops (44 KV slots), text-only, 256K, tools
+        // + thinking. The MXFP8 sibling is format coverage and loses on
+        // fidelity *and* size to both JANG profiles (live card: Tokyo-capital
+        // miss on MXFP8; JANG_6M is 5/5 top-1, KL 0.001). So this family
+        // breaks the MXFP8-only Top Pick rule on purpose — JANG_6M is the
+        // one we recommend. Hub weight shard is ~3.9 GB; bootstrap that
+        // measurement so first-launch hardware selection isn't the 0.5
+        // byte/param JANG fallback (~1.5 GB), which would look comfortable
+        // on an 8 GB Mac when the real working set is ~4.5 GB.
+
+        curated(
+            id: "OsaurusAI/Nanbeige4.2-3B-JANG_6M",
+            description:
+                "Nanbeige 4.2 3B looped-transformer reasoning model (en + zh). 6-bit affine JANG — the quality pick of the family. 256K context.",
+            isTopSuggestion: true,
+            bootstrapDownloadSizeBytes: 3_921_000_000,
+            modelType: "nanbeige",
+            releasedAt: date("2026-07-28"),
+            useCase: .general
         ),
 
         // MARK: Bonsai (prism-ml, Qwen 3.5 dense backbone)
@@ -881,17 +924,18 @@ extension ModelManager {
         // prism-ml's Bonsai checkpoints. Text matrices use affine JANG
         // (schema-2 discrete storage — not JANGTQ/MXTQ or a codebook
         // sidecar); vision components stay 4-bit affine. Same `qwen3_5`
-        // runtime class as Qwen 3.6 / Ornith dense builds. Both variants are
-        // Top Picks so the normalized Bonsai family can select the best build
-        // for this Mac. Their mixed text/vision precision cannot be estimated
-        // accurately from `27B × bit-width`, so the current Hub sizes bootstrap
+        // runtime class as Qwen 3.6 / Ornith dense builds. Demoted from Top
+        // Picks (2026-08-26): user feedback showed the dense 27B — every
+        // parameter active per token, unlike an MoE — decodes far too slowly
+        // for a recommended default, so both variants are catalog-only now.
+        // Their mixed text/vision precision cannot be estimated accurately
+        // from `27B × bit-width`, so the current Hub sizes bootstrap
         // first-launch hardware selection until `ModelSizeCache` refreshes.
 
         curated(
             id: "OsaurusAI/Bonsai-27b-Ternary-JANG",
             description:
                 "Bonsai 27B dense vision model on a Qwen 3.5 backbone. Ternary (2-bit slot) affine JANG text weights — ~8 GB on disk.",
-            isTopSuggestion: true,
             bootstrapDownloadSizeBytes: 8_040_700_199,
             modelType: "qwen3_5",
             releasedAt: date("2026-07-14"),
@@ -902,7 +946,6 @@ extension ModelManager {
             id: "OsaurusAI/Bonsai-27b-1bit-JANG",
             description:
                 "Bonsai 27B dense vision model on a Qwen 3.5 backbone. 1-bit affine JANG text weights — smallest of the family at ~4.7 GB.",
-            isTopSuggestion: true,
             bootstrapDownloadSizeBytes: 4_679_030_015,
             modelType: "qwen3_5",
             releasedAt: date("2026-07-14"),
@@ -1276,6 +1319,23 @@ extension ModelManager {
             releasedAt: date("2026-06-02"),
             useCase: .smallest
         ),
+
+        // MARK: LFM2.5 (Liquid AI hybrid MoE — Top Pick, listed last)
+        //
+        // Kept at the tail of the catalog so LFM rows always render at the
+        // bottom of order-following lists (the onboarding chooser keeps
+        // catalog order). It remains a Top Pick: the ~1B-active hybrid MoE is
+        // the mainstream-RAM auto-default that replaced the dense Bonsai 27B.
+
+        curated(
+            id: "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
+            description:
+                "Liquid AI LFM2.5 8B hybrid MoE (~1B active), MXFP8 — high-precision, fast Apple Silicon chat. 128K context.",
+            isTopSuggestion: true,
+            modelType: "lfm2_moe",
+            releasedAt: date("2026-05-29"),
+            useCase: .general
+        ),
     ]
 
     /// Lowercased IDs of curated entries. Used by the Recommended-tab sort to
@@ -1300,6 +1360,11 @@ extension ModelManager {
         "osaurusai/gemma-4-26b-a4b-it-jang_4m",
         "osaurusai/gemma-4-26b-a4b-it-mxfp4",
         "osaurusai/diffusiongemma-26b-a4b-it-mxfp8",
+        // Ornith 1.0 MXFP8 Top Picks were removed from the Hub (404 on
+        // `/tree/main`); 1.5 MXFP8 is the replacement. Keep them retired so
+        // a re-upload or stale org listing cannot re-surface a dead download.
+        "osaurusai/ornith-1.0-9b-mxfp8",
+        "osaurusai/ornith-1.0-35b-mxfp8",
     ]
 
     /// HF `pipeline_tag` values that mark a repo as chat-capable (text or
@@ -1522,6 +1587,7 @@ extension ModelManager {
     fileprivate static func requestHFModels(at url: URL) async throws -> [HFModel] {
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        HuggingFaceAuth.authorize(&request)
         let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             return []
@@ -1856,7 +1922,7 @@ extension ModelManager {
     nonisolated(unsafe) static var scanLocalModelsOverrideForTests: ((URL) -> [MLXModel])?
     nonisolated(unsafe) static var localModelsScanWaitLimitOverrideForTests: TimeInterval?
 
-    nonisolated static func invalidateLocalModelsCache() {
+    public nonisolated static func invalidateLocalModelsCache() {
         localModelsCacheCondition.lock()
         cachedLocalModels = nil
         localModelsScanInFlight = false
@@ -1885,6 +1951,28 @@ extension ModelManager {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
                 continuation.resume(returning: discoverLocalModels())
+            }
+        }
+    }
+
+    /// Wait until the launch-time managed-model scan has actually published
+    /// its cache. Unlike `discoverLocalModels()`, this dispatch-only gate does
+    /// not treat the ordinary 10-second UI protection timeout as an
+    /// authoritative empty catalog. It is used only when a request must
+    /// validate an already-persisted explicit model option before generation.
+    nonisolated static func awaitLocalModelsCacheReadyForDispatch() async {
+        if isLocalModelsCacheWarm { return }
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                localModelsCacheCondition.lock()
+                if cachedLocalModels == nil && !localModelsScanInFlight {
+                    startLocalModelsScanLocked()
+                }
+                while cachedLocalModels == nil && localModelsScanInFlight {
+                    localModelsCacheCondition.wait()
+                }
+                localModelsCacheCondition.unlock()
+                continuation.resume()
             }
         }
     }
@@ -2000,10 +2088,12 @@ extension ModelManager {
 
     private nonisolated static func mergeExternalModels(into scanned: [MLXModel]) -> [MLXModel] {
         // Append externally-discovered bundles (HF cache, LM Studio, custom folders). Read
-        // fresh from the locator's in-memory registry each call (cheap) so a
-        // background rescan is reflected without invalidating the disk-scan
-        // cache above. Locally-present models win on id collision.
-        let external = ExternalModelLocator.models()
+        // from the locator's non-blocking snapshot: this runs on view-body
+        // call paths, and the locator's cold build reads every bundle's
+        // config.json plus weight sizes. A background rescan is reflected
+        // without invalidating the disk-scan cache above. Locally-present
+        // models win on id collision.
+        let external = ExternalModelLocator.modelsSnapshotNonBlocking()
         guard !external.isEmpty else { return scanned }
         let scannedIds = Set(scanned.map { $0.id.lowercased() })
         return scanned + external.filter { !scannedIds.contains($0.id.lowercased()) }

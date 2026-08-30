@@ -15,7 +15,7 @@ if [[ ! -x "$BIN" ]]; then
   exit 66
 fi
 
-mkdir -p "$TEST_ROOT"
+mkdir -p "$TEST_ROOT" "$TEST_ROOT/models"
 LOG="$TEST_ROOT/osaurus.log"
 PIDFILE="$TEST_ROOT/osaurus.pid"
 
@@ -25,6 +25,7 @@ PIDFILE="$TEST_ROOT/osaurus.pid"
 nohup env \
   OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 \
   OSAURUS_TEST_ROOT="$TEST_ROOT" \
+  OSU_MODELS_DIR="$TEST_ROOT/models" \
   "$BIN" >"$LOG" 2>&1 &
 PID=$!
 printf '%s\n' "$PID" > "$PIDFILE"

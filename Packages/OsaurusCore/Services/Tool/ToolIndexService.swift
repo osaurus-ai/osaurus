@@ -127,6 +127,13 @@ public actor ToolIndexService {
         } catch {
             ToolIndexLogger.service.error("Failed to index registered tool '\(name)': \(error)")
         }
+
+        // Dynamic tools (notably MCP providers) can arrive before or after the
+        // persistent vector service initializes. `indexEntry` queues the latest
+        // registration when initialization is still in flight, then drains it
+        // once VecturaKit is ready. It never initializes or rebuilds the index
+        // from this registration path.
+        await ToolSearchService.shared.indexEntry(entry, parameters: parameters)
     }
 
     /// Remove a tool from the index when unregistered.

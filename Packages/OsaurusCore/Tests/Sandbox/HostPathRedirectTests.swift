@@ -47,6 +47,38 @@ struct HostPathRedirectTests {
         #expect(hint?.contains("file_read") == true)
     }
 
+    /// osaurus#2439: `shell_run` cloned a repo into `/tmp/psapp/wiki`, then
+    /// `file_read` rejected that path as outside the agent home. The bare
+    /// rejection reads as "the file tools are broken" — the model abandoned
+    /// the read path entirely rather than copying the tree one level over.
+    @Test func sandboxPathOutsideAgentHomeSuggestsCopyingItIn() {
+        let home = "/workspace/agents/abc"
+        let requirement = requirePath("/tmp/psapp/wiki/Home.md", home: home, tool: "file_read")
+        guard case .failure(let envelope) = requirement else {
+            Issue.record("expected a rejection for a path outside the agent home")
+            return
+        }
+        #expect(envelope.contains("shell_run"))
+        #expect(envelope.contains("cp -r /tmp/psapp/wiki/Home.md \(home)/"))
+    }
+
+    /// A host path keeps the existing host-tool redirect; it must not also
+    /// pick up the copy-it-in advice, which does not apply across the
+    /// sandbox boundary.
+    @Test func hostPathKeepsHostRedirectNotTheCopyHint() {
+        let requirement = requirePath(
+            "/Users/tpae/Desktop/notes.txt",
+            home: "/workspace/agents/abc",
+            tool: "file_read"
+        )
+        guard case .failure(let envelope) = requirement else {
+            Issue.record("expected a rejection for a host path")
+            return
+        }
+        #expect(envelope.contains("file_read"))
+        #expect(!envelope.contains("cp -r"))
+    }
+
     @Test func relativePathDoesNotRedirect() {
         #expect(hostPathRedirectHint(path: "Desktop") == nil)
         #expect(hostPathRedirectHint(path: "src/main.py") == nil)
@@ -68,14 +100,16 @@ struct HostPathRedirectTests {
 
     // MARK: - sandboxDirectoryReadHint
     //
-    // `sandbox_read_file` on a directory: the model wanted to *list*, not
-    // read. Catches the "read my Desktop with sandbox_read_file" slip that
-    // hostPathRedirectHint misses (the path is a valid sandbox directory).
+    // A file read on a directory means the model wanted to list, not read.
+    // Recovery guidance must use the same public workspace vocabulary the
+    // request schema exposes rather than private sandbox adapters.
 
     @Test func directoryReadSuggestsListingInSandbox() {
         let hint = sandboxDirectoryReadHint(stderr: "cat: /workspace/agents/abc/: Is a directory")
         #expect(hint?.contains("is a directory") == true)
-        #expect(hint?.contains("sandbox_search_files") == true)
+        #expect(hint?.contains("file_read") == true)
+        #expect(hint?.contains("file_search") == true)
+        #expect(hint?.contains("sandbox_search_files") == false)
     }
 
     @Test func directoryReadInCombinedModeAlsoSuggestsFileRead() {
@@ -85,11 +119,13 @@ struct HostPathRedirectTests {
         }
     }
 
-    @Test func directoryReadOutsideCombinedModeDoesNotMentionHost() {
-        // No host workspace bound → don't dangle a file_read reference at a
-        // pure-sandbox session where the host tools don't exist.
+    @Test func directoryReadOutsideCombinedModeUsesPublicWorkspaceTools() {
+        // Public file tools are available in pure-sandbox sessions too, but
+        // the recovery hint must not imply that a host workspace is mounted.
         let hint = sandboxDirectoryReadHint(stderr: "cat: /workspace/agents/abc/: Is a directory")
-        #expect(hint?.contains("file_read") == false)
+        #expect(hint?.contains("file_read") == true)
+        #expect(hint?.contains("file_search") == true)
+        #expect(hint?.contains("host workspace") == false)
     }
 
     @Test func nonDirectoryReadErrorGetsNoDirectoryHint() {

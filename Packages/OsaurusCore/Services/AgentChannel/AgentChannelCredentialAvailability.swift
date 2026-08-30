@@ -26,6 +26,7 @@ final class AgentChannelCredentialAvailability: @unchecked Sendable {
         case slack
         case telegram
         case imessage
+        case whatsapp
     }
 
     /// How long a cached answer is trusted before an off-main revalidation
@@ -146,6 +147,11 @@ final class AgentChannelCredentialAvailability: @unchecked Sendable {
             return TelegramConnectionService.shared.hasBotToken()
         case .imessage:
             return IMessageConnectionService.shared.helperAvailable()
+        case .whatsapp:
+            // The credential is the helper's linked WhatsApp Web session;
+            // the probe spawns the helper's status CLI, so this runs only
+            // off-main through this cache.
+            return WhatsAppConnectionService.shared.helperLinkedBlockingProbe()
         }
     }
 }

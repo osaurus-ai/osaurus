@@ -16,7 +16,7 @@ loop (real tools, real workspaces, no mocks):
 - **AgentLoop** (17 cases) — loop mechanics: dedupe/replay, error recovery,
   budget wrap-up, clarification, rejection handling, batch isolation.
 - **SandboxFrontier** (13 cases, off-CI) — the live Linux-VM sandbox lane:
-  code execution (`sandbox_write_file` + `sandbox_exec`), debugging seeded
+  code execution (`file_write` + `shell_run`), debugging seeded
   test failures, `sandbox_install`, combined host-folder mode and path
   routing, host-secret refusal, plugin authoring + same-run invocation,
   secrets round-trip with output scrubbing, `sandbox_reduce` digestion,

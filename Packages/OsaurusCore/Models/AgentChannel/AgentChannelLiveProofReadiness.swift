@@ -279,6 +279,59 @@ enum AgentChannelLiveProofReadiness {
         )
     }
 
+    static func whatsApp(_ diagnostics: WhatsAppConnectionDiagnostics) -> AgentChannelLiveProofReadinessReport {
+        var blockers: [String] = []
+        var manualProof: [String] = []
+        var notes: [String] = diagnostics.notes
+        let readableChatIds = nonEmptyEntries(diagnostics.readableChatIds)
+        let writableChatIds = nonEmptyEntries(diagnostics.writableChatIds)
+        let senderAllowlist = nonEmptyEntries(diagnostics.senderAllowlist)
+
+        if !diagnostics.helperVerified {
+            blockers.append(
+                "Build and install the osaurus-wa helper — `make wa-helper` or a verified download (state: \(diagnostics.helperState))."
+            )
+        }
+        if !diagnostics.linked {
+            blockers.append("Link a WhatsApp account by scanning the QR code in WhatsApp settings.")
+        }
+        if !diagnostics.receiveEnabled {
+            blockers.append("Enable WhatsApp receive for local desktop receive proof.")
+        }
+        if readableChatIds.isEmpty {
+            blockers.append("Add at least one readable WhatsApp chat.")
+        }
+        if senderAllowlist.isEmpty {
+            blockers.append("Add at least one authorized WhatsApp sender (E.164 phone number).")
+        }
+        if diagnostics.writeEnabled && writableChatIds.isEmpty {
+            blockers.append("Add at least one writable WhatsApp chat or turn writes off.")
+        }
+        appendDiagnosticFailures(diagnostics.failures, to: &blockers)
+
+        if diagnostics.writeEnabled {
+            manualProof.append("Send one confirmed message to a write-allowlisted WhatsApp chat.")
+        } else {
+            notes.append("WhatsApp writes are off; live proof can cover receive/read-only behavior.")
+        }
+        manualProof.append("Receive one inbound WhatsApp message from an authorized sender.")
+        manualProof.append("Confirm an unauthorized sender in the same chat is ignored.")
+        manualProof.append(
+            "Restart Osaurus and confirm the WhatsApp link, inbox, and configuration persist."
+        )
+        notes.append(
+            "WhatsApp uses the unofficial Web multi-device protocol; the account can be logged out remotely, so re-link readiness is part of live proof."
+        )
+
+        return AgentChannelLiveProofReadinessReport(
+            kind: .whatsapp,
+            status: blockers.isEmpty ? .ready : .blocked,
+            blockers: blockers,
+            manualProof: manualProof,
+            notes: notes
+        )
+    }
+
     static func routeFeedback(source: AgentChannelFeedbackSource) -> AgentChannelFeedbackRouting {
         switch source {
         case .nativeAgentChannel(let kind):
@@ -312,6 +365,8 @@ enum AgentChannelLiveProofReadiness {
             return "Telegram"
         case .imessage:
             return "iMessage"
+        case .whatsapp:
+            return "WhatsApp"
         case .customHTTP:
             return "Custom HTTP"
         }

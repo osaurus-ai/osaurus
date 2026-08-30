@@ -175,7 +175,8 @@ struct IdentityHealthCheckTests {
             systemPrompt: "",
             isBuiltIn: false,
             createdAt: Date(),
-            updatedAt: Date()
+            updatedAt: Date(),
+            autonomousExec: AutonomousExecConfig(enabled: false)
         )
     }
 

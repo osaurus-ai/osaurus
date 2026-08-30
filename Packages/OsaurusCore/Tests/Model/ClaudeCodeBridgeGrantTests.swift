@@ -20,6 +20,8 @@ struct ClaudeCodeBridgeGrantTests {
         let grant = await store.resolve(token)
         #expect(grant?.agentId == agentId)
         #expect(grant?.allowsConfigWrites == false)
+        #expect(grant?.allowsTool("osaurus_status") == true)
+        #expect(grant?.allowsTool("osaurus_agent") == false)
     }
 
     @Test("an unknown token resolves to nothing")
@@ -101,6 +103,9 @@ struct ClaudeCodeBridgeGrantTests {
 
         #expect(await store.resolve(readOnly)?.allowsConfigWrites == false)
         #expect(await store.resolve(writable)?.allowsConfigWrites == true)
+        #expect(await store.resolve(readOnly)?.allowsTool("osaurus_provider") == false)
+        #expect(await store.resolve(writable)?.allowsTool("osaurus_provider") == true)
+        #expect(await store.resolve(writable)?.allowsTool("osaurus_schedule") == false)
     }
 
     @Test("the config embeds the grant in env, never in argv")

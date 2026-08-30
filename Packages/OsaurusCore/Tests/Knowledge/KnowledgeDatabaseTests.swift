@@ -247,6 +247,50 @@ struct KnowledgeDatabaseTests {
         #expect(hits.first?.compositeKey == "c1:a.md:1")
     }
 
+    /// The read path resolves "is the writer open / in-memory" from a
+    /// lock-free mirror instead of hopping onto the writer queue, so a
+    /// read-only query can never park behind the indexer's write backlog
+    /// (osaurus#2439: a 5m56s `list_knowledge` during an initial index).
+    /// If the mirror is not published on open, an in-memory DB reports
+    /// "not open", the reader is skipped, and every read still works via the
+    /// write-connection fallback — silently restoring the old behaviour.
+    /// These assertions fail loudly instead.
+    @Test func inMemoryDatabaseKeepsReadsOnTheWriteConnection() throws {
+        let db = makeDBOrSkip()
+        guard let db else { return }
+        let snapshot = db.writerStateSnapshotForTesting
+        #expect(snapshot.isOpen)
+        #expect(snapshot.isInMemory)
+        // A `:memory:` DB is private to its connection, so the reader must
+        // stay unopened — otherwise reads would query an empty database.
+        #expect(db.hasOpenReadConnectionForTesting == false)
+    }
+
+    /// Reads must still return rows with the reader suppressed.
+    @Test func readsSucceedThroughTheWriteConnectionFallback() throws {
+        let db = makeDBOrSkip()
+        guard let db else { return }
+        try seedDocument(
+            db, collectionId: "c1", relPath: "a.md",
+            chunks: [("H", "first")]
+        )
+        let documents = try db.listDocuments(collectionIds: ["c1"], limit: 10)
+        #expect(documents.count == 1)
+        #expect(db.hasOpenReadConnectionForTesting == false)
+    }
+
+    /// Closing must retract the mirror, or a reader could be opened against
+    /// a closed database on the next read.
+    @Test func closingRetractsThePublishedWriterState() throws {
+        let db = makeDBOrSkip()
+        guard let db else { return }
+        #expect(db.writerStateSnapshotForTesting.isOpen)
+        db.close()
+        let snapshot = db.writerStateSnapshotForTesting
+        #expect(!snapshot.isOpen)
+        #expect(!snapshot.isInMemory)
+    }
+
     /// SQLCipher's in-memory open is plaintext and should always work;
     /// treat a failure as an environment problem, not a test failure.
     private func makeDBOrSkip() -> KnowledgeDatabase? {

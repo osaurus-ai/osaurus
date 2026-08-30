@@ -41,6 +41,7 @@ struct PluginDispatchInstructionsInjectionTests {
             let agent = Agent(
                 name: "PluginInstructionsTest-\(UUID().uuidString.prefix(6))",
                 agentAddress: "test-plugin-instructions-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: false),
                 pluginInstructions: pluginInstructions
             )
             AgentManager.shared.add(agent)

@@ -15,6 +15,7 @@
 //
 
 import Foundation
+import os
 
 /// Payload assembled from the same composition path as a real send, minus
 /// the in-flight user turn.
@@ -204,6 +205,17 @@ final class ChatWarmupController: ObservableObject {
     /// deallocated. Once shut down, all scheduling entry points are inert.
     private var isShutDown = false
 
+    /// Serializes complete `performWarmup` executions. The in-flight
+    /// coalescing inside the body (`await inFlightWarmup?.value`) only
+    /// covers callers that arrive AFTER the generation task is registered;
+    /// two near-simultaneous callers (Send's shape reconcile plus the DSV4
+    /// required pre-send warm-up, 14 ms apart in the live trace) both passed
+    /// the registration point and dispatched two identical full-prompt
+    /// warm-up generations back to back. Holding this lock across the whole
+    /// execution makes the second caller wait for the first to finish and
+    /// then short-circuit on the freshly warmed fingerprint.
+    private let warmupExecutionLock = SequentialAsyncLock()
+
     deinit {
         scheduleTask?.cancel()
         activeModelSwitch?.cancel()
@@ -292,7 +304,17 @@ final class ChatWarmupController: ObservableObject {
         cancelScheduledWarmup()
 
         let previousRequiredWarmup = requiredContextWarmup
-        previousRequiredWarmup?.cancel()
+        // Only a REAL shape change obsoletes the previous required warm-up.
+        // The `invalidatingShape: false` pre-send path (DSV4) asks that a
+        // warm-up exist — cancelling a required warm-up that was created
+        // milliseconds earlier by the same Send's shape reconcile raced it
+        // past its cooperative checkpoints and produced two identical
+        // full-prompt warm-up generations back to back (observed live, 14 ms
+        // apart). Chaining on it below without cancelling lets it finish and
+        // the fingerprint check coalesce.
+        if invalidatingShape {
+            previousRequiredWarmup?.cancel()
+        }
 
         let id = UUID()
         requiredContextWarmupID = id
@@ -936,6 +958,13 @@ final class ChatWarmupController: ObservableObject {
     private func performWarmup(session: ChatWarmupSessionContext) async {
         guard shouldAttemptWarmup(session: session) else { return }
 
+        // Whole-execution serialization — see `warmupExecutionLock`. A caller
+        // cancelled while waiting still acquires briefly and exits through
+        // the cancellation guards below without dispatching anything.
+        await warmupExecutionLock.acquire()
+        defer { warmupExecutionLock.release() }
+        guard !Task.isCancelled else { return }
+
         await retiringWork?.value
         guard !Task.isCancelled else { return }
         guard shouldAttemptWarmup(session: session) else { return }
@@ -995,7 +1024,19 @@ final class ChatWarmupController: ObservableObject {
         // later speculative re-warm and regain permission to evict a model.
         let userIntent = consumeUserIntent(for: payload.model)
         if !userIntent {
-            let hasOtherResidentModel = await hasResidentModelOther(payload.model)
+            // The residency probe can suspend inside runtime code that never
+            // observes cooperative cancellation, and this whole function holds
+            // `warmupExecutionLock`. A `reset()` (chat cleared, agent switch)
+            // must still be able to unblock the NEXT warm-up, so race the
+            // probe against this task's cancellation and abandon the stale
+            // probe instead of waiting it out; its late result resumes nobody.
+            let check = hasResidentModelOther
+            let model = payload.model
+            guard
+                let hasOtherResidentModel = await Self.valueOrCancellation({
+                    await check(model)
+                })
+            else { return }
             guard !Task.isCancelled else { return }
             guard shouldAttemptWarmup(session: session) else { return }
 
@@ -1024,6 +1065,45 @@ final class ChatWarmupController: ObservableObject {
         if inFlightWarmupID == id {
             inFlightWarmup = nil
             inFlightWarmupID = nil
+        }
+    }
+
+    /// Await `operation`, but resume immediately with `nil` if the current
+    /// task is cancelled while it is suspended. The operation runs as an
+    /// unstructured task; on cancellation it is cancelled (best effort) and
+    /// abandoned — a late result finds the continuation already taken and
+    /// resumes nobody. Same one-shot race as `valueWithDeadline`
+    /// (AsyncDeadline.swift), minus the timer: the only unblocking event
+    /// needed here is the caller's own cancellation.
+    private nonisolated static func valueOrCancellation<T: Sendable>(
+        _ operation: @escaping @Sendable () async -> T
+    ) async -> T? {
+        let work = Task { await operation() }
+        let state = OSAllocatedUnfairLock<CheckedContinuation<T?, Never>?>(initialState: nil)
+
+        @Sendable func take() -> CheckedContinuation<T?, Never>? {
+            state.withLock { held in
+                defer { held = nil }
+                return held
+            }
+        }
+
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (cont: CheckedContinuation<T?, Never>) in
+                if Task.isCancelled {
+                    work.cancel()
+                    cont.resume(returning: nil)
+                    return
+                }
+                state.withLock { $0 = cont }
+                Task {
+                    let value = await work.value
+                    take()?.resume(returning: value)
+                }
+            }
+        } onCancel: {
+            work.cancel()
+            take()?.resume(returning: nil)
         }
     }
 
@@ -1115,6 +1195,34 @@ final class ChatWarmupController: ObservableObject {
             guard !Task.isCancelled else { return }
             let ms = Int(Date().timeIntervalSince(startedAt) * 1000)
             debugLog("[ChatWarmup] failed model=\(payload.model) elapsedMs=\(ms) error=\(error)")
+        }
+    }
+}
+
+/// Minimal FIFO async lock for serializing whole warm-up executions on the
+/// main actor. Unlike checking an in-flight task handle, acquisition covers
+/// the entire critical section — including the payload composition and gate
+/// checks that run BEFORE a generation task exists, which is exactly the
+/// window two near-simultaneous warm-up requests raced through.
+@MainActor
+final class SequentialAsyncLock {
+    private var isLocked = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        if !isLocked {
+            isLocked = true
+            return
+        }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            isLocked = false
+        } else {
+            // Hand the lock directly to the next waiter (stays locked).
+            waiters.removeFirst().resume()
         }
     }
 }

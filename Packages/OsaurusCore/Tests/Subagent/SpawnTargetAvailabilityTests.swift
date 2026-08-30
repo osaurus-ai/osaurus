@@ -336,6 +336,63 @@ struct SpawnTargetAvailabilityTests {
         #expect(!guidance.contains("local/deleted-model"))
     }
 
+    @Test("passing display names widens the schema enum to accept name or UUID")
+    func schemaEnumAcceptsAgentDisplayNames() {
+        let agentID = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
+
+        func directEnum(_ tool: Tool, field: String) -> [String] {
+            guard case .object(let root)? = tool.function.parameters,
+                case .object(let properties)? = root["properties"],
+                case .object(let target)? = properties[field],
+                case .array(let values)? = target["enum"]
+            else { return [] }
+            return values.compactMap {
+                if case .string(let value) = $0 { return value }
+                return nil
+            }
+        }
+        func batchEnum(_ tool: Tool) -> [String] {
+            guard case .object(let root)? = tool.function.parameters,
+                case .object(let properties)? = root["properties"],
+                case .object(let jobs)? = properties["jobs"],
+                case .object(let items)? = jobs["items"],
+                case .object(let jobProperties)? = items["properties"],
+                case .object(let target)? = jobProperties["target"],
+                case .array(let values)? = target["enum"]
+            else { return [] }
+            return values.compactMap {
+                if case .string(let value) = $0 { return value }
+                return nil
+            }
+        }
+
+        let agentTool = SpawnAgentTool.constrainedSpec(
+            SpawnAgentTool().asOpenAITool(),
+            allowedAgentIDs: [agentID],
+            allowedAgentNames: ["Transcript Cleaner"]
+        )
+        // Both the UUID and the display name are offered; the UUID leads so the
+        // enum stays byte-stable against the frozen-prefix cache contract.
+        #expect(
+            directEnum(agentTool, field: "agent")
+                == [agentID.uuidString, "Transcript Cleaner"]
+        )
+
+        let batchTool = SpawnBatchTool.constrainedSpec(
+            SpawnBatchTool().asOpenAITool(),
+            allowedAgentIDs: [agentID],
+            allowedAgentNames: ["Transcript Cleaner"],
+            allowedModelIds: ["local/direct-model"],
+            maxParallel: 2
+        )
+        #expect(
+            Set(batchEnum(batchTool))
+                == Set([
+                    agentID.uuidString, "Transcript Cleaner", "local/direct-model",
+                ])
+        )
+    }
+
     @Test("missing configured agent remains visible in state but never runnable")
     func missingAgentIsRetainedForRepair() {
         let deletedID = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!

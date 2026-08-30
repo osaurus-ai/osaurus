@@ -35,18 +35,16 @@ struct SkillsView: View {
     private func skills(in tab: SkillsTab) -> [Skill] {
         switch tab {
         case .all: return skillManager.skills
-        case .builtIn: return skillManager.skills.filter { $0.isBuiltIn }
-        case .yours: return skillManager.skills.filter { !$0.isBuiltIn && !$0.isFromPlugin }
-        case .fromPlugins: return skillManager.skills.filter { $0.isFromPlugin }
+        case .custom: return skillManager.skills.filter { !$0.isBuiltIn && !$0.isFromPlugin }
+        // The Claude Plugins tab shows the marketplace, not the skill list.
+        case .claudePlugins: return []
         }
     }
 
     private var tabCounts: [SkillsTab: Int] {
         [
             .all: skillManager.skills.count,
-            .builtIn: skillManager.skills.filter { $0.isBuiltIn }.count,
-            .yours: skillManager.skills.filter { !$0.isBuiltIn && !$0.isFromPlugin }.count,
-            .fromPlugins: skillManager.skills.filter { $0.isFromPlugin }.count,
+            .custom: skillManager.skills.filter { !$0.isBuiltIn && !$0.isFromPlugin }.count,
         ]
     }
 
@@ -82,7 +80,10 @@ struct SkillsView: View {
 
             // Content
             ZStack {
-                if skillManager.skills.isEmpty && !skillManager.isRefreshing {
+                if selectedTab == .claudePlugins {
+                    ClaudePluginsMarketplaceView(searchText: searchText)
+                        .opacity(hasAppeared ? 1 : 0)
+                } else if skillManager.skills.isEmpty && !skillManager.isRefreshing {
                     SettingsEmptyState(
                         icon: "sparkles",
                         title: L("Create Your First Skill"),
@@ -404,12 +405,8 @@ struct SkillsView: View {
                 Text("No skills match \"\(searchText)\"", bundle: .module)
                     .font(.system(size: 13))
                     .foregroundColor(theme.secondaryText)
-            } else if selectedTab == .yours {
+            } else if selectedTab == .custom {
                 Text("No skills of your own yet — create or import one", bundle: .module)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.secondaryText)
-            } else if selectedTab == .fromPlugins {
-                Text("No plugin skills installed — plugins can bundle skills when you install them", bundle: .module)
                     .font(.system(size: 13))
                     .foregroundColor(theme.secondaryText)
             } else {

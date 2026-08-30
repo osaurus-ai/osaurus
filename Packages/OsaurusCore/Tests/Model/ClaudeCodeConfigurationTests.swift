@@ -274,6 +274,23 @@ struct ClaudeCodeConfigurationTests {
         #expect(decoded == original)
     }
 
+    @Test func defaultAgentPersistsClaudePermissionPrecedence() throws {
+        let claude = ClaudeCodeAgentConfig(
+            mode: .agent,
+            allowWrites: true,
+            allowShell: false,
+            allowOsaurusTools: true,
+            allowOsaurusConfigWrites: false
+        )
+        let original = DefaultAgentConfiguration(claudeCode: claude)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(DefaultAgentConfiguration.self, from: data)
+
+        #expect(decoded.claudeCode == claude)
+        #expect(decoded.claudeCode?.allowOsaurusTools == true)
+        #expect(decoded.claudeCode?.allowOsaurusConfigWrites == false)
+    }
+
     // MARK: - Auth status
 
     /// The exact shape `claude auth status --json` emits for a personal
@@ -335,6 +352,108 @@ struct ClaudeCodeConfigurationTests {
         #expect(ClaudeCodeConfiguration.decodeAuthStatus(Data()) == nil)
         // `loggedIn` is required — a payload without it is not a status.
         #expect(ClaudeCodeConfiguration.decodeAuthStatus(Data(#"{"email":"a@b.c"}"#.utf8)) == nil)
+    }
+
+    @Test func cliVersionUsesFirstNonemptyLine() {
+        let data = Data("\n2.1.37 (Claude Code)\nextra\n".utf8)
+        #expect(ClaudeCodeConfiguration.decodeVersion(data) == "2.1.37 (Claude Code)")
+        #expect(ClaudeCodeConfiguration.decodeVersion(Data()) == nil)
+    }
+
+    @Test func controlCommandCaptureCollectsBothPipes() async throws {
+        let result = try #require(
+            await ClaudeCodeProcessRunner.capture(
+                executable: "/bin/sh",
+                arguments: ["-c", "printf stdout-value; printf stderr-value >&2"],
+                timeout: 2
+            )
+        )
+        #expect(result.exitCode == 0)
+        #expect(String(decoding: result.stdout, as: UTF8.self) == "stdout-value")
+        #expect(result.stderr == "stderr-value")
+        #expect(!result.timedOut)
+    }
+
+    @Test func controlCommandCaptureTimesOutAndTerminates() async throws {
+        let result = try #require(
+            await ClaudeCodeProcessRunner.capture(
+                executable: "/bin/sh",
+                arguments: ["-c", "sleep 5"],
+                timeout: 0.05
+            )
+        )
+        #expect(result.timedOut)
+        #expect(result.exitCode != 0)
+    }
+
+    @Test func oldCLIWithoutAuthJSONUsesManualStatusPath() async throws {
+        let directory = try makeFakeClaude(
+            """
+            if [ "$1" = "--version" ]; then
+              printf '2.1.37 (Claude Code)\\n'
+            else
+              printf 'Usage: claude [options] [command]\\n'
+            fi
+            """
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let state = await ClaudeCodeConfiguration.setupState(
+            env: ["PATH": directory.path]
+        )
+        #expect(state == .statusUnavailable(cliVersion: "2.1.37 (Claude Code)"))
+    }
+
+    @Test func modernCLISignedOutJSONIsRecognized() async throws {
+        let directory = try makeFakeClaude(
+            """
+            if [ "$1" = "--version" ]; then
+              printf '2.1.212 (Claude Code)\\n'
+            else
+              printf '{"loggedIn":false}\\n'
+            fi
+            """
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let state = await ClaudeCodeConfiguration.setupState(
+            env: ["PATH": directory.path]
+        )
+        #expect(state == .signedOut)
+    }
+
+    @Test func resultFailuresMapToTypedErrors() {
+        #expect(
+            ClaudeCodeProcessRunner.error(forFailureDetail: "authentication required")
+                == .notAuthenticated(detail: "authentication required")
+        )
+        #expect(
+            ClaudeCodeProcessRunner.error(forFailureDetail: "usage limit reached")
+                == .rateLimited(detail: "usage limit reached")
+        )
+        #expect(
+            ClaudeCodeProcessRunner.error(forFailureDetail: "upstream exploded")
+                == .turnFailed("upstream exploded")
+        )
+    }
+
+    @Test func coreModelNeverRetriesClaudeCodeFailures() {
+        #expect(!CoreModelService.isRetryable(ClaudeCodeError.rateLimited(detail: "limit")))
+        #expect(!CoreModelService.isRetryable(ClaudeCodeError.notAuthenticated(detail: "login")))
+        #expect(!CoreModelService.isRetryable(ClaudeCodeError.turnFailed("failed")))
+    }
+
+    private func makeFakeClaude(_ body: String) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fake-claude-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let executable = directory.appendingPathComponent("claude", isDirectory: false)
+        try Data("#!/bin/sh\n\(body)\n".utf8).write(to: executable, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executable.path
+        )
+        return directory
     }
 
     // MARK: - Osaurus MCP bridge

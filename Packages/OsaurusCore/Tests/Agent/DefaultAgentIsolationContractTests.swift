@@ -31,6 +31,10 @@ struct DefaultAgentIsolationContractTests {
     @Test
     func defaultAgent_editableCapabilitiesAreHardOff() {
         let caps = AgentManager.shared.effectiveCapabilities(for: Agent.defaultId)
+        // The built-in Orchestrator has no global/config-only tool kill switch.
+        // Its fixed tool surface is always available; custom agents retain
+        // their own positive `toolsEnabled` capability.
+        #expect(caps.toolsEnabled == true)
         // The editable per-agent capabilities are locked off for the Default
         // agent regardless of any stored config — their tools (db_*,
         // render_chart, speak, search_memory, schedule_next_run, computer_use)

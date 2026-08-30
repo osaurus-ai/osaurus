@@ -47,8 +47,23 @@ enum KnowledgeToolScope {
             )
         }
 
+        // Agent grants, unioned with the active session's project
+        // collections. Project knowledge is deliberately independent of the
+        // agent's own knowledge opt-in: it belongs to the conversation's
+        // project, whichever agent runs it. The grant/union computed here
+        // remains the access boundary either way.
+        let projectId = ChatExecutionContext.currentProjectId
         let granted = await MainActor.run {
-            AgentManager.shared.effectiveKnowledgeCollections(for: agentId)
+            var collections = AgentManager.shared.effectiveKnowledgeCollections(for: agentId)
+            if let projectId,
+                let project = ProjectManager.shared.project(for: projectId)
+            {
+                let known = Set(collections.map(\.id))
+                collections += KnowledgeManager.shared
+                    .enabledCollections(withIds: project.knowledgeCollectionIds)
+                    .filter { !known.contains($0.id) }
+            }
+            return collections
         }
         guard !granted.isEmpty else {
             return .failure(
@@ -155,6 +170,18 @@ final class SearchKnowledgeTool: OsaurusTool, @unchecked Sendable {
         "required": .array([.string("query")]),
     ])
 
+    /// Cancellation audit: the body is bounded local retrieval — one query
+    /// embedding plus a hybrid Vectura/SQLite lookup capped at `top_k` — with
+    /// no external processes or detached work; it terminates promptly on its
+    /// own, so an owning spawned run drains it within that bounded window.
+    var canExposeToSpawnedOperation: Bool { true }
+
+    func spawnedOperationCancellationSupport(
+        argumentsJSON _: String
+    ) -> SpawnedOperationCancellationSupport {
+        .cooperative
+    }
+
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
@@ -177,15 +204,28 @@ final class SearchKnowledgeTool: OsaurusTool, @unchecked Sendable {
             )
         }
 
+        KnowledgeDebugLog.log("search_knowledge", "ENTER query=\(query.prefix(80))")
+        let t0 = KnowledgeDebugLog.now()
+
+        KnowledgeDebugLog.log("search_knowledge", "resolving agent grant scope")
         let scope = await KnowledgeToolScope.resolve(
             tool: name,
             collectionName: args["collection"] as? String
         )
         guard case .granted(let collections) = scope else {
+            KnowledgeDebugLog.log("search_knowledge", "scope resolution failed/rejected; returning")
             if case .failure(let envelope) = scope { return envelope }
             return ""
         }
-        if let envelope = KnowledgeToolScope.ensureDatabaseOpen(tool: name) { return envelope }
+        KnowledgeDebugLog.log(
+            "search_knowledge",
+            "scope granted: \(collections.count) collection(s) in \(KnowledgeDebugLog.ms(since: t0))ms"
+        )
+        KnowledgeDebugLog.log("search_knowledge", "ensureDatabaseOpen")
+        if let envelope = KnowledgeToolScope.ensureDatabaseOpen(tool: name) {
+            KnowledgeDebugLog.log("search_knowledge", "database unavailable; returning")
+            return envelope
+        }
 
         let tagFilter = ((args["tags"] as? [Any]) ?? []).compactMap { $0 as? String }
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -199,10 +239,20 @@ final class SearchKnowledgeTool: OsaurusTool, @unchecked Sendable {
         let collectionIds = collections.map { $0.id.uuidString }
         let nameById = KnowledgeToolScope.namesById(collections)
 
+        KnowledgeDebugLog.log(
+            "search_knowledge",
+            "calling KnowledgeSearchService.search topK=\(fetchCount) collections=\(collectionIds.count)"
+        )
+        let tSearch = KnowledgeDebugLog.now()
         var hits = await KnowledgeSearchService.shared.search(
             query: query,
             collectionIds: collectionIds,
             topK: fetchCount
+        )
+        KnowledgeDebugLog.log(
+            "search_knowledge",
+            "search returned \(hits.count) hit(s) in \(KnowledgeDebugLog.ms(since: tSearch))ms "
+                + "(total \(KnowledgeDebugLog.ms(since: t0))ms)"
         )
         if !tagFilter.isEmpty {
             hits = hits.filter { KnowledgeToolScope.matchesTags($0.tagsCSV, filter: tagFilter) }
@@ -211,6 +261,19 @@ final class SearchKnowledgeTool: OsaurusTool, @unchecked Sendable {
 
         if hits.isEmpty {
             let scopeNote = collections.count == 1 ? " in collection '\(collections[0].name)'" : ""
+            // A collection mid-index has an incomplete corpus, so an empty
+            // result may be transient. Tell the model to retry rather than
+            // conclude the material doesn't exist.
+            let indexing = await MainActor.run {
+                collections.contains { KnowledgeManager.shared.indexingCollectionIds.contains($0.id) }
+            }
+            if indexing {
+                return ToolEnvelope.success(
+                    tool: name,
+                    text: "No matches for '\(query)' yet\(scopeNote) — this collection is still "
+                        + "indexing, so its content is not fully searchable. Retry in a moment."
+                )
+            }
             return ToolEnvelope.success(
                 tool: name,
                 text: "No knowledge documents match '\(query)'\(scopeNote)."
@@ -269,6 +332,18 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
         ]),
         "required": .array([.string("path")]),
     ])
+
+    /// Cancellation audit: bounded local reads — SQLite index lookups plus
+    /// one capped (`maxContentChars`) file/extracted-text read inside the
+    /// collection folder. No network, no external processes, no detached
+    /// work; the body terminates promptly and drains trivially.
+    var canExposeToSpawnedOperation: Bool { true }
+
+    func spawnedOperationCancellationSupport(
+        argumentsJSON _: String
+    ) -> SpawnedOperationCancellationSupport {
+        .cooperative
+    }
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
@@ -373,6 +448,7 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
             )
         }
         let body: String
+        var extraFields: [KnowledgeFrontmatterField] = []
         if KnowledgeIndexService.isMarkdown(fileURL) {
             guard let raw = try? String(contentsOf: fileURL, encoding: .utf8) else {
                 return ToolEnvelope.failure(
@@ -382,7 +458,9 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
                     retryable: true
                 )
             }
-            body = KnowledgeDocumentParser.parse(markdown: raw).body
+            let parsed = KnowledgeDocumentParser.parse(markdown: raw)
+            body = parsed.body
+            extraFields = parsed.frontmatter.extras
         } else {
             DocumentAdaptersBootstrap.registerBuiltIns()
             guard let adapter = DocumentFormatRegistry.shared.adapter(for: fileURL),
@@ -410,11 +488,26 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
                 $0.headingPath.range(of: section, options: .caseInsensitive) != nil
             }
             guard !matching.isEmpty else {
-                let sections = Set(chunks.map(\.headingPath).filter { !$0.isEmpty })
+                let sectionList = Set(chunks.map(\.headingPath).filter { !$0.isEmpty })
                     .sorted().prefix(30).joined(separator: "; ")
+                // A document with no headings at all (e.g. source code or a
+                // flat text file) can never match a section. Say so and tell
+                // the model to drop `section` — otherwise it loops re-issuing
+                // the same doomed call against an empty section list.
+                guard !sectionList.isEmpty else {
+                    return ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "`\(relPath)` has no headings, so it can't be filtered by "
+                            + "`section`. Re-read it without the `section` argument to get "
+                            + "the full document.",
+                        field: "section",
+                        expected: "omit `section` for documents without headings",
+                        tool: name
+                    )
+                }
                 return ToolEnvelope.failure(
                     kind: .notFound,
-                    message: "No section matching `\(section)` in `\(relPath)`. Sections: \(sections)",
+                    message: "No section matching `\(section)` in `\(relPath)`. Sections: \(sectionList)",
                     tool: name
                 )
             }
@@ -435,6 +528,11 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
             out += "type: \(document.effectiveType)\(document.isTypeInferred ? " (inferred)" : "")\n"
         }
         if !document.tagsCSV.isEmpty { out += "tags: \(document.tagsCSV)\n" }
+        // Non-reserved frontmatter (e.g. `status`, `sensitivity`) is not
+        // indexed, but is passed through so agents can read and honor it.
+        for field in extraFields {
+            out += "\(field.key): \(field.value.replacingOccurrences(of: "\n", with: "\n  "))\n"
+        }
         out += "\n" + content
         if truncated {
             out += "\n\n[Truncated at \(Self.maxContentChars) characters — use `section` to read a specific part.]"
@@ -476,6 +574,17 @@ final class ListKnowledgeTool: OsaurusTool, @unchecked Sendable {
         "required": .array([]),
     ])
 
+    /// Cancellation audit: one capped (`limit` ≤ 200) SQLite listing over the
+    /// granted collections — no network, no external processes, no detached
+    /// work; the body terminates promptly and drains trivially.
+    var canExposeToSpawnedOperation: Bool { true }
+
+    func spawnedOperationCancellationSupport(
+        argumentsJSON _: String
+    ) -> SpawnedOperationCancellationSupport {
+        .cooperative
+    }
+
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
@@ -503,9 +612,45 @@ final class ListKnowledgeTool: OsaurusTool, @unchecked Sendable {
             )) ?? []
 
         if documents.isEmpty {
+            // The old text blamed indexing unconditionally. That is a lie in
+            // the common case and an expensive one: in osaurus#2439 an agent
+            // read "may still be indexing" off a collection that was simply
+            // empty and waited on it for forty minutes, re-running the same
+            // listing. Only claim indexing when the collection really is
+            // mid-index — the check `search_knowledge` already makes.
+            let scopeNote = collections.count == 1 ? " in collection '\(collections[0].name)'" : ""
+            let indexing = await MainActor.run {
+                collections.contains { KnowledgeManager.shared.indexingCollectionIds.contains($0.id) }
+            }
+            if indexing {
+                return ToolEnvelope.success(
+                    tool: name,
+                    text: "No knowledge documents listed yet\(scopeNote) — this collection is still "
+                        + "indexing, so its contents are incomplete. Retry in a moment."
+                )
+            }
+            let hasFilter = (docType?.isEmpty == false) || (tag?.isEmpty == false)
+            if hasFilter {
+                var facets: [String] = []
+                if let docType, !docType.isEmpty { facets.append("type '\(docType)'") }
+                if let tag, !tag.isEmpty { facets.append("tag '\(tag)'") }
+                return ToolEnvelope.success(
+                    tool: name,
+                    text: "No knowledge documents match \(facets.joined(separator: " and "))"
+                        + "\(scopeNote). Other documents may exist; list without the filter to see them."
+                )
+            }
+            let subject =
+                collections.count == 1
+                ? "Collection '\(collections[0].name)' is empty" : "These collections are empty"
             return ToolEnvelope.success(
                 tool: name,
-                text: "No knowledge documents match the filter. The collection may still be indexing."
+                // Naming the real write path matters as much as denying the
+                // indexing excuse: an agent told only "this is empty" with no
+                // route forward is what invented `<agent home>/knowledge/`.
+                text: "\(subject) — no documents at all. This is not an indexing delay, so "
+                    + "waiting will not change it. Add documents with `write_knowledge`; writing "
+                    + "files to a path never puts them in a collection."
             )
         }
 

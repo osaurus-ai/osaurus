@@ -93,6 +93,27 @@ public enum SystemPromptTemplates {
         - `share_artifact(path | content+filename)` — the only way the user sees a file/image; it MUST exist first. Sandbox: save under home, not `/tmp`.
         """
 
+    /// Agent-loop guidance for the resolved schema: the `share_artifact`
+    /// bullet is emitted only when that tool actually resolved — the
+    /// orchestrator surface deliberately excludes it (workers deliver
+    /// artifacts), and a bullet naming an uncallable tool is the
+    /// recitation-loop trap `defaultPersona` documents. Both flags are
+    /// session-constant, so the choice is KV-cache safe. Line-filtering the
+    /// canonical statics (rather than duplicating them) keeps one source of
+    /// truth for the bullet text.
+    public static func agentLoopGuidance(
+        compact: Bool,
+        includeShareArtifact: Bool
+    ) -> String {
+        let base = compact ? agentLoopGuidanceCompact : agentLoopGuidance
+        guard !includeShareArtifact else { return base }
+        return
+            base
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.contains("`share_artifact(") }
+            .joined(separator: "\n")
+    }
+
     // MARK: - Time Context
 
     /// Per-turn current date/time block injected into the latest user
@@ -103,14 +124,25 @@ public enum SystemPromptTemplates {
     /// — before they can fill absolute date-time tool arguments like a
     /// reminder's `dueDate` (live-confirmed 2026-07-27: Ornith-9B passed
     /// `2025-05-15` for "today").
+    ///
+    /// Minute granularity, deliberately: the block exists to resolve
+    /// relative dates and fill absolute date-time arguments, none of which
+    /// need seconds — and seconds made the rendered bytes unique per send,
+    /// so two fresh chats could never share a prefill past this block. At
+    /// minute granularity, chats started in the same minute render
+    /// byte-identical time blocks and stay KV/L2-shareable. It also rides
+    /// at the TAIL of the injected prefix (see
+    /// `composeInjectedUserPrefix`) so the stabler memory/screen blocks
+    /// sit adjacent to the shared static prefix and only the tail diverges.
     public static func timeContext(now: Date, timeZone: TimeZone) -> String {
         let readable = DateFormatter()
         readable.locale = Locale(identifier: "en_US_POSIX")
         readable.timeZone = timeZone
         readable.dateFormat = "EEEE, MMMM d, yyyy 'at' h:mm a"
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime]
+        let iso = DateFormatter()
+        iso.locale = Locale(identifier: "en_US_POSIX")
         iso.timeZone = timeZone
+        iso.dateFormat = "yyyy-MM-dd'T'HH:mmZZZZZ"
         return """
             [Current Time]
             \(readable.string(from: now)) — \(iso.string(from: now)) (\(timeZone.identifier))
@@ -134,6 +166,7 @@ public enum SystemPromptTemplates {
         ## Grounding
 
         - Ground factual and live-data claims — weather, prices, web content, file contents, command output, current state — in a tool result rather than answering from memory.
+        - A progress report is a factual claim about YOUR OWN work. Say a file was written, a page scraped, or a document saved only when a tool result in this conversation shows it. Never state a count, a file list, or a live status ("the browser is on step 2 of 11") you did not read out of a tool result — check first, or say plainly that you have not verified it.
         - You can almost always get there: a shell or network tool fetches live/external data, and `capabilities_discover` finds tools you don't have yet. Attempt that before deciding you can't — the absence of a purpose-built tool is not a dead end. Say what you can't do only after genuinely trying, and never invent a tool name or fabricate a value to fill a gap.
         - A claim about your own capabilities is a factual claim. "I don't have a tool for X" or "I can't do X" must be backed by either the Enabled capabilities list or a `capabilities_discover` call that came back empty. Never by X being absent from your current tool schema. Your loaded tools are a fixed subset, not the full enabled set.
         - When the user asks whether you have a tool, whether you can do something, or what you can do: check the Enabled capabilities list first, then `capabilities_discover` if the list does not settle it, then answer.
@@ -147,6 +180,7 @@ public enum SystemPromptTemplates {
         ## Grounding
 
         - Ground factual and live-data claims — weather, prices, web content, file contents, command output, current state — in a tool result rather than answering from memory.
+        - A progress report is a factual claim about YOUR OWN work. Say a file was written, a page scraped, or a document saved only when a tool result in this conversation shows it. Never state a count, a file list, or a live status you did not read out of a tool result — check first, or say plainly that you have not verified it.
         - Say what you can't do only after genuinely trying with the tools you have, and never invent a tool name or fabricate a value to fill a gap.
         """
 
@@ -159,6 +193,7 @@ public enum SystemPromptTemplates {
         ## Grounding
 
         - Ground live-data and factual claims (weather, prices, web, file contents, command output, current state) in a tool result, not memory.
+        - Progress reports are factual claims too: state a count, a file list, or a live status only if a tool result in this conversation showed it. Otherwise check, or say you have not verified.
         - You can almost always get there: a shell/network tool fetches external data and `capabilities_discover` finds tools you lack. Try before saying you can't, and never invent a tool name or fabricate a value.
         - "I can't do X" / "I don't have a tool for X" must be backed by the Enabled capabilities list or an empty `capabilities_discover` — never by X being absent from your current schema (a fixed subset, not the full enabled set).
         """
@@ -346,10 +381,8 @@ public enum SystemPromptTemplates {
     /// cannot create plugins, they are dropped so the section spends no context
     /// describing an unavailable path.
     ///
-    /// `hostWritableCombined` swaps the SOUL edit verb: in writable combined
-    /// mode `sandbox_write_file` is hidden, so the bullet names the unified
-    /// `file_write` (with the absolute `/workspace/...` home path — `~` would
-    /// route to the host workspace under the path rule).
+    /// `hostWritableCombined` changes only the path reminder: the public
+    /// `file_write` / `file_edit` family is used in every sandbox mode.
     public static func selfImprovementGuidance(
         canCreatePlugins: Bool,
         compact: Bool = false,
@@ -367,8 +400,8 @@ public enum SystemPromptTemplates {
             "- When a plugin you built turns out wrong or incomplete, fix the plugin itself rather than working around it. Plugins improve through use."
         let soulVerb =
             hostWritableCombined
-            ? "`file_write` (absolute `/workspace/...` path to your sandbox home's `SOUL.md`)"
-            : "`sandbox_write_file`"
+            ? "`file_write` / `file_edit` (absolute `/workspace/...` path to your sandbox home's `SOUL.md`)"
+            : "`file_write` / `file_edit`"
         let soul =
             compact
             ? "- Record durable cross-session patterns in `~/SOUL.md` via \(soulVerb) (applies next session); keep session facts and one-off paths out."
@@ -418,7 +451,7 @@ public enum SystemPromptTemplates {
         let writeStep =
             hostWritableCombined
             ? "2. **Write files** under `plugins/{service}/` in your sandbox home with `file_write` (absolute `/workspace/...` paths) — scripts first, then `plugin.json`. `sandbox_plugin_register` packages the whole directory automatically: do NOT inline script contents or add a `files` field. Binary files are rejected — regenerate them in `setup` instead."
-            : "2. **Write files** under `plugins/{service}/` with `sandbox_write_file` — scripts first, then `plugin.json`. `sandbox_plugin_register` packages the whole directory automatically: do NOT inline script contents or add a `files` field. Binary files are rejected — regenerate them in `setup` instead."
+            : "2. **Write files** under `plugins/{service}/` with `file_write` — scripts first, then `plugin.json`. `sandbox_plugin_register` packages the whole directory automatically: do NOT inline script contents or add a `files` field. Binary files are rejected — regenerate them in `setup` instead."
         return """
         A sandbox plugin is a JSON recipe (`plugin.json`) plus helper scripts
         that run in your sandbox. Use one when you need to connect to a service
@@ -465,7 +498,49 @@ public enum SystemPromptTemplates {
         """
     }
 
+    /// Reduced authoring contract for compact local models. Keeps every field
+    /// needed to produce a decodable SandboxPlugin and the exact write →
+    /// register → call transition, while omitting examples and policy prose
+    /// already covered by adjacent prompt sections.
+    public static func pluginCreatorInstructionsCompactBody(
+        hostWritableCombined: Bool = false
+    ) -> String {
+        let writePath =
+            hostWritableCombined
+            ? "absolute `/workspace/.../plugins/{service}/...` paths"
+            : "`plugins/{service}/...` paths"
+        return """
+        Create `plugins/{service}/` with helper scripts plus `plugin.json`; write each file with `file_write` using \(writePath) (scripts first, manifest last).
+
+        `plugin.json` requires top-level `name` and `description`; add `tools`, where each tool has `id`, `description`, optional simplified `parameters` (`{"arg":{"type":"string","description":"..."}}`, not JSON Schema), and `run`. Optional fields include `setup`, `dependencies`, `secrets`, and `permissions.network`. Do not add `files`: registration packages the directory. Tool parameters arrive as `$PARAM_{NAME}` and secrets as `$NAME`; scripts print JSON to stdout.
+
+        Call `sandbox_plugin_register({"plugin_id":"{service}"})`, then immediately call the returned prefixed tool to verify it. On failure, fix the files and re-register.
+        """
+    }
+
     // MARK: - Enabled Capabilities Manifest
+
+    /// Capability search/load tool names published to a request. Custom-agent
+    /// chat uses one unified gateway, while compatibility surfaces may still
+    /// publish the legacy discover/load pair.
+    public struct CapabilityToolNames: Sendable, Equatable {
+        public let discover: String
+        public let load: String
+
+        public init(discover: String, load: String) {
+            self.discover = discover
+            self.load = load
+        }
+
+        public static let gateway = CapabilityToolNames(
+            discover: "capabilities",
+            load: "capabilities"
+        )
+        public static let legacy = CapabilityToolNames(
+            discover: "capabilities_discover",
+            load: "capabilities_load"
+        )
+    }
 
     /// One tool or skill row in the enabled-capabilities manifest. Carries
     /// only the surface name + one-line description the model needs to
@@ -531,22 +606,23 @@ public enum SystemPromptTemplates {
     /// The manifest is the grounded answer to "do you have X" — it lets a
     /// model confirm an enabled capability with zero tool calls. Every line
     /// begins with its loadable id (`tool/<name>` or `skill/<name>`) so the
-    /// model can pass it straight to `capabilities_load` without a discover.
+    /// model can pass it straight to the published load tool without a search.
     /// Tools past `enabledManifestToolCap` collapse to a per-plugin `+N more`
-    /// pointer the model can expand with `capabilities_discover`. `compact`
+    /// pointer the model can expand with the published search tool. `compact`
     /// (small-/tiny-context models) drops per-tool descriptions but keeps the
     /// ids, since naming the capability is what stops the model from denying
     /// it.
     public static func enabledCapabilitiesManifest(
         groups: [ManifestPluginGroup],
-        compact: Bool = false
+        compact: Bool = false,
+        names: CapabilityToolNames = .gateway
     ) -> String? {
         guard !groups.isEmpty else { return nil }
 
         let blocks =
             compact
-            ? tieredCompactBlocks(groups)
-            : verboseBlocks(groups)
+            ? tieredCompactBlocks(groups, names: names)
+            : verboseBlocks(groups, names: names)
 
         // The "never deny a listed capability" rule is owned by
         // `groundingDirective` (which co-fires whenever this section
@@ -560,34 +636,37 @@ public enum SystemPromptTemplates {
             // line per tool. A plugin with N tools costs one line, not N, so
             // the cold first-turn prefill stays bounded as installed plugins
             // grow — while the model still SEES every plugin (it never has to
-            // guess one exists and `capabilities_discover` for it). Loading
+            // guess one exists and search for it). Loading
             // `plugin/<id>` expands the whole group (and runs its governing
             // skill) in one call.
             intro = """
                 ## Enabled capabilities
 
-                Enabled for this session. Load a plugin with capabilities_load \
-                using the exact `plugin/<id>` printed below; `tool/` and \
-                `skill/` ids load individually. Never copy an example or invent \
-                an id. List frozen at session start — capabilities_discover also \
-                finds anything installed since.
+                Entries below are capability ids, not callable function names. \
+                Load a plugin by calling `\(names.load)` with its `ids` array \
+                containing the exact `plugin/<id>` printed below; `tool/` and \
+                `skill/` ids load individually the same way. Never call an id \
+                as a function, copy an example, or invent an id. List frozen at \
+                session start — search with `\(names.discover)` only when no \
+                exact listed id fits or to find anything installed since.
                 """
         } else {
             intro = """
                 ## Enabled capabilities
 
                 These capabilities are enabled for this session. Each line begins \
-                with its loadable id; some are already in your tool schema, others \
-                must be loaded first. To load one, call capabilities_load with its \
-                id exactly as shown \
-                (e.g. `capabilities_load({"ids": ["tool/<name>"]})`). This list is \
+                with a capability id, not a callable function name; some are already \
+                in your tool schema, others must be loaded first. To load one, call \
+                `\(names.load)` with its id exactly as shown \
+                (e.g. `\(names.load)({"ids": ["tool/<name>"]})`). This list is \
                 frozen at session start; capabilities installed after that won't \
-                appear here but capabilities_discover still finds them — check it \
+                appear here but searching with `\(names.discover)` still finds \
+                them — use search only when no exact listed id fits, and check it \
                 before declaring something unavailable.
 
                 Worked example — User: "You have a list_messages tool." If \
-                `tool/list_messages` is listed here, confirm it and capabilities_load \
-                it before use.
+                `tool/list_messages` is listed here, confirm it and load it with \
+                `\(names.load)` before use.
                 """
         }
 
@@ -601,7 +680,8 @@ public enum SystemPromptTemplates {
     /// skills) keep listing their directly-loadable `tool/`/`skill/` ids
     /// inline — there is no `plugin/<id>` to expand and they are few.
     private static func tieredCompactBlocks(
-        _ groups: [ManifestPluginGroup]
+        _ groups: [ManifestPluginGroup],
+        names: CapabilityToolNames
     ) -> [String] {
         var renderedSkillLines = 0
         return groups.map { group in
@@ -619,7 +699,9 @@ public enum SystemPromptTemplates {
                 var lines = ["<\(group.pluginDisplay)>"]
                 lines.append(contentsOf: skillsToShow.map { "  skill/\($0.name)" })
                 if overflow > 0 {
-                    lines.append("  +\(overflow) more skill(s) — capabilities_discover lists them.")
+                    lines.append(
+                        "  +\(overflow) more skill(s) — search with `\(names.discover)` to list them."
+                    )
                 }
                 lines.append(contentsOf: group.tools.map { "  tool/\($0.name)" })
                 return lines.joined(separator: "\n")
@@ -637,7 +719,8 @@ public enum SystemPromptTemplates {
     /// tool lines before low-priority plugins collapse to a `+N more`
     /// pointer. Unchanged from the original manifest behavior.
     private static func verboseBlocks(
-        _ groups: [ManifestPluginGroup]
+        _ groups: [ManifestPluginGroup],
+        names: CapabilityToolNames
     ) -> [String] {
         var blocks: [String] = []
         var renderedToolLines = 0
@@ -659,7 +742,7 @@ public enum SystemPromptTemplates {
             }
             if skillOverflow > 0 {
                 skillLines.append(
-                    "  +\(skillOverflow) more skill(s) — call capabilities_discover to list them."
+                    "  +\(skillOverflow) more skill(s) — search with `\(names.discover)` to list them."
                 )
             }
 
@@ -670,7 +753,7 @@ public enum SystemPromptTemplates {
                 var collapsed = ["<plugin: \(group.pluginDisplay)>"]
                 collapsed.append(contentsOf: skillLines)
                 collapsed.append(
-                    "  +\(group.tools.count) more tool(s) — call capabilities_discover to list them."
+                    "  +\(group.tools.count) more tool(s) — search with `\(names.discover)` to list them."
                 )
                 blocks.append(collapsed.joined(separator: "\n"))
                 continue
@@ -690,7 +773,7 @@ public enum SystemPromptTemplates {
             lines.append(contentsOf: toolLines)
             if overflow > 0 {
                 lines.append(
-                    "  +\(overflow) more tool(s) — call capabilities_discover to list them."
+                    "  +\(overflow) more tool(s) — search with `\(names.discover)` to list them."
                 )
             }
             blocks.append(lines.joined(separator: "\n"))
@@ -703,17 +786,21 @@ public enum SystemPromptTemplates {
     /// this rule tells the model to load the skill first because a
     /// name+description manifest can't convey the skill-first ordering a
     /// tool-group skill (e.g. `Osaurus Browser`) teaches.
-    public static let skillsGovernToolGroups = """
-        ## Skills that govern tool groups
-
-        Some enabled capabilities are skills that teach you how to use a group \
-        of related tools. When the manifest shows a skill alongside tools from \
-        the same plugin, load the skill first with capabilities_load; it \
-        explains when each tool in that group applies. Loading the skill also \
-        loads that plugin's whole tool group in the same call, so you can call \
-        the tools directly afterward without a separate capabilities_load per \
-        tool.
+    public static func skillsGovernToolGroups(
+        names: CapabilityToolNames = .gateway
+    ) -> String {
         """
+            ## Skills that govern tool groups
+
+            Some enabled capabilities are skills that teach you how to use a group \
+            of related tools. When the manifest shows a skill alongside tools from \
+            the same plugin, load the skill first with `\(names.load)`; it \
+            explains when each tool in that group applies. Loading the skill also \
+            loads that plugin's whole tool group in the same call, so you can call \
+            the tools directly afterward without a separate `\(names.load)` call \
+            per tool.
+            """
+    }
 
     /// Whether the rendered manifest needs the verbose skill-first teaching
     /// block above. Compact manifests already collapse a governed plugin to a
@@ -920,8 +1007,7 @@ public enum SystemPromptTemplates {
     /// name/summary re-renders the block (a one-time cached-prefix bust),
     /// matching the other config-driven sections.
     public static func knowledgeGuidance(
-        collections: [KnowledgeGrantDescriptor],
-        curator: Bool = false
+        collections: [KnowledgeGrantDescriptor]
     ) -> String {
         var lines: [String] = ["## Knowledge", ""]
         lines.append("Knowledge collections granted to this agent:")
@@ -943,20 +1029,43 @@ public enum SystemPromptTemplates {
                 + "`list_knowledge` browses a collection's documents."
         )
         lines.append(
-            "- You cannot edit collection documents. When the user reports a change or "
-                + "asks you to update one — or you find outdated content yourself — file it "
-                + "with `flag_knowledge_stale`; the ticket starts the human-reviewed update "
-                + "and IS the correct way to fulfil an update request. Tell the user the "
-                + "report was filed for review."
+            "- To CHANGE an existing document, call `edit_knowledge` with find/replace. Do not "
+                + "restate the document: a long one will not fit in one reply and the truncated "
+                + "version would replace the original."
         )
-        if curator {
-            lines.append(
-                "- You are a curator: after filing the ticket, draft the corrected document "
-                    + "with `propose_knowledge_update`. The proposal stays pending until the "
-                    + "user approves it in the Knowledge tab — nothing changes on disk before "
-                    + "then."
-            )
-        }
+        lines.append(
+            "- To ADD documents, call `write_knowledge` with the full markdown. Send EVERY "
+                + "document for a task in one call: `documents` is an array, and one call is one "
+                + "approval. `delete_knowledge` removes documents. The user reviews the paths and "
+                + "a diff before anything is written, so a rejected call is a normal outcome, not "
+                + "an error."
+        )
+        lines.append(
+            "- A write lands immediately once approved. Confirm with `search_knowledge` before "
+                + "telling the user a document is in place; never report work you have not "
+                + "verified."
+        )
+        // The single most damaging gap in the old block was silence about
+        // where a collection actually lives. Told only that it could not
+        // edit, a model asked to build a knowledge base invented a
+        // destination: in osaurus#2439 it wrote markdown into
+        // `<agent home>/knowledge/`, a plain sandbox directory the indexer
+        // never reads, then spent an hour reporting the successful writes as
+        // failures because `search_knowledge` stayed empty. This stays true
+        // even now that a real write path exists, and is the line that stops
+        // the model improvising one.
+        lines.append(
+            "- Writing a file with `file_write` or `shell_run` NEVER creates a knowledge "
+                + "document, whatever the path is named. Collections live outside your sandbox; "
+                + "only the tools above reach them. If `search_knowledge` cannot find what you "
+                + "just wrote, the file is not in a collection — it is not an indexing delay, "
+                + "and retrying the write will not change that."
+        )
+        lines.append(
+            "- When you notice a document is outdated but fixing it is not the current task, "
+                + "file `flag_knowledge_stale` instead. The ticket is a note to the user; it "
+                + "changes nothing on disk."
+        )
         return lines.joined(separator: "\n")
     }
 
@@ -1006,8 +1115,8 @@ public enum SystemPromptTemplates {
             if agentToolAvailable {
                 lines.append(
                     "- `spawn_agent(input, agent)` runs the task on a configured agent (its own system "
-                        + "prompt + model). Pass the exact UUID shown first, not the display name. "
-                        + "Available agents:"
+                        + "prompt + model). Pass the agent's exact display name (or its UUID) as `agent` — "
+                        + "each is shown below. Available agents:"
                 )
             } else if batchToolAvailable {
                 lines.append("- Available agent targets for `spawn_batch`:")
@@ -1058,6 +1167,14 @@ public enum SystemPromptTemplates {
         lines.append(
             "- A direct-chat tool omitted from a worker's schema remains parent-owned. Do not "
                 + "delegate a side effect that the selected worker cannot actually call."
+        )
+        lines.append(
+            "- Workers deliver FILES as artifacts: a worker's `share_artifact` passes through "
+                + "to THIS conversation as an artifact card once the spawn returns (the result "
+                + "carries only an `artifacts_shared` count). For a file/code deliverable, tell "
+                + "the worker to share the file with `share_artifact` and reply with a short "
+                + "summary — never ask a worker to paste full file contents into its answer; "
+                + "long replies are truncated in the digest."
         )
         lines.append(
             "- `input` must be the COMPLETE task as a self-contained prompt — the worker sees only that, "
@@ -1115,21 +1232,47 @@ public enum SystemPromptTemplates {
     /// read site in `SystemPromptComposer.resolveSoul` — keeping the
     /// renderer pure means PR2's bootstrap seed and PR3's advert can
     /// reuse `soulSection` without dragging in I/O.
-    public static func soulSection(_ content: String) -> String {
-        let trimmed = stripLeadingSoulHeading(content.trimmingCharacters(in: .whitespacesAndNewlines))
+    public static func soulSection(
+        _ content: String,
+        names: CapabilityToolNames = .legacy
+    ) -> String {
+        let trimmed = normalizeLegacySoulToolVocabulary(
+            stripLeadingSoulHeading(content.trimmingCharacters(in: .whitespacesAndNewlines))
+        )
         guard !trimmed.isEmpty else { return "" }
+        let loaders =
+            names.discover == names.load
+            ? "`\(names.load)`"
+            : "`\(names.discover)` / `\(names.load)`"
         return """
             ## SOUL
 
             The agent has recorded the following stable preferences and patterns \
             across prior sessions. These are the agent's own notes; the user's \
-            instructions in earlier sections take precedence. Any plugin or tool \
-            named in these notes is NOT automatically callable — bring it into \
-            your schema with `capabilities_discover` / `capabilities_load` before \
-            invoking it.
+            instructions in earlier sections take precedence. These notes do not \
+            change availability: call a function only when it appears in the \
+            current tool schema, and use \(loaders) only with an exact capability \
+            id. Shell programs and Python/Node libraries are not capabilities.
 
             \(trimmed)
             """
+    }
+
+    /// Old Osaurus-generated SOUL seeds named a private backend adapter. Fix
+    /// only those known seed sentences while rendering; arbitrary user notes
+    /// remain byte-for-byte untouched on disk and in the prompt.
+    private static func normalizeLegacySoulToolVocabulary(_ content: String) -> String {
+        content
+            .replacingOccurrences(
+                of:
+                    "can edit it freely with sandbox_write_file (it writes whole files and\nedits in place).",
+                with:
+                    "can edit it freely with file_write for whole-file writes and file_edit\nfor exact edits."
+            )
+            .replacingOccurrences(
+                of: "can edit it freely with sandbox_write_file. Edits apply on the",
+                with: "can edit it freely with file_write or file_edit. Edits apply on the"
+            )
     }
 
     /// The seeded `~/SOUL.md` (and many hand-edited ones) begin with their own
@@ -1238,12 +1381,10 @@ public enum SystemPromptTemplates {
         isSeatbeltBackend ? "## macOS sandbox environment" : "## Linux sandbox environment"
     }
     static let sandboxReadFileHint =
-        "`sandbox_read_file` with `start_line`/`line_count`/`tail_lines`"
+        "`file_read` with `start_line`/`end_line`/`tail_lines`"
 
-    /// Combined-mode log-read hint: `sandbox_read_file` is hidden in
-    /// combined mode (the unified `file_read` reaches `/workspace/...`),
-    /// so point the model at `file_read` with `tail_lines` instead of a
-    /// tool it can't call.
+    /// Combined-mode log-read hint: the public `file_read` routes both host
+    /// workspace and `/workspace/...` sandbox paths.
     static let sandboxReadFileHintCombined =
         "`file_read` with `tail_lines` (works on `/workspace/...` sandbox paths too)"
 
@@ -1295,29 +1436,25 @@ public enum SystemPromptTemplates {
     /// line so the model isn't pointed at tools it doesn't have.
     private static func sandboxShellBullet(backgroundEnabled: Bool) -> String {
         backgroundEnabled
-            ? "- Shell: `sandbox_exec` for single-line shell; use `background:true` for servers and `sandbox_process` to inspect them."
-            : "- Shell: `sandbox_exec` for single-line shell."
+            ? "- Shell: `shell_run` for single-line shell; use `background:true` for servers and `sandbox_process` to inspect them."
+            : "- Shell: `shell_run` for single-line shell."
     }
 
     private static func sandboxToolGuide(backgroundEnabled: Bool) -> String {
         let shellBullet = sandboxShellBullet(backgroundEnabled: backgroundEnabled)
         return """
             Tool dispatch:
-            - Files: `sandbox_read_file` (read/list); `sandbox_write_file` (`path` FIRST, then `content` whole-file, or `old_string`+`new_string` to edit).
-            - Search: `sandbox_search_files` with `target="content"` or `target="files"`.
+            - Files: `file_read` (read/list), `file_write` (whole-file/append), and `file_edit` (one exact replacement).
+            - Search: `file_search` with `target="content"` or `target="files"`.
             \(shellBullet)
-            - Multi-line code/scripts: `sandbox_write_file` the script, then `sandbox_exec` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks.
+            - Multi-line code/scripts: `file_write` the script, then `shell_run` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks.
             - Run independent calls in parallel; chain dependent shell steps with `&&`.
             """
     }
 
     /// Combined-mode (`.sandbox(hostRead:)`) variant: the host `file_*`
-    /// tools are the single, path-routed read family, so reads/lists/searches
-    /// are NOT done with `sandbox_read_file` / `sandbox_search_files` (hidden
-    /// in this mode). The `## Files` block spells out the path routing.
-    /// With `hostWritable` (the `allowHostFolderWrites` opt-in) the writers
-    /// unify too: `file_write` / `file_edit` are the ONLY write family
-    /// (`sandbox_write_file` is hidden), routed by the same path rule.
+    /// tools are the single, path-routed family. The `## Files` block spells
+    /// out the routing and host-write policy.
     private static func sandboxToolGuideCombined(
         backgroundEnabled: Bool,
         hostWritable: Bool = false
@@ -1326,11 +1463,9 @@ public enum SystemPromptTemplates {
         let writeBullet =
             hostWritable
             ? "- Write/edit files: `file_write` (whole file) / `file_edit` (`old_string`+`new_string`, one exact match). The path picks the filesystem: relative = the user's workspace (tracked, undoable), `/workspace/...` = sandbox."
-            : "- Sandbox writes: `sandbox_write_file` (pass `path` first, then `content` to write the whole file, or `old_string`+`new_string` to edit one match — your workspace is read-only)."
+            : "- Sandbox writes: `file_write` / `file_edit` with a `/workspace/...` path (the user's workspace is read-only)."
         let scriptBullet =
-            hostWritable
-            ? "- Multi-line code/scripts: `file_write` the script to a `/workspace/...` path, then `sandbox_exec` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks."
-            : "- Multi-line code/scripts: `sandbox_write_file` the script, then `sandbox_exec` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks."
+            "- Multi-line code/scripts: `file_write` the script to a `/workspace/...` path, then `shell_run` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks."
         let copyBullet =
             hostWritable
             ? "- Move a file between the two areas: `file_copy(source, destination)` — raw byte copy, binary-safe (PDFs, images, archives). Same path rule: relative = workspace, `/workspace/...` = sandbox."
@@ -1375,12 +1510,12 @@ public enum SystemPromptTemplates {
     private static func sandboxToolGuideCompact(backgroundEnabled: Bool) -> String {
         let shell =
             backgroundEnabled
-            ? "`sandbox_exec` (single-line; `background:true` + `sandbox_process` for servers)"
-            : "`sandbox_exec` (single-line)"
+            ? "`shell_run` (single-line; `background:true` + `sandbox_process` for servers)"
+            : "`shell_run` (single-line)"
         return """
             Tool dispatch:
-            - Files: `sandbox_read_file` (read/list); `sandbox_write_file` (`path` FIRST, then `content` whole-file, or `old_string`+`new_string` to edit). Search: `sandbox_search_files` (`target="content"|"files"`).
-            - Shell: \(shell). Multi-line code: `sandbox_write_file` a script then `sandbox_exec` it (e.g. `python3 script.py`) — never `python3 -c` / `node -e`.
+            - Files: `file_read` (read/list), `file_write` (whole-file/append), `file_edit` (exact replacement). Search: `file_search` (`target="content"|"files"`).
+            - Shell: \(shell). Multi-line code: `file_write` a script then `shell_run` it (e.g. `python3 script.py`) — never `python3 -c` / `node -e`.
             - Install deps with `sandbox_install` (\(sandboxInstallManagers)); inspect large logs with \(sandboxReadFileHint). Run independent calls in parallel; chain dependent steps with `&&`. Sandbox is disposable.
             """
     }
@@ -1394,25 +1529,22 @@ public enum SystemPromptTemplates {
     ) -> String {
         let shell =
             backgroundEnabled
-            ? "`sandbox_exec` (single-line; `background:true` + `sandbox_process` for servers)"
-            : "`sandbox_exec` (single-line)"
+            ? "`shell_run` (single-line; `background:true` + `sandbox_process` for servers)"
+            : "`shell_run` (single-line)"
         let filesLine =
             hostWritable
             ? "- Read/list/search: `file_read`, `file_search`; write/edit: `file_write` / `file_edit`. The path picks the filesystem: relative = the user's workspace (tracked, undoable), `/workspace/...` = sandbox — see `## Files`. `file_copy(source, destination)` moves a file (binary-safe) between the areas."
-            : "- Read/list/search: `file_read`, `file_search` (reach your workspace and `/workspace/...` sandbox paths — see `## Files`). Sandbox writes: `sandbox_write_file` (`path` FIRST, then `content` whole-file or `old_string`+`new_string` edit; workspace is read-only). `file_copy(source, destination)` stages a workspace file (binary-safe) into a `/workspace/...` path for commands."
-        let scriptWriter = hostWritable ? "`file_write` a `/workspace/...` script" : "`sandbox_write_file` a script"
+            : "- Read/list/search: `file_read`, `file_search` (reach your workspace and `/workspace/...` sandbox paths — see `## Files`). Sandbox writes: `file_write` / `file_edit` with `/workspace/...` paths; the user's workspace is read-only. `file_copy(source, destination)` stages a workspace file (binary-safe) into a `/workspace/...` path for commands."
         return """
             Tool dispatch:
             \(filesLine)
-            - Shell: \(shell). Multi-line code: \(scriptWriter) then `sandbox_exec` it (e.g. `python3 script.py`) — never `python3 -c` / `node -e`.
+            - Shell: \(shell). Multi-line code: `file_write` a `/workspace/...` script then `shell_run` it (e.g. `python3 script.py`) — never `python3 -c` / `node -e`.
             - Install deps with `sandbox_install` (\(sandboxInstallManagers)); inspect large logs with \(sandboxReadFileHintCombined). Run independent calls in parallel; chain dependent steps with `&&`. Sandbox is disposable.
             """
     }
 
-    /// Runtime hints block. In combined mode the log-read hint points at
-    /// `file_read` (the unified read tool) rather than the hidden
-    /// `sandbox_read_file`, so the model is never steered toward a tool
-    /// it can't see in this mode.
+    /// Runtime hints block. `file_read` is the public routed read surface in
+    /// both pure and combined sandbox modes.
     private static func sandboxRuntimeHints(hostReadCombined: Bool) -> String {
         let logReadHint = hostReadCombined ? sandboxReadFileHintCombined : sandboxReadFileHint
         let managers = isSeatbeltBackend ? "`pip` / `npm`" : "`pip` / `npm` / `apk`"
@@ -1453,8 +1585,9 @@ public enum SystemPromptTemplates {
         ].compactMap { $0 }
 
         return """
-            Already installed (don't reinstall — call directly):
+            Installed sandbox packages (use from shell/code; these are not capability ids):
             \(lines.joined(separator: "\n"))
+            Lists are capped; verify an unlisted package with `shell_run` before reinstalling.
 
             """
     }
@@ -1478,6 +1611,22 @@ public enum SystemPromptTemplates {
     /// path rule + tool dispatch + mode-specific framing + optional
     /// project context. Returns `""` when no folder is mounted so the
     /// composer can append unconditionally.
+    /// Steering for repetitive find-and-replace / redaction tasks.
+    /// CONSTANT text by contract: this section is `.static` and must stay
+    /// byte-identical across turns and sessions so it never perturbs the
+    /// reusable KV prefix. No paths, dates, or per-session state.
+    public static func bulkEditGuidance() -> String {
+        """
+        ## Bulk edits and redaction
+
+        When asked to replace, remove, mask, anonymize, or redact names, emails, phone numbers, addresses, account numbers, or other sensitive values across a file, use `redact_file` — one deterministic pass with placeholder text, no scripting needed. Add `custom_rules` regexes for domain-specific patterns the built-in categories miss (revenue figures, percentages, IDs). Use `detect_pii` first when you need to preview what would match.
+        For other repetitive find-and-replace tasks, prefer in order:
+        1. `file_edit` with `replace_all: true` or an `edits` array — one call for many replacements.
+        2. `shell_run` with `sed` for large pattern rewrites.
+        Never re-emit unchanged file content, never write a one-off script for a job `redact_file` or `file_edit` covers, and never apply the same replacement one occurrence at a time.
+        """
+    }
+
     public static func folderContext(from folderContext: FolderContext?) -> String {
         guard let folder = folderContext else { return "" }
 
@@ -1648,10 +1797,9 @@ public enum SystemPromptTemplates {
     /// path-routed file tools: ONE reader (`file_read`, which also lists
     /// directories) and ONE search tool (`file_search`) reach two storage
     /// areas by path — the workspace (default) and the `/workspace/...`
-    /// sandbox scratch area. Read-only mode keeps writes in the sandbox
-    /// (`sandbox_write_file`); WRITABLE mode (`allowHostFolderWrites`)
-    /// unifies the writers too — `file_write` / `file_edit` routed by the
-    /// same path rule. This replaces the older `## Two filesystems`
+    /// sandbox scratch area. The public `file_write` / `file_edit` family
+    /// follows the same path rule; read-only mode rejects host destinations
+    /// while preserving sandbox writes. This replaces the older `## Two filesystems`
     /// framing that asked the model to pick between `file_*` and
     /// `sandbox_*` families (the disambiguation weak models kept getting
     /// wrong). The final sentence reflects the per-agent secret-read
@@ -1672,7 +1820,7 @@ public enum SystemPromptTemplates {
                 Rules:
                 - Read / list / search either area with `file_read` and `file_search`.
                 - Write either area with `file_write` (whole file) or `file_edit` (`old_string`+`new_string`).
-                - Commands run ONLY in the sandbox (`sandbox_exec`), which has no copy of the workspace. To process a workspace file with a command, first copy it into the sandbox with `file_copy(source, destination)` — a raw byte copy that also works for binaries (PDFs, images, archives) that `file_read`/`file_write` cannot carry. Copy results back to a relative path to put them in the folder.
+                - Commands run ONLY in the sandbox (`shell_run`), which has no copy of the workspace. To process a workspace file with a command, first copy it into the sandbox with `file_copy(source, destination)` — a raw byte copy that also works for binaries (PDFs, images, archives) that `file_read`/`file_write` cannot carry. Copy results back to a relative path to put them in the folder.
                 - Prefer `/workspace/...` for scratch and iterative work; write to the workspace when the user wants the file in their folder. Surface chat deliverables with `share_artifact`. \(secretLine) Secret files also cannot be written.
                 """
         }
@@ -1683,7 +1831,7 @@ public enum SystemPromptTemplates {
             - **Workspace** (your read-only host folder) — the default. For "what's in my workspace / on my Desktop", use `file_read` (it reads a file or lists a directory) and `file_search`. Relative paths and `/Users/...` paths are the workspace.
             - **Sandbox** scratch area — pass a `/workspace/...` path to the SAME `file_read` / `file_search`.
 
-            The workspace is read-only — you cannot create, edit, or delete files in it, so never offer to; say so if asked (the user can enable folder writes in the agent's sandbox settings). Create or change files with `sandbox_write_file` (pass `content` to write the whole file, or `old_string`+`new_string` to edit one match — it writes the sandbox), and run commands with `sandbox_exec` (it runs in the sandbox, which has no copy of the workspace — to process a workspace file with a command, first stage it into a `/workspace/...` path with `file_copy`, a byte copy that also carries binaries `file_read` cannot open). Surface results with `share_artifact`. \(secretLine)
+            The workspace is read-only — you cannot create, edit, or delete files in it, so never offer to; say so if asked (the user can enable folder writes in the agent's sandbox settings). Create or change sandbox files with `file_write` / `file_edit` using `/workspace/...` paths, and run commands with `shell_run` (the sandbox has no copy of the workspace — to process a workspace file with a command, first stage it into a `/workspace/...` path with `file_copy`, a byte copy that also carries binaries `file_read` cannot open). Surface results with `share_artifact`. \(secretLine)
             """
     }
 

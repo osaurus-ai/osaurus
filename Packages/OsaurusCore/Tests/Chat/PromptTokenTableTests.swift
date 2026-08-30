@@ -123,11 +123,18 @@ struct PromptTokenTableTests {
                     compact: true
                 )
             ),
-            Row("skillsGovernToolGroups", full: SystemPromptTemplates.skillsGovernToolGroups),
+            Row(
+                "skillsGovernToolGroups",
+                full: SystemPromptTemplates.skillsGovernToolGroups()
+            ),
             Row(
                 "pluginCreator",
                 full: PluginCreatorGate.section(
                     instructions: SystemPromptTemplates.pluginCreatorInstructions
+                ),
+                compact: PluginCreatorGate.section(
+                    instructions:
+                        SystemPromptTemplates.pluginCreatorInstructionsCompactBody()
                 )
             ),
             Row(

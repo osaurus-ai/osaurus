@@ -51,6 +51,13 @@ enum AgentReasoningPolicy {
         guard isAgentOrToolRequest, capability.isToggleableThinking else {
             return nil
         }
+        // A publisher-declared serving default (generation_config >
+        // default_chat_template_kwargs > enable_thinking) is an explicit
+        // bundle contract, not a template inference — leave it in force even
+        // on agent/tool surfaces. Concrete case: Raptor/Laguna QAT bundles
+        // are pruned to rely on reasoning for arithmetic; forcing the direct
+        // rail here silently broke agent math while plain chat worked.
+        guard capability.declaredDefaultThinkingOn == nil else { return nil }
         return false
     }
 

@@ -58,13 +58,6 @@ struct ConfigurationView: View {
     /// thread each (auto-)save.
     @State private var loadedServerConfig: ServerConfiguration = .default
 
-    /// Built-in/main-chat Spawn policy plus system runtime knobs for subagent
-    /// helper jobs. Backed by `SubagentConfigurationStore`; custom agents keep
-    /// their own policy in their Subagents tab. Saved immediately on change
-    /// (like the toast toggles), not through the debounced configuration path.
-    @State private var subagentConfiguration = SubagentConfigurationStore.snapshot()
-    @State private var subagentConfigurationBaseline = SubagentConfigurationStore.snapshot()
-
     // Search (passed from sidebar)
     @Binding var searchText: String
 
@@ -110,20 +103,21 @@ struct ConfigurationView: View {
         "CLI", "Command Line", "Install", "Symlink", "Maintenance",
         "Reset", "Factory Reset", "Wipe",
     ]
+    private static let modelStorageKeywords = [
+        "Models Directory", "Storage", "Disk", "Data Location", "Models Folder", "Move Models",
+    ]
+    private static let externalModelsKeywords = [
+        "External Models", "Hugging Face", "HF Cache", "LM Studio", "Import Models",
+    ]
     private static let notificationsKeywords = [
         "Notifications", "Toast", "Position", "Timeout", "Alerts", "Concurrent", "Background",
     ]
     private static let legalKeywords = [
         "Legal", "Terms", "Terms of Service", "Privacy", "Privacy Policy", "Policy", "About",
     ]
-    private static let subagentKeywords = [
-        "subagent", "spawn", "delegate", "delegation", "helper jobs",
-        "handoff", "ram safety", "residency", "unload", "preflight",
-        "load policy", "image jobs",
-    ]
-
     private static let allSearchKeywordGroups: [[String]] = [
-        generalKeywords, notificationsKeywords, subagentKeywords, legalKeywords,
+        generalKeywords, modelStorageKeywords, externalModelsKeywords, notificationsKeywords,
+        legalKeywords,
     ]
 
     /// True when an active query matches at least one section. Drives the
@@ -308,15 +302,6 @@ struct ConfigurationView: View {
         }
     }
 
-    /// Main-chat Spawn policy and shared subagent runtime knobs. The component
-    /// wraps itself in a `SettingsSection` card, so this only adds the
-    /// search-visibility gate.
-    @ViewBuilder private var subagentSection: some View {
-        if matchesSearch(Self.subagentKeywords) {
-            SubagentSettingsSection(configuration: $subagentConfiguration)
-        }
-    }
-
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
@@ -331,8 +316,27 @@ struct ConfigurationView: View {
                             // MARK: - General Section
                             generalSection
 
-                            // MARK: - Subagents Section (relocated Spawn knobs)
-                            subagentSection
+                            // MARK: - Model Storage (relocated from the
+                            // removed Storage tab)
+                            if matchesSearch(Self.modelStorageKeywords) {
+                                SettingsSection(
+                                    title: "Models Directory",
+                                    icon: "cube.box",
+                                    anchorId: "storage.location"
+                                ) {
+                                    DirectoryPickerView()
+                                }
+                            }
+
+                            if matchesSearch(Self.externalModelsKeywords) {
+                                SettingsSection(
+                                    title: "External Models",
+                                    icon: "square.stack.3d.up",
+                                    anchorId: "storage.externalModels"
+                                ) {
+                                    ExternalModelsSettingsView()
+                                }
+                            }
 
                             // MARK: - Notifications Section
                             if matchesSearch(Self.notificationsKeywords) {
@@ -546,55 +550,12 @@ struct ConfigurationView: View {
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             loadConfiguration()
-            let latest = SubagentConfigurationStore.snapshot()
-            subagentConfigurationBaseline = latest
-            subagentConfiguration = latest
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
         }
         .onReceive(ModelPickerItemCache.shared.$items) { options in
             coreModelPickerItems = options
-        }
-        // Subagent runtime knobs persist immediately (not via the debounced
-        // `saveConfiguration`). The re-snapshot on the change notification keeps
-        // this in sync if an agent's Subagents tab edits the shared store.
-        .onChange(of: subagentConfiguration) { _, newValue in
-            // Only a direct edit of this form's batch limit may turn Server
-            // Concurrent Sessions from Automatic into an explicit number.
-            // Store notifications update the baseline before they update the
-            // form, so their mirrored value compares equal here and cannot
-            // echo back as a new user-authored Server override.
-            let batchLimitWasExplicitlyEdited =
-                SpawnBatchConcurrencyContract.configuredLimit(for: newValue)
-                != SpawnBatchConcurrencyContract.configuredLimit(
-                    for: subagentConfigurationBaseline
-                )
-            let saved = SubagentConfigurationStore.saveEditorSnapshot(
-                newValue,
-                loadedBaseline: subagentConfigurationBaseline
-            )
-            subagentConfigurationBaseline = saved
-            if saved != newValue { subagentConfiguration = saved }
-            if batchLimitWasExplicitlyEdited {
-                Task { @MainActor in
-                    await server.applyMainChatBatchLimit(from: saved)
-                }
-            }
-        }
-        .onReceive(
-            NotificationCenter.default.publisher(for: .subagentConfigurationChanged)
-        ) { _ in
-            let latest = SubagentConfigurationStore.snapshot()
-            let reconciled = SubagentConfiguration.mergingEditorSnapshot(
-                subagentConfiguration,
-                loadedBaseline: subagentConfigurationBaseline,
-                live: latest
-            )
-            subagentConfigurationBaseline = latest
-            if reconciled != subagentConfiguration {
-                subagentConfiguration = reconciled
-            }
         }
         // Any edit to a save-relevant field reschedules the debounced save.
         // `currentFormState` is the same snapshot the dirty check uses, so

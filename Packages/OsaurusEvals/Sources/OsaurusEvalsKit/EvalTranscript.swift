@@ -74,6 +74,11 @@ public struct EvalCaseTranscript: Codable, Sendable {
         public let decodeThroughputAttribution: String
         public let requestedEnableThinking: Bool?
         public let thinkingState: String?
+        /// Compact native-MTP evidence for this step
+        /// (`d<depth> active=<n> verify=<n> accepted=<n> bonus=<n>
+        /// rejected=<n> ar=<n> downshifts=<n>[ reason=<s>]`), or nil when
+        /// native MTP did not produce this step's tokens.
+        public let mtp: String?
 
         public init(
             step: Int,
@@ -89,7 +94,8 @@ public struct EvalCaseTranscript: Codable, Sendable {
             decodeTokensPerSecond: Double? = nil,
             decodeThroughputAttribution: String? = nil,
             requestedEnableThinking: Bool?,
-            thinkingState: String? = nil
+            thinkingState: String? = nil,
+            mtp: String? = nil
         ) {
             self.step = step
             self.stopReason = stopReason
@@ -111,6 +117,7 @@ public struct EvalCaseTranscript: Codable, Sendable {
                 ?? requestedEnableThinking.map {
                     $0 ? "explicitEnabled" : "explicitDisabled"
                 } ?? "runtimeDefault"
+            self.mtp = mtp
         }
 
         private enum CodingKeys: String, CodingKey {
@@ -128,6 +135,7 @@ public struct EvalCaseTranscript: Codable, Sendable {
             case decodeThroughputAttribution
             case requestedEnableThinking
             case thinkingState
+            case mtp
         }
 
         public init(from decoder: Decoder) throws {
@@ -163,6 +171,7 @@ public struct EvalCaseTranscript: Codable, Sendable {
                 ?? requestedEnableThinking.map {
                     $0 ? "explicitEnabled" : "explicitDisabled"
                 } ?? "runtimeDefault"
+            mtp = try container.decodeIfPresent(String.self, forKey: .mtp)
         }
     }
 

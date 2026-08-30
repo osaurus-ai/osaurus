@@ -544,7 +544,7 @@ struct WatcherEditorSheet: View {
 
             footerView
         }
-        .frame(width: 580, height: 640)
+        .fittedSheetFrame(width: 580, height: 640)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
@@ -756,7 +756,7 @@ struct WatcherEditorSheet: View {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
-        panel.canCreateDirectories = false
+        panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.title = L("Select Folder to Watch")
         panel.prompt = L("Select")

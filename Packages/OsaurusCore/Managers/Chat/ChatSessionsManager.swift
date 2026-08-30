@@ -85,7 +85,10 @@ final class ChatSessionsManager: ObservableObject {
             turns: [],
             agentId: agentId
         )
-        ChatSessionStore.save(session)
+        // Async write is safe for a brand-new session: `turns` is genuinely
+        // empty (nothing to delete) and the in-memory upsert keeps the
+        // sidebar correct immediately.
+        ChatSessionStore.saveAsync(session)
         upsertInMemory(session)
         return session.id
     }
@@ -132,6 +135,40 @@ final class ChatSessionsManager: ObservableObject {
         Task { await SandboxWorkspaceChangeTracker.shared.purgeSession(id.uuidString) }
     }
 
+    /// Delete every session owned by an agent. Strict ownership match, unlike
+    /// `sessions(for:)`: the Default agent's "show everything" view must not
+    /// turn a per-agent wipe into an all-agents wipe, so only sessions whose
+    /// `agentId` matches (or is nil, for the Default agent's own chats) are
+    /// removed.
+    ///
+    /// The in-memory list and selection update synchronously (the UI must
+    /// reflect the wipe immediately); the database rows, artifact
+    /// directories, and sandbox change records are removed on background
+    /// queues — a large history deleted through per-session `delete(id:)`
+    /// calls would park the main thread behind N synchronous transactions.
+    /// Returns once the database batch has finished.
+    func deleteAll(for agentId: UUID) async {
+        let owned = sessions.filter { session in
+            session.agentId == agentId
+                || (agentId == Agent.defaultId && session.agentId == nil)
+        }
+        guard !owned.isEmpty else { return }
+        let ids = owned.map(\.id)
+        let idSet = Set(ids)
+        if let current = currentSessionId, idSet.contains(current) {
+            currentSessionId = nil
+        }
+        sessions.removeAll { idSet.contains($0.id) }
+        for id in ids {
+            Task { await SandboxWorkspaceChangeTracker.shared.purgeSession(id.uuidString) }
+        }
+        await withCheckedContinuation { continuation in
+            ChatSessionStore.deleteBatch(ids: ids) {
+                continuation.resume()
+            }
+        }
+    }
+
     /// Rename a session.
     ///
     /// Pulls from the in-memory list first because new sessions are only
@@ -144,7 +181,16 @@ final class ChatSessionsManager: ObservableObject {
         else { return }
         session.title = title
         session.updatedAt = Date()
-        ChatSessionStore.save(session)
+        // Targeted title update, not a full save: the in-memory copy is
+        // metadata-only (from `loadAllMetadata`), and a full `saveSession`
+        // would treat its empty `turns` as truth and delete every turn row.
+        // Also keeps the DB write off the main thread.
+        ChatSessionStore.renameTitleAsync(id: id, title: title, updatedAt: session.updatedAt)
+        // A registry-shared live instance saves itself in full
+        // on turn finalize; sync its title or that save clobbers the rename.
+        // (The window-attached case is synced by the sidebar callback; this
+        // covers a live session no window is viewing.)
+        LiveChatSessionRegistry.shared.registeredSession(for: id)?.title = title
         upsertInMemory(session)
     }
 
@@ -165,6 +211,8 @@ final class ChatSessionsManager: ObservableObject {
         // (empty turns), and a full save would delete the conversation's
         // turn rows. See `ChatSessionStore.renameTitleAsync`.
         ChatSessionStore.renameTitleAsync(id: id, title: title)
+        // Same live-instance sync as `rename` — see the note there.
+        LiveChatSessionRegistry.shared.registeredSession(for: id)?.title = title
         upsertInMemory(session)
     }
 
@@ -179,7 +227,11 @@ final class ChatSessionsManager: ObservableObject {
         else { return }
         guard session.archived != archived else { return }
         session.archived = archived
-        ChatSessionStore.save(session)
+        // Flag-only update for the same reason as `rename`: the in-memory
+        // copy is metadata-only and a full save would delete turn rows.
+        ChatSessionStore.setArchivedAsync(id: id, archived: archived)
+        // Same live-instance sync as `rename` — see the note there.
+        LiveChatSessionRegistry.shared.registeredSession(for: id)?.archived = archived
         upsertInMemory(session)
     }
 
@@ -193,8 +245,64 @@ final class ChatSessionsManager: ObservableObject {
         else { return }
         guard session.pinned != pinned else { return }
         session.pinned = pinned
-        ChatSessionStore.save(session)
+        // Flag-only update; see `setArchived`.
+        ChatSessionStore.setPinnedAsync(id: id, pinned: pinned)
+        // Same live-instance sync as `rename` — see the note there.
+        LiveChatSessionRegistry.shared.registeredSession(for: id)?.pinned = pinned
         upsertInMemory(session)
+    }
+
+    /// Move a session into a project (or out, with nil). Same
+    /// in-memory-first lookup as `rename`; persists via a targeted async
+    /// column update so a metadata-only copy can never clobber turn rows
+    /// and the main actor never blocks on the DB transaction. Does not
+    /// touch `updatedAt`: grouping is a display concern.
+    func setProject(id: UUID, projectId: UUID?) {
+        guard
+            var session = sessions.first(where: { $0.id == id })
+                ?? ChatSessionStore.load(id: id)
+        else { return }
+        guard session.projectId != projectId else { return }
+        session.projectId = projectId
+        ChatSessionStore.setProjectAsync(id: id, projectId: projectId)
+        upsertInMemory(session)
+        // A live ChatSession for this id (an open chat window) holds its own
+        // projectId copy that the NEXT compose reads — without this it keeps
+        // injecting the old project's instructions/knowledge.
+        NotificationCenter.default.post(
+            name: .chatSessionProjectDidChange,
+            object: nil,
+            userInfo: ["sessionId": id, "projectId": projectId as Any]
+        )
+    }
+
+    /// Detach all sessions from a deleted project and drop the project
+    /// record. Call this instead of `ProjectManager.delete` directly.
+    func deleteProject(id: UUID) {
+        ChatSessionStore.clearProjectAsync(projectId: id)
+        var updated = sessions
+        for index in updated.indices where updated[index].projectId == id {
+            updated[index].projectId = nil
+        }
+        sessions = updated
+        ProjectManager.shared.delete(id: id)
+        // Drop the project's shared memory namespace: DB rows, vector
+        // index (memory + disk), and any cached assembler block. Off the
+        // main actor and best-effort — a failure leaves orphan rows that
+        // the namespace simply never reads again.
+        let namespaceKey = MemoryNamespace.project(id).key
+        Task.detached(priority: .utility) {
+            try? MemoryDatabase.shared.deleteNamespaceData(agentId: namespaceKey)
+            await MemorySearchService.shared.purgeNamespaceStorage(agentId: namespaceKey)
+            await MemoryContextAssembler.shared.invalidateCache(agentId: namespaceKey)
+        }
+        // Live ChatSessions in other windows may still point at the dead
+        // project; tell them to drop it (see setProject).
+        NotificationCenter.default.post(
+            name: .chatSessionProjectDidChange,
+            object: nil,
+            userInfo: ["clearedProjectId": id]
+        )
     }
 
     /// Get a session by ID

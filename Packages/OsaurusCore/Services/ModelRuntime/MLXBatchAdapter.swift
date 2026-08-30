@@ -98,7 +98,33 @@ struct MLXBatchAdapter {
         let topK: Int
         let minP: Float
         let repetitionPenalty: Float?
+        /// Resolved presence/frequency penalties, so the Live Activity readout
+        /// can show what actually applied. Without them here the value would be
+        /// enforced but invisible — the shape that let this gap go unnoticed.
+        let presencePenalty: Float?
+        let frequencyPenalty: Float?
+        /// What actually drafts this request: `nativeMTP`, `dflash2`, or nil for
+        /// ordinary decoding. Resolved, not requested — the Mode picker is an
+        /// input to this, never a description of it.
+        let draftStrategy: String?
+        /// Why native MTP is NOT running when the user asked for it.
+        ///
+        /// This string was already computed and written to the submit log, where
+        /// no user will ever see it. A model whose tuning artifact never asserted
+        /// `output_equivalent` cannot run MTP even on Force-On — correctly, since
+        /// that assertion is the output-equivalence proof — but without surfacing
+        /// the reason the setting just appears to do nothing.
+        let mtpFallbackReason: String?
         let compiledBatchDecode: Bool
+        /// True when native MTP forced this request's sampler to greedy —
+        /// the machine-readable form of the coercion, carried by the same
+        /// single resolution that builds the run parameters, the readout,
+        /// and the API diagnostics.
+        var mtpGreedyEnforced: Bool = false
+        /// True when that enforcement actually CHANGED the sampler (the
+        /// pre-coercion resolution was not already greedy) — the condition
+        /// for the surfaced log line.
+        var samplerWasChanged: Bool = false
     }
 
     static func effectiveGenerationSettings(
@@ -108,6 +134,12 @@ struct MLXBatchAdapter {
         maxBatchSize: Int,
         modelDefaults: LocalGenerationDefaults.Defaults,
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
+        /// True when native MTP is active, which forces greedy decoding. The
+        /// readout has to show the COERCED sampler: reporting the request's
+        /// temp 1 / top-p 0.95 while argmax actually runs is the same
+        /// display-lie this readout exists to prevent.
+        forcesGreedyForNativeMTP: Bool = false,
+        nativeMTPFallbackReason: String? = nil,
         nativeMTPExplicitSamplingFallback: Bool = false,
         cacheTopology: ModelCacheTopologySnapshot? = nil,
         stage: String = "resolved"
@@ -136,19 +168,38 @@ struct MLXBatchAdapter {
             runtimeDefault: runtimeRepetitionPenalty
         )
 
-        return EffectiveGenerationSettings(
+        // Merge order: per-request → THE USER'S Sampling Defaults → model-shipped
+        // defaults → vmlx engine defaults.
+        //
+        // The user's settings used to sit BEHIND the model's shipped defaults,
+        // which made them inert: 83 of 95 bundles in a real local library ship
+        // `temperature`/`top_p`/`top_k` in generation_config.json, so setting a
+        // temperature in Settings changed nothing on almost every model. The
+        // field was editable, saved, and had no effect — the same shape as the
+        // context-length setting that could not constrain anything.
+        //
+        // A blank field really is absent, not zero: a persisted `generation`
+        // block from a real run contains only `streamInterval` and
+        // `diffusionMaxDenoisingSteps`. So a non-nil runtime value here is
+        // always something the user deliberately chose, and deliberate choices
+        // outrank a bundle's suggestion. Per-request still wins over both.
+        let resolved = EffectiveGenerationSettings(
             stage: stage,
             temperature: generation.temperature
-                ?? defaultTemperature
                 ?? runtimeTemperature
+                ?? defaultTemperature
                 ?? engineDefaults.temperature,
             maxTokens: generation.maxTokensExplicit
                 ? generation.maxTokens
-                : (modelDefaults.maxTokens ?? runtimeMaxTokens ?? generation.maxTokens),
-            topP: generation.topPOverride ?? modelDefaults.topP ?? runtimeTopP ?? engineDefaults.topP,
-            topK: generation.topKOverride ?? modelDefaults.topK ?? runtimeTopK ?? engineDefaults.topK,
-            minP: generation.minPOverride ?? modelDefaults.minP ?? runtimeMinP ?? engineDefaults.minP,
+                : (runtimeMaxTokens ?? modelDefaults.maxTokens ?? generation.maxTokens),
+            topP: generation.topPOverride ?? runtimeTopP ?? modelDefaults.topP ?? engineDefaults.topP,
+            topK: generation.topKOverride ?? runtimeTopK ?? modelDefaults.topK ?? engineDefaults.topK,
+            minP: generation.minPOverride ?? runtimeMinP ?? modelDefaults.minP ?? engineDefaults.minP,
             repetitionPenalty: repetitionPenalty,
+            presencePenalty: generation.presencePenalty ?? modelDefaults.presencePenalty,
+            frequencyPenalty: generation.frequencyPenalty ?? modelDefaults.frequencyPenalty,
+            draftStrategy: draftStrategy?.kindName,
+            mtpFallbackReason: nativeMTPFallbackReason,
             compiledBatchDecode: nativeMTPExplicitSamplingFallback
                 ? false
                 : shouldEnableCompiledBatchDecode(
@@ -157,6 +208,26 @@ struct MLXBatchAdapter {
                     cacheTopology: cacheTopology
                 )
         )
+        // Native MTP forces greedy on the parameters that RUN, so the readout
+        // must say greedy too. Printing the request's temp 1 / top-p 0.95
+        // while argmax executes is the display-lie this readout exists to stop.
+        guard forcesGreedyForNativeMTP else { return resolved }
+        return EffectiveGenerationSettings(
+            stage: resolved.stage,
+            temperature: 0,
+            maxTokens: resolved.maxTokens,
+            topP: 1,
+            topK: 0,
+            minP: 0,
+            repetitionPenalty: resolved.repetitionPenalty,
+            presencePenalty: resolved.presencePenalty,
+            frequencyPenalty: resolved.frequencyPenalty,
+            draftStrategy: resolved.draftStrategy,
+            mtpFallbackReason: resolved.mtpFallbackReason,
+            compiledBatchDecode: resolved.compiledBatchDecode,
+            mtpGreedyEnforced: true,
+            samplerWasChanged: resolved.temperature != 0 || resolved.topP != 1
+                || resolved.topK != 0 || resolved.minP != 0)
     }
 
     static func recordPendingEffectiveGenerationSettings(
@@ -204,14 +275,12 @@ struct MLXBatchAdapter {
         if disableNativeMTP {
             return nil
         }
-        guard
-            requestSamplingIsExplicitGreedy(
-                generation: generation,
-                draftStrategy: draftStrategy
-            )
-        else {
-            return nil
-        }
+        // Sampling is NOT a reason to abandon MTP any more. The submit path
+        // coerces the running parameters to greedy whenever MTP is active, so
+        // the equivalence precondition holds by construction. Dropping MTP
+        // here meant an ordinary chat turn — which reports
+        // `samplingParametersAreImplicit` — never engaged it at all, while the
+        // UI still said "MTP depth 2".
         if let promptTokenCount,
             promptTokenCount < nativeMTPTinyPromptMinimumTokens
         {
@@ -271,7 +340,10 @@ struct MLXBatchAdapter {
             return explicit
         }
 
-        let resolved = modelDefault ?? runtimeDefault
+        // Same precedence correction as the other sampler fields: the user's
+        // Sampling Default outranks the bundle's shipped one. Behind the
+        // model's value it was inert on any bundle that ships a penalty.
+        let resolved = runtimeDefault ?? modelDefault
         return resolved
     }
 
@@ -545,6 +617,8 @@ struct MLXBatchAdapter {
             }
             return ModelBatchCapacitySnapshot(
                 modelName: entry.0,
+                requestedMaximum: snapshot.requestedMaximum,
+                architectureMaximum: snapshot.architectureMaximum,
                 configuredMaximum: snapshot.configuredMaximum,
                 activeCount: snapshot.activeCount,
                 pendingCount: snapshot.pendingCount,
@@ -585,6 +659,14 @@ struct MLXBatchAdapter {
             var diskL2Hits = 0
             var diskL2Misses = 0
             var diskL2Stores = 0
+            // Root-wide gauges: every model's DiskCache reads the SAME
+            // cacheDir/cache_index.db with no modelKey predicate, so each
+            // reports the identical whole-root figure. MAX, never sum --
+            // summing would multiply the reported size by the model count.
+            var diskL2PayloadBytes = 0
+            var diskL2MaxBytes = 0
+            // Per-instance counter, so this one genuinely accumulates.
+            var diskL2Evictions = 0
             var ssmHits = 0
             var ssmMisses = 0
             var ssmReDerives = 0
@@ -605,6 +687,10 @@ struct MLXBatchAdapter {
                     diskL2Hits += diskStats.hits
                     diskL2Misses += diskStats.misses
                     diskL2Stores += diskStats.stores
+                    diskL2PayloadBytes = max(
+                        diskL2PayloadBytes, diskStats.currentPayloadBytes)
+                    diskL2MaxBytes = max(diskL2MaxBytes, diskStats.maxSizeBytes)
+                    diskL2Evictions += diskStats.evictions
                 }
                 ssmHits += stats.ssmStats.hits
                 ssmMisses += stats.ssmStats.misses
@@ -651,7 +737,10 @@ struct MLXBatchAdapter {
                 diskL2Stores: diskL2Stores,
                 ssmCompanionHits: ssmHits,
                 ssmCompanionMisses: ssmMisses,
-                ssmCompanionReDerives: ssmReDerives
+                ssmCompanionReDerives: ssmReDerives,
+                diskL2PayloadBytes: diskL2PayloadBytes,
+                diskL2MaxBytes: diskL2MaxBytes,
+                diskL2Evictions: diskL2Evictions
             )
             return processLifetimeCounters.mergingCounters(into: live)
         }
@@ -986,6 +1075,46 @@ struct MLXBatchAdapter {
         let hasPositiveReasoningEffort =
             normalizedReasoningEffort != nil && !directRailReasoningEffort
 
+        // The effort value the template-kwarg branches below are allowed to
+        // send. Bundles stamp their accepted set
+        // (`jang_config.reasoning.supported_reasoning_efforts`; Qwen3.8 =
+        // low/medium/xhigh and its template raise_exceptions on anything
+        // else, so forwarding the app ladder verbatim hard-fails the render):
+        //   • declared levels → the request snapped onto them (high→xhigh,
+        //     max→xhigh, minimal→low; ties round up)
+        //   • declared block without a level set → nil, the kwarg is omitted
+        //     (the model has no effort control; enable_thinking still applies)
+        //   • no declaration → the request unchanged (legacy behavior)
+        // Unknown strings pass through un-snapped so the template's own
+        // typed raise (which names the valid set) surfaces instead of a
+        // silent coerce. DSV4/Hy3 keep their dedicated normalizers above
+        // this mechanism and never consult it.
+        let dispatchReasoningEffort: String? = {
+            guard hasPositiveReasoningEffort, let requested = normalizedReasoningEffort else {
+                return nil
+            }
+            switch DeclaredReasoningEffort.control(forModelId: modelName) {
+            case .levels(let levels, let defaultLevel):
+                return DeclaredReasoningEffort.snapped(
+                    requested, ontoLevels: levels, defaultLevel: defaultLevel) ?? requested
+            case .noEffortControl:
+                return nil
+            case nil:
+                return requested
+            }
+        }()
+
+        // `preserve_thinking` (Qwen3.8+): whether historical `<think>` blocks
+        // stay in the rendered prompt. Sent only on an explicit option AND a
+        // bundle that declares the kwarg — the template default (true) stays
+        // authoritative otherwise. Note for cache work: flipping this changes
+        // every historical assistant message, so it re-keys the entire prefix.
+        if let preserveThinking = generation.modelOptions["preserveThinking"]?.boolValue,
+            DeclaredReasoningEffort.preserveThinking(forModelId: modelName) != nil
+        {
+            context["preserve_thinking"] = preserveThinking
+        }
+
         if DSV4ReasoningProfile.matches(modelId: modelName) {
             guard normalizedReasoningEffort != nil || disableThinking != nil else {
                 return context
@@ -1039,10 +1168,40 @@ struct MLXBatchAdapter {
             return context
         }
 
+        // Muse Glimmer reads `reasoning_strength`, not `reasoning_effort`, and
+        // has no thinking tags at all — so `enable_thinking` has nothing to
+        // switch and `reasoning_effort` is never looked at. Sending either one
+        // leaves the template on its own `high` default, which is why the
+        // reasoning card appeared to do nothing: every turn reasoned at high
+        // regardless of the setting.
+        //
+        // The model's level set is low / medium / high / **xhigh** — four, not
+        // three — and `xhigh` is the one intended for coding and agentic work.
+        // "Off" maps to `low` rather than dropping the line, because there is
+        // no way to disable reasoning on this family; omitting it would silently
+        // restore `high`, i.e. the opposite of what the user asked for.
+        if ModelFamilyNames.isMuseGlimmerFamily(modelName) {
+            let strength: String
+            if disableThinking == true {
+                strength = "low"
+            } else {
+                switch normalizedReasoningEffort?.lowercased() {
+                case "none", "off", "minimal", "no_think", "low": strength = "low"
+                case "medium": strength = "medium"
+                case "xhigh", "max", "highest": strength = "xhigh"
+                case "high": strength = "high"
+                case .some(let other) where !other.isEmpty: strength = other
+                default: strength = "high"
+                }
+            }
+            context["reasoning_strength"] = strength
+            return context
+        }
+
         if let disableThinking {
             context["enable_thinking"] = !disableThinking
-            if !disableThinking, let normalizedReasoningEffort {
-                context["reasoning_effort"] = normalizedReasoningEffort
+            if !disableThinking, let dispatchReasoningEffort {
+                context["reasoning_effort"] = dispatchReasoningEffort
             }
             return context
         }
@@ -1051,9 +1210,11 @@ struct MLXBatchAdapter {
                 context["enable_thinking"] = false
                 return context
             }
-            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            if hasPositiveReasoningEffort {
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = normalizedReasoningEffort
+                if let dispatchReasoningEffort {
+                    context["reasoning_effort"] = dispatchReasoningEffort
+                }
             } else {
                 context["enable_thinking"] = false
             }
@@ -1064,9 +1225,11 @@ struct MLXBatchAdapter {
                 context["enable_thinking"] = false
                 return context
             }
-            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            if hasPositiveReasoningEffort {
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = normalizedReasoningEffort
+                if let dispatchReasoningEffort {
+                    context["reasoning_effort"] = dispatchReasoningEffort
+                }
             } else {
                 context["enable_thinking"] = false
             }
@@ -1077,9 +1240,11 @@ struct MLXBatchAdapter {
                 context["enable_thinking"] = false
                 return context
             }
-            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            if hasPositiveReasoningEffort {
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = normalizedReasoningEffort
+                if let dispatchReasoningEffort {
+                    context["reasoning_effort"] = dispatchReasoningEffort
+                }
             } else {
                 context["enable_thinking"] = false
             }
@@ -1090,9 +1255,11 @@ struct MLXBatchAdapter {
                 context["enable_thinking"] = false
                 return context
             }
-            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            if hasPositiveReasoningEffort {
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = normalizedReasoningEffort
+                if let dispatchReasoningEffort {
+                    context["reasoning_effort"] = dispatchReasoningEffort
+                }
             } else {
                 context["enable_thinking"] = false
             }
@@ -1130,9 +1297,11 @@ struct MLXBatchAdapter {
             }
             if let disableThinking {
                 context["enable_thinking"] = !disableThinking
-            } else if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            } else if hasPositiveReasoningEffort {
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = normalizedReasoningEffort
+                if let dispatchReasoningEffort {
+                    context["reasoning_effort"] = dispatchReasoningEffort
+                }
             } else if normalizedReasoningEffort != nil {
                 context["enable_thinking"] = false
             }
@@ -1143,17 +1312,21 @@ struct MLXBatchAdapter {
                 context["enable_thinking"] = false
                 return context
             }
-            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            if hasPositiveReasoningEffort {
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = normalizedReasoningEffort
+                if let dispatchReasoningEffort {
+                    context["reasoning_effort"] = dispatchReasoningEffort
+                }
             } else {
                 context["enable_thinking"] = false
             }
             return context
         }
 
-        if let normalizedReasoningEffort, !directRailReasoningEffort {
-            context["reasoning_effort"] = normalizedReasoningEffort
+        if hasPositiveReasoningEffort {
+            if let dispatchReasoningEffort {
+                context["reasoning_effort"] = dispatchReasoningEffort
+            }
             context["enable_thinking"] = true
         }
         if directRailReasoningEffort {
@@ -1189,6 +1362,29 @@ struct MLXBatchAdapter {
         case .auto, .none:
             return nil
         }
+    }
+
+    /// Reasoning-token ceiling for wire-API requests, sized so the visible
+    /// answer always gets a share of `max_tokens`. Applies only to
+    /// `.httpAPI` (the reported failure surface): the chat UI renders
+    /// reasoning itself and owns its own limits, plugins/P2P/autonomous runs
+    /// keep today's behavior until they opt in. Nil below 129 tokens — a cap
+    /// that small can't be meaningfully split, and forcing an instant think
+    /// close there would rewrite the model's output more than it helps.
+    /// The reserve grows with the cap (a third, clamped to 160…2048) so tiny
+    /// caps still answer and huge caps still bound the runaway-think failure
+    /// without cramping deep reasoning.
+    static func apiReasoningAnswerBudget(
+        requestSource: RequestSource,
+        maxTokens: Int
+    ) -> Int? {
+        guard requestSource == .httpAPI else { return nil }
+        let answerReserve = min(max(maxTokens / 3, 160), 2048)
+        let budget = maxTokens - answerReserve
+        // Below this the ceiling would fire almost immediately and rewrite
+        // the output more than it rescues; tiny caps keep today's behavior.
+        guard budget >= 64 else { return nil }
+        return budget
     }
 
     private static func isDirectRailReasoningEffort(_ value: String?) -> Bool {
@@ -1407,6 +1603,8 @@ struct MLXBatchAdapter {
             maxBatchSize: maxBatchSize,
             modelDefaults: modelDefaults,
             draftStrategy: effectiveDraftStrategy,
+            forcesGreedyForNativeMTP: effectiveDraftStrategy?.usesNativeMTP == true,
+            nativeMTPFallbackReason: nativeMTPFallbackReason,
             nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback,
             cacheTopology: cacheTopology,
             stage: "submitted_to_batch_engine"
@@ -1424,8 +1622,17 @@ struct MLXBatchAdapter {
             topK: effective.topK,
             minP: effective.minP,
             repetitionPenalty: effective.repetitionPenalty,
-            presencePenalty: generation.presencePenalty,
-            frequencyPenalty: generation.frequencyPenalty,
+            // Per-request wins, then the bundle's shipped default — the same
+            // order the other sampling fields use. Before this, a bundle
+            // declaring `presence_penalty` had it adopted by vmlx's
+            // `GenerateParameters(generationConfig:fallback:)` and dropped here,
+            // because `LocalGenerationDefaults` (which osaurus uses instead of
+            // that initializer) did not read the key at all.
+            //
+            // A declared `0.0` stays inert: `makeGenerateParameters` treats 0 as
+            // "unset" per the OpenAI default.
+            presencePenalty: generation.presencePenalty ?? modelDefaults.presencePenalty,
+            frequencyPenalty: generation.frequencyPenalty ?? modelDefaults.frequencyPenalty,
             randomSeed: generation.seed,
             stopSequences: stopSequences,
             draftStrategy: effectiveDraftStrategy,
@@ -1439,6 +1646,37 @@ struct MLXBatchAdapter {
                 ?? runtime.concurrency.prefillStepSize,
             modelName: modelName
         )
+        // Native MTP verifies drafts against the target's own argmax, so its
+        // output-equivalence guarantee is only defined under greedy decoding —
+        // turning MTP on is a request for greedy decoding. That coercion is
+        // resolved ONCE, inside `effectiveGenerationSettings` above:
+        // `mlxParams` is built from the already-coerced values, the API's
+        // `last_effective_generation` shows them, and the flags carried on
+        // `effective` drive this log and the `mtp_greedy_enforced` diagnostic.
+        // Every other generation parameter (max tokens, stops, penalties,
+        // seed) follows the request/runtime/bundle resolution untouched, and
+        // non-MTP requests keep their sampler everywhere.
+        if effective.samplerWasChanged {
+            batchAdapterLog.info(
+                "native MTP active: greedy sampler enforced for this request model=\(modelName, privacy: .public) (bundle generation_config governs all non-MTP requests)"
+            )
+        }
+
+        // OpenAI-compatible API clients read `content` only —
+        // `reasoning_content` is invisible to them — so a think block that
+        // spends the whole finite max_tokens returns an empty answer ("AI
+        // generation did not return any text", the live Anarlog report).
+        // Reserve answer room by asking vmlx for a per-request reasoning
+        // ceiling; the engine resolves it through the same
+        // `ReasoningBudget.arm` path as the env override (primed vs
+        // self-opening, round-tripped close token) and stays inert for
+        // non-reasoning bundles whose vocab has no think tags.
+        if let budget = Self.apiReasoningAnswerBudget(
+            requestSource: generation.requestSource,
+            maxTokens: effective.maxTokens
+        ) {
+            mlxParams.requestedReasoningBudgetTokens = budget
+        }
         // Block-diffusion speed/quality budget (DiffusionGemma): server
         // setting, default 16 (seeded by ServerRuntimeSettingsStore).
         // nil = bundle's generation_config.json value. Ignored by
@@ -1663,6 +1901,7 @@ struct MLXBatchAdapter {
         guard !hasMedia else { return nil }
 
         var probeStableBoundaries: [[Int]] = []
+        var probeScopeSalt: String?
         let prefix = await warmupSendInvariantPrefixTokens(chat: chat) { probeText in
             var probeChat = chat
             probeChat.append(.user(probeText))
@@ -1677,6 +1916,7 @@ struct MLXBatchAdapter {
                 !prepared.hasMediaContent
             else { return nil }
             probeStableBoundaries.append(prepared.cacheStablePrefixTokenCounts)
+            probeScopeSalt = prepared.cacheScopeSalt
             return prepared.text.tokenIds
                 ?? MLXCacheIOLock.withSerializedMLXCacheIO {
                     prepared.text.tokens.asArray(Int.self)
@@ -1690,9 +1930,17 @@ struct MLXBatchAdapter {
             return nil
         }
 
-        // The scope salt is derived from additionalContext alone, so the
-        // probe render's salt matches the real send's.
-        let scopeSalt = MLXLMCommon.cacheScopeSalt(from: additionalContext)
+        // The scope salt must come from the PREPARED probe render, not from
+        // the raw request context: `prepare()` merges the bundle-declared
+        // reasoning defaults (generation_config / chat-config, e.g. DSV4-0731's
+        // enable_thinking=true + effort=low) into additionalContext BEFORE
+        // salting. Recomputing from the raw context here salted the warm-up
+        // as scope=nil while every real send salted as its merged scope —
+        // a different disk content hash over identical token bytes, so the
+        // send could never restore what the warm-up stored and re-prefilled
+        // the same prefix again (the "first turn prefills 2-3x" symptom,
+        // every model family with a declared reasoning default).
+        let scopeSalt = probeScopeSalt ?? MLXLMCommon.cacheScopeSalt(from: additionalContext)
         let stableBoundaries =
             probeStableBoundaries.count == 2
             ? agreedWarmupStableBoundaries(
@@ -2103,7 +2351,7 @@ struct MLXBatchAdapter {
         context.keys.sorted().compactMap { key in
             guard
                 key == "enable_thinking" || key == "reasoning_effort" || key == "tool_choice"
-                    || key == "tool_choice_name"
+                    || key == "tool_choice_name" || key == "preserve_thinking"
             else {
                 return nil
             }
@@ -2117,4 +2365,5 @@ struct MLXBatchAdapter {
             return "\(key)=<\(type(of: value))>"
         }.joined(separator: ",")
     }
+
 }

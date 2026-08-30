@@ -18,7 +18,7 @@
 import Foundation
 import OsaurusSQLCipher
 
-public enum KnowledgeDatabaseError: Error, LocalizedError {
+public enum KnowledgeDatabaseError: Error, LocalizedError, ForwardVersionStoreError {
     case failedToOpen(String)
     case failedToExecute(String)
     case failedToPrepare(String)
@@ -37,6 +37,13 @@ public enum KnowledgeDatabaseError: Error, LocalizedError {
                 "Knowledge database is schema v\(found) but this build supports up to v\(expected). Refusing to open to avoid forward-version corruption."
         case .notOpen: return "Knowledge database is not open"
         }
+    }
+
+    /// Only the forward-version refusal is a healthy-file downgrade; every
+    /// other case here is a real fault.
+    public var isForwardVersion: Bool {
+        if case .databaseFromNewerVersion = self { return true }
+        return false
     }
 }
 
@@ -57,6 +64,58 @@ public final class KnowledgeDatabase: @unchecked Sendable {
 
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "ai.osaurus.knowledge.database")
+
+    /// Dedicated read-only connection + its own serial queue. WAL lets a
+    /// reader run concurrently with the writer, so read-only tool queries
+    /// (search/list/read) no longer wait behind the folder indexer's write
+    /// backlog on `queue` — the cause of `search_knowledge` blowing its
+    /// 120s budget during a large collection's initial index. Opened lazily
+    /// on first read; falls back to the write connection if it can't open.
+    private var readDB: OpaquePointer?
+    private let readQueue = DispatchQueue(label: "ai.osaurus.knowledge.database.read")
+
+    /// A `:memory:` DB is private to its connection, so a second connection
+    /// would see an empty database. In-memory (test) mode therefore keeps
+    /// all reads on the single writer connection.
+    private var isInMemory = false
+
+    /// Writer-connection state, readable WITHOUT entering `queue`.
+    ///
+    /// `ensureReadConnectionLocked` needs two facts before it can open the
+    /// reader — is the file open, and is it in-memory — and it used to get
+    /// them with `queue.sync`. That is a priority inversion in the one place
+    /// that must not have one: a read-only tool query hops onto the writer
+    /// queue and waits behind the indexer's entire write backlog, which is
+    /// exactly the starvation the read connection exists to avoid. The hop
+    /// ran on every read until the reader was successfully cached, so a
+    /// `list_knowledge` issued during a large initial index paid it in full
+    /// (osaurus#2439: a 5m56s `list_knowledge`). These mirror `db`/
+    /// `isInMemory` under a plain lock so the read path never touches
+    /// `queue`.
+    private let writerStateLock = NSLock()
+    private var writerStateIsOpen = false
+    private var writerStateIsInMemory = false
+
+    /// Publish writer-connection state for the lock-free read path. Called
+    /// from inside `queue` whenever `db` / `isInMemory` change.
+    private func publishWriterState(isOpen: Bool, isInMemory: Bool) {
+        writerStateLock.lock()
+        writerStateIsOpen = isOpen
+        writerStateIsInMemory = isInMemory
+        writerStateLock.unlock()
+    }
+
+    private var writerSnapshot: (isOpen: Bool, isInMemory: Bool) {
+        writerStateLock.lock()
+        defer { writerStateLock.unlock() }
+        return (writerStateIsOpen, writerStateIsInMemory)
+    }
+
+    /// Test hooks for the read-path mirror. Silently falling back to the
+    /// write connection restores the exact starvation this replaced, so the
+    /// mirror needs assertions rather than trust.
+    var writerStateSnapshotForTesting: (isOpen: Bool, isInMemory: Bool) { writerSnapshot }
+    var hasOpenReadConnectionForTesting: Bool { readQueue.sync { readDB != nil } }
 
     public var isOpen: Bool {
         queue.sync { db != nil }
@@ -91,6 +150,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
                 }
                 throw error
             }
+            publishWriterState(isOpen: true, isInMemory: false)
         }
         OsaurusDatabaseHandle.register(maintenanceHandle)
     }
@@ -111,34 +171,65 @@ public final class KnowledgeDatabase: @unchecked Sendable {
     public func openInMemory() throws {
         try queue.sync {
             guard db == nil else { return }
+            isInMemory = true
             db = try EncryptedSQLiteOpener.open(
                 path: ":memory:",
                 key: nil,
                 applyPerfPragmas: false
             )
             try runMigrations()
+            publishWriterState(isOpen: true, isInMemory: true)
         }
     }
 
     public func close() {
         OsaurusDatabaseHandle.deregister(name: "knowledge")
+        readQueue.sync {
+            if let readConnection = readDB {
+                sqlite3_close(readConnection)
+                readDB = nil
+            }
+        }
         queue.sync {
             guard let connection = db else { return }
             try? executeRaw("PRAGMA optimize")
             sqlite3_close(connection)
             db = nil
+            isInMemory = false
+            publishWriterState(isOpen: false, isInMemory: false)
         }
     }
 
     // MARK: - Schema & Migrations
 
+    /// Every knowledge migration so far only ADDS tables or columns; none
+    /// drops, renames, re-types, or changes the meaning of anything an older
+    /// build already reads. A DB stamped by a newer build is therefore safe to
+    /// open here: unknown columns are ignored on read, and this build's writes
+    /// all name their columns explicitly.
+    ///
+    /// IMPORTANT: if a future migration ever becomes destructive, this
+    /// forward-open stops being safe and MUST be replaced by an explicit
+    /// minimum-compatible-version gate. Same contract as
+    /// `ChatHistoryDatabase.migrationsAreAdditiveOnly`.
+    static let migrationsAreAdditiveOnly = true
+
     private func runMigrations() throws {
         let currentVersion = try getSchemaVersion()
+        // Forward-compatible open. Hard-refusing a schema-ahead file is what
+        // turned a harmless channel bounce into "all my chat history is gone"
+        // (the same bug, one database over). The knowledge index is
+        // rebuildable, so refusing looks even more like data loss here: every
+        // collection renders empty and every `search_knowledge` comes back
+        // with nothing, which is exactly the symptom osaurus#2439 opened with.
+        //
+        // Leave `user_version` untouched so a newer build still recognizes its
+        // own schema and re-applies its idempotent migrations.
         if currentVersion > Self.latestSchemaVersion {
-            throw KnowledgeDatabaseError.databaseFromNewerVersion(
-                found: currentVersion,
-                expected: Self.latestSchemaVersion
+            KnowledgeLogger.database.info(
+                "Opening schema-ahead knowledge database (found v\(currentVersion), this build writes v\(Self.latestSchemaVersion))"
             )
+            return
         }
         if currentVersion < 1 {
             try runMigrationStep(1, migrateToV1)
@@ -555,6 +646,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
             SELECT \(Self.documentColumns) FROM documents
             WHERE collection_id = ?1 AND rel_path = ?2 LIMIT 1
             """,
+            readOnly: true,
             bind: { stmt in
                 Self.bindText(stmt, index: 1, value: collectionId)
                 Self.bindText(stmt, index: 2, value: relPath)
@@ -600,6 +692,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         sql += " ORDER BY collection_id, rel_path LIMIT ?\(nextIndex)"
         try prepareAndExecute(
             sql,
+            readOnly: true,
             bind: { stmt in
                 for (offset, id) in collectionIds.enumerated() {
                     Self.bindText(stmt, index: Int32(offset + 1), value: id)
@@ -639,6 +732,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         let limitIndex = collectionIds.count + 2
 
         if let ftsQuery = Self.ftsMatchQuery(trimmed) {
+            KnowledgeDebugLog.log("db.searchChunksText", "FTS branch match=\(ftsQuery)")
             try prepareAndExecute(
                 """
                 SELECT \(Self.chunkHitColumns)
@@ -648,6 +742,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
                 WHERE chunks_fts MATCH ?1 AND d.collection_id IN (\(placeholders))
                 ORDER BY bm25(chunks_fts) LIMIT ?\(limitIndex)
                 """,
+                readOnly: true,
                 bind: { stmt in
                     Self.bindText(stmt, index: 1, value: ftsQuery)
                     for (offset, id) in collectionIds.enumerated() {
@@ -661,9 +756,11 @@ public final class KnowledgeDatabase: @unchecked Sendable {
                     }
                 }
             )
+            KnowledgeDebugLog.log("db.searchChunksText", "FTS branch returned \(hits.count) row(s)")
             return hits
         }
 
+        KnowledgeDebugLog.log("db.searchChunksText", "LIKE branch (no FTS tokens) for query=\(trimmed.prefix(60))")
         try prepareAndExecute(
             """
             SELECT \(Self.chunkHitColumns)
@@ -672,6 +769,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
             WHERE c.content LIKE '%' || ?1 || '%' AND d.collection_id IN (\(placeholders))
             ORDER BY d.collection_id, d.rel_path, c.chunk_index LIMIT ?\(limitIndex)
             """,
+            readOnly: true,
             bind: { stmt in
                 Self.bindText(stmt, index: 1, value: trimmed)
                 for (offset, id) in collectionIds.enumerated() {
@@ -704,6 +802,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
                 WHERE d.collection_id = ?1 AND d.rel_path = ?2 AND c.chunk_index = ?3
                 LIMIT 1
                 """,
+                readOnly: true,
                 bind: { stmt in
                     Self.bindText(stmt, index: 1, value: key.collectionId)
                     Self.bindText(stmt, index: 2, value: key.relPath)
@@ -732,6 +831,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         sql += " ORDER BY d.collection_id, d.rel_path, c.chunk_index LIMIT ?\(collectionId != nil ? 2 : 1)"
         try prepareAndExecute(
             sql,
+            readOnly: true,
             bind: { stmt in
                 if let collectionId { Self.bindText(stmt, index: 1, value: collectionId) }
                 sqlite3_bind_int(stmt, Int32(collectionId != nil ? 2 : 1), Int32(limit))
@@ -1097,15 +1197,61 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         try handler(statement)
     }
 
+    /// Run a statement. `readOnly` queries go to the dedicated read
+    /// connection (concurrent with the writer under WAL) so they are not
+    /// serialized behind the indexer's writes; if that connection can't be
+    /// opened, they transparently fall back to the write connection.
     private func prepareAndExecute(
         _ sql: String,
+        readOnly: Bool = false,
         bind: (OpaquePointer) -> Void,
         process: (OpaquePointer) throws -> Void
     ) throws {
+        if readOnly {
+            dispatchPrecondition(condition: .notOnQueue(readQueue))
+            let ran = try readQueue.sync { () -> Bool in
+                guard let connection = ensureReadConnectionLocked() else { return false }
+                try Self.prepareAndExecute(on: connection, sql, bind: bind, process: process)
+                return true
+            }
+            if ran { return }
+            // Fall through to the write connection when no read connection.
+        }
         dispatchPrecondition(condition: .notOnQueue(queue))
         try queue.sync {
             guard let connection = db else { throw KnowledgeDatabaseError.notOpen }
             try Self.prepareAndExecute(on: connection, sql, bind: bind, process: process)
+        }
+    }
+
+    /// Lazily open the read-only connection. Must be called on `readQueue`.
+    /// Returns nil (caller falls back to the write connection) when the DB
+    /// file isn't open yet or the read connection can't be opened.
+    private func ensureReadConnectionLocked() -> OpaquePointer? {
+        if let readConnection = readDB { return readConnection }
+        // Both facts come from the lock-free mirror, never from `queue`:
+        // entering the writer queue here would park this read behind the
+        // indexer's write backlog (see `writerStateLock`).
+        let writer = writerSnapshot
+        // In-memory DBs are per-connection; a reader would see nothing.
+        guard !writer.isInMemory else { return nil }
+        // Only open a reader once the primary (writer) connection exists, so
+        // the file is present and migrated.
+        guard writer.isOpen else { return nil }
+        // Don't open a reader against a half-rekeyed file.
+        StorageMutationGate.blockingAwaitNotMutating()
+        do {
+            let connection = try OsaurusStorageOpener.open(
+                path: OsaurusPaths.knowledgeDatabaseFile().path
+            )
+            readDB = connection
+            KnowledgeLogger.database.info("Knowledge read connection opened")
+            return connection
+        } catch {
+            KnowledgeLogger.database.warning(
+                "Knowledge read connection unavailable (using writer): \(error.localizedDescription)"
+            )
+            return nil
         }
     }
 
@@ -1150,7 +1296,18 @@ public final class KnowledgeDatabase: @unchecked Sendable {
             .map { String($0) }
             .filter { !$0.isEmpty }
         guard !words.isEmpty else { return nil }
-        return words.map { "\"\($0)\"*" }.joined(separator: " OR ")
+        // Drop low-signal tokens before OR-prefixing. A short or purely
+        // numeric term like "2" becomes `"2"*`, which prefix-matches every
+        // token starting with 2 (2, 20, 2024, …) — in a large or code-heavy
+        // corpus that pulls in a huge fraction of chunks, so bm25 must rank
+        // them all. That both starves the query (multi-minute searches that
+        // blow the tool's 120s budget) and floods the results with noise.
+        // Keep only terms >= 3 chars that aren't all digits; if that leaves
+        // nothing (e.g. the query is just "AI" or "v2"), fall back to the
+        // full token list so short deliberate queries still match.
+        let meaningful = words.filter { $0.count >= 3 && !$0.allSatisfy(\.isNumber) }
+        let effective = meaningful.isEmpty ? words : meaningful
+        return effective.map { "\"\($0)\"*" }.joined(separator: " OR ")
     }
 }
 

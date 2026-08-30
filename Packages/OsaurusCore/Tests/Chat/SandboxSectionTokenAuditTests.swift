@@ -81,10 +81,9 @@ struct SandboxSectionTokenAuditTests {
             selfImprovement.contains("~/SOUL.md"),
             "Self-improvement dropped the `~/SOUL.md` mention — the agent needs a signal that the bootstrap seed is meaningful and editing is sanctioned."
         )
-        #expect(
-            selfImprovement.contains("sandbox_write_file"),
-            "Self-improvement dropped the SOUL edit verb."
-        )
+        #expect(selfImprovement.contains("file_write"))
+        #expect(selfImprovement.contains("file_edit"))
+        #expect(!selfImprovement.contains("sandbox_write_file"))
         #expect(
             selfImprovement.contains("next session"),
             "Self-improvement dropped the cadence note — the agent needs to know SOUL edits are not visible mid-session."
@@ -134,14 +133,14 @@ struct SandboxSectionTokenAuditTests {
     func sandboxFramingExcludesMutableState() {
         let framing = SystemPromptTemplates.sandbox()
         #expect(!framing.contains("Configured secrets"))
-        #expect(!framing.contains("Already installed"))
+        #expect(!framing.contains("Installed sandbox packages"))
 
         let state = SystemPromptTemplates.sandboxState(
             secretNames: ["FOO_TOKEN"],
             installedPackages: .init(pip: ["flask"])
         )
         #expect(state.contains("Configured secrets"))
-        #expect(state.contains("Already installed"))
+        #expect(state.contains("Installed sandbox packages"))
     }
 
     /// Small local models (<20B) / small-context windows get `compact`
@@ -165,8 +164,14 @@ struct SandboxSectionTokenAuditTests {
         smaller(fullSandbox, compactSandbox, label: "sandbox")
         #expect(compactSandbox.contains(home))
         #expect(compactSandbox.contains("Internet"))
-        #expect(compactSandbox.contains("sandbox_exec"))
+        #expect(compactSandbox.contains("shell_run"))
         #expect(compactSandbox.contains("never `python3 -c`"))
+        for privateName in [
+            "sandbox_read_file", "sandbox_search_files", "sandbox_write_file", "sandbox_exec",
+        ] {
+            #expect(!fullSandbox.contains(privateName))
+            #expect(!compactSandbox.contains(privateName))
+        }
 
         // Discovery ladder: compact keeps discover/load + the "start of work"
         // framing + the Secret/Risk pointers.
@@ -219,6 +224,21 @@ struct SandboxSectionTokenAuditTests {
         )
         #expect(SystemPromptTemplates.groundingDirectiveFullCompact.contains("capabilities_discover"))
 
+        // Progress claims are grounded claims. osaurus#2439: the model
+        // reported "Documents already saved (22)" as a table and "Browser
+        // session is active right now — Step 2/11" with no tool call behind
+        // any of it, then cited its own report as evidence for hours. The
+        // rule has to reach EVERY variant — a small local model on the
+        // compact prompt is exactly the one that fabricates.
+        for grounding in [
+            SystemPromptTemplates.groundingDirectiveFull,
+            SystemPromptTemplates.groundingDirectiveBase,
+            SystemPromptTemplates.groundingDirectiveFullCompact,
+        ] {
+            #expect(grounding.lowercased().contains("progress report"))
+            #expect(grounding.contains("tool result"))
+        }
+
         // Self-improvement: compact keeps the SOUL.md contract the existing
         // audit pins for the full variant.
         let compactSelf = SystemPromptTemplates.selfImprovementGuidance(
@@ -231,7 +251,9 @@ struct SandboxSectionTokenAuditTests {
             label: "self-improvement"
         )
         #expect(compactSelf.contains("~/SOUL.md"))
-        #expect(compactSelf.contains("sandbox_write_file"))
+        #expect(compactSelf.contains("file_write"))
+        #expect(compactSelf.contains("file_edit"))
+        #expect(!compactSelf.contains("sandbox_write_file"))
         #expect(compactSelf.contains("next session"))
     }
 }

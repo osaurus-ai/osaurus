@@ -401,6 +401,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
                 defaultManualModelIds: [
                     "mistral-medium-3.5",
                     "mistral-small-latest",
+                    "zai-glm-5-2",
                 ]
             )
         case .minimax:

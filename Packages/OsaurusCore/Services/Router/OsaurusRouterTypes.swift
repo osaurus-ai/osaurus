@@ -64,6 +64,14 @@ enum OsaurusRouter {
 
     static let minimumTopUpMicro = 5_000_000
 
+    /// Micro-USD per user-facing credit: 1 credit = 100 micro = $0.0001,
+    /// so $1 = 10,000 credits. Micro-USD stays the wire/arithmetic unit;
+    /// credits exist only for display.
+    static let microPerCredit: Int64 = 100
+
+    /// Dollar formatting for the real-money top-up flow (Stripe charges in
+    /// USD). Everything else in the UI shows credits via
+    /// `formatMicroAsCredits`.
     static func formatMicroUSD(_ rawValue: String) -> String {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let isNegative = trimmed.hasPrefix("-")
@@ -76,25 +84,107 @@ enum OsaurusRouter {
         return "\(sign)$\(dollars).\(String(format: "%02d", cents))"
     }
 
-    /// Like `formatMicroUSD` but keeps sub-cent precision so tiny per-request
-    /// charges don't all collapse to "$0.00". Two decimals at or above one cent,
-    /// four decimals below it, and "<$0.0001" for a non-zero amount smaller than
-    /// that. Intended for per-row cost display, not the headline balance.
-    static func formatMicroUSDPrecise(_ rawValue: String) -> String {
+    /// Formats a micro-USD amount as user-facing credits (1 credit = 100
+    /// micro). New charges are always whole credits; balances predating the
+    /// credit system can carry sub-credit residue, rendered as up to two
+    /// decimals (e.g. `"7250037"` -> `72,500.37 credits`). Non-zero amounts
+    /// below one credit render as `<1 credit` so tiny legacy charges don't
+    /// collapse to zero. The sign is preserved for activity rows.
+    static func formatMicroAsCredits(_ rawValue: String) -> String {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let isNegative = trimmed.hasPrefix("-")
         let unsigned = String(trimmed.drop { $0 == "-" || $0 == "+" })
-        guard let micro = Int64(unsigned), micro != 0 else { return "$0.00" }
+        guard let micro = Int64(unsigned), micro != 0 else { return "0 credits" }
 
         let sign = isNegative ? "-" : ""
-        let dollars = Double(micro) / 1_000_000.0
-        if micro >= 10_000 {
-            return "\(sign)$\(String(format: "%.2f", dollars))"
+        let credits = micro / microPerCredit
+        let residue = micro % microPerCredit
+        if credits == 0 {
+            return "\(sign)<1 credit"
         }
-        if micro < 100 {
-            return "\(sign)<$0.0001"
+        var body = groupedThousands(credits)
+        if residue != 0 {
+            body += ".\(String(format: "%02d", residue))"
         }
-        return "\(sign)$\(String(format: "%.4f", dollars))"
+        let unit = (credits == 1 && residue == 0) ? "credit" : "credits"
+        return "\(sign)\(body) \(unit)"
+    }
+
+    /// Hero-figure variant of `formatMicroAsCredits`: the grouped whole-credit
+    /// number without the unit, so large balances can render with "credits" as
+    /// a small caption instead of inside the oversized monospaced string.
+    /// Sub-credit residue is dropped here — it's display noise at headline
+    /// size and stays visible in statement/usage views.
+    static func formatMicroAsCreditsValue(_ rawValue: String) -> String {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isNegative = trimmed.hasPrefix("-")
+        let unsigned = String(trimmed.drop { $0 == "-" || $0 == "+" })
+        guard let micro = Int64(unsigned), micro != 0 else { return "0" }
+
+        let sign = isNegative ? "-" : ""
+        let credits = micro / microPerCredit
+        if credits == 0 {
+            return "\(sign)<1"
+        }
+        return "\(sign)\(groupedThousands(credits))"
+    }
+
+    /// Compact balance for tight chrome like the composer chip: full grouped
+    /// number below 10,000 credits, then abbreviated ("212.1K credits",
+    /// "1.25M credits") so large balances never truncate. Sub-credit residue
+    /// is dropped.
+    static func formatMicroAsCreditsCompact(_ rawValue: String) -> String {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isNegative = trimmed.hasPrefix("-")
+        let unsigned = String(trimmed.drop { $0 == "-" || $0 == "+" })
+        guard let micro = Int64(unsigned), micro != 0 else { return "0 credits" }
+
+        let sign = isNegative ? "-" : ""
+        let credits = micro / microPerCredit
+        if credits == 0 {
+            return "\(sign)<1 credit"
+        }
+        if credits < 10_000 {
+            let unit = credits == 1 ? "credit" : "credits"
+            return "\(sign)\(groupedThousands(credits)) \(unit)"
+        }
+        // 999,950+ rounds past "999.9K", so promote straight to the M tier
+        // instead of rendering "1000.0K".
+        let useMillions = credits >= 999_950
+        let scaled = useMillions ? Double(credits) / 1_000_000 : Double(credits) / 1_000
+        let suffix = useMillions ? "M" : "K"
+        var figure = String(format: useMillions ? "%.2f" : "%.1f", scaled)
+        while figure.contains("."), figure.hasSuffix("0") {
+            figure.removeLast()
+        }
+        if figure.hasSuffix(".") {
+            figure.removeLast()
+        }
+        return "\(sign)\(figure)\(suffix) credits"
+    }
+
+    /// Credits formatting for values the app only holds as a USD `Double`
+    /// (cloud media quotes/settled costs). Converts to micro-USD and defers
+    /// to `formatMicroAsCredits`.
+    static func formatUSDAsCredits(_ usd: Double) -> String {
+        guard usd.isFinite else { return "0 credits" }
+        let micro = (usd * 1_000_000).rounded()
+        guard micro.magnitude < Double(Int64.max) else { return "0 credits" }
+        return formatMicroAsCredits(String(Int64(micro)))
+    }
+
+    /// Locale-independent thousands grouping (`72500` -> `"72,500"`), matching
+    /// the fixed formatting style of `formatMicroUSD`.
+    private static func groupedThousands(_ value: Int64) -> String {
+        let digits = String(value)
+        var grouped: [Character] = []
+        for (offset, char) in digits.reversed().enumerated() {
+            if offset != 0, offset % 3 == 0 {
+                grouped.append(",")
+            }
+            grouped.append(char)
+        }
+        return String(grouped.reversed())
     }
 
     /// True when a chat/stream error string indicates the router rejected the
@@ -278,6 +368,11 @@ struct OsaurusRouterModel: Decodable, Identifiable, Equatable, Sendable {
     let outputMicroPerMTok: String
     let inputDisplay: String
     let outputDisplay: String
+    /// Ready-to-show credits pricing strings (e.g. "28.8 credits/M") shipped
+    /// alongside the legacy `$` display fields. Optional so older router
+    /// deployments without the credits siblings still decode.
+    let inputCreditsDisplay: String?
+    let outputCreditsDisplay: String?
     let stale: Bool
     let capabilities: [String: Bool]?
 
@@ -288,6 +383,8 @@ struct OsaurusRouterModel: Decodable, Identifiable, Equatable, Sendable {
         case outputMicroPerMTok = "output_micro_per_mtok"
         case inputDisplay = "input_display"
         case outputDisplay = "output_display"
+        case inputCreditsDisplay = "input_credits_display"
+        case outputCreditsDisplay = "output_credits_display"
     }
 }
 

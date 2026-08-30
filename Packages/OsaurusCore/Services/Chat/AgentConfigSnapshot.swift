@@ -42,17 +42,14 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     public let agentId: UUID
 
     /// OR of the request-scoped `toolsDisabled` flag and the agent's
-    /// `effectiveToolsDisabled`. NOTE: the global
-    /// `ChatConfiguration.disableTools` switch is NOT read by
-    /// `effectiveToolsDisabled`; callers fold it in by passing it as
-    /// `requestToolsDisabled` to `capture(...)` (e.g. `ChatView`).
+    /// `effectiveToolsDisabled`. `requestToolsDisabled` is an explicit
+    /// request/surface override; no chat-wide persisted setting is folded into
+    /// agent-backed requests.
     public let toolsDisabled: Bool
 
-    /// The session-global `ChatConfiguration.disableTools` switch in
-    /// isolation (the `requestToolsDisabled` the caller folded in), kept
-    /// separable from the per-agent Tools toggle. This is an absolute
-    /// kill-switch: unlike the per-agent toggle, sandbox mode does NOT
-    /// override it (see `SystemPromptComposer.resolveEffectiveToolsOff`).
+    /// Explicit request/surface tool suppression in isolation, kept separable
+    /// from the per-agent Tools toggle. Unlike the per-agent toggle, sandbox
+    /// mode does not override it.
     public let globalToolsDisabled: Bool
 
     /// Mirrors `AgentManager.effectiveMemoryDisabled` (folds in the
@@ -91,6 +88,11 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// `SystemPromptTemplates.effectivePersona(systemPrompt)` to fold in
     /// the default fallback.
     public let systemPrompt: String
+
+    /// Project this compose runs inside, when the chat belongs to one.
+    /// Drives the shared project-memory recall lane; nil (every non-project
+    /// chat) leaves the memory pipeline exactly as before.
+    public let projectId: UUID?
 
     /// Whether the Agent DB feature (spec §5.5) is enabled for this agent.
     /// Drives both tool gating (the `db_*` tools are filtered out when
@@ -170,9 +172,9 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// `read_knowledge` / `list_knowledge` from the model-visible schema.
     /// Execution-time scoping happens in the tools themselves.
     public let knowledgeEnabled: Bool
-    /// Curator role, pre-folded like `knowledgeEnabled` — false strips
-    /// `propose_knowledge_update` from the model-visible schema. The tool
-    /// re-checks the role at execution time.
+    /// DEPRECATED and inert. Gated `propose_knowledge_update`, removed with
+    /// the proposal architecture. Kept so existing agent JSON still decodes;
+    /// nothing reads it, and writing follows the collection grant instead.
     public let knowledgeCuratorEnabled: Bool
     /// Granted collections resolved to enabled ones at capture time
     /// (name + summary only). Feeds the `## Knowledge` prompt section —
@@ -180,10 +182,10 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// is what tells the model WHAT the granted corpora contain.
     public let knowledgeCollections: [KnowledgeGrantDescriptor]
 
-    /// True when this agent owns at least one usable proactive channel
-    /// destination binding (enabled, outbound mode != off). Gates the
-    /// narrow `agent_channel_publish` tool into the schema; the broad
-    /// `agent_channel_*` catalog stays deferred behind `capabilities_load`.
+    /// True when this agent owns at least one proactive channel destination
+    /// that is usable from the current run source. Gates the narrow
+    /// `agent_channel_publish` tool into the schema; the broad
+    /// `agent_channel_*` catalog stays deferred behind capability loading.
     public let hasChannelPublishDestinations: Bool
 
     public init(
@@ -217,9 +219,11 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         knowledgeEnabled: Bool = false,
         knowledgeCuratorEnabled: Bool = false,
         knowledgeCollections: [KnowledgeGrantDescriptor] = [],
-        hasChannelPublishDestinations: Bool = false
+        hasChannelPublishDestinations: Bool = false,
+        projectId: UUID? = nil
     ) {
         self.agentId = agentId
+        self.projectId = projectId
         self.toolsDisabled = toolsDisabled
         self.globalToolsDisabled = globalToolsDisabled
         self.memoryDisabled = memoryDisabled
@@ -254,11 +258,9 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
 
     /// Read every `effective*` field in one MainActor batch.
     ///
-    /// `requestToolsDisabled` is the per-request override the caller
-    /// passes through. This is where the global
-    /// `ChatConfiguration.disableTools` switch is folded in — it is NOT
-    /// read by `effectiveToolsDisabled`, so any caller that wants the
-    /// global switch honored (app chat AND the HTTP path) must pass it.
+    /// `requestToolsDisabled` is an explicit per-request override. Native chat
+    /// and `/agents/{id}/run` leave it false and use the target agent's
+    /// dedicated capability state.
     /// `modelOverride` lets the caller pin a specific model id (e.g. an
     /// HTTP request that named a model the agent doesn't default to);
     /// when nil, the agent's effective model is used.
@@ -267,8 +269,20 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         agentId: UUID,
         requestToolsDisabled: Bool = false,
         modelOverride: String? = nil,
-        modelTypeOverride: String? = nil
+        modelTypeOverride: String? = nil,
+        projectId: UUID? = nil
     ) -> AgentConfigSnapshot {
+        // Project knowledge collections join the agent's grants for this
+        // compose: they gate the knowledge tools into the schema even when
+        // the agent's own knowledge opt-in is off, matching the union the
+        // tools apply at execution time (`KnowledgeToolScope.resolve`).
+        let projectCollections: [KnowledgeCollection] = {
+            guard let projectId,
+                let project = ProjectManager.shared.project(for: projectId)
+            else { return [] }
+            return KnowledgeManager.shared.enabledCollections(
+                withIds: project.knowledgeCollectionIds)
+        }()
         let mgr = AgentManager.shared
         // One resolve services every capability gate (positive polarity),
         // closing the mid-fan-out race the old per-field calls risked.
@@ -345,23 +359,34 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             spawnConfiguration: spawnConfiguration,
             // Pre-fold the "anything to search?" half of the gate, like the
             // spawn tools: enabled with zero grants keeps the tools hidden.
-            knowledgeEnabled: caps.knowledgeEnabled && !caps.knowledgeCollectionIds.isEmpty,
+            // Project collections open the gate on their own.
+            knowledgeEnabled: (caps.knowledgeEnabled && !caps.knowledgeCollectionIds.isEmpty)
+                || !projectCollections.isEmpty,
             knowledgeCuratorEnabled: caps.knowledgeCuratorEnabled
                 && !caps.knowledgeCollectionIds.isEmpty,
             // Same grant resolution the tools use at execution time
-            // (`effectiveKnowledgeCollections`), captured here so the
-            // prompt section can't race a mid-compose grant edit.
-            knowledgeCollections: mgr.effectiveKnowledgeCollections(for: agentId)
-                .map(\.grantDescriptor),
-            // Usable = enabled with outbound mode != off, including
-            // automatic destinations derived from the channel setup the
-            // user already completed. Captured per compose so a binding
-            // (or a newly writable room) surfaces the publish tool on the
-            // next turn.
+            // (`effectiveKnowledgeCollections` ∪ project collections),
+            // captured here so the prompt section can't race a
+            // mid-compose grant edit.
+            knowledgeCollections: {
+                var collections = mgr.effectiveKnowledgeCollections(for: agentId)
+                let known = Set(collections.map(\.id))
+                collections += projectCollections.filter { !known.contains($0.id) }
+                return collections.map(\.grantDescriptor)
+            }(),
+            // Source-usable = enabled, outbound mode != off, and explicitly
+            // allowed from this run provenance. Keep the tool out when no
+            // matching Channel Destinations section can be rendered; otherwise
+            // the model has no valid binding_id and may mistake a capability id
+            // (for example plugin/osaurus.calendar) for a channel binding.
             hasChannelPublishDestinations: !AgentChannelAutoDestinationResolver
                 .effectiveConfiguration()
-                .usableBindings(agentId: agentId)
-                .isEmpty
+                .usableBindings(
+                    agentId: agentId,
+                    source: ChatExecutionContext.currentSessionSource
+                )
+                .isEmpty,
+            projectId: projectId
         )
     }
 }

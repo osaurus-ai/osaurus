@@ -273,6 +273,50 @@ struct CoreModelServiceFallbackTests {
         }
     }
 
+    // MARK: - Path 3: residency-refusal fallback (follow-ups)
+
+    // `.backgroundWouldEvictUserModel` is thrown when a `.background` primary
+    // would evict a resident model. Follow-up generation opts into falling back
+    // to the chat model on that refusal (so it works for users chatting on a
+    // remote provider while a local model is resident); strict background
+    // callers (titles, memory) do not, keeping their "never touch the resident"
+    // guarantee. The decision is a pure function so it's pinned here without a
+    // live runtime to actually evict.
+
+    @Test
+    func residencyRefusal_fallsBackOnlyWhenOptedIn() {
+        let refusal = CoreModelError.backgroundWouldEvictUserModel("some/local-model")
+        #expect(
+            CoreModelService.shouldFallBackToChatModel(for: refusal, allowResidencyRefusal: true)
+        )
+        #expect(
+            !CoreModelService.shouldFallBackToChatModel(for: refusal, allowResidencyRefusal: false)
+        )
+    }
+
+    @Test
+    func modelUnavailable_alwaysFallsBackRegardlessOfResidencyFlag() {
+        let unavailable = CoreModelError.modelUnavailable("some/model")
+        #expect(
+            CoreModelService.shouldFallBackToChatModel(for: unavailable, allowResidencyRefusal: false)
+        )
+        #expect(
+            CoreModelService.shouldFallBackToChatModel(for: unavailable, allowResidencyRefusal: true)
+        )
+    }
+
+    @Test
+    func transientErrors_neverFallBack() {
+        #expect(
+            !CoreModelService.shouldFallBackToChatModel(for: .timedOut, allowResidencyRefusal: true)
+        )
+        #expect(
+            !CoreModelService.shouldFallBackToChatModel(
+                for: .circuitBreakerOpen, allowResidencyRefusal: true
+            )
+        )
+    }
+
     @Test
     func generate_doesNotFallBackWhenFallbackEqualsConfigured() async throws {
         // A caller that names the same identifier for fallback as the

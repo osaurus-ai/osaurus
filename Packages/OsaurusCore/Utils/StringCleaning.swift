@@ -123,6 +123,61 @@ public enum StringCleaning {
         return false
     }
 
+    /// Harmony channel labels that can leak into assistant text as a bare word.
+    ///
+    /// Gemma-4 and other Harmony-channel models put the channel NAME on the
+    /// first line — `<|channel>thought\n…payload…<channel|>`. When the closing
+    /// tag spelling isn't recognised, the delimiters are stripped but the label
+    /// survives, and the user sees a message that is (or begins with) the bare
+    /// word `thought`. Reasoning being OFF does not prevent it: the template
+    /// still emits the pre-closed empty block that the model echoes.
+    ///
+    /// Deliberately a CLOSED set rather than "any bare identifier". The
+    /// reasoning-pane guard (`ChatTurn.thinkingIsBlank`) can afford the broad
+    /// test because nobody reasons in one bare token, but this runs on
+    /// user-visible prose, where a one-word answer is legitimate. Restricting
+    /// to real channel names means a genuine reply of "Analysis" is only ever
+    /// dropped if it is the entire message AND matches a channel label.
+    private static let harmonyChannelLabels: Set<String> = [
+        "thought", "thinking", "analysis", "commentary", "final", "response",
+    ]
+
+    /// Whether `text` is exactly a Harmony channel label. Shared with
+    /// `ChatTurn.thinkingIsBlank` so the reasoning pane and the visible answer
+    /// agree on what counts as a label, and neither can drift.
+    public static func isHarmonyChannelLabel(_ text: String) -> Bool {
+        harmonyChannelLabels.contains(text.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// Removes a leaked Harmony channel label from assistant text meant for display.
+    ///
+    /// Two shapes, both observed: the label as the entire message, and the
+    /// label alone on the first line followed by the real answer.
+    public static func stripLeakedChannelLabel(_ content: String) -> String {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return content }
+
+        // Cheap gate: the shortest label is 5 chars, so anything without one
+        // of them in its opening span cannot match either shape.
+        if trimmed.count > 24, !harmonyChannelLabels.contains(where: { trimmed.prefix(24).contains($0) }) {
+            return content
+        }
+
+        // Case-SENSITIVE against lowercase labels. The channel name is emitted
+        // lowercase (`thought`); prose that legitimately opens with a heading
+        // word capitalises it ("Analysis\nThe data shows…"). Matching
+        // case-insensitively ate that heading for every model, which is a
+        // worse bug than the one being fixed.
+        if harmonyChannelLabels.contains(trimmed) { return "" }
+
+        var lines = trimmed.split(separator: "\n", omittingEmptySubsequences: false)
+        guard let first = lines.first else { return content }
+        let head = first.trimmingCharacters(in: .whitespaces)
+        guard harmonyChannelLabels.contains(head) else { return content }
+        lines.removeFirst()
+        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Strips Gemini thought-signature markers from assistant text meant for display.
     ///
     /// We keep the raw content intact for Gemini round-tripping, but any UI-facing

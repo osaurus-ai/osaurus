@@ -220,14 +220,12 @@ final class DiscordConnectionService: @unchecked Sendable {
 
     @discardableResult
     func saveBotToken(_ token: String) throws -> Bool {
-        let saved = credentialStore.saveBotToken(token)
-        if !saved {
-            throw DiscordConnectionServiceError.configurationSaveFailed(
-                "The token was empty or Keychain storage was unavailable."
-            )
+        let outcome = credentialStore.saveBotTokenOutcome(token)
+        if let failure = outcome.failureDescription(label: "token") {
+            throw DiscordConnectionServiceError.configurationSaveFailed(failure)
         }
         AgentChannelCredentialAvailability.shared.invalidate(.discord)
-        return saved
+        return true
     }
 
     @discardableResult
@@ -247,12 +245,10 @@ final class DiscordConnectionService: @unchecked Sendable {
 
     func saveBotTokenOffMain(_ token: String) async throws {
         let store = credentialStore
-        let saved = await Keychain.perform { store.saveBotToken(token) }
+        let outcome = await Keychain.perform { store.saveBotTokenOutcome(token) }
         AgentChannelCredentialAvailability.shared.invalidate(.discord)
-        if !saved {
-            throw DiscordConnectionServiceError.configurationSaveFailed(
-                "The token was empty or Keychain storage was unavailable."
-            )
+        if let failure = outcome.failureDescription(label: "token") {
+            throw DiscordConnectionServiceError.configurationSaveFailed(failure)
         }
     }
 

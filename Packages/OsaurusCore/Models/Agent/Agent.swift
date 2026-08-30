@@ -67,14 +67,14 @@ public struct AgentQuickAction: Codable, Identifiable, Sendable, Equatable {
                 prompt: L("Help me add a cloud AI provider.")
             ),
             AgentQuickAction(
-                icon: "slider.horizontal.3",
-                text: L("Change a setting"),
-                prompt: L("I want to change an Osaurus setting.")
-            ),
-            AgentQuickAction(
                 icon: "person.2",
                 text: L("Create an agent"),
                 prompt: L("Help me create a new agent.")
+            ),
+            AgentQuickAction(
+                icon: "point.3.connected.trianglepath.dotted",
+                text: L("Delegate a task"),
+                prompt: L("Delegate a task to one of my agents.")
             ),
         ]
     }
@@ -127,7 +127,10 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var agentIndex: UInt32?
     /// Derived cryptographic address for this agent (nil = no address yet)
     public var agentAddress: String?
-    /// Controls the agent's ability to run arbitrary commands in the sandbox
+    /// Controls the agent's ability to run arbitrary commands in the sandbox.
+    /// `nil` is an unconfigured custom agent and resolves default-on when a
+    /// sandbox backend is available; `enabled: false` is an explicit opt-out.
+    /// The built-in Default agent is always hard-off at effective resolution.
     public var autonomousExec: AutonomousExecConfig?
     /// Behavior of the Claude Code subprocess backend when this agent is on a
     /// `claude-code/…` model. Nil = defaults (agent mode, read-only tools).
@@ -287,16 +290,26 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         id == defaultId.uuidString
     }
 
-    /// The default agent — front door to configuring Osaurus.
-    /// Renders as "Osaurus" in chat and the picker; subtitle nudges
-    /// users toward the configure flow that's unique to this agent.
-    /// `avatar: "green"` resolves the bundled `osaurus-avatar-green`
-    /// asset in `NativeMessageCellView`/`SharedHeaderComponents`.
+    /// Custom display name for the built-in Orchestrator agent, mirrored
+    /// from `DefaultAgentConfiguration.displayName` by
+    /// `DefaultAgentConfigurationStore` on every load/save. Kept as a
+    /// nonisolated static so the value-type `default` accessor can read
+    /// it from any context; writes only happen on the main actor
+    /// (the store is `@MainActor`), so reads never race a write.
+    nonisolated(unsafe) public static var defaultAgentNameOverride: String?
+
+    /// The default agent — the built-in Orchestrator that configures
+    /// Osaurus and delegates work. Renders as "Osaurus" in chat and the
+    /// picker unless the user set a custom name in Settings →
+    /// Orchestrator; subtitle nudges users toward the configure flow
+    /// that's unique to this agent. `avatar: "green"` resolves the
+    /// bundled `osaurus-avatar-green` asset in
+    /// `NativeMessageCellView`/`SharedHeaderComponents`.
     public static var `default`: Agent {
         Agent(
             id: defaultId,
-            name: "Osaurus",
-            description: L("Sets up Osaurus and answers questions about the app"),
+            name: defaultAgentNameOverride ?? "Osaurus",
+            description: L("Configures Osaurus and delegates work to your agents"),
             systemPrompt: "",
             themeId: nil,
             defaultModel: nil,
@@ -454,15 +467,12 @@ public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable {
 // MARK: - Autonomous Exec Configuration
 
 public struct AutonomousExecConfig: Codable, Sendable, Equatable {
-    /// Whether the agent's sandbox (autonomous code execution) is on. Note the
+    /// Whether the agent's sandbox (autonomous code execution) is on. The
     /// *effective* default is resolved in
-    /// `AgentManager.effectiveAutonomousExec`, not by this struct: the chip
-    /// defaults ON for the Default agent and newly created agents on supported
-    /// machines (`AgentManager.sandboxEnabledByDefault`). This field's own
-    /// default below stays `false` so it remains a neutral base for
-    /// `current ?? .default` mutations in the settings UI (which only flips
-    /// individual sub-toggles) and never silently turns the sandbox on for an
-    /// existing custom agent that was left unconfigured.
+    /// `AgentManager.effectiveAutonomousExec`, not by this struct: unconfigured
+    /// custom agents default ON on supported hosts, explicit false remains
+    /// OFF, and the built-in Default agent is always OFF. This field's own
+    /// default below stays `false` as a neutral mutation base.
     public var enabled: Bool
     public var maxCommandsPerTurn: Int
     public var pluginCreate: Bool
@@ -626,9 +636,9 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// agent can never reach a collection it wasn't granted. Empty → the
     /// knowledge tools stay hidden (nothing to search).
     public var knowledgeCollectionIds: [UUID]
-    /// Curator role: `propose_knowledge_update` exposed to the model.
-    /// A child of `knowledgeEnabled` — proposals still only ever create
-    /// pending drafts reviewed by the user.
+    /// DEPRECATED and inert. Gated `propose_knowledge_update`, removed with
+    /// the proposal architecture. Kept so existing agent JSON still decodes;
+    /// nothing reads it, and writing follows the collection grant instead.
     public var knowledgeCuratorEnabled: Bool
 
     public init(
@@ -835,6 +845,38 @@ public struct AgentLimitsSettings: Codable, Sendable, Equatable {
     public static var defaults: AgentLimitsSettings { AgentLimitsSettings() }
 }
 
+/// Per-agent customization of the follow-up suggestions feature. This shapes
+/// the follow-ups an agent produces; it never enables them — the global
+/// `ChatConfiguration.generateFollowUpSuggestions` switch does that.
+///
+/// Deliberately model-only: a per-agent *system prompt* for follow-ups is not
+/// offered because a distinct prompt prefill on the resident chat model would
+/// evict that model's cached prefix and bust KV cache for the next real turn.
+/// The model override sidesteps this entirely by routing generation to a
+/// SEPARATE model (e.g. a small-model cluster), leaving the chat model's cache
+/// untouched. `.empty` means "use the shared core model".
+public struct AgentFollowUpConfig: Codable, Sendable, Equatable {
+    /// Optional model-override identifier (same string form as an agent's
+    /// default model, e.g. `"llama-3.2-3b"` or `"anthropic/claude-haiku-4-5"`).
+    /// When non-empty, this agent's follow-ups generate on this model instead
+    /// of the shared core model — the request's "offload to a cluster of small
+    /// models" case. Empty falls back to the global core model, then the chat
+    /// model.
+    public var model: String
+
+    /// Routing identifier, or nil when unset (empty).
+    public var modelIdentifier: String? {
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    public init(model: String = "") {
+        self.model = model
+    }
+
+    public static var empty: AgentFollowUpConfig { AgentFollowUpConfig() }
+}
+
 /// Top-level opt-in feature settings for an agent. Currently bundles the DB
 /// toggle (spec §5.5), self-scheduling bounds (spec §4.1, §9, §13), and the
 /// Phase 4 storage / cost limits (spec §11.3). New agent-wide opt-in
@@ -870,6 +912,13 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// sibling `search_and_extract`). Default ON: search works out of the box
     /// via the free providers, so agents get it unless explicitly switched off.
     public var webSearchEnabled: Bool
+    /// Per-agent customization of the follow-up suggestions feature (a custom
+    /// suggester system prompt, extra rules, and a model override for cheaper /
+    /// faster generation). Only takes effect while the GLOBAL
+    /// `ChatConfiguration.generateFollowUpSuggestions` switch is on — this
+    /// struct shapes the follow-ups, it does not enable them. `.empty` means
+    /// "use the built-in prompt and the shared core model".
+    public var followUp: AgentFollowUpConfig
     /// Per-agent opt-in for the self-scheduling tools (`schedule_next_run`,
     /// `cancel_next_run`, `notify`). Decoupled from the schedule-mode picker
     /// (`schedule.mode`): the mode only sets the host-enforced bounds, while
@@ -992,10 +1041,9 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// execution time, so the grant list — not the schema — is the
     /// security boundary. Empty → the knowledge tools stay hidden.
     public var knowledgeCollectionIds: [UUID]
-    /// Curator role opt-in: exposes `propose_knowledge_update` (`.ask`
-    /// policy) so this agent can draft document replacements as pending
-    /// proposals. A child of `knowledgeEnabled`; proposals never touch
-    /// the corpus until the user approves them in the Knowledge tab.
+    /// DEPRECATED and inert. Gated `propose_knowledge_update`, removed with
+    /// the proposal architecture. Kept so existing agent JSON still decodes;
+    /// nothing reads it, and writing follows the collection grant instead.
     public var knowledgeCuratorEnabled: Bool
 
     public init(
@@ -1006,6 +1054,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         speakEnabled: Bool = false,
         searchMemoryEnabled: Bool = false,
         webSearchEnabled: Bool = true,
+        followUp: AgentFollowUpConfig = .empty,
         selfSchedulingEnabled: Bool = false,
         computerUseEnabled: Bool = false,
         computerUseCeiling: AutonomyCeiling? = nil,
@@ -1041,6 +1090,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.speakEnabled = speakEnabled
         self.searchMemoryEnabled = searchMemoryEnabled
         self.webSearchEnabled = webSearchEnabled
+        self.followUp = followUp
         self.selfSchedulingEnabled = selfSchedulingEnabled
         self.computerUseEnabled = computerUseEnabled
         self.computerUseCeiling = computerUseCeiling
@@ -1086,6 +1136,10 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         // Default ON (unlike the other gates): native search replaces the
         // osaurus.search plugin and free providers work with zero config.
         webSearchEnabled = try c.decodeIfPresent(Bool.self, forKey: .webSearchEnabled) ?? true
+        // Agents written before this shipped decode to `.empty` (built-in
+        // prompt + shared core model); the global switch still gates whether
+        // any of it runs.
+        followUp = try c.decodeIfPresent(AgentFollowUpConfig.self, forKey: .followUp) ?? .empty
         // Default off (consistent with the other built-in tool gates). Existing
         // agents that relied on self-scheduling must re-enable it explicitly.
         selfSchedulingEnabled = try c.decodeIfPresent(Bool.self, forKey: .selfSchedulingEnabled) ?? false
@@ -1204,6 +1258,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case speakEnabled
         case searchMemoryEnabled
         case webSearchEnabled
+        case followUp
         case selfSchedulingEnabled
         case computerUseEnabled
         case computerUseCeiling
@@ -1244,6 +1299,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(speakEnabled, forKey: .speakEnabled)
         try c.encode(searchMemoryEnabled, forKey: .searchMemoryEnabled)
         try c.encode(webSearchEnabled, forKey: .webSearchEnabled)
+        try c.encode(followUp, forKey: .followUp)
         try c.encode(selfSchedulingEnabled, forKey: .selfSchedulingEnabled)
         try c.encode(computerUseEnabled, forKey: .computerUseEnabled)
         try c.encodeIfPresent(computerUseCeiling, forKey: .computerUseCeiling)
@@ -1285,6 +1341,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
             speakEnabled: false,
             searchMemoryEnabled: false,
             webSearchEnabled: true,
+            followUp: .empty,
             selfSchedulingEnabled: false,
             computerUseEnabled: false,
             screenContextEnabled: true

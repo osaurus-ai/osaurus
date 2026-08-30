@@ -51,6 +51,9 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
     /// LLM context-compaction summary covering the oldest turns, or nil
     /// when the session has never been compacted. See `ConversationSummary`.
     public var conversationSummary: ConversationSummary?
+    /// The project this session belongs to. nil = not in any project.
+    /// Orthogonal to `agentId`: a project can group chats across agents.
+    public var projectId: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -69,7 +72,8 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         capabilities: Set<SessionCapability> = [],
         folderBookmark: Data? = nil,
         folderPath: String? = nil,
-        conversationSummary: ConversationSummary? = nil
+        conversationSummary: ConversationSummary? = nil,
+        projectId: UUID? = nil
     ) {
         self.id = id
         self.title = title
@@ -88,6 +92,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         self.folderBookmark = folderBookmark
         self.folderPath = folderPath
         self.conversationSummary = conversationSummary
+        self.projectId = projectId
     }
 
     // Custom decoder for backward compatibility with old sessions
@@ -113,6 +118,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         folderPath = try container.decodeIfPresent(String.self, forKey: .folderPath)
         conversationSummary = try container.decodeIfPresent(
             ConversationSummary.self, forKey: .conversationSummary)
+        projectId = try container.decodeIfPresent(UUID.self, forKey: .projectId)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -134,6 +140,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(folderBookmark, forKey: .folderBookmark)
         try container.encodeIfPresent(folderPath, forKey: .folderPath)
         try container.encodeIfPresent(conversationSummary, forKey: .conversationSummary)
+        try container.encodeIfPresent(projectId, forKey: .projectId)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -145,6 +152,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         case capabilities
         case folderBookmark, folderPath
         case conversationSummary
+        case projectId
     }
 
     /// Generate a title from the first user message

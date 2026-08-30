@@ -109,6 +109,19 @@ struct SpawnToolsetTests {
         #expect(successes == TextSubagentKind.defaultReadOnlyToolCallCap)
     }
 
+    @Test("tool-carrying children get at least 2 turns; text-only budgets stay untouched")
+    func effectiveMaxTurnsFloorsToolCarryingChildren() {
+        // One tool call consumes a turn, so a tool-carrying child with a
+        // 1-turn budget always dies at the iteration cap without a digest —
+        // the floor keeps a granted toolset from being a guaranteed wasted
+        // run, while text-only spawns honor the configured budget exactly.
+        #expect(TextSubagentKind.effectiveMaxTurns(configured: 1, hasToolset: true) == 2)
+        #expect(TextSubagentKind.effectiveMaxTurns(configured: 2, hasToolset: true) == 2)
+        #expect(TextSubagentKind.effectiveMaxTurns(configured: 6, hasToolset: true) == 6)
+        #expect(TextSubagentKind.effectiveMaxTurns(configured: 1, hasToolset: false) == 1)
+        #expect(TextSubagentKind.effectiveMaxTurns(configured: 6, hasToolset: false) == 6)
+    }
+
     @Test("refused non-allowlisted call does not consume the cap")
     func refusalDoesNotBurnBudget() async throws {
         let toolset = await TextSubagentKind.makeToolset(
@@ -319,6 +332,125 @@ struct SpawnToolsetTests {
             }
             #expect(deadlineMessage.contains("120s time budget"))
         }
+    }
+
+    // MARK: - Child tool surface mirrors the target agent's enablement (A1)
+
+    private func capabilities(
+        webSearch: Bool = false,
+        db: Bool = false,
+        knowledge: Bool = false,
+        curator: Bool = false
+    ) -> AgentCapabilities {
+        AgentCapabilities(
+            toolsEnabled: true,
+            memoryEnabled: false,
+            dbEnabled: db,
+            renderChartEnabled: false,
+            speakEnabled: false,
+            searchMemoryEnabled: false,
+            webSearchEnabled: webSearch,
+            selfSchedulingEnabled: false,
+            knowledgeEnabled: knowledge,
+            knowledgeCuratorEnabled: curator
+        )
+    }
+
+    @Test("auto surface: everything off leaves only the worker baseline")
+    func autoSurfaceBaseline() {
+        // Time + `share_artifact`: the declarative spawned-worker baseline
+        // (`ToolRegistry.spawnedWorkerBaselineToolNames`).
+        #expect(
+            TextSubagentKind.autoChildToolNames(capabilities: capabilities())
+                == ["get_current_time", "share_artifact"]
+        )
+    }
+
+    @Test("auto surface: capability gates map to the direct-chat tool names")
+    func autoSurfaceFollowsCapabilityGates() {
+        #expect(
+            TextSubagentKind.autoChildToolNames(
+                capabilities: capabilities(webSearch: true)
+            ) == ["get_current_time", "search_and_extract", "share_artifact", "web_search"]
+        )
+
+        let db = Set(TextSubagentKind.autoChildToolNames(capabilities: capabilities(db: true)))
+        #expect(db.isSuperset(of: SystemPromptComposer.agentDBToolNames))
+
+        let knowledge = Set(
+            TextSubagentKind.autoChildToolNames(
+                capabilities: capabilities(knowledge: true)
+            )
+        )
+        // Knowledge MUTATION stays with the parent (`isExcludedChildTool`):
+        // a child carries the retrieval/ticket subset, never write/delete.
+        let childKnowledgeNames = SystemPromptComposer.knowledgeToolNames
+            .filter { !TextSubagentKind.isExcludedChildTool($0) }
+        #expect(knowledge.isSuperset(of: childKnowledgeNames))
+        #expect(knowledge.isDisjoint(with: ["write_knowledge", "delete_knowledge"]))
+        #expect(knowledge.isDisjoint(with: SystemPromptComposer.knowledgeCuratorToolNames))
+
+        let curator = Set(
+            TextSubagentKind.autoChildToolNames(
+                capabilities: capabilities(knowledge: true, curator: true)
+            )
+        )
+        #expect(curator.isSuperset(of: SystemPromptComposer.knowledgeCuratorToolNames))
+    }
+
+    @Test("auto surface: curator toggle without knowledge grants nothing")
+    func autoSurfaceCuratorRequiresKnowledge() {
+        let names = Set(
+            TextSubagentKind.autoChildToolNames(
+                capabilities: capabilities(curator: true)
+            )
+        )
+        #expect(names.isDisjoint(with: SystemPromptComposer.knowledgeToolNames))
+        #expect(names.isDisjoint(with: SystemPromptComposer.knowledgeCuratorToolNames))
+    }
+
+    @Test("spawn-safety gate keeps audited tools and drops the interactive curator proposal")
+    @MainActor
+    func spawnSafetyGateIntersectsAuditedTools() {
+        let names = ToolRegistry.shared.specsForSpawnedOperations(
+            forTools: [
+                "web_search", "get_current_time", "search_knowledge",
+                "write_knowledge",
+            ]
+        ).map(\.function.name)
+        #expect(names.contains("web_search"))
+        #expect(names.contains("get_current_time"))
+        #expect(names.contains("search_knowledge"))
+        // Interactive approval flow — must never run inside a child.
+        #expect(!names.contains("write_knowledge"))
+    }
+
+    // MARK: - Child seed composition (A4)
+
+    @Test("child system prompt: persona plus optional knowledge section")
+    func childSystemPromptComposition() {
+        #expect(
+            TextSubagentKind.childSystemPrompt(persona: "You are P.", knowledgeSection: nil)
+                == "You are P."
+        )
+        #expect(
+            TextSubagentKind.childSystemPrompt(persona: "  ", knowledgeSection: "K")
+                == "K"
+        )
+        #expect(
+            TextSubagentKind.childSystemPrompt(persona: "P\n", knowledgeSection: "K")
+                == "P\n\nK"
+        )
+    }
+
+    @Test("seed user content: memory recall rides as the direct-chat-shaped prefix")
+    func seedUserContentMemoryPrefix() {
+        #expect(TextSubagentKind.seedUserContent(input: "task", memorySection: nil) == "task")
+        #expect(TextSubagentKind.seedUserContent(input: "task", memorySection: "  \n") == "task")
+        #expect(
+            TextSubagentKind.seedUserContent(input: "task", memorySection: "recall")
+                == "[Memory]\nrecall\n[/Memory]\n\ntask"
+        )
     }
 
     @Test("effectiveSpawnToolAccess: default agent uses global, custom uses settings")

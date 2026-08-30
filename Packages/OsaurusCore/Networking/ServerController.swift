@@ -56,8 +56,8 @@ final class ServerController: ObservableObject {
         await controller.applySpawnBatchLimit(normalized)
     }
 
-    /// Applies runtime settings on behalf of the `osaurus_settings`
-    /// configure tool. Routes through the live controller when one is
+    /// Applies runtime settings on behalf of the declarative
+    /// `osaurus_config` surface (its `server:` section). Routes through the live controller when one is
     /// wired (restart-aware: port/expose/CORS changes restart the NIO
     /// socket, cache/multimodal changes unload models). Returns `nil`
     /// when no controller exists yet — the settings are persisted and
@@ -72,8 +72,8 @@ final class ServerController: ObservableObject {
         return await controller.saveRuntimeSettings(settings)
     }
 
-    /// Current runtime settings + server liveness for the
-    /// `osaurus_settings` configure tool. Prefers the live controller's
+    /// Current runtime settings + server liveness for the declarative
+    /// configure surface (exporter/applier). Prefers the live controller's
     /// published value (identical to the store snapshot after every
     /// save, but authoritative mid-flight).
     static func runtimeSettingsForConfigureTool() -> (
@@ -85,8 +85,8 @@ final class ServerController: ObservableObject {
         return (ServerRuntimeSettingsStore.snapshot(), false)
     }
 
-    /// Current app-shell configuration for the `osaurus_settings`
-    /// configure tool `get` action. Prefers the live controller's
+    /// Current app-shell configuration for the declarative configure
+    /// surface (exporter). Prefers the live controller's
     /// published value.
     static func appShellSettingsForConfigureTool() -> ServerConfiguration {
         ServerControllerHolder.shared.controller?.configuration
@@ -95,7 +95,7 @@ final class ServerController: ObservableObject {
     }
 
     /// Applies app-shell settings (start at login / hide dock icon) on
-    /// behalf of the `osaurus_settings` configure tool, mirroring the
+    /// behalf of the declarative `osaurus_config` surface, mirroring the
     /// General settings pane: persist, sync the live controller's
     /// published configuration, and (re)register the login item.
     static func applyAppShellSettingsFromConfigureTool(
@@ -345,58 +345,31 @@ final class ServerController: ObservableObject {
             synchronizeSpawnBatchLimit(from: existingRuntimeSettings)
         }
         // Keep exposeToNetwork in sync with Bonjour-enabled agents.
-        //
-        // Bonjour needs the server off loopback, so an agent enabling it forces
-        // exposure on. This sync also retracts that — but *only* what it set
-        // itself, tracked by `exposureAutoEnabledByBonjour`. An exposure the
-        // user asked for (`--expose`, or any config predating the flag) is
-        // still never touched, which was the original intent; previously that
-        // was achieved by never turning exposure off at all, which left the
-        // side effect stuck on forever once any agent had ever used Bonjour.
+        // Only turn ON when a Bonjour agent requires it — never force
+        // it OFF, so the user's manual "expose to local network" setting
+        // is preserved across launches.
         agentsCancellable = AgentManager.shared.$agents
             .sink { agents in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     let shouldExpose = agents.contains { $0.bonjourEnabled }
-                    await self.reconcileBonjourExposure(shouldExpose: shouldExpose)
+                    // Only act when an agent is forcing exposure ON.
+                    // If no agent requires it, leave the user's setting alone.
+                    guard shouldExpose, !self.configuration.exposeToNetwork else { return }
+                    self.configuration.exposeToNetwork = true
+                    self.runtimeSettings.network.host = "0.0.0.0"
+                    self.saveConfiguration()
+                    ServerRuntimeSettingsStore.save(self.runtimeSettings)
+                    // Only restart for a live config change *after* launch has
+                    // settled. During launch the initial auto-start already
+                    // reads the updated config, so restarting here would be
+                    // redundant server churn racing the launch sequence — the
+                    // mid-launch restart the hang audit flagged.
+                    if self.isRunning && self.isLaunchComplete {
+                        await self.restartServer()
+                    }
                 }
             }
-    }
-
-    /// Bring `exposeToNetwork` in line with whether any agent still needs
-    /// Bonjour, touching it only when this sync owns the current value.
-    @MainActor
-    func reconcileBonjourExposure(shouldExpose: Bool) async {
-        let isExposed = configuration.exposeToNetwork
-        let ownedByBonjour = configuration.exposureAutoEnabledByBonjour
-
-        if shouldExpose {
-            guard !isExposed else {
-                // Already exposed. If that was the user's doing, leave the
-                // provenance alone: they keep ownership once Bonjour stops
-                // needing it, so removing the agent won't close their port.
-                return
-            }
-            configuration.exposeToNetwork = true
-            configuration.exposureAutoEnabledByBonjour = true
-            runtimeSettings.network.host = "0.0.0.0"
-        } else {
-            // Retract only an exposure this sync opened.
-            guard isExposed, ownedByBonjour else { return }
-            configuration.exposeToNetwork = false
-            configuration.exposureAutoEnabledByBonjour = false
-            runtimeSettings.network.host = "127.0.0.1"
-        }
-
-        saveConfiguration()
-        ServerRuntimeSettingsStore.save(runtimeSettings)
-        // Only restart for a live config change *after* launch has settled.
-        // During launch the initial auto-start already reads the updated
-        // config, so restarting here would be redundant server churn racing
-        // the launch sequence — the mid-launch restart the hang audit flagged.
-        if isRunning && isLaunchComplete {
-            await restartServer()
-        }
     }
 
     /// Runs the one-shot legacy → vmlx runtime-settings migration and
@@ -567,7 +540,11 @@ final class ServerController: ObservableObject {
     ) -> Bool {
         previous.cache != next.cache
             || previous.multimodal != next.multimodal
-            || previous.mtp != next.mtp
+            // Only the MTP fields that change what gets LOADED force a reload.
+            // Comparing the whole `mtp` struct meant changing the draft-token
+            // depth — a per-request value — evicted every resident model, so a
+            // quick depth switch cost a full 27B reload on the next turn.
+            || mtpLoadInputsChanged(previous: previous.mtp, next: next.mtp)
             // These values are consumed while constructing the model graph.
             // Compare effective settings so nil versus an explicit default
             // does not unload a resident model unnecessarily.
@@ -580,6 +557,28 @@ final class ServerController: ObservableObject {
             // Persisting a new profile while retaining the old container makes
             // the settings panel lie until a manual reload.
             || previous.memorySafety != next.memorySafety
+    }
+
+    /// Whether an MTP settings change alters what the model LOAD must produce.
+    ///
+    /// The MTP head is either in the graph or it is not, and that is decided at
+    /// load: `mode == .off` loads without it, and a DFlash 2 drafter is a
+    /// different set of weights entirely. Those need a reload.
+    ///
+    /// The DEPTH does not. `draftTokenLimit` only clamps the recommended depth
+    /// downward, and the depth is applied per request — so it is re-resolved
+    /// from current settings on each generate instead of being frozen at load.
+    /// Auto vs Force-On likewise selects between already-loaded weights.
+    nonisolated static func mtpLoadInputsChanged(
+        previous: VMLXServerMTPSettings,
+        next: VMLXServerMTPSettings
+    ) -> Bool {
+        (previous.mode == .off) != (next.mode == .off)
+            || previous.dflash2DrafterPath != next.dflash2DrafterPath
+            || previous.dflash2BlockSize != next.dflash2BlockSize
+            || previous.keepDraftCacheSeparate != next.keepDraftCacheSeparate
+            || previous.acceptedTokensOnlyEnterBaseCache
+                != next.acceptedTokensOnlyEnterBaseCache
     }
 
     /// Settings captured by `RuntimeConfig.snapshot()` but not by a loaded

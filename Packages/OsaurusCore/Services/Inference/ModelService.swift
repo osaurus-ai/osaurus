@@ -416,13 +416,23 @@ enum StreamingStatsHint: Sendable {
     /// (incl. KV-reused prefix) was processed before the first generated
     /// token, the headline TTFT driver for long-context Mac runs.
     private static let prefillFlagPrefix = "prefill="
+    /// Native-MTP decode-path evidence for this generation, carried as one
+    /// flag so older decoders skip it whole. Format:
+    /// `mtp=<depth>/<activeDepth>/<verifyCalls>/<accepted>/<bonus>/<rejected>/<arFallback>/<downshifts>[/<percent-encoded reason>]`.
+    /// Absent = native MTP did not produce these tokens (not requested OR
+    /// gate-excluded — same meaning as `GenerateCompletionInfo.nativeMTPStats
+    /// == nil`). The fallback reason is percent-encoded because vmlx emits
+    /// reasons like `adaptive_accept_ratio=0.33_depth=1` whose `=` would
+    /// otherwise be ambiguous and a future `,` would split the flag list.
+    private static let mtpFlagPrefix = "mtp="
 
     static func encode(
         tokenCount: Int,
         tokensPerSecond: Double,
         unclosedReasoning: Bool = false,
         stopReason: String? = nil,
-        prefillTokensPerSecond: Double? = nil
+        prefillTokensPerSecond: Double? = nil,
+        mtp: MTPStatsSummary? = nil
     ) -> String {
         let tps = String(format: "%.4f", locale: posixLocale, tokensPerSecond)
         var flags: [String] = []
@@ -439,6 +449,21 @@ enum StreamingStatsHint: Sendable {
             let pf = String(format: "%.4f", locale: posixLocale, prefillTokensPerSecond)
             flags.append("\(prefillFlagPrefix)\(pf)")
         }
+        if let mtp {
+            var fields = [
+                "\(mtp.depth)", "\(mtp.activeDepth)", "\(mtp.verifyCalls)",
+                "\(mtp.acceptedDraftTokens)", "\(mtp.bonusTokens)",
+                "\(mtp.rejectedTokens)", "\(mtp.arFallbackTokens)",
+                "\(mtp.adaptiveDownshifts)",
+            ]
+            if let reason = mtp.adaptiveFallbackReason,
+                let encoded = reason.addingPercentEncoding(
+                    withAllowedCharacters: .alphanumerics),
+                !encoded.isEmpty {
+                fields.append(encoded)
+            }
+            flags.append("\(mtpFlagPrefix)\(fields.joined(separator: "/"))")
+        }
         let suffix = flags.isEmpty ? "" : ";\(flags.joined(separator: ","))"
         return "\(statsPrefix)\(tokenCount);\(tps)\(suffix)"
     }
@@ -450,7 +475,8 @@ enum StreamingStatsHint: Sendable {
         tokensPerSecond: Double,
         unclosedReasoning: Bool,
         stopReason: String?,
-        prefillTokensPerSecond: Double?
+        prefillTokensPerSecond: Double?,
+        mtp: MTPStatsSummary?
     )? {
         guard delta.hasPrefix(statsPrefix) else { return nil }
         let payload = delta.dropFirst(statsPrefix.count)
@@ -474,7 +500,24 @@ enum StreamingStatsHint: Sendable {
             guard flag.hasPrefix(prefillFlagPrefix) else { return nil }
             return Double(flag.dropFirst(prefillFlagPrefix.count))
         }.first
-        return (count, tps, unclosed, stopReason, prefillTokensPerSecond)
+        let mtp = flags.compactMap { flag -> MTPStatsSummary? in
+            guard flag.hasPrefix(mtpFlagPrefix) else { return nil }
+            let fields = flag.dropFirst(mtpFlagPrefix.count).split(separator: "/")
+            guard fields.count >= 8,
+                let depth = Int(fields[0]), let active = Int(fields[1]),
+                let verify = Int(fields[2]), let accepted = Int(fields[3]),
+                let bonus = Int(fields[4]), let rejected = Int(fields[5]),
+                let arFallback = Int(fields[6]), let downshifts = Int(fields[7])
+            else { return nil }
+            let reason = fields.count >= 9
+                ? String(fields[8]).removingPercentEncoding : nil
+            return MTPStatsSummary(
+                depth: depth, activeDepth: active, verifyCalls: verify,
+                acceptedDraftTokens: accepted, bonusTokens: bonus,
+                rejectedTokens: rejected, arFallbackTokens: arFallback,
+                adaptiveDownshifts: downshifts, adaptiveFallbackReason: reason)
+        }.first
+        return (count, tps, unclosed, stopReason, prefillTokensPerSecond, mtp)
     }
 }
 

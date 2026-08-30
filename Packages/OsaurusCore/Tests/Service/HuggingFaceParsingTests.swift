@@ -62,6 +62,50 @@ struct HuggingFaceParsingTests {
         #expect(holder.base_model?.values == ["a/one", "b/two"])
     }
 
+    // MARK: - Private repository compatibility
+
+    @Test func acceptsCompletePrivateMLXBundleWithoutPublicNameOrTags() async {
+        let meta = HuggingFaceService.ModelMeta(
+            id: "owner/custom-checkpoint",
+            tags: nil,
+            siblings: [
+                .init(rfilename: "config.json", size: 100),
+                .init(rfilename: "tokenizer.json", size: 100),
+                .init(rfilename: "model.safetensors", size: 1_000),
+            ],
+            isPrivate: true
+        )
+
+        let result = await HuggingFaceService.shared.evaluateMLXCompatibility(
+            repoId: meta.id,
+            meta: meta
+        )
+
+        #expect(result.isPrivate)
+        #expect(result.isCompatible)
+    }
+
+    @Test func doesNotAcceptEquivalentUntaggedPublicBundle() async {
+        let meta = HuggingFaceService.ModelMeta(
+            id: "owner/custom-checkpoint",
+            tags: nil,
+            siblings: [
+                .init(rfilename: "config.json", size: 100),
+                .init(rfilename: "tokenizer.json", size: 100),
+                .init(rfilename: "model.safetensors", size: 1_000),
+            ],
+            isPrivate: false
+        )
+
+        let result = await HuggingFaceService.shared.evaluateMLXCompatibility(
+            repoId: meta.id,
+            meta: meta
+        )
+
+        #expect(!result.isPrivate)
+        #expect(!result.isCompatible)
+    }
+
     // MARK: - Relative image URL resolution
 
     @Test func rewritesRelativeMarkdownImagePaths() {

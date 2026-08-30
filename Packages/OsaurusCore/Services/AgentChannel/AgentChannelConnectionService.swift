@@ -38,17 +38,20 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         discordService: .shared,
         slackService: .shared,
         telegramService: .shared,
-        imessageService: .shared
+        imessageService: .shared,
+        whatsappService: .shared
     )
 
     private static let discordConnectionId = AgentChannelConnection.nativeDiscordConnectionId
     private static let slackConnectionId = AgentChannelConnection.nativeSlackConnectionId
     private static let telegramConnectionId = AgentChannelConnection.nativeTelegramConnectionId
     private static let imessageConnectionId = AgentChannelConnection.nativeIMessageConnectionId
+    private static let whatsappConnectionId = AgentChannelConnection.nativeWhatsAppConnectionId
     private let discordService: DiscordConnectionService
     private let slackService: SlackConnectionService
     private let telegramService: TelegramConnectionService
     private let imessageService: IMessageConnectionService
+    private let whatsappService: WhatsAppConnectionService
     private let customJSONRunner: any AgentChannelCustomJSONRunning
     private let writeKillSwitch: ChannelWriteKillSwitch
 
@@ -57,6 +60,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         slackService: SlackConnectionService = .shared,
         telegramService: TelegramConnectionService = .shared,
         imessageService: IMessageConnectionService = .shared,
+        whatsappService: WhatsAppConnectionService = .shared,
         customJSONRunner: any AgentChannelCustomJSONRunning = AgentChannelCustomJSONRunner(),
         writeKillSwitch: ChannelWriteKillSwitch = .shared
     ) {
@@ -64,6 +68,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         self.slackService = slackService
         self.telegramService = telegramService
         self.imessageService = imessageService
+        self.whatsappService = whatsappService
         self.customJSONRunner = customJSONRunner
         self.writeKillSwitch = writeKillSwitch
     }
@@ -74,6 +79,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             slackConnectionDictionary(),
             telegramConnectionDictionary(),
             imessageConnectionDictionary(),
+            whatsappConnectionDictionary(),
         ]
         let customRows = AgentChannelConfigurationStore.load().connections
             .filter { connection in
@@ -82,6 +88,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                     && id != Self.slackConnectionId
                     && id != Self.telegramConnectionId
                     && id != Self.imessageConnectionId
+                    && id != Self.whatsappConnectionId
             }
             .map(connectionDictionary)
         rows.append(contentsOf: customRows)
@@ -160,6 +167,24 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                     "summary": "The iMessage receive stream starts when the imsg helper is verified, Full Disk Access is granted, and readable chats plus authorized senders are configured.",
                 ]
                 return payload
+            case .whatsapp:
+                let diagnostics = await whatsappService.diagnostics()
+                var payload = diagnostics.dictionary
+                payload["connection_id"] = connection.id
+                payload["kind"] = connection.kind.rawValue
+                payload["standard_actions"] = connection.supportedActions.map(\.rawValue)
+                payload["action_policies"] = actionPolicies(for: connection).map(\.dictionary)
+                payload["relay_receive_policy"] = relayReceivePolicy(for: connection).dictionary
+                payload["message_store"] = whatsappService.messageStoreDiagnostics()
+                payload["transport_health"] = await AgentChannelTransportHealthCenter.shared
+                    .allStates(connectionId: connection.id)
+                    .map(\.dictionary)
+                payload["receive_transport"] = [
+                    "status": diagnostics.receiveReady ? "configured" : "not_configured",
+                    "transport_id": WhatsAppWatchTransportRuntime.transportId,
+                    "summary": "The WhatsApp receive stream starts when the osaurus-wa helper is verified, an account is linked via QR, and readable chats plus authorized senders are configured.",
+                ]
+                return payload
             case .customHTTP:
                 var payload = await customJSONRunner.diagnostics(connection: connection)
                 payload["standard_actions"] = connection.supportedActions.map(\.rawValue)
@@ -211,6 +236,16 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             }
         case .imessage:
             return imessageService.listSpaces().map { row in
+                [
+                    "id": row["id"] ?? "",
+                    "name": row["name"] ?? "",
+                    "kind": row["kind"] ?? "messaging_network",
+                    "connection_id": connection.id,
+                    "raw": row,
+                ]
+            }
+        case .whatsapp:
+            return whatsappService.listSpaces().map { row in
                 [
                     "id": row["id"] ?? "",
                     "name": row["name"] ?? "",
@@ -283,6 +318,19 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                     "raw": row,
                 ]
             }
+        case .whatsapp:
+            return try await whatsappService.listChats().map { row in
+                [
+                    "id": row["id"] ?? "",
+                    "name": row["name"] ?? "",
+                    "kind": row["kind"] ?? "chat",
+                    "space_id": spaceId,
+                    "connection_id": connection.id,
+                    "read_allowed": row["read_allowed"] ?? false,
+                    "write_allowed": row["write_allowed"] ?? false,
+                    "raw": row,
+                ]
+            }
         case .customHTTP:
             return try await customJSONRunner.listRooms(connection: connection, spaceId: spaceId)
         }
@@ -315,6 +363,12 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["room_id"] = roomId
             payload["standard_kind"] = "chat_messages"
             return payload
+        case .whatsapp:
+            var payload = try whatsappService.readChat(chatId: roomId, limit: limit)
+            payload["connection_id"] = connection.id
+            payload["room_id"] = roomId
+            payload["standard_kind"] = "chat_messages"
+            return payload
         case .customHTTP:
             return try await customJSONRunner.readMessages(connection: connection, roomId: roomId, limit: limit)
         }
@@ -336,7 +390,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             return payload
         case .customHTTP:
             return try await customJSONRunner.readThread(connection: connection, threadId: threadId, limit: limit)
-        case .telegram, .imessage:
+        case .telegram, .imessage, .whatsapp:
             throw AgentChannelConnectionServiceError.unsupportedKind(connection.kind)
         }
     }
@@ -394,6 +448,17 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["room_ids"] = roomIds ?? []
             payload["standard_kind"] = "message_search"
             return payload
+        case .whatsapp:
+            var payload = try whatsappService.searchMessages(
+                query: query,
+                chatIds: roomIds,
+                limitPerChat: limitPerRoom,
+                maxMatches: maxMatches
+            )
+            payload["connection_id"] = connection.id
+            payload["room_ids"] = roomIds ?? []
+            payload["standard_kind"] = "message_search"
+            return payload
         case .customHTTP:
             return try await customJSONRunner.searchMessages(
                 connection: connection,
@@ -428,6 +493,12 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             return payload
         case .imessage:
             var payload = try imessageService.draftMessage(chatId: roomId, content: content)
+            payload["connection_id"] = connection.id
+            payload["room_id"] = roomId
+            payload["standard_kind"] = "message_draft"
+            return payload
+        case .whatsapp:
+            var payload = try whatsappService.draftMessage(chatId: roomId, content: content)
             payload["connection_id"] = connection.id
             payload["room_id"] = roomId
             payload["standard_kind"] = "message_draft"
@@ -489,6 +560,16 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["room_id"] = roomId
             payload["standard_kind"] = "message_sent"
             return payload
+        case .whatsapp:
+            var payload = try await whatsappService.sendMessage(
+                chatId: roomId,
+                content: content,
+                confirmSend: confirmSend
+            )
+            payload["connection_id"] = connection.id
+            payload["room_id"] = roomId
+            payload["standard_kind"] = "message_sent"
+            return payload
         case .customHTTP:
             return try await customJSONRunner.sendMessage(
                 connection: connection,
@@ -519,6 +600,18 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             return payload
         case .slack:
             var payload = try await slackService.replyToThread(
+                threadId: threadId,
+                content: content,
+                confirmSend: confirmSend
+            )
+            payload["connection_id"] = connection.id
+            payload["standard_kind"] = "thread_reply_sent"
+            return payload
+        case .whatsapp:
+            // WhatsApp "threads" are quoted replies; the thread id is
+            // `<chat_id>:<message_id>` of the message being quoted (each
+            // stored message row advertises its own as `reply_thread_id`).
+            var payload = try await whatsappService.replyToThread(
                 threadId: threadId,
                 content: content,
                 confirmSend: confirmSend
@@ -579,6 +672,13 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 content: content,
                 confirmSend: confirmSend
             )
+        case .whatsapp:
+            payload = try await whatsappService.editMessage(
+                chatId: roomId,
+                messageId: messageId,
+                content: content,
+                confirmSend: confirmSend
+            )
         case .customHTTP:
             payload = try await customJSONRunner.editMessage(
                 connection: connection,
@@ -625,6 +725,13 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         case .imessage:
             // iMessage "delete" is unsend — an advanced private-API action.
             payload = try await imessageService.unsendMessage(
+                chatId: roomId,
+                messageId: messageId,
+                confirmSend: confirmSend
+            )
+        case .whatsapp:
+            // WhatsApp "delete" is revoke — "delete for everyone".
+            payload = try await whatsappService.deleteMessage(
                 chatId: roomId,
                 messageId: messageId,
                 confirmSend: confirmSend
@@ -689,6 +796,14 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 adding: adding,
                 confirmSend: confirmSend
             )
+        case .whatsapp:
+            payload = try await whatsappService.setReaction(
+                chatId: roomId,
+                messageId: messageId,
+                reaction: reaction,
+                adding: adding,
+                confirmSend: confirmSend
+            )
         case .customHTTP:
             payload = try await customJSONRunner.setReaction(
                 connection: connection,
@@ -726,6 +841,11 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             )
         case .imessage:
             payload = try await imessageService.sendTyping(
+                chatId: roomId,
+                confirmSend: confirmSend
+            )
+        case .whatsapp:
+            payload = try await whatsappService.sendTyping(
                 chatId: roomId,
                 confirmSend: confirmSend
             )
@@ -839,6 +959,43 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         let resolved = normalized.isEmpty ? Self.imessageConnectionId : normalized
         let connection = try resolveConnection(resolved)
         guard connection.kind == .imessage else {
+            throw AgentChannelConnectionServiceError.unsupportedKind(connection.kind)
+        }
+        return connection
+    }
+
+    // MARK: - WhatsApp-only actions
+
+    /// Send a file to a WhatsApp chat. No provider-neutral standard action
+    /// covers media sends; routing through the dispatcher keeps the global
+    /// write kill switch and connection resolution in one place. Path
+    /// fencing, size caps, confirmation, and allowlists are enforced inside
+    /// WhatsAppConnectionService.
+    func whatsappSendAttachment(
+        connectionId: String?,
+        roomId: String,
+        path: String,
+        caption: String?,
+        confirmSend: Bool
+    ) async throws -> [String: Any] {
+        let connection = try requireWhatsAppConnection(connectionId)
+        try requireGlobalWritesEnabled()
+        var payload = try await whatsappService.sendAttachment(
+            chatId: roomId,
+            path: path,
+            caption: caption,
+            confirmSend: confirmSend
+        )
+        payload["connection_id"] = connection.id
+        payload["room_id"] = roomId
+        return payload
+    }
+
+    private func requireWhatsAppConnection(_ connectionId: String?) throws -> AgentChannelConnection {
+        let normalized = Self.normalizedId(connectionId ?? "")
+        let resolved = normalized.isEmpty ? Self.whatsappConnectionId : normalized
+        let connection = try resolveConnection(resolved)
+        guard connection.kind == .whatsapp else {
             throw AgentChannelConnectionServiceError.unsupportedKind(connection.kind)
         }
         return connection
@@ -1010,6 +1167,9 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         }
         if resolvedId.lowercased() == Self.imessageConnectionId {
             return imessageConnection()
+        }
+        if resolvedId.lowercased() == Self.whatsappConnectionId {
+            return whatsappConnection()
         }
         guard let connection = AgentChannelConfigurationStore.load().connection(id: resolvedId) else {
             throw AgentChannelConnectionServiceError.connectionNotFound(resolvedId)
@@ -1261,6 +1421,65 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         return row
     }
 
+    private func whatsappConnection() -> AgentChannelConnection {
+        let config = whatsappService.configuration()
+        return AgentChannelConnection(
+            id: Self.whatsappConnectionId,
+            name: "WhatsApp",
+            kind: .whatsapp,
+            enabled: true,
+            supportedActions: [
+                .diagnostics,
+                .listSpaces,
+                .listRooms,
+                .readMessages,
+                .replyThread,
+                .editMessage,
+                .deleteMessage,
+                .searchMessages,
+                .draftMessage,
+                .sendMessage,
+                .addReaction,
+                .removeReaction,
+                .sendTyping,
+            ],
+            spaceAllowlist: [WhatsAppConnectionService.spaceId],
+            readRoomAllowlist: config.readableChatIds,
+            writeRoomAllowlist: config.writableChatIds,
+            writeEnabled: config.writeEnabled,
+            defaultReadLimit: config.defaultReadLimit,
+            // The credential is the helper's linked WhatsApp Web session;
+            // no Keychain secret exists.
+            secrets: [],
+            inboundAuthorization: AgentChannelInboundAuthorizationPolicy(
+                senderAllowlist: config.senderAllowlist,
+                roomAllowlist: config.readableChatIds,
+                allowUnscopedSpaces: false,
+                allowBotMessages: false,
+                // Operator-controlled: turning Ignore Self Messages off lets
+                // messages sent from the linked account itself dispatch —
+                // the single-number test loop.
+                allowSelfMessages: !config.ignoreSelfMessages,
+                requireProviderEventId: true,
+                auditDecisionReason: "whatsapp_receive_authorization"
+            )
+        )
+    }
+
+    private func whatsappConnectionDictionary() -> [String: Any] {
+        var row = connectionDictionary(whatsappConnection())
+        // No remote credential: the "credential" is the linked session.
+        row["credential_saved"] = whatsappService.lastKnownLinkStatus().linked
+        row["helper_available"] = whatsappService.helperAvailable()
+        row["linked"] = whatsappService.lastKnownLinkStatus().linked
+        let readRooms = row["read_room_allowlist"] as? [String] ?? []
+        let writeRooms = row["write_room_allowlist"] as? [String] ?? []
+        row["configured"] =
+            whatsappService.helperAvailable()
+            && (!readRooms.isEmpty || !writeRooms.isEmpty)
+        return row
+    }
+
     private func connectionDictionary(_ connection: AgentChannelConnection) -> [String: Any] {
         [
             "id": connection.id,
@@ -1351,7 +1570,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 }
                 return (.available, nil)
             }
-        case .discord, .slack, .telegram, .imessage:
+        case .discord, .slack, .telegram, .imessage, .whatsapp:
             switch action {
             case .diagnostics, .listSpaces:
                 return (.available, nil)
@@ -1439,6 +1658,8 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             dispatch = discordService.configuration().inboundDispatch
         case .imessage:
             dispatch = imessageService.configuration().inboundDispatch
+        case .whatsapp:
+            dispatch = whatsappService.configuration().inboundDispatch
         case .customHTTP:
             dispatch = nil
         }

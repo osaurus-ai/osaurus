@@ -67,6 +67,28 @@ import Foundation
         }
     }
 
+    /// Sanitized startup/provisioning failure record. These closed enum-like
+    /// tokens deliberately exclude error messages, paths, domains,
+    /// environment values, and agent identity.
+    public struct SandboxStartupFailureSample: Codable, Sendable, Equatable {
+        public let recordedAt: Date
+        public let category: String
+        public let backend: String
+        public let phase: String
+
+        public init(
+            recordedAt: Date = Date(),
+            category: String,
+            backend: String,
+            phase: String
+        ) {
+            self.recordedAt = recordedAt
+            self.category = category
+            self.backend = backend
+            self.phase = phase
+        }
+    }
+
     /// Ring-buffer persistence for boot samples. Local-only diagnostics;
     /// surfaced in the Sandbox settings panel and used by the opt-in
     /// integration benchmark to compare cold vs warm boots.
@@ -75,6 +97,10 @@ import Foundation
 
         static func fileURL() -> URL {
             OsaurusPaths.container().appendingPathComponent("startup-metrics.json")
+        }
+
+        static func failureFileURL() -> URL {
+            OsaurusPaths.container().appendingPathComponent("startup-failures.json")
         }
 
         public static func load() -> [SandboxBootSample] {
@@ -103,12 +129,34 @@ import Foundation
             persist(samples)
         }
 
+        public static func loadFailures() -> [SandboxStartupFailureSample] {
+            guard let data = try? Data(contentsOf: failureFileURL()) else { return [] }
+            return (try? JSONDecoder().decode([SandboxStartupFailureSample].self, from: data)) ?? []
+        }
+
+        public static func recordFailure(_ sample: SandboxStartupFailureSample) {
+            var samples = loadFailures()
+            samples.append(sample)
+            if samples.count > maxSamples {
+                samples.removeFirst(samples.count - maxSamples)
+            }
+            persistFailures(samples)
+        }
+
         private static func persist(_ samples: [SandboxBootSample]) {
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.container())
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             guard let data = try? encoder.encode(samples) else { return }
             try? data.write(to: fileURL(), options: .atomic)
+        }
+
+        private static func persistFailures(_ samples: [SandboxStartupFailureSample]) {
+            OsaurusPaths.ensureExistsSilent(OsaurusPaths.container())
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            guard let data = try? encoder.encode(samples) else { return }
+            try? data.write(to: failureFileURL(), options: .atomic)
         }
 
         /// Coarse, low-cardinality latency bucket for consent-gated

@@ -1,0 +1,35 @@
+{
+  "id": "default_agent.channels-telegram-read-only",
+  "domain": "default_agent",
+  "label": "default agent • make Telegram read-only with a read cap",
+  "query": "Change the Telegram channel settings so agents can only read up to 10 messages per request and can never send messages there.",
+  "notes": "Wave 3c per-platform channel scope: `channels.telegram.write_enabled: false` + `default_read_limit: 10`. Disabling writes is the SAFE direction. Pins the platform subsection and the read-limit key. Imperative 'Change the … settings' phrasing: the earlier declarative-statement wording ('agents may read at most…') read as a policy remark and grok acknowledged without acting.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "telegram"
+          }
+        },
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "default_read_limit"
+          }
+        }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

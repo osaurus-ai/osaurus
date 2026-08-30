@@ -125,7 +125,9 @@ public actor CoreModelService {
         maxTokens: Int = 2048,
         timeout: TimeInterval = 60,
         fallbackModel: String? = nil,
-        intent: CoreModelIntent = .interactive
+        intent: CoreModelIntent = .interactive,
+        modelOverride: String? = nil,
+        fallBackOnResidencyRefusal: Bool = false
     ) async throws -> String {
         try await generate(
             prompt: prompt,
@@ -135,10 +137,26 @@ public actor CoreModelService {
             timeout: timeout,
             fallbackModel: fallbackModel,
             intent: intent,
+            modelOverride: modelOverride,
+            fallBackOnResidencyRefusal: fallBackOnResidencyRefusal,
             modelOptions: [:]
         )
     }
 
+    /// - Parameter modelOverride: When set, this identifier is used as the
+    ///   primary model in place of the globally-configured core model (the
+    ///   chat-model fallback still applies). Lets a caller route a specific
+    ///   auxiliary call — e.g. a per-agent follow-up model — without changing
+    ///   the shared Core Model setting.
+    /// - Parameter fallBackOnResidencyRefusal: When true, a `.background`
+    ///   primary that is refused because loading it would evict a resident
+    ///   model (`.backgroundWouldEvictUserModel`) also falls back to the chat
+    ///   model, instead of failing. The chat model is the one the user is
+    ///   actively on, so it is already resident (local) or remote — running
+    ///   there evicts nothing. Off by default so strict background callers
+    ///   (titles, memory) keep their "never touch the resident" guarantee;
+    ///   follow-ups opt in so they generate for users chatting on a remote
+    ///   provider while a local model happens to be resident.
     func generate(
         prompt: String,
         systemPrompt: String? = nil,
@@ -147,12 +165,23 @@ public actor CoreModelService {
         timeout: TimeInterval = 60,
         fallbackModel: String? = nil,
         intent: CoreModelIntent = .interactive,
+        modelOverride: String? = nil,
+        fallBackOnResidencyRefusal: Bool = false,
         modelOptions: [String: ModelOptionValue]
     ) async throws -> String {
         try checkBreakerOrEnterHalfOpen()
 
-        let configured = await MainActor.run {
-            ChatConfigurationStore.load().coreModelIdentifier
+        // A per-call override wins over the shared Core Model setting; empty
+        // strings are treated as "no override" so callers can pass raw config.
+        // The `await` can't live in a `??` autoclosure, so resolve it up front
+        // and only read settings when there's no override.
+        let configured: String?
+        if let override = Self.normaliseFallback(modelOverride) {
+            configured = override
+        } else {
+            configured = await MainActor.run {
+                ChatConfigurationStore.load().coreModelIdentifier
+            }
         }
         let fallback = Self.normaliseFallback(fallbackModel)
         let messages = buildMessages(prompt: prompt, systemPrompt: systemPrompt)
@@ -175,7 +204,8 @@ public actor CoreModelService {
                 messages: messages,
                 params: params,
                 timeout: timeout,
-                intent: intent
+                intent: intent,
+                fallBackOnResidencyRefusal: fallBackOnResidencyRefusal
             )
         } catch {
             try recordFailureAndThrow(error)
@@ -191,7 +221,8 @@ public actor CoreModelService {
         messages: [ChatMessage],
         params: GenerationParameters,
         timeout: TimeInterval,
-        intent: CoreModelIntent
+        intent: CoreModelIntent,
+        fallBackOnResidencyRefusal: Bool = false
     ) async throws -> String {
         guard let primary else {
             guard let fb = fallback else { throw CoreModelError.modelUnavailable("none") }
@@ -204,16 +235,21 @@ public actor CoreModelService {
             return try await runWithRetries(
                 model: primary, messages: messages, params: params, timeout: timeout, intent: intent)
         } catch let coreErr as CoreModelError {
-            // Configuration-level failure: the primary's identifier
-            // can't be routed at all (Foundation Model on pre-26 macOS,
-            // a deleted MLX model, a disconnected remote provider).
-            // `.timedOut` and `.circuitBreakerOpen` are deliberately
-            // NOT in this branch — they're transient and retrying with
-            // a different model would just mask the real issue.
-            guard case .modelUnavailable = coreErr,
-                let fb = fallback,
-                fb != primary
-            else { throw coreErr }
+            // Which CoreModelErrors are worth retrying on the chat model:
+            //  - `.modelUnavailable`: the primary's identifier can't be routed
+            //    at all (Foundation on pre-26 macOS, a deleted MLX model, a
+            //    disconnected remote provider).
+            //  - `.backgroundWouldEvictUserModel`: only when the caller opted in
+            //    (follow-ups). The primary was refused because loading it would
+            //    evict a resident; the chat model is already resident/remote, so
+            //    running there generates without eviction.
+            // `.timedOut` and `.circuitBreakerOpen` are deliberately excluded —
+            // transient, and a different model would just mask the real issue.
+            let shouldFallBack = Self.shouldFallBackToChatModel(
+                for: coreErr,
+                allowResidencyRefusal: fallBackOnResidencyRefusal
+            )
+            guard shouldFallBack, let fb = fallback, fb != primary else { throw coreErr }
             logger.info("Core model '\(primary)' unavailable; falling back to chat model '\(fb)'")
             return try await runWithRetries(
                 model: fb, messages: messages, params: params, timeout: timeout, intent: intent)
@@ -243,6 +279,30 @@ public actor CoreModelService {
                 timeout: timeout,
                 intent: intent
             )
+        }
+    }
+
+    /// Whether a failed primary attempt should retry on the chat model.
+    /// Pure so the fallback contract can be pinned without a live runtime.
+    ///   - `.modelUnavailable`: the primary can't be routed at all — always
+    ///     retry the chat model (issue #823).
+    ///   - `.backgroundWouldEvictUserModel`: only when the caller opted in
+    ///     (follow-ups). The primary was refused to protect a resident; the
+    ///     chat model is the one actually in use (resident or remote), so
+    ///     retrying there generates without evicting anything.
+    ///   - everything else (`.timedOut`, `.circuitBreakerOpen`, …): transient
+    ///     or fatal in a way a different model won't fix — don't fall back.
+    static func shouldFallBackToChatModel(
+        for error: CoreModelError,
+        allowResidencyRefusal: Bool
+    ) -> Bool {
+        switch error {
+        case .modelUnavailable:
+            return true
+        case .backgroundWouldEvictUserModel:
+            return allowResidencyRefusal
+        default:
+            return false
         }
     }
 
@@ -451,8 +511,12 @@ public actor CoreModelService {
     /// `.modelUnavailable` and `.circuitBreakerOpen` won't change
     /// shape across consecutive sub-second attempts. Cancellation is
     /// never retryable.
-    private static func isRetryable(_ error: Error) -> Bool {
+    static func isRetryable(_ error: Error) -> Bool {
         if error is CancellationError { return false }
+        // A second Claude Code subprocess would spend the same subscription
+        // quota (or repeat the same auth/install failure). The CLI already owns
+        // its transport retries, so never replay a failed turn here.
+        if error is ClaudeCodeError { return false }
         guard let coreErr = error as? CoreModelError else { return true }
         return coreErr == .timedOut
     }

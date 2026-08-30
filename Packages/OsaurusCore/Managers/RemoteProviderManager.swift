@@ -90,6 +90,13 @@ public final class RemoteProviderManager: ObservableObject {
     /// `RemoteProviderState.discoveredModels`, which is chat/spawn-only.
     private var mediaModelCatalogs: [UUID: [MediaModelInfo]] = [:]
 
+    /// Per-provider context windows advertised by custom OpenAI-compatible
+    /// `/models` endpoints (vLLM's `max_model_len` and friends), keyed by
+    /// provider id then unprefixed model id. Captured on connect/refetch so
+    /// the picker and chat budget honor the server's window instead of the
+    /// 128k unknown-metadata fallback (issue #2301's workaround).
+    private var customProviderContextLengths: [UUID: [String: Int]] = [:]
+
     private init() {
         self.configuration = RemoteProviderConfigurationStore.load()
         ensureManagedOsaurusRouterProviderIfNeeded()
@@ -409,9 +416,11 @@ public final class RemoteProviderManager: ObservableObject {
                     discoveredModels = discovery.chatModelIDs
                     mediaModelCatalogs[provider.id] = discovery.mediaModels
                 } else {
-                    discoveredModels = try await withRateLimitRetry {
-                        try await RemoteProviderService.fetchModels(from: provider)
+                    let discovery = try await withRateLimitRetry {
+                        try await RemoteProviderService.fetchModelsDiscovery(from: provider)
                     }
+                    discoveredModels = discovery.models
+                    customProviderContextLengths[provider.id] = discovery.contextLengths
                 }
             } catch {
                 if provider.providerType == .azureOpenAI && !provider.manualModelIds.isEmpty {
@@ -512,6 +521,7 @@ public final class RemoteProviderManager: ObservableObject {
             providerStates[providerId] = state
         }
         mediaModelCatalogs.removeValue(forKey: providerId)
+        customProviderContextLengths.removeValue(forKey: providerId)
 
         if let provider = configuration.provider(id: providerId) {
             if provider.providerType == .osaurusRouter {
@@ -756,16 +766,23 @@ public final class RemoteProviderManager: ObservableObject {
     /// identity / auth / other 4xx / config, plus anything unrecognized
     /// (e.g. a biometric/Keychain failure, which a tight retry loop must not
     /// hammer — the app-activation observer recovers those instead).
+    /// Transport-level `URLError` codes that mean "try again later" rather than
+    /// "this is misconfigured": network loss / timeout / DNS / TLS / a garbled
+    /// response. Shared by the raw-error and diagnostics-unwrapping paths.
+    static func isTransientURLErrorCode(_ code: URLError.Code) -> Bool {
+        switch code {
+        case .notConnectedToInternet, .timedOut, .networkConnectionLost,
+            .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed,
+            .secureConnectionFailed, .resourceUnavailable, .badServerResponse:
+            return true
+        default:
+            return false
+        }
+    }
+
     static func isTransientConnectError(_ error: Error) -> Bool {
         if let urlError = error as? URLError {
-            switch urlError.code {
-            case .notConnectedToInternet, .timedOut, .networkConnectionLost,
-                .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed,
-                .secureConnectionFailed, .resourceUnavailable, .badServerResponse:
-                return true
-            default:
-                return false
-            }
+            return isTransientURLErrorCode(urlError.code)
         }
         if let routerError = error as? OsaurusRouterAPIError {
             switch routerError {
@@ -783,7 +800,18 @@ public final class RemoteProviderManager: ObservableObject {
             switch serviceError {
             case .invalidResponse, .rateLimited:
                 return true
-            case .invalidURL, .notConnected, .requestFailed, .requestFailedWithDiagnostics,
+            case .requestFailedWithDiagnostics(_, let diagnostics):
+                // The discovery path wraps a raw transport `URLError` into this
+                // case (e.g. `notConnectedToInternet` when the network stack
+                // isn't up yet right after a relaunch). Recover the underlying
+                // code so an offline-at-launch failure is still classified
+                // transient and the recovery sweeps reconnect it — otherwise it
+                // stays down until a manual refresh.
+                if let code = diagnostics.transportURLErrorCode {
+                    return isTransientURLErrorCode(URLError.Code(rawValue: code))
+                }
+                return false
+            case .invalidURL, .notConnected, .requestFailed,
                 .streamingError, .noModelsAvailable, .unsupportedParameter, .mcpEndpointDetected:
                 return false
             }
@@ -1005,6 +1033,7 @@ public final class RemoteProviderManager: ObservableObject {
 
         let discovered: [String]
         var mediaCatalogChanged = false
+        var contextLengthsChanged = false
         do {
             if let override = testFetchModelsOverride {
                 discovered = try await override(provider)
@@ -1029,7 +1058,11 @@ public final class RemoteProviderManager: ObservableObject {
                 mediaCatalogChanged = mediaModelCatalogs[providerId] != discovery.mediaModels
                 mediaModelCatalogs[providerId] = discovery.mediaModels
             } else {
-                discovered = try await RemoteProviderService.fetchModels(from: provider)
+                let discovery = try await RemoteProviderService.fetchModelsDiscovery(from: provider)
+                discovered = discovery.models
+                contextLengthsChanged =
+                    customProviderContextLengths[provider.id] != discovery.contextLengths
+                customProviderContextLengths[provider.id] = discovery.contextLengths
             }
         } catch {
             return
@@ -1037,7 +1070,8 @@ public final class RemoteProviderManager: ObservableObject {
 
         let merged = provider.mergedModelIds(discovered: discovered)
         lastModelRefetchAt[providerId] = Date()
-        guard mediaCatalogChanged || merged != state.discoveredModels else { return }
+        guard mediaCatalogChanged || contextLengthsChanged || merged != state.discoveredModels
+        else { return }
 
         state.discoveredModels = merged
         providerStates[providerId] = state
@@ -1378,6 +1412,13 @@ public final class RemoteProviderManager: ObservableObject {
     /// the only caller (`ModelPickerItemCache`) lives in this module.
     func osaurusRouterMetadata(for unprefixedModelId: String) -> OsaurusRouterModel? {
         osaurusRouterModelCatalog[unprefixedModelId]
+    }
+
+    /// Context window advertised by a custom OpenAI-compatible provider's
+    /// `/models` endpoint for an unprefixed model id, or nil when the server
+    /// didn't report one (or the provider hasn't connected yet).
+    func customProviderContextLength(providerId: UUID, unprefixedModelId: String) -> Int? {
+        customProviderContextLengths[providerId]?[unprefixedModelId]
     }
 
     /// Unprefixed model ids in `catalog` that advertise image/vision input.
@@ -1782,6 +1823,7 @@ public final class RemoteProviderManager: ObservableObject {
         isOsaurusRouterEnabled = true
         UserDefaults.standard.removeObject(forKey: OsaurusRouter.enabledDefaultsKey)
         osaurusRouterModelCatalog = [:]
+        customProviderContextLengths = [:]
         testFetchModelsOverride = nil
         testConnectionTransportOverride = nil
         testIdentityExistsOverride = nil

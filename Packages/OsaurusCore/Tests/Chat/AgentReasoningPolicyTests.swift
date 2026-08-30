@@ -21,6 +21,20 @@ struct AgentReasoningPolicyTests {
         templateInjectsThinkTag: false,
         defaultThinkingOn: false
     )
+    private let toggleableDeclaredOn = LocalReasoningCapability.Capability(
+        supportsThinking: true,
+        hasEnableThinkingKwarg: true,
+        templateInjectsThinkTag: true,
+        defaultThinkingOn: true,
+        declaredDefaultThinkingOn: true
+    )
+    private let toggleableDeclaredOff = LocalReasoningCapability.Capability(
+        supportsThinking: true,
+        hasEnableThinkingKwarg: true,
+        templateInjectsThinkTag: false,
+        defaultThinkingOn: false,
+        declaredDefaultThinkingOn: false
+    )
 
     @Test("unset ordinary chat preserves opposite bundle defaults")
     func ordinaryChatPreservesBundleDefault() {
@@ -52,6 +66,48 @@ struct AgentReasoningPolicyTests {
                 ) == false
             )
         }
+    }
+
+    @Test("publisher-declared bundle default stays in force on agent/tool runs")
+    func declaredBundleDefaultSurvivesAgentSurface() {
+        for capability in [toggleableDeclaredOn, toggleableDeclaredOff] {
+            #expect(
+                AgentReasoningPolicy.defaultEnableThinking(
+                    isAgentOrToolRequest: true,
+                    explicitEnableThinking: nil,
+                    explicitReasoningEffort: nil,
+                    modelOptions: [:],
+                    usesReasoningEffortControl: false,
+                    capability: capability
+                ) == nil
+            )
+        }
+        // Explicit choices still beat the declared contract.
+        #expect(
+            AgentReasoningPolicy.defaultEnableThinking(
+                isAgentOrToolRequest: true,
+                explicitEnableThinking: false,
+                explicitReasoningEffort: nil,
+                modelOptions: [:],
+                usesReasoningEffortControl: false,
+                capability: toggleableDeclaredOn
+            ) == false
+        )
+        // Presentation mirrors dispatch: the declared default shows as active.
+        #expect(
+            AgentReasoningPolicy.effectiveEnableThinkingForPresentation(
+                isAgentOrToolRequest: true,
+                modelOptions: [:],
+                capability: toggleableDeclaredOn
+            )
+        )
+        #expect(
+            !AgentReasoningPolicy.effectiveEnableThinkingForPresentation(
+                isAgentOrToolRequest: true,
+                modelOptions: [:],
+                capability: toggleableDeclaredOff
+            )
+        )
     }
 
     @Test("explicit API and UI choices win in both directions")
@@ -285,6 +341,33 @@ struct AgentReasoningDispatchTests {
         remoteAgent.runAsRemoteAgent = true
         _ = try await engine.completeChat(request: remoteAgent)
         #expect(await capture.parameters?.modelOptions["disableThinking"] == nil)
+    }
+
+    @Test("declared bundle default keeps agent dispatch off the synthetic rail")
+    func declaredDefaultDispatchLeavesContractUntouched() async throws {
+        let capture = Capture()
+        let capability = LocalReasoningCapability.Capability(
+            supportsThinking: true,
+            hasEnableThinkingKwarg: true,
+            templateInjectsThinkTag: true,
+            defaultThinkingOn: true,
+            declaredDefaultThinkingOn: true
+        )
+        let engine = ChatEngine(
+            services: [CaptureService(capture: capture, id: "ornith-fixture")],
+            installedModelsProvider: { [] },
+            reasoningCapabilityProvider: { _ in capability }
+        )
+
+        var agent = request()
+        agent.isAgentRequest = true
+        _ = try await engine.completeChat(request: agent)
+        #expect(await capture.parameters?.modelOptions["disableThinking"] == nil)
+
+        var explicitOff = agent
+        explicitOff.enable_thinking = false
+        _ = try await engine.completeChat(request: explicitOff)
+        #expect(await capture.parameters?.modelOptions["disableThinking"]?.boolValue == true)
     }
 
     @Test("DSV4 agent default stays on its dedicated effort rail")

@@ -354,14 +354,23 @@ struct MLXModel: Identifiable, Codable {
     /// Best estimate of the total model size in bytes.
     /// Uses explicit downloadSizeBytes if available, otherwise estimates based on parameters/quantization.
     var totalSizeEstimateBytes: Int64? {
-        if let bytes = downloadSizeBytes { return bytes }
+        if let bytes = downloadSizeBytes, bytes > 0 { return bytes }
 
         // Estimate based on params and quantization (without the runtime overhead multiplier)
         if let params = parameterCountBillions {
-            return Int64(params * bytesPerParameter * 1024 * 1024 * 1024)
+            let bytes = params * bytesPerParameter * Self.bytesPerGB
+            guard bytes.isFinite, bytes > 0, bytes <= Double(Int64.max) else { return nil }
+            return Int64(bytes.rounded(.up))
         }
 
         return nil
+    }
+
+    /// Whether the size is an authoritative Hub/local measurement or a
+    /// temporary name-derived fallback.
+    var sizeEstimateSource: ModelSizeEstimateSource? {
+        if let bytes = downloadSizeBytes, bytes > 0 { return .measured }
+        return totalSizeEstimateBytes == nil ? nil : .metadataFallback
     }
 
     /// Local directory where this model should be stored.
@@ -518,6 +527,31 @@ struct MLXModel: Identifiable, Codable {
         let value = computeIsVLM()
         if usesSharedCache {
             MLXModelDownloadCache.setVLM(value, for: id)
+        }
+        return value
+    }
+
+    /// Whether this bundle's checkpoint actually carries audio tensors.
+    ///
+    /// The composer used to decide audio purely from the model NAME, via
+    /// `ModelMediaCapabilities.from(modelId:)`. The checkpoint-fact-driven
+    /// answer already existed in `from(directory:modelId:)`, which scans the
+    /// safetensors index for `embed_audio.embedding_projection` — nothing on
+    /// the composer path reached it. Live result: gemma-4 E2B-it-8bit, which
+    /// does carry that tensor, offered "Select files to attach (image
+    /// supported)" and greyed every `.wav` out, so an audio-capable model
+    /// could not be given audio at all.
+    ///
+    /// Memoized like `isVLM` because the probe reads the index off disk and
+    /// the composer asks from a SwiftUI body getter.
+    var hasAudioTensors: Bool {
+        let usesSharedCache = rootDirectory == nil && bundleDirectory == nil
+        if usesSharedCache, let cached = MLXModelDownloadCache.cachedAudio(for: id) {
+            return cached
+        }
+        let value = isDownloaded && ModelMediaCapabilities.bundleCarriesAudio(directory: localDirectory)
+        if usesSharedCache {
+            MLXModelDownloadCache.setAudio(value, for: id)
         }
         return value
     }
@@ -687,8 +721,8 @@ struct MLXModel: Identifiable, Codable {
         }
     }
 
-    /// Estimated memory required to run this model (in GB), including overhead
-    /// for KV cache, activations, and runtime buffers.
+    /// Estimated baseline memory required to run this model (in GB), including
+    /// ordinary chat activations and runtime buffers.
     ///
     /// Prefers the **measured** on-disk size (folded in from `ModelSizeCache`
     /// via `withDownloadSize`) when known — weights dominate the footprint, so
@@ -696,35 +730,29 @@ struct MLXModel: Identifiable, Codable {
     /// the `params × bytesPerParameter` constant heuristic. The heuristic is
     /// only the fallback for entries we haven't sized yet.
     var estimatedMemoryGB: Double? {
-        if let dlBytes = downloadSizeBytes, dlBytes > 0 {
-            return GPUMemoryBudget.estimatedChatWorkingSetBytes(
-                onDiskBytes: dlBytes
-            ).map { Double($0) / Self.bytesPerGB }
-        }
-        if let params = parameterCountBillions {
-            return params * bytesPerParameter * 1e9 * 1.25 / Self.bytesPerGB
-        }
-        return nil
+        guard let bytes = totalSizeEstimateBytes else { return nil }
+        return GPUMemoryBudget.estimatedChatWorkingSetBytes(onDiskBytes: bytes)
+            .map { Double($0) / Self.bytesPerGB }
     }
 
-    /// Formatted estimated memory string (e.g. "~3.5 GB")
+    /// Formatted estimated running-memory value (e.g. "3.5 GB"). Call sites
+    /// label it as estimated instead of embedding an approximation marker,
+    /// which avoids constructions such as "~~3.5 GB".
     var formattedEstimatedMemory: String? {
         guard let gb = estimatedMemoryGB else { return nil }
         return gb < 1.0
-            ? String(format: "~%.0f MB", gb * 1024)
-            : String(format: "~%.1f GB", gb)
+            ? String(format: "%.0f MB", gb * 1024)
+            : String(format: "%.1f GB", gb)
     }
 
-    /// Comfortably inside the GPU working set, with room for a long-context KV
-    /// cache to grow.
-    private static let comfortableBudgetRatio: Double = 0.85
-    /// The most a working set may overshoot the budget and still be offered.
-    /// `GPUMemoryBudget.defaultBudgetGB` is the conservative split rather than
-    /// the larger one modern macOS advertises, and the recommended working set
-    /// is a recommendation rather than a cliff, so a small overshoot is
-    /// survivable — it just leaves nothing for other apps. Past this the
-    /// weights get paged.
-    private static let maxBudgetRatio: Double = 1.10
+    /// Complete fit calculation used by every model-selection surface.
+    func memoryAssessment(totalMemoryGB: Double) -> ModelMemoryAssessment {
+        GPUMemoryBudget.assessment(
+            modelSizeBytes: totalSizeEstimateBytes,
+            sizeSource: sizeEstimateSource,
+            physicalMemoryGB: totalMemoryGB
+        )
+    }
 
     /// Assess whether this model can run on a Mac with `totalMemoryGB` of
     /// unified memory.
@@ -737,13 +765,7 @@ struct MLXModel: Identifiable, Codable {
     /// 48 GB Mac budgets only ~36 GB to the GPU: 89% of RAM, but 119% of what
     /// it can actually hold.
     func compatibility(totalMemoryGB: Double) -> ModelCompatibility {
-        guard let required = estimatedMemoryGB, totalMemoryGB > 0 else { return .unknown }
-        let budget = GPUMemoryBudget.budgetGB(physicalMemoryGB: totalMemoryGB)
-        guard budget > 0 else { return .unknown }
-        let ratio = required / budget
-        if ratio <= Self.comfortableBudgetRatio { return .compatible }
-        if ratio <= Self.maxBudgetRatio { return .tight }
-        return .tooLarge
+        memoryAssessment(totalMemoryGB: totalMemoryGB).compatibility
     }
 
     /// Compact month-and-year form of `releasedAt`, e.g. "Apr 2026" in English
@@ -770,6 +792,16 @@ enum ModelCompatibility {
     case tight
     case tooLarge
     case unknown
+
+    /// Shared plain-language verdict used anywhere a user chooses a model.
+    var displayName: String {
+        switch self {
+        case .compatible: return L("Runs well")
+        case .tight: return L("Memory may be tight")
+        case .tooLarge: return L("Not recommended")
+        case .unknown: return L("Not enough information")
+        }
+    }
 }
 
 // MARK: - Use Case

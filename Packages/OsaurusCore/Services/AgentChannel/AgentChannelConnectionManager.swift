@@ -74,6 +74,7 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
         AgentChannelConnection.nativeSlackConnectionId,
         AgentChannelConnection.nativeTelegramConnectionId,
         AgentChannelConnection.nativeIMessageConnectionId,
+        AgentChannelConnection.nativeWhatsAppConnectionId,
     ])
     private static let supportedHTTPMethods = Set(["GET", "POST", "PUT", "PATCH", "DELETE"])
 

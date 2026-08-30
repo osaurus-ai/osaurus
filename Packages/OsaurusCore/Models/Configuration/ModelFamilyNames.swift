@@ -163,4 +163,14 @@ enum ModelFamilyNames {
     static func isZayaVLFamily(_ modelId: String) -> Bool {
         matches(#"(^|/)zaya[\-_]?1[\-_]?vl($|[\-_/\.0-9])"#, in: modelId.lowercased())
     }
+
+    /// Muse Glimmer. Its reasoning control is the template variable
+    /// `reasoning_strength` carrying low/medium/high/xhigh, not the
+    /// `enable_thinking` + `reasoning_effort` pair every other family uses, so
+    /// the context builder needs to branch on it explicitly.
+    static func isMuseGlimmerFamily(_ modelId: String) -> Bool {
+        let lower = modelId.lowercased()
+        return matches(#"(^|/)muse[\-_]?glimmer($|[\-_/\.0-9])"#, in: lower)
+            || lower.contains("muse_glimmer") || lower.contains("muse-glimmer")
+    }
 }

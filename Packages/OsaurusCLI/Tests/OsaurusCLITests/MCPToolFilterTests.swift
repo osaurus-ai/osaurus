@@ -17,7 +17,7 @@ struct MCPToolFilterTests {
     // MARK: - Matching
 
     @Test func exactNamesMatchOnlyThemselves() throws {
-        let filter = try #require(MCPToolFilter(patterns: "osaurus_status,osaurus_list"))
+        let filter = MCPToolFilter(patterns: "osaurus_status,osaurus_list")
 
         #expect(filter.admits("osaurus_status"))
         #expect(filter.admits("osaurus_list"))
@@ -27,7 +27,7 @@ struct MCPToolFilterTests {
     }
 
     @Test func trailingStarMatchesByPrefix() throws {
-        let filter = try #require(MCPToolFilter(patterns: "osaurus_*"))
+        let filter = MCPToolFilter(patterns: "osaurus_*")
 
         #expect(filter.admits("osaurus_status"))
         #expect(filter.admits("osaurus_agent"))
@@ -38,7 +38,7 @@ struct MCPToolFilterTests {
     }
 
     @Test func mixesExactAndPrefixPatterns() throws {
-        let filter = try #require(MCPToolFilter(patterns: "osaurus_*,shell_run"))
+        let filter = MCPToolFilter(patterns: "osaurus_*,shell_run")
 
         #expect(filter.admits("osaurus_describe"))
         #expect(filter.admits("shell_run"))
@@ -46,7 +46,7 @@ struct MCPToolFilterTests {
     }
 
     @Test func bareStarAdmitsEverything() throws {
-        let filter = try #require(MCPToolFilter(patterns: "*"))
+        let filter = MCPToolFilter(patterns: "*")
 
         #expect(filter.admits("anything"))
         #expect(filter.admits(""))
@@ -55,19 +55,17 @@ struct MCPToolFilterTests {
     // MARK: - Parsing hygiene
 
     @Test func whitespaceAndEmptyEntriesAreIgnored() throws {
-        let filter = try #require(MCPToolFilter(patterns: " osaurus_status , , osaurus_list ,"))
+        let filter = MCPToolFilter(patterns: " osaurus_status , , osaurus_list ,")
 
         #expect(filter.admits("osaurus_status"))
         #expect(filter.admits("osaurus_list"))
         #expect(!filter.admits(""))
     }
 
-    /// A value with no usable patterns must read as "no filter" rather than
-    /// "admit nothing" — the latter would silently produce an empty server.
-    @Test func emptyPatternsProduceNoFilter() {
-        #expect(MCPToolFilter(patterns: "") == nil)
-        #expect(MCPToolFilter(patterns: "   ") == nil)
-        #expect(MCPToolFilter(patterns: ",,,") == nil)
+    @Test func explicitEmptyPatternsFailClosed() {
+        #expect(!MCPToolFilter(patterns: "").admits("osaurus_status"))
+        #expect(!MCPToolFilter(patterns: "   ").admits("osaurus_status"))
+        #expect(!MCPToolFilter(patterns: ",,,").admits("osaurus_status"))
     }
 
     // MARK: - Argument extraction
@@ -86,12 +84,12 @@ struct MCPToolFilterTests {
     @Test func absentFlagMeansProxyEverything() {
         #expect(MCPToolFilter.parse(args: ["mcp"]) == nil)
         #expect(MCPToolFilter.parse(args: ["mcp", "--access-key", "osk-v1"]) == nil)
-        // A dangling `--tools` with no value can't be honored; treat as absent.
-        #expect(MCPToolFilter.parse(args: ["mcp", "--tools"]) == nil)
+        // A dangling explicit filter is a typo, so it fails closed.
+        #expect(MCPToolFilter.parse(args: ["mcp", "--tools"])?.admits("osaurus_status") == false)
     }
 
     @Test func summaryListsParsedPatterns() throws {
-        let filter = try #require(MCPToolFilter(patterns: "osaurus_status,osaurus_*"))
+        let filter = MCPToolFilter(patterns: "osaurus_status,osaurus_*")
         #expect(filter.summary.contains("osaurus_status"))
         #expect(filter.summary.contains("osaurus_*"))
     }

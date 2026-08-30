@@ -336,6 +336,29 @@ enum SubagentConfigurationStore {
         }
     }
 
+    /// One-time default-on migration for the orchestrator-first contract:
+    /// seed every existing custom agent into the DEFAULT / main-chat spawn
+    /// pool, exactly once (`spawnPoolSeeded` guards re-runs). Because seeding
+    /// never repeats, a user's later removal from the pool persists — an
+    /// empty pool is a valid seeded state, never an "unseeded" signal. New
+    /// agents don't rely on this: every creation path appends via
+    /// `AgentManager.registerInDefaultSpawnPool`.
+    @discardableResult
+    nonisolated static func seedSpawnPoolIfNeeded(
+        with agents: [Agent]
+    ) -> SubagentConfiguration {
+        mutate { current in
+            guard !current.spawnPoolSeeded else { return }
+            var seen = Set(current.spawnableAgentIDs)
+            for agent in agents where !agent.isBuiltIn {
+                if seen.insert(agent.id).inserted {
+                    current.spawnableAgentIDs.append(agent.id)
+                }
+            }
+            current.spawnPoolSeeded = true
+        }
+    }
+
     nonisolated static func invalidateSnapshot() {
         snapshotLock.lock()
         cachedSnapshot = nil

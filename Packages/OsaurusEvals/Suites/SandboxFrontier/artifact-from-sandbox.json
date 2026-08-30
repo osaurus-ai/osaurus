@@ -11,7 +11,7 @@
     "agentLoop": {
       "maxIterations": 12,
       "mustCallToolsInOrder": [
-        "sandbox_write_file",
+        "file_write",
         "share_artifact",
         "complete"
       ],

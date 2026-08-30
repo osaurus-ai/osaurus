@@ -504,25 +504,11 @@ struct AgentsView: View {
             newName = "\(agent.name) Copy \(counter)"
         }
 
-        let duplicated = Agent(
-            id: UUID(),
-            name: newName,
-            description: agent.description,
-            systemPrompt: agent.systemPrompt,
-            themeId: agent.themeId,
-            defaultModel: agent.defaultModel,
-            temperature: agent.temperature,
-            maxTokens: agent.maxTokens,
-            chatQuickActions: agent.chatQuickActions,
-            chatGreeting: agent.chatGreeting,
-            chatSubtitle: agent.chatSubtitle,
-            isBuiltIn: false,
-            createdAt: Date(),
-            updatedAt: Date()
-        )
+        let duplicated = AgentManager.duplicateRecord(from: agent, name: newName)
 
         AgentStore.save(duplicated)
         agentManager.refresh()
+        agentManager.registerInDefaultSpawnPool(duplicated)
         showSuccess("Duplicated as \"\(newName)\"")
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -967,12 +953,10 @@ private enum DetailTab: String, CaseIterable {
         case .configure: return L("Identity, model, and behavior overrides.")
         case .abilities:
             return L(
-                "Everything this agent can do — flip an ability and watch the startup context respond."
+                "Everything this agent can do. Context impact updates as you turn abilities on or off."
             )
         case .capabilities:
-            return L(
-                "Pick which tools this agent can use. Skills come from the shared library and are always available."
-            )
+            return L("Pick which tools this agent can use. Skills come from the shared library and are always available.")
         case .subagents:
             return L(
                 "Let this agent delegate work — control your Mac, hand tasks to other agents, or generate images."
@@ -1061,6 +1045,7 @@ private enum AgentTab: Hashable {
 // MARK: - Agent Detail View
 
 struct AgentDetailView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
     private let scheduleManager = ScheduleManager.shared
@@ -1118,6 +1103,7 @@ struct AgentDetailView: View {
     @State private var systemPrompt: String = ""
     @State private var temperature: String = ""
     @State private var maxTokens: String = ""
+    @State private var claudeCodeConfig: ClaudeCodeAgentConfig = .default
     @State private var selectedThemeId: UUID?
     @State private var chatQuickActions: [AgentQuickAction]?
     @State private var editingQuickActionId: UUID?
@@ -1149,6 +1135,10 @@ struct AgentDetailView: View {
     @State private var searchMemoryEnabled: Bool = false
     /// Native `web_search` gate — default ON (free providers need no setup).
     @State private var webSearchEnabled: Bool = true
+    /// Per-agent follow-up model override (only active while the global switch
+    /// is on). Empty inherits the shared core model. Model-only by design — a
+    /// per-agent suggester prompt would bust the chat model's KV cache.
+    @State private var followUpModel: String = ""
     @State private var selfSchedulingEnabled: Bool = false
     /// Local mirrors of the knowledge feature (`AgentSettings.knowledgeEnabled`
     /// + collection grants). The Features section binds these; `saveAgent`
@@ -1270,6 +1260,15 @@ struct AgentDetailView: View {
     /// it (the persisted bookmark on `Agent.hostWorkspaceBookmark` is the real
     /// grant). `nil` means no host folder is granted.
     @State private var hostWorkspacePath: String? = nil
+    /// One live startup-context estimate shared by every Abilities sub-tab.
+    /// Specialist editors report local values here before persistence lands.
+    @State private var abilityContextPreview: AgentAbilityContextPreview?
+    @State private var abilityContextDelta: Int?
+    @State private var abilityContextDeltaDismissTask: Task<Void, Never>?
+    @State private var abilityPreviewToolMode: ToolSelectionMode?
+    @State private var abilityPreviewToolNames: Set<String>?
+    @State private var abilityPreviewAutonomousConfig: AutonomousExecConfig?
+    @State private var abilityPreviewRegistryRevision = 0
     /// Editable mirror of `AutonomousExecConfig.sandboxAllowedDomains`
     /// (comma-joined). Committed (normalized + persisted) on submit.
     @State private var sandboxAllowedDomainsText: String = ""
@@ -1356,6 +1355,7 @@ struct AgentDetailView: View {
     @State private var copiedRouteURL: String?
     @State private var pickerItems: [ModelPickerItem] = []
     @State private var showModelPicker = false
+    @State private var showFollowUpModelPicker = false
     @State private var selectedModel: String?
     @State private var showCreateSchedule = false
     @State private var showCreateWatcher = false
@@ -1379,6 +1379,9 @@ struct AgentDetailView: View {
     /// this the tab strip can stay empty if the user opened this view before
     /// plugins finished loading.
     @State private var loadedPluginsRefreshNonce: UInt = 0
+
+    /// Routes the "Delete All Data" confirmation to the window's alert host.
+    @Environment(\.themedAlertScope) private var alertScope
 
     /// Per-agent slices of the cross-manager data this detail screen
     /// renders. Refreshed by `refreshDetailCaches()` so the body
@@ -1448,7 +1451,14 @@ struct AgentDetailView: View {
     private var tabContent: some View {
         switch selectedTab {
         case .builtIn(.capabilities):
-            AgentCapabilityManagerView(agentId: agent.id, onDismiss: nil)
+            AgentCapabilityManagerView(
+                agentId: agent.id,
+                onDismiss: nil,
+                onSelectionChanged: { mode, names in
+                    abilityPreviewToolMode = mode
+                    abilityPreviewToolNames = names
+                }
+            )
                 .environment(\.theme, themeManager.currentTheme)
                 .id(selectedTab)
         case .builtIn(.database):
@@ -1486,6 +1496,18 @@ struct AgentDetailView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// Context is an Abilities-group status, not destination content. Keep the
+    /// same compact control visible for built-in and plugin tabs in the group.
+    private var isAbilitiesGroupSelected: Bool {
+        switch selectedTab {
+        case .builtIn(.abilities), .builtIn(.capabilities), .builtIn(.subagents),
+            .builtIn(.sandbox), .plugin, .failedPlugin:
+            return true
+        default:
+            return false
         }
     }
 
@@ -1538,6 +1560,12 @@ struct AgentDetailView: View {
             DispatchQueue.main.async {
                 isInitialLoadComplete = true
             }
+        }
+        .task(id: abilityDraft) {
+            await refreshAbilityContextPreview()
+        }
+        .onDisappear {
+            abilityContextDeltaDismissTask?.cancel()
         }
         .onChange(of: agent.id) { _, _ in
             refreshDetailCaches()
@@ -1624,6 +1652,7 @@ struct AgentDetailView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
             loadedPluginsRefreshNonce &+= 1
+            abilityPreviewRegistryRevision &+= 1
             switch selectedTab {
             case .plugin(let pid):
                 let stillVisible = PluginManager.shared.plugins.contains {
@@ -1953,7 +1982,21 @@ struct AgentDetailView: View {
     /// group's tabs as pills below. `AgentDetailGroupedTabStrip` owns the
     /// chrome; this view only maps the agent's tab sources into groups.
     private var tabBar: some View {
-        AgentDetailGroupedTabStrip(groups: tabGroups, selection: $selectedTab)
+        AgentDetailGroupedTabStrip(
+            groups: tabGroups,
+            selection: $selectedTab,
+            trailingAccessory:
+                isAbilitiesGroupSelected
+                ? AnyView(
+                    AgentAbilityContextPreviewBar(
+                        preview: abilityContextPreview,
+                        delta: abilityContextDelta,
+                        enabledCount: abilityFlagValues.filter { $0 }.count,
+                        totalCount: abilityFlagValues.count
+                    )
+                )
+                : nil
+        )
     }
 
     private func tabItem(for tab: DetailTab) -> AgentDetailTabItem<AgentTab> {
@@ -2051,7 +2094,16 @@ struct AgentDetailView: View {
         voiceSection
         systemPromptSection
         defaultModelSection
-        claudeCodeSection
+        if ClaudeCodeConfiguration.isAvailable()
+            || selectedModel?.hasPrefix(ClaudeCodeConfiguration.modelPrefix) == true
+        {
+            claudeCodeSection
+        }
+        // Follow-up model override is a custom-agent lever; the Default agent
+        // always uses the shared core model.
+        if agent.id != Agent.defaultId {
+            followUpSection
+        }
         // The schedule-mode picker is configuration for the self-scheduling
         // feature, so it only appears once that capability is switched on
         // (the master toggle lives in Abilities → Overview). With it off
@@ -2061,6 +2113,7 @@ struct AgentDetailView: View {
             scheduleSection
         }
         advancedSettingsDisclosure
+        deleteAllDataSection
     }
 
     /// Routed by `selectedTab` from the body. Capabilities is rendered
@@ -2612,6 +2665,200 @@ struct AgentDetailView: View {
         }
     }
 
+    private var claudeCodeSection: some View {
+        AgentDetailSection(title: L("Claude Code"), icon: "terminal.fill") {
+            VStack(alignment: .leading, spacing: 14) {
+                Picker(
+                    L("Execution mode"),
+                    selection: Binding(
+                        get: { claudeCodeConfig.mode },
+                        set: { mode in updateClaudeCodeConfig { $0.mode = mode } }
+                    )
+                ) {
+                    Text("Agent", bundle: .module).tag(ClaudeCodeMode.agent)
+                    Text("Text only", bundle: .module).tag(ClaudeCodeMode.textOnly)
+                }
+                .pickerStyle(.segmented)
+
+                Text(
+                    claudeCodeConfig.mode == .agent
+                        ? "Claude Code runs its own agent loop. Read, Grep, and Glob are allowed by default; every wider capability is opt-in."
+                        : "Claude Code runs as a text generator with every built-in and MCP tool disabled.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+                Toggle(
+                    isOn: Binding(
+                        get: { claudeCodeConfig.allowWrites },
+                        set: { enabled in updateClaudeCodeConfig { $0.allowWrites = enabled } }
+                    )
+                ) {
+                    claudeCodePermissionLabel(
+                        title: "Allow file changes",
+                        detail: "Auto-approve Edit, Write, and NotebookEdit in the chat folder."
+                    )
+                }
+                .disabled(claudeCodeConfig.mode != .agent)
+
+                Toggle(
+                    isOn: Binding(
+                        get: { claudeCodeConfig.allowShell },
+                        set: { enabled in updateClaudeCodeConfig { $0.allowShell = enabled } }
+                    )
+                ) {
+                    claudeCodePermissionLabel(
+                        title: "Allow shell commands",
+                        detail: "Auto-approve Claude Code's Bash tool in the chat folder."
+                    )
+                }
+                .disabled(claudeCodeConfig.mode != .agent)
+
+                Toggle(
+                    isOn: Binding(
+                        get: { claudeCodeConfig.allowOsaurusTools },
+                        set: { enabled in
+                            updateClaudeCodeConfig {
+                                $0.allowOsaurusTools = enabled
+                                if !enabled { $0.allowOsaurusConfigWrites = false }
+                            }
+                        }
+                    )
+                ) {
+                    claudeCodePermissionLabel(
+                        title: "Allow Osaurus read tools",
+                        detail: "Attach a scoped MCP bridge for status, list, describe, and search."
+                    )
+                }
+                .disabled(claudeCodeConfig.mode != .agent)
+
+                Toggle(
+                    isOn: Binding(
+                        get: { claudeCodeConfig.allowOsaurusConfigWrites },
+                        set: { enabled in
+                            updateClaudeCodeConfig { $0.allowOsaurusConfigWrites = enabled }
+                        }
+                    )
+                ) {
+                    claudeCodePermissionLabel(
+                        title: "Allow Osaurus configuration changes",
+                        detail: "Permit agent, provider, model, plugin, and MCP configuration writes."
+                    )
+                }
+                .disabled(
+                    claudeCodeConfig.mode != .agent
+                        || !claudeCodeConfig.allowOsaurusTools
+                )
+            }
+            .toggleStyle(.switch)
+        }
+    }
+
+    private func claudeCodePermissionLabel(
+        title: LocalizedStringKey,
+        detail: LocalizedStringKey
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title, bundle: .module)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.primaryText)
+            Text(detail, bundle: .module)
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
+        }
+    }
+
+    private func updateClaudeCodeConfig(
+        _ mutate: (inout ClaudeCodeAgentConfig) -> Void
+    ) {
+        var next = claudeCodeConfig
+        mutate(&next)
+        claudeCodeConfig = next
+        agentManager.updateClaudeCodeConfig(next, for: agent.id)
+        showSaveIndicator()
+    }
+
+    /// Per-agent model override for follow-up suggestion generation. Applies
+    /// only while the global "Suggest Follow-Up Questions" switch is on. Model
+    /// is the only knob by design — routing follow-ups to a separate model
+    /// keeps them off the resident chat model so its KV cache survives.
+    private var followUpSection: some View {
+        AgentDetailSection(title: L("Follow-Up Model"), icon: "lightbulb") {
+            VStack(alignment: .leading, spacing: 10) {
+                Button {
+                    showFollowUpModelPicker.toggle()
+                } label: {
+                    HStack(spacing: 8) {
+                        if !followUpModel.isEmpty {
+                            Text(formatModelName(followUpModel))
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(theme.primaryText)
+                                .lineLimit(1)
+                        } else {
+                            Text("Default (shared core model)", bundle: .module)
+                                .font(.system(size: 13))
+                                .foregroundColor(theme.placeholderText)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(theme.inputBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(theme.inputBorder, lineWidth: 1)
+                            )
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .popover(isPresented: $showFollowUpModelPicker, arrowEdge: .bottom) {
+                    ModelPickerView(
+                        options: pickerItems,
+                        selectedModel: Binding(
+                            get: { followUpModel.isEmpty ? nil : followUpModel },
+                            set: { newModel in
+                                followUpModel = newModel ?? ""
+                                debouncedSave()
+                            }
+                        ),
+                        agentId: agent.id,
+                        onDismiss: { showFollowUpModelPicker = false }
+                    )
+                }
+
+                if !followUpModel.isEmpty {
+                    Button {
+                        followUpModel = ""
+                        debouncedSave()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.system(size: 10))
+                            Text("Reset to default", bundle: .module)
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+
+                Text(
+                    "Generates this agent's follow-up questions on a separate, usually cheaper or faster model, so the chat model is never interrupted. Applies only while Suggest Follow-Up Questions is on in Chat settings.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+            }
+        }
+    }
+
     // MARK: - Scheduling
 
     /// Schedule-mode picker. Only shown when self-scheduling is enabled
@@ -2807,29 +3054,50 @@ struct AgentDetailView: View {
 
     // MARK: - Abilities Overview
 
-    /// Abilities → Overview tab: hero context estimate plus every
-    /// capability card. The primary on/off state lives here; the cards
+    /// Abilities → Overview tab: every capability card. The primary on/off state
+    /// lives here; the shared context card stays in the fixed tab chrome above.
     /// deep-link into the specialist tabs (Tools, Memory, Automation,
     /// Database, Sandbox) for detailed configuration.
     @ViewBuilder
     private var abilitiesTabContent: some View {
         tabHelperText(DetailTab.abilities.helperText)
-        AgentAbilitiesOverviewView(
-            agentId: agent.id,
-            draft: abilityDraft,
-            enabledCount: abilityFlagValues.filter { $0 }.count,
-            totalCount: abilityFlagValues.count
-        ) {
+        AgentAbilitiesOverviewView {
             abilityCards
         }
     }
 
-    /// The editor's LOCAL toggle state, priced live by the overview hero
-    /// before the debounced save lands. Code Execution isn't debounced —
-    /// it writes through `updateAutonomousExec` immediately — so its
-    /// current effective value is read from the manager.
+    /// The editor's complete LOCAL Abilities state, priced before any of the
+    /// three persistence lanes (debounced agent, immediate tools, async
+    /// sandbox) finish.
     private var abilityDraft: AgentAbilityContextPreview.Draft {
-        AgentAbilityContextPreview.Draft(
+        let toolMode =
+            abilityPreviewToolMode
+            ?? agentManager.effectiveToolSelectionMode(for: agent.id)
+        let toolNames =
+            abilityPreviewToolNames
+            ?? Set(agentManager.effectiveEnabledToolNames(for: agent.id) ?? [])
+        let autonomous =
+            abilityPreviewAutonomousConfig
+            ?? agentManager.effectiveAutonomousExec(for: agent.id)
+            ?? .default
+        let collectionIds = Set(knowledgeCollectionIds)
+        let collections = knowledgeManager.collections
+            .filter { collectionIds.contains($0.id) }
+            .map(\.grantDescriptor)
+        let spawnConfiguration = AgentSpawnConfigSnapshot(
+            agentIDs: spawnableAgentIDs.filter { $0 != agent.id },
+            modelNames: spawnableModelNames,
+            modelNotes: spawnableModelNotes,
+            budgets: SpawnBatchConcurrencyContract.applyingSharedLimit(
+                from: globalSubagentConfig,
+                to: subagentBudgets
+            ),
+            toolAccess: spawnToolAccess,
+            launcherModelOverride:
+                subagentModelOverrides[SubagentCapabilityRegistry.spawn.id]
+        )
+
+        return AgentAbilityContextPreview.Draft(
             toolsEnabled: toolsEnabled,
             memoryEnabled: memoryEnabled,
             dbEnabled: dbEnabled,
@@ -2840,10 +3108,54 @@ struct AgentDetailView: View {
             selfSchedulingEnabled: selfSchedulingEnabled,
             knowledgeEnabled: knowledgeEnabled,
             knowledgeCuratorEnabled: knowledgeCuratorEnabled,
-            codeExecutionEnabled:
-                agentManager.effectiveAutonomousExec(for: agent.id)?.enabled == true,
-            model: selectedModel
+            codeExecutionEnabled: autonomous.enabled,
+            model: selectedModel,
+            toolMode: toolMode,
+            manualToolNames: toolNames.sorted(),
+            computerUseEnabled: computerUseEnabled,
+            browserUseEnabled: browserUseEnabled,
+            spawnDelegationEnabled: spawnDelegationEnabled,
+            imageEnabled: imageEnabled,
+            videoEnabled: videoEnabled,
+            appleScriptEnabled: appleScriptEnabled,
+            spawnableAgentIDs: spawnableAgentIDs,
+            spawnableModelNames: spawnableModelNames,
+            spawnableModelNotes: spawnableModelNotes,
+            spawnConfiguration: spawnConfiguration,
+            autonomousConfig: autonomous,
+            knowledgeCollections: collections,
+            registryRevision: abilityPreviewRegistryRevision
         )
+    }
+
+    /// Recompose only when a budget input changes. The short debounce keeps
+    /// bulk tool/group flips and slider edits from opening the agent store on
+    /// every intermediate state.
+    @MainActor
+    private func refreshAbilityContextPreview() async {
+        try? await Task.sleep(nanoseconds: 140_000_000)
+        guard !Task.isCancelled else { return }
+        guard !StorageMutationGate.isRotationInFlight else { return }
+
+        let next = AgentAbilityContextPreview.compute(agentId: agent.id, draft: abilityDraft)
+        if let previous = abilityContextPreview {
+            let delta = next.highTokens - previous.highTokens
+            if delta != 0 {
+                abilityContextDelta = delta
+                abilityContextDeltaDismissTask?.cancel()
+                abilityContextDeltaDismissTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 2_600_000_000)
+                    guard !Task.isCancelled else { return }
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
+                        abilityContextDelta = nil
+                    }
+                }
+            }
+        }
+
+        withAnimation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.9)) {
+            abilityContextPreview = next
+        }
     }
 
     /// On/off values behind the hero's "N of M abilities on" counter, in
@@ -2860,7 +3172,9 @@ struct AgentDetailView: View {
                 webSearchEnabled,
                 selfSchedulingEnabled,
                 dbEnabled,
-                agentManager.effectiveAutonomousExec(for: agent.id)?.enabled == true,
+                abilityPreviewAutonomousConfig?.enabled
+                    ?? agentManager.effectiveAutonomousExec(for: agent.id)?.enabled
+                    ?? false,
                 hostWorkspacePath != nil,
             ]
         }
@@ -3078,7 +3392,7 @@ struct AgentDetailView: View {
             AgentAbilityCard(
                 title: "Knowledge",
                 subtitle:
-                    "Let the agent search and read the knowledge collections granted below: curated guides, templates, and standards. Separate from memory, knowledge is yours to edit and never written by the agent.",
+                    "Let the agent search, read and update the knowledge collections granted below: curated guides, templates, and standards. The agent shows you every change and waits for your approval before saving, and you can undo anything it writes from the Knowledge section.",
                 icon: "books.vertical",
                 isOn: toolBackedSaveBinding($knowledgeEnabled),
                 pausedNote: knowledgeReadinessNote,
@@ -3103,17 +3417,12 @@ struct AgentDetailView: View {
                     }
                 }
             }
-            if knowledgeEnabled {
-                AgentAbilityCard(
-                    title: "Curator",
-                    subtitle:
-                        "Let this agent draft document updates as pending proposals (it can also file and work staleness tickets). Nothing changes in a collection until you approve a proposal in the Knowledge section.",
-                    icon: "checkmark.seal",
-                    isOn: toolBackedSaveBinding($knowledgeCuratorEnabled),
-                    pausedNote: toolsPausedNote,
-                    onPausedNoteTap: flashToolsToggle
-                )
-            }
+            // The Curator toggle is gone. It gated `propose_knowledge_update`,
+            // which asked for consent twice and could never tell the agent
+            // whether its own work had landed. Writing follows the collection
+            // grant above, and each write is approved with a diff at call
+            // time. `knowledgeCuratorEnabled` remains on the model only so
+            // existing agent JSON still decodes; nothing reads it.
 
             AgentAbilityGroupHeader(
                 label: "Web",
@@ -3219,7 +3528,9 @@ struct AgentDetailView: View {
     private var codeExecutionAbilityCard: some View {
         let sandboxAvailable = SandboxManager.State.shared.availability.isAvailable
         let sandboxRunning = SandboxManager.State.shared.status == .running
-        let execConfig = agentManager.effectiveAutonomousExec(for: agent.id)
+        let execConfig =
+            abilityPreviewAutonomousConfig
+            ?? agentManager.effectiveAutonomousExec(for: agent.id)
 
         AgentAbilityCard(
             title: "Autonomous Execution",
@@ -3231,15 +3542,15 @@ struct AgentDetailView: View {
                     updateAutonomousExec(from: execConfig) { $0.enabled = enabled }
                 }
             ),
-            isInteractive: sandboxRunning,
+            isInteractive: sandboxAvailable,
             configureLabel: "Sandbox permissions & secrets",
             onConfigure: { selectedTab = .builtIn(.sandbox) }
         ) {
             if !sandboxAvailable {
-                sandboxFeatureHint("Container-based execution requires macOS 26 or later.")
+                sandboxFeatureHint("Sandboxed execution is unavailable on this device.")
             } else if !sandboxRunning {
                 sandboxFeatureHint(
-                    "Start the sandbox container from the Sandbox status bar to enable this."
+                    "This setting will apply when the sandbox starts."
                 )
             }
         }
@@ -5146,10 +5457,8 @@ struct AgentDetailView: View {
 
     /// Sandbox execution toggles, surfaced in the Sandbox tab's Execution
     /// section via the shared `featureCard` visual. `interactive` is false
-    /// when the sandbox is unavailable / not running: the rows still render
-    /// (so the capability is discoverable) but the switches are disabled
-    /// and dimmed, paired with an explanatory hint from
-    /// `sandboxExecSubsection`.
+    /// only when the sandbox is unavailable: users can configure execution
+    /// before first provisioning without triggering a runtime start.
     @ViewBuilder
     private func sandboxExecToggles(
         execConfig: AutonomousExecConfig?,
@@ -5223,105 +5532,25 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Claude Code backend settings. Only meaningful when the agent is on a
-    /// `claude-code/…` model, and only shown when the CLI is actually
-    /// installed — otherwise the whole section is noise.
-    @ViewBuilder
-    private var claudeCodeSection: some View {
-        if ClaudeCodeConfiguration.isAvailable() {
-            let config = agentManager.effectiveClaudeCodeConfig(for: agent.id)
-
-            AgentDetailSection(title: L("Claude Code"), icon: "terminal.fill") {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(
-                        "Applies when this agent runs a Claude Code model. Requests go through your signed-in Claude Code CLI and use your Claude subscription — Osaurus stores no Anthropic key.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                    featureCard(
-                        title: "Let Claude Code Use Its Own Tools",
-                        subtitle:
-                            "On: Claude Code runs its own agent loop and tools, and Osaurus shows a read-only trace. Off: it becomes a plain text generator with no tools at all (Osaurus's tools can't be given to it).",
-                        isOn: config.mode == .agent
-                    ) { agentMode in
-                        updateClaudeCode(from: config) { $0.mode = agentMode ? .agent : .textOnly }
-                    }
-
-                    if config.mode == .agent {
-                        featureCard(
-                            title: "Edit Files",
-                            subtitle:
-                                "Allow Claude Code to create and edit files in the working folder. Off keeps its run read-only.",
-                            isOn: config.allowWrites
-                        ) { allow in
-                            updateClaudeCode(from: config) { $0.allowWrites = allow }
-                        }
-
-                        featureCard(
-                            title: "Run Shell Commands",
-                            subtitle:
-                                "Allow Claude Code's Bash tool. This runs on your Mac under your own account — it is not confined by the Osaurus sandbox.",
-                            isOn: config.allowShell
-                        ) { allow in
-                            updateClaudeCode(from: config) { $0.allowShell = allow }
-                        }
-
-                        featureCard(
-                            title: "Give It Osaurus's Own Tools",
-                            subtitle:
-                                "Expose Osaurus's configuration tools so it can read this app's agents, models, and providers. Requires the Osaurus server to be running.",
-                            isOn: config.allowOsaurusTools
-                        ) { allow in
-                            updateClaudeCode(from: config) { $0.allowOsaurusTools = allow }
-                        }
-
-                        if config.allowOsaurusTools {
-                            featureCard(
-                                title: "Let It Change Osaurus Settings",
-                                subtitle:
-                                    "Also expose the tools that modify agents, providers, models, and plugins. Off keeps its view of Osaurus read-only.",
-                                isOn: config.allowOsaurusConfigWrites
-                            ) { allow in
-                                updateClaudeCode(from: config) {
-                                    $0.allowOsaurusConfigWrites = allow
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func updateClaudeCode(
-        from current: ClaudeCodeAgentConfig,
-        _ mutate: (inout ClaudeCodeAgentConfig) -> Void
-    ) {
-        var config = current
-        mutate(&config)
-        agentManager.updateClaudeCodeConfig(config, for: agent.id)
-    }
-
     /// Sandbox execution rows for the Sandbox tab's Execution section.
-    /// Shows the toggles in every sandbox state: dimmed + disabled (with an
-    /// explanatory hint) when the sandbox is unavailable or not running,
-    /// fully interactive once it's running. The tab gates this on
+    /// Shows the toggles in every sandbox state: disabled only when the
+    /// sandbox is unavailable, and otherwise configurable before first
+    /// provisioning. The tab gates this on
     /// `isCustomAgent`.
     @ViewBuilder
     private var sandboxExecSubsection: some View {
         let sandboxAvailable = SandboxManager.State.shared.availability.isAvailable
         let sandboxRunning = SandboxManager.State.shared.status == .running
-        let execConfig = agentManager.effectiveAutonomousExec(for: agent.id)
+        let execConfig =
+            abilityPreviewAutonomousConfig
+            ?? agentManager.effectiveAutonomousExec(for: agent.id)
 
-        sandboxExecToggles(execConfig: execConfig, interactive: sandboxRunning)
+        sandboxExecToggles(execConfig: execConfig, interactive: sandboxAvailable)
         if !sandboxAvailable {
             sandboxFeatureHint("Sandboxed execution is unavailable on this device.")
         } else if !sandboxRunning {
             sandboxFeatureHint(
-                "Start the sandbox from the Sandbox status bar to enable these."
+                "Changes will apply when the sandbox starts."
             )
         }
     }
@@ -5366,8 +5595,7 @@ struct AgentDetailView: View {
     }
 
     private func commitSandboxAllowedDomains(execConfig: AutonomousExecConfig?) {
-        let raw =
-            sandboxAllowedDomainsText
+        let raw = sandboxAllowedDomainsText
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
@@ -5398,12 +5626,15 @@ struct AgentDetailView: View {
         from current: AutonomousExecConfig?,
         _ mutate: (inout AutonomousExecConfig) -> Void
     ) {
+        let previous = current
         var config = current ?? .default
         mutate(&config)
+        abilityPreviewAutonomousConfig = config
         Task { @MainActor in
             do {
                 try await agentManager.updateAutonomousExec(config, for: agent.id)
             } catch {
+                abilityPreviewAutonomousConfig = previous
                 ToastManager.shared.error(
                     L("Failed to update sandbox access"),
                     message: error.localizedDescription
@@ -6225,6 +6456,119 @@ struct AgentDetailView: View {
         }
     }
 
+    /// Danger-zone card at the end of the General tab. Lets the user wipe the
+    /// agent's accumulated data (chats, facts, episodes) without deleting the
+    /// agent itself, which was previously the only way to start over.
+    private var deleteAllDataSection: some View {
+        AgentDetailSection(title: L("Delete All Data"), icon: "trash") {
+            Text("Remove this agent's chats and memory. The agent itself stays.", bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+
+            Button {
+                presentDeleteAllData()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11, weight: .medium))
+                    Text("Delete Data…", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(theme.errorColor)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.errorColor.opacity(0.1))
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+    }
+
+    /// Confirmation alert with per-category checkboxes so the user picks
+    /// exactly what to wipe instead of the app guessing. Uses the alert's
+    /// `customContent` slot rather than plain `buttons` because the dialog
+    /// stays up while the deletion runs: both buttons disable and the
+    /// destructive one shows a spinner, which the fire-and-dismiss standard
+    /// button row can't express.
+    private func presentDeleteAllData() {
+        let selection = AgentDataWipeSelection()
+        let requestId = UUID()
+        let scope = alertScope
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: L("Delete Agent Data"),
+                message: nil,
+                // Never rendered (customContent owns the button row). The
+                // destructive entry keeps the warning-triangle header, and
+                // the absence of a cancel-role button means clicking the
+                // dimmed overlay can't dismiss the dialog mid-deletion.
+                buttons: [.destructive(L("Delete Selected")) {}],
+                customContent: AnyView(
+                    AgentDataWipeDialogContent(
+                        selection: selection,
+                        message: L(
+                            "Choose what to permanently delete for \"\(currentAgent.name)\". The agent itself stays. This can't be undone."
+                        ),
+                        chatCount: chatSessions.count,
+                        factCount: pinnedFacts.count,
+                        episodeCount: episodes.count,
+                        onCancel: {
+                            ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                        },
+                        onDelete: {
+                            await performDeleteAllData(selection)
+                            ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                        }
+                    )
+                ),
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
+    }
+
+    private func performDeleteAllData(_ selection: AgentDataWipeSelection) async {
+        let wipeChats = selection.chats
+        let wipeFacts = selection.pinnedFacts
+        let wipeEpisodes = selection.episodes
+        guard wipeChats || wipeFacts || wipeEpisodes else { return }
+        let agentId = agent.id
+        let agentScope = agentId.uuidString
+        if wipeChats {
+            await ChatSessionsManager.shared.deleteAll(for: agentId)
+        }
+        // Memory DB deletes run off the main actor — same rationale as
+        // `loadMemoryData`: these calls dispatch-sync onto the DB's
+        // serial queue and can otherwise stall the appear path.
+        await Task.detached(priority: .userInitiated) {
+            let db = MemoryDatabase.shared
+            if !db.isOpen { try? db.open() }
+            if wipeFacts { try? db.deletePinnedFacts(forAgent: agentScope) }
+            if wipeEpisodes { try? db.deleteEpisodes(forAgent: agentScope) }
+            if wipeChats { try? db.deleteConversationMemory(forAgent: agentScope) }
+        }.value
+        if wipeFacts && wipeEpisodes && wipeChats {
+            // Full wipe: the on-disk vector index has nothing left to
+            // serve, so remove it rather than leaving deleted content
+            // in the encrypted store.
+            await MemorySearchService.shared.deleteAgentIndex(agentId: agentScope)
+        } else if wipeFacts || wipeEpisodes {
+            // Partial wipe: drop the in-memory instance; stale on-disk
+            // vectors resolve to missing SQL rows and are filtered on
+            // read, same as single-item deletes.
+            await MemorySearchService.shared.evictAgent(agentId: agentScope)
+        }
+        guard agentId == agent.id else { return }
+        refreshDetailCaches()
+        loadMemoryData()
+        showSuccess(L("Selected data deleted"))
+    }
+
     private func deletePinnedFact(_ factId: String) {
         try? MemoryDatabase.shared.deletePinnedFact(id: factId)
         // Drop the matching vector so search can't keep surfacing a fact that
@@ -6244,6 +6588,7 @@ struct AgentDetailView: View {
         systemPrompt = agent.systemPrompt
         temperature = agent.temperature.map { String($0) } ?? ""
         maxTokens = agent.maxTokens.map { String($0) } ?? ""
+        claudeCodeConfig = agentManager.effectiveClaudeCodeConfig(for: agent.id)
         selectedThemeId = agent.themeId
         chatQuickActions = agent.chatQuickActions
         chatGreetingDraft = agent.chatGreeting ?? ""
@@ -6255,6 +6600,7 @@ struct AgentDetailView: View {
         speakEnabled = agent.settings.speakEnabled
         searchMemoryEnabled = agent.settings.searchMemoryEnabled
         webSearchEnabled = agent.settings.webSearchEnabled
+        followUpModel = agent.settings.followUp.model
         selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
         knowledgeEnabled = agent.settings.knowledgeEnabled
         knowledgeCollectionIds = agent.settings.knowledgeCollectionIds
@@ -6286,6 +6632,9 @@ struct AgentDetailView: View {
         // Snapshot the global subagent config for the spawn-handoff warning.
         globalSubagentConfig = globalSpawnConfiguration
         hostWorkspacePath = agent.hostWorkspacePath
+        abilityPreviewToolMode = agentManager.effectiveToolSelectionMode(for: agent.id)
+        abilityPreviewToolNames = Set(agentManager.effectiveEnabledToolNames(for: agent.id) ?? [])
+        abilityPreviewAutonomousConfig = agentManager.effectiveAutonomousExec(for: agent.id)
         autoSpeak = agent.autoSpeak ?? false
         ttsVoice = agent.ttsVoice ?? ""
         avatar = agent.avatar
@@ -6455,6 +6804,7 @@ struct AgentDetailView: View {
             agentIndex: current.agentIndex,
             agentAddress: current.agentAddress,
             autonomousExec: current.autonomousExec,
+            claudeCode: current.claudeCode,
             pluginInstructions: effectivePluginInstructions,
             bonjourEnabled: current.bonjourEnabled,
             toolSelectionMode: current.toolSelectionMode,
@@ -6474,6 +6824,7 @@ struct AgentDetailView: View {
                 speakEnabled: speakEnabled,
                 searchMemoryEnabled: searchMemoryEnabled,
                 webSearchEnabled: webSearchEnabled,
+                followUp: AgentFollowUpConfig(model: followUpModel),
                 selfSchedulingEnabled: selfSchedulingEnabled,
                 computerUseEnabled: computerUseEnabled,
                 computerUseCeiling: computerUseEnabled ? computerUseCeiling : nil,
@@ -6547,6 +6898,160 @@ struct AgentDetailView: View {
                 saveIndicator = nil
             }
         }
+    }
+}
+
+// MARK: - Agent Data Wipe Dialog
+
+/// Selection state for the "Delete All Data" confirmation. A reference type
+/// so the alert accessory (checkboxes) and the destructive button's closure
+/// observe the same instance after `ThemedAlertCenter` captures the request.
+private final class AgentDataWipeSelection: ObservableObject {
+    @Published var chats = true
+    @Published var pinnedFacts = true
+    @Published var episodes = true
+}
+
+/// Body of the "Delete Agent Data" alert: message, per-category checkboxes,
+/// and its own Cancel / Delete Selected row (mirroring the standard alert
+/// button styling). Owns the in-progress state — while the deletion runs the
+/// checkboxes and both buttons disable and the destructive button swaps its
+/// label for a spinner, then `onDelete` dismisses the dialog when finished.
+private struct AgentDataWipeDialogContent: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject var selection: AgentDataWipeSelection
+    let message: String
+    let chatCount: Int
+    let factCount: Int
+    let episodeCount: Int
+    let onCancel: () -> Void
+    let onDelete: () async -> Void
+
+    @State private var isDeleting = false
+    @State private var hoveredButton: String?
+
+    private var nothingSelected: Bool {
+        !selection.chats && !selection.pinnedFacts && !selection.episodes
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(message)
+                .font(.system(size: 13))
+                .foregroundColor(theme.secondaryText)
+                .multilineTextAlignment(.center)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 12) {
+                row(L("Chat history"), count: chatCount, isOn: $selection.chats)
+
+                Text(L("Memory").uppercased())
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(theme.secondaryText)
+                    .tracking(0.3)
+                    .padding(.top, 10)
+
+                row(L("Pinned facts"), count: factCount, isOn: $selection.pinnedFacts)
+                row(L("Episodes"), count: episodeCount, isOn: $selection.episodes)
+
+                Text(
+                    "Chat history also removes the raw transcripts memory keeps for this agent.",
+                    bundle: .module
+                )
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
+                .padding(.top, 2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 12)
+            .disabled(isDeleting)
+            .opacity(isDeleting ? 0.6 : 1)
+
+            Rectangle()
+                .fill(theme.primaryBorder.opacity(0.3))
+                .frame(height: 1)
+                .padding(.top, 16)
+
+            HStack(spacing: 12) {
+                cancelButton
+                deleteButton
+            }
+            .padding(.top, 16)
+        }
+    }
+
+    private func row(_ title: String, count: Int, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: 6) {
+            Toggle(isOn: isOn) {
+                Text(title)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.primaryText)
+            }
+            .toggleStyle(.checkbox)
+
+            Spacer()
+
+            Text(verbatim: "\(count)")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var cancelButton: some View {
+        let isHovered = hoveredButton == "cancel" && !isDeleting
+        return Button {
+            onCancel()
+        } label: {
+            Text(L("Cancel"))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(theme.tertiaryBackground.opacity(isHovered ? 0.8 : 0.5))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(isHovered ? theme.primaryBorder : theme.cardBorder, lineWidth: 1)
+                )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .keyboardShortcut(.cancelAction)
+        .disabled(isDeleting)
+        .opacity(isDeleting ? 0.5 : 1)
+        .onHover { hoveredButton = $0 ? "cancel" : nil }
+    }
+
+    private var deleteButton: some View {
+        let disabled = isDeleting || nothingSelected
+        let isHovered = hoveredButton == "delete" && !disabled
+        let labelColor: Color = theme.isDark ? theme.primaryBackground : .white
+        return Button {
+            guard !isDeleting else { return }
+            isDeleting = true
+            Task { await onDelete() }
+        } label: {
+            HStack(spacing: 6) {
+                if isDeleting {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(labelColor)
+                }
+                Text(L("Delete Selected"))
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            .foregroundColor(labelColor)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(theme.errorColor.opacity(isHovered ? 0.9 : 1.0))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(PlainButtonStyle())
+        .keyboardShortcut(.defaultAction)
+        .disabled(disabled)
+        .opacity(disabled && !isDeleting ? 0.5 : 1)
+        .onHover { hoveredButton = $0 ? "delete" : nil }
     }
 }
 
@@ -7332,7 +7837,7 @@ private struct AgentEditorSheet: View {
 
             footerView
         }
-        .frame(width: 860, height: 580)
+        .fittedSheetFrame(width: 860, height: 580)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
@@ -7828,23 +8333,16 @@ private struct AgentEditorSheet: View {
         // agent so `seedEnabledCapabilitiesIfNeeded` is a no-op on first
         // Capabilities-tab open. The auto-grow path keeps these sets fresh
         // when new plugins are installed later.
-        let agent = Agent(
-            id: UUID(),
+        var agent = AgentManager.newCustomAgentRecord(
             name: trimmedName,
             description: "",
             systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
             themeId: nil,
-            defaultModel: selectedModel,
-            temperature: nil,
-            maxTokens: nil,
-            isBuiltIn: false,
-            createdAt: Date(),
-            updatedAt: Date(),
-            autonomousExec: AgentManager.sandboxDefaultAutonomousExec,
-            toolSelectionMode: draftMode,
-            manualToolNames: Array(draftToolNames),
-            avatar: selectedAvatar
+            defaultModel: selectedModel
         )
+        agent.toolSelectionMode = draftMode
+        agent.manualToolNames = Array(draftToolNames)
+        agent.avatar = selectedAvatar
 
         onSave(agent)
     }

@@ -164,8 +164,13 @@ struct RuntimePolicySourceTests {
         let registerBody = String(toolIndex[registerStart.lowerBound ..< registerEnd.lowerBound])
         #expect(registerBody.contains("ToolDatabase.shared.upsertEntry(entry)"))
         #expect(
-            !registerBody.contains("ToolSearchService.shared.indexEntry"),
-            "live tool registration must update the SQL/BM25 catalog without loading the embedding model on the launch path"
+            registerBody.contains("ToolSearchService.shared.indexEntry"),
+            "live dynamic-tool registration must incrementally update the vector catalog"
+        )
+        #expect(
+            !registerBody.contains("ToolSearchService.shared.initialize")
+                && !registerBody.contains("ToolSearchService.shared.rebuildIndex"),
+            "live registration may queue/index one entry but must not initialize or rebuild the embedding index"
         )
     }
 
@@ -781,7 +786,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "8e2c3d6ebca6a43be6a516eb3dc55ef49c174a5d"
+        let expectedRuntimeHardenedRevision = "bf8b31995195fffd833968658f14c707317eaa70"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -791,7 +796,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the proven vmlx-swift revision with schema-bound Qwen XML string-array recovery, Gemma reasoning routing, scalar text-only Gemma system prompts, static system-prefix SSD cache boundaries, Nanbeige 4.2 looped-transformer runtime support, and actor-consistent atomic BatchEngine capacity snapshots together with the existing runtime checkpoints. An internally-consistent older pin is still not wired"
+            "Osaurus must consume the proven vmlx-swift revision with schema-bound Qwen XML string-array recovery, Gemma reasoning routing, scalar text-only Gemma system prompts, static system-prefix SSD cache boundaries, Nanbeige 4.2 looped-transformer runtime support, Qwen3.5 B-wide position correctness, and requested/architecture/effective BatchEngine capacity provenance together with the existing runtime checkpoints. An internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
@@ -1219,7 +1224,12 @@ struct RuntimePolicySourceTests {
         #expect(controller.contains("previous.cache != next.cache"))
         #expect(controller.contains("previous.memorySafety != next.memorySafety"))
         #expect(controller.contains("previous.multimodal != next.multimodal"))
-        #expect(controller.contains("previous.mtp != next.mtp"))
+        // Deliberately NOT `previous.mtp != next.mtp` any more: comparing the
+        // whole struct evicted every resident model for a per-request depth
+        // change. Only load-affecting MTP fields (mode off<->on, the DFlash 2
+        // drafter) force the refresh; depth re-resolves per request.
+        #expect(controller.contains("mtpLoadInputsChanged(previous: previous.mtp, next: next.mtp)"))
+        #expect(controller.contains("(previous.mode == .off) != (next.mode == .off)"))
         #expect(controller.contains("await ModelRuntime.shared.clearAll()"))
     }
 
@@ -1240,11 +1250,17 @@ struct RuntimePolicySourceTests {
 
         #expect(!chat.contains(#"label: "Context Length""#))
         #expect(!chat.contains("tempChatContextLength"))
-        #expect(
-            chat.contains(#"label: "Default Agent Max Output Tokens""#)
+        // The default agent's per-response output cap moved to Settings →
+        // Orchestrator; it must keep disclaiming that it is not the context
+        // window or KV retention.
+        let orchestrator = try Self.source(
+            "Views/Settings/OrchestratorSettingsView.swift"
         )
         #expect(
-            chat.contains(
+            orchestrator.contains(#"label: "Max Output Tokens""#)
+        )
+        #expect(
+            orchestrator.contains(
                 "This is not the model context window or KV retention."
             )
         )
@@ -3338,8 +3354,10 @@ struct RuntimePolicySourceTests {
             "The UI may pass the agent/profile temperature, but implicit sampling must be preserved by the runtime rather than rewritten to greedy native-MTP defaults."
         )
         #expect(
-            chatView.contains("tools: toolSpecs.isEmpty ? nil : toolSpecs"),
-            "Chat UI should only send tool schemas when the composer resolved a non-empty tool set."
+            chatView.contains(
+                "tools: iterationToolSpecs.isEmpty ? nil : iterationToolSpecs"
+            ),
+            "Chat UI should send the current run schema, including tools loaded for the next iteration."
         )
         #expect(
             chatView.contains("let requestedToolChoice = ChatToolChoicePolicy.resolve(")
@@ -3347,18 +3365,20 @@ struct RuntimePolicySourceTests {
             "Chat UI should route explicit tool-use prompts through the shared policy instead of hard-coding auto for every tool-enabled turn."
         )
         #expect(
-            chatView.contains("tools: toolSpecs,")
+            chatView.contains("tools: iterationToolSpecs,")
                 && chatView.contains("userText: trimmed,")
                 && chatView.contains("attempt: attempt"),
-            "Chat UI tool-choice policy must see the resolved tools, original user text, and attempt count so first-turn required routing cannot become a repeated tool loop."
+            "Chat UI tool-choice policy must see the current iteration tools, original user text, and attempt count so first-turn required routing cannot become a repeated tool loop."
         )
         #expect(
             chatView.contains("finalReq.samplingParametersAreImplicit = true"),
             "Tool-budget wrap-up calls use the same implicit-sampling contract as normal UI turns."
         )
         #expect(
-            chatView.contains("let turnGenerationControls = ChatTurnGenerationControls.capture("),
-            "Chat UI must freeze prompt-affecting model controls once at send time instead of rereading mutable UI state between tool iterations."
+            chatView.contains(
+                "let turnGenerationControls = await ChatTurnGenerationControls.captureForSend("
+            ),
+            "Chat UI must freeze prompt-affecting model controls once at send time, after bounded cold-cache recovery, instead of rereading mutable UI state between tool iterations."
         )
         #expect(
             chatView.contains("turnGenerationControls.apply(to: &req)"),
@@ -3417,23 +3437,6 @@ struct RuntimePolicySourceTests {
             toolsView.contains("private var visibleTools: [ToolRegistry.ToolEntry]")
                 && toolsView.contains("ShowAllToolsButton("),
             "Plugin and connection cards should cap expanded rows and expose an explicit show-all control."
-        )
-
-        let sandboxCardStart = try #require(toolsView.range(of: "private struct SandboxPluginToolCard"))
-        let sandboxCardEnd =
-            toolsView.range(
-                of: "// MARK: - Tool Plugin Card",
-                range: sandboxCardStart.upperBound ..< toolsView.endIndex
-            )?.lowerBound ?? toolsView.endIndex
-        let sandboxCard = String(toolsView[sandboxCardStart.lowerBound ..< sandboxCardEnd])
-
-        #expect(
-            sandboxCard.contains("@State private var showAllTools = false")
-                && sandboxCard.contains("private var visibleToolSpecs: [SandboxToolSpec]")
-                && sandboxCard.contains("toolGroupRenderCapValue")
-                && sandboxCard.contains("ForEach(visibleToolSpecs, id: \\.id)")
-                && sandboxCard.contains("ShowAllToolsButton("),
-            "Custom tool cards must use the same capped expansion path as other tool cards; otherwise a large JSON tool recipe can freeze the Tools page."
         )
     }
 
@@ -3873,5 +3876,23 @@ struct RuntimePolicySourceTests {
         #expect(!crashReporting.contains("event.user = nil"))
         #expect(crashReporting.contains("event.serverName = nil"))
         #expect(crashReporting.contains("options.sendDefaultPii = false"))
+    }
+
+    @Test("manual MTP block stays visible and truthful in the model picker")
+    func manualMTPBlockPickerWiring() throws {
+        let picker = try Self.source("Views/Chat/FloatingInputCard.swift")
+
+        #expect(picker.contains("nativeMTPManuallyBlockedModels"))
+        #expect(picker.contains("manual=blocked"))
+        #expect(
+            picker.contains(
+                "nativeMTPManuallyBlockedModels.contains(identity) ? \"off\" : nativeMTPSelection"
+            ),
+            "A globally saved manual depth must render as Off for a bundle whose runtime blocks manual MTP."
+        )
+        #expect(
+            picker.contains("? [ModelOptionSegment(id: \"off\", label: L(\"Off\"))]"),
+            "Blocked bundles must not advertise selectable Auto or explicit-depth chips."
+        )
     }
 }

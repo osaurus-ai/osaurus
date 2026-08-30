@@ -135,6 +135,18 @@ struct ClaudeCodeStreamDecoderTests {
         #expect(stop == "max_tokens")
     }
 
+    @Test func statsPreferAPIGenerationDuration() {
+        let events = decode([
+            #"{"type":"result","subtype":"success","is_error":false,"duration_ms":10000,"duration_api_ms":2000,"usage":{"output_tokens":40}}"#
+        ])
+        guard case .stats(let tokens, let tps, _)? = events.last else {
+            Issue.record("expected stats, got \(String(describing: events.last))")
+            return
+        }
+        #expect(tokens == 40)
+        #expect(abs(tps - 20.0) < 0.001)
+    }
+
     @Test func errorResultSurfacesFailure() {
         let events = decode([
             #"{"type":"result","subtype":"error_during_execution","is_error":true,"duration_ms":10,"result":"upstream exploded","usage":{"output_tokens":0}}"#

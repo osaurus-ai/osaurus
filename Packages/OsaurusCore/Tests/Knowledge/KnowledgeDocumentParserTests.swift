@@ -38,6 +38,48 @@ struct KnowledgeDocumentParserTests {
     }
 
     @Test
+    func preservesNonReservedFieldsAsExtrasInSourceOrder() {
+        let markdown = """
+            ---
+            status: draft
+            type: note
+            title: Meeting Notes
+            source: https://example.com/spec
+            sensitivity: private
+            tags: [ops]
+            ---
+            body
+            """
+        let (frontmatter, _) = KnowledgeDocumentParser.parse(markdown: markdown)
+        #expect(frontmatter.docType == "note")
+        #expect(
+            frontmatter.extras == [
+                KnowledgeFrontmatterField(key: "status", value: "draft"),
+                KnowledgeFrontmatterField(key: "source", value: "https://example.com/spec"),
+                KnowledgeFrontmatterField(key: "sensitivity", value: "private"),
+            ]
+        )
+    }
+
+    @Test
+    func rendersListAndNestedExtras() {
+        let markdown = """
+            ---
+            title: Doc
+            aliases: [okf, knowledge]
+            review:
+              owner: sam
+              due: 2026-09-01
+            ---
+            body
+            """
+        let (frontmatter, _) = KnowledgeDocumentParser.parse(markdown: markdown)
+        #expect(frontmatter.extras.map(\.key) == ["aliases", "review"])
+        #expect(frontmatter.extras[0].value == "okf, knowledge")
+        #expect(frontmatter.extras[1].value == "due: 2026-09-01, owner: sam")
+    }
+
+    @Test
     func normalizesCommaStringTags() {
         let markdown = """
             ---

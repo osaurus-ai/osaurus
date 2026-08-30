@@ -57,8 +57,22 @@ final class OsaurusRouterAccountService: ObservableObject {
         }
     }
 
+    /// User-facing balance in credits (e.g. "72,500 credits") for sentence
+    /// contexts like chat modals. Micro-USD stays the internal unit; dollars
+    /// appear only in the top-up flow.
     var formattedBalance: String {
-        OsaurusRouter.formatMicroUSD(balance?.balanceMicro ?? "0")
+        OsaurusRouter.formatMicroAsCredits(balance?.balanceMicro ?? "0")
+    }
+
+    /// Hero balance figure without the unit ("212,085"); pair with a small
+    /// "credits" caption so large balances don't blow out headline layouts.
+    var formattedBalanceValue: String {
+        OsaurusRouter.formatMicroAsCreditsValue(balance?.balanceMicro ?? "0")
+    }
+
+    /// Abbreviated balance for tight chrome ("212.1K credits").
+    var compactFormattedBalance: String {
+        OsaurusRouter.formatMicroAsCreditsCompact(balance?.balanceMicro ?? "0")
     }
 
     /// Current balance in micro-USD (0 when unknown or unparseable).

@@ -40,6 +40,10 @@ public enum WhatsNewAction: Hashable, Sendable {
     case openBrowserSettings
     /// Open Management → Channels.
     case openChannelsSettings
+    /// Reveal the chat sidebar's Projects tab.
+    case openProjects
+    /// Open Settings → Orchestrator (identity + delegation helpers).
+    case openOrchestratorSettings
 }
 
 public struct WhatsNewPage: Identifiable, Hashable, Sendable {
@@ -103,47 +107,11 @@ public enum WhatsNewContent {
     /// here whose `version` matches `CFBundleShortVersionString` for each
     /// release that should announce changes on first launch after update.
     public static let releases: [WhatsNewRelease] = [
-        knowledge_0_22_7,
         browserUse_0_22_9,
         channels_0_22_13,
+        projects_0_22_23,
+        orchestrator_0_24_0,
     ]
-
-    /// First-launch announcement for knowledge collections in 0.22.7.
-    /// Three pages: what a collection is and the formats it indexes,
-    /// the per-agent grant model in the Abilities tab, and the curator
-    /// propose/approve loop. The final CTA deep-links to
-    /// Management → Knowledge via `openKnowledgeSettings`.
-    private static let knowledge_0_22_7 = WhatsNewRelease(
-        version: "0.22.7",
-        pages: [
-            WhatsNewPage(
-                id: "knowledge-0.22.7:summary",
-                title: "Knowledge Base",
-                titlePrefix: "Introducing",
-                description:
-                    "Point Osaurus at folders of reference material like team guides, standards, specs, and spreadsheets, and your agents can search and read them on demand. Markdown, plain text, code, PDF, Word, Excel, PowerPoint, and CSV files are all indexed, entirely on your Mac.",
-                systemImage: "books.vertical.fill"
-            ),
-            WhatsNewPage(
-                id: "knowledge-0.22.7:grants",
-                title: "Granted per agent",
-                eyebrow: "Introducing Knowledge Base",
-                description:
-                    "Each agent only sees the knowledge bases you check in its Abilities tab. Everything else stays invisible to it. Edit a file in the folder and the index updates live, no restart needed.",
-                systemImage: "checklist"
-            ),
-            WhatsNewPage(
-                id: "knowledge-0.22.7:curation",
-                title: "Agents propose, you approve",
-                eyebrow: "Introducing Knowledge Base",
-                description:
-                    "Turn on the Curator ability and an agent can flag stale documents and draft updates, but nothing is ever written until you review the diff and approve it in the Knowledge tab.",
-                systemImage: "checkmark.seal.fill",
-                actionLabel: "Open Knowledge",
-                action: .openKnowledgeSettings
-            ),
-        ]
-    )
 
     /// First-launch announcement for native Browser Use in 0.22.9.
     /// Three pages: what it does and the persistent per-agent sessions
@@ -215,6 +183,79 @@ public enum WhatsNewContent {
                 systemImage: "checkmark.shield.fill",
                 actionLabel: "Open Channels",
                 action: .openChannelsSettings
+            ),
+        ]
+    )
+
+    /// First-launch announcement for Projects in 0.22.23. Three pages:
+    /// what a project bundles, the shared memory that carries across every
+    /// chat and agent, and how to start one. The final CTA reveals the
+    /// sidebar's Projects tab via `openProjects`.
+    private static let projects_0_22_23 = WhatsNewRelease(
+        version: "0.22.23",
+        pages: [
+            WhatsNewPage(
+                id: "projects-0.22.23:summary",
+                title: "Projects",
+                titlePrefix: "Introducing",
+                description:
+                    "Group related chats into a project so they share one set of instructions, knowledge collections, and memory. Everything you work on in a project stays together, and every new chat starts with the same context instead of a blank slate.",
+                systemImage: "folder.fill"
+            ),
+            WhatsNewPage(
+                id: "projects-0.22.23:memory",
+                title: "Memory shared across every chat",
+                eyebrow: "Introducing Projects",
+                description:
+                    "Chats in a project pool their memory, so a fact learned in one chat is recalled in another right away, even across different agents. It works even for agents whose own memory is off. They read and add to the project's shared memory without building any personal memory of their own.",
+                systemImage: "brain"
+            ),
+            WhatsNewPage(
+                id: "projects-0.22.23:start",
+                title: "Start in the sidebar",
+                eyebrow: "Introducing Projects",
+                description:
+                    "Open the Projects tab in the sidebar to create one, set its instructions, knowledge, and default agent, then pull in existing chats or start new ones. Your existing chats and memory are untouched until you add them.",
+                systemImage: "folder.badge.plus",
+                actionLabel: "Open Projects",
+                action: .openProjects
+            ),
+        ]
+    )
+
+    /// First-launch announcement for the Orchestrator in 0.24.0. Three
+    /// pages: the default agent's new role (declarative config + delegation),
+    /// the delegation helpers and their safety rails, and the new
+    /// Settings → Orchestrator tab for identity + delegation. The final CTA
+    /// deep-links to Settings → Orchestrator.
+    private static let orchestrator_0_24_0 = WhatsNewRelease(
+        version: "0.24.0",
+        pages: [
+            WhatsNewPage(
+                id: "orchestrator-0.24.0:summary",
+                title: "The Orchestrator",
+                titlePrefix: "Introducing",
+                description:
+                    "Your default agent grew up. Beyond setting up Osaurus and answering questions, it now manages your whole configuration as one reviewable document — it plans every change, shows you exactly what would happen, and applies only after you approve — and it can delegate real work to your agents.",
+                systemImage: "point.3.connected.trianglepath.dotted"
+            ),
+            WhatsNewPage(
+                id: "orchestrator-0.24.0:delegation",
+                title: "Delegates work to your agents",
+                eyebrow: "Introducing the Orchestrator",
+                description:
+                    "Ask for something bigger and the Orchestrator can spawn your custom agents and allowed local or cloud models as helpers — in parallel, each within budgets you set for tokens, turns, tool calls, and time. A RAM-safety preflight keeps parallel local models from overwhelming your Mac, and results flow back into one conversation.",
+                systemImage: "square.stack.3d.up.fill"
+            ),
+            WhatsNewPage(
+                id: "orchestrator-0.24.0:settings",
+                title: "Make it yours",
+                eyebrow: "Introducing the Orchestrator",
+                description:
+                    "The Orchestrator has its own home in Settings: give it a name, write its persona, tune its generation, and choose exactly which agents and models it may delegate to. Delegation stays off until you allow specific helpers.",
+                systemImage: "slider.horizontal.3",
+                actionLabel: "Open Orchestrator settings",
+                action: .openOrchestratorSettings
             ),
         ]
     )

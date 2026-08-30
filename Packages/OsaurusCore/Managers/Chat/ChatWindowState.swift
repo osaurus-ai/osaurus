@@ -55,7 +55,21 @@ final class ChatWindowState: ObservableObject {
 
     // MARK: - View State
 
-    @Published var showSidebar: Bool = false
+    /// Session sidebar starts open so a fresh window surfaces chat history
+    /// immediately; the toolbar toggle still collapses it per window.
+    @Published var showSidebar: Bool = true
+
+    /// True while the content area shows a project detail page instead of
+    /// the chat surface. Set by `ChatView`; read by the toolbar item views
+    /// so chat-specific chrome (agent pill, window pin) hides with it.
+    @Published var isProjectPageVisible: Bool = false
+
+    /// True when the current chat was entered FROM its project's detail page
+    /// (as opposed to the sidebar's Chats tab). The toolbar's back-to-project
+    /// button uses this only to pick its icon: a back chevron when returning
+    /// retraces the user's path, a folder when the project page would be new
+    /// navigation. Set alongside `loadSession`/`startNewChat` by `ChatView`.
+    @Published var enteredChatFromProjectPage: Bool = false
 
     /// Drives the "a local model is already running in another window" alert
     /// raised when the user tries to start a second local generation. Only one
@@ -168,13 +182,14 @@ final class ChatWindowState: ObservableObject {
         self.foundationModelAvailable = AppConfiguration.shared.foundationModelAvailable
         self.theme = Self.loadTheme(for: agentId)
 
-        // Load initial data
-        self.agents = AgentManager.shared.agents
+        // Load initial data.
+        let allAgents = AgentManager.shared.agents
+        self.agents = allAgents
         self.filteredSessions = ChatSessionsManager.shared.sessions(for: agentId)
 
         // Pre-compute view values
         self.cachedSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: agentId)
-        self.cachedActiveAgent = agents.first { $0.id == agentId } ?? .default
+        self.cachedActiveAgent = allAgents.first { $0.id == agentId } ?? .default
         self.cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
         decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
 
@@ -216,10 +231,11 @@ final class ChatWindowState: ObservableObject {
         self.foundationModelAvailable = AppConfiguration.shared.foundationModelAvailable
         self.theme = Self.loadTheme(for: context.agentId)
 
-        self.agents = AgentManager.shared.agents
+        let allAgents = AgentManager.shared.agents
+        self.agents = allAgents
         self.filteredSessions = ChatSessionsManager.shared.sessions(for: context.agentId)
         self.cachedSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: context.agentId)
-        self.cachedActiveAgent = agents.first { $0.id == context.agentId } ?? .default
+        self.cachedActiveAgent = allAgents.first { $0.id == context.agentId } ?? .default
         self.cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
         decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
 
@@ -249,6 +265,24 @@ final class ChatWindowState: ObservableObject {
         selectedDiscoveredAgent = nil
         selectedDiscoveredAgentProviderId = nil
         selectedRelayAgent = nil
+        // A registry-shared session is co-owned by its registering owner:
+        // this window closing must only unlink, never shut down the shared
+        // instance's warm-up controller or stop its run.
+        if LiveChatSessionRegistry.shared.isShared(session) {
+            if !session.turns.isEmpty { session.save() }
+            releaseSharedSessionIfNeeded()
+            return
+        }
+        // Persist BEFORE stop(), exactly like switchAgent/startNewChat do:
+        // stop() on a mid-prepare cancel takes the draft-restore rollback,
+        // which REMOVES the just-sent user turn to put its text back in the
+        // composer — but this window is being destroyed, so the restored
+        // draft dies with it and the close callback's later save() finds
+        // empty turns and bails. Verified live: closing during model load
+        // silently lost the user's message with no persisted trace. Saving
+        // first keeps the message; for a mid-stream close the post-cleanup
+        // save then overwrites this snapshot with the cancel-stamped turns.
+        if !session.turns.isEmpty { session.save() }
         // Shut the warm-up controller BEFORE stop(): stop() on an idle session
         // runs completeRunCleanup(), whose run-completed hook would otherwise
         // schedule a fresh warm-up for a session that is being torn down.
@@ -268,12 +302,20 @@ final class ChatWindowState: ObservableObject {
     func switchAgent(to newAgentId: UUID) {
         TTSService.shared.stop()
         if !session.turns.isEmpty { session.save() }
+        // Switching agents starts a fresh chat, and `reset`/`installFreshSession`
+        // both clear `projectId`. Preserve project membership across the switch:
+        // cross-agent work *inside* a project is the point, so switching agents
+        // from a project chat must keep the new chat in that project rather than
+        // silently dropping it (the project pill would vanish and the chat would
+        // stop sharing the project's instructions, knowledge, and memory).
+        let inheritedProjectId = session.projectId
         adoptAgent(newAgentId)
-        if detachRunningSessionIfNeeded() {
+        if releaseSharedSessionIfNeeded() || detachRunningSessionIfNeeded() {
             installFreshSession(agentId: newAgentId)
         } else {
             session.reset(for: newAgentId)
         }
+        session.projectId = inheritedProjectId
         refreshSessions()
         refreshSandboxChanges()
     }
@@ -282,7 +324,7 @@ final class ChatWindowState: ObservableObject {
         TTSService.shared.stop()
         if !session.turns.isEmpty { session.save() }
         flushCurrentSession()
-        if detachRunningSessionIfNeeded() {
+        if releaseSharedSessionIfNeeded() || detachRunningSessionIfNeeded() {
             installFreshSession(agentId: agentId)
         } else {
             session.reset(for: agentId)
@@ -291,6 +333,23 @@ final class ChatWindowState: ObservableObject {
         refreshSandboxChanges()
         // KPI: user started a new chat conversation. Count only.
         FeatureTelemetry.chatSessionStarted()
+    }
+
+    /// The sidebar is about to delete conversation `id`. If this window is
+    /// attached to it, move the window off it first. A registry-shared
+    /// (co-owned) instance must never be `reset()` in place — that
+    /// would wipe the co-owner's engagement; the owning surface stops and
+    /// unregisters it. Ordinary
+    /// sessions keep the old behavior: reset stops the run and clears the
+    /// view (never a background-registry handoff — the row is going away,
+    /// and an adopted run's completion save would resurrect it).
+    func prepareForSessionDeletion(id: UUID) {
+        guard session.sessionId == id else { return }
+        if releaseSharedSessionIfNeeded() {
+            installFreshSession(agentId: agentId)
+        } else {
+            session.reset()
+        }
     }
 
     func loadSession(_ sessionData: ChatSessionData) {
@@ -318,12 +377,22 @@ final class ChatWindowState: ObservableObject {
         if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: sessionData.id),
             let liveSession = liveTask.chatSession
         {
+            releaseSharedSessionIfNeeded()
             detachRunningSessionIfNeeded()
             attachSession(liveSession, registryTaskId: liveTask.id)
-        } else if detachRunningSessionIfNeeded() {
-            // The chat we're leaving keeps running in the background; the
-            // target loads into a brand-new session so the two never share
-            // transcript state.
+        } else if let sharedSession = LiveChatSessionRegistry.shared.liveSession(
+            for: sessionData.id
+        ) {
+            // Another surface owns a live
+            // instance of this conversation: attach that exact object so
+            // both surfaces render one session and never race saves.
+            releaseSharedSessionIfNeeded()
+            detachRunningSessionIfNeeded()
+            attachSharedSession(sharedSession)
+        } else if releaseSharedSessionIfNeeded() || detachRunningSessionIfNeeded() {
+            // The chat we're leaving is co-owned by another surface, or
+            // keeps running in the background; the target loads into a
+            // brand-new session so the two never share transcript state.
             installFreshSession(agentId: targetAgentId, loading: resolvedData)
         } else {
             session.load(from: resolvedData)
@@ -369,6 +438,12 @@ final class ChatWindowState: ObservableObject {
     @discardableResult
     private func detachRunningSessionIfNeeded() -> Bool {
         guard session.isStreaming || session.awaitingClarify != nil else { return false }
+        // Registry-shared sessions are co-owned by their registering
+        // owner, which keeps an in-flight run alive after this window
+        // stops viewing it; adopting one into the background-task registry
+        // would create a second owner. `releaseSharedSessionIfNeeded` is the
+        // hand-off path for them.
+        guard !LiveChatSessionRegistry.shared.isShared(session) else { return false }
         guard BackgroundTaskManager.shared.adoptSession(session) != nil else { return false }
         // The detached run no longer belongs to this window: break the weak
         // window link so it can't push alerts into a view showing a
@@ -378,6 +453,32 @@ final class ChatWindowState: ObservableObject {
         session.onSessionChanged = nil
         BackgroundTaskManager.shared.unbindWindow(windowId)
         return true
+    }
+
+    /// Unlink this window from a registry-shared session (co-owned by
+    /// another surface) WITHOUT resetting, reloading, or
+    /// stopping it — the other surface keeps it live. Returns true when the
+    /// current session was shared and the caller must install a replacement
+    /// rather than mutate the released one.
+    @discardableResult
+    private func releaseSharedSessionIfNeeded() -> Bool {
+        guard LiveChatSessionRegistry.shared.isShared(session) else { return false }
+        session.windowState = nil
+        session.onSessionChanged = nil
+        BackgroundTaskManager.shared.unbindWindow(windowId)
+        return true
+    }
+
+    /// Attach a registry-shared live session so this window
+    /// renders the exact instance the other surface owns. Unlike
+    /// `attachSession` there is no background-task binding — the co-owner
+    /// governs the execution lifecycle.
+    private func attachSharedSession(_ sharedSession: ChatSession) {
+        sharedSession.windowState = self
+        sharedSession.onSessionChanged = { [weak self] in
+            self?.refreshSessionsDebounced()
+        }
+        session = sharedSession
     }
 
     /// Install a brand-new `ChatSession` for this window (optionally loading
@@ -442,8 +543,9 @@ final class ChatWindowState: ObservableObject {
     // MARK: - Refresh Methods
 
     func refreshAgents() {
-        agents = AgentManager.shared.agents
-        cachedActiveAgent = agents.first { $0.id == agentId } ?? .default
+        let allAgents = AgentManager.shared.agents
+        agents = allAgents
+        cachedActiveAgent = allAgents.first { $0.id == agentId } ?? .default
         cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
     }
 
@@ -463,8 +565,13 @@ final class ChatWindowState: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
     }
 
-    func refreshTheme() {
-        let newTheme = Self.loadTheme(for: agentId)
+    /// `freshAgent` lets callers that already hold the up-to-date agent (e.g.
+    /// the `applyAgentsUpdate` sink, which runs during `@Published`'s `willSet`
+    /// while `AgentManager.shared.agents` still holds the OLD array) resolve the
+    /// theme from that fresh value instead of re-reading the stale singleton —
+    /// otherwise the window's theme trails a per-agent theme change by one.
+    func refreshTheme(freshAgent: Agent? = nil) {
+        let newTheme = Self.loadTheme(for: agentId, freshAgent: freshAgent)
         let oldConfig = theme.customThemeConfig
         let newConfig = newTheme.customThemeConfig
         // Skip only if the full config is identical (not just the ID) and the
@@ -641,7 +748,10 @@ final class ChatWindowState: ObservableObject {
         session.invalidateTokenCache(preservingPromptShapeBaseline: true)
 
         if newActive.themeId != oldActive.themeId {
-            refreshTheme()
+            // Resolve from `newActive`: the singleton's `agents` is still the old
+            // array during this `willSet` sink, so re-reading it would apply the
+            // previous theme (a one-change lag).
+            refreshTheme(freshAgent: newActive)
         }
     }
 
@@ -673,8 +783,13 @@ final class ChatWindowState: ObservableObject {
         RemoteProviderManager.shared.removeProvider(id: providerId)
     }
 
-    private static func loadTheme(for agentId: UUID) -> ThemeProtocol {
-        if let themeId = AgentManager.shared.themeId(for: agentId),
+    private static func loadTheme(for agentId: UUID, freshAgent: Agent? = nil) -> ThemeProtocol {
+        // Prefer an explicitly-supplied fresh agent over the singleton, which can
+        // still be mid-update (see `refreshTheme(freshAgent:)`). The Default agent
+        // always uses the global theme, matching `AgentManager.themeId(for:)`.
+        let agent = freshAgent ?? AgentManager.shared.agent(for: agentId)
+        if let agent, agent.id != Agent.defaultId,
+            let themeId = agent.themeId,
             let custom = ThemeManager.shared.installedThemes.first(where: { $0.metadata.id == themeId })
         {
             return CustomizableTheme(config: custom)
@@ -682,12 +797,13 @@ final class ChatWindowState: ObservableObject {
         return ThemeManager.shared.currentTheme
     }
 
-    /// Built-in default agent renders as the localized "Osaurus" brand
-    /// label so the chat header carries the product name instead of the
-    /// internal `"Default"` id; custom agents render their stored name
-    /// verbatim.
+    /// Built-in default agent renders its localized display name (the
+    /// "Osaurus" brand label, or the user's custom Orchestrator name from
+    /// Settings → Orchestrator) so the chat header carries the product
+    /// name instead of the internal `"Default"` id; custom agents render
+    /// their stored name verbatim.
     private static func displayName(for agent: Agent) -> String {
-        agent.isBuiltIn ? L("Osaurus") : agent.name
+        agent.displayName
     }
 
     /// The identity that should head the chat thread / empty state right now.

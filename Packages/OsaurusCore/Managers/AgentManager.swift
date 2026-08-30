@@ -257,6 +257,7 @@ public final class AgentManager: ObservableObject {
         }
         installAgentSnapshot(migrated)
         SubagentConfigurationStore.migrateLegacyAgentNames(using: migrated)
+        SubagentConfigurationStore.seedSpawnPoolIfNeeded(with: migrated)
     }
 
     /// Return one Agent plus the three Spawn-scoped generations from the same
@@ -340,7 +341,33 @@ public final class AgentManager: ObservableObject {
         temperature: Float? = nil,
         maxTokens: Int? = nil
     ) -> Agent {
-        let agent = Agent(
+        let agent = Self.newCustomAgentRecord(
+            name: name,
+            description: description,
+            systemPrompt: systemPrompt,
+            themeId: themeId,
+            defaultModel: defaultModel,
+            temperature: temperature,
+            maxTokens: maxTokens
+        )
+        add(agent)
+        return agent
+    }
+
+    /// Shared seed for every newly authored custom agent, including the
+    /// regular create flow and onboarding. Keeping sandbox policy here avoids
+    /// one entry point silently drifting back to an unconfigured record.
+    static func newCustomAgentRecord(
+        name: String,
+        description: String = "",
+        systemPrompt: String = "",
+        themeId: UUID? = nil,
+        defaultModel: String? = nil,
+        temperature: Float? = nil,
+        maxTokens: Int? = nil,
+        now: Date = Date()
+    ) -> Agent {
+        Agent(
             id: UUID(),
             name: name,
             description: description,
@@ -350,18 +377,46 @@ public final class AgentManager: ObservableObject {
             temperature: temperature,
             maxTokens: maxTokens,
             isBuiltIn: false,
-            createdAt: Date(),
-            updatedAt: Date(),
+            createdAt: now,
+            updatedAt: now,
             autonomousExec: Self.sandboxDefaultAutonomousExec
         )
-        add(agent)
-        return agent
+    }
+
+    /// Build the record used by the Agents UI's duplicate action.
+    ///
+    /// `autonomousExec` is copied verbatim rather than re-seeded from the
+    /// default-on policy: `nil` remains unconfigured/default-on, while an
+    /// explicit `enabled: false` remains an opt-out on the duplicate.
+    static func duplicateRecord(
+        from agent: Agent,
+        name: String,
+        now: Date = Date()
+    ) -> Agent {
+        Agent(
+            id: UUID(),
+            name: name,
+            description: agent.description,
+            systemPrompt: agent.systemPrompt,
+            themeId: agent.themeId,
+            defaultModel: agent.defaultModel,
+            temperature: agent.temperature,
+            maxTokens: agent.maxTokens,
+            chatQuickActions: agent.chatQuickActions,
+            chatGreeting: agent.chatGreeting,
+            chatSubtitle: agent.chatSubtitle,
+            isBuiltIn: false,
+            createdAt: now,
+            updatedAt: now,
+            autonomousExec: agent.autonomousExec
+        )
     }
 
     /// Save a pre-built agent, refresh the list, and assign a cryptographic address.
     public func add(_ agent: Agent) {
         AgentStore.save(agent)
         refresh()
+        registerInDefaultSpawnPool(agent)
         // KPI: a user-created agent. Count only — no name or configuration.
         // Built-in agents are seeded by the app, not created by the user.
         if !agent.isBuiltIn {
@@ -389,6 +444,7 @@ public final class AgentManager: ObservableObject {
         if !agent.isBuiltIn {
             try? assignAddress(to: agent)
             let restored = self.agent(for: agent.id) ?? agent
+            registerInDefaultSpawnPool(restored)
             NotificationCenter.default.post(
                 name: .agentAdded,
                 object: nil,
@@ -397,6 +453,22 @@ public final class AgentManager: ObservableObject {
             return restored
         }
         return agent
+    }
+
+    /// Custom agents are spawnable by the orchestrator by DEFAULT: every
+    /// creation path (create/add, config apply, duplicate, bundle import,
+    /// backup restore) appends the new agent to the DEFAULT / main-chat spawn
+    /// pool. The user can remove it in Settings → Subagents — a removal
+    /// persists because this fires only on creation and the one-time seed
+    /// (`spawnPoolSeeded`) never re-runs. Eval/test agents written straight
+    /// through `AgentStore.save` intentionally stay out.
+    func registerInDefaultSpawnPool(_ agent: Agent) {
+        guard !agent.isBuiltIn else { return }
+        _ = SubagentConfigurationStore.mutate { config in
+            if !config.spawnableAgentIDs.contains(agent.id) {
+                config.spawnableAgentIDs.append(agent.id)
+            }
+        }
     }
 
     /// Set or replace the custom avatar image for `agentId`. Writes the bytes
@@ -640,6 +712,14 @@ public final class AgentManager: ObservableObject {
             setActiveAgent(Agent.defaultId)
         }
 
+        // Drop the agent from the DEFAULT / main-chat spawn pool. Agent
+        // UUIDs are never reused, so a stale entry would keep the
+        // orchestrator's `spawn_agent` tool visible (pool "non-empty")
+        // while advertising a target that can no longer resolve.
+        _ = SubagentConfigurationStore.mutate { config in
+            config.spawnableAgentIDs.removeAll { $0 == id }
+        }
+
         refresh()
 
         // Tear down plugin state FIRST and wait for it to finish. Plugins
@@ -662,9 +742,24 @@ public final class AgentManager: ObservableObject {
         // create permanent orphans in `agent-channels.json`.
         try? AgentChannelConnectionManager.shared.deleteBindings(agentId: id)
 
-        // Release the agent's in-memory vector index so a long-lived process
-        // doesn't accumulate one VecturaKit instance per deleted agent.
-        await MemorySearchService.shared.evictAgent(agentId: id.uuidString)
+        // Delete the agent's chat sessions and accumulated memory. Agent
+        // UUIDs are never reused, so without this the sessions, pinned
+        // facts, episodes, and raw transcripts of a deleted agent sat in
+        // the databases forever with no UI left that could reach them.
+        await ChatSessionsManager.shared.deleteAll(for: id)
+        let agentScope = id.uuidString
+        await Task.detached(priority: .userInitiated) {
+            let db = MemoryDatabase.shared
+            if !db.isOpen { try? db.open() }
+            try? db.deletePinnedFacts(forAgent: agentScope)
+            try? db.deleteEpisodes(forAgent: agentScope)
+            try? db.deleteConversationMemory(forAgent: agentScope)
+        }.value
+
+        // Drop the agent's vector index: the in-memory VecturaKit instance
+        // (so a long-lived process doesn't accumulate one per deleted
+        // agent) and the on-disk store, which is now all deleted content.
+        await MemorySearchService.shared.deleteAgentIndex(agentId: agentScope)
 
         // Wipe the agent's native browser profile (cookies / sign-ins /
         // history) and drop its session-catalog record. Without this a
@@ -726,12 +821,11 @@ extension AgentManager {
     /// Whether the sandbox (autonomous exec) toggle should default ON for
     /// newly created custom agents.
     ///
-    /// Gated on sandbox availability: the chat chip is hidden and the Linux VM
-    /// cannot run on unsupported machines (pre-macOS 26), so defaulting on
-    /// there would only inject an unusable placeholder into the model's
-    /// schema. Reading the published availability (seeded synchronously from
-    /// the OS version in `SandboxManager.State`) keeps this stable from the
-    /// first frame and lets tests force a value via
+    /// Gated on sandbox availability: macOS 26+ uses the Linux VM and older
+    /// supported hosts use the Seatbelt fallback. If neither backend exists,
+    /// defaulting on would only inject an unusable placeholder into the
+    /// model's schema. Reading the synchronously seeded published availability
+    /// keeps this stable from the first frame and lets tests force a value via
     /// `SandboxManager.State.shared.availability`.
     @MainActor
     public static var sandboxEnabledByDefault: Bool {
@@ -754,21 +848,37 @@ extension AgentManager {
     /// The built-in Default ("Osaurus") agent is configuration-only: it never
     /// runs autonomous exec, so it always resolves to `nil` (off) regardless
     /// of any stored value or sandbox availability. Custom agents carry their
-    /// own persisted value (seeded ON at creation for new agents where the
-    /// sandbox is supported, left untouched for existing ones), so they are
-    /// returned as-is.
+    /// own persisted value; an agent with no explicit choice defaults ON
+    /// where the sandbox is supported — the chat chip is gone, so agent
+    /// settings is the opt-out (which persists an explicit `enabled: false`).
     public func effectiveAutonomousExec(for agentId: UUID) -> AutonomousExecConfig? {
         guard let agent = agent(for: agentId) else {
             return nil
         }
+        return Self.resolvedAutonomousExec(
+            for: agent,
+            availability: SandboxManager.resolveAvailability()
+        )
+    }
 
+    /// Pure policy seam used by effective resolution and rollout tests.
+    static func resolvedAutonomousExec(
+        for agent: Agent,
+        availability: SandboxAvailability
+    ) -> AutonomousExecConfig? {
         // Single resolution point, so hard-off here also stops
         // `SandboxToolRegistrar` from provisioning a VM for the Default agent.
         if agent.id == Agent.defaultId {
             return nil
         }
 
-        return agent.autonomousExec
+        if let config = agent.autonomousExec {
+            return config
+        }
+
+        // Unconfigured agent: sandbox on by default on supported machines.
+        guard availability.isAvailable else { return nil }
+        return AutonomousExecConfig(enabled: true)
     }
 
     /// Claude Code backend config for an agent, falling back to the safe
@@ -800,15 +910,11 @@ extension AgentManager {
 
     /// Update sandbox execution config for an agent.
     ///
-    /// Provisioning is delegated to the notification-driven path:
-    /// `SandboxToolRegistrar.handleAgentUpdated` observes `.agentUpdated`
-    /// and calls `registerTools`, which calls
-    /// `SandboxAgentProvisioner.ensureProvisioned` (now coalesced per
-    /// agent). We deliberately do NOT also call `ensureProvisioned`
-    /// directly here — having two callers race through `ensureAgentUser`
-    /// caused the duplicate-attempt spam noted in the audit and
-    /// occasionally produced a `provisioningFailed` envelope even when
-    /// the second attempt would have succeeded.
+    /// Ordinary config edits use the notification-driven registration path.
+    /// An explicit OFF→ON transition additionally awaits the registrar's
+    /// coalesced first-use task, so UI success means real tools are ready.
+    /// Provisioning itself still has one owner (`SandboxToolRegistrar`);
+    /// this manager never races a direct `ensureProvisioned` call against it.
     public func updateAutonomousExec(_ config: AutonomousExecConfig?, for agentId: UUID) async throws {
         let wasEnabled = effectiveAutonomousExec(for: agentId)?.enabled ?? false
         let willBeEnabled = config?.enabled ?? false
@@ -832,7 +938,7 @@ extension AgentManager {
             // provisioning if needed), bypassing the `setupComplete` gate that
             // keeps the default-ON chip from auto-downloading at launch.
             // `provisionOnDemand` resets the startup-failure tracking for us.
-            SandboxToolRegistrar.shared.provisionOnDemand(for: agentId)
+            try await SandboxToolRegistrar.shared.provisionOnDemand(for: agentId)
         }
 
         // Mirror the per-agent egress choice onto the shared sandbox config
@@ -927,20 +1033,19 @@ extension AgentManager {
     /// the single source of truth; the narrower `effective*` accessors and
     /// `AgentConfigSnapshot.capture` all read from here.
     ///
-    /// Default agent: tools come from `DefaultAgentConfiguration`, memory
-    /// from the global switch only, and the editable per-agent capabilities
+    /// Default agent: tools are always available, memory comes from the global
+    /// switch, and the editable per-agent capabilities
     /// (DB, charts, speak, recall, self-scheduling) are hard-off — the
     /// default agent is locked to its fixed baseline.
     public func effectiveCapabilities(for agentId: UUID) -> AgentCapabilities {
         let globalMemoryEnabled = MemoryConfigurationStore.load().enabled
 
         // Unknown agent or the default agent: baseline capabilities (tools
-        // from DefaultAgentConfiguration, memory from the global switch,
+        // always available, memory from the global switch,
         // editable per-agent capabilities hard-off).
         guard let agent = agent(for: agentId), agent.id != Agent.defaultId else {
-            let cfg = DefaultAgentConfigurationStore.load()
             return AgentCapabilities(
-                toolsEnabled: !cfg.disableTools,
+                toolsEnabled: true,
                 memoryEnabled: globalMemoryEnabled,
                 dbEnabled: false,
                 renderChartEnabled: false,

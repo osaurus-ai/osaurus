@@ -63,7 +63,8 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                         "target": .object([
                             "type": .string("string"),
                             "description": .string(
-                                "Exact allowed agent UUID or model id for target_type."
+                                "For target_type `agent`: the agent's exact display name or its "
+                                    + "UUID. For `model`: the exact allowed model id."
                             ),
                         ]),
                         "input": .object([
@@ -272,6 +273,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         let admissionWaitSeconds: Double?
         let residencyMode: String?
         let engineOccupancy: ModelBatchCapacitySnapshot?
+        /// Capacity provenance reconciled after a cold engine has resolved.
+        /// Kept separate so admission-time occupancy remains truthful.
+        let resolvedEngineCapacity: ModelBatchCapacitySnapshot?
         let engineQueuedAtAdmission: Bool
 
         init(
@@ -289,6 +293,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             admissionWaitSeconds: Double?,
             residencyMode: String?,
             engineOccupancy: ModelBatchCapacitySnapshot? = nil,
+            resolvedEngineCapacity: ModelBatchCapacitySnapshot? = nil,
             engineQueuedAtAdmission: Bool = false
         ) {
             self.wave = wave
@@ -305,6 +310,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             self.admissionWaitSeconds = admissionWaitSeconds
             self.residencyMode = residencyMode
             self.engineOccupancy = engineOccupancy
+            self.resolvedEngineCapacity = resolvedEngineCapacity
             self.engineQueuedAtAdmission = engineQueuedAtAdmission
         }
 
@@ -328,9 +334,24 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 "capacity_snapshot":
                     localJobs > 0 ? "post_admission_capacity_plan" : "not_applicable",
                 "engine_capacity_source":
-                    engineOccupancy == nil ? "configured_cold_start" : "atomic_live",
+                    resolvedEngineCapacity != nil
+                    ? "atomic_post_execution"
+                    : (engineOccupancy == nil ? "configured_cold_start" : "atomic_live"),
+                "engine_requested_max":
+                    (resolvedEngineCapacity ?? engineOccupancy)?.requestedMaximum
+                    ?? NSNull(),
+                "engine_architecture_max":
+                    (resolvedEngineCapacity ?? engineOccupancy)?.architectureMaximum
+                    ?? NSNull(),
+                "engine_effective_max":
+                    (resolvedEngineCapacity ?? engineOccupancy)?.configuredMaximum
+                    ?? NSNull(),
+                // Compatibility alias retained for older consumers. New evals
+                // must score `engine_effective_max` and the two provenance
+                // fields above rather than treating this as a request width.
                 "engine_configured_max":
-                    engineOccupancy?.configuredMaximum ?? NSNull(),
+                    (resolvedEngineCapacity ?? engineOccupancy)?.configuredMaximum
+                    ?? NSNull(),
                 "engine_active_at_admission":
                     engineOccupancy?.activeCount ?? NSNull(),
                 "engine_pending_at_admission":
@@ -341,6 +362,29 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                     engineOccupancy?.isAcceptingRequests ?? NSNull(),
                 "engine_queued_at_admission": engineQueuedAtAdmission,
             ]
+        }
+
+        func reconcilingResolvedEngineCapacity(
+            _ snapshot: ModelBatchCapacitySnapshot
+        ) -> BatchWaveDiagnostic {
+            BatchWaveDiagnostic(
+                wave: wave,
+                jobs: jobs,
+                remoteJobs: remoteJobs,
+                localJobs: localJobs,
+                localModelKey: localModelKey,
+                effectiveLocalSlots: effectiveLocalSlots,
+                engineSlots: engineSlots,
+                ramSlots: ramSlots,
+                localSubwaveSizes: localSubwaveSizes,
+                limitingFactors: limitingFactors,
+                verdict: verdict,
+                admissionWaitSeconds: admissionWaitSeconds,
+                residencyMode: residencyMode,
+                engineOccupancy: engineOccupancy,
+                resolvedEngineCapacity: snapshot,
+                engineQueuedAtAdmission: engineQueuedAtAdmission
+            )
         }
     }
 
@@ -414,6 +458,20 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         func snapshot() -> [BatchWaveDiagnostic] {
             values.sorted { $0.wave < $1.wave }
         }
+
+        func localModelKeys() -> [String] {
+            Array(Set(values.compactMap(\.localModelKey))).sorted()
+        }
+
+        func reconcileResolvedEngineCapacity(
+            for modelKey: String,
+            with snapshot: ModelBatchCapacitySnapshot
+        ) {
+            values = values.map { value in
+                guard value.localModelKey == modelKey else { return value }
+                return value.reconcilingResolvedEngineCapacity(snapshot)
+            }
+        }
     }
 
     private enum BatchTaskOutput: Sendable {
@@ -455,8 +513,22 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
 
     public func execute(argumentsJSON: String) async throws -> String {
         let parsed = Self.parseJobs(argumentsJSON, tool: name)
-        guard case .success(let jobs) = parsed else {
+        guard case .success(let parsedJobs) = parsed else {
             return parsed.failureEnvelope ?? ""
+        }
+        // Map any agent job whose `target` is a display name (not a UUID) onto
+        // the launching agent's allow-listed id before downstream consumers key
+        // on the UUID. Small local models emit the name, not the UUID (#2408).
+        let jobs: [Job]
+        switch await Self.resolveAgentJobNames(
+            parsedJobs,
+            scope: SubagentScope.current(),
+            tool: name
+        ) {
+        case .success(let resolved):
+            jobs = resolved
+        case .failure(let error):
+            return error.envelope
         }
         for job in jobs {
             if let failure = SpawnInputContract.validationFailure(
@@ -491,7 +563,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         let feed = SubagentFeed(
             toolCallId: parentScope.toolCallId,
             kindId: SubagentCapabilityRegistry.spawn.id,
-            title: "spawn batch (\(jobs.count))"
+            title: "spawn batch (\(jobs.count))",
+            agentId: parentScope.agentId,
+            parentSessionId: parentScope.sessionId
         )
         let interrupt = InterruptToken()
         SubagentFeedRegistry.shared.register(feed)
@@ -767,6 +841,23 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             localAdmissionPlanOverride: localAdmissionPlanOverride,
             diagnostics: diagnostics
         )
+        // A cold first wave has no engine snapshot at admission time. After
+        // its children settle, the same production registry can report the
+        // engine's requested, architecture, and effective widths. Reconcile
+        // those immutable capacity facts into the persisted wave so evals do
+        // not guess from a model name or confuse a requested width with the
+        // post-clamp width. Occupancy timing fields remain explicitly named
+        // `*_at_admission` and retain their original point-in-time values.
+        for modelKey in await diagnostics.localModelKeys() {
+            if let snapshot = await ModelRuntime.shared.batchEngineCapacitySnapshot(
+                for: modelKey
+            ) {
+                await diagnostics.reconcileResolvedEngineCapacity(
+                    for: modelKey,
+                    with: snapshot
+                )
+            }
+        }
         let cacheAfter = await ModelRuntime.batchDiagnosticsSnapshot()
         let executionWaves = await diagnostics.snapshot()
         let ordered = results.sorted { $0.job.index < $1.job.index }
@@ -887,8 +978,14 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                         )
                         continue
                     }
+                    // Seed the human name so the feed title (captured before
+                    // `resolveModel`) shows the agent, not its UUID.
+                    let agentName = await MainActor.run {
+                        AgentManager.shared.agent(for: agentID)?.name
+                    }
                     kind = TextSubagentKind(
                         agentID: agentID,
+                        agentName: agentName,
                         input: job.input,
                         modelOverride: Self.modelOverrideForTests,
                         permissionPreauthorized: true
@@ -1043,6 +1140,64 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             "\(failure.id): \(ToolEnvelope.failureMessage(failure.envelope))"
         }.joined(separator: "; ")
         return "No batch jobs were started because target validation failed. \(details)"
+    }
+
+    /// Resolve every agent job whose `target` is a display NAME (not a UUID)
+    /// to the launching agent's uniquely-matching spawnable id, so the rest of
+    /// the batch pipeline keeps keying on the UUID. Authorization is unchanged:
+    /// only the launching agent's already-allow-listed agents are matched. A
+    /// name that maps to zero or many targets fails the whole batch with a
+    /// corrective envelope. See issue #2408.
+    static func resolveAgentJobNames(
+        _ jobs: [Job],
+        scope: SubagentScope,
+        tool: String
+    ) async -> Result<[Job], SpawnBatchParseError> {
+        var resolved: [Job] = []
+        resolved.reserveCapacity(jobs.count)
+        for job in jobs {
+            guard job.targetType == .agent, UUID(uuidString: job.target) == nil
+            else {
+                resolved.append(job)
+                continue
+            }
+            let resolution = await SubagentToolVisibility.resolveSpawnableAgentName(
+                job.target,
+                scope: scope
+            )
+            guard let id = resolution.id else {
+                let names = resolution.allowedNames
+                let hint =
+                    names.isEmpty
+                    ? "This agent has no spawnable agents configured."
+                    : "Use one of these exact agent names (or its UUID): "
+                        + names.map { "\"\($0)\"" }.joined(separator: ", ") + "."
+                return .failure(
+                    SpawnBatchParseError(
+                        envelope: ToolEnvelope.failure(
+                            kind: .invalidArgs,
+                            message:
+                                "Agent job '\(job.id)' target '\(job.target)' did not match a "
+                                + "spawnable agent. " + hint,
+                            field: "jobs[\(job.index)].target",
+                            expected: "a spawnable agent name or UUID",
+                            tool: tool,
+                            retryable: true
+                        )
+                    )
+                )
+            }
+            resolved.append(
+                Job(
+                    index: job.index,
+                    id: job.id,
+                    targetType: job.targetType,
+                    target: id.uuidString,
+                    input: job.input
+                )
+            )
+        }
+        return .success(resolved)
     }
 
     static func parseJobs(
@@ -1216,15 +1371,10 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                     )
                 )
             }
-            if targetType == .agent, UUID(uuidString: target) == nil {
-                return .failure(
-                    SpawnBatchParseError.invalidJob(
-                        index: index,
-                        message: "needs an exact agent UUID in `target`",
-                        tool: tool
-                    )
-                )
-            }
+            // A non-UUID agent target is allowed through here: `resolveAgentJobNames`
+            // (run in `execute` with the launching scope) maps a display name to
+            // its allow-listed UUID before any authority/prepare consumer reads it.
+            // See issue #2408.
             jobs.append(
                 Job(
                     index: index,
@@ -1520,11 +1670,22 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             snapshot: engineOccupancy
         )
         let residencyPlan = residencyPlanOverride ?? first.run.textResidencyPlan
+        // Bounded pricing only when EVERY local job supplies an estimate;
+        // one unknown job reverts the whole wave to the conservative
+        // cap-priced charge (a wave must never be under-priced by its
+        // cheapest member). Each job's safe position budget is resolved
+        // independently — including a delegated job's enforced ceiling —
+        // and the wave is priced at the MAXIMUM per-child bound (see
+        // `SubagentChildRequestEstimate.waveEnvelope`).
+        let waveEstimate = SubagentChildRequestEstimate.waveEnvelope(
+            of: localJobs.map { $0.run.kind.admissionRequestEstimate() }
+        )
         let memoryFacts: SubagentBatchMemoryFacts?
         if let residencyPlan {
             memoryFacts = await ModelRuntime.shared.subagentBatchMemoryFacts(
                 for: first.run.resolved.name,
-                residencyPlan: residencyPlan
+                residencyPlan: residencyPlan,
+                requestEstimate: waveEstimate
             )
         } else {
             // Non-text local kinds exist only in model-free test seams today.
@@ -2924,6 +3085,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
     static func constrainedSpec(
         _ tool: Tool,
         allowedAgentIDs: [UUID],
+        allowedAgentNames: [String] = [],
         allowedModelIds: [String],
         maxParallel: Int
     ) -> Tool {
@@ -2933,7 +3095,14 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         let models = SubagentConfiguration.normalizedSpawnableModelNames(
             allowedModelIds
         )
-        let targets = Array(Set(agents + models)).sorted()
+        // Agent display names join the union so a strict, enum-enforcing
+        // provider accepts a name for an agent job as well as a UUID (issue
+        // #2408). `resolveAgentJobNames` maps a name back before execution.
+        let agentNames =
+            allowedAgentNames
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let targets = Array(Set(agents + agentNames + models)).sorted()
         guard !targets.isEmpty,
             case .object(var root)? = tool.function.parameters,
             case .object(var properties)? = root["properties"],
@@ -2945,7 +3114,8 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
 
         target["enum"] = .array(targets.map(JSONValue.string))
         target["description"] = .string(
-            "Exact allowed target. Agent UUIDs: \(agents.joined(separator: ", ")). "
+            "Exact allowed target. For an agent, pass its display name or one of these "
+                + "UUIDs: \(agents.joined(separator: ", ")). "
                 + "Models: \(models.joined(separator: ", "))."
         )
         jobProperties["target"] = .object(target)

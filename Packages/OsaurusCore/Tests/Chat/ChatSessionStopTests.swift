@@ -10,14 +10,12 @@ struct ChatSessionStopTests {
 
     private func enableDefaultAgentTools(warmModelsOnLoad: Bool) {
         var chatConfig = ChatConfigurationStore.load()
-        chatConfig.disableTools = false
         chatConfig.warmModelsOnLoad = warmModelsOnLoad
         chatConfig.autoGenerateChatTitles = false
         ChatConfigurationStore.save(chatConfig)
 
         DefaultAgentConfigurationStore.save(
             DefaultAgentConfiguration(
-                disableTools: false,
                 autonomousExec: nil,
                 toolSelectionMode: .manual,
                 manualToolNames: ["todo"]
@@ -159,9 +157,14 @@ struct ChatSessionStopTests {
 
             try await Task.sleep(for: .milliseconds(250))
 
-            #expect(session.turns.count == 1)
+            // A user Stop before any delta keeps a cancelled marker so the
+            // transcript records that a run happened (task-#50 contract; the
+            // pre-2392 behavior trimmed it, leaving a silent gap).
+            #expect(session.turns.count == 2)
             #expect(session.turns.first?.role == .user)
             #expect(session.turns.first?.content == "Hello")
+            #expect(session.turns.last?.role == .assistant)
+            #expect(session.turns.last?.terminalStopReason == "cancelled")
         }
     }
 
@@ -183,8 +186,10 @@ struct ChatSessionStopTests {
                 await engine.cancelled
             }
             #expect(session.isStreaming == false)
-            #expect(session.turns.count == 1)
+            // User Stop → the empty turn survives as the cancelled marker.
+            #expect(session.turns.count == 2)
             #expect(session.turns.first?.role == .user)
+            #expect(session.turns.last?.terminalStopReason == "cancelled")
         }
     }
 
@@ -261,7 +266,12 @@ struct ChatSessionStopTests {
             try await Task.sleep(for: .milliseconds(250))
 
             #expect(session.isStreaming == false)
-            #expect(session.turns.map(\.content) == ["keep this stopped turn"])
+            // The Stop landed during the pre-send handshake ("Loading
+            // Model..."), which is exactly the pre-persist race: the run task
+            // never appended an assistant turn, so the cancelled marker is
+            // appended by `stop()` itself.
+            #expect(session.turns.map(\.content) == ["keep this stopped turn", ""])
+            #expect(session.turns.last?.terminalStopReason == "cancelled")
             #expect(await engine.regularRequestCount == 0)
             #expect(await engine.warmupRequestCount == 0)
 
@@ -607,6 +617,7 @@ struct ChatSessionStopTests {
             enableDefaultAgentTools(warmModelsOnLoad: true)
 
             let session = ChatSession()
+            session.toolsDisabledForTestingOverride = false
             session.selectedModel = "chat-session-tool-loop-test-model"
             session.forceChatEngineRouteForTests = true
             let engine = PostToolEmptyExhaustionChatEngine()
@@ -656,6 +667,7 @@ struct ChatSessionStopTests {
             enableDefaultAgentTools(warmModelsOnLoad: false)
 
             let session = ChatSession()
+            session.toolsDisabledForTestingOverride = false
             session.selectedModel = "chat-session-reasoning-retry-test-model"
             session.forceChatEngineRouteForTests = true
             let engine = ReasoningRetryChatEngine()

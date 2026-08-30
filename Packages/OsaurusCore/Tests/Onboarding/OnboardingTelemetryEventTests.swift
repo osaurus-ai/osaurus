@@ -142,26 +142,26 @@ struct OnboardingTelemetryEventTests {
         let (service, rec, cleanup) = makeRecordingService()
         defer { cleanup() }
 
-        OnboardingTelemetry.stepSkipped(.choosePlugins, service: service)
+        OnboardingTelemetry.stepSkipped(.configureAI, service: service)
 
         #expect(rec.events.count == 1)
         let event = rec.events[0]
         #expect(event.name == "onboarding_step_skipped")
         #expect(business(event.props).count == 1)
-        #expect(event.props["step"] as? String == "choose_plugins")
+        #expect(event.props["step"] as? String == "configure_ai")
     }
 
     @Test func completed_emits_last_step_and_via() {
         let (service, rec, cleanup) = makeRecordingService()
         defer { cleanup() }
 
-        OnboardingTelemetry.completed(lastStep: .walkthrough, via: .finishButton, service: service)
+        OnboardingTelemetry.completed(lastStep: .configureAI, via: .finishButton, service: service)
 
         #expect(rec.events.count == 1)
         let event = rec.events[0]
         #expect(event.name == "onboarding_completed")
         #expect(business(event.props).count == 2)
-        #expect(event.props["last_step"] as? String == "walkthrough")
+        #expect(event.props["last_step"] as? String == "configure_ai")
         #expect(event.props["via"] as? String == "finish_button")
     }
 

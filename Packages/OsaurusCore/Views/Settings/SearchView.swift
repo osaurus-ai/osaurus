@@ -82,7 +82,7 @@ struct SearchView: View {
 
     private var headerView: some View {
         ManagerHeaderWithActions(
-            title: L("Search"),
+            title: L("Web Search"),
             subtitle: subtitleText
         ) {
             HeaderPrimaryButton("Connect Provider", icon: "plus") {
@@ -1802,7 +1802,7 @@ private struct SearchCustomProviderSheet: View {
 
             sheetFooter
         }
-        .frame(width: 560, height: 540)
+        .fittedSheetFrame(width: 560, height: 540)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(

@@ -71,7 +71,14 @@ public final class SandboxToolRegistrar {
     /// Coalesces explicit first-use provisioning kicks (`provisionOnDemand`)
     /// so the model hammering the `sandbox_init_pending` placeholder while the
     /// cold download runs doesn't queue a fresh `registerTools` per call.
-    private var onDemandProvisionTask: Task<Void, Never>?
+    private var onDemandProvisionTask:
+        (agentId: UUID, token: UUID, task: Task<Void, Error>)?
+
+    public struct OnDemandProvisionError: LocalizedError, Sendable {
+        public let reason: UnavailabilityReason
+
+        public var errorDescription: String? { reason.message }
+    }
 
     /// Delay before the single auto-retry on `provisioningFailed`. Kept
     /// short because most provisioning failures are transient (container
@@ -223,9 +230,62 @@ public final class SandboxToolRegistrar {
     /// Register all sandbox plugin tools globally (agent-agnostic).
     /// Plugin tools are available to any agent and resolved at execution time.
     public func registerAllPluginTools() {
-        let allPlugins = SandboxPluginManager.shared.allUniquePlugins()
-        for plugin in allPlugins {
-            ToolRegistry.shared.registerSandboxPluginTools(plugin: plugin)
+        registerAllPluginTools(
+            libraryPlugins: SandboxPluginLibrary.shared.plugins
+        )
+    }
+
+    func registerAllPluginTools(libraryPlugins: [SandboxPlugin]) {
+        // Library recipes are intentionally decoupled from per-agent installs:
+        // `SandboxPluginTool.execute` performs the first-use install. Loading
+        // only `.ready` installed plugins creates a startup deadlock for tools
+        // authored in Settings — the schema is absent, so no agent can make
+        // the call that would install it. The library is also the availability
+        // source of truth: deleting a recipe must not let a stale per-agent
+        // install resurrect its schema on the next launch.
+        var pluginsById: [String: SandboxPlugin] = [:]
+        for plugin in libraryPlugins {
+            pluginsById[plugin.id] = plugin
+        }
+        for pluginId in pluginsById.keys.sorted() {
+            if let plugin = pluginsById[pluginId] {
+                ToolRegistry.shared.registerSandboxPluginTools(plugin: plugin)
+            }
+        }
+    }
+
+    /// Publish a Settings-created/imported library recipe immediately.
+    /// Replacing always unregisters the old prefix first so removed tools and
+    /// renamed plugin IDs cannot remain callable as stale schemas.
+    @discardableResult
+    public func activateLibraryPlugin(
+        _ plugin: SandboxPlugin,
+        replacing previousPluginId: String? = nil
+    ) -> Task<Void, Never> {
+        ToolRegistry.shared.unregisterSandboxPluginTools(
+            pluginId: previousPluginId ?? plugin.id
+        )
+        if let previousPluginId, previousPluginId != plugin.id {
+            ToolRegistry.shared.unregisterSandboxPluginTools(pluginId: plugin.id)
+        }
+        ToolRegistry.shared.registerSandboxPluginTools(plugin: plugin)
+
+        // Existing chats freeze their capability manifest at first compose for
+        // KV-cache stability. A Settings catalog edit is an explicit, rare
+        // surface change, so discard those snapshots; otherwise an already-open
+        // chat cannot discover the newly published recipe until it is recreated.
+        return Task {
+            await SessionToolStateStore.shared.invalidateAll()
+        }
+    }
+
+    /// Remove a Settings library recipe from the live catalog and refresh
+    /// frozen capability manifests in already-open chats.
+    @discardableResult
+    public func deactivateLibraryPlugin(pluginId: String) -> Task<Void, Never> {
+        ToolRegistry.shared.unregisterSandboxPluginTools(pluginId: pluginId)
+        return Task {
+            await SessionToolStateStore.shared.invalidateAll()
         }
     }
 
@@ -270,8 +330,6 @@ public final class SandboxToolRegistrar {
             return
         }
 
-        ToolRegistry.shared.unregisterAllBuiltinSandboxTools()
-        registeredBuiltins = nil
         let needsProvisioning =
             autonomousEnabled
             || SandboxPluginManager.shared.plugins(for: agentIdStr).contains { $0.status == .ready }
@@ -290,6 +348,12 @@ public final class SandboxToolRegistrar {
 
         let containerStatus = SandboxManager.State.shared.status
         if containerStatus != .running {
+            // Container availability is process-wide. Clear the canonical
+            // runtime surface only when the backend is actually unavailable,
+            // not whenever another agent refreshes its own configuration.
+            ToolRegistry.shared.unregisterAllBuiltinSandboxTools()
+            registeredBuiltins = nil
+
             // Without autonomous execution there's no expectation of sandbox
             // tools — clear any prior unavailability and bail.
             guard autonomousEnabled else {
@@ -424,8 +488,43 @@ public final class SandboxToolRegistrar {
         unavailability[agentId] = next
         if prev != next {
             debugLog("[Sandbox] \(message)")
+            let tokens = Self.failureTelemetryTokens(
+                kind: kind,
+                backend: SandboxBackend.current
+            )
+            SandboxStartupMetricsStore.recordFailure(
+                SandboxStartupFailureSample(
+                    category: tokens.category,
+                    backend: tokens.backend,
+                    phase: tokens.phase
+                )
+            )
+            FeatureTelemetry.sandboxProvisionFailure(
+                category: tokens.category,
+                backend: tokens.backend,
+                phase: tokens.phase
+            )
         }
         publishActiveAgentUnavailability(for: agentId, reason: next)
+    }
+
+    /// Convert internal failures to a privacy-safe, bounded telemetry
+    /// vocabulary. The detailed user-facing message stays local.
+    nonisolated static func failureTelemetryTokens(
+        kind: UnavailabilityReason.Kind,
+        backend: SandboxBackend
+    ) -> (category: String, backend: String, phase: String) {
+        let backendToken = backend == .virtualMachine ? "vm" : "seatbelt"
+        switch kind {
+        case .containerUnavailable:
+            return ("container_unavailable", backendToken, "availability")
+        case .provisioningFailed:
+            return ("agent_provision_failed", backendToken, "agent_provision")
+        case .startupFailed:
+            return ("runtime_start_failed", backendToken, "runtime_start")
+        case .vmnetOwnedByOtherProcess:
+            return ("vmnet_in_use", backendToken, "vm_ownership")
+        }
     }
 
     /// Mirror per-agent unavailability into `SandboxManager.State.shared`
@@ -584,17 +683,59 @@ public final class SandboxToolRegistrar {
     /// (where supported), but a fresh, never-set-up sandbox stays un-booted at
     /// launch so there's no surprise multi-GB download. When the model first
     /// reaches for a sandbox tool it hits the `sandbox_init_pending`
-    /// placeholder, which calls this to start (and cold-provision) the
-    /// container. `AgentManager.updateAutonomousExec` also calls it on an
+    /// placeholder, which awaits this start (and cold provision) before
+    /// returning. `AgentManager.updateAutonomousExec` also awaits it on an
     /// explicit OFF→ON toggle. Coalesced via `onDemandProvisionTask` so
-    /// repeated placeholder calls during the download don't pile up.
-    public func provisionOnDemand(for agentId: UUID) {
-        guard onDemandProvisionTask == nil else { return }
+    /// repeated placeholder calls during the download share one result.
+    public func provisionOnDemand(for agentId: UUID) async throws {
+        if let inFlight = onDemandProvisionTask {
+            try await withTaskCancellationHandler {
+                try await inFlight.task.value
+            } onCancel: {
+                inFlight.task.cancel()
+            }
+            if inFlight.agentId == agentId { return }
+        }
+
         resetStartupFailures()
-        onDemandProvisionTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer { self.onDemandProvisionTask = nil }
+        let token = UUID()
+        let task = Task<Void, Error> { @MainActor [weak self] in
+            guard let self else { throw CancellationError() }
+            try Task.checkCancellation()
             await self.registerTools(for: agentId, forceStart: true)
+            try Task.checkCancellation()
+
+            let hasRealTools =
+                self.registeredBuiltins?.agentId == agentId
+                && ToolRegistry.shared.builtInSandboxToolNamesSnapshot
+                    .contains("sandbox_exec")
+            guard hasRealTools else {
+                let reason =
+                    self.unavailability[agentId]
+                    ?? UnavailabilityReason(
+                        kind: .containerUnavailable,
+                        message:
+                            "Sandbox provisioning completed without registering its runtime tools."
+                    )
+                throw OnDemandProvisionError(reason: reason)
+            }
+        }
+        onDemandProvisionTask = (agentId, token, task)
+
+        do {
+            try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+            if onDemandProvisionTask?.token == token {
+                onDemandProvisionTask = nil
+            }
+        } catch {
+            if onDemandProvisionTask?.token == token {
+                onDemandProvisionTask = nil
+            }
+            throw error
         }
     }
 }

@@ -24,7 +24,7 @@ struct ToolSearchServiceTests {
         #expect(results.isEmpty)
     }
 
-    @Test func indexEntryDoesNotCrashWhenUninitialized() async {
+    @Test func indexEntryQueuesUntilVectorIndexInitializes() async {
         let entry = ToolIndexEntry(
             id: "test-tool",
             name: "test-tool",
@@ -35,10 +35,27 @@ struct ToolSearchServiceTests {
             tokenCount: 50
         )
         await ToolSearchService.shared.indexEntry(entry)
+        #expect(await ToolSearchService.shared.hasPendingIndexEntry(id: entry.id))
+
+        await ToolSearchService.shared.removeEntry(id: entry.id)
+        #expect(!(await ToolSearchService.shared.hasPendingIndexEntry(id: entry.id)))
     }
 
-    @Test func removeEntryDoesNotCrashWhenUninitialized() async {
-        await ToolSearchService.shared.removeEntry(id: "nonexistent")
+    @Test func removeEntryDropsQueuedRegistrationWhenUninitialized() async {
+        let entry = ToolIndexEntry(
+            id: "queued-then-removed-tool",
+            name: "queued-then-removed-tool",
+            description: "A queued test tool",
+            runtime: .mcp,
+            toolsJSON: "{}",
+            source: .system,
+            tokenCount: 50
+        )
+        await ToolSearchService.shared.indexEntry(entry)
+        #expect(await ToolSearchService.shared.hasPendingIndexEntry(id: entry.id))
+
+        await ToolSearchService.shared.removeEntry(id: entry.id)
+        #expect(!(await ToolSearchService.shared.hasPendingIndexEntry(id: entry.id)))
     }
 
     @Test func rebuildIndexDoesNotCrashWhenUninitialized() async {

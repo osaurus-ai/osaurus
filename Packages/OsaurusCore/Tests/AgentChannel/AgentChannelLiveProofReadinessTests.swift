@@ -226,6 +226,124 @@ struct AgentChannelLiveProofReadinessTests {
         #expect(report.blockers == ["Slack API token check failed."])
     }
 
+    @Test func whatsappUnlinkedIsBlockedForReceiveProof() {
+        let report = AgentChannelLiveProofReadiness.whatsApp(
+            WhatsAppConnectionDiagnostics(
+                helperVerified: true,
+                helperState: "dev_override",
+                helperVersion: "0.1.0",
+                linked: false,
+                selfNumber: nil,
+                readableChatIds: [],
+                writableChatIds: [],
+                senderAllowlist: [],
+                writeEnabled: false,
+                receiveEnabled: false,
+                status: "not_linked",
+                failures: [],
+                notes: []
+            )
+        )
+
+        #expect(report.kind == .whatsapp)
+        #expect(report.status == .blocked)
+        #expect(
+            report.blockers.contains(
+                "Link a WhatsApp account by scanning the QR code in WhatsApp settings."
+            )
+        )
+        #expect(report.blockers.contains("Enable WhatsApp receive for local desktop receive proof."))
+        #expect(report.blockers.contains("Add at least one readable WhatsApp chat."))
+        #expect(
+            report.blockers.contains(
+                "Add at least one authorized WhatsApp sender (E.164 phone number)."
+            )
+        )
+    }
+
+    @Test func whatsappMissingHelperIsBlocked() {
+        let report = AgentChannelLiveProofReadiness.whatsApp(
+            WhatsAppConnectionDiagnostics(
+                helperVerified: false,
+                helperState: "missing",
+                helperVersion: nil,
+                linked: false,
+                selfNumber: nil,
+                readableChatIds: ["+15551234567"],
+                writableChatIds: [],
+                senderAllowlist: ["+15551234567"],
+                writeEnabled: false,
+                receiveEnabled: true,
+                status: "helper_missing",
+                failures: [],
+                notes: []
+            )
+        )
+
+        #expect(report.status == .blocked)
+        #expect(report.blockers.contains { $0.contains("osaurus-wa helper") && $0.contains("missing") })
+    }
+
+    @Test func whatsappCompleteReadWriteSetupIsReadyButRequiresManualProof() {
+        let report = AgentChannelLiveProofReadiness.whatsApp(
+            WhatsAppConnectionDiagnostics(
+                helperVerified: true,
+                helperState: "verified",
+                helperVersion: "0.1.0",
+                linked: true,
+                selfNumber: "+15550001111",
+                readableChatIds: ["+15551234567"],
+                writableChatIds: ["+15551234567"],
+                senderAllowlist: ["+15551234567"],
+                writeEnabled: true,
+                receiveEnabled: true,
+                status: "connected_read_write",
+                failures: [],
+                notes: []
+            )
+        )
+
+        #expect(report.status == .ready)
+        #expect(report.isReadyForLiveProof)
+        #expect(report.blockers.isEmpty)
+        #expect(
+            report.manualProof.contains(
+                "Send one confirmed message to a write-allowlisted WhatsApp chat."
+            )
+        )
+        #expect(
+            report.manualProof.contains(
+                "Receive one inbound WhatsApp message from an authorized sender."
+            )
+        )
+        #expect(report.notes.contains { $0.contains("unofficial") })
+    }
+
+    @Test func whatsappWritesOnRequireWritableChats() {
+        let report = AgentChannelLiveProofReadiness.whatsApp(
+            WhatsAppConnectionDiagnostics(
+                helperVerified: true,
+                helperState: "verified",
+                helperVersion: "0.1.0",
+                linked: true,
+                selfNumber: "+15550001111",
+                readableChatIds: ["+15551234567"],
+                writableChatIds: [" "],
+                senderAllowlist: ["+15551234567"],
+                writeEnabled: true,
+                receiveEnabled: true,
+                status: "connected_read_write",
+                failures: [],
+                notes: []
+            )
+        )
+
+        #expect(report.status == .blocked)
+        #expect(
+            report.blockers == ["Add at least one writable WhatsApp chat or turn writes off."]
+        )
+    }
+
     @Test func legacyTelegramPluginFeedbackDoesNotApplyToNativeChannels() {
         let routing = AgentChannelLiveProofReadiness.routeFeedback(source: .legacyTelegramPlugin)
 

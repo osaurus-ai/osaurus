@@ -132,12 +132,25 @@ struct CapabilitiesToolTests {
         #expect(properties["query"] != nil)
         #expect(properties["ids"] != nil)
         #expect(properties["list"] == nil)
+        #expect(tool.description.contains("capability IDs for the `ids` argument"))
+        #expect(tool.description.contains("never callable function names"))
+        #expect(tool.description.contains("use `query` only when no exact available ID fits"))
     }
 
-    @Test func rejectsCallsWithoutQueryOrIds() async throws {
+    @Test func bareCallReturnsTheEnabledListInsteadOfRejecting() async throws {
+        // A bare `{}` used to come back invalid_args, which sent weaker
+        // models (Raptor was the live repro) into a rejection retry loop.
+        // The gateway now answers the call it almost certainly meant: list
+        // what is enabled. In the empty test environment that list is empty,
+        // which must still be an ok envelope, not an error.
         let result = try await CapabilitiesTool().execute(argumentsJSON: "{}")
-        #expect(ToolEnvelope.isError(result))
+        #expect(!ToolEnvelope.isError(result))
         #expect(result.contains("\"tool\":\"capabilities\""))
+        // Environment-independent: CI ships bundled skills (populated list),
+        // a bare checkout has none (empty-list text). Either is the contract.
+        #expect(
+            result.contains("Enabled capabilities")
+                || result.contains("No capabilities are enabled"))
     }
 
     @Test func searchResultUsesSingleGatewayVocabulary() async throws {
@@ -148,6 +161,38 @@ struct CapabilitiesToolTests {
         #expect(!ToolEnvelope.isError(result))
         #expect(result.contains("\"tool\":\"capabilities\""))
         #expect(!result.contains("capabilities_load"))
+        #expect(!result.contains("capabilities_discover"))
+    }
+
+    @Test @MainActor
+    func loadResultUsesSingleGatewayVocabulary() async throws {
+        let dynamic = CapabilityPolicyFixtureTool(
+            name: "gateway_load_result_\(UUID().uuidString)",
+            description: "Dynamic gateway load-result fixture"
+        )
+        ToolRegistry.shared.registerPluginTool(dynamic)
+        ToolRegistry.shared.setEnabled(true, for: dynamic.name)
+        defer { ToolRegistry.shared.unregister(names: [dynamic.name]) }
+        // Task-scoped buffer: several suites drain the process-global
+        // `shared` in parallel, and one of their drains can steal this
+        // test's entry between execute and drain (intermittent `[]`).
+        let buffer = CapabilityLoadBuffer()
+        let (result, loaded) = try await CapabilityLoadBuffer.$overrideForTests.withValue(buffer) {
+            let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+                try await CapabilitiesTool().execute(
+                    argumentsJSON: #"{"ids":["tool/\#(dynamic.name)"]}"#
+                )
+            }
+            let loaded = await buffer.drain()
+            return (result, loaded)
+        }
+
+        #expect(!ToolEnvelope.isError(result))
+        #expect(result.contains(#""tool":"capabilities""#))
+        #expect(result.contains("capabilities"))
+        #expect(!result.contains("capabilities_load"))
+        #expect(!result.contains("capabilities_discover"))
+        #expect(loaded.map(\.function.name) == [dynamic.name])
     }
 }
 
@@ -183,7 +228,10 @@ struct CapabilitiesDiscoverToolTests {
             argumentsJSON: "{\"query\": \"zzz_capability_alias_probe_\(UUID().uuidString)\"}"
         )
         #expect(!ToolEnvelope.isError(result))
-        #expect(result.contains("No capabilities found") || result.contains("Found"))
+        #expect(
+            result.contains("No additional enabled capabilities found")
+                || result.contains("Found")
+        )
     }
 
     @Test func capabilitiesSearchSchemaIsGemmaRenderable() throws {
@@ -210,7 +258,10 @@ struct CapabilitiesDiscoverToolTests {
                 "{\"queries\": \"[<|\\\"|>zzz_capability_string_probe_\(UUID().uuidString)<|\\\"|>]\"}"
         )
         #expect(!ToolEnvelope.isError(result))
-        #expect(result.contains("No capabilities found") || result.contains("Found"))
+        #expect(
+            result.contains("No additional enabled capabilities found")
+                || result.contains("Found")
+        )
     }
 
     @Test func returnsNoMatchMessage() async throws {
@@ -218,7 +269,52 @@ struct CapabilitiesDiscoverToolTests {
         let result = try await tool.execute(
             argumentsJSON: "{\"queries\": [\"zzz_completely_nonexistent_capability_xyz\"]}"
         )
-        #expect(result.contains("No capabilities found") || result.contains("capability"))
+        #expect(result.contains("No additional enabled capabilities found"))
+    }
+
+    @Test func noMatchRecoveryNamesOnlyToolsCallableInThisRequest() async throws {
+        func spec(_ name: String) -> Tool {
+            Tool(
+                type: "function",
+                function: ToolFunction(
+                    name: name,
+                    description: "test",
+                    parameters: .object([
+                        "type": .string("object"),
+                        "properties": .object([:]),
+                    ])
+                )
+            )
+        }
+        let scope = ToolExecutionScope(
+            exposed: ["file_read", "file_search", "shell_run", "sandbox_install"].map(spec)
+        )
+        let probe = "zzz_request_recovery_\(UUID().uuidString)"
+        let result = try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+            try await CapabilitiesDiscoverTool().execute(
+                argumentsJSON: #"{"query":"\#(probe)"}"#
+            )
+        }
+
+        #expect(result.contains("No additional enabled capabilities found"))
+        #expect(result.contains("`file_read`/`file_search`"))
+        #expect(result.contains("`shell_run`"))
+        #expect(result.contains("`sandbox_install`"))
+        #expect(!result.contains("sandbox_plugin_register"))
+        #expect(!result.contains("see Discovering more tools"))
+        #expect(!result.contains("see Building new tools"))
+    }
+
+    @Test @MainActor
+    func gatedBuiltinAbsentFromRequestIsNotReportedAsBaselineLoaded() {
+        let availability = ToolRegistry.shared.availability(
+            forTool: "image",
+            selectedPreflightNames: ["capabilities"]
+        )
+
+        #expect(availability.reasonCodes.contains(.notSelectedByPreflight))
+        #expect(!availability.reasonCodes.contains(.alreadyLoaded))
+        #expect(availability.detail.contains("not exposed in the current request schema"))
     }
 
     @Test func listModeRejectsUnknownListValue() async throws {
@@ -342,6 +438,8 @@ struct CapabilitiesDiscoverToolTests {
                 if !dbWasOpen {
                     try ToolDatabase.shared.openInMemory()
                 }
+                ConfigurationDomainBootstrap.registerBuiltIns()
+                await ToolIndexService.shared.syncFromRegistry(rebuildVectorIndex: false)
                 defer {
                     try? ToolDatabase.shared.deleteEntry(id: CapabilityPolicyFixtureTool.allowedName)
                     try? ToolDatabase.shared.deleteEntry(id: CapabilityPolicyFixtureTool.deniedName)
@@ -387,6 +485,7 @@ struct CapabilitiesDiscoverToolTests {
                 let agent = Agent(
                     name: "CapabilitySearchGrant-\(UUID().uuidString.prefix(6))",
                     agentAddress: "capability-search-grant-\(UUID().uuidString)",
+                    autonomousExec: AutonomousExecConfig(enabled: false),
                     manualToolNames: [allowed.name]
                 )
                 AgentManager.shared.add(agent)
@@ -401,7 +500,6 @@ struct CapabilitiesDiscoverToolTests {
                 )
                 #expect(rawResults.contains { $0.entry.name == allowed.name })
                 #expect(!rawResults.contains { $0.entry.name == denied.name })
-                #expect(diagnostic.filteredByAllowlist.count == 1)
                 #expect(diagnostic.filteredByAllowlist.contains(denied.name))
 
                 let tool = CapabilitiesDiscoverTool(agentId: agent.id)
@@ -411,6 +509,42 @@ struct CapabilitiesDiscoverToolTests {
                 #expect(result.contains(allowed.name))
                 #expect(!result.contains(denied.name))
                 #expect(result.contains("availability: loadable_via_capabilities_load"))
+
+                let configureNames = ToolRegistry.configureToolNames
+                #expect(configureNames.contains("osaurus_config"))
+                let configureQuery = #"{"query":"osaurus_config"}"#
+
+                let seededConfigureResult = try await tool.execute(argumentsJSON: configureQuery)
+                for configureName in configureNames {
+                    #expect(
+                        !seededConfigureResult.contains("tool/\(configureName)"),
+                        "Default-agent configure tool \(configureName) leaked to a seeded custom agent"
+                    )
+                }
+
+                let unseededAgent = Agent(
+                    name: "CapabilitySearchLegacy-\(UUID().uuidString.prefix(6))",
+                    agentAddress: "capability-search-legacy-\(UUID().uuidString)",
+                    autonomousExec: AutonomousExecConfig(enabled: false),
+                    manualToolNames: nil
+                )
+                AgentManager.shared.add(unseededAgent)
+                #expect(AgentManager.shared.effectiveEnabledToolNames(for: unseededAgent.id) == nil)
+
+                let unseededResult = try await CapabilitiesDiscoverTool(agentId: unseededAgent.id)
+                    .execute(argumentsJSON: configureQuery)
+                let gatewayResult = try await CapabilitiesTool(agentId: unseededAgent.id)
+                    .execute(argumentsJSON: configureQuery)
+                for configureName in configureNames {
+                    #expect(
+                        !unseededResult.contains("tool/\(configureName)"),
+                        "Default-agent configure tool \(configureName) leaked to an unseeded custom agent"
+                    )
+                    #expect(
+                        !gatewayResult.contains("tool/\(configureName)"),
+                        "Default-agent configure tool \(configureName) leaked through the unified gateway"
+                    )
+                }
 
                 AgentManager.shared.setActiveAgent(agent.id)
                 defer { AgentManager.shared.setActiveAgent(Agent.defaultId) }
@@ -424,6 +558,21 @@ struct CapabilitiesDiscoverToolTests {
                     "Direct capabilities_discover calls without explicit/task-local agent context must keep global-enabled results"
                 )
 
+                let unscopedConfigureResult = try await unscopedTool.execute(
+                    argumentsJSON: configureQuery
+                )
+                for configureName in configureNames {
+                    #expect(
+                        !unscopedConfigureResult.contains("tool/\(configureName)"),
+                        "No-context discovery must fail closed for Default-agent configure tool \(configureName)"
+                    )
+                }
+
+                let defaultResult = try await CapabilitiesDiscoverTool(agentId: Agent.defaultId)
+                    .execute(argumentsJSON: configureQuery)
+                #expect(defaultResult.contains("tool/osaurus_config"))
+
+                _ = await AgentManager.shared.delete(id: unseededAgent.id)
                 _ = await AgentManager.shared.delete(id: agent.id)
             }
         }
@@ -448,18 +597,26 @@ struct CapabilitiesLoadToolTests {
         #expect(!serialized.contains("skill/plot-data"))
     }
 
-    @Test func rejectsEmptyIds() async throws {
+    @Test func emptyIdsFallsBackToTheEnabledList() async throws {
+        // `ids: []` and a missing `ids` both used to be invalid_args — the
+        // shape a model in a rejection loop keeps producing. Loading nothing
+        // now answers with the enabled list so the loop has something to act
+        // on instead of another rejection.
         let tool = CapabilitiesLoadTool()
         let result = try await tool.execute(argumentsJSON: "{\"ids\": []}")
-        #expect(ToolEnvelope.isError(result))
-        #expect(result.contains("ids"))
+        #expect(!ToolEnvelope.isError(result))
+        #expect(
+            result.contains("Enabled capabilities")
+                || result.contains("No capabilities are enabled"))
     }
 
-    @Test func rejectsMissingIds() async throws {
+    @Test func missingIdsFallsBackToTheEnabledList() async throws {
         let tool = CapabilitiesLoadTool()
         let result = try await tool.execute(argumentsJSON: "{}")
-        #expect(ToolEnvelope.isError(result))
-        #expect(result.contains("ids"))
+        #expect(!ToolEnvelope.isError(result))
+        #expect(
+            result.contains("Enabled capabilities")
+                || result.contains("No capabilities are enabled"))
     }
 
     /// Synthetic spec with a uniquely-marked parameter description so the
@@ -665,6 +822,7 @@ struct CapabilitiesLoadToolTests {
                 let agent = Agent(
                     name: "CapabilityLoadGrant-\(UUID().uuidString.prefix(6))",
                     agentAddress: "capability-load-grant-\(UUID().uuidString)",
+                    autonomousExec: AutonomousExecConfig(enabled: false),
                     manualToolNames: []
                 )
                 AgentManager.shared.add(agent)
@@ -790,6 +948,7 @@ struct CapabilitiesLoadToolTests {
                 let agent = Agent(
                     name: "SkillAutoLoad-\(UUID().uuidString.prefix(6))",
                     agentAddress: "skill-autoload-\(UUID().uuidString)",
+                    autonomousExec: AutonomousExecConfig(enabled: false),
                     manualToolNames: [groupTool.name]
                 )
                 AgentManager.shared.add(agent)

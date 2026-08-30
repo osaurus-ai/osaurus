@@ -38,7 +38,8 @@ struct AgentRunSamplingResolutionTests {
             let agent = Agent(
                 name: "Sampling Probe \(UUID().uuidString)",
                 temperature: 0.1,
-                maxTokens: 512
+                maxTokens: 512,
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             manager.add(agent)
 
@@ -60,7 +61,8 @@ struct AgentRunSamplingResolutionTests {
             let agent = Agent(
                 name: "Sampling Probe \(UUID().uuidString)",
                 temperature: 0.1,
-                maxTokens: 512
+                maxTokens: 512,
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             manager.add(agent)
 

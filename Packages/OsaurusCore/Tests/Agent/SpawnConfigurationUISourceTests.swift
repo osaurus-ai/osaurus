@@ -25,7 +25,7 @@ struct SpawnConfigurationUISourceTests {
 
         #expect(agents.components(separatedBy: "SpawnConfigurationEditor(").count - 1 == 1)
         #expect(settings.components(separatedBy: "SpawnConfigurationEditor(").count - 1 == 1)
-        #expect(settings.contains(#"SettingsSubsection(label: "Main Chat Spawn")"#))
+        #expect(settings.contains(#"label: "Main Chat Spawn""#))
         #expect(editor.contains(#"AgentSheetSectionLabel("Allowed agents")"#))
         #expect(editor.contains(#"AgentSheetSectionLabel("Allowed models")"#))
         #expect(editor.contains(#"title: "Max subagents per batch""#))
@@ -65,7 +65,7 @@ struct SpawnConfigurationUISourceTests {
     @Test("shared global editors use revision-safe three-way store saves")
     func globalEditorsDoNotReplaceStaleSharedSnapshots() throws {
         let paths = [
-            "Views/Settings/ConfigurationView.swift",
+            "Views/Settings/OrchestratorSettingsView.swift",
             "Views/Model/AppleScriptModelsView.swift",
             "Views/ImageGeneration/ImageGenerationView.swift",
         ]
@@ -82,7 +82,7 @@ struct SpawnConfigurationUISourceTests {
 
     @Test("Main Chat batch edits use an origin-aware Server update path")
     func mainChatBatchEditsUpdateServerWithoutNotificationEchoes() throws {
-        let settings = try Self.source("Views/Settings/ConfigurationView.swift")
+        let settings = try Self.source("Views/Settings/OrchestratorSettingsView.swift")
         let controller = try Self.source("Networking/ServerController.swift")
         let composer = try Self.source("Services/Chat/SystemPromptComposer.swift")
 

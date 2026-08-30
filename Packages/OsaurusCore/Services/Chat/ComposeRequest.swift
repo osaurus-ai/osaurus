@@ -42,6 +42,10 @@ struct ComposeRequest: Sendable {
     /// `frozenManifest`). `nil` = read fresh; non-nil = reuse verbatim.
     let frozenSoul: String?
     let trace: TTFTTrace?
+    /// Project of the session being composed for, when any. Folds the
+    /// project's knowledge collections into the knowledge-tool gate and the
+    /// prompt's grant descriptors.
+    let projectId: UUID?
 
     init(
         agentId: UUID,
@@ -56,7 +60,8 @@ struct ComposeRequest: Sendable {
         frozenToolSpecs: [Tool]? = nil,
         frozenManifest: String? = nil,
         frozenSoul: String? = nil,
-        trace: TTFTTrace? = nil
+        trace: TTFTTrace? = nil,
+        projectId: UUID? = nil
     ) {
         self.agentId = agentId
         self.executionMode = executionMode
@@ -71,5 +76,6 @@ struct ComposeRequest: Sendable {
         self.frozenManifest = frozenManifest
         self.frozenSoul = frozenSoul
         self.trace = trace
+        self.projectId = projectId
     }
 }

@@ -23,8 +23,10 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Context Management               | Stable    | -                  | SKILLS.md                     | Services/Context/CapabilitySearch.swift, Tools/CapabilityTools.swift, Services/Tool/ToolSearchService.swift, Services/Tool/ToolIndexService.swift |
 | Memory                           | Stable    | "Key Features"     | MEMORY.md                     | Services/Memory/MemoryService.swift, Services/Memory/MemorySearchService.swift, Services/Memory/MemoryContextAssembler.swift |
 | Knowledge Collections            | Foundation | -                 | KNOWLEDGE.md                  | Managers/KnowledgeManager.swift, Services/Knowledge/, Storage/KnowledgeDatabase.swift, Tools/KnowledgeTools.swift, Tools/KnowledgeCurationTools.swift, Views/Knowledge/KnowledgeView.swift |
+| Projects                         | Stable    | "Key Features"     | PROJECTS.md                   | Models/Project/Project.swift, Managers/ProjectManager.swift, Views/Chat/ProjectDetailView.swift, Managers/Chat/ChatSessionsManager.swift, Services/Chat/SystemPromptComposer.swift, Services/Memory/MemoryService.swift |
 | Privacy Filter                   | Experimental | "Key Features"  | PRIVACY_FILTER.md             | PrivacyFilter/Core/PrivacyFilterPipeline.swift, PrivacyFilter/Core/PrivacyFilterEngine.swift, PrivacyFilter/Core/RegexEntityDetector.swift, PrivacyFilter/Store/PrivacyFilterStore.swift, PrivacyFilter/Views/PrivacyView.swift, PrivacyFilter/Views/RedactionReviewSheet.swift, Services/Provider/WireTransportProbe.swift, Views/Chat/RedactionHighlighter.swift, Views/Chat/RedactionHoverController.swift |
 | Agents                         | Stable    | "Agents"         | (in README)                   | Managers/AgentManager.swift, Models/Agent/Agent.swift, Views/Agent/AgentsView.swift         |
+| Orchestrator (default agent)     | Stable    | "Orchestrator"     | ORCHESTRATOR.md               | Models/Agent/DefaultAgentConfiguration.swift, Services/Chat/DefaultAgentSystemPromptBuilder.swift, Views/Settings/OrchestratorSettingsView.swift |
 | Agent DB & Self-Scheduling       | Stable    | "Agents"           | AGENT_DB.md                   | Storage/AgentDatabase.swift, Storage/SchedulerDatabase.swift, Managers/NextRunScheduler.swift, Tools/Database/, Views/Agent/AgentDBTabViews.swift, Views/Agent/NextRunPanelView.swift |
 | Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule/Schedule.swift, Views/Schedule/SchedulesView.swift      |
 | Watchers                         | Stable    | "Watchers"         | WATCHERS.md                   | Managers/WatcherManager.swift, Models/Watcher/Watcher.swift, Views/Watcher/WatchersView.swift         |
@@ -484,6 +486,8 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 - `Managers/AgentManager.swift` — Agent lifecycle and active agent management
 - `Views/Agent/AgentsView.swift` — Agent gallery and management UI
 
+**The Orchestrator (built-in default agent):** the in-memory `Agent.default` ("Osaurus", `Agent.defaultId`) is the default chat agent. Unspecified new windows open on it; a chat can also open directly on a custom agent. It is a configuration + delegation agent: it inspects and changes Osaurus through the declarative `osaurus_config` tool (plan → approval card → apply) and delegates work to allowed custom agents and local/cloud models as subagents. It never gets a sandbox, working folder, browser, or computer use — for filesystem work, create or switch to a custom agent and pick the working folder there. Its identity (custom display name via `DefaultAgentConfiguration.displayName`, persona, temperature, max tokens) and delegation helpers (spawn allow-list, budgets, RAM safety — `SubagentConfiguration`) are edited in **Settings → Orchestrator** (`Views/Settings/OrchestratorSettingsView.swift`) and covered by the declarative document's `default_agent` / `delegation` sections. See [ORCHESTRATOR.md](ORCHESTRATOR.md) for the full guide.
+
 **Features:**
 
 - **Custom System Prompts** — Define unique instructions for each agent
@@ -499,7 +503,7 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 
 | Group | Setting | Toggle | Default | Gates |
 |---|---|---|---|---|
-| Model Access | `disableTools` (inverted) | Tools | on | All tool use |
+| Model Access | `toolsEnabled` | Tools | on | All tool use (custom agents only) |
 | Model Access | `disableMemory` (inverted) | Memory | on | Passive memory injection + recording |
 | Output | `renderChartEnabled` | Charts | off | `render_chart` |
 | Output | `speakEnabled` | Voice | off | `speak` |
@@ -793,17 +797,18 @@ See [AGENT_LOOP.md](AGENT_LOOP.md) for the full guide.
 
 | Tool | Category | Description |
 |------|----------|-------------|
-| `sandbox_read_file` | Read-only | Read file contents (supports line ranges and log tails). Use instead of `cat`/`head`/`tail`. |
-| `sandbox_search_files` | Read-only | Search file contents (`target="content"`, ripgrep) **or** find files by name (`target="files"`, glob). Replaces the old `sandbox_search_files` + `sandbox_find_files` + `sandbox_list_directory` trio. |
-| `sandbox_write_file` | Write | Write a whole file (`content`, creates parent directories) **or** edit it in place (`old_string`+`new_string`, exact match) — the presence of `old_string` selects the edit path. Use instead of `echo`/`cat` heredoc / `sed` / `awk`. |
-| `sandbox_exec` | Exec | Run shell command. Foreground (default) or `background:true` for servers/long jobs. |
-| `sandbox_process` | Exec | Manage background jobs from `sandbox_exec(background:true)` — `poll` / `wait` / `kill`. |
+| `file_read` | Read-only | Read files or list directories; supports line ranges and log tails. VM paths are raw-text reads. |
+| `file_search` | Read-only | Search file contents (`target="content"`) or find files by name (`target="files"`). |
+| `file_write` | Write | Create, overwrite, or append UTF-8 files; creates parent directories. |
+| `file_edit` | Write | Replace one exact, unique text occurrence without rewriting the whole file. |
+| `shell_run` | Exec | Run a shell command. Foreground by default; `background:true` is available when Background Processes is enabled. |
+| `sandbox_process` | Exec | Inspect, wait for, or kill jobs started by `shell_run(background:true)`. |
 | `sandbox_install` | Package | Install packages — one tool, `manager` selects `apk` (system, root), `pip` (Python venv), or `npm` (Node workspace). Replaces the old `sandbox_pip_install` + `sandbox_npm_install`. |
 | `sandbox_secret_check` | Secret | Check whether a secret exists (never reveals value) |
 | `sandbox_secret_set` | Secret | Store a secret directly or prompt the user |
 | `sandbox_plugin_register` | Plugin | Register an agent-created plugin (requires `pluginCreate`) |
 
-The previously-discrete `sandbox_list_directory`, `sandbox_find_files`, `sandbox_move`, `sandbox_delete`, `sandbox_exec_background`, `sandbox_run_script`, `sandbox_edit_file`, and `sandbox_execute_code` tools were dropped. Their behaviour now comes from a flag (`background:true` on `sandbox_exec`, `target` on `sandbox_search_files`), an argument (`old_string`+`new_string` on `sandbox_write_file` for in-place edits), or a direct shell invocation (`mv` / `rm` in `sandbox_exec`). `sandbox_run_script` and `sandbox_execute_code`'s use case — multi-step scripts/orchestration — is now `sandbox_write_file` the script then `sandbox_exec` to run it (e.g. `python3 script.py`). The `sandbox_pip_install` / `sandbox_npm_install` tools were folded into `sandbox_install` (pick the manager with `manager:"pip"` / `"npm"`); a failed bare `apk add` / `pip install` / `npm install` in `sandbox_exec` surfaces a self-heal hint pointing at `sandbox_install`.
+The model sees the same five public workspace names in trusted-folder and VM modes. Private `sandbox_read_file`, `sandbox_search_files`, `sandbox_write_file`, and `sandbox_exec` adapters remain implementation details and are never callable from model schemas. Older discrete operations now use `file_read` for reads/listing, `file_search` for content/name search, `file_write` plus `file_edit` for mutations, and `shell_run` for processes or `mv` / `rm`. Multi-line code should be written as a script with `file_write`, then run with `shell_run`. The old `sandbox_pip_install` / `sandbox_npm_install` pair was folded into `sandbox_install`.
 
 `share_artifact` is a global built-in (registered in `ToolRegistry`, available in plain chat / folder / sandbox alike) so it does not appear in this sandbox-specific table.
 
@@ -817,10 +822,11 @@ Read-only tools are always available. Write/exec/package/secret tools require `a
 | `description` | Brief description |
 | `dependencies` | System packages via `apk add` |
 | `setup` | Setup command as agent user |
-| `files` | Seed files into plugin directory |
 | `tools` | Custom tool definitions (shell commands with `$PARAM_` env vars) |
 | `secrets` | Required secret names |
 | `permissions` | Network and inference access |
+
+Write plugin scripts beside `plugin.json` before registration; the registrar packages the directory automatically. A manifest `files` field is not supported.
 
 **Host API Bridge Services:**
 

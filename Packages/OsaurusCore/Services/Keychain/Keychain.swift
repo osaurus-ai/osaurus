@@ -300,6 +300,25 @@ enum Keychain {
                 logFailure("add", service: service, status: addStatus)
                 return mutationOutcome(for: addStatus)
             }
+            if isAccessDeniedStatus(updateStatus) {
+                // The item exists but its ACL refuses this process (typically
+                // written by a differently signed build). It can be neither
+                // read nor updated by us, so there is nothing to preserve:
+                // delete it and re-add once to reclaim the account.
+                logFailure("update", service: service, status: updateStatus)
+                let deleteStatus = backend.delete(query: base)
+                if deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound {
+                    var add = base
+                    add[kSecValueData as String] = data
+                    add[kSecAttrAccessible as String] = accessible
+                    let addStatus = backend.add(attributes: add)
+                    if addStatus == errSecSuccess { return .success }
+                    logFailure("add-after-denied", service: service, status: addStatus)
+                    return mutationOutcome(for: addStatus)
+                }
+                logFailure("delete-after-denied", service: service, status: deleteStatus)
+                return mutationOutcome(for: updateStatus)
+            }
             logFailure("update", service: service, status: updateStatus)
             return mutationOutcome(for: updateStatus)
         }

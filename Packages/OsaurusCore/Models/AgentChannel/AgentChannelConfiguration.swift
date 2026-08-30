@@ -12,6 +12,7 @@ enum AgentChannelKind: String, Codable, CaseIterable, Sendable {
     case slack
     case telegram
     case imessage
+    case whatsapp
     case customHTTP = "custom_http"
 }
 
@@ -580,6 +581,7 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
     static let nativeSlackConnectionId = "slack"
     static let nativeTelegramConnectionId = "telegram"
     static let nativeIMessageConnectionId = "imessage"
+    static let nativeWhatsAppConnectionId = "whatsapp"
 
     var id: String
     var name: String
@@ -743,7 +745,7 @@ enum AgentChannelBindingRunSource: String, Codable, CaseIterable, Sendable {
         case .schedule: self = .schedule
         case .watcher: self = .watcher
         case .selfSchedule: self = .selfSchedule
-        case .plugin, .http, .channel, .imported: return nil
+        case .plugin, .http, .channel, .imported, .delegation: return nil
         }
     }
 }
@@ -1000,6 +1002,15 @@ struct AgentChannelConfiguration: Codable, Equatable, Sendable {
     /// Bindings the agent can actually surface/use (enabled, mode != off).
     func usableBindings(agentId: UUID) -> [AgentChannelBinding] {
         bindings(agentId: agentId).filter(\.isUsable)
+    }
+
+    /// Bindings usable by this agent from the exact run provenance. A missing
+    /// or lateral/external source is not authorized to publish proactively.
+    func usableBindings(agentId: UUID, source: SessionSource?) -> [AgentChannelBinding] {
+        guard let source,
+            let runSource = AgentChannelBindingRunSource(sessionSource: source)
+        else { return [] }
+        return usableBindings(agentId: agentId).filter { $0.allows(source: runSource) }
     }
 
     private static func normalizedConnections(

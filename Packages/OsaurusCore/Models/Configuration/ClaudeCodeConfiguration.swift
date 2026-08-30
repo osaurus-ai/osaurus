@@ -62,6 +62,7 @@ public enum ClaudeCodeError: LocalizedError, Sendable, Equatable {
     case binaryNotFound(searchedPath: String)
     case notAuthenticated(detail: String)
     case launchFailed(String)
+    case turnFailed(String)
     case exited(code: Int32, stderrTail: String)
     case rateLimited(detail: String)
 
@@ -72,9 +73,11 @@ public enum ClaudeCodeError: LocalizedError, Sendable, Equatable {
                 "Claude Code isn't installed, or its `claude` command isn't on this app's PATH. Install it, then restart Osaurus."
             )
         case .notAuthenticated:
-            return L("Claude Code isn't signed in. Run `claude login` in a terminal, then try again.")
+            return L("Claude Code isn't signed in. Open `claude` in a terminal, sign in, then try again.")
         case .launchFailed(let detail):
             return String(format: L("Couldn't start Claude Code: %@"), detail)
+        case .turnFailed(let detail):
+            return String(format: L("Claude Code couldn't complete the turn: %@"), detail)
         case .exited(let code, let tail):
             if tail.isEmpty {
                 return String(format: L("Claude Code exited with code %d."), Int(code))
@@ -133,6 +136,10 @@ public struct ClaudeCodeAuthStatus: Codable, Sendable, Equatable {
 /// The three states the setup UI renders.
 public enum ClaudeCodeSetupState: Sendable, Equatable {
     case notInstalled(searchedPath: String)
+    /// The installed CLI predates machine-readable authentication commands.
+    /// It may already be signed in, but Osaurus cannot prove that without
+    /// spending a generation, so the UI offers a manual terminal check.
+    case statusUnavailable(cliVersion: String?)
     case signedOut
     case signedIn(ClaudeCodeAuthStatus)
 }
@@ -440,6 +447,31 @@ public enum ClaudeCodeConfiguration {
         try? JSONDecoder().decode(ClaudeCodeAuthStatus.self, from: data)
     }
 
+    /// Parse the first non-empty line of `claude --version`.
+    public static func decodeVersion(_ data: Data) -> String? {
+        String(decoding: data, as: UTF8.self)
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty })
+    }
+
+    public static func cliVersion(
+        env: [String: String] = ProcessInfo.processInfo.environment,
+        timeout: TimeInterval = 5
+    ) async -> String? {
+        guard let executable = resolveExecutable(env: env),
+            let result = await ClaudeCodeProcessRunner.capture(
+                executable: executable,
+                arguments: ["--version"],
+                environment: env,
+                timeout: timeout
+            ),
+            result.exitCode == 0,
+            !result.timedOut
+        else { return nil }
+        return decodeVersion(result.stdout)
+    }
+
     /// Ask the CLI who is signed in.
     ///
     /// Unlike `isAvailable()` this *does* spawn a process, so it is only called
@@ -449,15 +481,17 @@ public enum ClaudeCodeConfiguration {
         timeout: TimeInterval = 10
     ) async -> ClaudeCodeAuthStatus? {
         guard let executable = resolveExecutable(env: env) else { return nil }
-        guard
-            let data = await runCapturing(
+        guard let result = await ClaudeCodeProcessRunner.capture(
                 executable: executable,
                 arguments: ["auth", "status", "--json"],
-                env: env,
+                environment: env,
                 timeout: timeout
-            )
+            ),
+            !result.timedOut
         else { return nil }
-        return decodeAuthStatus(data)
+        // Some versions use a non-zero exit for the signed-out JSON state.
+        // Decode the payload before considering the status code.
+        return decodeAuthStatus(result.stdout)
     }
 
     /// Resolve what the setup UI should show.
@@ -467,7 +501,14 @@ public enum ClaudeCodeConfiguration {
         guard resolveExecutable(env: env) != nil else {
             return .notInstalled(searchedPath: searchedPath(env: env))
         }
-        guard let status = await authStatus(env: env), status.loggedIn else {
+        let version = await cliVersion(env: env)
+        guard let status = await authStatus(env: env) else {
+            // Older CLIs accept unknown subcommands by printing general help
+            // with exit code zero. A missing JSON payload, not the exit code,
+            // is therefore the reliable capability signal.
+            return .statusUnavailable(cliVersion: version)
+        }
+        guard status.loggedIn else {
             return .signedOut
         }
         return .signedIn(status)
@@ -486,56 +527,12 @@ public enum ClaudeCodeConfiguration {
         timeout: TimeInterval = 300
     ) async -> ClaudeCodeAuthStatus? {
         guard let executable = resolveExecutable(env: env) else { return nil }
-        _ = await runCapturing(
+        _ = await ClaudeCodeProcessRunner.capture(
             executable: executable,
             arguments: ["auth", "login"],
-            env: env,
+            environment: env,
             timeout: timeout
         )
         return await authStatus(env: env)
-    }
-
-    /// Run a short-lived `claude` subcommand and collect stdout.
-    ///
-    /// Deliberately simpler than `ClaudeCodeProcessRunner`: these are one-shot
-    /// control commands with bounded output, so there is no streaming, no
-    /// partial-line framing, and no idle watchdog — just a wall-clock deadline
-    /// and a SIGTERM. Returns nil on launch failure, timeout, or non-zero exit.
-    private static func runCapturing(
-        executable: String,
-        arguments: [String],
-        env: [String: String],
-        timeout: TimeInterval
-    ) async -> Data? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        process.environment = env
-        let stdout = Pipe()
-        process.standardOutput = stdout
-        // Keep the child off the app's stderr; callers surface their own copy.
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-
-        let deadline = Task {
-            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-            if !Task.isCancelled, process.isRunning {
-                process.terminate()
-            }
-        }
-        defer { deadline.cancel() }
-
-        // Read before waiting: a child that fills the pipe buffer would block
-        // forever on write if we waited for exit first.
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else { return nil }
-        return data
     }
 }

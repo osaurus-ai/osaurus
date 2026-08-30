@@ -39,6 +39,75 @@ struct SystemPermissionProbeTests {
         #expect(!SystemPermissionProbe.fullDiskAccessGranted(homeDirectory: root))
     }
 
+    /// Regression for GitHub #2523: on upgraded Macs a legacy, no longer
+    /// TCC-protected `~/Library/Safari` file could be readable without any
+    /// FDA grant. A stray readable file outside the sentinel set must not
+    /// flip the probe to granted.
+    @Test func fullDiskAccessProbeIgnoresStaleUnprotectedSafariFiles() throws {
+        let root = try makeTemporaryHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let bookmarks = root.appendingPathComponent("Library/Safari/Bookmarks.plist")
+        try FileManager.default.createDirectory(
+            at: bookmarks.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("stale".utf8).write(to: bookmarks)
+
+        #expect(!SystemPermissionProbe.fullDiskAccessGranted(homeDirectory: root))
+    }
+
+    /// The probe fails closed: every sentinel file that exists must be
+    /// readable. One readable file next to an unreadable one is what a
+    /// partial / revoked grant looks like, not FDA.
+    @Test func fullDiskAccessProbeRejectsWhenAnyExistingProtectedFileIsUnreadable() throws {
+        let root = try makeTemporaryHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let readable = root.appendingPathComponent("Library/Application Support/com.apple.TCC/TCC.db")
+        try FileManager.default.createDirectory(
+            at: readable.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("test".utf8).write(to: readable)
+
+        let unreadable = root.appendingPathComponent("Library/Messages/chat.db")
+        try FileManager.default.createDirectory(
+            at: unreadable.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("test".utf8).write(to: unreadable)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o000],
+            ofItemAtPath: unreadable.path
+        )
+        defer {
+            // Restore permissions so the temp-directory cleanup can delete it.
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o644],
+                ofItemAtPath: unreadable.path
+            )
+        }
+
+        #expect(!SystemPermissionProbe.fullDiskAccessGranted(homeDirectory: root))
+    }
+
+    @Test func fullDiskAccessProbeGrantsWhenEveryExistingProtectedFileIsReadable() throws {
+        let root = try makeTemporaryHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        for relative in ["Library/Application Support/com.apple.TCC/TCC.db", "Library/Messages/chat.db"] {
+            let url = root.appendingPathComponent(relative)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data("test".utf8).write(to: url)
+        }
+
+        #expect(SystemPermissionProbe.fullDiskAccessGranted(homeDirectory: root))
+    }
+
     @Test func screenRecordingProbeUsesCoreGraphicsPreflightResult() {
         #expect(SystemPermissionProbe.screenRecordingGranted(preflight: { true }))
         #expect(!SystemPermissionProbe.screenRecordingGranted(preflight: { false }))

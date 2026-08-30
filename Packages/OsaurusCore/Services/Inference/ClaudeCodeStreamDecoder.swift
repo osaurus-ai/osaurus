@@ -195,7 +195,16 @@ public struct ClaudeCodeStreamDecoder: Sendable {
 
         let usage = root["usage"] as? [String: Any]
         let outputTokens = (usage?["output_tokens"] as? Int) ?? 0
-        let durationMs = (root["duration_ms"] as? Double) ?? Double(root["duration_ms"] as? Int ?? 0)
+        // Prefer API generation time over end-to-end CLI wall time so startup,
+        // MCP work, and local tool execution do not depress the displayed
+        // decode rate. Older versions only report `duration_ms`.
+        let apiDurationMs =
+            (root["duration_api_ms"] as? Double)
+            ?? Double(root["duration_api_ms"] as? Int ?? 0)
+        let wallDurationMs =
+            (root["duration_ms"] as? Double)
+            ?? Double(root["duration_ms"] as? Int ?? 0)
+        let durationMs = apiDurationMs > 0 ? apiDurationMs : wallDurationMs
         let tps = durationMs > 0 ? Double(outputTokens) / (durationMs / 1000.0) : 0
 
         let stopReason = (root["stop_reason"] as? String) ?? lastStopReason

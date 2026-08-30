@@ -327,6 +327,18 @@ extension ModelInfo {
             }
         }
 
+        // Org-less bundles live directly under the models root
+        // (e.g. `<root>/DeepSeek-V4-Flash-0731-JANG`). Without this probe the
+        // org scan below treats the bundle itself as an org directory and
+        // never matches, ModelInfo resolves nil, and every consumer of
+        // bundle metadata silently falls back — observed live as the context
+        // chip (and the runtime trim budget) using the 128k default for a
+        // 1,048,576-token model.
+        let direct = root.appendingPathComponent(trimmed, isDirectory: true)
+        if fm.fileExists(atPath: direct.appendingPathComponent("config.json").path) {
+            return direct
+        }
+
         // Try to find by repo name only (search all org directories)
         let lowerName = trimmed.lowercased()
         if let orgDirs = try? fm.contentsOfDirectory(
@@ -496,6 +508,7 @@ struct ShowResponse: Codable, Sendable {
     let template: String
     let details: ShowDetails
     let modelInfo: [String: AnyCodable]
+    let capabilities: [String]
 
     private enum CodingKeys: String, CodingKey {
         case modelfile
@@ -503,6 +516,7 @@ struct ShowResponse: Codable, Sendable {
         case template
         case details
         case modelInfo = "model_info"
+        case capabilities
     }
 
     struct ShowDetails: Codable, Sendable {
@@ -633,7 +647,8 @@ extension ModelInfo {
             parameters: paramLines.joined(separator: "\n"),
             template: "",
             details: details,
-            modelInfo: modelInfoDict
+            modelInfo: modelInfoDict,
+            capabilities: capabilities
         )
     }
 }

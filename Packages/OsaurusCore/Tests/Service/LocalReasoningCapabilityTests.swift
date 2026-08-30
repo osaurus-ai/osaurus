@@ -283,6 +283,65 @@ struct LocalReasoningCapabilityTests {
         #expect(LocalReasoningCapability.analyzeJangConfig(data: data) == nil)
     }
 
+    // MARK: - Generic bundle capability declaration
+
+    @Test("Muse-style capabilities declare a channel without inventing a toggle")
+    func declaredMuseReasoningChannel() {
+        let data = Data(
+            #"""
+            {
+              "model_type": "muse_glimmer",
+              "capabilities": {
+                "supports_thinking": true,
+                "reasoning_parser": "muse_glimmer",
+                "reasoning_control": "reasoning_strength"
+              }
+            }
+            """#.utf8
+        )
+        let cap = LocalReasoningCapability.analyzeDeclaredCapabilities(data: data)
+        #expect(cap?.supportsThinking == true)
+        #expect(cap?.hasEnableThinkingKwarg == false)
+        #expect(cap?.isToggleableThinking == false)
+        #expect(cap?.templateInjectsThinkTag == false)
+        #expect(cap?.declaredDefaultThinkingOn == nil)
+    }
+
+    @Test("A declared channel supplements template analysis only")
+    func declaredChannelMergesWithoutFabricatingTemplateMechanics() throws {
+        let template = LocalReasoningCapability.analyze(
+            template: "Reasoning strength: {{ reasoning_strength | default('high') }}"
+        )
+        let declared = try #require(
+            LocalReasoningCapability.analyzeDeclaredCapabilities(
+                data: Data(#"{"capabilities":{"supports_thinking":true}}"#.utf8)
+            )
+        )
+        let merged = LocalReasoningCapability.merge(
+            templateCapability: template,
+            declaredCapability: declared
+        )
+        #expect(merged.supportsThinking)
+        #expect(!merged.hasEnableThinkingKwarg)
+        #expect(!merged.templateInjectsThinkTag)
+        #expect(!merged.isToggleableThinking)
+        #expect(merged.declaredDefaultThinkingOn == nil)
+    }
+
+    @Test("Missing or false supports_thinking is not a capability declaration")
+    func absentDeclaredReasoningChannel() {
+        #expect(
+            LocalReasoningCapability.analyzeDeclaredCapabilities(
+                data: Data(#"{"capabilities":{"supports_thinking":false}}"#.utf8)
+            ) == nil
+        )
+        #expect(
+            LocalReasoningCapability.analyzeDeclaredCapabilities(
+                data: Data(#"{"capabilities":{"reasoning_parser":"muse_glimmer"}}"#.utf8)
+            ) == nil
+        )
+    }
+
     // MARK: - Filesystem integration
 
     /// End-to-end: scratch directory with NO chat template but WITH a
@@ -328,6 +387,31 @@ struct LocalReasoningCapabilityTests {
         defer { try? FileManager.default.removeItem(at: tmp) }
 
         #expect(LocalReasoningCapability.readJangConfigReasoning(at: tmp) == nil)
+    }
+
+    @Test("Filesystem: config capabilities surface a non-toggle reasoning channel")
+    func filesystemDeclaredReasoningCapability() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(
+                "osaurus-reasoning-declared-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: tmp,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try #"{"capabilities":{"supports_thinking":true,"reasoning_parser":"muse_glimmer"}}"#
+            .write(
+                to: tmp.appendingPathComponent("config.json"),
+                atomically: true,
+                encoding: .utf8
+            )
+
+        let cap = LocalReasoningCapability.readDeclaredReasoningCapability(at: tmp)
+        #expect(cap?.supportsThinking == true)
+        #expect(cap?.isToggleableThinking == false)
     }
 
     @Test("Filesystem: VLM chat_template.json sidecar wins when tokenizer_config is text-only")

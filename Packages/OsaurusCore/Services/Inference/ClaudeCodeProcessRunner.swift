@@ -54,6 +54,7 @@ private final class ClaudeCodeStreamState: @unchecked Sendable {
     private var lineParser = OpenAICompatibleStreamFramer.SSELineParser()
     private var stderrTail = Data()
     private var sawAnyEvent = false
+    private var reportedFailure: String?
 
     /// Feed stdout bytes; returns the events they completed.
     func ingestStdout(_ chunk: Data) -> [ClaudeCodeStreamEvent] {
@@ -64,7 +65,7 @@ private final class ClaudeCodeStreamState: @unchecked Sendable {
         while let line = lineParser.nextLine() {
             events.append(contentsOf: decoder.decode(line: line))
         }
-        if !events.isEmpty { sawAnyEvent = true }
+        record(events)
         return events
     }
 
@@ -78,7 +79,7 @@ private final class ClaudeCodeStreamState: @unchecked Sendable {
         while let line = lineParser.nextLine() {
             events.append(contentsOf: decoder.decode(line: line))
         }
-        if !events.isEmpty { sawAnyEvent = true }
+        record(events)
         return events
     }
 
@@ -104,9 +105,148 @@ private final class ClaudeCodeStreamState: @unchecked Sendable {
         defer { lock.unlock() }
         return sawAnyEvent
     }
+
+    func failureDetail() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return reportedFailure
+    }
+
+    private func record(_ events: [ClaudeCodeStreamEvent]) {
+        if !events.isEmpty { sawAnyEvent = true }
+        for case .failure(let detail) in events {
+            reportedFailure = detail
+        }
+    }
+}
+
+struct ClaudeCodeCommandResult: Sendable, Equatable {
+    let exitCode: Int32
+    let stdout: Data
+    let stderr: String
+    let timedOut: Bool
+}
+
+/// Bounded output collector for short-lived CLI control commands.
+private final class ClaudeCodeCommandState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stdout = Data()
+    private var stderr = Data()
+    private var timedOut = false
+
+    func appendStdout(_ chunk: Data) {
+        lock.lock()
+        defer { lock.unlock() }
+        stdout.append(chunk)
+        if stdout.count > 64 * 1024 {
+            stdout.removeFirst(stdout.count - (64 * 1024))
+        }
+    }
+
+    func appendStderr(_ chunk: Data) {
+        lock.lock()
+        defer { lock.unlock() }
+        stderr.append(chunk)
+        if stderr.count > 8 * 1024 {
+            stderr.removeFirst(stderr.count - (8 * 1024))
+        }
+    }
+
+    func markTimedOut() {
+        lock.lock()
+        timedOut = true
+        lock.unlock()
+    }
+
+    func result(exitCode: Int32) -> ClaudeCodeCommandResult {
+        lock.lock()
+        defer { lock.unlock() }
+        return ClaudeCodeCommandResult(
+            exitCode: exitCode,
+            stdout: stdout,
+            stderr: String(decoding: stderr, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            timedOut: timedOut
+        )
+    }
 }
 
 public enum ClaudeCodeProcessRunner {
+    /// Run a bounded control command without blocking the caller's executor.
+    ///
+    /// Authentication probes and browser sign-in can be initiated from
+    /// `@MainActor` SwiftUI tasks. Pipe readability handlers keep those tasks
+    /// responsive while the child runs, and cancellation follows the same
+    /// SIGTERM → SIGKILL path as generation.
+    static func capture(
+        executable: String,
+        arguments: [String],
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        timeout: TimeInterval
+    ) async -> ClaudeCodeCommandResult? {
+        let process = Process()
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        let state = ClaudeCodeCommandState()
+
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.environment = environment
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            state.appendStdout(chunk)
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            state.appendStderr(chunk)
+        }
+
+        let terminator = ProcessTerminator(process: process)
+        do {
+            try process.run()
+        } catch {
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            return nil
+        }
+
+        let timeoutTask = Task {
+            let nanoseconds = UInt64(max(0, timeout) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            guard !Task.isCancelled, process.isRunning else { return }
+            state.markTimedOut()
+            terminator.terminate()
+        }
+        defer { timeoutTask.cancel() }
+
+        await withTaskCancellationHandler {
+            await terminator.waitUntilExit()
+        } onCancel: {
+            terminator.terminate()
+        }
+
+        let residualOut = stdoutPipe.fileHandleForReading.availableData
+        if !residualOut.isEmpty { state.appendStdout(residualOut) }
+        let residualErr = stderrPipe.fileHandleForReading.availableData
+        if !residualErr.isEmpty { state.appendStderr(residualErr) }
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
+
+        return state.result(exitCode: process.terminationStatus)
+    }
+
     /// Run one turn and stream its decoded events.
     ///
     /// - Parameters:
@@ -209,6 +349,10 @@ public enum ClaudeCodeProcessRunner {
                 continuation.finish(throwing: Self.error(forExitCode: status, stderrTail: tail))
                 return
             }
+            if let detail = state.failureDetail() {
+                continuation.finish(throwing: Self.error(forFailureDetail: detail))
+                return
+            }
             if !state.producedOutput() {
                 continuation.finish(
                     throwing: ClaudeCodeError.exited(code: status, stderrTail: state.stderrText())
@@ -242,13 +386,26 @@ public enum ClaudeCodeProcessRunner {
         }
         return .exited(code: code, stderrTail: stderrTail)
     }
+
+    static func error(forFailureDetail detail: String) -> ClaudeCodeError {
+        let lowered = detail.lowercased()
+        if lowered.contains("not logged in") || lowered.contains("sign in")
+            || lowered.contains("authentication") || lowered.contains("unauthorized")
+        {
+            return .notAuthenticated(detail: detail)
+        }
+        if lowered.contains("rate limit") || lowered.contains("usage limit") {
+            return .rateLimited(detail: detail)
+        }
+        return .turnFailed(detail)
+    }
 }
 
 /// Idempotent SIGTERM → grace → SIGKILL handle around a `Process`.
 ///
 /// Separate from the runner so the cancellation closure can capture just this
 /// and not the whole streaming context.
-private final class ProcessTerminator: @unchecked Sendable {
+final class ProcessTerminator: @unchecked Sendable {
     private let lock = NSLock()
     private let process: Process
     private var didTerminate = false
@@ -303,10 +460,14 @@ private final class ProcessTerminator: @unchecked Sendable {
 
     func terminate() {
         lock.lock()
-        let alreadyTerminated = didTerminate
-        didTerminate = true
+        // A stream can be cancelled in the tiny window before `process.run()`.
+        // Do not consume the one-shot termination claim until there is a live
+        // child to signal; the already-cancelled producer will call again when
+        // it enters its cancellation handler after launch.
+        let shouldTerminate = !didTerminate && process.isRunning
+        if shouldTerminate { didTerminate = true }
         lock.unlock()
-        guard !alreadyTerminated, process.isRunning else { return }
+        guard shouldTerminate else { return }
 
         process.terminate()
 

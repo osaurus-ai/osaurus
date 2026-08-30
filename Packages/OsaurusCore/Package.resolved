@@ -1,5 +1,5 @@
 {
-  "originHash" : "4ace0dec3570ed63e0fc1bb250e5f133771e977760d1f6002b7531a36ae900c6",
+  "originHash" : "e7c41114538fa3841f9bc279cad343e42dee81deeb82ea61ea88d25d786e9373",
   "pins" : [
     {
       "identity" : "aachartkit-swift",
@@ -33,8 +33,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/containerization.git",
       "state" : {
-        "revision" : "44bec8b9933bc491d0cbf44abac90a1f6aaebf6b",
-        "version" : "0.35.0"
+        "revision" : "5427fd21ded4b84034126caef5b3182900b4776d",
+        "version" : "0.41.0"
       }
     },
     {
@@ -69,8 +69,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/grpc/grpc-swift-nio-transport.git",
       "state" : {
-        "revision" : "f62a09000685b5b86ee383b63e042f286b1a5422",
-        "version" : "2.7.0"
+        "revision" : "eaad084d6c26ff1f2e96f9c2ab76ef84d7165ab6",
+        "version" : "2.9.2"
       }
     },
     {
@@ -374,7 +374,16 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/osaurus-ai/vmlx-swift",
       "state" : {
-        "revision" : "8e2c3d6ebca6a43be6a516eb3dc55ef49c174a5d"
+        "revision" : "bf8b31995195fffd833968658f14c707317eaa70"
+      }
+    },
+    {
+      "identity" : "yams",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jpsim/Yams.git",
+      "state" : {
+        "revision" : "3d6871d5b4a5cd519adf233fbb576e0a2af71c17",
+        "version" : "5.4.0"
       }
     },
     {

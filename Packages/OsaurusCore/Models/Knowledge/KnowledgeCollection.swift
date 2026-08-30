@@ -35,6 +35,16 @@ public struct KnowledgeCollection: Identifiable, Codable, Equatable, Sendable {
     /// detected from an existing repo's `origin`. Sync is always
     /// user-triggered or approval-triggered; there is no background poll.
     public var gitRemoteURL: String?
+    /// Optional path patterns restricting which files are indexed, matched
+    /// against each file's collection-relative path (e.g. `docs/ENGINES.md`).
+    /// When `includeGlobs` is non-empty a file must match one of them to be
+    /// indexed; a file matching any `excludeGlobs` pattern is always dropped.
+    /// Both empty (the default) means "index everything", so existing
+    /// collections are unaffected. Changing either requires re-indexing the
+    /// collection (newly-excluded files are pruned, newly-included ones
+    /// added). See `KnowledgeGlob` for the supported syntax.
+    public var includeGlobs: [String]
+    public var excludeGlobs: [String]
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -45,6 +55,8 @@ public struct KnowledgeCollection: Identifiable, Codable, Equatable, Sendable {
         folderPath: String,
         isEnabled: Bool = true,
         gitRemoteURL: String? = nil,
+        includeGlobs: [String] = [],
+        excludeGlobs: [String] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -54,6 +66,8 @@ public struct KnowledgeCollection: Identifiable, Codable, Equatable, Sendable {
         self.folderPath = folderPath
         self.isEnabled = isEnabled
         self.gitRemoteURL = gitRemoteURL
+        self.includeGlobs = includeGlobs
+        self.excludeGlobs = excludeGlobs
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -66,8 +80,16 @@ public struct KnowledgeCollection: Identifiable, Codable, Equatable, Sendable {
         folderPath = try c.decode(String.self, forKey: .folderPath)
         isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         gitRemoteURL = try c.decodeIfPresent(String.self, forKey: .gitRemoteURL)
+        includeGlobs = try c.decodeIfPresent([String].self, forKey: .includeGlobs) ?? []
+        excludeGlobs = try c.decodeIfPresent([String].self, forKey: .excludeGlobs) ?? []
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+    }
+
+    /// True when `relPath` (collection-relative, `/`-separated) should be
+    /// indexed under this collection's include/exclude globs.
+    public func indexPathAllowed(_ relPath: String) -> Bool {
+        KnowledgeGlob.matches(relPath, include: includeGlobs, exclude: excludeGlobs)
     }
 
     public var folderURL: URL {
@@ -81,6 +103,68 @@ public struct KnowledgeCollection: Identifiable, Codable, Equatable, Sendable {
         var isDirectory: ObjCBool = false
         return FileManager.default.fileExists(atPath: folderURL.path, isDirectory: &isDirectory)
             && isDirectory.boolValue
+    }
+
+    // `fileExists` against an unmounted network volume or slow external disk
+    // can block for seconds, and the knowledge list evaluates `folderExists`
+    // per row per SwiftUI body pass — an observed main-thread hang. The memo
+    // pays that probe once per path, then serves the cached verdict and
+    // refreshes it off the calling thread when stale.
+    private static let folderExistsCacheLock = NSLock()
+    private nonisolated(unsafe) static var folderExistsCache: [String: (value: Bool, at: Date)] =
+        [:]
+    private nonisolated(unsafe) static var folderExistsRefreshInFlight: Set<String> = []
+    private static let folderExistsRefreshInterval: TimeInterval = 10.0
+
+    /// Eventually-consistent variant of `folderExists` for view bodies and
+    /// other latency-sensitive callers. Correctness-critical paths (indexing,
+    /// curation, watchers — all off-main) should keep using `folderExists`.
+    public var folderExistsCached: Bool {
+        let path = folderURL.path
+        return Self.cachedProbe(key: path) {
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+                && isDirectory.boolValue
+        }
+    }
+
+    /// Eventually-consistent variant of `isGitRepository` (same body-eval
+    /// call sites as `folderExistsCached`, same slow-volume hazard).
+    public var isGitRepositoryCached: Bool {
+        let path = folderURL.appendingPathComponent(".git").path
+        return Self.cachedProbe(key: path) {
+            FileManager.default.fileExists(atPath: path)
+        }
+    }
+
+    private static func cachedProbe(key: String, probe: @escaping @Sendable () -> Bool) -> Bool {
+        folderExistsCacheLock.lock()
+        let known = folderExistsCache[key]
+        folderExistsCacheLock.unlock()
+
+        if let known {
+            if Date().timeIntervalSince(known.at) >= folderExistsRefreshInterval {
+                folderExistsCacheLock.lock()
+                let alreadyRefreshing = !folderExistsRefreshInFlight.insert(key).inserted
+                folderExistsCacheLock.unlock()
+                if !alreadyRefreshing {
+                    DispatchQueue.global(qos: .utility).async {
+                        let value = probe()
+                        folderExistsCacheLock.lock()
+                        folderExistsCache[key] = (value, Date())
+                        folderExistsRefreshInFlight.remove(key)
+                        folderExistsCacheLock.unlock()
+                    }
+                }
+            }
+            return known.value
+        }
+
+        let probed = probe()
+        folderExistsCacheLock.lock()
+        folderExistsCache[key] = (probed, Date())
+        folderExistsCacheLock.unlock()
+        return probed
     }
 
     /// Whether the collection folder is a git repository (a `.git` entry

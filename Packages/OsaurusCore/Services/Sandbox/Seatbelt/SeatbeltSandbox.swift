@@ -239,9 +239,13 @@ public enum SeatbeltSandbox {
             "(allow process-info*)",
             "(allow signal (target same-sandbox))",
             // Baseline kernel/service access virtually every binary
-            // needs to start (dyld, libSystem, Foundation tools).
+            // needs to start (dyld, libSystem, Foundation tools). Do not
+            // grant blanket `mach-lookup`: that would let arbitrary agent
+            // code connect to user-session services outside the filesystem
+            // boundary (including credential-bearing XPC services). Add an
+            // individually named service only when a supported workflow has
+            // a demonstrated requirement and a confinement regression test.
             "(allow sysctl-read)",
-            "(allow mach-lookup)",
             "(allow file-read-metadata)",
             "(allow file-ioctl (subpath \"/dev\"))",
             // Read-only OS + toolchain surface. No home-directory

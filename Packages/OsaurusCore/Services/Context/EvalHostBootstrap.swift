@@ -59,6 +59,24 @@ public enum EvalHostBootstrap {
         ToolRegistry.shared.unregister(names: [dynamicLoadProbeToolName])
     }
 
+    /// Stable eval-only plugin group used to exercise the compact
+    /// `plugin/<id>` manifest path. Unlike `dynamicLoadProbeToolName`, this
+    /// probe renders as one grouped plugin ID and therefore catches models
+    /// that call that ID as a function instead of loading it through the
+    /// capability gateway.
+    nonisolated public static let groupedLoadProbeToolName = "eval_grouped_load_probe"
+    nonisolated public static let groupedLoadProbePluginId = "osaurus.eval.capability-group"
+
+    public static func registerGroupedLoadProbe() {
+        let probe = EvalGroupedLoadProbeTool()
+        ToolRegistry.shared.registerPluginTool(probe)
+        ToolRegistry.shared.setEnabled(true, for: probe.name)
+    }
+
+    public static func unregisterGroupedLoadProbe() {
+        ToolRegistry.shared.unregister(names: [groupedLoadProbeToolName])
+    }
+
     /// True when at least one curated AppleScript bundle is installed and
     /// ready — the gate the `applescript` / `mac_query` tools use before
     /// appearing in the composed schema.
@@ -103,7 +121,7 @@ public enum EvalHostBootstrap {
     }
 }
 
-private struct EvalDynamicLoadProbeTool: OsaurusTool {
+private struct EvalDynamicLoadProbeTool: IndividuallyManifestedCapabilityTool {
     let name = EvalHostBootstrap.dynamicLoadProbeToolName
     let description =
         "Return a deterministic acknowledgement that a deferred dynamic tool loaded and executed."
@@ -114,5 +132,20 @@ private struct EvalDynamicLoadProbeTool: OsaurusTool {
 
     func execute(argumentsJSON _: String) async throws -> String {
         ToolEnvelope.success(tool: name, text: "dynamic load probe executed")
+    }
+}
+
+private struct EvalGroupedLoadProbeTool: CapabilityToolGroupDeclaring {
+    let name = EvalHostBootstrap.groupedLoadProbeToolName
+    let description =
+        "Return a deterministic acknowledgement that a deferred plugin group loaded and executed."
+    let capabilityGroupId = EvalHostBootstrap.groupedLoadProbePluginId
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "properties": .object([:]),
+    ])
+
+    func execute(argumentsJSON _: String) async throws -> String {
+        ToolEnvelope.success(tool: name, text: "grouped capability load probe executed")
     }
 }

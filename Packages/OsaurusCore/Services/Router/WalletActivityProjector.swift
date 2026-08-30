@@ -47,8 +47,8 @@ struct WalletActivityRow: Identifiable, Equatable {
     /// Primary label. Plain English vocabulary like `CreditsActivityRow`'s
     /// state labels; views localize via `LocalizedStringKey`.
     let title: String
-    /// Signed display amount: "+$5.00" for balance credits, "-$0.0012" for
-    /// spend. Empty when the amount is unparseable.
+    /// Signed display amount: "+50,000 credits" for balance credits,
+    /// "-13 credits" for spend. Empty when the amount is unparseable.
     let amountLabel: String
     /// True when the amount adds to the balance (row tints as a credit).
     let isCredit: Bool
@@ -97,8 +97,8 @@ extension WalletActivityRow {
             kind: .usage,
             title: title,
             amountLabel: micro > 0
-                ? "-" + OsaurusRouter.formatMicroUSDPrecise(item.costMicro)
-                : OsaurusRouter.formatMicroUSDPrecise(item.costMicro),
+                ? "-" + OsaurusRouter.formatMicroAsCredits(item.costMicro)
+                : OsaurusRouter.formatMicroAsCredits(item.costMicro),
             isCredit: false,
             stateKind: CreditsActivityRow.state(forStatus: item.status).kind,
             date: CreditsActivityProjector.date(fromRouterTimestamp: item.createdAt)
@@ -112,8 +112,8 @@ extension WalletActivityRow {
             kind: .transaction,
             title: Self.transactionTitle(entryType: item.entryType, isCredit: micro >= 0),
             amountLabel: micro >= 0
-                ? "+" + OsaurusRouter.formatMicroUSD(item.amountMicro)
-                : OsaurusRouter.formatMicroUSD(item.amountMicro),
+                ? "+" + OsaurusRouter.formatMicroAsCredits(item.amountMicro)
+                : OsaurusRouter.formatMicroAsCredits(item.amountMicro),
             isCredit: micro >= 0,
             stateKind: micro >= 0 ? .success : .secondary,
             date: CreditsActivityProjector.date(fromRouterTimestamp: item.createdAt)
@@ -127,9 +127,9 @@ extension WalletActivityRow {
         if included {
             amountLabel = "Included"
         } else if micro > 0 {
-            amountLabel = "-" + OsaurusRouter.formatMicroUSDPrecise(item.costMicro)
+            amountLabel = "-" + OsaurusRouter.formatMicroAsCredits(item.costMicro)
         } else {
-            amountLabel = OsaurusRouter.formatMicroUSDPrecise(item.costMicro)
+            amountLabel = OsaurusRouter.formatMicroAsCredits(item.costMicro)
         }
         self.init(
             id: "web-\(item.id)",

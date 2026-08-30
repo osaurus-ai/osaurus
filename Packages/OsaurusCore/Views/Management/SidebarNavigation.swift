@@ -37,12 +37,37 @@ struct SidebarSectionData: Identifiable {
     let id: String
     let title: String
     let items: [SidebarItemData]
+    /// Collapsible sections render their header as a disclosure toggle and
+    /// hide their items until switched on (Developer Tools). The expansion
+    /// choice persists per section id across sessions.
+    var isCollapsible: Bool = false
+}
+
+/// Persistence for collapsible-section expansion (kept outside the generic
+/// `SidebarNavigation` type, which cannot hold static stored properties).
+///
+/// The Developer Tools switch doubles as a "developer mode" signal: other
+/// settings surfaces (provider connectivity card, memory diagnostics tab)
+/// read `isDeveloperToolsOn` and re-check on `changed` to hide their
+/// developer-grade chrome while the switch is off.
+enum SidebarSectionExpansion {
+    static let defaultsKey = "settingsSidebarExpandedSections"
+    /// Posted after the expansion set persists, so open settings tabs can
+    /// react to the Developer Tools switch without relaunching.
+    static let changed = Notification.Name("sidebarSectionExpansionChanged")
+
+    static var isDeveloperToolsOn: Bool {
+        UserDefaults.standard.stringArray(forKey: defaultsKey)?
+            .contains(ManagementSection.developers.rawValue) ?? false
+    }
 }
 
 // MARK: - Layout Constants
 
 private enum SidebarLayout {
-    static let expandedWidth: CGFloat = 220
+    // Wide enough for the longest tab labels ("Local Models", "Cloud
+    // Models") to render on one line next to their badges.
+    static let expandedWidth: CGFloat = 240
     static let collapsedWidth: CGFloat = 64
     static let topPadding: CGFloat = 26
     static let bottomPadding: CGFloat = 16
@@ -70,6 +95,12 @@ struct SidebarNavigation<Content: View, Footer: View>: View {
     @State private var isCollapsed = false
     @State private var canScrollDown = true
     @Namespace private var sidebarNamespace
+
+    /// Ids of collapsible sections the user has toggled open, persisted so
+    /// the choice survives relaunch.
+    @State private var expandedCollapsibleSections: Set<String> = Set(
+        UserDefaults.standard.stringArray(forKey: SidebarSectionExpansion.defaultsKey) ?? []
+    )
 
     private var sidebarWidth: CGFloat {
         isCollapsed ? SidebarLayout.collapsedWidth : SidebarLayout.expandedWidth
@@ -188,18 +219,20 @@ private extension SidebarNavigation {
                     ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
                         sectionHeader(for: section, isFirst: index == 0)
 
-                        ForEach(section.items) { item in
-                            SidebarItemView(
-                                item: item,
-                                isSelected: selection == item.id,
-                                isCollapsed: isCollapsed,
-                                namespace: sidebarNamespace
-                            ) {
-                                withAnimation(.easeOut(duration: 0.2)) {
-                                    selection = item.id
+                        if showsItems(for: section) {
+                            ForEach(section.items) { item in
+                                SidebarItemView(
+                                    item: item,
+                                    isSelected: selection == item.id,
+                                    isCollapsed: isCollapsed,
+                                    namespace: sidebarNamespace
+                                ) {
+                                    withAnimation(.easeOut(duration: 0.2)) {
+                                        selection = item.id
+                                    }
                                 }
+                                .id(item.id)
                             }
-                            .id(item.id)
                         }
                     }
 
@@ -216,11 +249,56 @@ private extension SidebarNavigation {
                     proxy.scrollTo(newValue, anchor: .center)
                 }
             }
+            .onChange(of: expandedCollapsibleSections) { oldValue, newValue in
+                // Switching a collapsible group ON reveals rows that may sit
+                // below the fold (Developer Tools is the last group), so
+                // scroll its final row into view to show what the switch
+                // unlocked. Collapsing scrolls nowhere.
+                let opened = newValue.subtracting(oldValue)
+                guard let sectionId = opened.first,
+                    let lastItem = sections.first(where: { $0.id == sectionId })?.items.last
+                else { return }
+                // Let the switch's own knob animation and the row insertion
+                // (0.2s easeOut) land first, then glide down in a gentle
+                // ease — sequencing the two keeps the reveal readable
+                // instead of the scroll fighting the toggle mid-flight.
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    withAnimation(.easeInOut(duration: 0.35)) {
+                        proxy.scrollTo(lastItem.id, anchor: .bottom)
+                    }
+                }
+            }
             .onAppear {
                 // Ensure initial selection is visible
                 proxy.scrollTo(selection, anchor: .center)
             }
         }
+    }
+
+    /// Whether a section's items render. Non-collapsible sections always
+    /// show; collapsible ones show while toggled on — or while the current
+    /// selection lives inside them, so a search result / deeplink can never
+    /// land on a hidden tab.
+    func showsItems(for section: SidebarSectionData) -> Bool {
+        guard section.isCollapsible else { return true }
+        return expandedCollapsibleSections.contains(section.id)
+            || section.items.contains { $0.id == selection }
+    }
+
+    func toggleSectionExpansion(_ section: SidebarSectionData) {
+        withAnimation(.easeOut(duration: 0.2)) {
+            if expandedCollapsibleSections.contains(section.id) {
+                expandedCollapsibleSections.remove(section.id)
+            } else {
+                expandedCollapsibleSections.insert(section.id)
+            }
+        }
+        UserDefaults.standard.set(
+            Array(expandedCollapsibleSections).sorted(),
+            forKey: SidebarSectionExpansion.defaultsKey
+        )
+        NotificationCenter.default.post(name: SidebarSectionExpansion.changed, object: nil)
     }
 
     /// Group label when expanded; a thin divider between groups when collapsed.
@@ -233,6 +311,14 @@ private extension SidebarNavigation {
                         .fill(theme.primaryBorder.opacity(0.6))
                         .frame(width: 24, height: 1)
                         .padding(.vertical, 4)
+                }
+            } else if section.isCollapsible {
+                SidebarCollapsibleSectionHeader(
+                    title: section.title,
+                    isExpanded: showsItems(for: section),
+                    topPadding: isFirst ? 4 : 16
+                ) {
+                    toggleSectionExpansion(section)
                 }
             } else {
                 SidebarSectionHeader(title: section.title, topPadding: isFirst ? 4 : 16)
@@ -447,6 +533,45 @@ struct SidebarSectionHeader: View {
             .padding(.horizontal, 12)
             .padding(.top, topPadding)
             .padding(.bottom, 4)
+    }
+}
+
+/// Section header with a literal switch for collapsible groups (Developer
+/// Tools): same typography as `SidebarSectionHeader`, plus a trailing mini
+/// toggle that shows the group's tabs while on.
+struct SidebarCollapsibleSectionHeader: View {
+    @Environment(\.theme) private var theme
+    let title: String
+    let isExpanded: Bool
+    var topPadding: CGFloat = 16
+    let action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(title.uppercased())
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundColor(theme.tertiaryText)
+            Spacer(minLength: 0)
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { isExpanded },
+                    set: { _ in action() }
+                )
+            )
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .labelsHidden()
+            .localizedHelp("Show Developer Tools in the sidebar")
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, topPadding)
+        .padding(.bottom, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+        .accessibilityValue(
+            isExpanded ? Text("Shown", bundle: .module) : Text("Hidden", bundle: .module)
+        )
     }
 }
 

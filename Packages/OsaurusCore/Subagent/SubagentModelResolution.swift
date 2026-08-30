@@ -122,6 +122,13 @@ enum SubagentModelResolution {
     /// not treated as proof of current availability: the target must still be
     /// Foundation, an installed local model, or a model advertised by a
     /// currently connected provider before the residency decision can run.
+    ///
+    /// `honorConfiguredOverride` (default true) lets TRUE agent delegation
+    /// skip the launching agent's per-capability model override: the
+    /// delegated child is a REAL chat session of the target agent, and
+    /// `applyAgentDefaultModelForDispatch` will run it on the target agent's
+    /// own model — so the residency plan must be computed for that exact
+    /// model, not for an override the dispatched session will never load.
     static func resolve(
         capabilityId: String,
         agentId: UUID?,
@@ -131,6 +138,7 @@ enum SubagentModelResolution {
         idleWaitSeconds: Int,
         deniedMessage: String,
         unavailableMessage: String,
+        honorConfiguredOverride: Bool = true,
         defaultModel: @escaping @Sendable @MainActor () -> String?
     ) async throws -> Resolved {
         // Eval seam: force the model, keep residency passthrough.
@@ -154,18 +162,20 @@ enum SubagentModelResolution {
             // only after current availability was proven above. It still flows
             // into the residency decision below (not a bypass).
             if let requested { return requested }
-            let settings = agentId.flatMap { AgentManager.shared.agent(for: $0)?.settings }
-            let configuredOverride = SubagentToolVisibility.effectiveSubagentModel(
-                capabilityId: capabilityId,
-                isDefault: isDefault,
-                config: config,
-                settings: settings
-            )
-            if let configuredOverride = trimmedNonEmpty(configuredOverride) {
-                guard let available = availableOverride(configuredOverride) else {
-                    throw SubagentError.unavailable(unavailableMessage)
+            if honorConfiguredOverride {
+                let settings = agentId.flatMap { AgentManager.shared.agent(for: $0)?.settings }
+                let configuredOverride = SubagentToolVisibility.effectiveSubagentModel(
+                    capabilityId: capabilityId,
+                    isDefault: isDefault,
+                    config: config,
+                    settings: settings
+                )
+                if let configuredOverride = trimmedNonEmpty(configuredOverride) {
+                    guard let available = availableOverride(configuredOverride) else {
+                        throw SubagentError.unavailable(unavailableMessage)
+                    }
+                    return available
                 }
-                return available
             }
             return pickModel(
                 evalModel: nil,

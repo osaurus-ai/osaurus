@@ -2,10 +2,10 @@
 //  ToolsManagerView.swift
 //  osaurus
 //
-//  The Tools catalog: choose which tools agents can use, manage service
-//  connections, and create custom tools. Organized as three tabs —
-//  All (every usable tool, grouped by where it comes from), Connections
-//  (remote MCP services), and Custom (user-created sandboxed tools).
+//  The Tools catalog: choose which tools agents can use and manage service
+//  connections. Organized as two tabs — All Tools (every usable tool,
+//  grouped by where it comes from, including user-created custom tools) and
+//  MCP (remote MCP services).
 //
 
 import AppKit
@@ -83,8 +83,8 @@ struct ToolsManagerView: View {
                     allToolsTabContent
                 case .connections:
                     ProvidersView()
-                case .custom:
-                    CustomToolsTabContent(onChange: { reload() })
+                case .nativePlugins:
+                    NativePluginsBrowseView()
                 }
             }
             .opacity(hasAppeared ? 1 : 0)
@@ -134,7 +134,7 @@ struct ToolsManagerView: View {
     private var headerBar: some View {
         ManagerHeaderWithTabs(
             title: L("Tools"),
-            subtitle: L("Choose which tools agents can use")
+            subtitle: headerSubtitle
         ) {
             HeaderIconButton(
                 "arrow.clockwise",
@@ -162,6 +162,17 @@ struct ToolsManagerView: View {
         }
     }
 
+    private var headerSubtitle: String {
+        switch selectedTab {
+        case .all:
+            L("Choose which tools agents can use")
+        case .connections:
+            L("Connect services and troubleshoot the tools they provide")
+        case .nativePlugins:
+            L("Browse and install native plugins")
+        }
+    }
+
     // MARK: - All Tools Tab (every tool agents can use, grouped by source)
 
     private var allToolsTabContent: some View {
@@ -172,11 +183,6 @@ struct ToolsManagerView: View {
             // child and defeat virtualization. Row spacing is 8; section
             // headers and intro cards add 8 more top padding for a 16 gap.
             LazyVStack(spacing: 8) {
-                SectionHeader(
-                    title: L("All Tools"),
-                    description: "Everything agents can use, grouped by where each tool comes from"
-                )
-
                 let builtIn = visibleTools(builtInSectionToolEntries, section: .builtIn)
                 let pluginGroups = visiblePluginGroups()
                 let remoteGroups = visibleRemoteGroups()
@@ -214,54 +220,11 @@ struct ToolsManagerView: View {
                             .padding(.top, 8)
                     }
 
-                    if !builtIn.isEmpty {
-                        ToolSectionHeader(
-                            title: L("Built-in"),
-                            icon: "shippingbox",
-                            count: builtIn.count
-                        )
-                        .padding(.top, 8)
-
-                        cappedGroup(key: "builtIn", tools: builtIn) { entry in
-                            RuntimeManagedToolEntryRow(
-                                entry: entry,
-                                badge: sourceBadge(for: entry),
-                                policyInfo: policyInfoCache[entry.name],
-                                availability: cachedAvailability(availabilityCache, for: entry),
-                                status: catalogStatus(for: entry.name),
-                                onChange: { applyLocalToolMutation(name: entry.name) }
-                            )
-                        }
-                    }
-
-                    if !pluginGroups.isEmpty {
-                        ToolSectionHeader(
-                            title: L("Plugins"),
-                            icon: "puzzlepiece.extension",
-                            count: pluginGroups.reduce(0) { $0 + $1.tools.count }
-                        )
-                        .padding(.top, 8)
-
-                        ForEach(pluginGroups, id: \.plugin.id) { item in
-                            ToolPluginCard(
-                                plugin: item.plugin,
-                                tools: item.tools,
-                                policyInfoCache: policyInfoCache,
-                                availabilityCache: availabilityCache,
-                                exposureRowsByName: exposureRowsByName,
-                                onToolMutated: { applyLocalToolMutation(name: $0) }
-                            )
-                        }
-                    }
-
+                    // Sources are no longer wrapped in collapsible section
+                    // cards — the source pill in the toolbar narrows the list,
+                    // and each card/row already names its own origin. Groups
+                    // render flat for a cleaner, scannable catalog.
                     if !remoteGroups.isEmpty {
-                        ToolSectionHeader(
-                            title: L("Connections"),
-                            icon: "server.rack",
-                            count: remoteGroups.reduce(0) { $0 + $1.tools.count }
-                        )
-                        .padding(.top, 8)
-
                         ForEach(remoteGroups, id: \.provider.id) { item in
                             RemoteProviderToolsCard(
                                 provider: item.provider,
@@ -278,16 +241,36 @@ struct ToolsManagerView: View {
                     }
 
                     if !custom.isEmpty {
-                        ToolSectionHeader(
-                            title: L("Custom"),
-                            icon: "person.crop.square.badge.wrench",
-                            count: custom.count
-                        )
-                        .padding(.top, 8)
-
                         cappedGroup(key: "custom", tools: custom) { entry in
                             ToolEntryRow(
                                 entry: entry,
+                                sourceLabel: L("Custom"),
+                                policyInfo: policyInfoCache[entry.name],
+                                availability: cachedAvailability(availabilityCache, for: entry),
+                                status: catalogStatus(for: entry.name),
+                                onChange: { applyLocalToolMutation(name: entry.name) }
+                            )
+                        }
+                    }
+
+                    if !pluginGroups.isEmpty {
+                        ForEach(pluginGroups, id: \.plugin.id) { item in
+                            ToolPluginCard(
+                                plugin: item.plugin,
+                                tools: item.tools,
+                                policyInfoCache: policyInfoCache,
+                                availabilityCache: availabilityCache,
+                                exposureRowsByName: exposureRowsByName,
+                                onToolMutated: { applyLocalToolMutation(name: $0) }
+                            )
+                        }
+                    }
+
+                    if !builtIn.isEmpty {
+                        cappedGroup(key: "builtIn", tools: builtIn) { entry in
+                            RuntimeManagedToolEntryRow(
+                                entry: entry,
+                                badge: sourceBadge(for: entry),
                                 policyInfo: policyInfoCache[entry.name],
                                 availability: cachedAvailability(availabilityCache, for: entry),
                                 status: catalogStatus(for: entry.name),
@@ -314,17 +297,17 @@ struct ToolsManagerView: View {
     private var filterToolbar: some View {
         HStack(spacing: 8) {
             ToolFilterMenu(
-                icon: "circle.lefthalf.filled",
-                accessibilityTitle: L("Filter by status"),
-                options: ToolCatalogStatusFilter.allCases,
-                selection: $statusFilter
-            )
-
-            ToolFilterMenu(
                 icon: "square.grid.2x2",
                 accessibilityTitle: L("Filter by source"),
                 options: ToolCatalogSourceFilter.allCases,
                 selection: $sourceFilter
+            )
+
+            ToolFilterMenu(
+                icon: "circle.lefthalf.filled",
+                accessibilityTitle: L("Filter by status"),
+                options: ToolCatalogStatusFilter.allCases,
+                selection: $statusFilter
             )
 
             Spacer(minLength: 8)
@@ -730,433 +713,6 @@ func cachedAvailability(
     cache[entry.name] ?? ToolRegistry.shared.availability(forTool: entry.name)
 }
 
-// MARK: - Custom Tools Tab
-
-/// The Custom tab: tools the user creates or imports as JSON recipes. They
-/// run inside Osaurus's sandbox, isolated from the rest of the Mac — the
-/// sandbox is the safety mechanism, not the organizing concept.
-private struct CustomToolsTabContent: View {
-    @Environment(\.theme) private var theme
-    @ObservedObject private var pluginLibrary = SandboxPluginLibrary.shared
-
-    let onChange: () -> Void
-
-    @State private var showCreatePlugin = false
-    @State private var editingPlugin: SandboxPlugin?
-    @State private var pluginToDelete: SandboxPlugin?
-    @State private var showDeleteConfirm = false
-    @State private var actionError: String?
-
-    var body: some View {
-        ScrollView {
-            // Mirror the All tab: a single LazyVStack with bare `ForEach`
-            // groups so tool rows virtualize instead of laying out eagerly.
-            LazyVStack(spacing: 8) {
-                SectionHeader(
-                    title: L("Custom Tools"),
-                    description:
-                        "Tools you create or import as JSON recipes. They run inside Osaurus's sandbox, isolated from the rest of your Mac."
-                )
-
-                HStack {
-                    Spacer()
-
-                    Button(action: importPluginFile) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "square.and.arrow.down")
-                                .font(.system(size: 11))
-                            Text("Import", bundle: .module)
-                                .font(.system(size: 12, weight: .medium))
-                        }
-                        .foregroundColor(theme.primaryText)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.tertiaryBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help(Text("Import a custom tool from a JSON file", bundle: .module))
-
-                    Button(action: { showCreatePlugin = true }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 11))
-                            Text("New Custom Tool", bundle: .module)
-                                .font(.system(size: 12, weight: .medium))
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-
-                if pluginLibrary.plugins.isEmpty {
-                    customToolsEmptyState
-                } else {
-                    ToolSectionHeader(
-                        title: L("Your Custom Tools"),
-                        icon: "person.crop.square.badge.wrench",
-                        count: pluginLibrary.plugins.count
-                    )
-                    .padding(.top, 8)
-
-                    ForEach(pluginLibrary.plugins) { plugin in
-                        SandboxPluginToolCard(
-                            plugin: plugin,
-                            onEdit: { editingPlugin = plugin },
-                            onDuplicate: { duplicatePlugin(plugin) },
-                            onExport: { exportPlugin(plugin) },
-                            onDelete: {
-                                pluginToDelete = plugin
-                                showDeleteConfirm = true
-                            }
-                        )
-                    }
-                }
-            }
-            .padding(24)
-            .frame(maxWidth: .infinity)
-        }
-        .sheet(isPresented: $showCreatePlugin) {
-            SandboxPluginEditorView(
-                plugin: .blank(),
-                isNew: true,
-                onSave: { plugin in pluginLibrary.save(plugin) },
-                onDismiss: {}
-            )
-        }
-        .sheet(item: $editingPlugin) { plugin in
-            SandboxPluginEditorView(
-                plugin: plugin,
-                isNew: false,
-                onSave: { updated in
-                    pluginLibrary.update(oldId: plugin.id, plugin: updated)
-                    editingPlugin = nil
-                },
-                onDismiss: { editingPlugin = nil }
-            )
-        }
-        .alert(Text("Remove Custom Tool?", bundle: .module), isPresented: $showDeleteConfirm) {
-            Button(role: .cancel) {
-                pluginToDelete = nil
-            } label: {
-                Text("Cancel", bundle: .module)
-            }
-            Button(role: .destructive) {
-                if let p = pluginToDelete {
-                    pluginLibrary.delete(id: p.id)
-                    ToolRegistry.shared.unregisterSandboxPluginTools(pluginId: p.id)
-                    pluginToDelete = nil
-                    onChange()
-                }
-            } label: {
-                Text("Remove", bundle: .module)
-            }
-        } message: {
-            if let p = pluginToDelete {
-                Text(
-                    "Remove \"\(p.name)\" from your custom tools? Agents will no longer be able to use its tools.",
-                    bundle: .module
-                )
-            }
-        }
-        .alert(
-            Text("Error", bundle: .module),
-            isPresented: Binding(
-                get: { actionError != nil },
-                set: { if !$0 { actionError = nil } }
-            )
-        ) {
-            Button(role: .cancel) {
-                actionError = nil
-            } label: {
-                Text("OK", bundle: .module)
-            }
-        } message: {
-            if let error = actionError {
-                Text(error)
-            }
-        }
-    }
-
-    private var customToolsEmptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "puzzlepiece.extension")
-                .font(.system(size: 40, weight: .light))
-                .foregroundColor(theme.tertiaryText)
-
-            Text("No custom tools yet", bundle: .module)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-
-            Text(
-                "Create a tool or import a JSON recipe. Custom tools are set up automatically the first time an agent uses them.",
-                bundle: .module
-            )
-            .font(.system(size: 13))
-            .foregroundColor(theme.tertiaryText)
-            .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 60)
-    }
-
-    private func importPluginFile() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.json]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        Task { @MainActor in
-            guard await panel.beginModal() == .OK, let url = panel.url else { return }
-            do {
-                let plugin = try pluginLibrary.importFromFile(url)
-                ToolRegistry.shared.registerSandboxPluginTools(plugin: plugin)
-                onChange()
-            } catch {
-                actionError = error.localizedDescription
-            }
-        }
-    }
-
-    private func duplicatePlugin(_ plugin: SandboxPlugin) {
-        var copy = plugin
-        copy.name = plugin.name + " Copy"
-        copy.version = nil
-        pluginLibrary.save(copy)
-        ToolRegistry.shared.registerSandboxPluginTools(plugin: copy)
-        onChange()
-    }
-
-    private func exportPlugin(_ plugin: SandboxPlugin) {
-        guard let data = pluginLibrary.exportData(for: plugin.id) else { return }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = "\(plugin.id).json"
-        Task { @MainActor in
-            guard await panel.beginModal() == .OK, let url = panel.url else { return }
-            try? data.write(to: url, options: .atomic)
-        }
-    }
-}
-
-// MARK: - Sandbox Plugin Tool Card
-
-private struct SandboxPluginToolCard: View {
-    @Environment(\.theme) private var theme
-    let plugin: SandboxPlugin
-    let onEdit: () -> Void
-    let onDuplicate: () -> Void
-    let onExport: () -> Void
-    let onDelete: () -> Void
-
-    @State private var isExpanded = false
-    @State private var isMenuHovering = false
-    @State private var showAllTools = false
-
-    private var toolCount: Int {
-        plugin.tools?.count ?? 0
-    }
-
-    private var visibleToolSpecs: [SandboxToolSpec] {
-        guard let tools = plugin.tools else { return [] }
-        let cap = toolGroupRenderCapValue
-        return (showAllTools || tools.count <= cap) ? tools : Array(tools.prefix(cap))
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 14) {
-                Button(action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        isExpanded.toggle()
-                    }
-                }) {
-                    HStack(spacing: 14) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(theme.accentColor.opacity(0.12))
-                            Image(systemName: "puzzlepiece.extension.fill")
-                                .font(.system(size: 20))
-                                .foregroundColor(theme.accentColor)
-                        }
-                        .frame(width: 44, height: 44)
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(plugin.name)
-                                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                                .foregroundColor(theme.primaryText)
-
-                            Text(plugin.description)
-                                .font(.system(size: 13))
-                                .foregroundColor(theme.secondaryText)
-                                .lineLimit(1)
-                        }
-
-                        Spacer()
-
-                        if toolCount > 0 {
-                            HStack(spacing: 4) {
-                                Image(systemName: "wrench.and.screwdriver")
-                                    .font(.system(size: 10))
-                                Text("\(toolCount) tool\(toolCount == 1 ? "" : "s")", bundle: .module)
-                                    .font(.system(size: 11, weight: .medium))
-                            }
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Capsule().fill(theme.tertiaryBackground))
-                        }
-
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.tertiaryText)
-                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel(Text("Custom tool \(plugin.name), \(toolCount) tools", bundle: .module))
-
-                Menu {
-                    Button(action: onEdit) {
-                        Label {
-                            Text("Edit", bundle: .module)
-                        } icon: {
-                            Image(systemName: "pencil")
-                        }
-                    }
-                    Button(action: onDuplicate) {
-                        Label {
-                            Text("Duplicate", bundle: .module)
-                        } icon: {
-                            Image(systemName: "plus.square.on.square")
-                        }
-                    }
-                    Button(action: onExport) {
-                        Label {
-                            Text("Export", bundle: .module)
-                        } icon: {
-                            Image(systemName: "square.and.arrow.up")
-                        }
-                    }
-                    Divider()
-                    Button(role: .destructive, action: onDelete) {
-                        Label {
-                            Text("Remove", bundle: .module)
-                        } icon: {
-                            Image(systemName: "trash")
-                        }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 16))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 28, height: 28)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.tertiaryBackground.opacity(isMenuHovering ? 1 : 0))
-                        )
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .onHover { isMenuHovering = $0 }
-                .accessibilityLabel(Text("Actions for \(plugin.name)", bundle: .module))
-            }
-
-            if isExpanded {
-                Divider()
-                    .padding(.vertical, 4)
-
-                if let tools = plugin.tools, !tools.isEmpty {
-                    VStack(spacing: 8) {
-                        ForEach(visibleToolSpecs, id: \.id) { spec in
-                            let toolName = "\(plugin.id)_\(spec.id)"
-                            let entry = ToolRegistry.shared.entry(named: toolName)
-                            sandboxToolRow(spec: spec, entry: entry)
-                        }
-
-                        if tools.count > toolGroupRenderCapValue {
-                            ShowAllToolsButton(
-                                hiddenCount: tools.count - toolGroupRenderCapValue,
-                                isExpanded: showAllTools
-                            ) {
-                                showAllTools.toggle()
-                            }
-                        }
-                    }
-                } else {
-                    HStack {
-                        Image(systemName: "info.circle")
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.tertiaryText)
-                        Text("No tools defined in this custom tool", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                    .padding(8)
-                }
-
-                if let deps = plugin.dependencies, !deps.isEmpty {
-                    HStack(spacing: 6) {
-                        Image(systemName: "shippingbox")
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.tertiaryText)
-                        Text("Dependencies: \(deps.joined(separator: ", "))", bundle: .module)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                    .padding(.top, 4)
-                }
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity)
-        .background(HoverableCardBackground())
-    }
-
-    private func sandboxToolRow(spec: SandboxToolSpec, entry: ToolRegistry.ToolEntry?) -> some View {
-        HStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(theme.accentColor.opacity(0.08))
-                Image(systemName: "terminal")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.accentColor)
-            }
-            .frame(width: 28, height: 28)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(spec.id)
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundColor(theme.primaryText)
-                Text(spec.description)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            if let entry = entry {
-                ToolEnableToggle(entry: entry, onChange: {})
-            }
-        }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground.opacity(0.5))
-        )
-    }
-}
-
 #if DEBUG && canImport(PreviewsMacros)
     #Preview {
         ToolsManagerView()
@@ -1174,7 +730,7 @@ private struct ToolPluginCard: View {
     let exposureRowsByName: [String: ToolExposureDiagnostic.Row]
     let onToolMutated: (String) -> Void
 
-    @State private var isExpanded: Bool = false
+    @State private var isExpanded: Bool = true
     @State private var showAllTools = false
 
     private var visibleTools: [ToolRegistry.ToolEntry] {
@@ -1183,16 +739,16 @@ private struct ToolPluginCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
                 Button(action: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         isExpanded.toggle()
                     }
                 }) {
-                    HStack(spacing: 14) {
+                    HStack(spacing: 10) {
                         ZStack {
-                            RoundedRectangle(cornerRadius: 10)
+                            RoundedRectangle(cornerRadius: 8)
                                 .fill(
                                     plugin.hasLoadError
                                         ? Color.red.opacity(0.12)
@@ -1203,18 +759,19 @@ private struct ToolPluginCard: View {
                                     ? "exclamationmark.triangle.fill"
                                     : "puzzlepiece.extension.fill"
                             )
-                            .font(.system(size: 20))
+                            .font(.system(size: 14))
                             .foregroundColor(
                                 plugin.hasLoadError ? .red : theme.accentColor
                             )
                         }
-                        .frame(width: 44, height: 44)
+                        .frame(width: 34, height: 34)
 
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 8) {
                                 Text(plugin.displayName)
-                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
                                     .foregroundColor(theme.primaryText)
+                                    .lineLimit(1)
 
                                 if plugin.hasLoadError {
                                     HStack(spacing: 4) {
@@ -1232,7 +789,7 @@ private struct ToolPluginCard: View {
 
                             if let description = plugin.pluginDescription {
                                 Text(description)
-                                    .font(.system(size: 13))
+                                    .font(.system(size: 11))
                                     .foregroundColor(theme.secondaryText)
                                     .lineLimit(1)
                             }
@@ -1241,16 +798,12 @@ private struct ToolPluginCard: View {
                         Spacer()
 
                         if !tools.isEmpty {
-                            HStack(spacing: 4) {
-                                Image(systemName: "wrench.and.screwdriver")
-                                    .font(.system(size: 10))
-                                Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")", bundle: .module)
-                                    .font(.system(size: 11, weight: .medium))
-                            }
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Capsule().fill(theme.tertiaryBackground))
+                            Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")", bundle: .module)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(theme.secondaryText)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(theme.tertiaryBackground))
                         }
 
                         Image(systemName: "chevron.right")
@@ -1302,6 +855,7 @@ private struct ToolPluginCard: View {
                     ForEach(visibleTools, id: \.id) { entry in
                         ToolEntryRow(
                             entry: entry,
+                            sourceLabel: plugin.displayName,
                             policyInfo: policyInfoCache[entry.name],
                             availability: cachedAvailability(availabilityCache, for: entry),
                             status: ToolCatalogPresentation.status(
@@ -1326,7 +880,7 @@ private struct ToolPluginCard: View {
                 .transition(.opacity)
             }
         }
-        .padding(16)
+        .padding(12)
         .frame(maxWidth: .infinity)
         .background(HoverableCardBackground())
     }
@@ -1354,28 +908,29 @@ private struct RemoteProviderToolsCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
                 Button(action: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         isExpanded.toggle()
                     }
                 }) {
-                    HStack(spacing: 14) {
+                    HStack(spacing: 10) {
                         ZStack {
-                            RoundedRectangle(cornerRadius: 10)
+                            RoundedRectangle(cornerRadius: 8)
                                 .fill(theme.accentColor.opacity(0.12))
                             Image(systemName: "server.rack")
-                                .font(.system(size: 20))
+                                .font(.system(size: 14))
                                 .foregroundColor(theme.accentColor)
                         }
-                        .frame(width: 44, height: 44)
+                        .frame(width: 34, height: 34)
 
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 8) {
                                 Text(provider.name)
-                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
                                     .foregroundColor(theme.primaryText)
+                                    .lineLimit(1)
 
                                 HStack(spacing: 4) {
                                     Circle()
@@ -1391,23 +946,19 @@ private struct RemoteProviderToolsCard: View {
                             }
 
                             Text(provider.url)
-                                .font(.system(size: 12, design: .monospaced))
+                                .font(.system(size: 11, design: .monospaced))
                                 .foregroundColor(theme.tertiaryText)
                                 .lineLimit(1)
                         }
 
                         Spacer()
 
-                        HStack(spacing: 4) {
-                            Image(systemName: "wrench.and.screwdriver")
-                                .font(.system(size: 10))
-                            Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundColor(theme.secondaryText)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(theme.tertiaryBackground))
+                        Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")", bundle: .module)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(theme.tertiaryBackground))
 
                         Image(systemName: "chevron.right")
                             .font(.system(size: 11, weight: .semibold))
@@ -1477,7 +1028,7 @@ private struct RemoteProviderToolsCard: View {
                 .transition(.opacity)
             }
         }
-        .padding(16)
+        .padding(12)
         .frame(maxWidth: .infinity)
         .background(HoverableCardBackground())
     }

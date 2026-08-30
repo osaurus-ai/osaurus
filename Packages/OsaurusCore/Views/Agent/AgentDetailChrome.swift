@@ -759,6 +759,20 @@ struct AgentDetailGroupedTabStrip<Tab: Hashable>: View {
 
     let groups: [AgentDetailTabGroup<Tab>]
     @Binding var selection: Tab
+    /// Optional fixed control at the trailing edge of the active group's
+    /// sub-tab row. Kept outside the horizontal tab scroller so status/actions
+    /// remain visible without taking vertical space from the destination.
+    let trailingAccessory: AnyView?
+
+    init(
+        groups: [AgentDetailTabGroup<Tab>],
+        selection: Binding<Tab>,
+        trailingAccessory: AnyView? = nil
+    ) {
+        self.groups = groups
+        self._selection = selection
+        self.trailingAccessory = trailingAccessory
+    }
 
     /// Last tab visited per group id, so switching groups round-trips
     /// back to where the user was.
@@ -837,16 +851,23 @@ struct AgentDetailGroupedTabStrip<Tab: Hashable>: View {
     /// pills.
     @ViewBuilder
     private func subTabRow(_ group: AgentDetailTabGroup<Tab>) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                ForEach(group.items) { item in
-                    AgentDetailSubTabPill(item: item, isSelected: selection == item.id) {
-                        selection = item.id
+        HStack(spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    ForEach(group.items) { item in
+                        AgentDetailSubTabPill(item: item, isSelected: selection == item.id) {
+                            selection = item.id
+                        }
                     }
                 }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 7)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 7)
+
+            if let trailingAccessory {
+                trailingAccessory
+                    .padding(.trailing, 20)
+            }
         }
         .background(drawerFill)
     }

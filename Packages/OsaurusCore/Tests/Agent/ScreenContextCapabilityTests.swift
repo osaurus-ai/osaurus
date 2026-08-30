@@ -48,6 +48,7 @@ struct ScreenContextCapabilityTests {
             let agent = Agent(
                 name: "ScreenCtxTestAgent-\(UUID().uuidString.prefix(6))",
                 agentAddress: "test-screen-context-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: false),
                 settings: settings
             )
             AgentManager.shared.add(agent)

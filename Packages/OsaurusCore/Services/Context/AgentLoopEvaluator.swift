@@ -50,6 +50,13 @@ public struct AgentLoopTranscript: Sendable, Codable {
         public struct ExecutionWave: Sendable, Codable, Equatable {
             public let wave: Int?
             public let remoteJobs: Int?
+            public let localJobs: Int?
+            public let engineRequestedMaximum: Int?
+            public let engineArchitectureMaximum: Int?
+            public let engineEffectiveMaximum: Int?
+            public let hasEngineRequestedMaximum: Bool?
+            public let hasEngineArchitectureMaximum: Bool?
+            public let hasEngineEffectiveMaximum: Bool?
             public let effectiveLocalSlots: Int?
             public let localSubwaves: [Int]?
             public let limitingFactors: [String]?
@@ -57,23 +64,45 @@ public struct AgentLoopTranscript: Sendable, Codable {
             public init(
                 wave: Int?,
                 remoteJobs: Int?,
+                localJobs: Int? = nil,
+                engineRequestedMaximum: Int? = nil,
+                engineArchitectureMaximum: Int? = nil,
+                engineEffectiveMaximum: Int? = nil,
+                hasEngineRequestedMaximum: Bool? = nil,
+                hasEngineArchitectureMaximum: Bool? = nil,
+                hasEngineEffectiveMaximum: Bool? = nil,
                 effectiveLocalSlots: Int?,
                 localSubwaves: [Int]?,
                 limitingFactors: [String]?
             ) {
                 self.wave = wave
                 self.remoteJobs = remoteJobs
+                self.localJobs = localJobs
+                self.engineRequestedMaximum = engineRequestedMaximum
+                self.engineArchitectureMaximum = engineArchitectureMaximum
+                self.engineEffectiveMaximum = engineEffectiveMaximum
+                self.hasEngineRequestedMaximum = hasEngineRequestedMaximum
+                self.hasEngineArchitectureMaximum = hasEngineArchitectureMaximum
+                self.hasEngineEffectiveMaximum = hasEngineEffectiveMaximum
                 self.effectiveLocalSlots = effectiveLocalSlots
                 self.localSubwaves = localSubwaves
                 self.limitingFactors = limitingFactors
             }
 
             public var isWellFormed: Bool {
-                wave != nil
+                let base = wave != nil
                     && remoteJobs != nil
+                    && localJobs != nil
                     && effectiveLocalSlots != nil
                     && localSubwaves != nil
                     && limitingFactors != nil
+                guard base else { return false }
+                guard (localJobs ?? 0) > 0 else { return true }
+                return hasEngineRequestedMaximum == true
+                    && hasEngineArchitectureMaximum == true
+                    && hasEngineEffectiveMaximum == true
+                    && engineRequestedMaximum != nil
+                    && engineEffectiveMaximum != nil
             }
         }
 
@@ -194,6 +223,19 @@ public struct AgentLoopTranscript: Sendable, Codable {
         /// Honest request-resolution state without inventing a downstream
         /// bundle default when the evaluator did not explicitly override it.
         public let thinkingState: String?
+        /// Native-MTP evidence for this step, from the runtime's completion
+        /// stats. All nil = native MTP did not produce this step's tokens
+        /// (not requested, or gate-excluded) — the same meaning as vmlx's
+        /// `nativeMTPStats == nil`. Never inferred from settings.
+        public let mtpDepth: Int?
+        public let mtpActiveDepth: Int?
+        public let mtpVerifyCalls: Int?
+        public let mtpAcceptedDraftTokens: Int?
+        public let mtpBonusTokens: Int?
+        public let mtpRejectedTokens: Int?
+        public let mtpARFallbackTokens: Int?
+        public let mtpAdaptiveDownshifts: Int?
+        public let mtpAdaptiveFallbackReason: String?
 
         public init(
             step: Int,
@@ -208,7 +250,16 @@ public struct AgentLoopTranscript: Sendable, Codable {
             completionTokens: Int? = nil,
             decodeTokensPerSecond: Double? = nil,
             decodeThroughputAttribution: String? = nil,
-            requestedEnableThinking: Bool?
+            requestedEnableThinking: Bool?,
+            mtpDepth: Int? = nil,
+            mtpActiveDepth: Int? = nil,
+            mtpVerifyCalls: Int? = nil,
+            mtpAcceptedDraftTokens: Int? = nil,
+            mtpBonusTokens: Int? = nil,
+            mtpRejectedTokens: Int? = nil,
+            mtpARFallbackTokens: Int? = nil,
+            mtpAdaptiveDownshifts: Int? = nil,
+            mtpAdaptiveFallbackReason: String? = nil
         ) {
             self.step = step
             self.stopReason = stopReason
@@ -229,6 +280,15 @@ public struct AgentLoopTranscript: Sendable, Codable {
             self.thinkingState = requestedEnableThinking.map {
                 $0 ? "explicitEnabled" : "explicitDisabled"
             } ?? "runtimeDefault"
+            self.mtpDepth = mtpDepth
+            self.mtpActiveDepth = mtpActiveDepth
+            self.mtpVerifyCalls = mtpVerifyCalls
+            self.mtpAcceptedDraftTokens = mtpAcceptedDraftTokens
+            self.mtpBonusTokens = mtpBonusTokens
+            self.mtpRejectedTokens = mtpRejectedTokens
+            self.mtpARFallbackTokens = mtpARFallbackTokens
+            self.mtpAdaptiveDownshifts = mtpAdaptiveDownshifts
+            self.mtpAdaptiveFallbackReason = mtpAdaptiveFallbackReason
         }
 
         private enum CodingKeys: String, CodingKey {
@@ -246,6 +306,15 @@ public struct AgentLoopTranscript: Sendable, Codable {
             case decodeThroughputAttribution
             case requestedEnableThinking
             case thinkingState
+            case mtpDepth
+            case mtpActiveDepth
+            case mtpVerifyCalls
+            case mtpAcceptedDraftTokens
+            case mtpBonusTokens
+            case mtpRejectedTokens
+            case mtpARFallbackTokens
+            case mtpAdaptiveDownshifts
+            case mtpAdaptiveFallbackReason
         }
 
         public init(from decoder: Decoder) throws {
@@ -281,6 +350,19 @@ public struct AgentLoopTranscript: Sendable, Codable {
                 ?? requestedEnableThinking.map {
                     $0 ? "explicitEnabled" : "explicitDisabled"
                 } ?? "runtimeDefault"
+            mtpDepth = try container.decodeIfPresent(Int.self, forKey: .mtpDepth)
+            mtpActiveDepth = try container.decodeIfPresent(Int.self, forKey: .mtpActiveDepth)
+            mtpVerifyCalls = try container.decodeIfPresent(Int.self, forKey: .mtpVerifyCalls)
+            mtpAcceptedDraftTokens = try container.decodeIfPresent(
+                Int.self, forKey: .mtpAcceptedDraftTokens)
+            mtpBonusTokens = try container.decodeIfPresent(Int.self, forKey: .mtpBonusTokens)
+            mtpRejectedTokens = try container.decodeIfPresent(Int.self, forKey: .mtpRejectedTokens)
+            mtpARFallbackTokens = try container.decodeIfPresent(
+                Int.self, forKey: .mtpARFallbackTokens)
+            mtpAdaptiveDownshifts = try container.decodeIfPresent(
+                Int.self, forKey: .mtpAdaptiveDownshifts)
+            mtpAdaptiveFallbackReason = try container.decodeIfPresent(
+                String.self, forKey: .mtpAdaptiveFallbackReason)
         }
     }
 
@@ -350,6 +432,17 @@ public struct AgentLoopTranscript: Sendable, Codable {
                     let parsed = SpawnBatchObservation.ExecutionWave(
                         wave: wave["wave"] as? Int,
                         remoteJobs: wave["remote_jobs"] as? Int,
+                        localJobs: wave["local_jobs"] as? Int,
+                        engineRequestedMaximum: wave["engine_requested_max"] as? Int,
+                        engineArchitectureMaximum:
+                            wave["engine_architecture_max"] as? Int,
+                        engineEffectiveMaximum: wave["engine_effective_max"] as? Int,
+                        hasEngineRequestedMaximum:
+                            wave.keys.contains("engine_requested_max"),
+                        hasEngineArchitectureMaximum:
+                            wave.keys.contains("engine_architecture_max"),
+                        hasEngineEffectiveMaximum:
+                            wave.keys.contains("engine_effective_max"),
                         effectiveLocalSlots: wave["effective_local_slots"] as? Int,
                         localSubwaves: wave["local_subwaves"] as? [Int],
                         limitingFactors: wave["limited_by"] as? [String]
@@ -398,6 +491,16 @@ public struct AgentLoopTranscript: Sendable, Codable {
     /// `iterationCapReached`, `toolRejected`, `cancelled`,
     /// `clarifyRequested` (clarify intercept), `endedBySurface`.
     public let exit: String
+    /// `AgentToolLoop.ExitOrigin` as a string — WHICH branch produced
+    /// `exit`. `finalResponse` is returned from six distinct sites, three of
+    /// which are give-up paths after a bounded recovery was exhausted, so
+    /// `exit` alone cannot tell an answer from a surrender. Diagnostic only.
+    public let exitOrigin: String
+    /// Bounded-recovery attempts spent over the whole run (empty-turn,
+    /// announce-only, continuation-request, repetition-loop,
+    /// incomplete-reasoning). All are uncharged against the iteration
+    /// budget, so they otherwise leave no trace.
+    public let recoveryRetryTotal: Int
     /// First-turn system prompt (post-compose) for forensics.
     public let systemPrompt: String
     /// Names of the tool schemas sent to the model on the first
@@ -470,6 +573,8 @@ public struct AgentLoopTranscript: Sendable, Codable {
         finalText: String,
         iterations: Int,
         exit: String,
+        exitOrigin: String = "unrecorded",
+        recoveryRetryTotal: Int = 0,
         systemPrompt: String,
         toolSchemaNames: [String],
         loopDurationMs: Double = 0,
@@ -491,6 +596,8 @@ public struct AgentLoopTranscript: Sendable, Codable {
         self.finalText = finalText
         self.iterations = iterations
         self.exit = exit
+        self.exitOrigin = exitOrigin
+        self.recoveryRetryTotal = recoveryRetryTotal
         self.systemPrompt = systemPrompt
         self.toolSchemaNames = toolSchemaNames
         self.loopDurationMs = loopDurationMs
@@ -651,6 +758,10 @@ public enum AgentLoopEvaluator {
     ///     `autonomousExec.enabled == true` (the runner's eval agent) —
     ///     tool registration reads the agent record. Builtin sandbox
     ///     tools are unregistered on exit; the container is NOT stopped.
+    ///   - useHostFolder: false composes a plain chat turn with
+    ///     `executionMode: .none`. This lets capability-manifest evals prove
+    ///     the same deferred plugin surface as Chat without adding unrelated
+    ///     folder tools. Ignored when `sandbox` is non-nil.
     ///   - cancelAfterToolCalls: interruption lever for cancellation evals.
     ///     When set, the loop's `isCancelled` hook flips true once this many
     ///     tool calls have been processed, so the run ends with the
@@ -669,6 +780,7 @@ public enum AgentLoopEvaluator {
         enableThinking: Bool? = nil,
         stopOnToolRejection: Bool = false,
         sandbox: AgentLoopSandboxMode? = nil,
+        useHostFolder: Bool = true,
         cancelAfterToolCalls: Int? = nil
     ) async -> AgentLoopTranscript {
         // The Default agent's schema is hard-restricted to the 8-tool
@@ -699,7 +811,7 @@ public enum AgentLoopEvaluator {
         // the eval workspace from the TaskLocal folder root bound around
         // every dispatch below, so a concurrent user folder chat is never
         // redirected at the eval temp directory (and vice versa).
-        let wantsHostFolder = sandbox == nil
+        let wantsHostFolder = sandbox == nil && useHostFolder
         var folderContext: FolderContext?
         if wantsHostFolder {
             folderContext = await FolderContextService.shared.buildContext(from: workspace)
@@ -744,9 +856,10 @@ public enum AgentLoopEvaluator {
         // exactly the three production shapes ChatView can produce.
         let executionMode: ExecutionMode
         switch sandbox {
-        case nil:
-            // `wantsHostFolder` guarantees folderContext is non-nil here.
+        case nil where wantsHostFolder:
             executionMode = .hostFolder(folderContext!)
+        case nil:
+            executionMode = .none
         case .pure:
             executionMode = .sandbox(hostRead: nil)
         }
@@ -766,9 +879,8 @@ public enum AgentLoopEvaluator {
             additionalToolNames: []
         )
         let systemPrompt = composed.prompt
-        // Frozen for the whole run (deferred-schema policy, production
-        // parity): `capabilities_load` never patches the request schema.
         let toolSpecs = composed.tools
+        let toolScope = ToolExecutionScope(exposed: toolSpecs)
 
         // Shared loop budget wiring (same as chat/HTTP/plugin) with a
         // run-scoped sticky watermark.
@@ -844,15 +956,19 @@ public enum AgentLoopEvaluator {
             iterations: Int,
             exit: String,
             loopMs: Double,
-            error: String?
+            error: String?,
+            exitOrigin: String = "unrecorded",
+            recoveryRetryTotal: Int = 0
         ) -> AgentLoopTranscript {
             AgentLoopTranscript(
                 toolCalls: transcriptCalls,
                 finalText: finalText,
                 iterations: iterations,
                 exit: exit,
+                exitOrigin: exitOrigin,
+                recoveryRetryTotal: recoveryRetryTotal,
                 systemPrompt: systemPrompt,
-                toolSchemaNames: composed.tools.map { $0.function.name },
+                toolSchemaNames: toolScope.modelVisibleSpecs.map { $0.function.name },
                 loopDurationMs: loopMs,
                 notices: noticesSeen,
                 stepDiagnostics: stepDiagnostics,
@@ -887,6 +1003,7 @@ public enum AgentLoopEvaluator {
             stream: Bool,
             includeTools: Bool = true
         ) -> ChatCompletionRequest {
+            let iterationToolSpecs = toolScope.modelVisibleSpecs
             var request = ChatCompletionRequest(
                 model: resolvedModel,
                 messages: messages,
@@ -903,13 +1020,14 @@ public enum AgentLoopEvaluator {
                 presence_penalty: nil,
                 stop: nil,
                 n: nil,
-                tools: (includeTools && !toolSpecs.isEmpty) ? toolSpecs : nil,
-                tool_choice: (includeTools && !toolSpecs.isEmpty) ? .auto : nil,
+                tools: (includeTools && !iterationToolSpecs.isEmpty)
+                    ? iterationToolSpecs : nil,
+                tool_choice: (includeTools && !iterationToolSpecs.isEmpty) ? .auto : nil,
                 session_id: sessionId
             )
             request.samplingParametersAreImplicit = true
             request.enable_thinking = enableThinking
-            request.isAgentRequest = includeTools && !toolSpecs.isEmpty
+            request.isAgentRequest = includeTools && !iterationToolSpecs.isEmpty
             return request
         }
 
@@ -929,7 +1047,8 @@ public enum AgentLoopEvaluator {
             toolArgumentCharacters: Int,
             completionTokens: Int? = nil,
             decodeTokensPerSecond: Double? = nil,
-            decodeThroughputAttribution: String? = nil
+            decodeThroughputAttribution: String? = nil,
+            mtp: MTPStatsSummary? = nil
         ) {
             let attribution = decodeThroughputAttribution
                 ?? (decodeTokensPerSecond != nil
@@ -949,7 +1068,16 @@ public enum AgentLoopEvaluator {
                     completionTokens: completionTokens,
                     decodeTokensPerSecond: decodeTokensPerSecond,
                     decodeThroughputAttribution: attribution,
-                    requestedEnableThinking: enableThinking
+                    requestedEnableThinking: enableThinking,
+                    mtpDepth: mtp?.depth,
+                    mtpActiveDepth: mtp?.activeDepth,
+                    mtpVerifyCalls: mtp?.verifyCalls,
+                    mtpAcceptedDraftTokens: mtp?.acceptedDraftTokens,
+                    mtpBonusTokens: mtp?.bonusTokens,
+                    mtpRejectedTokens: mtp?.rejectedTokens,
+                    mtpARFallbackTokens: mtp?.arFallbackTokens,
+                    mtpAdaptiveDownshifts: mtp?.adaptiveDownshifts,
+                    mtpAdaptiveFallbackReason: mtp?.adaptiveFallbackReason
                 )
             )
             Self.emitStepProgress(
@@ -1011,17 +1139,19 @@ public enum AgentLoopEvaluator {
         /// a card nobody can click.
         @Sendable func dispatchOne(_ inv: ServiceToolInvocation) async -> String {
             do {
-                return try await ChatExecutionContext.$currentFolderRoot.withValue(evalFolderRoot) {
-                    try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-                        try await ChatExecutionContext.$autoApproveToolPrompts.withValue(true) {
-                            // Headless idle ceiling for `shell_run` when the model
-                            // passed no `timeout`: there is no [Terminate] button
-                            // here, so a hung command would wedge the eval run.
-                            try await ChatExecutionContext.$defaultShellIdleTimeout.withValue(300) {
-                                try await ToolRegistry.shared.execute(
-                                    name: inv.toolName,
-                                    argumentsJSON: inv.jsonArguments
-                                )
+                return try await ChatExecutionContext.$toolExecutionScope.withValue(toolScope) {
+                    try await ChatExecutionContext.$currentFolderRoot.withValue(evalFolderRoot) {
+                        try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
+                            try await ChatExecutionContext.$autoApproveToolPrompts.withValue(true) {
+                                // Headless idle ceiling for `shell_run` when the model
+                                // passed no `timeout`: there is no [Terminate] button
+                                // here, so a hung command would wedge the eval run.
+                                try await ChatExecutionContext.$defaultShellIdleTimeout.withValue(300) {
+                                    try await ToolRegistry.shared.execute(
+                                        name: inv.toolName,
+                                        argumentsJSON: inv.jsonArguments
+                                    )
+                                }
                             }
                         }
                     }
@@ -1039,14 +1169,9 @@ public enum AgentLoopEvaluator {
             result: String
         ) async -> AgentLoopToolExecution {
             let isError = ToolEnvelope.isError(result)
-            // Deferred-schema policy (production parity): drain the load buffer
-            // — tools loaded via `capabilities_load` are callable immediately
-            // through the registry, and their schemas already ride in the tool
-            // result (`CapabilitiesLoadTool.loadedSchemaBlock`) — but the request
-            // schema stays FROZEN for the whole run (no mid-run `<tools>`
-            // rewrite), so the paged-KV prefix stays byte-stable.
-            if inv.toolName == "capabilities_load" || inv.toolName == "capabilities" {
-                _ = await CapabilityLoadBuffer.shared.drain()
+            if CapabilityLoadBuffer.shouldActivate(after: inv.toolName) {
+                let loaded = await CapabilityLoadBuffer.shared.drain()
+                toolScope.activate(loaded)
             }
             history.append(
                 ChatMessage(role: "tool", content: result, tool_calls: nil, tool_call_id: callId)
@@ -1092,7 +1217,12 @@ public enum AgentLoopEvaluator {
             return AgentLoopToolExecution(result: result, isError: isError)
         }
 
-        let hooks = AgentLoopHooks(
+        // Diagnostics side channel (observational; the loop behaves the same
+        // with or without it). Captured on the main actor like the rest of
+        // this evaluator's mutable run state.
+        var exitDiagnostics: AgentToolLoop.ExitDiagnostics?
+
+        var hooks = AgentLoopHooks(
             isCancelled: {
                 // Cancellation evals: flip cancelled once the processed-call
                 // budget is reached. Reads the same transcript array the
@@ -1146,6 +1276,7 @@ public enum AgentLoopEvaluator {
                     var sawToolCallProgress = false
                     var stepCompletionTokens: Int?
                     var stepDecodeTokensPerSecond: Double?
+                    var stepMTP: MTPStatsSummary?
                     var stepThroughputAttribution = "unavailable_stream_ended_without_vmlx_info"
                     let stepStarted = Date()
                     var stepProgress = AgentLoopStepProgressTracker(
@@ -1258,6 +1389,7 @@ public enum AgentLoopEvaluator {
                             if let stats = StreamingStatsHint.decode(delta) {
                                 terminalStopReason = stats.stopReason
                                 terminalUnclosedReasoning = stats.unclosedReasoning
+                                if let mtp = stats.mtp { stepMTP = mtp }
                                 // Authoritative end-of-step runtime stats:
                                 // token-weight the decode tps, sum tokens,
                                 // and keep the first step's prefill speed.
@@ -1308,7 +1440,8 @@ public enum AgentLoopEvaluator {
                             toolArgumentCharacters: streamedToolArgumentCharacters,
                             completionTokens: stepCompletionTokens,
                             decodeTokensPerSecond: stepDecodeTokensPerSecond,
-                            decodeThroughputAttribution: stepThroughputAttribution
+                            decodeThroughputAttribution: stepThroughputAttribution,
+                            mtp: stepMTP
                         )
                         if terminalStopReason == "length",
                             sawToolCallProgress,
@@ -1342,7 +1475,8 @@ public enum AgentLoopEvaluator {
                             decodeTokensPerSecond: stepDecodeTokensPerSecond,
                             decodeThroughputAttribution: stepDecodeTokensPerSecond == nil
                                 ? "unavailable_tool_call_before_vmlx_info"
-                                : stepThroughputAttribution
+                                : stepThroughputAttribution,
+                            mtp: stepMTP
                         )
                         // Interim prose preceding tool calls is NOT the
                         // final answer (never let it go stale into the
@@ -1371,7 +1505,8 @@ public enum AgentLoopEvaluator {
                             decodeTokensPerSecond: stepDecodeTokensPerSecond,
                             decodeThroughputAttribution: stepDecodeTokensPerSecond == nil
                                 ? "unavailable_tool_call_before_vmlx_info"
-                                : stepThroughputAttribution
+                                : stepThroughputAttribution,
+                            mtp: stepMTP
                         )
                         finalText = ""
                         return .toolCalls(
@@ -1562,6 +1697,10 @@ public enum AgentLoopEvaluator {
             }
         )
 
+        hooks.recordExitDiagnostics = { diagnostics in
+            exitDiagnostics = diagnostics
+        }
+
         do {
             let runResult = try await ChatExecutionContext.$currentSessionSource.withValue(
                 sessionSource
@@ -1655,7 +1794,9 @@ public enum AgentLoopEvaluator {
                 iterations: runResult.iterations,
                 exit: exitLabel,
                 loopMs: Date().timeIntervalSince(loopStarted) * 1000,
-                error: nil
+                error: nil,
+                exitOrigin: exitDiagnostics?.origin.rawValue ?? "unrecorded",
+                recoveryRetryTotal: exitDiagnostics?.counters.total ?? 0
             )
         } catch {
             // Same hygiene on the abort path — a crashed model step must
@@ -1682,6 +1823,7 @@ public enum AgentLoopEvaluator {
         case .lengthExhausted: return "lengthExhausted"
         case .oversizedToolCallExhausted: return "oversizedToolCallExhausted"
         case .truncatedToolCallExhausted: return "truncatedToolCallExhausted"
+        case .repetitionLoopExhausted: return "repetitionLoopExhausted"
         case .incompleteReasoningExhausted: return "incompleteReasoningExhausted"
         }
     }

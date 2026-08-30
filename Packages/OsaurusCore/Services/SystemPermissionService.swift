@@ -18,11 +18,16 @@ enum SystemPermissionProbe {
         let relativePath: String
     }
 
+    /// Sentinel files that are unconditionally Full Disk Access-protected.
+    /// The user's TCC database always exists, so it is the reliable anchor;
+    /// Messages' chat.db rides along for redundancy. The old `~/Library/
+    /// Safari` files are deliberately absent: Safari's live data moved into
+    /// its container, and on upgraded Macs the legacy files can be left
+    /// behind UNPROTECTED — a readable stale bookmark file made the probe
+    /// report FDA as granted when it wasn't (GitHub #2523).
     static let defaultFullDiskResources: [FullDiskResource] = [
         .init(relativePath: "Library/Application Support/com.apple.TCC/TCC.db"),
         .init(relativePath: "Library/Messages/chat.db"),
-        .init(relativePath: "Library/Safari/Bookmarks.plist"),
-        .init(relativePath: "Library/Safari/CloudTabs.db"),
     ]
 
     static func fullDiskAccessGranted(
@@ -30,12 +35,15 @@ enum SystemPermissionProbe {
         fileManager: FileManager = .default,
         resources: [FullDiskResource] = defaultFullDiskResources
     ) -> Bool {
-        resources.contains { resource in
-            canReadProtectedFile(
-                homeDirectory.appendingPathComponent(resource.relativePath),
-                fileManager: fileManager
-            )
-        }
+        // Fail closed: only files that actually exist participate, and EVERY
+        // one of them must be readable. With a real FDA grant all protected
+        // files are readable, so any-readable added nothing except a
+        // false-positive path through a file that lost its protection.
+        let existing = resources
+            .map { homeDirectory.appendingPathComponent($0.relativePath) }
+            .filter { isRegularFile($0, fileManager: fileManager) }
+        guard !existing.isEmpty else { return false }
+        return existing.allSatisfy { canReadProtectedFile($0, fileManager: fileManager) }
     }
 
     static func screenRecordingGranted(
@@ -44,11 +52,14 @@ enum SystemPermissionProbe {
         preflight()
     }
 
-    private static func canReadProtectedFile(_ url: URL, fileManager: FileManager) -> Bool {
+    private static func isRegularFile(_ url: URL, fileManager: FileManager) -> Bool {
         var isDirectory: ObjCBool = false
-        guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue else {
-            return false
-        }
+        return fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            && !isDirectory.boolValue
+    }
+
+    private static func canReadProtectedFile(_ url: URL, fileManager: FileManager) -> Bool {
+        guard isRegularFile(url, fileManager: fileManager) else { return false }
 
         do {
             let handle = try FileHandle(forReadingFrom: url)

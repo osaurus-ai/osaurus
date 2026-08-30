@@ -1,18 +1,23 @@
 {
   "id": "default_agent.mcp-disable",
   "domain": "default_agent",
-  "label": "default agent • disable an MCP server (disable action)",
-  "query": "Disable the MCP server 4f2b7e91-8c03-4a65-9d17-5e0a2c8f6b34 for now.",
-  "notes": "\"Disable\" maps directly to action 'disable' on the consolidated osaurus_mcp tool (a first-class action alongside enable, so the model never has to discover the 'enable' + enabled:false idiom — the eval matrix surfaced that older shape sending small models into a self-correction loop). Unknown id → typed not-found error. The selection assertion pins the 'disable' action, not the literal UUID (small models mis-transcribe 32-hex-digit ids).",
-  "fixtures": {},
+  "label": "default agent • disable an MCP server (enabled: false patch)",
+  "query": "Disable the MCP server named \"Acme Tools\" for now.",
+  "notes": "\"Disable\" maps to an mcp_servers entry carrying `enabled: false` (merge semantics: the entry patches the existing server by name). A REAL enabled server is seeded under the referenced name (autoConnect off, non-routable URL — never dials) so the disable is an actual change: with an empty store an honest inspect-first model correctly reports \"no such server\" and the case punished exactly the read-first pattern the delete rubrics reward. (Before the runner's registry sweep existed, this case only passed by accident — it patched the \"Acme Tools\" server LEAKED by mcp-add.)",
+  "fixtures": {
+    "seedMCPServers": [
+      { "id": "4e7b2a9c-6d13-4f85-a920-3c8e5b7d1f64", "name": "Acme Tools" }
+    ]
+  },
   "expect": {
     "defaultAgent": {
-      "mustCallTools": ["osaurus_mcp"],
+      "mustCallTools": ["osaurus_config"],
       "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
       "argsMustContain": [
-        { "tool": "osaurus_mcp", "args": { "action": "disable" } }
+        { "tool": "osaurus_config", "args": { "yaml": "acme" } },
+        { "tool": "osaurus_config", "args": { "yaml": "false" } }
       ],
-      "maxIterations": 4
+      "maxIterations": 8
     }
   }
 }

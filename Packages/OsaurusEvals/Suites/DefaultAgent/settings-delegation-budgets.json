@@ -1,0 +1,35 @@
+{
+  "id": "default_agent.settings-delegation-budgets",
+  "domain": "default_agent",
+  "label": "default agent • cap subagent delegation budgets",
+  "query": "Cap each delegated subagent job at 2 parallel spawns and about 6 minutes of runtime.",
+  "notes": "Wave 3b delegation scope: `delegation.budget_max_parallel_spawns` + `budget_max_seconds`. Tightening budgets is the SAFE direction (widening spawn tool access is the gated axis). Pins both budget keys; exact seconds value (360) is the model's arithmetic, not probed.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "budget_max_parallel_spawns"
+          }
+        },
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "budget_max_seconds"
+          }
+        }
+      ],
+      "maxIterations": 8
+    }
+  }
+}
