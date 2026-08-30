@@ -816,13 +816,13 @@ public enum SubagentJobEvaluator {
         )
         let started = Date()
         let envelope = await withEvalScope(toolCallId: toolCallId) {
-            await SubagentSession.run(kind, tool: "computer_use")
+            await SubagentSession.run(kind, tool: SubagentCapabilityRegistry.computerUse.primaryToolName)
         }
         let latency = Date().timeIntervalSince(started) * 1000
         return transcript(
             fromEnvelope: envelope,
-            tool: "computer_use",
-            kindId: "computer_use",
+            tool: SubagentCapabilityRegistry.computerUse.primaryToolName,
+            kindId: SubagentCapabilityRegistry.computerUse.id,
             toolCallId: toolCallId,
             latencyMs: latency
         )

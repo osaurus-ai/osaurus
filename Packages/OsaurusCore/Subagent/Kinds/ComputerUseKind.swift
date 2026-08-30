@@ -279,7 +279,7 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
         case .done(let summary):
             return SubagentResult(
                 payload: [
-                    "kind": "computer_use",
+                    "kind": SubagentCapabilityRegistry.computerUse.id,
                     "model": model,
                     "summary": summary,
                     "steps": result.metrics.steps,
