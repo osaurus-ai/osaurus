@@ -387,9 +387,33 @@ public actor RemoteProviderService: ToolCapableService {
     /// media for the Router wire (non-vision upstream adapters reject
     /// array-form user content). Empty for non-Router providers.
     private var routerVisionModelIds: Set<String> = []
+    /// Models whose live Router upstream rejected image content despite the
+    /// catalog advertising vision support. Keep the quarantine for this
+    /// service's lifetime so one failed image turn cannot poison every later
+    /// request when that turn is replayed from conversation history.
+    private var routerRejectedImageInputModelIds: Set<String> = []
 
     public func updateOsaurusRouterVisionModels(_ modelIds: Set<String>) {
         routerVisionModelIds = modelIds
+    }
+
+    func recordRouterImageInputRejection(for modelId: String) {
+        routerRejectedImageInputModelIds.insert(modelId)
+    }
+
+    func routerModelSupportsImageInput(_ modelId: String) -> Bool {
+        routerVisionModelIds.contains(modelId)
+            && !routerRejectedImageInputModelIds.contains(modelId)
+    }
+
+    func routerWireCompatibleMessagesForCurrentCapabilities(
+        _ messages: [ChatMessage],
+        modelId: String
+    ) -> [ChatMessage] {
+        Self.routerWireCompatibleMessages(
+            messages,
+            modelSupportsImageInput: routerModelSupportsImageInput(modelId)
+        )
     }
 
     /// Get the prefixed model names for this provider
@@ -2411,6 +2435,9 @@ public actor RemoteProviderService: ToolCapableService {
                 providerType: providerType
             )
             : nil
+        let routerRequestContainsImageInput =
+            providerType == .osaurusRouter
+            && request.messages.contains { !$0.imageUrls.isEmpty }
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
@@ -2543,6 +2570,18 @@ public actor RemoteProviderService: ToolCapableService {
                         if let rateLimited = RemoteProviderServiceError.rateLimited(from: httpResponse) {
                             continuation.finish(throwing: rateLimited)
                             return
+                        }
+                        // The Router catalog is advisory and can briefly get
+                        // ahead of an upstream deployment. If a model marked
+                        // vision-capable rejects array-form user content,
+                        // quarantine image input for that model locally. The
+                        // next turn then truthfully flattens every historical
+                        // image to the existing removal notice instead of
+                        // replaying the same 400 forever (issue #2559).
+                        if routerRequestContainsImageInput,
+                            Self.isUserMediaContentShapeRejection(errorData)
+                        {
+                            await self.recordRouterImageInputRejection(for: request.model)
                         }
                         // Parse the error envelope instead of dumping the raw
                         // JSON body into chat; known upstream rejections map
@@ -3456,9 +3495,9 @@ public actor RemoteProviderService: ToolCapableService {
                 model: request.model
             ).transformOutbound(outbound.messages)
             if requestProviderType == .osaurusRouter {
-                outbound.messages = Self.routerWireCompatibleMessages(
+                outbound.messages = routerWireCompatibleMessagesForCurrentCapabilities(
                     outbound.messages,
-                    modelSupportsImageInput: routerVisionModelIds.contains(request.model)
+                    modelId: request.model
                 )
                 outbound.clamp_to_balance = false
             } else {
@@ -6262,16 +6301,23 @@ extension RemoteProviderService {
         return "HTTP \(statusCode): Unknown error"
     }
 
+    static func isUserMediaContentShapeRejection(_ data: Data) -> Bool {
+        isUserMediaContentShapeRejection(String(decoding: data, as: UTF8.self))
+    }
+
+    static func isUserMediaContentShapeRejection(_ message: String) -> Bool {
+        message.lowercased().contains("user message content must be a string")
+    }
+
     /// Rewrite known upstream-adapter rejections into actionable copy. The
     /// Router's non-vision upstream adapters reject array-form user content
     /// with a terse protocol message that means nothing to a user staring at
     /// a chat bubble — translate it to what actually happened and how to
     /// recover. Returns nil for everything else (message passes through).
     static func friendlyUpstreamRejection(_ message: String) -> String? {
-        let lowered = message.lowercased()
-        if lowered.contains("user message content must be a string") {
+        if isUserMediaContentShapeRejection(message) {
             return
-                "This model doesn't accept image, audio, or video attachments. Remove the attachment from the conversation (or start a new chat without it), or switch to a vision-capable model."
+                "This model rejected image, audio, or video attachments. Osaurus will omit media from subsequent requests to this model; retry your message or switch to a vision-capable model."
         }
         return nil
     }

@@ -1059,6 +1059,56 @@ struct RemoteChatRequestEncodingTests {
         #expect(try #require(array.first)["content"] is [[String: Any]])
     }
 
+    /// Issue #2559: a Router model can advertise vision while its live
+    /// upstream still rejects array-form user content. Remembering that
+    /// rejection must downgrade the whole replayed history on the next turn,
+    /// otherwise the original image poisons every later text-only request.
+    @Test func routerImageRejection_quarantinesCatalogVisionClaimForLaterTurns() async throws {
+        let model = "openai/gpt-5.6-sol"
+        let service = RemoteProviderService(
+            provider: RemoteProvider(
+                name: "Osaurus Router",
+                host: "router.osaurus.ai",
+                providerProtocol: .https,
+                port: nil,
+                basePath: "/v1",
+                authType: .none,
+                providerType: .osaurusRouter
+            ),
+            models: [model],
+            resolvedHeaders: [:]
+        )
+        await service.updateOsaurusRouterVisionModels([model])
+
+        let history = [
+            ChatMessage(
+                role: "user",
+                content: "describe this",
+                contentParts: [
+                    .text("describe this"),
+                    .imageUrl(url: "data:image/png;base64,BBBB", detail: nil),
+                ]
+            ),
+            ChatMessage(role: "user", content: "There is no image attached now."),
+        ]
+
+        let before = await service.routerWireCompatibleMessagesForCurrentCapabilities(
+            history,
+            modelId: model
+        )
+        #expect(before.first?.contentParts != nil)
+
+        await service.recordRouterImageInputRejection(for: model)
+
+        let after = await service.routerWireCompatibleMessagesForCurrentCapabilities(
+            history,
+            modelId: model
+        )
+        #expect(after.first?.contentParts == nil)
+        #expect(after.first?.content?.contains("removed") == true)
+        #expect(after.last?.content == "There is no image attached now.")
+    }
+
     /// Audio/video have no mapping on any Router upstream: they are removed
     /// (with the notice) even for vision-capable models, while supported
     /// image parts stay multimodal.
@@ -1094,8 +1144,14 @@ struct RemoteChatRequestEncodingTests {
             "user message content must be a string"
         )
         #expect(friendly?.contains("attachment") == true)
+        #expect(friendly?.contains("retry") == true)
         #expect(
             RemoteProviderService.friendlyUpstreamRejection("some other upstream error") == nil
+        )
+        #expect(
+            RemoteProviderService.isUserMediaContentShapeRejection(
+                Data(#"{"error":{"message":"USER MESSAGE CONTENT MUST BE A STRING"}}"#.utf8)
+            )
         )
 
         // End-to-end through the error-envelope extractor, as the streaming
