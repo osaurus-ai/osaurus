@@ -331,7 +331,10 @@ struct ChatSessionQueuedSendTests {
             session.enqueueSend("queued follow-up", attachments: [queuedAttachment])
 
             try await waitUntil(timeout: .seconds(2)) {
-                !session.isStreaming && session.turns.isEmpty && session.queuedSend != nil
+                !session.isStreaming
+                    && session.turns.isEmpty
+                    && session.queuedSend != nil
+                    && session.sessionId == nil
             }
 
             #expect(session.sessionId == nil)
