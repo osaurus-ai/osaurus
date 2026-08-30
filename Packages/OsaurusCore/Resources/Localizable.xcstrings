@@ -1,6 +1,26 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Claude Code": {
+    },
+    "Claude Code couldn't complete the turn: %@": {
+    },
+    "Claude Code exited with code %d.": {
+    },
+    "Claude Code exited with code %d: %@": {
+    },
+    "Claude Code hit a subscription rate limit: %@": {
+    },
+    "Claude Code isn't signed in. Open `claude` in a terminal, sign in, then try again.": {
+    },
+    "Couldn't start Claude Code: %@": {
+    },
+    "Execution mode": {
+    },
+    "Runs through your signed-in Claude Code CLI": {
+    },
+    "this agent runs Claude Code in text-only mode, which disables all tools": {
+    },
     "Browse and install native plugins": {
     },
     "Native Plugins": {
