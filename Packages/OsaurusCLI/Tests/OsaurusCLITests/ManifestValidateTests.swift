@@ -363,6 +363,37 @@ final class ManifestValidateExtendedCoverageTests: XCTestCase {
         XCTAssertTrue(report.warnings.contains(where: { $0.contains("min_macos") }))
     }
 
+    func testMinOsaurusWithBuildMetadataPasses() {
+        // `SemanticVersion.parse("0.18.0+build7")` succeeds (it strips the
+        // `+build` metadata before checking the numeric core), so the
+        // validator — which claims to "mirror what SemanticVersion.parse
+        // accepts" — must not warn on a valid version carrying build
+        // metadata.
+        let report = validate(
+            #"{ "plugin_id": "com.test", "capabilities": {}, "min_osaurus": "0.18.0+build7" }"#
+        )
+        XCTAssertTrue(report.errors.isEmpty, "build metadata is valid: \(report.errors)")
+        XCTAssertTrue(
+            report.warnings.isEmpty,
+            "valid semver with build metadata must not warn: \(report.warnings)"
+        )
+    }
+
+    func testMalformedMinOsaurusWithLeadingDashWarns() {
+        // `SemanticVersion.parse("-1.2.3")` returns nil (the core before the
+        // first `-` is empty, so the major component fails to parse). The
+        // validator must likewise reject it instead of silently accepting a
+        // version the host will then refuse to parse.
+        let report = validate(
+            #"{ "plugin_id": "com.test", "capabilities": {}, "min_osaurus": "-1.2.3" }"#
+        )
+        XCTAssertTrue(report.errors.isEmpty, "shape mismatch should warn, not error: \(report.errors)")
+        XCTAssertTrue(
+            report.warnings.contains(where: { $0.contains("min_osaurus") && $0.contains("semver") }),
+            "a leading-dash version is not valid semver and must warn: \(report.warnings)"
+        )
+    }
+
     // MARK: - instructions / license / authors
 
     func testInstructionsMustBeString() {
