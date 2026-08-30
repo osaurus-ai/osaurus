@@ -25,8 +25,8 @@ struct ConfigApprovalQueueTests {
         return try ConfigPlanner.plan(document: document, prune: false)
     }
 
-    @Test("approve resolves the suspended apply as true and clears the card")
-    func approveResolvesTrue() async throws {
+    @Test("approve resolves the suspended apply as approved and clears the card")
+    func approveResolvesApproved() async throws {
         let queue = ConfigApprovalQueue.shared
         queue.cancelAll()
         let plan = try emptyPlan()
@@ -37,13 +37,13 @@ struct ConfigApprovalQueueTests {
         let request = try #require(queue.pending.first)
         #expect(request.prune == false)
 
-        queue.resolve(id: request.id, approved: true)
-        #expect(await task.value == true)
+        queue.resolve(id: request.id, outcome: .approved)
+        #expect(await task.value == .approved)
         #expect(queue.pending.isEmpty)
     }
 
-    @Test("deny resolves the suspended apply as false")
-    func denyResolvesFalse() async throws {
+    @Test("deny resolves the suspended apply as denied")
+    func denyResolvesDenied() async throws {
         let queue = ConfigApprovalQueue.shared
         queue.cancelAll()
         let plan = try emptyPlan()
@@ -54,12 +54,12 @@ struct ConfigApprovalQueueTests {
         // Prune travels with the request so the card can warn about deletes.
         #expect(request.prune == true)
 
-        queue.resolve(id: request.id, approved: false)
-        #expect(await task.value == false)
+        queue.resolve(id: request.id, outcome: .denied)
+        #expect(await task.value == .denied)
         #expect(queue.pending.isEmpty)
     }
 
-    @Test("cancelAll denies every pending approval (Stop / chat teardown)")
+    @Test("cancelAll cancels every pending approval (Stop / chat teardown)")
     func cancelAllDeniesEverything() async throws {
         let queue = ConfigApprovalQueue.shared
         queue.cancelAll()
@@ -70,13 +70,13 @@ struct ConfigApprovalQueueTests {
         while queue.pending.count < 2 { await Task.yield() }
 
         queue.cancelAll()
-        #expect(await first.value == false)
-        #expect(await second.value == false)
+        #expect(await first.value == .cancelled)
+        #expect(await second.value == .cancelled)
         #expect(queue.pending.isEmpty)
     }
 
-    @Test("cancelled turn resolves as denied so the tool never hangs")
-    func taskCancellationDenies() async throws {
+    @Test("cancelled turn resolves as cancelled so the tool never hangs")
+    func taskCancellationCancels() async throws {
         let queue = ConfigApprovalQueue.shared
         queue.cancelAll()
         let plan = try emptyPlan()
@@ -85,9 +85,28 @@ struct ConfigApprovalQueueTests {
         while queue.pending.isEmpty { await Task.yield() }
 
         task.cancel()
-        #expect(await task.value == false)
+        #expect(await task.value == .cancelled)
         // The onCancel resolve hops through a MainActor task; drain it.
         while !queue.pending.isEmpty { await Task.yield() }
+        #expect(queue.pending.isEmpty)
+    }
+
+    @Test("unanswered review expires with a typed timeout and clears the card")
+    func unansweredReviewTimesOut() async throws {
+        let queue = ConfigApprovalQueue.shared
+        queue.cancelAll()
+        let plan = try emptyPlan()
+
+        let task = Task {
+            await queue.requestApproval(
+                plan: plan,
+                prune: false,
+                timeout: .milliseconds(20)
+            )
+        }
+        while queue.pending.isEmpty { await Task.yield() }
+
+        #expect(await task.value == .timedOut)
         #expect(queue.pending.isEmpty)
     }
 

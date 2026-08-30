@@ -38,6 +38,7 @@ private final class ScriptedLoopSurface {
     var willProcessCallIds: [String] = []
     var batchOutcomes: [[AgentLoopToolOutcome]] = []
     var emittedFinalTexts: [String] = []
+    var emittedToolRejectionTexts: [String] = []
     var incompleteContinuationPreparations = 0
     var cancelOnIncompleteContinuation = false
     var trackedTaskContinuationPreparations = 0
@@ -112,6 +113,9 @@ private final class ScriptedLoopSurface {
             hooks.emitFallbackText = { text in
                 self.emittedFinalTexts.append(text)
             }
+        }
+        hooks.emitToolRejectionText = { text in
+            self.emittedToolRejectionTexts.append(text)
         }
         return hooks
     }
@@ -1558,6 +1562,7 @@ struct AgentToolLoopTests {
         // into the state machine (mirrors the historical chat path).
         #expect(surface.executedCalls.map(\.name) == ["bad_tool"])
         #expect(state.lastResultClass == .error)
+        #expect(surface.emittedToolRejectionTexts == ["no"])
         // No batch-complete callback on early stop.
         #expect(surface.batchOutcomes.isEmpty)
     }
@@ -1969,6 +1974,36 @@ struct AgentToolLoopTests {
         )
         #expect(result == AgentToolLoop.RunResult(exit: .cancelled, iterations: 1))
         #expect(surface.executedCalls.map(\.name) == ["first_tool"])
+        #expect(surface.emittedToolRejectionTexts.isEmpty)
+    }
+
+    @Test func cancellationWinsOverAConcurrentDenialWithoutSyntheticText() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("approval_tool")])
+        ])
+        let baseHooks = surface.makeHooks()
+        var hooks = baseHooks
+        hooks.executeTool = { invocation, callId in
+            _ = await baseHooks.executeTool(invocation, callId)
+            surface.cancelled = true
+            return AgentLoopToolExecution(
+                result: ToolEnvelope.failure(
+                    kind: .userDenied,
+                    message: "cancelled approval",
+                    tool: invocation.toolName
+                ),
+                isError: true
+            )
+        }
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: hooks
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .cancelled, iterations: 1))
+        #expect(surface.emittedToolRejectionTexts.isEmpty)
     }
 
     @Test func cancellationBeforeFirstIteration() async throws {
@@ -2150,6 +2185,7 @@ struct AgentToolLoopTests {
         // executed rows even on the rejection exit.
         #expect(surface.batchOutcomes.count == 1)
         #expect(surface.batchOutcomes[0].map(\.wasError) == [false, true])
+        #expect(surface.emittedToolRejectionTexts == ["no"])
     }
 
     @Test func batchExecutorDedupesDuplicateReadSiblingsWithinOneBatch() async throws {

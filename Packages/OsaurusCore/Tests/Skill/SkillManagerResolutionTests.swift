@@ -96,6 +96,63 @@ struct SkillManagerResolutionTests {
         }
     }
 
+    // MARK: - Skill-relative resources (issue #1803)
+
+    @Test @MainActor
+    func fullInstructionsIncludeResolvedSkillDirectoryBeforeBody() async throws {
+        try await Self.withTempSkillStorage {
+            let skill = await SkillManager.shared.create(
+                name: "Directory Anchor \(UUID().uuidString.prefix(6))",
+                description: "directory anchor fixture",
+                instructions: "Run `python3 scripts/main.py`."
+            )
+            let expectedDirectory = SkillStore.skillDirectory(for: skill)
+                .standardizedFileURL.path
+
+            let full = await SkillManager.shared.buildFullInstructions(for: skill)
+
+            let directoryLine =
+                "Skill directory: `\(expectedDirectory)`. "
+                + "Resolve relative paths in this skill against that directory."
+            let directoryRange = full.range(of: directoryLine)
+            let bodyRange = full.range(of: "Run `python3 scripts/main.py`.")
+            #expect(directoryRange != nil)
+            #expect(bodyRange != nil)
+            #expect(directoryRange!.lowerBound < bodyRange!.lowerBound)
+            #expect(expectedDirectory.hasPrefix("/"))
+            #expect(!expectedDirectory.contains("/../"))
+        }
+    }
+
+    @Test @MainActor
+    func fullInstructionsDoNotInventDirectoryForBuiltInSkill() async throws {
+        try await Self.withTempSkillStorage {
+            let skill = try #require(Skill.builtInSkills.first)
+            let synthesizedDirectory = SkillStore.skillDirectory(for: skill)
+                .standardizedFileURL.path
+            #expect(!FileManager.default.fileExists(atPath: synthesizedDirectory))
+
+            let full = await SkillManager.shared.buildFullInstructions(for: skill)
+
+            #expect(!full.contains("Skill directory: `\(synthesizedDirectory)`"))
+            #expect(full.contains(skill.instructions))
+        }
+    }
+
+    @Test("slash skill wrapper says the skill is active, not a callable tool") @MainActor
+    func activeSkillWrapperPreventsSkillNameToolHallucination() {
+        let section = SkillManager.activeSkillPromptSection(
+            name: "directory-anchor-proof",
+            body: "Run `python3 scripts/main.py`."
+        )
+
+        #expect(section.contains("## Active Skill Instructions: directory-anchor-proof"))
+        #expect(section.contains("This skill is already loaded for this turn."))
+        #expect(section.contains("Do not search for it"))
+        #expect(section.contains("invoke a tool named after the skill"))
+        #expect(section.contains("Run `python3 scripts/main.py`."))
+    }
+
     // MARK: - Fixtures
 
     /// Creates a user skill with two references: `alpha.md` (tiny, sorts

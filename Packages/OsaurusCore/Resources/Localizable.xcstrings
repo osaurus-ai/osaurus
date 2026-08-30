@@ -21,6 +21,51 @@
     },
     "this agent runs Claude Code in text-only mode, which disables all tools": {
     },
+    "Cached context from the previous model cannot be reused, and the new model may interpret earlier turns differently. Start a new chat for the most consistent results.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Der zwischengespeicherte Kontext des vorherigen Modells kann nicht wiederverwendet werden, und das neue Modell kann frühere Nachrichten anders interpretieren. Starte für möglichst konsistente Ergebnisse einen neuen Chat." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "이전 모델의 캐시된 컨텍스트는 재사용할 수 없으며 새 모델은 이전 대화를 다르게 해석할 수 있습니다. 가장 일관된 결과를 얻으려면 새 채팅을 시작하세요." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Кэшированный контекст предыдущей модели нельзя использовать повторно, а новая модель может иначе интерпретировать предыдущие сообщения. Для наиболее последовательных результатов начните новый чат." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "无法复用先前模型的缓存上下文，新模型也可能以不同方式理解之前的对话。为获得最一致的结果，请开始新聊天。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "無法重用先前模型的快取內容，新模型也可能以不同方式理解之前的對話。為獲得最一致的結果，請開始新聊天。" } }
+      }
+    },
+    "Continue with This Model": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Mit diesem Modell fortfahren" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "이 모델로 계속" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Продолжить с этой моделью" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "继续使用此模型" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "繼續使用此模型" } }
+      }
+    },
+    "Model changed from %@ to %@; cached context will be rebuilt": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Modell von %1$@ zu %2$@ gewechselt; der Kontext-Cache wird neu aufgebaut" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "모델이 %1$@에서 %2$@(으)로 변경되었습니다. 캐시된 컨텍스트를 다시 구성합니다" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Модель изменена с %1$@ на %2$@; кэш контекста будет создан заново" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "模型已从 %1$@ 切换到 %2$@；将重新构建缓存上下文" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "模型已從 %1$@ 切換到 %2$@；將重新建立快取內容" } }
+      }
+    },
+    "Start New Chat": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Neuen Chat starten" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "새 채팅 시작" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Начать новый чат" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "开始新聊天" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "開始新聊天" } }
+      }
+    },
+    "You switched from %@ to %@ in this conversation.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Du hast in dieser Unterhaltung von %1$@ zu %2$@ gewechselt." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "이 대화에서 %1$@에서 %2$@(으)로 전환했습니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "В этом разговоре вы переключились с %1$@ на %2$@." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "你在此对话中已从 %1$@ 切换到 %2$@。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "你在此對話中已從 %1$@ 切換到 %2$@。" } }
+      }
+    },
     "Browse and install native plugins": {
     },
     "Native Plugins": {
@@ -207582,6 +207627,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "引用的聊天會話已不可用。"
+          }
+        }
+      }
+    },
+    "The requested action was not completed.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die angeforderte Aktion wurde nicht abgeschlossen."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "요청한 작업이 완료되지 않았습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запрошенное действие не было выполнено."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请求的操作未完成。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "要求的操作未完成。"
           }
         }
       }

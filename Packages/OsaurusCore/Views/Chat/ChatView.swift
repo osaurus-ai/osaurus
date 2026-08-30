@@ -36,6 +36,15 @@ struct QueuedSend: Equatable {
     var oneOffSkillId: UUID?
 }
 
+/// A manual model change made after a conversation already has content.
+/// Prefix/KV caches are model-scoped, so the new model must rebuild context;
+/// it may also interpret the existing transcript differently. Kept as IDs so
+/// the composer resolves the freshest user-facing display names.
+struct ModelSwitchContinuityWarning: Equatable, Sendable {
+    let previousModelId: String
+    let newModelId: String
+}
+
 /// Equatable wrapper around `ChatEmptyState` so it only re-renders when one of
 /// its actual inputs changes. `ChatView` observes the whole `ChatSession`
 /// object, so its body re-evaluates on any `@Published` mutation — including
@@ -303,6 +312,7 @@ final class ChatSession: ObservableObject {
     @Published var input: String = ""
     @Published var pendingAttachments: [Attachment] = []
     @Published var selectedModel: String? = nil
+    @Published var modelSwitchContinuityWarning: ModelSwitchContinuityWarning?
     /// Proactive model + KV-cache warm-up for faster first-token latency.
     let warmupController = ChatWarmupController()
     @Published var pickerItems: [ModelPickerItem] = []
@@ -963,6 +973,20 @@ final class ChatSession: ObservableObject {
             .sink { [weak self] newModel in
                 guard let self = self, !self.isLoadingModel else { return }
                 guard let model = newModel else { return }
+                let previousModel = self.selectedModel
+                if Self.shouldWarnAboutModelSwitch(
+                    previousModel: previousModel,
+                    newModel: model,
+                    hasConversation: self.hasVisibleThreadMessages
+                ), let previousModel
+                {
+                    self.modelSwitchContinuityWarning = ModelSwitchContinuityWarning(
+                        previousModelId: previousModel,
+                        newModelId: model
+                    )
+                } else if previousModel == nil || !self.hasVisibleThreadMessages {
+                    self.modelSwitchContinuityWarning = nil
+                }
                 self.lastManualModelSelection = model
                 let pid = self.agentId ?? Agent.defaultId
                 // Mode 2 (remote agent run): the model is pinned to the remote
@@ -1091,6 +1115,15 @@ final class ChatSession: ObservableObject {
         if MockChatData.isEnabled {
             rebuildVisibleBlocks()
         }
+    }
+
+    nonisolated static func shouldWarnAboutModelSwitch(
+        previousModel: String?,
+        newModel: String,
+        hasConversation: Bool
+    ) -> Bool {
+        guard hasConversation, let previousModel else { return false }
+        return previousModel.caseInsensitiveCompare(newModel) != .orderedSame
     }
 
     deinit {
@@ -2659,6 +2692,7 @@ final class ChatSession: ObservableObject {
         pendingAttachments = []
         pendingOneOffSkillId = nil
         queuedSend = nil
+        modelSwitchContinuityWarning = nil
         voiceInputState = .idle
         showVoiceOverlay = false
         transientSessionIdForCurrentRun = nil
@@ -6096,7 +6130,10 @@ final class ChatSession: ObservableObject {
                     // command (resolved above, before compose, so the tools it
                     // references made it into the schema).
                     if let oneOff = oneOffSkillSection {
-                        sys += "\n\n## Active Skill: \(oneOff.name)\n\n\(oneOff.body)"
+                        sys += "\n\n" + SkillManager.activeSkillPromptSection(
+                            name: oneOff.name,
+                            body: oneOff.body
+                        )
                     }
 
                     // Initial request schema. `ToolExecutionScope` appends tools
@@ -7486,6 +7523,21 @@ final class ChatSession: ObservableObject {
                             }
                             self.rebuildVisibleBlocks()
                         },
+                        emitToolRejectionText: { message in
+                            // Chat intentionally stops after an interactive
+                            // denial or terminal tool failure so the model
+                            // cannot retry a side effect or hallucinate its
+                            // result. Close that stopped turn visibly with the
+                            // canonical envelope message instead of leaving a
+                            // blank assistant bubble / eternal-looking task.
+                            assistantTurn.pendingToolName = nil
+                            assistantTurn.clearPendingToolArgs()
+                            let prefix = L("The requested action was not completed.")
+                            let visible = message.isEmpty ? prefix : prefix + " " + message
+                            let separator = assistantTurn.contentIsEmpty ? "" : "\n\n"
+                            assistantTurn.appendContentAndNotify(separator + visible)
+                            self.rebuildVisibleBlocks()
+                        },
                         finalVisibleText: {
                             // Grounded-claim check scope: only runs where the
                             // configure surface is actually offered, so agents
@@ -8776,6 +8828,11 @@ struct ChatView: View {
                                 isCompact: windowState.showSidebar,
                                 isEmptyChat: !observedSession.hasVisibleThreadMessages,
                                 onClearChat: { observedSession.reset() },
+                                modelSwitchContinuityWarning:
+                                    observedSession.modelSwitchContinuityWarning,
+                                onDismissModelSwitchContinuityWarning: {
+                                    observedSession.modelSwitchContinuityWarning = nil
+                                },
                                 onCaptureScreenshot: { observedSession.captureScreenshotFromSlashCommand() },
                                 onGenerateTitle: { observedSession.generateTitleFromSlashCommand() },
                                 onSkillSelected: { skillId in

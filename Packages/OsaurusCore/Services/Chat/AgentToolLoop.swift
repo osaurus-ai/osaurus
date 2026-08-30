@@ -504,6 +504,12 @@ struct AgentLoopHooks {
     /// prior empty-final behavior, which is harmless off the chat surface.
     var emitFallbackText: ((_ text: String) async -> Void)?
 
+    /// Emit a final user-visible explanation when chat's fail-closed tool
+    /// policy stops the loop. The rejected envelope is already persisted as
+    /// a tool turn; this hook closes the visible assistant turn without
+    /// asking the model to guess about a denied or failed side effect.
+    var emitToolRejectionText: ((_ text: String) async -> Void)?
+
     /// Diagnostics side channel, fired once immediately before the run
     /// returns. Optional and observational: the loop's behaviour is
     /// identical whether or not a surface supplies it, and `RunResult`
@@ -548,6 +554,7 @@ struct AgentLoopHooks {
         pendingTodoCount: (() async -> Int)? = nil,
         todoProgressSnapshot: (() async -> AgentTodoProgressSnapshot?)? = nil,
         emitFallbackText: ((_ text: String) async -> Void)? = nil,
+        emitToolRejectionText: ((_ text: String) async -> Void)? = nil,
         finalVisibleText: (() async -> String?)? = nil,
         prepareGroundedClaimRetry: (() async -> Void)? = nil
     ) {
@@ -564,6 +571,7 @@ struct AgentLoopHooks {
         self.pendingTodoCount = pendingTodoCount
         self.todoProgressSnapshot = todoProgressSnapshot
         self.emitFallbackText = emitFallbackText
+        self.emitToolRejectionText = emitToolRejectionText
         self.finalVisibleText = finalVisibleText
         self.prepareGroundedClaimRetry = prepareGroundedClaimRetry
     }
@@ -2066,6 +2074,13 @@ enum AgentToolLoop {
                         repetitionLoop: repetitionLoopRetries,
                         incompleteReasoning: incompleteReasoningRetries)))
         }
+
+        /// Close a fail-closed tool rejection visibly. This runs only after
+        /// cancellation has been checked, so Stop/cancel retains its own
+        /// terminal semantics and never gains a synthetic denial message.
+        func emitToolRejection(_ outcome: AgentLoopToolOutcome) async {
+            await hooks.emitToolRejectionText?(ToolEnvelope.failureMessage(outcome.result))
+        }
         // Total oversized streamed-call recoveries. One typed retry gives a
         // model a chance to switch to bounded/chunked writes without allowing
         // another unbounded decode loop.
@@ -2678,8 +2693,9 @@ enum AgentToolLoop {
                         return await finishBatch(.cancelled)
                     }
                     if policy.stopOnToolRejection,
-                        outcomes.contains(where: Self.shouldStopAfterToolOutcome)
+                        let rejected = outcomes.first(where: Self.shouldStopAfterToolOutcome)
                     {
+                        await emitToolRejection(rejected)
                         return await finishBatch(.toolRejected)
                     }
                 } else {
@@ -2799,6 +2815,7 @@ enum AgentToolLoop {
                                 Self.shouldStopAfterToolOutcome(guardedOutcome)
                             {
                                 await hooks.onBatchComplete(outcomes)
+                                await emitToolRejection(guardedOutcome)
                                 return RunResult(exit: .toolRejected, iterations: iteration)
                             }
                             continue
@@ -2827,6 +2844,7 @@ enum AgentToolLoop {
                             if policy.stopOnToolRejection,
                                 Self.shouldStopAfterToolOutcome(outcome)
                             {
+                                await emitToolRejection(outcome)
                                 return RunResult(exit: .toolRejected, iterations: iteration)
                             }
                             continue
@@ -2885,6 +2903,7 @@ enum AgentToolLoop {
                         if policy.stopOnToolRejection,
                             Self.shouldStopAfterToolOutcome(outcomes[outcomes.count - 1])
                         {
+                            await emitToolRejection(outcomes[outcomes.count - 1])
                             return RunResult(exit: .toolRejected, iterations: iteration)
                         }
                     }

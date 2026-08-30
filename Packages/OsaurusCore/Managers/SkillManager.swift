@@ -744,7 +744,25 @@ public final class SkillManager {
         for skill: Skill,
         referenceBudget: Int = .max
     ) async -> String {
-        var sections = [skill.instructions]
+        var sections: [String] = []
+
+        // A skill body may refer to bundled files with paths such as
+        // `scripts/main.py` or `references/schema.json`. The execution cwd is
+        // the selected workspace, not the skill directory, so the model needs
+        // this source-of-truth anchor to construct the correct absolute path.
+        let directoryURL = SkillStore.skillDirectory(for: skill).standardizedFileURL
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(
+            atPath: directoryURL.path,
+            isDirectory: &isDirectory
+        ), isDirectory.boolValue {
+            sections.append(
+                "Skill directory: `\(directoryURL.path)`. "
+                    + "Resolve relative paths in this skill against that directory."
+            )
+        }
+
+        sections.append(skill.instructions)
 
         if !skill.references.isEmpty {
             let refs = await loadReferenceContents(for: skill, budget: referenceBudget)
@@ -754,6 +772,23 @@ public final class SkillManager {
         }
 
         return sections.joined(separator: "\n")
+    }
+
+    /// Wrap a slash-selected skill as instructions that are already active,
+    /// not as the name of another tool the model still needs to discover.
+    /// Local models otherwise commonly turn `## Active Skill: foo` into a
+    /// hallucinated `foo(...)` call (or search for the skill) instead of
+    /// following the bundled instructions with their exposed file/shell tools.
+    static func activeSkillPromptSection(name: String, body: String) -> String {
+        """
+        ## Active Skill Instructions: \(name)
+
+        This skill is already loaded for this turn. Do not search for it, call \
+        `capabilities` to load it, or invoke a tool named after the skill. Follow \
+        the instructions below using only the actual tools exposed in this request.
+
+        \(body)
+        """
     }
 
     /// Tool names out of `candidates` that `text` mentions as a whole
