@@ -707,7 +707,7 @@ struct MLXBatchAdapterTests {
             modelDefaults: mtpBundleDefaults,
             draftStrategy: effectiveDraftStrategy,
             forcesGreedyForNativeMTP: effectiveDraftStrategy?.usesNativeMTP == true,
-            nativeMTPExplicitSamplingFallback: effectiveDraftStrategy == nil
+            nativeMTPRequestFallback: effectiveDraftStrategy == nil
         )
 
         // Sampling no longer drops MTP: the submit path coerces the running
@@ -817,7 +817,7 @@ struct MLXBatchAdapterTests {
             maxBatchSize: 1,
             modelDefaults: .empty,
             draftStrategy: nil,
-            nativeMTPExplicitSamplingFallback: true
+            nativeMTPRequestFallback: true
         )
 
         #expect(effective.temperature == 0)
@@ -826,6 +826,48 @@ struct MLXBatchAdapterTests {
         #expect(effective.minP == 0)
         #expect(effective.repetitionPenalty == nil)
         #expect(effective.compiledBatchDecode == false)
+    }
+
+    @Test func nativeMTPFallbackReason_isNilWhenMTPActuallyRuns() {
+        let requested = DraftStrategy.nativeMTP(depth: 2)
+
+        #expect(
+            MLXBatchAdapter.nativeMTPFallbackReason(
+                requestedDraftStrategy: requested,
+                effectiveDraftStrategy: requested,
+                promptTokenCount: 128,
+                coldWarmup: false
+            ) == nil
+        )
+    }
+
+    @Test func nativeMTPFallbackReason_reportsOnlyRealColdAndTinyFallbacks() {
+        let requested = DraftStrategy.nativeMTP(depth: 2)
+
+        #expect(
+            MLXBatchAdapter.nativeMTPFallbackReason(
+                requestedDraftStrategy: nil,
+                effectiveDraftStrategy: nil,
+                promptTokenCount: 1,
+                coldWarmup: true
+            ) == nil
+        )
+        #expect(
+            MLXBatchAdapter.nativeMTPFallbackReason(
+                requestedDraftStrategy: requested,
+                effectiveDraftStrategy: nil,
+                promptTokenCount: 128,
+                coldWarmup: true
+            ) == "cold_warmup"
+        )
+        #expect(
+            MLXBatchAdapter.nativeMTPFallbackReason(
+                requestedDraftStrategy: requested,
+                effectiveDraftStrategy: nil,
+                promptTokenCount: MLXBatchAdapter.nativeMTPTinyPromptMinimumTokens - 1,
+                coldWarmup: false
+            ) == "tiny_prompt"
+        )
     }
 
     @Test func effectiveGenerationSettings_dsv4MaxReasoningKeepsModelPenalty() {
