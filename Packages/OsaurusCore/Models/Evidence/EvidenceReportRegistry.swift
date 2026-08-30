@@ -7,6 +7,7 @@
 //  a projection over existing files; it does not own or move artifacts.
 //
 
+import CryptoKit
 import Foundation
 
 public enum EvidenceReportKind: String, Codable, CaseIterable, Hashable, Sendable {
@@ -16,6 +17,8 @@ public enum EvidenceReportKind: String, Codable, CaseIterable, Hashable, Sendabl
     case liveProof = "live_proof"
     case runTrace = "run_trace"
     case provider
+    case modelCompatibility = "model_compatibility"
+    case cache
     case custom
 }
 
@@ -63,19 +66,175 @@ public struct EvidenceReportCounts: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+enum EvidenceReportIdentity {
+    static func digest(_ value: String) -> String {
+        digest(Data(value.utf8))
+    }
+
+    static func digest(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func contentDigest(at url: URL, fileManager: FileManager = .default) -> String? {
+        guard
+            let attributes = try? fileManager.attributesOfItem(atPath: url.path),
+            attributes[.type] as? FileAttributeType == .typeRegular,
+            let handle = try? FileHandle(forReadingFrom: url)
+        else {
+            return nil
+        }
+        defer { try? handle.close() }
+
+        var hasher = SHA256()
+        do {
+            while let data = try handle.read(upToCount: 64 * 1024), !data.isEmpty {
+                hasher.update(data: data)
+            }
+        } catch {
+            return nil
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func normalizedLogicalValue(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .precomposedStringWithCanonicalMapping
+            .replacingOccurrences(of: "\\", with: "/")
+    }
+
+    static func normalizedLocator(_ locator: String) -> String? {
+        let normalized = normalizedLogicalValue(locator)
+        guard
+            !normalized.isEmpty,
+            !normalized.hasPrefix("/"),
+            URL(string: normalized)?.scheme == nil,
+            !looksLikeWindowsAbsolutePath(normalized)
+        else {
+            return nil
+        }
+
+        var components: [String] = []
+        for component in normalized.split(separator: "/", omittingEmptySubsequences: true) {
+            switch component {
+            case ".":
+                continue
+            case "..":
+                return nil
+            default:
+                components.append(String(component))
+            }
+        }
+        guard !components.isEmpty else { return nil }
+        return components.joined(separator: "/")
+    }
+
+    static func opaqueLocator(seed: String, pathExtension: String = "") -> String {
+        let suffix = normalizedPathExtension(pathExtension).map { ".\($0)" } ?? ""
+        return "artifacts/\(digest(seed))\(suffix)"
+    }
+
+    static func containsAbsoluteLocalPath(_ value: String) -> Bool {
+        let normalized = normalizedLogicalValue(value)
+        if normalized.hasPrefix("/") || normalized.lowercased().contains("file://") {
+            return true
+        }
+        if looksLikeWindowsAbsolutePath(normalized) {
+            return true
+        }
+        return normalized.split(whereSeparator: { $0 == "|" || $0 == "," }).contains {
+            let component = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            return component.hasPrefix("/") || looksLikeWindowsAbsolutePath(component)
+        }
+    }
+
+    private static func normalizedPathExtension(_ value: String) -> String? {
+        let normalized = value.lowercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber) }
+        return normalized.isEmpty ? nil : normalized
+    }
+
+    private static func looksLikeWindowsAbsolutePath(_ value: String) -> Bool {
+        guard value.count >= 3 else { return false }
+        let characters = Array(value)
+        return characters[0].isLetter && characters[1] == ":" && characters[2] == "/"
+    }
+}
+
 public struct EvidenceReportArtifact: Codable, Equatable, Hashable, Sendable {
     public var path: String
     public var availability: EvidenceArtifactAvailability
     public var message: String?
+    private var machineLocalPath: String?
 
     public init(
         path: String,
         availability: EvidenceArtifactAvailability,
         message: String? = nil
     ) {
-        self.path = path
+        if let locator = EvidenceReportIdentity.normalizedLocator(path) {
+            self.path = locator
+            machineLocalPath = nil
+        } else {
+            let url: URL?
+            if path.lowercased().hasPrefix("file://") {
+                url = URL(string: path)?.standardizedFileURL
+            } else if EvidenceReportIdentity.containsAbsoluteLocalPath(path) {
+                url = URL(fileURLWithPath: path).standardizedFileURL
+            } else {
+                url = nil
+            }
+            self.path = EvidenceReportIdentity.opaqueLocator(
+                seed: path,
+                pathExtension: url?.pathExtension ?? URL(fileURLWithPath: path).pathExtension
+            )
+            machineLocalPath = url?.path
+        }
         self.availability = availability
         self.message = message
+    }
+
+    public func resolvedURL(relativeTo directoryURL: URL) -> URL? {
+        if let machineLocalPath {
+            return URL(fileURLWithPath: machineLocalPath).standardizedFileURL
+        }
+        guard let locator = EvidenceReportIdentity.normalizedLocator(path) else {
+            return nil
+        }
+        return directoryURL.appendingPathComponent(locator).standardizedFileURL
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case path
+        case availability
+        case message
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            path: try container.decode(String.self, forKey: .path),
+            availability: try container.decode(EvidenceArtifactAvailability.self, forKey: .availability),
+            message: try container.decodeIfPresent(String.self, forKey: .message)
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(path, forKey: .path)
+        try container.encode(availability, forKey: .availability)
+        try container.encodeIfPresent(message, forKey: .message)
+    }
+
+    public static func == (lhs: EvidenceReportArtifact, rhs: EvidenceReportArtifact) -> Bool {
+        lhs.path == rhs.path
+            && lhs.availability == rhs.availability
+            && lhs.message == rhs.message
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(path)
+        hasher.combine(availability)
+        hasher.combine(message)
     }
 }
 
@@ -84,6 +243,7 @@ public struct EvidenceReportDescriptor: Codable, Equatable, Sendable {
     public var kind: EvidenceReportKind
     public var source: String
     public var artifactPath: String
+    public var artifactLocator: String?
     public var status: EvidenceReportStatus
     public var counts: EvidenceReportCounts
     public var startedAt: Date?
@@ -96,6 +256,7 @@ public struct EvidenceReportDescriptor: Codable, Equatable, Sendable {
         kind: EvidenceReportKind,
         source: String,
         artifactPath: String,
+        artifactLocator: String? = nil,
         status: EvidenceReportStatus = .unknown,
         counts: EvidenceReportCounts = EvidenceReportCounts(),
         startedAt: Date? = nil,
@@ -107,6 +268,7 @@ public struct EvidenceReportDescriptor: Codable, Equatable, Sendable {
         self.kind = kind
         self.source = source
         self.artifactPath = artifactPath
+        self.artifactLocator = artifactLocator
         self.status = status
         self.counts = counts
         self.startedAt = startedAt
@@ -120,6 +282,7 @@ public struct EvidenceReportDescriptor: Codable, Equatable, Sendable {
         kind: EvidenceReportKind,
         source: String,
         artifactURL: URL,
+        artifactLocator: String? = nil,
         status: EvidenceReportStatus = .unknown,
         counts: EvidenceReportCounts = EvidenceReportCounts(),
         startedAt: Date? = nil,
@@ -132,6 +295,7 @@ public struct EvidenceReportDescriptor: Codable, Equatable, Sendable {
             kind: kind,
             source: source,
             artifactPath: artifactURL.path,
+            artifactLocator: artifactLocator,
             status: status,
             counts: counts,
             startedAt: startedAt,
@@ -152,6 +316,7 @@ public struct EvidenceReportSummary: Codable, Equatable, Hashable, Sendable {
     public var startedAt: Date?
     public var completedAt: Date?
     public var registeredAt: Date
+    public var generation: UInt64
     public var metadata: [String: String]
 
     public init(
@@ -164,6 +329,7 @@ public struct EvidenceReportSummary: Codable, Equatable, Hashable, Sendable {
         startedAt: Date? = nil,
         completedAt: Date? = nil,
         registeredAt: Date,
+        generation: UInt64 = 0,
         metadata: [String: String] = [:]
     ) {
         self.id = id
@@ -175,7 +341,52 @@ public struct EvidenceReportSummary: Codable, Equatable, Hashable, Sendable {
         self.startedAt = startedAt
         self.completedAt = completedAt
         self.registeredAt = registeredAt
+        self.generation = generation
         self.metadata = metadata
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case source
+        case artifact
+        case status
+        case counts
+        case startedAt
+        case completedAt
+        case registeredAt
+        case generation
+        case metadata
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        kind = try container.decode(EvidenceReportKind.self, forKey: .kind)
+        source = try container.decode(String.self, forKey: .source)
+        artifact = try container.decode(EvidenceReportArtifact.self, forKey: .artifact)
+        status = try container.decode(EvidenceReportStatus.self, forKey: .status)
+        counts = try container.decodeIfPresent(EvidenceReportCounts.self, forKey: .counts) ?? EvidenceReportCounts()
+        startedAt = try container.decodeIfPresent(Date.self, forKey: .startedAt)
+        completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
+        registeredAt = try container.decode(Date.self, forKey: .registeredAt)
+        generation = try container.decodeIfPresent(UInt64.self, forKey: .generation) ?? 0
+        metadata = try container.decodeIfPresent([String: String].self, forKey: .metadata) ?? [:]
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(source, forKey: .source)
+        try container.encode(artifact, forKey: .artifact)
+        try container.encode(status, forKey: .status)
+        try container.encode(counts, forKey: .counts)
+        try container.encodeIfPresent(startedAt, forKey: .startedAt)
+        try container.encodeIfPresent(completedAt, forKey: .completedAt)
+        try container.encode(registeredAt, forKey: .registeredAt)
+        try container.encode(generation, forKey: .generation)
+        try container.encode(metadata, forKey: .metadata)
     }
 
     public func stableJSONData(prettyPrinted: Bool = false) throws -> Data {
@@ -214,8 +425,7 @@ public struct EvidenceReportFilter: Equatable, Sendable {
             return false
         }
         if !artifactAvailability.isEmpty,
-            !artifactAvailability.contains(summary.artifact.availability)
-        {
+            !artifactAvailability.contains(summary.artifact.availability) {
             return false
         }
         return true
@@ -234,7 +444,7 @@ public enum EvidenceReportMetadataRedactor {
     }
 
     public static func redactedValue(forKey key: String, value: String) -> String {
-        if isSensitiveKey(key) || looksSensitive(value) {
+        if isSensitiveKey(key) || looksSensitive(value) || EvidenceReportIdentity.containsAbsoluteLocalPath(value) {
             return redactedValue
         }
         return value
@@ -275,8 +485,7 @@ public enum EvidenceReportMetadataRedactor {
             || lowercased.contains("api_key=")
             || lowercased.contains("apikey=")
             || lowercased.contains("password=")
-            || lowercased.contains("secret=")
-        {
+            || lowercased.contains("secret=") {
             return true
         }
 
@@ -291,10 +500,34 @@ public enum EvidenceReportMetadataRedactor {
 }
 
 public struct EvidenceReportRegistrySnapshot: Codable, Equatable, Sendable {
+    public static let currentSchemaVersion = 2
+
+    public var schemaVersion: Int
     public var reports: [EvidenceReportSummary]
 
-    public init(reports: [EvidenceReportSummary]) {
+    public init(
+        schemaVersion: Int = EvidenceReportRegistrySnapshot.currentSchemaVersion,
+        reports: [EvidenceReportSummary]
+    ) {
+        self.schemaVersion = schemaVersion
         self.reports = reports
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case reports
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        reports = try container.decodeIfPresent([EvidenceReportSummary].self, forKey: .reports) ?? []
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encode(reports, forKey: .reports)
     }
 
     public func stableJSONData(prettyPrinted: Bool = false) throws -> Data {
