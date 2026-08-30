@@ -244,10 +244,14 @@ let package = Package(
         // #331 preserves per-sequence Qwen 3.5 positions under continuous
         // batching; #335 exposes requested and architecture-limited batch
         // capacity; #341-#342 make AgenticTaskBench sandboxing and scoring
-        // reflect the production model/config path.
+        // reflect the production model/config path; #337 loads the real
+        // per-expert Ornith-35B MTP-MoE layout without dropping tensors; #343
+        // prevents prompt-scoped tuning rows from authorizing global MTP Auto;
+        // and #344 keeps manual MTP available to other families while honoring
+        // an explicit bundle-level manual safety block for Ornith 1.5 35B.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "787d5966a49cfa3c9a2d91a7bb2f7d353a292a3e"
+            revision: "aee2a8e0332400b09f31ee6b6723a48a980db336"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

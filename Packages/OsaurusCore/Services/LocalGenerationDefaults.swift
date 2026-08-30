@@ -287,6 +287,127 @@ enum LocalGenerationDefaults {
         return writes.map(\.url.lastPathComponent)
     }
 
+    /// Stamp the narrowly proven Ornith 1.5 35B MTP safety decision into an
+    /// already-downloaded bundle that predates the corrected Hub sidecar.
+    ///
+    /// This is deliberately metadata-driven and idempotent. It does not match
+    /// the broad Ornith or Qwen families: the identifier must be Ornith 1.5
+    /// 35B-A3B, `config.json` must declare the Qwen 3.5 MoE architecture, and
+    /// the bundle must contain MTP evidence. Ornith 9B, Qwen 3.8 27B,
+    /// Flash-Next, and future unrelated MTP bundles therefore never enter the
+    /// write path.
+    ///
+    /// Returns true only when `vmlx_mtp_tuning.json` was changed. A recognized
+    /// bundle with malformed/unwritable metadata throws so the caller refuses
+    /// the load instead of silently allowing a known-regressive manual mode.
+    static func repairOrnith15A3BManualMTPBlockIfNeeded(
+        at directory: URL,
+        modelName: String
+    ) throws -> Bool {
+        let identifiers = [modelName, directory.lastPathComponent]
+        guard identifiers.contains(where: isOrnith15A3BIdentifier) else {
+            return false
+        }
+
+        let configURL = directory.appendingPathComponent("config.json")
+        guard let configData = readSmallConfigFile(configURL) else {
+            throw repairError(
+                code: 20,
+                description: "Ornith 1.5 35B config.json is unreadable."
+            )
+        }
+        let config: [String: Any]
+        do {
+            guard
+                let decoded = try JSONSerialization.jsonObject(with: configData)
+                    as? [String: Any]
+            else {
+                throw repairError(
+                    code: 20,
+                    description: "Ornith 1.5 35B config.json is malformed."
+                )
+            }
+            config = decoded
+        } catch {
+            throw repairError(
+                code: 20,
+                description: "Ornith 1.5 35B config.json is malformed.",
+                underlying: error
+            )
+        }
+
+        let modelType = (config["model_type"] as? String)?.lowercased()
+        let architectures = (config["architectures"] as? [String]) ?? []
+        guard modelType == "qwen3_5_moe",
+              architectures.contains("Qwen3_5MoeForConditionalGeneration")
+        else {
+            return false
+        }
+
+        let tuningURL = directory.appendingPathComponent("vmlx_mtp_tuning.json")
+        let tuningExists = FileManager.default.fileExists(atPath: tuningURL.path)
+        var jangDeclaresMTP = false
+        let jangURL = directory.appendingPathComponent("jang_config.json")
+        if let jangData = readSmallConfigFile(jangURL),
+           let jang = try? JSONSerialization.jsonObject(with: jangData) as? [String: Any]
+        {
+            let runtime = jang["runtime"] as? [String: Any]
+            let mtp = jang["mtp"] as? [String: Any]
+            jangDeclaresMTP = (runtime?["bundle_has_mtp"] as? Bool) == true
+                || (mtp?["artifact_available"] as? Bool) == true
+        }
+        guard tuningExists || jangDeclaresMTP else { return false }
+
+        var root: [String: Any] = [:]
+        if tuningExists {
+            guard let tuningData = readSmallConfigFile(tuningURL) else {
+                throw repairError(
+                    code: 21,
+                    description: "Ornith 1.5 35B vmlx_mtp_tuning.json is unreadable."
+                )
+            }
+            do {
+                guard
+                    let decoded = try JSONSerialization.jsonObject(with: tuningData)
+                        as? [String: Any]
+                else {
+                    throw repairError(
+                        code: 21,
+                        description: "Ornith 1.5 35B vmlx_mtp_tuning.json is malformed."
+                    )
+                }
+                root = decoded
+            } catch {
+                throw repairError(
+                    code: 21,
+                    description: "Ornith 1.5 35B vmlx_mtp_tuning.json is malformed.",
+                    underlying: error
+                )
+            }
+        }
+
+        var native = root["native_mtp"] as? [String: Any] ?? [:]
+        let alreadyBlocked = (native["blocked"] as? Bool) == true
+            && (native["manual_blocked"] as? Bool) == true
+        guard !alreadyBlocked else { return false }
+
+        native["blocked"] = true
+        native["manual_blocked"] = true
+        let existingReason = (native["reason"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if existingReason.isEmpty {
+            native["reason"] =
+                "Ornith 1.5 35B MTP regressed versus autoregressive decode in production validation."
+        }
+        root["native_mtp"] = native
+        let output = try JSONSerialization.data(
+            withJSONObject: root,
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        )
+        try output.write(to: tuningURL, options: .atomic)
+        return true
+    }
+
     /// Match the exact Laguna XS 2.1 family boundary while allowing normal
     /// repository/display suffixes such as JANG_4M, MXFP8, or CRACK.
     ///
@@ -307,6 +428,19 @@ enum LocalGenerationDefaults {
             .joined(separator: "-")
         return normalized == "laguna-xs-2.1"
             || normalized.hasPrefix("laguna-xs-2.1-")
+    }
+
+    private static func isOrnith15A3BIdentifier(_ identifier: String) -> Bool {
+        let leaf = identifier.split(separator: "/", omittingEmptySubsequences: true).last
+            .map(String.init) ?? identifier
+        let folded = leaf.lowercased().unicodeScalars.map { scalar -> Character in
+            CharacterSet.alphanumerics.contains(scalar) ? Character(String(scalar)) : "-"
+        }
+        let normalized = String(folded)
+            .split(separator: "-", omittingEmptySubsequences: true)
+            .joined(separator: "-")
+        return normalized == "ornith-1-5-35b-a3b"
+            || normalized.hasPrefix("ornith-1-5-35b-a3b-")
     }
 
     private static func isExactlyTopK20(_ value: Any?) -> Bool {

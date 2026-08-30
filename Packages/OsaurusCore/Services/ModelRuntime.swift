@@ -3724,6 +3724,32 @@ public actor ModelRuntime {
         genLog.info(
             "loadContainer: local directory model=\(name, privacy: .public) path=\(localURL.path, privacy: .public)"
         )
+
+        // Older local copies do not receive corrected Hub sidecars. Migrate
+        // only the exact Ornith 1.5 35B-A3B Qwen3.5-MoE bundle before vMLX
+        // inspects MTP policy; every other MTP family remains untouched.
+        do {
+            if try LocalGenerationDefaults.repairOrnith15A3BManualMTPBlockIfNeeded(
+                at: localURL,
+                modelName: name
+            ) {
+                genLog.warning(
+                    "stamped Ornith 1.5 35B MTP safety metadata model=\(name, privacy: .public) manualBlocked=true"
+                )
+            }
+        } catch {
+            genLog.error(
+                "failed to stamp Ornith 1.5 35B MTP safety metadata model=\(name, privacy: .public): \(String(describing: error), privacy: .public)"
+            )
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 422,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Ornith 1.5 35B requires a local MTP safety update, but Osaurus could not update its bundle metadata. \(error.localizedDescription)"
+                ]
+            )
+        }
         let loadBundleFacts = LoadBundleFacts.inspect(bundleURL: localURL)
 
         // One-time, idempotent bundle-metadata repair for the Laguna XS 2.1

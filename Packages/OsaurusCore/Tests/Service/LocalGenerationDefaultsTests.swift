@@ -1067,6 +1067,158 @@ struct LocalGenerationDefaultsTests {
         }
     }
 
+    // MARK: - Ornith 1.5 35B MTP safety migration
+
+    private func makeOrnithMTPFixture(
+        name: String,
+        modelType: String = "qwen3_5_moe",
+        architecture: String = "Qwen3_5MoeForConditionalGeneration",
+        declaresMTP: Bool = true,
+        tuning: String? = #"{"native_mtp":{"best_depth":1,"validated":true,"output_equivalent":true,"note":"preserve me"}}"#
+    ) throws -> URL {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("\(name)-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        try """
+        {"model_type":"\(modelType)","architectures":["\(architecture)"]}
+        """.write(
+            to: tmp.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try """
+        {"runtime":{"bundle_has_mtp":\(declaresMTP)},"mtp":{"artifact_available":\(declaresMTP)}}
+        """.write(
+            to: tmp.appendingPathComponent("jang_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        if let tuning {
+            try tuning.write(
+                to: tmp.appendingPathComponent("vmlx_mtp_tuning.json"),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+        return tmp
+    }
+
+    @Test(
+        "only Ornith 1.5 35B quant bundles receive the manual MTP block",
+        arguments: ["JANG_4M", "JANG_6M", "MXFP8"]
+    )
+    func ornith15A3BMigrationIsExactAndIdempotent(quant: String) throws {
+        let tmp = try makeOrnithMTPFixture(
+            name: "Ornith-1.5-35B-A3B-UNCENSORED-\(quant)"
+        )
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let changed = try LocalGenerationDefaults
+            .repairOrnith15A3BManualMTPBlockIfNeeded(
+                at: tmp,
+                modelName: "dealign.ai/Ornith-1.5-35B-A3B-UNCENSORED-\(quant)"
+            )
+        #expect(changed)
+
+        let data = try Data(contentsOf: tmp.appendingPathComponent("vmlx_mtp_tuning.json"))
+        let root = try #require(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        let native = try #require(root["native_mtp"] as? [String: Any])
+        #expect(native["blocked"] as? Bool == true)
+        #expect(native["manual_blocked"] as? Bool == true)
+        #expect((native["best_depth"] as? NSNumber)?.intValue == 1)
+        #expect(native["note"] as? String == "preserve me")
+
+        let second = try LocalGenerationDefaults
+            .repairOrnith15A3BManualMTPBlockIfNeeded(
+                at: tmp,
+                modelName: "Ornith 1.5 35B A3B \(quant)"
+            )
+        #expect(!second)
+    }
+
+    @Test(
+        "neighboring MTP families and Ornith 9B are never stamped",
+        arguments: [
+            "Ornith-1.5-9B-JANG_4M",
+            "Ornith-1.0-35B-A3B-JANG_4M",
+            "Qwen3.8-27B-JANG_6D",
+            "Qwen3.8-Flash-Next-JANG_4M",
+        ]
+    )
+    func ornithMigrationLeavesEveryControlUntouched(name: String) throws {
+        let tmp = try makeOrnithMTPFixture(name: name)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let before = try Data(contentsOf: tmp.appendingPathComponent("vmlx_mtp_tuning.json"))
+
+        let changed = try LocalGenerationDefaults
+            .repairOrnith15A3BManualMTPBlockIfNeeded(at: tmp, modelName: name)
+        let after = try Data(contentsOf: tmp.appendingPathComponent("vmlx_mtp_tuning.json"))
+        #expect(!changed)
+        #expect(after == before)
+    }
+
+    @Test("a deceptive Ornith 35B name cannot stamp a different architecture")
+    func ornithMigrationRequiresExactRuntimeArchitecture() throws {
+        let tmp = try makeOrnithMTPFixture(
+            name: "Ornith-1.5-35B-A3B-JANG_4M",
+            modelType: "qwen4_exp",
+            architecture: "Qwen4ExpForConditionalGeneration"
+        )
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let before = try Data(contentsOf: tmp.appendingPathComponent("vmlx_mtp_tuning.json"))
+
+        let changed = try LocalGenerationDefaults
+            .repairOrnith15A3BManualMTPBlockIfNeeded(
+                at: tmp,
+                modelName: "Ornith-1.5-35B-A3B-JANG_4M"
+            )
+        #expect(!changed)
+        #expect(
+            try Data(contentsOf: tmp.appendingPathComponent("vmlx_mtp_tuning.json"))
+                == before)
+    }
+
+    @Test("an exact old bundle without a tuning file gets one safety sidecar")
+    func ornithMigrationCreatesMissingTuningSidecarFromMTPEvidence() throws {
+        let tmp = try makeOrnithMTPFixture(
+            name: "Ornith-1.5-35B-A3B-JANG_4M",
+            tuning: nil
+        )
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        #expect(
+            try LocalGenerationDefaults.repairOrnith15A3BManualMTPBlockIfNeeded(
+                at: tmp,
+                modelName: "dealign.ai/Ornith-1.5-35B-A3B-JANG_4M"
+            ))
+        let root = try #require(
+            try JSONSerialization.jsonObject(
+                with: Data(contentsOf: tmp.appendingPathComponent("vmlx_mtp_tuning.json"))
+            ) as? [String: Any]
+        )
+        let native = try #require(root["native_mtp"] as? [String: Any])
+        #expect(native["blocked"] as? Bool == true)
+        #expect(native["manual_blocked"] as? Bool == true)
+    }
+
+    @Test("an exact bundle with malformed tuning fails instead of enabling MTP")
+    func ornithMigrationFailsClosedOnMalformedTuning() throws {
+        let tmp = try makeOrnithMTPFixture(
+            name: "Ornith-1.5-35B-A3B-JANG_4M",
+            tuning: "{not-json"
+        )
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        #expect(throws: (any Error).self) {
+            _ = try LocalGenerationDefaults.repairOrnith15A3BManualMTPBlockIfNeeded(
+                at: tmp,
+                modelName: "Ornith-1.5-35B-A3B-JANG_4M"
+            )
+        }
+    }
+
     // MARK: - vmlx parity
 
     /// vmlx's `GenerationConfigFile` decodes `presence_penalty` and
