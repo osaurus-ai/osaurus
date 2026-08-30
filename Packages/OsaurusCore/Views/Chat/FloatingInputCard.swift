@@ -409,6 +409,10 @@ struct FloatingInputCard: View {
     /// showing the control there would advertise speculation it cannot do.
     /// Sourced from the engine's own per-model status, never from the name.
     @State private var nativeMTPCapableModels: Set<String> = []
+    /// Resident models whose bundle metadata explicitly blocks manual MTP.
+    /// Kept separate from capability: the head still exists, but presenting
+    /// selectable depths would lie because the runtime must stay AR-only.
+    @State private var nativeMTPManuallyBlockedModels: Set<String> = []
     /// Mirrors `mtp.mode` / `mtp.draftTokenLimit` so the row renders the value
     /// that is actually saved rather than a local guess.
     @State private var nativeMTPSelection: String = "auto"
@@ -2353,27 +2357,35 @@ extension FloatingInputCard {
     /// 1-3 pin it lower, which is all the server draft-token limit can do —
     /// it clamps the measured depth downward, never upward.
     private func nativeMTPOption(for model: String) -> ModelOptionDefinition? {
+        let identity = Self.mtpIdentity(model)
         guard !isRemoteAgentRun,
-            nativeMTPCapableModels.contains(Self.mtpIdentity(model))
+            nativeMTPCapableModels.contains(identity)
         else { return nil }
+        let manuallyBlocked = nativeMTPManuallyBlockedModels.contains(identity)
         return ModelOptionDefinition(
             id: Self.nativeMTPOptionID,
             label: L("Speculative Depth"),
             icon: "hare",
-            kind: .segmented([
-                ModelOptionSegment(id: "off", label: L("Off")),
-                ModelOptionSegment(id: "auto", label: L("Auto")),
-                ModelOptionSegment(id: "1", label: "1"),
-                ModelOptionSegment(id: "2", label: "2"),
-                ModelOptionSegment(id: "3", label: "3"),
-            ]),
+            kind: .segmented(
+                manuallyBlocked
+                    ? [ModelOptionSegment(id: "off", label: L("Off"))]
+                    : [
+                        ModelOptionSegment(id: "off", label: L("Off")),
+                        ModelOptionSegment(id: "auto", label: L("Auto")),
+                        ModelOptionSegment(id: "1", label: "1"),
+                        ModelOptionSegment(id: "2", label: "2"),
+                        ModelOptionSegment(id: "3", label: "3"),
+                    ]
+            ),
             // The one selector whose choice also changes SAMPLING: active
             // MTP decodes greedy (output-equivalence is only defined under
             // argmax). Undisclosed, "why is my temperature ignored?" is
             // unanswerable from the UI.
-            help: L(
-                "Auto activates only from measured tuning; 1–3 activate that depth directly. While active, this model decodes greedily (temperature 0); Off restores the configured sampling."
-            )
+            help: manuallyBlocked
+                ? L("Speculative decoding is disabled for this bundle because its MTP head is not safe for production use.")
+                : L(
+                    "Auto activates only from measured tuning; 1–3 activate that depth directly. While active, this model decodes greedily (temperature 0); Off restores the configured sampling."
+                )
         )
     }
 
@@ -2442,6 +2454,14 @@ extension FloatingInputCard {
                     Self.statusIndicatesNativeMTPHead($0.nativeMTPStatus)
                 }
                 .map { Self.mtpIdentity($0.name) })
+            let residentIdentities = Set(summaries.map { Self.mtpIdentity($0.name) })
+            nativeMTPManuallyBlockedModels.subtract(residentIdentities)
+            nativeMTPManuallyBlockedModels.formUnion(
+                summaries.filter {
+                    $0.nativeMTPStatus?.contains("manual=blocked") == true
+                }
+                .map { Self.mtpIdentity($0.name) }
+            )
         }
     }
 
@@ -3060,7 +3080,10 @@ extension FloatingInputCard {
         var values = activeModelOptions
         var displayDefaults = defaults
         if options.contains(where: { $0.id == Self.nativeMTPOptionID }) {
-            values[Self.nativeMTPOptionID] = .string(nativeMTPSelection)
+            let identity = Self.mtpIdentity(model)
+            values[Self.nativeMTPOptionID] = .string(
+                nativeMTPManuallyBlockedModels.contains(identity) ? "off" : nativeMTPSelection
+            )
             displayDefaults[Self.nativeMTPOptionID] = .string("auto")
         }
 

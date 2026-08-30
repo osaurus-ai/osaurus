@@ -3877,4 +3877,22 @@ struct RuntimePolicySourceTests {
         #expect(crashReporting.contains("event.serverName = nil"))
         #expect(crashReporting.contains("options.sendDefaultPii = false"))
     }
+
+    @Test("manual MTP block stays visible and truthful in the model picker")
+    func manualMTPBlockPickerWiring() throws {
+        let picker = try Self.source("Views/Chat/FloatingInputCard.swift")
+
+        #expect(picker.contains("nativeMTPManuallyBlockedModels"))
+        #expect(picker.contains("manual=blocked"))
+        #expect(
+            picker.contains(
+                "nativeMTPManuallyBlockedModels.contains(identity) ? \"off\" : nativeMTPSelection"
+            ),
+            "A globally saved manual depth must render as Off for a bundle whose runtime blocks manual MTP."
+        )
+        #expect(
+            picker.contains("? [ModelOptionSegment(id: \"off\", label: L(\"Off\"))]"),
+            "Blocked bundles must not advertise selectable Auto or explicit-depth chips."
+        )
+    }
 }
