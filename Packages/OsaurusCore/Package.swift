@@ -253,7 +253,7 @@ let package = Package(
         // for that model and adds its real q5/q5/q4 affine expert layout.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "bf8b31995195fffd833968658f14c707317eaa70"
+            revision: "0d72609241d8a41e1a9bd45ef96434b209e8e657"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
