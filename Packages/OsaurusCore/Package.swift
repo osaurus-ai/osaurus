@@ -248,10 +248,12 @@ let package = Package(
         // per-expert Ornith-35B MTP-MoE layout without dropping tensors; #343
         // prevents prompt-scoped tuning rows from authorizing global MTP Auto;
         // and #344 keeps manual MTP available to other families while honoring
-        // an explicit bundle-level manual safety block for Ornith 1.5 35B.
+        // an explicit bundle-level manual safety block for Ornith 1.5 35B;
+        // #346 restores the architecture-scoped compiled GDN/MoE decode path
+        // for that model and adds its real q5/q5/q4 affine expert layout.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "aee2a8e0332400b09f31ee6b6723a48a980db336"
+            revision: "bf8b31995195fffd833968658f14c707317eaa70"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
