@@ -387,23 +387,24 @@ public actor RemoteProviderService: ToolCapableService {
     /// media for the Router wire (non-vision upstream adapters reject
     /// array-form user content). Empty for non-Router providers.
     private var routerVisionModelIds: Set<String> = []
-    /// Models whose live Router upstream rejected image content despite the
-    /// catalog advertising vision support. Keep the quarantine for this
-    /// service's lifetime so one failed image turn cannot poison every later
-    /// request when that turn is replayed from conversation history.
-    private var routerRejectedImageInputModelIds: Set<String> = []
+    /// Models whose live upstream rejected image content despite the client
+    /// allowing it. Keep the quarantine for this service's lifetime so one
+    /// failed image turn cannot poison every later request when that turn is
+    /// replayed from conversation history. Covers both Router catalog drift
+    /// and ChatGPT OAuth models, whose catalog has no image capability field.
+    private var rejectedImageInputModelIds: Set<String> = []
 
     public func updateOsaurusRouterVisionModels(_ modelIds: Set<String>) {
         routerVisionModelIds = modelIds
     }
 
-    func recordRouterImageInputRejection(for modelId: String) {
-        routerRejectedImageInputModelIds.insert(modelId)
+    func recordImageInputRejection(for modelId: String) {
+        rejectedImageInputModelIds.insert(modelId)
     }
 
     func routerModelSupportsImageInput(_ modelId: String) -> Bool {
         routerVisionModelIds.contains(modelId)
-            && !routerRejectedImageInputModelIds.contains(modelId)
+            && !rejectedImageInputModelIds.contains(modelId)
     }
 
     func routerWireCompatibleMessagesForCurrentCapabilities(
@@ -413,6 +414,17 @@ public actor RemoteProviderService: ToolCapableService {
         Self.routerWireCompatibleMessages(
             messages,
             modelSupportsImageInput: routerModelSupportsImageInput(modelId)
+        )
+    }
+
+    func codexMessagesForCurrentCapabilities(
+        _ messages: [ChatMessage],
+        modelId: String
+    ) -> [ChatMessage] {
+        guard rejectedImageInputModelIds.contains(modelId) else { return messages }
+        return Self.messagesFlatteningRejectedImageInput(
+            messages,
+            routeName: "ChatGPT OAuth"
         )
     }
 
@@ -2435,8 +2447,8 @@ public actor RemoteProviderService: ToolCapableService {
                 providerType: providerType
             )
             : nil
-        let routerRequestContainsImageInput =
-            providerType == .osaurusRouter
+        let recoverableRequestContainsImageInput =
+            (providerType == .osaurusRouter || providerType == .openAICodex)
             && request.messages.contains { !$0.imageUrls.isEmpty }
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
@@ -2571,17 +2583,17 @@ public actor RemoteProviderService: ToolCapableService {
                             continuation.finish(throwing: rateLimited)
                             return
                         }
-                        // The Router catalog is advisory and can briefly get
-                        // ahead of an upstream deployment. If a model marked
-                        // vision-capable rejects array-form user content,
+                        // Capability acceptance can drift from the live
+                        // upstream: Router metadata may briefly be stale, and
+                        // the ChatGPT OAuth catalog has no image field. When
+                        // either route rejects array-form user content,
                         // quarantine image input for that model locally. The
-                        // next turn then truthfully flattens every historical
-                        // image to the existing removal notice instead of
-                        // replaying the same 400 forever (issue #2559).
-                        if routerRequestContainsImageInput,
+                        // next turn truthfully flattens historical images
+                        // instead of replaying the same 400 forever (#2559).
+                        if recoverableRequestContainsImageInput,
                             Self.isUserMediaContentShapeRejection(errorData)
                         {
-                            await self.recordRouterImageInputRejection(for: request.model)
+                            await self.recordImageInputRejection(for: request.model)
                         }
                         // Parse the error envelope instead of dumping the raw
                         // JSON body into chat; known upstream rejections map
@@ -3477,7 +3489,12 @@ public actor RemoteProviderService: ToolCapableService {
             let openResponsesRequest = request.toOpenResponsesRequest()
             bodyData = try encoder.encode(openResponsesRequest)
         case .openAICodex:
-            bodyData = try request.toCodexOpenResponsesRequest().toCodexOAuthPayloadData(
+            var outbound = request
+            outbound.messages = codexMessagesForCurrentCapabilities(
+                outbound.messages,
+                modelId: outbound.model
+            )
+            bodyData = try outbound.toCodexOpenResponsesRequest().toCodexOAuthPayloadData(
                 responsesLiteSessionId: codexResponsesLiteSessionId
             )
         case .gemini:
@@ -3948,6 +3965,33 @@ public actor RemoteProviderService: ToolCapableService {
         }
         let flattened = (keptText + [notice]).joined(separator: "\n")
         return ChatMessage(role: message.role, content: flattened)
+    }
+
+    /// Once a route has explicitly rejected image-bearing user content for a
+    /// model, collapse those historical turns to text on later requests. The
+    /// visible notice makes the removal truthful while preserving the user's
+    /// text and all non-user protocol messages exactly.
+    static func messagesFlatteningRejectedImageInput(
+        _ messages: [ChatMessage],
+        routeName: String
+    ) -> [ChatMessage] {
+        messages.map { message in
+            guard message.role.lowercased() == "user", !message.imageUrls.isEmpty else {
+                return message
+            }
+            let notice = "[Osaurus: image removed — rejected by \(routeName)]"
+            let base = hasMeaningfulText(message.content) ? (message.content ?? "") : ""
+            let flattened = base.isEmpty ? notice : base + "\n\n" + notice
+            return ChatMessage(
+                role: message.role,
+                content: flattened,
+                tool_calls: message.tool_calls,
+                tool_call_id: message.tool_call_id,
+                reasoning_content: message.reasoning_content,
+                reasoning_item_id: message.reasoning_item_id,
+                reasoning_encrypted: message.reasoning_encrypted
+            )
+        }
     }
 
     /// "1 image", "2 images and 1 audio attachment" — compact removal summary

@@ -1098,7 +1098,7 @@ struct RemoteChatRequestEncodingTests {
         )
         #expect(before.first?.contentParts != nil)
 
-        await service.recordRouterImageInputRejection(for: model)
+        await service.recordImageInputRejection(for: model)
 
         let after = await service.routerWireCompatibleMessagesForCurrentCapabilities(
             history,
@@ -1107,6 +1107,56 @@ struct RemoteChatRequestEncodingTests {
         #expect(after.first?.contentParts == nil)
         #expect(after.first?.content?.contains("removed") == true)
         #expect(after.last?.content == "There is no image attached now.")
+    }
+
+    /// ChatGPT OAuth has no per-model image capability in its catalog. When
+    /// the live Codex route rejects an image, later turns must stop emitting
+    /// `input_image` for that model while preserving the user's text.
+    @Test func codexImageRejection_flattensPoisonedHistoryForLaterTurns() async throws {
+        let model = "gpt-5.6-sol"
+        let service = RemoteProviderService(
+            provider: OpenAICodexOAuthService.makeProvider(),
+            models: [model],
+            resolvedHeaders: [:]
+        )
+        let history = [
+            ChatMessage(
+                role: "user",
+                content: "describe this",
+                contentParts: [
+                    .text("describe this"),
+                    .imageUrl(url: "data:image/png;base64,BBBB", detail: nil),
+                ]
+            ),
+            ChatMessage(role: "user", content: "There is no image attached now."),
+        ]
+
+        let before = await service.codexMessagesForCurrentCapabilities(
+            history,
+            modelId: model
+        )
+        let beforePayload = try Self.makeRequest(
+            model: model,
+            maxTokens: nil,
+            messages: before
+        ).toCodexOpenResponsesRequest().toCodexOAuthPayloadData()
+        #expect(String(decoding: beforePayload, as: UTF8.self).contains("input_image"))
+
+        await service.recordImageInputRejection(for: model)
+
+        let after = await service.codexMessagesForCurrentCapabilities(
+            history,
+            modelId: model
+        )
+        let afterPayload = try Self.makeRequest(
+            model: model,
+            maxTokens: nil,
+            messages: after
+        ).toCodexOpenResponsesRequest().toCodexOAuthPayloadData()
+        let wire = String(decoding: afterPayload, as: UTF8.self)
+        #expect(!wire.contains("input_image"))
+        #expect(wire.contains("rejected by ChatGPT OAuth"))
+        #expect(wire.contains("There is no image attached now."))
     }
 
     /// Audio/video have no mapping on any Router upstream: they are removed
