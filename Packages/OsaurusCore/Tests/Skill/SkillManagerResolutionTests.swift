@@ -124,6 +124,21 @@ struct SkillManagerResolutionTests {
         }
     }
 
+    @Test @MainActor
+    func fullInstructionsDoNotInventDirectoryForBuiltInSkill() async throws {
+        try await Self.withTempSkillStorage {
+            let skill = try #require(Skill.builtInSkills.first)
+            let synthesizedDirectory = SkillStore.skillDirectory(for: skill)
+                .standardizedFileURL.path
+            #expect(!FileManager.default.fileExists(atPath: synthesizedDirectory))
+
+            let full = await SkillManager.shared.buildFullInstructions(for: skill)
+
+            #expect(!full.contains("Skill directory: `\(synthesizedDirectory)`"))
+            #expect(full.contains(skill.instructions))
+        }
+    }
+
     // MARK: - Fixtures
 
     /// Creates a user skill with two references: `alpha.md` (tiny, sorts

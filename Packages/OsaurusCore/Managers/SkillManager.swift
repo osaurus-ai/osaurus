@@ -750,10 +750,14 @@ public final class SkillManager {
         // `scripts/main.py` or `references/schema.json`. The execution cwd is
         // the selected workspace, not the skill directory, so the model needs
         // this source-of-truth anchor to construct the correct absolute path.
-        let directoryPath = SkillStore.skillDirectory(for: skill).standardizedFileURL.path
-        if !directoryPath.isEmpty {
+        let directoryURL = SkillStore.skillDirectory(for: skill).standardizedFileURL
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(
+            atPath: directoryURL.path,
+            isDirectory: &isDirectory
+        ), isDirectory.boolValue {
             sections.append(
-                "Skill directory: `\(directoryPath)`. "
+                "Skill directory: `\(directoryURL.path)`. "
                     + "Resolve relative paths in this skill against that directory."
             )
         }
