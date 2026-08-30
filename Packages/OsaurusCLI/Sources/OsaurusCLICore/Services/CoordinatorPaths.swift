@@ -71,6 +71,13 @@ public struct CoordinatorPaths: Equatable, Sendable {
                 output += String(format: "%%%02X", byte)
             }
         }
+        // A component of only "." or ".." resolves to the current/parent directory,
+        // which would let a name escape its intended container (e.g.
+        // `laneDirectory(named: "..")` resolving above `lanes/`). Percent-encode the
+        // dots so the component stays a literal child name.
+        if output == "." || output == ".." {
+            return output.replacingOccurrences(of: ".", with: "%2E")
+        }
         return output.isEmpty ? "_" : output
     }
 }
