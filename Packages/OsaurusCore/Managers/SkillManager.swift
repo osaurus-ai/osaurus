@@ -744,7 +744,21 @@ public final class SkillManager {
         for skill: Skill,
         referenceBudget: Int = .max
     ) async -> String {
-        var sections = [skill.instructions]
+        var sections: [String] = []
+
+        // A skill body may refer to bundled files with paths such as
+        // `scripts/main.py` or `references/schema.json`. The execution cwd is
+        // the selected workspace, not the skill directory, so the model needs
+        // this source-of-truth anchor to construct the correct absolute path.
+        let directoryPath = SkillStore.skillDirectory(for: skill).standardizedFileURL.path
+        if !directoryPath.isEmpty {
+            sections.append(
+                "Skill directory: `\(directoryPath)`. "
+                    + "Resolve relative paths in this skill against that directory."
+            )
+        }
+
+        sections.append(skill.instructions)
 
         if !skill.references.isEmpty {
             let refs = await loadReferenceContents(for: skill, budget: referenceBudget)

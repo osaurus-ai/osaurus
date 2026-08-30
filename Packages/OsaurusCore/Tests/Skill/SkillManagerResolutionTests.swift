@@ -96,6 +96,34 @@ struct SkillManagerResolutionTests {
         }
     }
 
+    // MARK: - Skill-relative resources (issue #1803)
+
+    @Test @MainActor
+    func fullInstructionsIncludeResolvedSkillDirectoryBeforeBody() async throws {
+        try await Self.withTempSkillStorage {
+            let skill = await SkillManager.shared.create(
+                name: "Directory Anchor \(UUID().uuidString.prefix(6))",
+                description: "directory anchor fixture",
+                instructions: "Run `python3 scripts/main.py`."
+            )
+            let expectedDirectory = SkillStore.skillDirectory(for: skill)
+                .standardizedFileURL.path
+
+            let full = await SkillManager.shared.buildFullInstructions(for: skill)
+
+            let directoryLine =
+                "Skill directory: `\(expectedDirectory)`. "
+                + "Resolve relative paths in this skill against that directory."
+            let directoryRange = full.range(of: directoryLine)
+            let bodyRange = full.range(of: "Run `python3 scripts/main.py`.")
+            #expect(directoryRange != nil)
+            #expect(bodyRange != nil)
+            #expect(directoryRange!.lowerBound < bodyRange!.lowerBound)
+            #expect(expectedDirectory.hasPrefix("/"))
+            #expect(!expectedDirectory.contains("/../"))
+        }
+    }
+
     // MARK: - Fixtures
 
     /// Creates a user skill with two references: `alpha.md` (tiny, sorts
