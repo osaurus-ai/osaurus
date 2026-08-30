@@ -6073,7 +6073,10 @@ final class ChatSession: ObservableObject {
                     // command (resolved above, before compose, so the tools it
                     // references made it into the schema).
                     if let oneOff = oneOffSkillSection {
-                        sys += "\n\n## Active Skill: \(oneOff.name)\n\n\(oneOff.body)"
+                        sys += "\n\n" + SkillManager.activeSkillPromptSection(
+                            name: oneOff.name,
+                            body: oneOff.body
+                        )
                     }
 
                     // Initial request schema. `ToolExecutionScope` appends tools

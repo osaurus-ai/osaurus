@@ -774,6 +774,23 @@ public final class SkillManager {
         return sections.joined(separator: "\n")
     }
 
+    /// Wrap a slash-selected skill as instructions that are already active,
+    /// not as the name of another tool the model still needs to discover.
+    /// Local models otherwise commonly turn `## Active Skill: foo` into a
+    /// hallucinated `foo(...)` call (or search for the skill) instead of
+    /// following the bundled instructions with their exposed file/shell tools.
+    static func activeSkillPromptSection(name: String, body: String) -> String {
+        """
+        ## Active Skill Instructions: \(name)
+
+        This skill is already loaded for this turn. Do not search for it, call \
+        `capabilities` to load it, or invoke a tool named after the skill. Follow \
+        the instructions below using only the actual tools exposed in this request.
+
+        \(body)
+        """
+    }
+
     /// Tool names out of `candidates` that `text` mentions as a whole
     /// identifier token.
     ///

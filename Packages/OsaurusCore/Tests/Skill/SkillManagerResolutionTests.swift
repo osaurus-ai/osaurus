@@ -139,6 +139,20 @@ struct SkillManagerResolutionTests {
         }
     }
 
+    @Test("slash skill wrapper says the skill is active, not a callable tool") @MainActor
+    func activeSkillWrapperPreventsSkillNameToolHallucination() {
+        let section = SkillManager.activeSkillPromptSection(
+            name: "directory-anchor-proof",
+            body: "Run `python3 scripts/main.py`."
+        )
+
+        #expect(section.contains("## Active Skill Instructions: directory-anchor-proof"))
+        #expect(section.contains("This skill is already loaded for this turn."))
+        #expect(section.contains("Do not search for it"))
+        #expect(section.contains("invoke a tool named after the skill"))
+        #expect(section.contains("Run `python3 scripts/main.py`."))
+    }
+
     // MARK: - Fixtures
 
     /// Creates a user skill with two references: `alpha.md` (tiny, sorts
