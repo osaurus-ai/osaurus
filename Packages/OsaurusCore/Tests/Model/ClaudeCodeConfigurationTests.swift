@@ -386,6 +386,53 @@ struct ClaudeCodeConfigurationTests {
         #expect(result.exitCode != 0)
     }
 
+    @Test func generationPromptUsesStdinInsteadOfArgv() async throws {
+        let directory = try makeFakeClaude(
+            """
+            if [ "$#" -ne 0 ]; then
+              printf 'prompt leaked into argv' >&2
+              exit 2
+            fi
+            prompt="$(cat)"
+            if [ "$prompt" = "private prompt" ]; then
+              text="stdin-ok"
+            else
+              text="stdin-missing"
+            fi
+            printf '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"%s"}}}\\n' "$text"
+            printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"usage":{"output_tokens":1}}\\n'
+            """
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let events = ClaudeCodeProcessRunner.stream(
+            executable: directory.appendingPathComponent("claude").path,
+            arguments: [],
+            prompt: "private prompt",
+            workingDirectory: directory
+        )
+        var text = ""
+        for try await event in events {
+            if case .text(let delta) = event { text += delta }
+        }
+        #expect(text == "stdin-ok")
+    }
+
+    @Test func processRegistryTerminatesChildrenForAppShutdown() async throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "sleep 5"]
+        try process.run()
+
+        let registry = ClaudeCodeProcessRegistry()
+        await registry.register(UUID(), terminator: ProcessTerminator(process: process))
+        #expect(await registry.liveCount() == 1)
+
+        await registry.terminateAll()
+        #expect(!process.isRunning)
+        #expect(await registry.liveCount() == 0)
+    }
+
     @Test func oldCLIWithoutAuthJSONUsesManualStatusPath() async throws {
         let directory = try makeFakeClaude(
             """

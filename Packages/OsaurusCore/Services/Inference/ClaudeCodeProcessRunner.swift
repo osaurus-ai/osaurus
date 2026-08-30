@@ -23,10 +23,10 @@ import Foundation
 actor ClaudeCodeProcessRegistry {
     static let shared = ClaudeCodeProcessRegistry()
 
-    private var live: [UUID: @Sendable () -> Void] = [:]
+    private var live: [UUID: ProcessTerminator] = [:]
 
-    func register(_ id: UUID, terminate: @escaping @Sendable () -> Void) {
-        live[id] = terminate
+    func register(_ id: UUID, terminator: ProcessTerminator) {
+        live[id] = terminator
     }
 
     func unregister(_ id: UUID) {
@@ -34,9 +34,15 @@ actor ClaudeCodeProcessRegistry {
     }
 
     /// Called from the app-quit teardown. Terminates every live child.
-    func terminateAll() {
-        for terminate in live.values { terminate() }
+    func terminateAll() async {
+        let terminators = Array(live.values)
         live.removeAll()
+        for terminator in terminators { terminator.terminate() }
+        // App teardown must not depend on a detached escalation firing after
+        // the app process is already gone. Give SIGTERM a short grace period,
+        // then synchronously issue SIGKILL to any stubborn child.
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        for terminator in terminators { terminator.forceKillIfRunning() }
     }
 
     func liveCount() -> Int { live.count }
@@ -188,6 +194,7 @@ public enum ClaudeCodeProcessRunner {
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
         let state = ClaudeCodeCommandState()
+        let runId = UUID()
 
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -221,6 +228,10 @@ public enum ClaudeCodeProcessRunner {
             stderrPipe.fileHandleForReading.readabilityHandler = nil
             return nil
         }
+        await ClaudeCodeProcessRegistry.shared.register(runId, terminator: terminator)
+        defer {
+            Task { await ClaudeCodeProcessRegistry.shared.unregister(runId) }
+        }
 
         let timeoutTask = Task {
             let nanoseconds = UInt64(max(0, timeout) * 1_000_000_000)
@@ -252,7 +263,8 @@ public enum ClaudeCodeProcessRunner {
     /// - Parameters:
     ///   - executable: absolute path from `ClaudeCodeConfiguration.resolveExecutable`.
     ///   - arguments: from `ClaudeCodeConfiguration.arguments`.
-    ///   - prompt: the rendered conversation, passed as the trailing prompt argument.
+    ///   - prompt: the rendered conversation, sent over stdin so it never
+    ///     appears in the process list.
     ///   - workingDirectory: the chat's working folder, or a temp dir.
     static func stream(
         executable: String,
@@ -265,19 +277,20 @@ public enum ClaudeCodeProcessRunner {
 
         let state = ClaudeCodeStreamState()
         let process = Process()
+        let stdinPipe = Pipe()
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
         let runId = UUID()
 
         process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments + [prompt]
+        // Prompts can contain secrets and process argv is visible to other
+        // processes owned by the user. Feed the prompt over stdin instead.
+        process.arguments = arguments
         process.environment = environment
         process.currentDirectoryURL = workingDirectory
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
-        // Without an explicit stdin the CLI waits 3s for piped input on every
-        // single turn before proceeding ("no stdin data received in 3s").
-        process.standardInput = FileHandle.nullDevice
+        process.standardInput = stdinPipe
 
         // Non-blocking, synchronous pumps. `continuation.yield` is cheap and
         // Sendable-safe, so no Task per chunk (see ShellRunTool's note).
@@ -303,7 +316,7 @@ public enum ClaudeCodeProcessRunner {
         let terminator = ProcessTerminator(process: process)
 
         let producerTask = Task {
-            await ClaudeCodeProcessRegistry.shared.register(runId) { terminator.terminate() }
+            await ClaudeCodeProcessRegistry.shared.register(runId, terminator: terminator)
             defer {
                 Task { await ClaudeCodeProcessRegistry.shared.unregister(runId) }
             }
@@ -311,12 +324,21 @@ public enum ClaudeCodeProcessRunner {
             do {
                 try process.run()
             } catch {
+                try? stdinPipe.fileHandleForWriting.close()
                 stdoutPipe.fileHandleForReading.readabilityHandler = nil
                 stderrPipe.fileHandleForReading.readabilityHandler = nil
                 continuation.finish(
                     throwing: ClaudeCodeError.launchFailed(error.localizedDescription)
                 )
                 return
+            }
+
+            // A dedicated blocking queue handles pipe backpressure for large
+            // transcripts without tying up Swift's cooperative executor.
+            let promptData = Data(prompt.utf8)
+            DispatchQueue.global(qos: .userInitiated).async {
+                try? stdinPipe.fileHandleForWriting.write(contentsOf: promptData)
+                try? stdinPipe.fileHandleForWriting.close()
             }
 
             await withTaskCancellationHandler {
@@ -480,5 +502,14 @@ final class ProcessTerminator: @unchecked Sendable {
                 if pid > 0 { kill(pid, SIGKILL) }
             #endif
         }
+    }
+
+    func forceKillIfRunning() {
+        #if canImport(Darwin)
+            let pid = process.processIdentifier
+            if process.isRunning, pid > 0 {
+                kill(pid, SIGKILL)
+            }
+        #endif
     }
 }

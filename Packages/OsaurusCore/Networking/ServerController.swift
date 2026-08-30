@@ -255,6 +255,10 @@ final class ServerController: ObservableObject {
 
     /// Stops the running server
     func stopServer() async {
+        // Bridge grants authenticate against this server instance. Never let
+        // one survive a stop/restart boundary, even if the server already
+        // finished closing by the time this call arrives.
+        await ClaudeCodeBridgeGrantStore.shared.revokeAll()
         // If nothing to stop, return
         guard serverActor != nil else { return }
         if !isRestarting { serverHealth = .stopping }
@@ -280,6 +284,7 @@ final class ServerController: ObservableObject {
 
     /// Ensures the server is properly shut down before app termination
     func ensureShutdown() async {
+        await ClaudeCodeBridgeGrantStore.shared.revokeAll()
         guard serverActor != nil else { return }
 
         print("[Osaurus] Ensuring NIO server shutdown before app termination")

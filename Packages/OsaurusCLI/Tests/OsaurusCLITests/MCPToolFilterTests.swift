@@ -116,7 +116,35 @@ struct MCPBridgeGrantTests {
             url: try #require(URL(string: "http://127.0.0.1:1337/mcp/call")),
             method: "POST",
             timeout: 30,
-            credential: nil
+            credential: nil,
+            environment: [:]
+        )
+        #expect(request.value(forHTTPHeaderField: MCPCommand.bridgeGrantHeaderName) == nil)
+    }
+
+    @Test("grant header is forwarded from the scoped child environment")
+    func presentWithEnvironment() throws {
+        let request = MCPCommand.makeProxyRequest(
+            url: try #require(URL(string: "http://127.0.0.1:1337/mcp/call")),
+            method: "POST",
+            timeout: 30,
+            credential: nil,
+            environment: [MCPCommand.bridgeGrantEnvironmentKey: "grant-123"]
+        )
+        #expect(
+            request.value(forHTTPHeaderField: MCPCommand.bridgeGrantHeaderName)
+                == "grant-123"
+        )
+    }
+
+    @Test("blank bridge environment value is ignored")
+    func blankEnvironmentValueIgnored() throws {
+        let request = MCPCommand.makeProxyRequest(
+            url: try #require(URL(string: "http://127.0.0.1:1337/mcp/call")),
+            method: "POST",
+            timeout: 30,
+            credential: nil,
+            environment: [MCPCommand.bridgeGrantEnvironmentKey: "  \n "]
         )
         #expect(request.value(forHTTPHeaderField: MCPCommand.bridgeGrantHeaderName) == nil)
     }

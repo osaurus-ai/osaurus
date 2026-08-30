@@ -30,8 +30,9 @@ public struct ClaudeCodeRunOptions: Sendable, Equatable {
     /// even when `allowOsaurusTools` is set, so a source build without an
     /// embedded CLI degrades instead of spawning a bad command.
     public var osaurusCLIPath: String?
-    /// The chat's working folder. Nil falls back to a scratch directory, so a
-    /// run without a folder can't wander into the app bundle or the user's home.
+    /// Starting directory for Claude Code's tools. Nil falls back to a scratch
+    /// directory. This is navigation context, not a sandbox boundary: enabled
+    /// Claude Code tools still run with the macOS user's filesystem access.
     public var workingDirectory: URL?
     /// The agent this turn belongs to.
     ///

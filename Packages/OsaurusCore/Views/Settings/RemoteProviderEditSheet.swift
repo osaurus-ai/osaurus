@@ -414,7 +414,7 @@ private struct AddProviderFlow: View {
                             ProviderRowCard(
                                 icon: "terminal.fill",
                                 title: "Claude Code",
-                                subtitle: "Use your Claude Pro or Max subscription",
+                                subtitle: "Use your signed-in Claude Code CLI",
                                 gradient: ClaudeCodeConfiguration.brandGradient
                             ) {
                                 withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {

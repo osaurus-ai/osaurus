@@ -99,7 +99,7 @@ struct ClaudeCodeSetupStep: View {
                 Text("Claude Code", bundle: .module)
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundColor(theme.primaryText)
-                Text("Use your Claude Pro or Max subscription", bundle: .module)
+                Text("Use your signed-in Claude Code CLI", bundle: .module)
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
             }
@@ -420,6 +420,13 @@ struct ClaudeCodeSetupStep: View {
     private func probe() async {
         phase = .probing
         let state = await ClaudeCodeConfiguration.setupState()
+        if case .notInstalled = state {
+            // No Claude rows to add.
+        } else {
+            // Covers install/sign-in completed outside Osaurus as well as the
+            // in-sheet browser flow.
+            await ModelPickerItemCache.shared.prewarmModelCache()
+        }
         phase = .resolved(state)
     }
 

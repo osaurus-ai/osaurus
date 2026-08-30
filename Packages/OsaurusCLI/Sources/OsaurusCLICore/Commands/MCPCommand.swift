@@ -220,7 +220,8 @@ public struct MCPCommand: Command {
         url: URL,
         method: String,
         timeout: TimeInterval,
-        credential: AccessKeyCredential?
+        credential: AccessKeyCredential?,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -235,7 +236,7 @@ public struct MCPCommand: Command {
         // server sees an ordinary loopback request either way. Absent for a
         // user-configured MCP client, which is exactly the caller that should
         // not be able to act as an agent.
-        if let grant = ProcessInfo.processInfo.environment[bridgeGrantEnvironmentKey],
+        if let grant = environment[bridgeGrantEnvironmentKey],
             !grant.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
             request.setValue(grant, forHTTPHeaderField: bridgeGrantHeaderName)

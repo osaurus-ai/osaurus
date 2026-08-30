@@ -3838,9 +3838,10 @@ final class ChatSession: ObservableObject {
 
     /// Per-run options for the Claude Code subprocess backend.
     ///
-    /// The working directory is the same folder root the turn's tools are bound
-    /// to, so Claude Code's own file tools can't reach outside the folder the
-    /// user picked for this chat. `agentId` travels with the run because the
+    /// The working directory starts Claude Code in the folder the user picked
+    /// for this chat. It is not an Osaurus sandbox; enabled Claude Code tools
+    /// retain the macOS user's normal filesystem access. `agentId` travels
+    /// with the run because the
     /// subprocess is out of process: the `@TaskLocal` chat identity cannot
     /// follow it, so the MCP bridge mints a grant naming this agent instead.
     private func claudeCodeRunOptions(for agentId: UUID) -> ClaudeCodeRunOptions {

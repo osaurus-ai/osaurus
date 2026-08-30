@@ -2682,7 +2682,7 @@ struct AgentDetailView: View {
 
                 Text(
                     claudeCodeConfig.mode == .agent
-                        ? "Claude Code runs its own agent loop. Read, Grep, and Glob are allowed by default; every wider capability is opt-in."
+                        ? "Claude Code runs its own agent loop under your macOS account. Read, Grep, and Glob are allowed by default; every wider capability is opt-in."
                         : "Claude Code runs as a text generator with every built-in and MCP tool disabled.",
                     bundle: .module
                 )
@@ -2698,7 +2698,7 @@ struct AgentDetailView: View {
                 ) {
                     claudeCodePermissionLabel(
                         title: "Allow file changes",
-                        detail: "Auto-approve Edit, Write, and NotebookEdit in the chat folder."
+                        detail: "Auto-approve Edit, Write, and NotebookEdit. These run with your macOS file access, starting in the chat folder."
                     )
                 }
                 .disabled(claudeCodeConfig.mode != .agent)
@@ -2711,7 +2711,7 @@ struct AgentDetailView: View {
                 ) {
                     claudeCodePermissionLabel(
                         title: "Allow shell commands",
-                        detail: "Auto-approve Claude Code's Bash tool in the chat folder."
+                        detail: "Auto-approve Bash under your macOS account. This is not the Osaurus sandbox."
                     )
                 }
                 .disabled(claudeCodeConfig.mode != .agent)
