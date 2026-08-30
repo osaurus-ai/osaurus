@@ -61,6 +61,14 @@ struct RuntimePolicySourceTests {
         }
     }
 
+    @Test("HTTP max tokens does not invent a hidden reasoning budget")
+    func httpMaxTokensDoesNotInventReasoningBudget() throws {
+        let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
+        #expect(!adapter.contains("apiReasoningAnswerBudget"))
+        #expect(!adapter.contains("mlxParams.requestedReasoningBudgetTokens ="))
+        #expect(adapter.contains("Do not invent a reasoning budget from `max_tokens`"))
+    }
+
     @Test("production prompt entry points wait for the initial plugin catalog")
     func promptCompositionWaitsForPluginCatalog() throws {
         let manager = try Self.source("Managers/Plugin/PluginManager.swift")

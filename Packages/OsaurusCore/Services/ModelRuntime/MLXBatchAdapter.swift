@@ -1351,29 +1351,6 @@ struct MLXBatchAdapter {
         }
     }
 
-    /// Reasoning-token ceiling for wire-API requests, sized so the visible
-    /// answer always gets a share of `max_tokens`. Applies only to
-    /// `.httpAPI` (the reported failure surface): the chat UI renders
-    /// reasoning itself and owns its own limits, plugins/P2P/autonomous runs
-    /// keep today's behavior until they opt in. Nil below 129 tokens — a cap
-    /// that small can't be meaningfully split, and forcing an instant think
-    /// close there would rewrite the model's output more than it helps.
-    /// The reserve grows with the cap (a third, clamped to 160…2048) so tiny
-    /// caps still answer and huge caps still bound the runaway-think failure
-    /// without cramping deep reasoning.
-    static func apiReasoningAnswerBudget(
-        requestSource: RequestSource,
-        maxTokens: Int
-    ) -> Int? {
-        guard requestSource == .httpAPI else { return nil }
-        let answerReserve = min(max(maxTokens / 3, 160), 2048)
-        let budget = maxTokens - answerReserve
-        // Below this the ceiling would fire almost immediately and rewrite
-        // the output more than it rescues; tiny caps keep today's behavior.
-        guard budget >= 64 else { return nil }
-        return budget
-    }
-
     private static func isDirectRailReasoningEffort(_ value: String?) -> Bool {
         guard let value else { return false }
         switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
@@ -1653,21 +1630,13 @@ struct MLXBatchAdapter {
             )
         }
 
-        // OpenAI-compatible API clients read `content` only —
-        // `reasoning_content` is invisible to them — so a think block that
-        // spends the whole finite max_tokens returns an empty answer ("AI
-        // generation did not return any text", the live Anarlog report).
-        // Reserve answer room by asking vmlx for a per-request reasoning
-        // ceiling; the engine resolves it through the same
-        // `ReasoningBudget.arm` path as the env override (primed vs
-        // self-opening, round-tripped close token) and stays inert for
-        // non-reasoning bundles whose vocab has no think tags.
-        if let budget = Self.apiReasoningAnswerBudget(
-            requestSource: generation.requestSource,
-            maxTokens: effective.maxTokens
-        ) {
-            mlxParams.requestedReasoningBudgetTokens = budget
-        }
+        // Do not invent a reasoning budget from `max_tokens`. A wire client
+        // choosing a finite output cap did not ask Osaurus to mask the model's
+        // reasoning tokens or force a close token. Besides changing model
+        // output, that hidden processor makes native MTP ineligible because a
+        // drafted token could bypass the per-token budget. Explicit reasoning
+        // controls belong on an explicit API field; absent one, the bundle
+        // template and generation config remain authoritative.
         // Block-diffusion speed/quality budget (DiffusionGemma): server
         // setting, default 16 (seeded by ServerRuntimeSettingsStore).
         // nil = bundle's generation_config.json value. Ignored by
