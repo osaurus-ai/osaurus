@@ -4980,6 +4980,8 @@ public actor ModelRuntime {
                 toolChoice: toolChoice,
                 stopSequences: stopSequences,
                 draftStrategy: requestStrategy,
+                nativeMTPRequested: ServerRuntimeSettingsStore.snapshot().mtp.mode != .off,
+                nativeMTPLoadResolutionReason: holder.nativeMTPReason,
                 runtime: cfg,
                 maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
             )

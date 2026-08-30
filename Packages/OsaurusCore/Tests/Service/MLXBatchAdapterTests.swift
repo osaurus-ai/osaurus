@@ -870,6 +870,32 @@ struct MLXBatchAdapterTests {
         )
     }
 
+    @Test func nativeMTPFallbackReason_carriesLoadResolutionWhenNoHeadWasLoaded() {
+        #expect(
+            MLXBatchAdapter.nativeMTPFallbackReason(
+                requestedNativeMTP: true,
+                requestedDraftStrategy: nil,
+                effectiveDraftStrategy: nil,
+                promptTokenCount: 128,
+                coldWarmup: false,
+                loadResolutionReason: "Bundle tuning is not usable for production MTP."
+            ) == "Bundle tuning is not usable for production MTP."
+        )
+    }
+
+    @Test func nativeMTPFallbackReason_doesNotCarryStaleReasonAfterUserTurnsMTPOff() {
+        #expect(
+            MLXBatchAdapter.nativeMTPFallbackReason(
+                requestedNativeMTP: false,
+                requestedDraftStrategy: nil,
+                effectiveDraftStrategy: nil,
+                promptTokenCount: 128,
+                coldWarmup: false,
+                loadResolutionReason: "Bundle tuning is not usable for production MTP."
+            ) == nil
+        )
+    }
+
     @Test func effectiveGenerationSettings_dsv4MaxReasoningKeepsModelPenalty() {
         let generation = GenerationParameters(
             temperature: nil,

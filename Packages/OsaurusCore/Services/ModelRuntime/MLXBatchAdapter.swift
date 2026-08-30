@@ -290,23 +290,31 @@ struct MLXBatchAdapter {
     }
 
     static func nativeMTPFallbackReason(
+        requestedNativeMTP: Bool = false,
         requestedDraftStrategy: MLXLMCommon.DraftStrategy?,
         effectiveDraftStrategy: MLXLMCommon.DraftStrategy?,
         promptTokenCount: Int,
-        coldWarmup: Bool
+        coldWarmup: Bool,
+        loadResolutionReason: String? = nil
     ) -> String? {
-        guard requestedDraftStrategy?.usesNativeMTP == true else { return nil }
+        guard requestedNativeMTP || requestedDraftStrategy?.usesNativeMTP == true else {
+            return nil
+        }
         // A fallback reason describes a strategy that was requested but did
         // not run. Sampling no longer drops native MTP: the submit path keeps
         // it active and resolves its running sampler separately. Reporting
         // `explicit_sampling` while `native_mtp:dN` actually executes makes
         // the eval/API telemetry internally contradictory.
         guard effectiveDraftStrategy?.usesNativeMTP != true else { return nil }
-        if coldWarmup { return "cold_warmup" }
-        if promptTokenCount < nativeMTPTinyPromptMinimumTokens {
+        if requestedDraftStrategy?.usesNativeMTP == true, coldWarmup {
+            return "cold_warmup"
+        }
+        if requestedDraftStrategy?.usesNativeMTP == true,
+            promptTokenCount < nativeMTPTinyPromptMinimumTokens
+        {
             return "tiny_prompt"
         }
-        return nil
+        return loadResolutionReason
     }
 
     private static func effectiveRepetitionPenalty(
@@ -1441,6 +1449,8 @@ struct MLXBatchAdapter {
         toolChoice: ToolChoiceOption?,
         stopSequences: [String],
         draftStrategy: MLXLMCommon.DraftStrategy?,
+        nativeMTPRequested: Bool = false,
+        nativeMTPLoadResolutionReason: String? = nil,
         runtime: RuntimeConfig,
         maxBatchSize: Int
     ) async throws -> PreparedStream {
@@ -1563,10 +1573,12 @@ struct MLXBatchAdapter {
             disableNativeMTP: nativeMTPColdWarmup
         )
         let nativeMTPFallbackReason = Self.nativeMTPFallbackReason(
+            requestedNativeMTP: nativeMTPRequested,
             requestedDraftStrategy: draftStrategy,
             effectiveDraftStrategy: effectiveDraftStrategy,
             promptTokenCount: prepared.promptTokens.count,
-            coldWarmup: nativeMTPColdWarmup
+            coldWarmup: nativeMTPColdWarmup,
+            loadResolutionReason: nativeMTPLoadResolutionReason
         )
         let nativeMTPRequestFallback =
             draftStrategy?.usesNativeMTP == true && effectiveDraftStrategy == nil
