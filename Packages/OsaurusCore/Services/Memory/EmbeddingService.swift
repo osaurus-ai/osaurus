@@ -42,7 +42,7 @@ public actor EmbeddingService {
     public static func ensureModelPresent() {
         if VMLXModel2VecEmbedder.locateModelDirectory(modelName: modelName) == nil {
             logger.warning(
-                "Embedding model '\(modelName, privacy: .public)' not found locally — semantic search will be EMPTY and unreliable. Run `make evals-prep`, set OSAURUS_EMBEDDING_MODEL_DIR, or install minishlab/\(modelName, privacy: .public) in the Hugging Face cache."
+                "Embedding model '\(modelName, privacy: .public)' not found locally — semantic search will be EMPTY and unreliable. Install minishlab/\(modelName, privacy: .public) in Osaurus's Models Directory or the Hugging Face cache, run `make evals-prep`, or set OSAURUS_EMBEDDING_MODEL_DIR."
             )
         }
     }
