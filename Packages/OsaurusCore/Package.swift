@@ -256,7 +256,7 @@ let package = Package(
         // #378 preserves exact reusable boundaries across growing tool loops.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "a0c5b801050863c79ec6189bd6bf77de4c194bb3"
+            revision: "1315fdcba7544b2942db5806f8287ca252dddb32"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
