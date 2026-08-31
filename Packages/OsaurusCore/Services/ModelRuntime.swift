@@ -2466,6 +2466,25 @@ public actor ModelRuntime {
         return min(dynamicLimit, max(0, configuredLimit))
     }
 
+    /// The only allocator clamp a session holder may carry is one the user
+    /// explicitly typed into Memory Safety. The memory-safety *profile
+    /// defaults* (Safe Auto and Strict both resolve the allocator cap to a
+    /// fixed 128 MiB) must not override the weight-scaled `mlxCacheLimit()`
+    /// dynamic limit: past roughly 13k tokens of context a 128 MiB
+    /// freed-buffer pool cannot hold even one KV-sized decode intermediate,
+    /// so recycling silently stops and every decoded token pays fresh
+    /// zero-filled page allocation. Measured on Raptor 8B-A1B (same build,
+    /// same machine, single-variable A/B): decode 14.4 tok/s at 17.7k
+    /// context under the profile cap vs 47.7-52 tok/s at 14k with a working
+    /// pool; per-tool-step delta-prefill 1.3-3.0 s vs 0.3-0.5 s. The
+    /// dynamic limit stays bounded (weights/4, capped at RAM/8 and 8 GiB),
+    /// so the Qwen3.8 RSS-creep protection above is preserved.
+    nonisolated static func explicitAllocatorCacheLimitBytes(
+        customAllocatorCacheBytes: UInt64?
+    ) -> Int? {
+        customAllocatorCacheBytes.map { Int(min(UInt64(Int.max), $0)) }
+    }
+
     /// Decode-time ceiling. Native MTP / affine DSV4 may reuse large
     /// intermediates while a request is active, but the allocator pool must
     /// never be allowed to consume the entire load-admission budget. That
@@ -4155,10 +4174,16 @@ public actor ModelRuntime {
                 dflash2BlockSize: mtpPlan.dflash2BlockSize,
                 nativeMTPStatus: mtpPlan.statusLine,
                 nativeMTPReason: mtpPlan.reason,
-                allocatorCacheLimitBytes: mtpPlan.loadConfiguration.maxResidentBytes
-                    .applyAsCacheLimitInt(
-                        physicalMemory: ProcessInfo.processInfo.physicalMemory
-                    ),
+                // Only a user-typed Memory Safety override may clamp the MLX
+                // freed-buffer pool below the weight-scaled dynamic limit.
+                // Routing the resolved plan value here folded the profile
+                // default (128 MiB for Safe Auto / Strict) into every load,
+                // which collapses deep-context decode under memory pressure
+                // (see `explicitAllocatorCacheLimitBytes`).
+                allocatorCacheLimitBytes: Self.explicitAllocatorCacheLimitBytes(
+                    customAllocatorCacheBytes:
+                        serverSettings.memorySafety.customAllocatorCacheBytes
+                ),
                 // Store the load-time DSV4 fact. Native MTP is resolved per
                 // request so toggling MTP Off cannot keep using the enlarged
                 // request allocator window.

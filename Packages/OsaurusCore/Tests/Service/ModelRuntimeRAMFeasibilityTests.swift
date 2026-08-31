@@ -546,4 +546,27 @@ struct ModelRuntimeRAMFeasibilityTests {
             )
         )
     }
+
+    @Test("Only a user-typed allocator override clamps the session holder")
+    func profileDefaultAllocatorCapDoesNotClamp() {
+        // Profile defaults (Safe Auto / Strict resolve to 128 MiB) must reach
+        // the holder as nil so the weight-scaled dynamic limit governs.
+        #expect(
+            ModelRuntime.explicitAllocatorCacheLimitBytes(
+                customAllocatorCacheBytes: nil
+            ) == nil
+        )
+        // An explicit user value still clamps.
+        #expect(
+            ModelRuntime.explicitAllocatorCacheLimitBytes(
+                customAllocatorCacheBytes: 256 << 20
+            ) == 256 << 20
+        )
+        // Values beyond Int.max saturate instead of trapping.
+        #expect(
+            ModelRuntime.explicitAllocatorCacheLimitBytes(
+                customAllocatorCacheBytes: UInt64.max
+            ) == Int.max
+        )
+    }
 }
