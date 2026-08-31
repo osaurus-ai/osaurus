@@ -2,30 +2,30 @@
   "disconnected": {
     "client_disconnected": true,
     "data_lines": 250,
-    "duration_seconds": 1.5026,
-    "ended_epoch": 1788151446.799486,
+    "duration_seconds": 1.5243,
+    "ended_epoch": 1788152673.22484,
     "finish_reason": null,
     "http_status": 200,
     "label": "DISCONNECT_A",
-    "started_epoch": 1788151445.296881,
-    "ttft_seconds": 0.1098,
+    "started_epoch": 1788152671.7005372,
+    "ttft_seconds": 0.1097,
     "usage": null
   },
   "final_idle": true,
   "model": "lfm2.5-2.6b-jang_6m",
   "survivor": {
     "data_lines": 1184,
-    "duration_seconds": 8.2187,
-    "ended_epoch": 1788151453.720875,
+    "duration_seconds": 8.6422,
+    "ended_epoch": 1788152680.548161,
     "finish_reason": "length",
     "http_status": 200,
     "label": "SURVIVOR_B",
-    "started_epoch": 1788151445.502182,
-    "ttft_seconds": 1.3935,
+    "started_epoch": 1788152671.905914,
+    "ttft_seconds": 1.4199,
     "usage": {
       "completion_tokens": 1200,
       "prompt_tokens": 30,
-      "tokens_per_second": 174.6743,
+      "tokens_per_second": 165.2428,
       "total_tokens": 1230
     }
   },
@@ -36,23 +36,23 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "ea4e1623-7c06-407f-a2e9-d10948ed499f",
+          "id": "75da8de0-5acb-4372-bfc3-fb258fb4b668",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         },
         {
           "can_cancel": false,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "prefilling",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:05Z"
+      "timestamp": "2026-08-31T05:04:31Z"
     },
     {
       "active_count": 1,
@@ -60,23 +60,23 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "ea4e1623-7c06-407f-a2e9-d10948ed499f",
+          "id": "75da8de0-5acb-4372-bfc3-fb258fb4b668",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         },
         {
           "can_cancel": false,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "prefilling",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:05Z"
+      "timestamp": "2026-08-31T05:04:32Z"
     },
     {
       "active_count": 1,
@@ -84,23 +84,23 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "ea4e1623-7c06-407f-a2e9-d10948ed499f",
+          "id": "75da8de0-5acb-4372-bfc3-fb258fb4b668",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         },
         {
           "can_cancel": false,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "prefilling",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:06Z"
+      "timestamp": "2026-08-31T05:04:32Z"
     },
     {
       "active_count": 1,
@@ -108,23 +108,23 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "ea4e1623-7c06-407f-a2e9-d10948ed499f",
+          "id": "75da8de0-5acb-4372-bfc3-fb258fb4b668",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         },
         {
           "can_cancel": false,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "prefilling",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:06Z"
+      "timestamp": "2026-08-31T05:04:32Z"
     },
     {
       "active_count": 1,
@@ -132,23 +132,23 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "ea4e1623-7c06-407f-a2e9-d10948ed499f",
+          "id": "75da8de0-5acb-4372-bfc3-fb258fb4b668",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         },
         {
           "can_cancel": false,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "prefilling",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:06Z"
+      "timestamp": "2026-08-31T05:04:32Z"
     },
     {
       "active_count": 1,
@@ -156,23 +156,23 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "ea4e1623-7c06-407f-a2e9-d10948ed499f",
+          "id": "75da8de0-5acb-4372-bfc3-fb258fb4b668",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         },
         {
           "can_cancel": false,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "prefilling",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:06Z"
+      "timestamp": "2026-08-31T05:04:33Z"
     },
     {
       "active_count": 1,
@@ -180,14 +180,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:07Z"
+      "timestamp": "2026-08-31T05:04:33Z"
     },
     {
       "active_count": 1,
@@ -195,14 +195,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:07Z"
+      "timestamp": "2026-08-31T05:04:33Z"
     },
     {
       "active_count": 1,
@@ -210,14 +210,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:07Z"
+      "timestamp": "2026-08-31T05:04:33Z"
     },
     {
       "active_count": 1,
@@ -225,14 +225,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:07Z"
+      "timestamp": "2026-08-31T05:04:34Z"
     },
     {
       "active_count": 1,
@@ -240,14 +240,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:08Z"
+      "timestamp": "2026-08-31T05:04:34Z"
     },
     {
       "active_count": 1,
@@ -255,14 +255,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:08Z"
+      "timestamp": "2026-08-31T05:04:34Z"
     },
     {
       "active_count": 1,
@@ -270,14 +270,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:08Z"
+      "timestamp": "2026-08-31T05:04:35Z"
     },
     {
       "active_count": 1,
@@ -285,14 +285,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:08Z"
+      "timestamp": "2026-08-31T05:04:35Z"
     },
     {
       "active_count": 1,
@@ -300,14 +300,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:09Z"
+      "timestamp": "2026-08-31T05:04:35Z"
     },
     {
       "active_count": 1,
@@ -315,14 +315,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:09Z"
+      "timestamp": "2026-08-31T05:04:35Z"
     },
     {
       "active_count": 1,
@@ -330,14 +330,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:09Z"
+      "timestamp": "2026-08-31T05:04:36Z"
     },
     {
       "active_count": 1,
@@ -345,14 +345,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:09Z"
+      "timestamp": "2026-08-31T05:04:36Z"
     },
     {
       "active_count": 1,
@@ -360,14 +360,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:10Z"
+      "timestamp": "2026-08-31T05:04:36Z"
     },
     {
       "active_count": 1,
@@ -375,14 +375,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:10Z"
+      "timestamp": "2026-08-31T05:04:36Z"
     },
     {
       "active_count": 1,
@@ -390,14 +390,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:10Z"
+      "timestamp": "2026-08-31T05:04:37Z"
     },
     {
       "active_count": 1,
@@ -405,14 +405,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:10Z"
+      "timestamp": "2026-08-31T05:04:37Z"
     },
     {
       "active_count": 1,
@@ -420,14 +420,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:11Z"
+      "timestamp": "2026-08-31T05:04:37Z"
     },
     {
       "active_count": 1,
@@ -435,14 +435,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:11Z"
+      "timestamp": "2026-08-31T05:04:37Z"
     },
     {
       "active_count": 1,
@@ -450,14 +450,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:11Z"
+      "timestamp": "2026-08-31T05:04:38Z"
     },
     {
       "active_count": 1,
@@ -465,14 +465,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:11Z"
+      "timestamp": "2026-08-31T05:04:38Z"
     },
     {
       "active_count": 1,
@@ -480,14 +480,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:12Z"
+      "timestamp": "2026-08-31T05:04:38Z"
     },
     {
       "active_count": 1,
@@ -495,14 +495,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:12Z"
+      "timestamp": "2026-08-31T05:04:38Z"
     },
     {
       "active_count": 1,
@@ -510,14 +510,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:12Z"
+      "timestamp": "2026-08-31T05:04:39Z"
     },
     {
       "active_count": 1,
@@ -525,14 +525,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:12Z"
+      "timestamp": "2026-08-31T05:04:39Z"
     },
     {
       "active_count": 1,
@@ -540,14 +540,14 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:13Z"
+      "timestamp": "2026-08-31T05:04:39Z"
     },
     {
       "active_count": 1,
@@ -555,19 +555,49 @@
         {
           "can_cancel": true,
           "cancellation_requested": false,
-          "id": "47ad3a95-bf84-4337-a6e9-540cba4ad65e",
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
           "model": "lfm2.5-2.6b-jang_6m",
           "phase": "generating",
           "source": "HTTP API",
-          "started_at": "2026-08-31T04:44:05Z"
+          "started_at": "2026-08-31T05:04:31Z"
         }
       ],
-      "timestamp": "2026-08-31T04:44:13Z"
+      "timestamp": "2026-08-31T05:04:39Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:40Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:40Z"
     },
     {
       "active_count": 0,
       "activities": [],
-      "timestamp": "2026-08-31T04:44:13Z"
+      "timestamp": "2026-08-31T05:04:40Z"
     }
   ]
 }

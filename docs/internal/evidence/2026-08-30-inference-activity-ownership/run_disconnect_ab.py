@@ -106,6 +106,15 @@ def activity() -> dict:
         return json.load(response)
 
 
+def activity_row(snapshot: dict) -> dict:
+    diagnostics = snapshot.get("batch_diagnostics") or {}
+    return {
+        "timestamp": snapshot["timestamp"],
+        "active_count": diagnostics.get("active_count"),
+        "activities": snapshot.get("inference_activity") or [],
+    }
+
+
 def main() -> None:
     disconnected: dict = {}
     survivor: dict = {}
@@ -118,27 +127,16 @@ def main() -> None:
     timeline = []
     while thread_a.is_alive() or thread_b.is_alive():
         snapshot = activity()
-        timeline.append(
-            {
-                "timestamp": snapshot["timestamp"],
-                "active_count": snapshot["batch_diagnostics"]["active_count"],
-                "activities": snapshot["inference_activity"],
-            }
-        )
+        timeline.append(activity_row(snapshot))
         time.sleep(0.25)
 
     thread_a.join()
     thread_b.join()
     for _ in range(40):
         snapshot = activity()
-        timeline.append(
-            {
-                "timestamp": snapshot["timestamp"],
-                "active_count": snapshot["batch_diagnostics"]["active_count"],
-                "activities": snapshot["inference_activity"],
-            }
-        )
-        if not snapshot["inference_activity"] and snapshot["batch_diagnostics"]["active_count"] == 0:
+        row = activity_row(snapshot)
+        timeline.append(row)
+        if not row["activities"] and row["active_count"] in (None, 0):
             break
         time.sleep(0.25)
 

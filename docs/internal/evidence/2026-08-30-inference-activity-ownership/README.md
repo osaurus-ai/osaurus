@@ -40,19 +40,22 @@ could cancel unrelated concurrent work using the same resident model.
 ## Current automated evidence
 
 - `InferenceActivityRegistryTests`: 3/3 pass.
+- `RuntimePolicySourceTests`: 110/110 pass on the post-MTP-merge head.
 - `RuntimePolicySourceTests.httpChannelCloseCancelsPerRequestStreamingTasks`:
   pass and pins the absence of model-name cancellation in `HTTPHandler`.
 - Localization catalog/key/literal lint: pass.
 
 ## Release-app live gate
 
-- PR head: `1e6effd8ad6caa376d9a510ac2a2826304cbae3d`.
+- Integrated code head: `a2e9454bb` (the evidence-only commit follows this
+  code head).
 - Release binary SHA-256:
-  `d9c1daec8e84ec71f1a10301d65463a2ce2019f51b55f2c03d32284cc900b59b`.
-- Isolated app PID: `4020`; server PID was the same process; model:
+  `d201c7af470902e42731750253d0b79e12b22d4630dc20d9bb0ae64020f4395a`.
+- Isolated app PID: `18364`; server PID was the same process; model:
   `lfm2.5-2.6b-jang_6m`.
 - Release build: `xcodebuild` completed with `** BUILD SUCCEEDED **`.
-- Focused and GitHub CI: all eight PR checks pass.
+- Final-head focused tests: 3/3 registry and 110/110 runtime source-policy
+  tests pass.
 
 ### Exact UI stop
 
@@ -74,16 +77,18 @@ BatchEngine returned active `0` / queued `0`, and the UI returned to explicit
 250 SSE data records, preserves both raw streams, and polls the exact activity
 registry until drain. The recorded result in `disconnect-ab-summary.json` is:
 
-- A: HTTP 200, TTFT `0.1098 s`, deliberate client disconnect after `1.5026 s`,
-  no terminal model finish.
+- A: HTTP 200, TTFT `0.1097 s`, deliberate client disconnect after `1.5243 s`,
+  and no terminal model finish.
 - B: HTTP 200, coherent consecutive output, normal `length` finish, `1200`
-  completion tokens at `174.6743 tok/s`, TTFT `1.3935 s`.
+  completion tokens at `165.2428 tok/s`, TTFT `1.4199 s`. Its visible output
+  is the strict sequence `1...332` without a gap or repetition.
 - Registry: two unique HTTP API activity UUIDs before disconnect, only the
   survivor UUID afterward, then active count `0` and an empty registry.
 
-After all rows, cache telemetry was active `0`, queued `0`, disk L2
-hits/misses/stores `0/23/9`, and no SSM companion or paged-cache activity.
-Measured idle `phys_footprint` was `1374 MB`; process peak was `2579 MB`.
+After the post-merge rows, cache telemetry was active `0`, queued `0`, disk L2
+hits/misses/stores `4/4/4`, and SSM companion hits/misses `4/0`. Measured idle
+`phys_footprint` was `1346 MB`; process peak was `1526 MB`. UI Quit ended the
+exact app with `last-exit.json` reason `quit-complete`; no crash occurred.
 
 Screenshots:
 
