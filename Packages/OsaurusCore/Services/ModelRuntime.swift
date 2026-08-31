@@ -5422,11 +5422,13 @@ public actor ModelRuntime {
                             )
                         }
                     case .toolInvocation(let name, let argsJSON):
-                        // Surface the first parsed tool call and terminate this
-                        // generation step immediately. The stream termination
-                        // cancels any remaining decode tail, so post-tool prose
-                        // cannot leak and the chat loop can execute the tool
-                        // without waiting for an optional stats/EOS event.
+                        // Surface the first parsed tool call and terminate the
+                        // public generation step immediately so the tool can
+                        // execute without waiting for optional stats/EOS. The
+                        // producer deliberately keeps draining the engine tail
+                        // below; vMLX retains its generation lease until cache
+                        // persistence and allocator teardown finish, so the
+                        // following inference cannot race the saved boundary.
                         continuation.yield(StreamingToolHint.encode(name))
                         continuation.yield(StreamingToolHint.encodeArgs(argsJSON))
                         let tool = ServiceToolInvocation(

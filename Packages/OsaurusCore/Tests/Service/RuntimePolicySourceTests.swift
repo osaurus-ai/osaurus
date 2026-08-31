@@ -3525,8 +3525,8 @@ struct RuntimePolicySourceTests {
         )
     }
 
-    @Test("local streamWithTools drains cache persistence before loop dispatch")
-    func localStreamWithToolsDrainsCachePersistenceBeforeLoopDispatch() throws {
+    @Test("local streamWithTools dispatches immediately and preserves cache drain")
+    func localStreamWithToolsDispatchesImmediatelyAndPreservesCacheDrain() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
         let streamStart = try #require(
             runtime.range(of: "func streamWithTools("),
@@ -3544,18 +3544,22 @@ struct RuntimePolicySourceTests {
         let afterToolCase = streamWithTools[toolCase.lowerBound...]
 
         #expect(
-            streamWithTools.contains("var pendingTool: ServiceToolInvocation?")
+            streamWithTools.contains("var dispatchedTool = false")
                 && afterToolCase.contains("ServiceToolInvocation(")
                 && afterToolCase.contains("toolName: name")
                 && afterToolCase.contains("jsonArguments: argsJSON")
-                && afterToolCase.contains("if let pendingTool")
-                && afterToolCase.contains("continuation.finish(throwing: pendingTool)"),
-            "streamWithTools must retain the parsed invocation until the upstream vMLX stream reaches terminal drain, so cache persistence finishes before the loop can execute the tool."
+                && afterToolCase.contains("dispatchedTool = true")
+                && afterToolCase.contains("continuation.finish(throwing: tool)")
+                && afterToolCase.contains("continue"),
+            "streamWithTools must dispatch the parsed invocation immediately, then keep consuming the upstream vMLX stream so cache persistence can finish behind the running tool."
         )
         #expect(
             streamWithTools.contains("continuation.yield(StreamingToolHint.encode(name))")
-                && streamWithTools.contains("continuation.yield(StreamingToolHint.encodeArgs(argsJSON))"),
-            "The native UI must still receive the parsed tool envelope while the executable invocation waits for terminal cache drain."
+                && streamWithTools.contains("continuation.yield(StreamingToolHint.encodeArgs(argsJSON))")
+                && streamWithTools.contains("if dispatchedTool { continue }")
+                && streamWithTools.contains("if case .cancelled = termination")
+                && streamWithTools.contains("producerTask.cancel()"),
+            "The native UI must receive the tool envelope immediately, while only a real consumer cancellation may cancel the engine-owned terminal drain."
         )
         #expect(
             !afterToolCase.contains("pendingTools.append"),
