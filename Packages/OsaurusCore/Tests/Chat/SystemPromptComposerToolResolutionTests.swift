@@ -324,8 +324,8 @@ struct SystemPromptComposerToolResolutionTests {
         }
     }
 
-    @Test("custom host-folder chat retains the enabled-tool manifest")
-    func customHostFolderChatPublishesGatewayAlignedManifest() async {
+    @Test("custom host-folder chat directly publishes enabled dynamic tools")
+    func customHostFolderChatPublishesEnabledDynamicToolsDirectly() async {
         await withSandboxAgent(autonomous: false) { agentId in
             await DynamicCatalogTestLock.shared.run {
                 let fixture = capabilityManifestFixtureTool()
@@ -353,13 +353,12 @@ struct SystemPromptComposerToolResolutionTests {
                     model: "gpt-5"
                 )
                 let schemaNames = Set(context.tools.map(\.function.name))
-                let manifest = context.enabledManifest ?? ""
                 let sectionIds = context.manifest.sections.map(\.id)
 
                 #expect(schemaNames.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
                 #expect(schemaNames.contains("capabilities"))
-                #expect(manifest.contains("tool/\(fixture.name)"))
-                #expect(sectionIds.contains("enabledManifest"))
+                #expect(schemaNames.contains(fixture.name))
+                #expect(!sectionIds.contains("enabledManifest"))
             }
         }
     }
