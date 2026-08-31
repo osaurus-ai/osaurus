@@ -5343,6 +5343,17 @@ public actor ModelRuntime {
             modelId: modelId,
             modelName: modelName
         )
+        return Self.bridgeToolEventStream(events)
+    }
+
+    /// Expose a parsed tool call to the agent loop immediately, but keep
+    /// consuming the engine-owned event stream through terminal drain. vMLX
+    /// persists the reusable KV/prefix checkpoint during that drain; cancelling
+    /// as soon as `.toolInvocation` arrived made every following tool step
+    /// re-prefill the entire growing history.
+    nonisolated static func bridgeToolEventStream(
+        _ events: AsyncThrowingStream<ModelRuntimeEvent, Error>
+    ) -> AsyncThrowingStream<String, Error> {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let producerTask = Task {
             // Chat UI streaming must dispatch a parsed local tool call as soon
@@ -5351,10 +5362,17 @@ public actor ModelRuntime {
             // contract: the parser has already closed the envelope and built
             // canonical JSON. Waiting for stats lets a model/runtime stream
             // that never reaches EOS leave the UI stuck with a complete-looking
-            // tool row and no actual dispatch. Finish-by-throw immediately and
-            // let `onTermination` cancel the now-unneeded decode tail.
+            // tool row and no actual dispatch. Finish-by-throw immediately,
+            // then silently drain the engine-owned tail so it can persist the
+            // reusable cache checkpoint.
+            var dispatchedTool = false
             do {
                 for try await ev in events {
+                    // Once the call is delivered, the public stream is already
+                    // finished. Continue draining silently so vMLX can commit
+                    // cache state and release its generation lease.
+                    if dispatchedTool { continue }
+
                     if case .completionInfo(
                         let tokenCount,
                         let tokensPerSecond,
@@ -5415,24 +5433,37 @@ public actor ModelRuntime {
                             toolName: name,
                             jsonArguments: argsJSON
                         )
+                        dispatchedTool = true
                         continuation.finish(throwing: tool)
-                        return
+                        continue
                     case .completionInfo:
                         continue
                     }
                 }
-                continuation.finish()
+                if !dispatchedTool { continuation.finish() }
             } catch {
                 if Task.isCancelled {
-                    continuation.finish()
-                } else {
+                    if !dispatchedTool { continuation.finish() }
+                } else if !dispatchedTool {
                     continuation.finish(throwing: error)
+                } else {
+                    // The tool is already executing and cannot receive a
+                    // second terminal result. Keep the cache-drain failure
+                    // visible in diagnostics instead of perturbing the loop.
+                    genLog.error(
+                        "tool-call terminal drain failed after dispatch: \(error.localizedDescription, privacy: .public)"
+                    )
                 }
             }
         }
 
-        continuation.onTermination = { @Sendable _ in
-            producerTask.cancel()
+        continuation.onTermination = { @Sendable termination in
+            // `.finished` includes finish-by-throw used for tool dispatch.
+            // Only a real consumer cancellation owns cancellation of the
+            // engine stream; normal tool dispatch must preserve terminal drain.
+            if case .cancelled = termination {
+                producerTask.cancel()
+            }
         }
 
         return stream
