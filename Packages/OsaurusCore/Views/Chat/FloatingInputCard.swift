@@ -2785,6 +2785,20 @@ extension FloatingInputCard {
         return ModelManager.findInstalledMLXModelFromCache(named: id) != nil
     }
 
+    nonisolated static func localMemoryWarningsApply(
+        isSelectedModelLocal: Bool,
+        isRemoteAgentRun: Bool
+    ) -> Bool {
+        isSelectedModelLocal && !isRemoteAgentRun
+    }
+
+    private var localMemoryWarningsApplyToSelectedModel: Bool {
+        Self.localMemoryWarningsApply(
+            isSelectedModelLocal: isSelectedModelLocal,
+            isRemoteAgentRun: isRemoteAgentRun
+        )
+    }
+
     private var modelWarmupDotColor: Color {
         // Remote models and remote agent runs execute elsewhere — there is
         // no local load/warm state to report.
@@ -3266,14 +3280,17 @@ extension FloatingInputCard {
     /// one actor hop and a `vm_statistics64` read.
     private func refreshLoadFeasibility() {
         refreshSwapPressure()
-        guard !isRemoteAgentRun, let model = selectedModel, isSelectedModelLocal else {
+        guard localMemoryWarningsApplyToSelectedModel, let model = selectedModel else {
             if pendingLoadFeasibility != nil { pendingLoadFeasibility = nil }
             return
         }
         Task { @MainActor in
             let assessment = await ModelRuntime.shared.projectedLoadFeasibility(for: model)
             // The selection may have moved while we were on the runtime actor.
-            guard selectedModel == model else { return }
+            guard selectedModel == model, localMemoryWarningsApplyToSelectedModel else {
+                if pendingLoadFeasibility != nil { pendingLoadFeasibility = nil }
+                return
+            }
 
             guard let assessment, assessment.loadPressureSeverity != .none else {
                 if pendingLoadFeasibility != nil { pendingLoadFeasibility = nil }
@@ -3986,7 +4003,8 @@ extension FloatingInputCard {
     /// floating overlay) wins when both apply.
     @ViewBuilder
     private var ramPressureRow: some View {
-        if !configContextTooSmall, let feasibility = pendingLoadFeasibility,
+        if localMemoryWarningsApplyToSelectedModel,
+            !configContextTooSmall, let feasibility = pendingLoadFeasibility,
             ramBannerDismissedForModel != selectedModel
                 || feasibility.loadPressureSeverity == .block
         {
@@ -4175,6 +4193,11 @@ extension FloatingInputCard {
     /// tight-fit re-check. State only changes when the banner's content
     /// would, so idle ticks don't re-render the card.
     private func refreshSwapPressure() {
+        guard localMemoryWarningsApplyToSelectedModel else {
+            if swapPressure != nil { swapPressure = nil }
+            if swapBannerDismissedAtSeverity != nil { swapBannerDismissedAtSeverity = nil }
+            return
+        }
         let state = SwapPressureMonitor.shared.currentState()
         if state.severity == .none {
             if swapPressure != nil { swapPressure = nil }
@@ -4191,7 +4214,8 @@ extension FloatingInputCard {
     /// severity that has not worsened.
     @ViewBuilder
     private var swapPressureRow: some View {
-        if !configContextTooSmall,
+        if localMemoryWarningsApplyToSelectedModel,
+            !configContextTooSmall,
             (pendingLoadFeasibility?.loadPressureSeverity ?? .none) == .none,
             let swap = swapPressure, swap.severity != .none,
             swapBannerDismissedAtSeverity.map({ swap.severity > $0 }) ?? true

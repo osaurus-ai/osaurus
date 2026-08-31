@@ -35,6 +35,36 @@ final class MemoryPressureWiringTests: XCTestCase {
 
     // MARK: - Connected
 
+    func testLocalMemoryWarningsDoNotApplyToCloudModelsOrRemoteAgentRuns() {
+        XCTAssertTrue(
+            FloatingInputCard.localMemoryWarningsApply(
+                isSelectedModelLocal: true,
+                isRemoteAgentRun: false
+            )
+        )
+        XCTAssertFalse(
+            FloatingInputCard.localMemoryWarningsApply(
+                isSelectedModelLocal: false,
+                isRemoteAgentRun: false
+            )
+        )
+        XCTAssertFalse(
+            FloatingInputCard.localMemoryWarningsApply(
+                isSelectedModelLocal: true,
+                isRemoteAgentRun: true
+            )
+        )
+    }
+
+    func testComposerClearsAndSuppressesStaleLocalMemoryWarnings() throws {
+        let src = try source("Views/Chat/FloatingInputCard.swift")
+        XCTAssertTrue(src.contains("guard localMemoryWarningsApplyToSelectedModel else"))
+        XCTAssertTrue(src.contains("if localMemoryWarningsApplyToSelectedModel,"))
+        XCTAssertTrue(
+            src.contains("guard selectedModel == model, localMemoryWarningsApplyToSelectedModel else")
+        )
+    }
+
     func testAdvisoryIsRenderedInTheContextPanel() throws {
         let src = try source("Views/Chat/FloatingInputCard.swift")
         XCTAssertTrue(
