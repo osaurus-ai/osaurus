@@ -128,20 +128,33 @@ struct ModelManagerSuggestedTests {
         }
     }
 
-    @Test @MainActor func lfm25Entry_haveExpectedMetadata() async {
+    @Test @MainActor func lfm25Entry_isCatalogOnly() async {
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
             let mxfp8 = suggested.first { $0.id == "OsaurusAI/LFM2.5-8B-A1B-MXFP8" }
 
             #expect(mxfp8 != nil)
             #expect(mxfp8?.modelType == "lfm2_moe")
-            // Top Pick: the hybrid MoE (~1B active) took the mainstream-RAM
-            // recommendation slot from the dense Bonsai 27B, which user
-            // feedback showed decoding far too slowly for a default.
-            #expect(mxfp8?.isTopSuggestion == true)
+            #expect(mxfp8?.isTopSuggestion == false)
             // Sizes now come from `ModelSizeCache` (empty here), not literals.
             #expect(mxfp8?.downloadSizeBytes == nil)
             #expect(mxfp8?.releasedAt != nil)
+        }
+    }
+
+    @Test @MainActor func raptorEntry_isMainstreamTopPick() async {
+        await withIsolatedModelSizeCache {
+            let suggested = ModelManager().suggestedModels
+            let raptor = suggested.first {
+                $0.id == "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M"
+            }
+
+            #expect(raptor != nil)
+            #expect(raptor?.modelType == "bailing_hybrid")
+            #expect(raptor?.isTopSuggestion == true)
+            #expect(raptor?.useCase == .general)
+            #expect(raptor?.downloadSizeBytes == 6_783_354_784)
+            #expect(raptor?.releasedAt != nil)
         }
     }
 
@@ -272,19 +285,18 @@ struct ModelManagerSuggestedTests {
 
     // MARK: - Top-pick reorg (precision-first)
 
-    @Test @MainActor func topPicks_recommendLFMOrnithAndOfficialGemma() async {
+    @Test @MainActor func topPicks_recommendRaptorLargeOrnithAndOfficialGemma() async {
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
             let topIds = Set(suggested.filter(\.isTopSuggestion).map { $0.id })
-            // Recommendation spine: LFM2.5 8B-A1B hybrid MoE for mainstream
-            // RAM, Ornith 1.5 MXFP8 for the larger tiers (the 1.0 MXFP8 Hub
-            // repos were removed), official OsaurusAI Gemma 4 for the smaller
+            // Recommendation spine: Raptor 8B-A1B hybrid MoE for mainstream
+            // RAM, Ornith 1.5 35B-A3B MXFP8 for the larger tiers, official
+            // OsaurusAI Gemma 4 for the smaller
             // VL tiers, and Nanbeige 4.2 3B JANG_6M as the text-quality
             // exception (JANG_6M beats that family's MXFP8). These are the
             // ONLY Top Picks.
             let expectedTopPicks: Set<String> = [
-                "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
-                "OsaurusAI/Ornith-1.5-9B-MXFP8",
+                "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M",
                 "OsaurusAI/Ornith-1.5-35B-A3B-MXFP8",
                 "OsaurusAI/Nanbeige4.2-3B-JANG_6M",
                 "OsaurusAI/gemma-4-12B-it-MXFP8",
@@ -293,7 +305,7 @@ struct ModelManagerSuggestedTests {
             ]
             #expect(
                 topIds == expectedTopPicks,
-                "Top Picks should be exactly LFM2.5 + Ornith 1.5 MXFP8 + Nanbeige JANG_6M + official Gemma; got \(topIds.sorted())"
+                "Top Picks should be exactly Raptor + large Ornith 1.5 MXFP8 + Nanbeige JANG_6M + official Gemma; got \(topIds.sorted())"
             )
             // Gemma QAT/MXFP4, plus Qwen 3.6 / Nemotron-3 / Bonsai, are
             // catalog-only — installable and selectable, just not part of the
@@ -309,6 +321,8 @@ struct ModelManagerSuggestedTests {
                 "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
                 "OsaurusAI/Bonsai-27b-Ternary-JANG",
                 "OsaurusAI/Bonsai-27b-1bit-JANG",
+                "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
+                "OsaurusAI/Ornith-1.5-9B-MXFP8",
             ] {
                 #expect(!topIds.contains(id), "expected \(id) to NOT be a Top Pick (catalog-only)")
                 #expect(
@@ -492,39 +506,36 @@ struct ModelManagerSuggestedTests {
         }
     }
 
-    @Test @MainActor func onboardingDefault_selectsMoEForMainstreamRAM() async {
+    @Test @MainActor func onboardingDefault_selectsRaptorThrough24GB() async {
         await withIsolatedModelSizeCache {
             let candidates = ModelManager().suggestedModels.filter(\.isTopSuggestion)
-            // 18 GB Macs comfortably fit the LFM2.5 8B-A1B hybrid MoE (~10 GB
-            // working set inside the 10.2 GB comfortable budget) while the
-            // dense Ornith 9B does not yet, so the MoE is the auto-default.
+            let sixteenGB = ConfigureAIState.recommendedLocalPick(
+                from: candidates,
+                totalMemoryGB: 16
+            )
             let eighteenGB = ConfigureAIState.recommendedLocalPick(
                 from: candidates,
                 totalMemoryGB: 18
             )
-            // By 24 GB the larger-base Top Picks fit comfortably and win on
-            // the largest-comfortable-base-parameters rule.
             let twentyFourGB = ConfigureAIState.recommendedLocalPick(
                 from: candidates,
                 totalMemoryGB: 24
             )
 
-            #expect(eighteenGB?.id == "OsaurusAI/LFM2.5-8B-A1B-MXFP8")
-            #expect(twentyFourGB?.id == "OsaurusAI/Ornith-1.5-9B-MXFP8")
+            let raptorId = "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M"
+            #expect(sixteenGB?.id == raptorId)
+            #expect(eighteenGB?.id == raptorId)
+            #expect(twentyFourGB?.id == raptorId)
 
             // Nanbeige JANG_6M (~4.5 GB working set) is a Top Pick but must
-            // not steal the 8 GB multimodal floor (Gemma E2B) or the 16 GB
-            // E4B slot — 3B loses to every larger comfortable base.
+            // not steal the 8 GB multimodal floor (Gemma E2B). Raptor's
+            // measured bundle is intentionally not treated as comfortable on
+            // an 8 GB machine.
             let eightGB = ConfigureAIState.recommendedLocalPick(
                 from: candidates,
                 totalMemoryGB: 8
             )
-            let sixteenGB = ConfigureAIState.recommendedLocalPick(
-                from: candidates,
-                totalMemoryGB: 16
-            )
             #expect(eightGB?.id == "OsaurusAI/gemma-4-E2B-it-8bit")
-            #expect(sixteenGB?.id == "OsaurusAI/gemma-4-E4B-it-8bit")
         }
     }
 }

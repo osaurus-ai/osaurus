@@ -269,14 +269,11 @@ final class ConfigureAIState: ObservableObject {
     /// parameter count** that **comfortably** fits (`.compatible`, so never
     /// into the `.tight` band). For variants of the same base model, prefer
     /// the larger resident footprint as the higher-quality precision.
-    /// Every curated Top Pick is a GUI-verified-good model — coherent output
-    /// with clean tool-calling and reasoning and no control-marker leakage
-    /// (verified live in the dev app across the curated families). Bonsai 27B
-    /// is no longer a Top Pick: as a dense model (every parameter active per
-    /// token) it decoded far too slowly per user feedback, so the mainstream
-    /// slot recommends the LFM2.5 8B-A1B hybrid MoE instead. When nothing is
-    /// comfortable (very low RAM), fall back to the smallest candidate overall
-    /// so onboarding never dead-ends.
+    /// Top Picks are the maintained onboarding recommendation set. Raptor v0.5
+    /// 8B-A1B is the mainstream-RAM text default; dense Bonsai 27B, LFM2.5 8B,
+    /// and dense Ornith 1.5 9B remain catalog choices rather than first-run
+    /// defaults. When nothing is comfortable (very low RAM), fall back to the
+    /// smallest candidate overall so onboarding never dead-ends.
     ///
     /// This replaced the earlier Gemma-4-QAT auto-default spine: the Gemma 4
     /// `qat-MXFP4` builds are no longer curated Top Picks, so they are neither

@@ -714,17 +714,15 @@ extension ModelManager {
     nonisolated fileprivate static let curatedSuggestedModels: [MLXModel] = [
         // MARK: Gemma 4 — multimodal
         //
-        // Onboarding recommendation spine (2026-08-26; the 2026-07-08 set was
-        // GUI-verified in the dev-built app — every model below loads, calls
-        // tools, reasons with thinking on, and leaks no markup into visible
-        // content):
-        //   • Mainstream RAM → LFM2.5 8B-A1B MXFP8 hybrid MoE (~1B active) and
-        //                      Gemma 4 12B-it-MXFP8 as RAM allows. Bonsai 27B
-        //                      was demoted from this slot: user feedback showed
-        //                      the dense 27B decodes far too slowly for a
-        //                      first-run default, so the mainstream pick is now
-        //                      an MoE with a small active set.
-        //   • Larger RAM     → Ornith 1.5 MXFP8 (9B / 35B-A3B MoE, below).
+        // Onboarding recommendation spine (2026-08-31). Top Pick membership
+        // controls the first-run shortlist; the memory-fit selector below still
+        // refuses to auto-default into the `.tight` band:
+        //   • Mainstream RAM → Raptor v0.5 8B-A1B JANG_6M (~1B active) and
+        //                      Gemma 4 12B-it-MXFP8 as RAM allows. LFM2.5 8B
+        //                      and dense Ornith 1.5 9B remain in the catalog,
+        //                      but Raptor is the small-active-set first-run
+        //                      default once it comfortably fits.
+        //   • Larger RAM     → Ornith 1.5 35B-A3B MXFP8 (below).
         //   • Smaller RAM → official OsaurusAI Gemma 4 at the highest non-QAT,
         //                    non-MXFP4 precision that exists: `12B-it-MXFP8`
         //                    (the only MXFP8 Gemma the org ships) and the
@@ -864,6 +862,19 @@ extension ModelManager {
             useCase: .vision
         ),
 
+        // MARK: Raptor v0.5 (Ling 3 / BailingMoeV3 — Top Pick)
+
+        curated(
+            id: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M",
+            description:
+                "Raptor v0.5 8B-A1B text model on the Ling 3 architecture. JANG_6M — fast agentic tool use with ~1B active parameters. 128K context.",
+            isTopSuggestion: true,
+            bootstrapDownloadSizeBytes: 6_783_354_784,
+            modelType: "bailing_hybrid",
+            releasedAt: date("2026-08-25"),
+            useCase: .general
+        ),
+
         // MARK: Ornith 1.5 (Qwen 3.5 hybrid backbone)
         //
         // Successor to the 1.0 MXFP8 Top Picks. Those Hub repos
@@ -879,7 +890,6 @@ extension ModelManager {
             id: "OsaurusAI/Ornith-1.5-9B-MXFP8",
             description:
                 "Ornith 1.5 9B vision-language model, tuned for agentic coding on a Qwen 3.5 hybrid backbone. MXFP8 — near-lossless precision. 256K context.",
-            isTopSuggestion: true,
             modelType: "qwen3_5",
             releasedAt: date("2026-08-19"),
             useCase: .vision
@@ -1320,18 +1330,17 @@ extension ModelManager {
             useCase: .smallest
         ),
 
-        // MARK: LFM2.5 (Liquid AI hybrid MoE — Top Pick, listed last)
+        // MARK: LFM2.5 (Liquid AI hybrid MoE — catalog only, listed last)
         //
         // Kept at the tail of the catalog so LFM rows always render at the
         // bottom of order-following lists (the onboarding chooser keeps
-        // catalog order). It remains a Top Pick: the ~1B-active hybrid MoE is
-        // the mainstream-RAM auto-default that replaced the dense Bonsai 27B.
+        // catalog order). Raptor v0.5 now occupies the mainstream-RAM Top Pick
+        // slot; LFM2.5 remains available as an installable alternative.
 
         curated(
             id: "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
             description:
                 "Liquid AI LFM2.5 8B hybrid MoE (~1B active), MXFP8 — high-precision, fast Apple Silicon chat. 128K context.",
-            isTopSuggestion: true,
             modelType: "lfm2_moe",
             releasedAt: date("2026-05-29"),
             useCase: .general
