@@ -5568,10 +5568,13 @@ extension OpenResponsesRequest {
             }
 
             // Responses Lite carries tool declarations and base instructions
-            // as developer input items rather than top-level fields.
+            // as developer input items rather than top-level fields. Tools
+            // nested inside a namespace stay type-tagged: codex-rs serializes
+            // `ResponsesApiNamespaceTool` with `tag = "type"`, and the backend
+            // 400s on `input[0].tools[0].tools[0].type` when it is missing.
             let functionTools = (object["tools"] as? [[String: Any]] ?? []).map { tool in
                 var nested = tool
-                nested.removeValue(forKey: "type")
+                nested["type"] = "function"
                 return nested
             }
             let tools: [Any] =

@@ -864,6 +864,7 @@ struct RemoteChatRequestEncodingTests {
         #expect(functions["type"] as? String == "namespace")
         #expect(functions["name"] as? String == "functions")
         let nestedTools = try #require(functions["tools"] as? [[String: Any]])
+        #expect(nestedTools.first?["type"] as? String == "function")
         #expect(nestedTools.first?["name"] as? String == "get_weather")
         #expect(input[1]["type"] as? String == "message")
         #expect(input[1]["role"] as? String == "developer")
