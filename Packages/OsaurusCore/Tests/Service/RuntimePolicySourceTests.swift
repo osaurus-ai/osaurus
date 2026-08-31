@@ -3525,8 +3525,8 @@ struct RuntimePolicySourceTests {
         )
     }
 
-    @Test("local streamWithTools dispatches parsed tool invocation without waiting for optional stats")
-    func localStreamWithToolsDispatchesParsedToolInvocationWithoutWaitingForOptionalStats() throws {
+    @Test("local streamWithTools drains cache persistence before loop dispatch")
+    func localStreamWithToolsDrainsCachePersistenceBeforeLoopDispatch() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
         let streamStart = try #require(
             runtime.range(of: "func streamWithTools("),
@@ -3544,21 +3544,18 @@ struct RuntimePolicySourceTests {
         let afterToolCase = streamWithTools[toolCase.lowerBound...]
 
         #expect(
-            streamWithTools.contains("A trailing `.completionInfo`")
-                && streamWithTools.contains("complete-looking")
+            streamWithTools.contains("var pendingTool: ServiceToolInvocation?")
                 && afterToolCase.contains("ServiceToolInvocation(")
                 && afterToolCase.contains("toolName: name")
                 && afterToolCase.contains("jsonArguments: argsJSON")
-                && afterToolCase.contains("continuation.finish(throwing: tool)"),
-            "streamWithTools must treat parsed vMLX toolInvocation as terminal for dispatch; waiting for optional completion stats can leave the UI stuck after a complete tool call."
+                && afterToolCase.contains("if let pendingTool")
+                && afterToolCase.contains("continuation.finish(throwing: pendingTool)"),
+            "streamWithTools must retain the parsed invocation until the upstream vMLX stream reaches terminal drain, so cache persistence finishes before the loop can execute the tool."
         )
         #expect(
-            afterToolCase.contains("return"),
-            "After surfacing the parsed tool invocation the producer task must return rather than run on."
-        )
-        #expect(
-            !streamWithTools.contains("var pendingTool: ServiceToolInvocation?"),
-            "The local streaming path must not hold a parsed tool invocation in pending state while draining for a later completionInfo event."
+            streamWithTools.contains("continuation.yield(StreamingToolHint.encode(name))")
+                && streamWithTools.contains("continuation.yield(StreamingToolHint.encodeArgs(argsJSON))"),
+            "The native UI must still receive the parsed tool envelope while the executable invocation waits for terminal cache drain."
         )
         #expect(
             !afterToolCase.contains("pendingTools.append"),
