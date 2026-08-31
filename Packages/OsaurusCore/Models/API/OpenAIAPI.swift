@@ -329,6 +329,11 @@ struct ChatMessage: Codable, Sendable {
     /// Server-encrypted reasoning blob paired with `reasoning_item_id`. In-memory
     /// only; re-sent verbatim on the Responses path for chain continuity.
     let reasoning_encrypted: String?
+    /// Provider-native Responses output Items captured from
+    /// `response.output_item.done`. Kept off the Chat Completions JSON wire and
+    /// replayed verbatim on later Responses turns so item ids, assistant phase,
+    /// encrypted reasoning, and future typed fields survive.
+    var responses_output_items: [JSONValue]? = nil
 
     /// Extract image URLs from content parts (supports both data URLs and http URLs)
     var imageUrls: [String] {
@@ -479,7 +484,8 @@ extension ChatMessage {
         tool_call_id: String?,
         reasoning_content: String? = nil,
         reasoning_item_id: String? = nil,
-        reasoning_encrypted: String? = nil
+        reasoning_encrypted: String? = nil,
+        responses_output_items: [JSONValue]? = nil
     ) {
         self.role = role
         self.content = content
@@ -490,6 +496,7 @@ extension ChatMessage {
         self.reasoning_content = reasoning_content
         self.reasoning_item_id = reasoning_item_id
         self.reasoning_encrypted = reasoning_encrypted
+        self.responses_output_items = responses_output_items
     }
 
     /// Initialize from a route adapter that already normalized OpenAI-style

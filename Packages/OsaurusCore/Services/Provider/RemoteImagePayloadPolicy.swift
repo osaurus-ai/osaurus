@@ -153,7 +153,8 @@ extension ChatMessage {
             tool_call_id: tool_call_id,
             reasoning_content: reasoning_content,
             reasoning_item_id: reasoning_item_id,
-            reasoning_encrypted: reasoning_encrypted
+            reasoning_encrypted: reasoning_encrypted,
+            responses_output_items: responses_output_items
         )
     }
 }

@@ -106,6 +106,16 @@ public struct CodexModelMetadata: Sendable, Equatable, Hashable {
     /// entry omits it (older catalogs, fallback models). Osaurus applies its
     /// own safety margin downstream, so this stays the raw catalog value.
     public let contextWindow: Int?
+    /// Input modalities from the live Codex catalog. A missing field means
+    /// legacy metadata; Codex itself defaults that case to text + image.
+    public let inputModalities: [String]?
+
+    /// Mirrors codex-rs's backward-compatible default: image input is allowed
+    /// unless the catalog explicitly publishes a modality list without it.
+    public var supportsImageInput: Bool {
+        guard let inputModalities else { return true }
+        return inputModalities.contains { $0.caseInsensitiveCompare("image") == .orderedSame }
+    }
 
     public init(
         slug: String,
@@ -113,7 +123,8 @@ public struct CodexModelMetadata: Sendable, Equatable, Hashable {
         defaultReasoningLevel: String? = nil,
         supportedReasoningLevels: [CodexReasoningLevel] = [],
         usesResponsesLite: Bool = false,
-        contextWindow: Int? = nil
+        contextWindow: Int? = nil,
+        inputModalities: [String]? = nil
     ) {
         self.slug = slug
         self.displayName = displayName
@@ -121,6 +132,7 @@ public struct CodexModelMetadata: Sendable, Equatable, Hashable {
         self.supportedReasoningLevels = supportedReasoningLevels
         self.usesResponsesLite = usesResponsesLite
         self.contextWindow = contextWindow
+        self.inputModalities = inputModalities
     }
 }
 
@@ -519,7 +531,7 @@ public enum OpenAICodexOAuthService {
     /// catalog for older or unrecognized versions (non-semver values like
     /// "osaurus-1.2.3" get the wrong subset entirely). Bump this to the
     /// current Codex CLI release when new models stop appearing in discovery.
-    public static let codexClientVersion = "0.144.1"
+    public static let codexClientVersion = "0.151.0"
 
     /// Codex CLI-style `User-Agent`, mirroring codex-rs's
     /// `get_codex_user_agent()` format:
@@ -563,6 +575,7 @@ public enum OpenAICodexOAuthService {
         let default_reasoning_level: String?
         let supported_reasoning_levels: [ReasoningLevelEntry]?
         let context_window: Int?
+        let input_modalities: [String]?
 
         /// The publishable capability slice of this entry, preserving the
         /// catalog's level order and dropping malformed (effort-less) levels.
@@ -580,7 +593,8 @@ public enum OpenAICodexOAuthService {
                     return CodexReasoningLevel(effort: effort, description: level.description)
                 },
                 usesResponsesLite: use_responses_lite == true,
-                contextWindow: context_window.flatMap { $0 > 0 ? $0 : nil }
+                contextWindow: context_window.flatMap { $0 > 0 ? $0 : nil },
+                inputModalities: input_modalities
             )
         }
     }

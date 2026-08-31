@@ -12039,6 +12039,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             return acc + TokenEstimator.estimate(output.output)
                         case .reasoning(let reasoning):
                             return acc + TokenEstimator.estimate(reasoning.encrypted_content ?? "")
+                        case .raw(let raw):
+                            let byteCount =
+                                (try? JSONEncoder.osaurusCanonical().encode(raw).count) ?? 0
+                            return acc + byteCount / TokenEstimator.charsPerToken
                         }
                     }
                 }

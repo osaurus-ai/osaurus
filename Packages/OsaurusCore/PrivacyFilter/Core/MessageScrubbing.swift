@@ -225,7 +225,10 @@ extension ChatMessage {
                 tool_call_id: tool_call_id,
                 reasoning_content: newReasoning,
                 reasoning_item_id: reasoning_item_id,
-                reasoning_encrypted: reasoning_encrypted
+                reasoning_encrypted: reasoning_encrypted,
+                // Raw provider Items may contain the pre-redaction text.
+                // Drop them so privacy filtering can never replay secrets.
+                responses_output_items: nil
             )
         }
         if newParts != nil {
@@ -238,7 +241,8 @@ extension ChatMessage {
             tool_call_id: tool_call_id,
             reasoning_content: newReasoning,
             reasoning_item_id: reasoning_item_id,
-            reasoning_encrypted: reasoning_encrypted
+            reasoning_encrypted: reasoning_encrypted,
+            responses_output_items: nil
         )
     }
 

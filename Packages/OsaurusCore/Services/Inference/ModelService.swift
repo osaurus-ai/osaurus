@@ -353,6 +353,29 @@ enum StreamingReasoningItemHint: Sendable {
     }
 }
 
+/// In-band transport for one completed, provider-authored Responses output
+/// Item. The item is kept as generic JSON so newer OpenAI item fields survive
+/// without waiting for Osaurus's typed response models to catch up. ChatView
+/// persists these in wire order and the Responses adapter replays them
+/// verbatim on subsequent requests.
+enum StreamingResponsesOutputItemHint: Sendable {
+    private static let prefix = "\u{FFFE}responses_output_item:"
+
+    static func encode(_ item: JSONValue) -> String {
+        guard let data = try? JSONEncoder.osaurusCanonical().encode(item) else {
+            return prefix + "null"
+        }
+        return prefix + String(decoding: data, as: UTF8.self)
+    }
+
+    static func decode(_ delta: String) -> JSONValue? {
+        guard delta.hasPrefix(prefix) else { return nil }
+        let json = String(delta.dropFirst(prefix.count))
+        guard let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(JSONValue.self, from: data)
+    }
+}
+
 /// In-band signaling for local prefill progress before the first generated
 /// token. Payload is JSON so additional fields can be added later without
 /// changing the sentinel prefix or colliding with visible model text.
@@ -416,6 +439,11 @@ enum StreamingStatsHint: Sendable {
     /// (incl. KV-reused prefix) was processed before the first generated
     /// token, the headline TTFT driver for long-context Mac runs.
     private static let prefillFlagPrefix = "prefill="
+    /// Provider-reported prompt usage and the subset served from cache. These
+    /// stay optional because local runtimes and many compatible providers do
+    /// not report them.
+    private static let inputTokensFlagPrefix = "input="
+    private static let cachedInputTokensFlagPrefix = "cached_input="
     /// Native-MTP decode-path evidence for this generation, carried as one
     /// flag so older decoders skip it whole. Format:
     /// `mtp=<depth>/<activeDepth>/<verifyCalls>/<accepted>/<bonus>/<rejected>/<arFallback>/<downshifts>[/<percent-encoded reason>]`.
@@ -432,6 +460,8 @@ enum StreamingStatsHint: Sendable {
         unclosedReasoning: Bool = false,
         stopReason: String? = nil,
         prefillTokensPerSecond: Double? = nil,
+        inputTokenCount: Int? = nil,
+        cachedInputTokenCount: Int? = nil,
         mtp: MTPStatsSummary? = nil
     ) -> String {
         let tps = String(format: "%.4f", locale: posixLocale, tokensPerSecond)
@@ -448,6 +478,12 @@ enum StreamingStatsHint: Sendable {
         if let prefillTokensPerSecond, prefillTokensPerSecond.isFinite, prefillTokensPerSecond > 0 {
             let pf = String(format: "%.4f", locale: posixLocale, prefillTokensPerSecond)
             flags.append("\(prefillFlagPrefix)\(pf)")
+        }
+        if let inputTokenCount, inputTokenCount >= 0 {
+            flags.append("\(inputTokensFlagPrefix)\(inputTokenCount)")
+        }
+        if let cachedInputTokenCount, cachedInputTokenCount >= 0 {
+            flags.append("\(cachedInputTokensFlagPrefix)\(cachedInputTokenCount)")
         }
         if let mtp {
             var fields = [
@@ -476,6 +512,8 @@ enum StreamingStatsHint: Sendable {
         unclosedReasoning: Bool,
         stopReason: String?,
         prefillTokensPerSecond: Double?,
+        inputTokenCount: Int?,
+        cachedInputTokenCount: Int?,
         mtp: MTPStatsSummary?
     )? {
         guard delta.hasPrefix(statsPrefix) else { return nil }
@@ -500,6 +538,14 @@ enum StreamingStatsHint: Sendable {
             guard flag.hasPrefix(prefillFlagPrefix) else { return nil }
             return Double(flag.dropFirst(prefillFlagPrefix.count))
         }.first
+        let inputTokenCount = flags.compactMap { flag -> Int? in
+            guard flag.hasPrefix(inputTokensFlagPrefix) else { return nil }
+            return Int(flag.dropFirst(inputTokensFlagPrefix.count))
+        }.first
+        let cachedInputTokenCount = flags.compactMap { flag -> Int? in
+            guard flag.hasPrefix(cachedInputTokensFlagPrefix) else { return nil }
+            return Int(flag.dropFirst(cachedInputTokensFlagPrefix.count))
+        }.first
         let mtp = flags.compactMap { flag -> MTPStatsSummary? in
             guard flag.hasPrefix(mtpFlagPrefix) else { return nil }
             let fields = flag.dropFirst(mtpFlagPrefix.count).split(separator: "/")
@@ -517,7 +563,16 @@ enum StreamingStatsHint: Sendable {
                 rejectedTokens: rejected, arFallbackTokens: arFallback,
                 adaptiveDownshifts: downshifts, adaptiveFallbackReason: reason)
         }.first
-        return (count, tps, unclosed, stopReason, prefillTokensPerSecond, mtp)
+        return (
+            count,
+            tps,
+            unclosed,
+            stopReason,
+            prefillTokensPerSecond,
+            inputTokenCount,
+            cachedInputTokenCount,
+            mtp
+        )
     }
 }
 

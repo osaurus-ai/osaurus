@@ -262,6 +262,32 @@ struct OpenAICodexOAuthServiceTests {
         #expect(summary.modelMetadata["gpt-5.4"]?.contextWindow == nil)
     }
 
+    @Test func decodeModelCatalog_preservesInputModalitiesPerModel() throws {
+        let payload = """
+            {"models":[
+                {"slug":"gpt-5.6-sol","visibility":"list","priority":1,
+                 "shell_type":"shell_command","input_modalities":["text","image"]},
+                {"slug":"gpt-5.6-text","visibility":"list","priority":2,
+                 "shell_type":"shell_command","input_modalities":["text"]},
+                {"slug":"gpt-5.5","visibility":"list","priority":3,
+                 "shell_type":"shell_command"}
+            ]}
+            """
+        let (_, summary) = try OpenAICodexOAuthService.decodeModelCatalog(Data(payload.utf8))
+
+        let vision = try #require(summary.modelMetadata["gpt-5.6-sol"])
+        #expect(vision.inputModalities == ["text", "image"])
+        #expect(vision.supportsImageInput)
+
+        let textOnly = try #require(summary.modelMetadata["gpt-5.6-text"])
+        #expect(!textOnly.supportsImageInput)
+
+        // codex-rs defaults legacy catalog entries to text + image.
+        let legacy = try #require(summary.modelMetadata["gpt-5.5"])
+        #expect(legacy.inputModalities == nil)
+        #expect(legacy.supportsImageInput)
+    }
+
     @Test func decodeModelCatalog_throwsTypedErrorForUnreadablePayload() {
         #expect(throws: OpenAICodexOAuthError.self) {
             _ = try OpenAICodexOAuthService.decodeModelCatalog(Data(#"{"models":"unexpected"}"#.utf8))

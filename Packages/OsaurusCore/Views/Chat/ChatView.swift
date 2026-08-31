@@ -2198,7 +2198,9 @@ final class ChatSession: ObservableObject {
             tool_call_id: nil,
             reasoning_content: turn.thinkingIsBlank ? nil : turn.thinking,
             reasoning_item_id: turn.reasoningItemId,
-            reasoning_encrypted: turn.reasoningEncrypted
+            reasoning_encrypted: turn.reasoningEncrypted,
+            responses_output_items: turn.responsesOutputItems.isEmpty
+                ? nil : turn.responsesOutputItems
         )
     }
 
@@ -4713,6 +4715,13 @@ final class ChatSession: ObservableObject {
                     }
                     continue
                 }
+                // Preserve the complete provider-authored Responses output Item
+                // for exact stateless replay (phase, ids, reasoning, and future
+                // fields), independently of the flattened visible transcript.
+                if let responseItem = StreamingResponsesOutputItemHint.decode(delta) {
+                    currentTurn.responsesOutputItems.append(responseItem)
+                    continue
+                }
                 // Captured OpenAI Responses reasoning item (id + encrypted blob).
                 // Not visible text — stash it on the turn so the next request
                 // re-emits it before this turn's function_call(s).
@@ -4769,6 +4778,8 @@ final class ChatSession: ObservableObject {
                     }
                     currentTurn.generationTokenCount = stats.tokenCount
                     currentTurn.terminalStopReason = stats.stopReason
+                    currentTurn.inputTokenCount = stats.inputTokenCount
+                    currentTurn.cachedInputTokenCount = stats.cachedInputTokenCount
                     // Vmlx tells us the model never closed `</think>` before
                     // EOS / max_tokens. Persist on the turn so the bubble
                     // renderer can surface a one-line banner suggesting

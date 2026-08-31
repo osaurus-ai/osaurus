@@ -215,6 +215,15 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Populated only on the Responses path; nil everywhere else.
     var reasoningItemId: String? = nil
     var reasoningEncrypted: String? = nil
+    /// Complete provider-authored Responses output Items, captured in wire
+    /// order and replayed on follow-up turns. This preserves semantics that
+    /// the flattened ChatTurn fields cannot represent (notably assistant
+    /// commentary/final phase and future typed item fields).
+    var responsesOutputItems: [JSONValue] = []
+    /// Provider-reported prompt usage for this assistant response, including
+    /// the subset served from OpenAI's prompt cache when available.
+    var inputTokenCount: Int? = nil
+    var cachedInputTokenCount: Int? = nil
     /// Keeps an abandoned protocol attempt visible in the transcript while
     /// preventing it from re-entering model history. This is set only when an
     /// agent/tool generation ends with incomplete reasoning and the loop
