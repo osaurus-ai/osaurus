@@ -400,11 +400,9 @@ enum ExternalModelLocator {
             reports.append(
                 contentsOf: huggingFaceCacheRoots().map(scanHuggingFaceCacheReport(root:))
             )
-            if let customRoot = customModelFolderRoot(),
-                FileManager.default.fileExists(atPath: customRoot.path)
-            {
-                reports.append(scanCustomModelFolderReport(root: customRoot))
-            }
+            reports.append(
+                contentsOf: customModelFolderRoots().map(scanCustomModelFolderReport(root:))
+            )
         }
         if isLMStudioImportEnabled {
             reports.append(contentsOf: lmStudioRoots().map { scanReport(root: $0, source: .lmStudio) })
@@ -414,12 +412,29 @@ enum ExternalModelLocator {
 
     // MARK: - Roots
 
-    static func customModelFolderRoot(
+    /// Plain model-library roots. `~/models` is a durable convention, not a
+    /// transient UI preference: many existing Osaurus/vMLX users keep large
+    /// publisher/repo libraries there and must not lose them when a bookmark
+    /// or defaults domain changes across an app update. A user-selected root
+    /// remains first, and equivalent paths are deduplicated.
+    static func customModelFolderRoots(
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
-        customPath: String? = ExternalModelLocator.customHFCachePath
-    ) -> URL? {
-        guard let customPath else { return nil }
-        return Self.fileURL(fromUserPath: customPath, homeDirectory: homeDirectory)
+        customPath: String? = ExternalModelLocator.customHFCachePath,
+        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+    ) -> [URL] {
+        var roots: [URL] = []
+
+        func add(_ url: URL, requireExisting: Bool) {
+            let standardized = url.standardizedFileURL
+            if requireExisting, !fileExists(standardized.path) { return }
+            if !roots.contains(standardized) { roots.append(standardized) }
+        }
+
+        if let customPath {
+            add(Self.fileURL(fromUserPath: customPath, homeDirectory: homeDirectory), requireExisting: true)
+        }
+        add(homeDirectory.appendingPathComponent("models", isDirectory: true), requireExisting: true)
+        return roots
     }
 
     static func huggingFaceCacheRoots(

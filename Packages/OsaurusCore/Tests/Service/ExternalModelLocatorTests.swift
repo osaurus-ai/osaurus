@@ -119,6 +119,25 @@ struct ExternalModelLocatorTests {
         )
     }
 
+    @Test func customModelFolderRoots_alwaysIncludesExistingHomeModelsAndDeduplicatesCustom() {
+        let home = URL(fileURLWithPath: "/Users/tester", isDirectory: true)
+        let existing = Set(["/Users/tester/models"])
+
+        let defaults = ExternalModelLocator.customModelFolderRoots(
+            homeDirectory: home,
+            customPath: nil,
+            fileExists: { existing.contains($0) }
+        )
+        #expect(defaults.map(\.path) == ["/Users/tester/models"])
+
+        let deduplicated = ExternalModelLocator.customModelFolderRoots(
+            homeDirectory: home,
+            customPath: "~/models",
+            fileExists: { existing.contains($0) }
+        )
+        #expect(deduplicated.map(\.path) == ["/Users/tester/models"])
+    }
+
     // MARK: - Bundle validation
 
     @Test func isMLXBundle_acceptsSafetensorsBundle() {

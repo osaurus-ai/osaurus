@@ -194,7 +194,7 @@ struct ExternalModelsSettingsView: View {
             )
 
             Text(
-                "Empty scans HF_HUB_CACHE, HF_HOME/hub, and ~/.cache/huggingface/hub.",
+                "Empty scans ~/models, HF_HUB_CACHE, HF_HOME/hub, and ~/.cache/huggingface/hub.",
                 bundle: .module
             )
             .font(.system(size: 10))
