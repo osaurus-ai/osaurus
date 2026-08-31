@@ -767,7 +767,7 @@ public struct SystemPromptComposer: Sendable {
         trace: TTFTTrace?
     ) -> String? {
         let schemaNames = Set(tools.map(\.function.name))
-        guard snapshot.toolMode == .auto, !executionMode.usesHostFolderTools, !effectiveToolsOff,
+        guard snapshot.toolMode == .auto, !effectiveToolsOff,
             let capabilityNames = capabilityToolNames(inSchema: schemaNames),
             schemaNames.contains(capabilityNames.load)
         else { return nil }
@@ -1045,10 +1045,9 @@ public struct SystemPromptComposer: Sendable {
             // Keep the lean custom-agent contract: expose only the frozen
             // enabled-capabilities manifest needed to use assigned plugins.
             // Rich grounding/nudge/model-family guidance remains off this
-            // path, and host-folder agents receive their enabled dynamic tools
-            // directly rather than through the lazy capability gateway.
+            // path. Host-folder agents still receive this manifest: attaching
+            // a workspace must not hide otherwise enabled dynamic tools.
             if snapshot.agentId != Agent.defaultId,
-                !executionMode.usesHostFolderTools,
                 !effectiveToolsOff,
                 let capabilityNames,
                 let manifestSection = toolset.enabledManifest,
@@ -3125,28 +3124,6 @@ public struct SystemPromptComposer: Sendable {
                     replacingExisting: true
                 )
                 allowed.formUnion(ToolRegistry.coreWorkspaceToolNames)
-            }
-            // Reliability rollback for host-folder work: publish every
-            // agent-enabled dynamic tool with its full schema up front. The
-            // lazy capability gateway remains for ordinary chat, but attached
-            // workspace tasks must not lose spreadsheet, document, or other
-            // plugin tools because the model failed to perform a discovery /
-            // load round-trip.
-            if executionMode.usesHostFolderTools,
-                snapshot.agentId != Agent.defaultId,
-                let enabledNames = AgentManager.shared.effectiveEnabledToolNames(
-                    for: snapshot.agentId
-                )
-            {
-                let registeredDynamicNames = Set(
-                    ToolRegistry.shared.listDynamicTools().map(\.name)
-                )
-                let directNames = Set(enabledNames).intersection(registeredDynamicNames)
-                add(
-                    ToolRegistry.shared.specs(forTools: Array(directNames)),
-                    replacingExisting: true
-                )
-                allowed.formUnion(directNames)
             }
             // Redaction tools join the schema only when a HOST folder is
             // active: they resolve the chat's folder root directly and have
