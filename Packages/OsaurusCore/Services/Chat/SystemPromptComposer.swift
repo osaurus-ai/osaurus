@@ -767,7 +767,7 @@ public struct SystemPromptComposer: Sendable {
         trace: TTFTTrace?
     ) -> String? {
         let schemaNames = Set(tools.map(\.function.name))
-        guard snapshot.toolMode == .auto, !executionMode.usesHostFolderTools, !effectiveToolsOff,
+        guard snapshot.toolMode == .auto, !effectiveToolsOff,
             let capabilityNames = capabilityToolNames(inSchema: schemaNames),
             schemaNames.contains(capabilityNames.load)
         else { return nil }
@@ -1045,9 +1045,9 @@ public struct SystemPromptComposer: Sendable {
             // Keep the lean custom-agent contract: expose only the frozen
             // enabled-capabilities manifest needed to use assigned plugins.
             // Rich grounding/nudge/model-family guidance remains off this
-            // path, and host-folder agents retain their workspace-only prompt.
+            // path. Host-folder agents still receive this manifest: attaching
+            // a workspace must not hide otherwise enabled dynamic tools.
             if snapshot.agentId != Agent.defaultId,
-                !executionMode.usesHostFolderTools,
                 !effectiveToolsOff,
                 let capabilityNames,
                 let manifestSection = toolset.enabledManifest,
@@ -3355,7 +3355,9 @@ public struct SystemPromptComposer: Sendable {
             ]
             required = ["path", "old_string", "new_string"]
         case "file_search":
-            description = "Search file contents or names with optional path, file filter, and result limit."
+            description =
+                "Search plain-text file contents or filenames. Content search does not extract PDF, "
+                + "Word, PowerPoint, or XLSX; use file_read on those documents and sheet_name for XLSX."
             properties = [
                 "pattern": .object([
                     "type": .string("string"),
