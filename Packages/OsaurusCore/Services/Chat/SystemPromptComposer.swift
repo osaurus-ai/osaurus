@@ -1076,6 +1076,27 @@ public struct SystemPromptComposer: Sendable {
                 }
             }
 
+            // The lean custom-agent architecture omits the rich compatibility
+            // guidance below. Keep one compact, session-static gateway contract
+            // in every custom-agent prompt so an absent specialized tool leads
+            // to discovery/load. This is independent of whether an enabled-
+            // plugin manifest exists: a freshly installed or catalog-
+            // discoverable capability may be the exact thing the task needs.
+            if snapshot.agentId != Agent.defaultId,
+                !effectiveToolsOff,
+                let capabilityNames
+            {
+                composer.append(
+                    .static(
+                        id: "capabilityNudge",
+                        label: L("Capability Discovery"),
+                        content: SystemPromptTemplates.capabilityDiscoveryNudgeLean(
+                            names: capabilityNames
+                        )
+                    )
+                )
+            }
+
             appendPluginCreatorSection(
                 composer: &composer,
                 snapshot: snapshot,

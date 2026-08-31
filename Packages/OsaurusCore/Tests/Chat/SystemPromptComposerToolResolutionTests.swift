@@ -360,7 +360,39 @@ struct SystemPromptComposerToolResolutionTests {
                 #expect(schemaNames.contains("capabilities"))
                 #expect(manifest.contains("tool/\(fixture.name)"))
                 #expect(sectionIds.contains("enabledManifest"))
+                #expect(sectionIds.contains("capabilityNudge"))
+                #expect(context.prompt.contains("call `capabilities` to search"))
+                #expect(context.prompt.contains("before using shell/package managers"))
             }
+        }
+    }
+
+    @Test("custom host-folder chat teaches capability recovery without a manifest")
+    func customHostFolderChatKeepsGatewayNudgeWithoutEnabledPlugins() async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            let folder = FolderContext(
+                rootPath: URL(
+                    fileURLWithPath: "/tmp/osaurus-capability-nudge-folder-\(UUID().uuidString)"
+                ),
+                projectType: .unknown,
+                tree: "./\nWorkbook.xlsx",
+                manifest: nil,
+                gitStatus: nil,
+                isGitRepo: false
+            )
+            FolderToolManager.shared.ensureFolderToolsRegistered()
+            defer { FolderToolManager.shared._unregisterAllForTesting() }
+
+            let context = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .hostFolder(folder),
+                model: "gpt-5"
+            )
+            let sectionIds = context.manifest.sections.map(\.id)
+
+            #expect(context.tools.contains { $0.function.name == "capabilities" })
+            #expect(sectionIds.contains("capabilityNudge"))
+            #expect(context.prompt.contains("before using shell/package managers"))
         }
     }
 

@@ -229,6 +229,22 @@ public enum SystemPromptTemplates {
         work around the gap or tell the user the capability is unavailable.
         """
 
+    /// Compact discovery contract for the lean custom-agent prompt. The lean
+    /// path intentionally omits the full grounding/tool guidance, but it must
+    /// still teach the stable capability gateway recovery sequence. Without
+    /// this rule, small local models see `capabilities` in the schema yet jump
+    /// straight to shell/package-manager work when a specialized tool is not
+    /// already visible.
+    public static func capabilityDiscoveryNudgeLean(
+        names: CapabilityToolNames = .gateway
+    ) -> String {
+        """
+        ## Discovering more tools
+
+        Your current tool list is a starting set, not the complete capability set. If a needed tool is absent, call `\(names.discover)` to search for what you need before using shell/package managers, inventing a tool name, or saying the capability is unavailable. Load only exact IDs returned by discovery with `\(names.load)`, then follow the returned schema and call the loaded tool directly.
+        """
+    }
+
     /// Sandbox-mode variant of the discovery nudge. Keeps the discover/load
     /// explanation and the "don't invent" line, then replaces the terminal
     /// "tell the user it is unavailable" sentence with an escalation ladder
