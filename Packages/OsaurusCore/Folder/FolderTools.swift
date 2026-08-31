@@ -2697,10 +2697,8 @@ struct FileSearchTool: OsaurusTool {
 
     let name = "file_search"
     let description =
-        "Search plain-text files in the working directory. With `target=\"content\"` (default) it finds text by "
+        "Search files in the working directory. With `target=\"content\"` (default) it finds text by "
         + "case-insensitive substring match, returning matching lines with file paths and line numbers. "
-        + "Content search does not extract PDF, Word, PowerPoint, or XLSX files; call `file_read` on "
-        + "those documents (with `sheet_name` for a specific XLSX worksheet). "
         + "With `target=\"files\"` it finds files by name (case-insensitive substring, e.g. `q4` matches "
         + "`q4_sales_report.xlsx`; use `*`/`?` for a glob like `*.swift`). "
         + "Example: {\"pattern\": \"TODO\", \"path\": \"src\", \"file_pattern\": \"*.py\"}"
@@ -3022,9 +3020,7 @@ struct FileSearchTool: OsaurusTool {
         guard count > 0 else { return nil }
         let mb = FolderToolHelpers.maxContentSearchFileBytes / (1024 * 1024)
         return
-            "\(count) file(s) skipped (binary or >\(mb)MB) — their contents were not searched. "
-            + "This does not prove the text is absent from skipped files; use `file_read` on PDF, "
-            + "Word, PowerPoint, or XLSX files (with `sheet_name` for XLSX)."
+            "\(count) file(s) skipped (binary or >\(mb)MB) — their contents were not searched."
     }
 
     /// Appended when a search stops at `maxEntriesVisited` rather than from

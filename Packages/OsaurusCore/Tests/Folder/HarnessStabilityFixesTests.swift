@@ -420,9 +420,6 @@ struct HarnessStabilityFixesTests {
         let text = EnvelopeAssertions.successText(result) ?? ""
         #expect(text.contains("No matches found"))
         #expect(text.contains("1 file(s) skipped"))
-        #expect(text.contains("does not prove the text is absent"))
-        #expect(text.contains("file_read"))
-        #expect(text.contains("sheet_name"))
         #expect(warnings(result).contains(where: { $0.contains("skipped") }))
     }
 
