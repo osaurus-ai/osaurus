@@ -1426,10 +1426,12 @@ struct RuntimePolicySourceTests {
         #expect(
             adapter.contains("post-generation disk-cache store")
                 && adapter.contains("for await event in upstream")
-                && adapter.contains(
-                    "if case .info = event {\n                        continuation.yield(event)\n                        continue\n                    }"
-                ),
-            "adapter must forward terminal info but keep draining vmlx until the upstream stream finishes, so the solo lease covers post-generation cache persistence"
+                && adapter.contains("terminalInfo = event")
+                && adapter.contains("await onEngineDrained()")
+                && adapter.contains("if let terminalInfo {")
+                && adapter.contains("continuation.yield(terminalInfo)")
+                && adapter.contains("continuation.finish()"),
+            "adapter must hold terminal info until vmlx, cache persistence, and allocator teardown have drained, so an immediate follow-up cannot overlap the prior allocator window"
         )
         #expect(
             adapter.contains("continuation.onTermination = { @Sendable _ in")

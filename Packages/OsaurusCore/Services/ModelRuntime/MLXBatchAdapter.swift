@@ -1475,7 +1475,8 @@ struct MLXBatchAdapter {
         nativeMTPRequested: Bool = false,
         nativeMTPLoadResolutionReason: String? = nil,
         runtime: RuntimeConfig,
-        maxBatchSize: Int
+        maxBatchSize: Int,
+        onEngineDrained: @Sendable @escaping () async -> Void = {}
     ) async throws -> PreparedStream {
         let trace = generation.ttftTrace
         trace?.mark("batch_prepare_start")
@@ -1801,10 +1802,17 @@ struct MLXBatchAdapter {
         // lease (which the next step waits on) releases right after.
         let producerSubmitAt = CFAbsoluteTimeGetCurrent()
         let producerTask = Task<Void, Never> {
+            var terminalInfo: Generation?
             await withTaskCancellationHandler {
                 for await event in upstream {
                     if case .info = event {
-                        continuation.yield(event)
+                        // `.info` is terminal to every public consumer. Hold
+                        // it until the upstream producer, disk/cache commit,
+                        // and allocator teardown have all completed; yielding
+                        // it here lets an immediate follow-up request enter
+                        // ModelRuntime before this request closes its allocator
+                        // window, suppressing the required inter-request clear.
+                        terminalInfo = event
                         continue
                     }
                     if !Task.isCancelled {
@@ -1837,6 +1845,17 @@ struct MLXBatchAdapter {
                     + "postSubmitMs=\(Int((CFAbsoluteTimeGetCurrent() - producerSubmitAt) * 1000)) "
                     + "(decode + post-gen disk store)"
             )
+            // This callback owns request-scoped allocator teardown. It must
+            // run before the wrapped stream finishes and before the solo
+            // lease is released: otherwise an immediately-following HTTP or
+            // chat request can increment the allocator-window refcount while
+            // this request is between engine drain and outer-task cleanup.
+            // That race suppresses the inter-request cache return and leaves
+            // the next D3 verifier competing with the prior working set.
+            await onEngineDrained()
+            if let terminalInfo {
+                continuation.yield(terminalInfo)
+            }
             continuation.finish()
             if let soloLease {
                 await soloLease.release()

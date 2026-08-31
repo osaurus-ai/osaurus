@@ -5072,7 +5072,12 @@ public actor ModelRuntime {
                 nativeMTPRequested: ServerRuntimeSettingsStore.snapshot().mtp.mode != .off,
                 nativeMTPLoadResolutionReason: holder.nativeMTPReason,
                 runtime: cfg,
-                maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
+                maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize,
+                onEngineDrained: { [weak self] in
+                    await self?.finishGenerationAllocatorWindowIfNeeded(
+                        usesGenerationAllocatorWindow
+                    )
+                }
             )
         } catch {
             if !parameters.suppressProgressUI {
@@ -5102,7 +5107,6 @@ public actor ModelRuntime {
             } onCancel: {
                 innerProducer.cancel()
             }
-            finishGenerationAllocatorWindowIfNeeded(usesGenerationAllocatorWindow)
             await ModelLease.shared.release(modelName)
             await self.scheduleIdleResidency(for: modelName)
             self.clearGenerationTask(id: genID)
