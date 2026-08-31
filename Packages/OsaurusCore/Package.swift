@@ -252,10 +252,11 @@ let package = Package(
         // #346 restores the architecture-scoped compiled GDN/MoE decode path
         // for that model and adds its real q5/q5/q4 affine expert layout.
         // vmlx-swift#376 heals dtype-misaligned safetensors containers before
-        // mmap with a byte-verified atomic replacement and advisory fallback.
+        // mmap with a byte-verified atomic replacement and advisory fallback;
+        // #378 preserves exact reusable boundaries across growing tool loops.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "1a2f4c17b45c57e86fa28c5a1ef2b41c4da94ffd"
+            revision: "a0c5b801050863c79ec6189bd6bf77de4c194bb3"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
