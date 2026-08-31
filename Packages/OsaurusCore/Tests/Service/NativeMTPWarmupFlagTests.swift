@@ -15,6 +15,15 @@ import Testing
 
 struct NativeMTPWarmupFlagTests {
 
+    @Test func loadWarmupPromptAndBudgetCanExerciseD3Verifier() {
+        // This is deliberately conservative across tokenizers: the prompt has
+        // more whitespace-delimited words than the adapter's token threshold,
+        // and the output budget covers at least two depth-three verifier calls.
+        let promptWords = MLXBatchAdapter.nativeMTPLoadWarmupPrompt.split(whereSeparator: \.isWhitespace)
+        #expect(promptWords.count >= MLXBatchAdapter.nativeMTPTinyPromptMinimumTokens)
+        #expect(MLXBatchAdapter.nativeMTPLoadWarmupVerifierTokens >= 2 * (3 + 1))
+    }
+
     @Test func consumeMarksModelWarmExactlyOnce() async {
         let registry = MLXBatchAdapter.Registry.shared
         let model = "warmup-flag-test-\(UUID().uuidString)"

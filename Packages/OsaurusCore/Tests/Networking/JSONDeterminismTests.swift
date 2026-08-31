@@ -112,8 +112,14 @@ struct JSONDeterminismTests {
         // confirm the canonical writing options apply.
         let request = Self.makeRequest(model: "gpt-5.2")
 
-        let a = try request.toCodexOpenResponsesRequest().toCodexOAuthPayloadData()
-        let b = try request.toCodexOpenResponsesRequest().toCodexOAuthPayloadData()
+        let a = try request.toCodexOpenResponsesRequest().toCodexOAuthPayloadData(
+            sessionId: nil,
+            usesResponsesLite: false
+        )
+        let b = try request.toCodexOpenResponsesRequest().toCodexOAuthPayloadData(
+            sessionId: nil,
+            usesResponsesLite: false
+        )
 
         #expect(a == b)
     }

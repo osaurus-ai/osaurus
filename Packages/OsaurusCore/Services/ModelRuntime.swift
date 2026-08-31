@@ -1798,17 +1798,23 @@ public actor ModelRuntime {
         // Native-MTP bundles historically ran their FIRST request in plain
         // autoregressive mode (the registry's cold-warmup rule), so the one
         // request most users judge a model by silently lost the speculative
-        // speedup. Pay that warmup here instead, with a hidden two-token
-        // greedy generation, so the first user request decodes with MTP.
-        // Failure is non-fatal: the request path's cold-warmup rule remains
-        // as the fallback.
+        // speedup. Pay both the AR bootstrap and a real verifier warmup here.
+        // Use the same bounded allocator window as a visible MTP request so
+        // warmup materializes the actual D3 working set, then retain only its
+        // most-recently-used portion under the persistent ceiling.
+        let warmupStrategy = Self.requestDraftStrategy(holder.draftStrategy)
+        let usesWarmupAllocatorWindow = beginGenerationAllocatorWindowIfNeeded(
+            holder: holder,
+            requestStrategy: warmupStrategy
+        )
         await MLXBatchAdapter.warmupNativeMTPAtLoad(
             modelName: name,
             container: holder.container,
-            draftStrategy: holder.draftStrategy,
+            draftStrategy: warmupStrategy,
             runtime: getConfig(),
             maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
         )
+        finishGenerationAllocatorWindowIfNeeded(usesWarmupAllocatorWindow)
         return holder
     }
 
@@ -5092,7 +5098,12 @@ public actor ModelRuntime {
                 nativeMTPRequested: ServerRuntimeSettingsStore.snapshot().mtp.mode != .off,
                 nativeMTPLoadResolutionReason: holder.nativeMTPReason,
                 runtime: cfg,
-                maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
+                maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize,
+                onEngineDrained: { [weak self] in
+                    await self?.finishGenerationAllocatorWindowIfNeeded(
+                        usesGenerationAllocatorWindow
+                    )
+                }
             )
         } catch {
             if !parameters.suppressProgressUI {

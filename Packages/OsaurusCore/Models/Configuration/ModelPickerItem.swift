@@ -7,6 +7,12 @@
 
 import Foundation
 
+enum ModelChatEndpointCapability: String, Codable, Sendable {
+    case supported
+    case unsupported
+    case unknown
+}
+
 /// Represents a model in the model picker with rich metadata
 struct ModelPickerItem: Identifiable, Hashable {
     /// The source/provider of the model
@@ -105,6 +111,10 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// model2vec, etc.). Set from `MLXModel.isEmbedding` for local items so
     /// `isLikelyChatCapable` can exclude them without re-reading config.json.
     let isEmbedding: Bool
+    /// Provider-scoped chat endpoint support. OpenAI's `/v1/models` listing
+    /// exposes only ids, so those rows remain explicitly unknown instead of a
+    /// successful listing being misrepresented as a chat capability claim.
+    let chatEndpointCapability: ModelChatEndpointCapability
 
     /// Description of the model (optional)
     let description: String?
@@ -156,6 +166,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         modelType: String? = nil,
         isMLXFormat: Bool = true,
         isEmbedding: Bool = false,
+        chatEndpointCapability: ModelChatEndpointCapability = .supported,
         description: String? = nil,
         inputPriceMicroPerMTok: Int64? = nil,
         outputPriceMicroPerMTok: Int64? = nil,
@@ -178,6 +189,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.modelType = modelType
         self.isMLXFormat = isMLXFormat
         self.isEmbedding = isEmbedding
+        self.chatEndpointCapability = chatEndpointCapability
         self.description = description
         self.inputPriceMicroPerMTok = inputPriceMicroPerMTok
         self.outputPriceMicroPerMTok = outputPriceMicroPerMTok
@@ -314,6 +326,7 @@ extension ModelPickerItem {
             displayName: (catalogDisplayName?.isEmpty == false ? catalogDisplayName : nil)
                 ?? displayName(fromModelId: modelId),
             source: .remote(providerName: providerName, providerId: providerId),
+            isVLM: metadata?.supportsImageInput ?? true,
             contextLength: metadata?.contextWindow,
             reasoningCapabilities: metadata.flatMap(ModelReasoningCapabilities.init(codex:))
         )
@@ -334,6 +347,9 @@ extension ModelPickerItem {
             id: modelId,
             displayName: displayName(fromModelId: modelId),
             source: .remote(providerName: providerName, providerId: providerId),
+            chatEndpointCapability: .unknown,
+            description:
+                "Chat compatibility is unknown because OpenAI /v1/models does not publish endpoint capabilities.",
             contextLength: officialOpenAIContextWindow(forModelId: modelId),
             reasoningCapabilities: isPublicGPT56ModelId(modelId) ? .officialOpenAIGPT56 : nil
         )
@@ -503,6 +519,7 @@ extension ModelPickerItem {
     /// picker is never left empty when models exist.
     var isLikelyChatCapable: Bool {
         if mediaModel != nil { return false }
+        if chatEndpointCapability == .unsupported { return false }
         switch source {
         case .foundation:
             // Foundation is Apple's on-device chat model.

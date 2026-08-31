@@ -122,7 +122,8 @@ struct RemoteReasoningPolicy {
                 tool_call_id: msg.tool_call_id,
                 reasoning_content: nil,
                 reasoning_item_id: msg.reasoning_item_id,
-                reasoning_encrypted: msg.reasoning_encrypted
+                reasoning_encrypted: msg.reasoning_encrypted,
+                responses_output_items: msg.responses_output_items
             )
         }
     }
@@ -146,7 +147,8 @@ struct RemoteReasoningPolicy {
                 tool_call_id: msg.tool_call_id,
                 reasoning_content: nil,
                 reasoning_item_id: msg.reasoning_item_id,
-                reasoning_encrypted: msg.reasoning_encrypted
+                reasoning_encrypted: msg.reasoning_encrypted,
+                responses_output_items: msg.responses_output_items
             )
         }
     }

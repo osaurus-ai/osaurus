@@ -299,6 +299,8 @@ struct ModelPickerItemCacheTests {
         #expect(sol.displayName == "gpt-5.6-sol")
         #expect(sol.reasoningCapabilities == .officialOpenAIGPT56)
         #expect(sol.reasoningCapabilities?.levels.map(\.id).contains("ultra") == false)
+        #expect(sol.chatEndpointCapability == .unknown)
+        #expect(sol.description?.contains("/v1/models") == true)
         // /v1/models never reports a window, so the official route falls back
         // to the documented per-family table instead of the generic default.
         #expect(sol.contextLength == 1_050_000)
@@ -311,6 +313,7 @@ struct ModelPickerItemCacheTests {
         // official contract, even for a GPT-5.6 slug.
         let proxySol = try #require(byId["proxy/gpt-5.6-sol"])
         #expect(proxySol.reasoningCapabilities == nil)
+        #expect(proxySol.chatEndpointCapability == .supported)
         // The static window table is scoped to api.openai.com only — a proxy
         // claiming an OpenAI slug must not inherit OpenAI's real window.
         #expect(proxySol.contextLength == nil)

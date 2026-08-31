@@ -88,3 +88,73 @@ the same vMLX and request-scoped lifecycle (before only the final bound formula
 changed) also completed one approved `get_current_time` call, its tool-result
 continuation, and a coherent follow-up turn. HTTP evidence is used here for the
 served-MTP contract; the rendered app inspection is the user-facing check.
+
+## Rejected QSA repin
+
+The later experimental vMLX pin
+`ca0195ba0f62f36a1d87c67258a59189f43e3e4a` is deliberately excluded from
+this release lane. In the same isolated Release app, cache-disabled back-to-back
+count-to-200 requests both used native MTP D3, accepted 173/173 draft groups,
+and produced the exact 691-token output, but decode fell from 68.5819 tok/s to
+27.9504 tok/s. Target-verifier time grew from 7.428 seconds to 22.039 seconds.
+Enabling disk L2 and prefix restore did not remove the regression. The QSA
+prefill work must recover sustained decode independently before it can replace
+the proven pin.
+
+A fresh build after restoring the proven `e025cd77` pin still measured
+68.6783 tok/s followed immediately by 22.8996 tok/s; verifier time grew from
+7.404 seconds to 27.296 seconds while D3 acceptance remained 173/173 with zero
+AR fallback. That result was an Osaurus completion-boundary race, not a vMLX
+decode or thermal regression: the public terminal `.info` reached HTTP/chat
+consumers before the engine producer and the outer request-scoped allocator
+window finished. An immediate follow-up could increment
+`admittedAllocatorGenerationCount` while the prior request was draining. The
+prior completion then correctly observed another nominally active allocator
+window and skipped its inter-request clear, even though the second request was
+still waiting for the one-slot engine lease. The slow rows retained roughly
+8–10 GiB more physical footprint and made the next D3 verifier compete with the
+prior working set.
+
+## Sequential completion-boundary fix
+
+The fix holds terminal `.info` inside `MLXBatchAdapter` until the upstream
+engine stream, disk/SSM commit, and request-scoped allocator cleanup have all
+completed. Only then is the terminal event yielded and the solo lease released.
+The allocator cleanup callback runs at that engine-owned boundary; the outer
+task still owns model-lease and residency cleanup. Cancellation continues to
+cancel and await the underlying solo producer before the same terminal fence.
+
+The matched direct control explicitly inserted Osaurus's synchronized full
+allocator clear between a warmup and measured request. It stayed fast rather
+than reproducing the regression: verifier time was 7.356 then 7.384 seconds,
+the measured row was 69.1 tok/s, D3 accepted all 173 groups, AR fallback was
+zero, and output was the exact 1–200 sequence. This exonerates the RAM-safety
+clear itself and isolates the app's early-terminal race.
+
+The exact no-sign Release app executable for the fixed integrated proof had
+SHA-256
+`ae135fe7bf626eaa383fb970d4f82bb293bfc44d74c76298c226e28b5f0bb40e`
+and retained vMLX `e025cd77c4adf7f1813d157ea0fbb6514f4e86f4`. On the real
+OpenAI-compatible API, two immediate count-to-200 requests measured 68.9787
+and 68.5197 tok/s. Both produced 691 tokens with normal `stop`, byte-identical
+exact 1–200 output, native MTP D3, 173/173 accepted D3 groups, and zero AR
+fallback. The prior failing second-request value was 22.8996 tok/s.
+
+A chat-shaped multi-turn request containing the first 1–200 answer and asking
+to continue from 201 through 400 produced the exact continuation at 65.9146
+tok/s. Runtime telemetry reported 759 processed prompt tokens at 1,724.0
+prompt tok/s, 799 generated tokens, D3 active depth 3, 200/200 accepted D3
+groups, and zero AR fallback. After that row current physical footprint was
+52,854,624,240 bytes; after the two immediate served rows it was
+52,821,790,320 bytes with a 55,264,481,360-byte lifetime peak. The app returned
+to 0% CPU, remained healthy, stopped cleanly, and created no crash report.
+
+Raw fixed-proof artifacts:
+
+```text
+/private/tmp/osaurus-qwen38-qsa-fixed/direct-e025-16g-with-app-clear.log
+/private/tmp/osaurus-qwen38-qsa-fixed/mtpdrain-api-row1.json
+/private/tmp/osaurus-qwen38-qsa-fixed/mtpdrain-api-row2.json
+/private/tmp/osaurus-qwen38-qsa-fixed/mtpdrain-api-multiturn.json
+/tmp/osaurus-prefill-debug.log
+```

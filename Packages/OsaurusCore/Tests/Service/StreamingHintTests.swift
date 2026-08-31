@@ -177,6 +177,18 @@ struct StreamingHintTests {
         #expect(abs((decoded?.prefillTokensPerSecond ?? 0) - 412.5) < 0.01)
     }
 
+    @Test func statsHint_roundTripsProviderInputAndCachedTokens() {
+        let encoded = StreamingStatsHint.encode(
+            tokenCount: 32,
+            tokensPerSecond: 0,
+            inputTokenCount: 1_024,
+            cachedInputTokenCount: 768
+        )
+        let decoded = StreamingStatsHint.decode(encoded)
+        #expect(decoded?.inputTokenCount == 1_024)
+        #expect(decoded?.cachedInputTokenCount == 768)
+    }
+
     @Test func statsHint_omitsPrefillFlagWhenAbsentOrNonPositive() {
         // nil and 0/negative prefill keep the compact 2-field wire so the
         // healthy bytes are unchanged and old decoders see no new flag.

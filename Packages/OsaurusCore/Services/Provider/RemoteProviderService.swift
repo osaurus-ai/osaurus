@@ -5,6 +5,7 @@
 //  Service for proxying requests to remote OpenAI-compatible API providers.
 //
 
+import CryptoKit
 import Foundation
 import os
 
@@ -387,9 +388,47 @@ public actor RemoteProviderService: ToolCapableService {
     /// media for the Router wire (non-vision upstream adapters reject
     /// array-form user content). Empty for non-Router providers.
     private var routerVisionModelIds: Set<String> = []
+    /// Router models whose live upstream rejected image content despite the
+    /// signed Router catalog advertising vision support. Keep this narrowly
+    /// scoped quarantine for the service lifetime so stale Router metadata
+    /// cannot poison every later request with the same historical image.
+    private var routerRejectedImageInputModelIds: Set<String> = []
 
     public func updateOsaurusRouterVisionModels(_ modelIds: Set<String>) {
         routerVisionModelIds = modelIds
+    }
+
+    func recordRouterImageInputRejection(for modelId: String) {
+        routerRejectedImageInputModelIds.insert(modelId)
+    }
+
+    func routerModelSupportsImageInput(_ modelId: String) -> Bool {
+        routerVisionModelIds.contains(modelId)
+            && !routerRejectedImageInputModelIds.contains(modelId)
+    }
+
+    func routerWireCompatibleMessagesForCurrentCapabilities(
+        _ messages: [ChatMessage],
+        modelId: String
+    ) -> [ChatMessage] {
+        Self.routerWireCompatibleMessages(
+            messages,
+            modelSupportsImageInput: routerModelSupportsImageInput(modelId)
+        )
+    }
+
+    func codexMessagesForCurrentCapabilities(
+        _ messages: [ChatMessage],
+        modelId: String
+    ) -> [ChatMessage] {
+        guard
+            let metadata = OpenAICodexOAuthService.modelMetadata(forSlug: modelId),
+            !metadata.supportsImageInput
+        else { return messages }
+        return Self.messagesFlatteningRejectedImageInput(
+            messages,
+            routeName: "ChatGPT OAuth catalog"
+        )
     }
 
     /// Get the prefixed model names for this provider
@@ -1391,6 +1430,11 @@ public actor RemoteProviderService: ToolCapableService {
         /// been yielded from the streaming `output_item.done` path, so the
         /// `response.completed` fallback doesn't re-emit the same blob.
         var didCaptureReasoning: Bool = false
+        /// Canonical item JSON already emitted through
+        /// `StreamingResponsesOutputItemHint`, used to dedupe the
+        /// `response.completed` fallback against `output_item.done`.
+        var capturedResponsesOutputItemFingerprints: Set<String> = []
+        var capturedResponsesOutputItemIDs: Set<String> = []
 
         /// Yielded text content. Only used when `trackContent` is `true`
         /// (streamWithTools, for the inline tool-call detection fallback).
@@ -1398,6 +1442,10 @@ public actor RemoteProviderService: ToolCapableService {
         var yieldedTextCount: Int = 0
         var yieldedTextBytes: Int = 0
         var yieldedReasoningCount: Int = 0
+        /// Responses safety refusal text is accumulated on its dedicated rail
+        /// and surfaced as an actionable terminal error, never as a silent
+        /// empty completion or ordinary assistant answer.
+        var accumulatedRefusal: String = ""
 
         /// Router-only low-volume diagnostics. Nil for all other providers so
         /// the shared parser path stays cheap.
@@ -1425,6 +1473,7 @@ public actor RemoteProviderService: ToolCapableService {
         /// comes from the rolling observer, never this). `nil` until a usage
         /// object arrives, so providers that don't send one emit no hint.
         var providerUsage: Usage?
+        var providerCachedInputTokens: Int?
 
         let stopSequences: [String]
         let trackContent: Bool
@@ -1790,7 +1839,9 @@ public actor RemoteProviderService: ToolCapableService {
     /// reason `idempotency_key` is router-only), and Gemini/Anthropic have
     /// their own caching (implicit / `cache_control`).
     static func supportsPromptCacheKey(providerType: RemoteProviderType, host: String) -> Bool {
-        guard providerType == .openaiLegacy else { return false }
+        guard providerType == .openaiLegacy || providerType == .openResponses else {
+            return false
+        }
         let normalizedHost = host.lowercased()
         return normalizedHost == "api.openai.com" || normalizedHost.hasSuffix(".openai.com")
     }
@@ -2068,7 +2119,7 @@ public actor RemoteProviderService: ToolCapableService {
         return .continue
     }
 
-    private static func handleOpenResponsesEvent(
+    static func handleOpenResponsesEvent(
         _ jsonData: Data,
         state: inout StreamingState,
         yield: (String) -> Void
@@ -2101,6 +2152,28 @@ public actor RemoteProviderService: ToolCapableService {
             {
                 yield(StreamingReasoningHint.encode(delta))
             }
+
+        case "response.refusal.delta":
+            if let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                let delta = root["delta"] as? String
+            {
+                state.accumulatedRefusal += delta
+            }
+
+        case "response.refusal.done":
+            if let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                let refusal = root["refusal"] as? String, !refusal.isEmpty
+            {
+                state.accumulatedRefusal = refusal
+            }
+            return .finishWithError(
+                RemoteProviderServiceError.requestFailed(
+                    "OpenAI refused this request: "
+                        + (state.accumulatedRefusal.isEmpty
+                            ? "no explanation provided by the provider"
+                            : state.accumulatedRefusal)
+                )
+            )
 
         case "response.output_item.added":
             if let addedEvent = try? state.decoder.decode(OutputItemAddedEvent.self, from: jsonData),
@@ -2145,6 +2218,15 @@ public actor RemoteProviderService: ToolCapableService {
             }
 
         case "response.output_item.done":
+            // Preserve every completed provider-native Item as generic JSON.
+            // This happens before typed decoding so new/unknown item kinds and
+            // assistant `phase` cannot be lost by an older local schema.
+            if let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                let item = root["item"]
+            {
+                captureResponseOutputItem(item, state: &state, yield: yield)
+            }
+
             // Capture the encrypted reasoning item untyped. The typed
             // `OpenResponsesReasoningItem` requires `status`/`summary`, which
             // gpt-5.5/Codex omits on the reasoning item, so a typed decode
@@ -2183,6 +2265,22 @@ public actor RemoteProviderService: ToolCapableService {
 
         case "response.completed":
             state.lastFinishReason = "completed"
+            captureOpenResponsesUsage(jsonData, state: &state)
+            captureResponseOutputItemsFromCompleted(
+                jsonData,
+                state: &state,
+                yield: yield
+            )
+            if state.accumulatedRefusal.isEmpty {
+                state.accumulatedRefusal = openResponsesRefusal(from: jsonData) ?? ""
+            }
+            if !state.accumulatedRefusal.isEmpty {
+                return .finishWithError(
+                    RemoteProviderServiceError.requestFailed(
+                        "OpenAI refused this request: \(state.accumulatedRefusal)"
+                    )
+                )
+            }
             // Defensive fallback: some providers attach
             // `reasoning.encrypted_content` only to the final `response.output`
             // array rather than a streaming `output_item.done`. No-op when we
@@ -2201,10 +2299,139 @@ public actor RemoteProviderService: ToolCapableService {
             case .truncated(let err): return .finishWithError(err)
             }
 
+        case "response.failed", "error":
+            let message =
+                openResponsesErrorMessage(from: jsonData)
+                ?? "The provider terminated the Responses stream without an error message."
+            return .finishWithError(
+                RemoteProviderServiceError.requestFailed(
+                    "OpenAI Responses stream failed: \(message)"
+                )
+            )
+
+        case "response.incomplete":
+            state.lastFinishReason = "length"
+            captureOpenResponsesUsage(jsonData, state: &state)
+            if !state.accumulatedToolCalls.isEmpty {
+                return .finishWithError(
+                    outputLimitToolCallError(
+                        from: state.accumulatedToolCalls,
+                        finishMarker: "response.incomplete"
+                    )
+                )
+            }
+            return .finishNormal
+
         default:
             break
         }
         return .continue
+    }
+
+    private static func captureResponseOutputItem(
+        _ item: Any,
+        state: inout StreamingState,
+        yield: (String) -> Void
+    ) {
+        if let object = item as? [String: Any],
+            let id = object["id"] as? String, !id.isEmpty,
+            !state.capturedResponsesOutputItemIDs.insert(id).inserted
+        {
+            return
+        }
+        guard JSONSerialization.isValidJSONObject(item),
+            let data = try? JSONSerialization.data(
+                withJSONObject: item,
+                options: .osaurusCanonical
+            )
+        else { return }
+        let fingerprint = String(decoding: data, as: UTF8.self)
+        guard state.capturedResponsesOutputItemFingerprints.insert(fingerprint).inserted,
+            let value = try? JSONDecoder().decode(JSONValue.self, from: data)
+        else { return }
+        yield(StreamingResponsesOutputItemHint.encode(value))
+    }
+
+    private static func captureResponseOutputItemsFromCompleted(
+        _ jsonData: Data,
+        state: inout StreamingState,
+        yield: (String) -> Void
+    ) {
+        guard let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+            let response = root["response"] as? [String: Any],
+            let output = response["output"] as? [Any]
+        else { return }
+        for (index, item) in output.enumerated() {
+            captureResponseOutputItem(item, state: &state, yield: yield)
+            guard let object = item as? [String: Any],
+                (object["type"] as? String) == "function_call",
+                let callId = object["call_id"] as? String,
+                let name = object["name"] as? String
+            else { continue }
+            let arguments = object["arguments"] as? String ?? ""
+            state.accumulatedToolCalls[index] = (
+                id: callId,
+                name: name,
+                args: arguments,
+                thoughtSignature: nil
+            )
+        }
+    }
+
+    private static func openResponsesErrorMessage(from jsonData: Data) -> String? {
+        guard let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+            return nil
+        }
+        if let message = root["message"] as? String, !message.isEmpty { return message }
+        if let error = root["error"] as? [String: Any],
+            let message = error["message"] as? String, !message.isEmpty
+        {
+            return message
+        }
+        if let response = root["response"] as? [String: Any],
+            let error = response["error"] as? [String: Any],
+            let message = error["message"] as? String, !message.isEmpty
+        {
+            return message
+        }
+        return nil
+    }
+
+    private static func openResponsesRefusal(from jsonData: Data) -> String? {
+        guard let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+            let response = root["response"] as? [String: Any],
+            let output = response["output"] as? [[String: Any]]
+        else { return nil }
+        for item in output {
+            guard let content = item["content"] as? [[String: Any]] else { continue }
+            for part in content where (part["type"] as? String) == "refusal" {
+                if let refusal = part["refusal"] as? String, !refusal.isEmpty {
+                    return refusal
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func captureOpenResponsesUsage(
+        _ jsonData: Data,
+        state: inout StreamingState
+    ) {
+        guard let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+            let response = root["response"] as? [String: Any],
+            let usage = response["usage"] as? [String: Any],
+            let inputTokens = usage["input_tokens"] as? Int,
+            let outputTokens = usage["output_tokens"] as? Int
+        else { return }
+        let totalTokens = usage["total_tokens"] as? Int ?? inputTokens + outputTokens
+        state.providerUsage = Usage(
+            prompt_tokens: inputTokens,
+            completion_tokens: outputTokens,
+            total_tokens: totalTokens
+        )
+        if let details = usage["input_tokens_details"] as? [String: Any] {
+            state.providerCachedInputTokens = details["cached_tokens"] as? Int
+        }
     }
 
     /// Fallback reasoning capture from a `response.completed` payload. Parsed
@@ -2299,7 +2526,9 @@ public actor RemoteProviderService: ToolCapableService {
                 StreamingStatsHint.encode(
                     tokenCount: usage.completion_tokens,
                     tokensPerSecond: usage.tokens_per_second ?? 0,
-                    stopReason: state.lastFinishReason
+                    stopReason: state.lastFinishReason,
+                    inputTokenCount: usage.prompt_tokens,
+                    cachedInputTokenCount: state.providerCachedInputTokens
                 )
             )
         }
@@ -2411,6 +2640,9 @@ public actor RemoteProviderService: ToolCapableService {
                 providerType: providerType
             )
             : nil
+        let recoverableRequestContainsImageInput =
+            providerType == .osaurusRouter
+            && request.messages.contains { !$0.imageUrls.isEmpty }
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
@@ -2543,6 +2775,16 @@ public actor RemoteProviderService: ToolCapableService {
                         if let rateLimited = RemoteProviderServiceError.rateLimited(from: httpResponse) {
                             continuation.finish(throwing: rateLimited)
                             return
+                        }
+                        // Capability acceptance can drift from the live Router
+                        // upstream while its signed metadata is briefly stale.
+                        // Quarantine image input only for that Router model. The
+                        // next turn truthfully flattens historical images
+                        // instead of replaying the same 400 forever (#2559).
+                        if recoverableRequestContainsImageInput,
+                            Self.isUserMediaContentShapeRejection(errorData)
+                        {
+                            await self.recordRouterImageInputRejection(for: request.model)
                         }
                         // Parse the error envelope instead of dumping the raw
                         // JSON body into chat; known upstream rejections map
@@ -3027,7 +3269,7 @@ public actor RemoteProviderService: ToolCapableService {
     }
 
     /// Identity and affinity headers required by Codex Responses Lite.
-    /// `version` and the internal Lite marker match codex-rs 0.144's wire
+    /// `version` and the internal Lite marker match the pinned codex-rs wire
     /// contract. Legacy Codex models must not receive these headers.
     static func codexResponsesLiteHeaders(sessionId: String) -> [String: String] {
         [
@@ -3273,13 +3515,14 @@ public actor RemoteProviderService: ToolCapableService {
             configuredProviderType: provider.providerType,
             request: request
         )
-        let codexResponsesLiteSessionId: String?
-        if requestProviderType == .openAICodex,
-            OpenAICodexOAuthService.usesResponsesLite(modelId: request.model)
-        {
-            codexResponsesLiteSessionId = self.codexResponsesLiteSessionId(for: request.codexSessionKey)
+        let usesCodexResponsesLite =
+            requestProviderType == .openAICodex
+            && OpenAICodexOAuthService.usesResponsesLite(modelId: request.model)
+        let codexSessionId: String?
+        if requestProviderType == .openAICodex {
+            codexSessionId = self.codexResponsesLiteSessionId(for: request.codexSessionKey)
         } else {
-            codexResponsesLiteSessionId = nil
+            codexSessionId = nil
         }
 
         // Mode 2 hard guard (defense-in-depth): a remote-agent run must only
@@ -3399,9 +3642,9 @@ public actor RemoteProviderService: ToolCapableService {
             headers = [:]
         } else if provider.authType == .openAICodexOAuth {
             let oauthHeaders = try codexOAuthHeaders()
-            if let codexResponsesLiteSessionId {
+            if usesCodexResponsesLite, let codexSessionId {
                 headers = oauthHeaders.merging(
-                    Self.codexResponsesLiteHeaders(sessionId: codexResponsesLiteSessionId)
+                    Self.codexResponsesLiteHeaders(sessionId: codexSessionId)
                 ) { _, lite in lite }
             } else {
                 headers = oauthHeaders
@@ -3435,11 +3678,17 @@ public actor RemoteProviderService: ToolCapableService {
             let anthropicRequest = request.toAnthropicRequest()
             bodyData = try encoder.encode(anthropicRequest)
         case .openResponses:
-            let openResponsesRequest = request.toOpenResponsesRequest()
+            let openResponsesRequest = try request.toOpenResponsesRequest()
             bodyData = try encoder.encode(openResponsesRequest)
         case .openAICodex:
-            bodyData = try request.toCodexOpenResponsesRequest().toCodexOAuthPayloadData(
-                responsesLiteSessionId: codexResponsesLiteSessionId
+            var outbound = request
+            outbound.messages = codexMessagesForCurrentCapabilities(
+                outbound.messages,
+                modelId: outbound.model
+            )
+            bodyData = try outbound.toCodexOpenResponsesRequest().toCodexOAuthPayloadData(
+                sessionId: codexSessionId,
+                usesResponsesLite: usesCodexResponsesLite
             )
         case .gemini:
             try Self.rejectDroppedMediaInputs(in: request.messages, wireName: "Gemini")
@@ -3456,9 +3705,9 @@ public actor RemoteProviderService: ToolCapableService {
                 model: request.model
             ).transformOutbound(outbound.messages)
             if requestProviderType == .osaurusRouter {
-                outbound.messages = Self.routerWireCompatibleMessages(
+                outbound.messages = routerWireCompatibleMessagesForCurrentCapabilities(
                     outbound.messages,
-                    modelSupportsImageInput: routerVisionModelIds.contains(request.model)
+                    modelId: request.model
                 )
                 outbound.clamp_to_balance = false
             } else {
@@ -3569,7 +3818,8 @@ public actor RemoteProviderService: ToolCapableService {
                     tool_call_id: base.tool_call_id,
                     reasoning_content: base.reasoning_content,
                     reasoning_item_id: base.reasoning_item_id,
-                    reasoning_encrypted: base.reasoning_encrypted
+                    reasoning_encrypted: base.reasoning_encrypted,
+                    responses_output_items: base.responses_output_items
                 )
             } else {
                 indexByCallId[callId] = result.count
@@ -3682,7 +3932,8 @@ public actor RemoteProviderService: ToolCapableService {
                 tool_call_id: source.tool_call_id,
                 reasoning_content: source.reasoning_content,
                 reasoning_item_id: source.reasoning_item_id,
-                reasoning_encrypted: source.reasoning_encrypted
+                reasoning_encrypted: source.reasoning_encrypted,
+                responses_output_items: source.responses_output_items
             )
         }
 
@@ -3846,7 +4097,8 @@ public actor RemoteProviderService: ToolCapableService {
             tool_call_id: message.tool_call_id,
             reasoning_content: message.reasoning_content,
             reasoning_item_id: message.reasoning_item_id,
-            reasoning_encrypted: message.reasoning_encrypted
+            reasoning_encrypted: message.reasoning_encrypted,
+            responses_output_items: message.responses_output_items
         )
     }
 
@@ -3911,6 +4163,33 @@ public actor RemoteProviderService: ToolCapableService {
         return ChatMessage(role: message.role, content: flattened)
     }
 
+    /// Once a route has explicitly rejected image-bearing user content for a
+    /// model, collapse those historical turns to text on later requests. The
+    /// visible notice makes the removal truthful while preserving the user's
+    /// text and all non-user protocol messages exactly.
+    static func messagesFlatteningRejectedImageInput(
+        _ messages: [ChatMessage],
+        routeName: String
+    ) -> [ChatMessage] {
+        messages.map { message in
+            guard message.role.lowercased() == "user", !message.imageUrls.isEmpty else {
+                return message
+            }
+            let notice = "[Osaurus: image removed — rejected by \(routeName)]"
+            let base = hasMeaningfulText(message.content) ? (message.content ?? "") : ""
+            let flattened = base.isEmpty ? notice : base + "\n\n" + notice
+            return ChatMessage(
+                role: message.role,
+                content: flattened,
+                tool_calls: message.tool_calls,
+                tool_call_id: message.tool_call_id,
+                reasoning_content: message.reasoning_content,
+                reasoning_item_id: message.reasoning_item_id,
+                reasoning_encrypted: message.reasoning_encrypted
+            )
+        }
+    }
+
     /// "1 image", "2 images and 1 audio attachment" — compact removal summary
     /// for the wire notice and log line.
     private static func removedMediaSummary(_ kinds: [String]) -> String {
@@ -3969,6 +4248,13 @@ public actor RemoteProviderService: ToolCapableService {
 
         case .openResponses, .openAICodex:
             let response = try JSONDecoder().decode(OpenResponsesResponse.self, from: data)
+            if response.status == .failed {
+                throw RemoteProviderServiceError.requestFailed(
+                    "OpenAI Responses request failed: "
+                        + (response.error?.message
+                            ?? "no error message was provided")
+                )
+            }
             var textContent = ""
             var toolCalls: [ToolCall] = []
 
@@ -3976,8 +4262,13 @@ public actor RemoteProviderService: ToolCapableService {
                 switch item {
                 case .message(let message):
                     for content in message.content {
-                        if case .outputText(let text) = content {
+                        switch content {
+                        case .outputText(let text):
                             textContent += text.text
+                        case .refusal(let refusal):
+                            throw RemoteProviderServiceError.requestFailed(
+                                "OpenAI refused this request: \(refusal.refusal)"
+                            )
                         }
                     }
                 case .functionCall(let funcCall):
@@ -4892,8 +5183,73 @@ struct RemoteChatRequest: Encodable {
         object["required"] = filtered.isEmpty ? nil : .array(filtered)
     }
 
+    /// Stable provider item id derived from a logical call/prefix identity.
+    /// Random ids make an otherwise byte-identical conversation miss remote
+    /// prompt caches on every retry and follow-up.
+    static func stableResponsesItemID(prefix: String, source: String) -> String {
+        let digest = SHA256.hash(data: Data(source.utf8))
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        return prefix + String(hex.prefix(32))
+    }
+
+    /// OpenAI strict function schemas require every object property to be
+    /// listed in `required` and `additionalProperties` to be false, recursively.
+    /// Return false for incomplete schemas so the request explicitly chooses
+    /// best-effort validation rather than claiming a contract it cannot honor.
+    static func isStrictResponsesToolSchema(_ schema: JSONValue?) -> Bool {
+        guard let schema else { return false }
+
+        func isStrict(_ value: JSONValue) -> Bool {
+            guard case .object(let object) = value else { return true }
+
+            let isObjectType: Bool = {
+                guard case .string(let type) = object["type"] else { return false }
+                return type == "object"
+            }()
+            if isObjectType || object["properties"] != nil {
+                guard case .bool(false) = object["additionalProperties"] else {
+                    return false
+                }
+                let properties: [String: JSONValue]
+                if case .object(let declared) = object["properties"] {
+                    properties = declared
+                } else {
+                    properties = [:]
+                }
+                let requiredValues: [JSONValue]
+                if case .array(let declared) = object["required"] {
+                    requiredValues = declared
+                } else {
+                    requiredValues = []
+                }
+                let required = Set(requiredValues.compactMap { value -> String? in
+                    guard case .string(let name) = value else { return nil }
+                    return name
+                })
+                guard required == Set(properties.keys),
+                    properties.values.allSatisfy(isStrict)
+                else { return false }
+            }
+
+            if let items = object["items"], !isStrict(items) { return false }
+            for key in ["anyOf", "oneOf", "allOf"] {
+                if case .array(let alternatives) = object[key],
+                    !alternatives.allSatisfy(isStrict)
+                {
+                    return false
+                }
+            }
+            return true
+        }
+
+        guard case .object(let root) = schema,
+            case .string("object") = root["type"]
+        else { return false }
+        return isStrict(schema)
+    }
+
     /// Convert to Open Responses API request format
-    func toOpenResponsesRequest(alwaysUseInputItems: Bool = false) -> OpenResponsesRequest {
+    func toOpenResponsesRequest(alwaysUseInputItems: Bool = false) throws -> OpenResponsesRequest {
         var inputItems: [OpenResponsesInputItem] = []
         var instructions: String?
 
@@ -4918,16 +5274,51 @@ struct RemoteChatRequest: Encodable {
                     }
                 }
 
+            case "developer":
+                if let content = msg.content {
+                    inputItems.append(
+                        .message(
+                            OpenResponsesMessageItem(
+                                role: "developer",
+                                content: .text(content)
+                            )
+                        )
+                    )
+                }
+
             case "user":
                 // User messages become message input items. Image content
                 // parts translate to `input_image` parts (the Responses API
-                // accepts data URIs in `image_url`); reading only the flat
-                // `content` string dropped attached images, and dropped the
-                // whole message when the user sent an image with no text.
-                let imageParts: [OpenResponsesContentPart] = msg.imageUrls.map {
-                    .inputImage(OpenResponsesInputImagePart(imageUrl: $0))
+                // accepts data URIs in `image_url`). Preserve each image's
+                // requested `detail`; silently dropping audio/video would lie
+                // about what the model received, so reject those modalities.
+                var mediaParts: [OpenResponsesContentPart] = []
+                if let parts = msg.contentParts {
+                    for part in parts {
+                        switch part {
+                        case .text:
+                            continue
+                        case .imageUrl(let url, let detail):
+                            mediaParts.append(
+                                .inputImage(
+                                    OpenResponsesInputImagePart(
+                                        imageUrl: url,
+                                        detail: detail
+                                    )
+                                )
+                            )
+                        case .audioInput:
+                            throw RemoteProviderServiceError.unsupportedParameter(
+                                "OpenAI Responses audio input is not implemented by this client. Remove the audio attachment and retry."
+                            )
+                        case .videoUrl:
+                            throw RemoteProviderServiceError.unsupportedParameter(
+                                "OpenAI Responses video input is not supported. Remove the video attachment and retry."
+                            )
+                        }
+                    }
                 }
-                if imageParts.isEmpty {
+                if mediaParts.isEmpty {
                     if let content = msg.content {
                         let msgContent = OpenResponsesMessageContent.text(content)
                         inputItems.append(.message(OpenResponsesMessageItem(role: "user", content: msgContent)))
@@ -4937,13 +5328,20 @@ struct RemoteChatRequest: Encodable {
                     if let content = msg.content, RemoteProviderService.hasMeaningfulText(content) {
                         parts.append(.inputText(OpenResponsesInputTextPart(text: content)))
                     }
-                    parts.append(contentsOf: imageParts)
+                    parts.append(contentsOf: mediaParts)
                     inputItems.append(
                         .message(OpenResponsesMessageItem(role: "user", content: .parts(parts)))
                     )
                 }
 
             case "assistant":
+                // Prefer the provider-authored output Items when available.
+                // This is the only lossless way to retain assistant phase,
+                // item ids, and item types across a stateless follow-up.
+                if let nativeItems = msg.responses_output_items, !nativeItems.isEmpty {
+                    inputItems.append(contentsOf: nativeItems.map(OpenResponsesInputItem.raw))
+                    continue
+                }
                 if let toolCalls = msg.tool_calls, !toolCalls.isEmpty {
                     // Emit any text content first
                     if let content = msg.content, !content.isEmpty {
@@ -4967,8 +5365,10 @@ struct RemoteChatRequest: Encodable {
                     // Each tool call becomes a function_call input item so the following
                     // function_call_output items have a matching call_id to reference.
                     for tc in toolCalls {
-                        let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
-                        let itemId = "fc_" + String(raw.prefix(24))
+                        let itemId = Self.stableResponsesItemID(
+                            prefix: "fc_",
+                            source: tc.id
+                        )
                         inputItems.append(
                             .functionCall(
                                 OpenResponsesFunctionCall(
@@ -5032,7 +5432,10 @@ struct RemoteChatRequest: Encodable {
                 OpenResponsesTool(
                     name: tool.function.name,
                     description: tool.function.description,
-                    parameters: tool.function.parameters
+                    parameters: tool.function.parameters,
+                    strict: Self.isStrictResponsesToolSchema(
+                        tool.function.parameters
+                    )
                 )
             }
         }
@@ -5067,8 +5470,19 @@ struct RemoteChatRequest: Encodable {
 
         let reasoning =
             reasoning_effort
-            .map { OpenResponsesReasoningConfig(effort: $0, summary: "auto") }
+            .map {
+                OpenResponsesReasoningConfig(
+                    effort: $0,
+                    summary: "auto"
+                )
+            }
         let isReasoningModel = OpenAIReasoningProfile.matches(modelId: model)
+        let responseText =
+            response_format?.type == "json_object"
+            ? OpenResponsesTextConfig(
+                format: OpenResponsesTextFormat(type: "json_object")
+            )
+            : nil
 
         return OpenResponsesRequest(
             model: model,
@@ -5082,17 +5496,25 @@ struct RemoteChatRequest: Encodable {
             instructions: instructions,
             previous_response_id: nil,
             metadata: nil,
-            reasoning: reasoning
+            reasoning: reasoning,
+            store: false,
+            include: ["reasoning.encrypted_content"],
+            parallel_tool_calls: openResponsesTools?.isEmpty == false ? true : nil,
+            prompt_cache_key: promptCacheKey,
+            text: responseText
         )
     }
 
-    func toCodexOpenResponsesRequest() -> OpenResponsesRequest {
-        toOpenResponsesRequest(alwaysUseInputItems: true)
+    func toCodexOpenResponsesRequest() throws -> OpenResponsesRequest {
+        try toOpenResponsesRequest(alwaysUseInputItems: true)
     }
 }
 
 extension OpenResponsesRequest {
-    func toCodexOAuthPayloadData(responsesLiteSessionId: String? = nil) throws -> Data {
+    func toCodexOAuthPayloadData(
+        sessionId: String?,
+        usesResponsesLite: Bool
+    ) throws -> Data {
         let encoded = try JSONEncoder.osaurusCanonical().encode(self)
         guard var object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] else {
             return encoded
@@ -5102,7 +5524,39 @@ extension OpenResponsesRequest {
         object["include"] = ["reasoning.encrypted_content"]
         object.removeValue(forKey: "max_output_tokens")
 
-        if let responsesLiteSessionId {
+        if let sessionId {
+            object["prompt_cache_key"] = sessionId
+            let turnMetadata = try JSONSerialization.data(
+                withJSONObject: [
+                    "session_id": sessionId,
+                    "thread_id": sessionId,
+                    "request_kind": "turn",
+                ],
+                options: .osaurusCanonical
+            )
+            var clientMetadata = object["client_metadata"] as? [String: Any] ?? [:]
+            clientMetadata["x-codex-turn-metadata"] = String(
+                decoding: turnMetadata,
+                as: UTF8.self
+            )
+            object["client_metadata"] = clientMetadata
+        }
+
+        if var reasoning = object["reasoning"] as? [String: Any] {
+            reasoning["context"] = "all_turns"
+            object["reasoning"] = reasoning
+        }
+
+        if usesResponsesLite {
+            guard let sessionId else {
+                throw EncodingError.invalidValue(
+                    "missing session id",
+                    .init(
+                        codingPath: [],
+                        debugDescription: "Codex Responses Lite requires a stable session id"
+                    )
+                )
+            }
             guard var input = object["input"] as? [Any] else {
                 throw EncodingError.invalidValue(
                     object["input"] as Any,
@@ -5115,9 +5569,34 @@ extension OpenResponsesRequest {
 
             // Responses Lite carries tool declarations and base instructions
             // as developer input items rather than top-level fields.
-            let tools = object["tools"] as? [Any] ?? []
+            let functionTools = (object["tools"] as? [[String: Any]] ?? []).map { tool in
+                var nested = tool
+                nested.removeValue(forKey: "type")
+                return nested
+            }
+            let tools: [Any] =
+                functionTools.isEmpty
+                ? []
+                : [
+                    [
+                        "type": "namespace",
+                        "name": "functions",
+                        "description": "",
+                        "tools": functionTools,
+                    ] as [String: Any]
+                ]
+            let toolsData = try JSONSerialization.data(
+                withJSONObject: tools,
+                options: .osaurusCanonical
+            )
+            let additionalToolsID = RemoteChatRequest.stableResponsesItemID(
+                prefix: "at_",
+                source: sessionId + "|additional-tools|"
+                    + String(decoding: toolsData, as: UTF8.self)
+            )
             var prefix: [Any] = [
                 [
+                    "id": additionalToolsID,
                     "type": "additional_tools",
                     "role": "developer",
                     "tools": tools,
@@ -5125,6 +5604,10 @@ extension OpenResponsesRequest {
             ]
             if let instructions = object["instructions"] as? String, !instructions.isEmpty {
                 prefix.append([
+                    "id": RemoteChatRequest.stableResponsesItemID(
+                        prefix: "msg_",
+                        source: sessionId + "|instructions|" + instructions
+                    ),
                     "type": "message",
                     "role": "developer",
                     "content": [
@@ -5132,6 +5615,9 @@ extension OpenResponsesRequest {
                             "type": "input_text",
                             "text": instructions,
                         ]
+                    ],
+                    "internal_chat_message_metadata_passthrough": [
+                        "content_item_kinds": ["model.base_instructions"]
                     ],
                 ] as [String: Any])
             }
@@ -5142,7 +5628,6 @@ extension OpenResponsesRequest {
 
             object["tool_choice"] = "auto"
             object["parallel_tool_calls"] = false
-            object["prompt_cache_key"] = responsesLiteSessionId
 
             var reasoning = object["reasoning"] as? [String: Any] ?? [:]
             reasoning["context"] = "all_turns"
@@ -6262,16 +6747,23 @@ extension RemoteProviderService {
         return "HTTP \(statusCode): Unknown error"
     }
 
+    static func isUserMediaContentShapeRejection(_ data: Data) -> Bool {
+        isUserMediaContentShapeRejection(String(decoding: data, as: UTF8.self))
+    }
+
+    static func isUserMediaContentShapeRejection(_ message: String) -> Bool {
+        message.lowercased().contains("user message content must be a string")
+    }
+
     /// Rewrite known upstream-adapter rejections into actionable copy. The
     /// Router's non-vision upstream adapters reject array-form user content
     /// with a terse protocol message that means nothing to a user staring at
     /// a chat bubble — translate it to what actually happened and how to
     /// recover. Returns nil for everything else (message passes through).
     static func friendlyUpstreamRejection(_ message: String) -> String? {
-        let lowered = message.lowercased()
-        if lowered.contains("user message content must be a string") {
+        if isUserMediaContentShapeRejection(message) {
             return
-                "This model doesn't accept image, audio, or video attachments. Remove the attachment from the conversation (or start a new chat without it), or switch to a vision-capable model."
+                "This model rejected multimodal message content. Remove the attachment and retry, or switch to a model that supports that media type."
         }
         return nil
     }

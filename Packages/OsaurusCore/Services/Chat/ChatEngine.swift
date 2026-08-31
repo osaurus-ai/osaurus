@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 
 actor ChatEngine: Sendable, ChatEngineProtocol {
     private let services: [ModelService]
@@ -1012,6 +1013,17 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             warmupPrefill: warmupPrefill
         )
 
+        // vMLX emits the authoritative stats event before it performs its
+        // synchronous GPU drain and cache persistence.  The HTTP writer is
+        // allowed to finish the client-visible response as soon as it sees
+        // those stats, which can drop this wrapping stream while the producer
+        // is still unwinding the final upstream iteration.  Treating that
+        // narrow window as a client cancellation aborts the engine-owned
+        // drain and leaves the following request contending with unfinished
+        // Metal/cache work.  This lock-backed latch distinguishes that normal
+        // terminal race from a real pre-terminal disconnect.
+        let terminalStatsObserved = OSAllocatedUnfairLock(initialState: false)
+
         // Capture the background-task id at construction time (still on
         // the parent task) so the detached producer below can forward
         // token-usage deltas to `BackgroundTaskManager.recordUsage(...)`
@@ -1094,6 +1106,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             do {
                 for try await delta in inner {
                     if let stats = StreamingStatsHint.decode(delta) {
+                        terminalStatsObserved.withLock { $0 = true }
                         statsHintCount += 1
                         outputTokenCount = stats.tokenCount
                         // Stats hint carries the authoritative cumulative
@@ -1311,8 +1324,19 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         continuation.onTermination = { @Sendable termination in
             switch termination {
             case .cancelled:
-                print("[Osaurus][Stream] Consumer cancelled - stopping producer task")
-                producerTask.cancel()
+                let sawTerminalStats = terminalStatsObserved.withLock { $0 }
+                if !Self.shouldCancelProducerOnConsumerCancellation(
+                    terminalStatsObserved: sawTerminalStats
+                ) {
+                    // Logical generation is complete.  Keep the producer
+                    // alive long enough to drain the runtime-owned terminal
+                    // work; the vMLX solo lease and Metal gate are released
+                    // only after that drain finishes.
+                    print("[Osaurus][Stream] Consumer closed after terminal stats - draining producer")
+                } else {
+                    print("[Osaurus][Stream] Consumer cancelled before terminal stats - stopping producer task")
+                    producerTask.cancel()
+                }
             case .finished:
                 // Normal completion, producer should already be done
                 break
@@ -1322,6 +1346,16 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         }
 
         return stream
+    }
+
+    /// A dropped consumer is an actual inference cancellation only before the
+    /// runtime's authoritative terminal-stats event.  After that event the
+    /// producer owns a short GPU/cache drain which must be allowed to finish.
+    /// Kept pure and internal so the boundary cannot regress unnoticed.
+    nonisolated static func shouldCancelProducerOnConsumerCancellation(
+        terminalStatsObserved: Bool
+    ) -> Bool {
+        !terminalStatsObserved
     }
 
     func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {

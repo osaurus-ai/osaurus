@@ -833,14 +833,25 @@ struct MLXBatchAdapter {
     ///   defaults write ai.osaurus ai.osaurus.mtp.disableLoadWarmup -bool true
     static let mtpLoadWarmupDisabledKey = "ai.osaurus.mtp.disableLoadWarmup"
 
+    /// The prompt is intentionally well above `nativeMTPTinyPromptMinimumTokens`.
+    /// A short prompt such as "Hi" consumes the AR cold flag but the following
+    /// request still cannot enter native MTP, so it never builds the D3 verifier
+    /// buffer working set that determines first-user-request speed.
+    static let nativeMTPLoadWarmupPrompt = """
+        Count from one through thirty two, one number per line, with no explanation. \
+        This hidden deterministic request initializes native speculative decoding \
+        and its verifier buffers before the first visible user request begins.
+        """
+    static let nativeMTPLoadWarmupVerifierTokens = 8
+
     /// Runs the native-MTP cold warmup at model-load time instead of on the
-    /// user's first request. The registry's cold-warmup rule forces the
-    /// first generation per model into plain AR mode; without this, that
-    /// "first generation" is the user's entire first response, which
-    /// silently loses the MTP decode speedup. A hidden two-token greedy
-    /// generation through the regular `generate` path (so gating, engine
-    /// creation, and solo-lease behavior are identical to a real request)
-    /// consumes the warmup for a fraction of a second instead.
+    /// user's first request. The registry's cold-warmup rule forces the first
+    /// generation per model into plain AR mode. We therefore need two bounded
+    /// generations through the regular `generate` path: an AR bootstrap that
+    /// consumes the flag, followed by a real native-MTP generation that runs
+    /// the D3 verifier and materializes its hot Metal buffers. The historical
+    /// single two-token "Hi" generation performed only the AR half and never
+    /// executed native MTP at all.
     ///
     /// Failure is non-fatal and self-healing: the warm flag is reset so the
     /// next real request performs the AR warmup exactly as before.
@@ -857,22 +868,34 @@ struct MLXBatchAdapter {
 
         let startedAt = CFAbsoluteTimeGetCurrent()
         do {
-            let prepared = try await generate(
-                modelName: modelName,
-                container: container,
-                buildChat: { [MLXLMCommon.Chat.Message(role: .user, content: "Hi")] },
-                buildToolsSpec: { nil },
-                generation: GenerationParameters(temperature: 0, maxTokens: 2),
-                toolChoice: nil,
-                stopSequences: [],
-                draftStrategy: draftStrategy,
-                runtime: runtime,
-                maxBatchSize: maxBatchSize
-            )
-            for await _ in prepared.stream {}
+            func runWarmup(maxTokens: Int) async throws {
+                let prepared = try await generate(
+                    modelName: modelName,
+                    container: container,
+                    buildChat: {
+                        [MLXLMCommon.Chat.Message(role: .user, content: nativeMTPLoadWarmupPrompt)]
+                    },
+                    buildToolsSpec: { nil },
+                    generation: GenerationParameters(temperature: 0, maxTokens: maxTokens),
+                    toolChoice: nil,
+                    stopSequences: [],
+                    draftStrategy: draftStrategy,
+                    runtime: runtime,
+                    maxBatchSize: maxBatchSize
+                )
+                for await _ in prepared.stream {}
+            }
+
+            // Phase 1 is deliberately AR: consumeNativeMTPColdWarmup disables
+            // MTP for the first generation after every model load.
+            try await runWarmup(maxTokens: 2)
+            // Phase 2 sees the warm flag and must actually exercise the native
+            // verifier. Eight output tokens cover at least two D3 verifier
+            // steps without adding material load latency.
+            try await runWarmup(maxTokens: nativeMTPLoadWarmupVerifierTokens)
             let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
             batchAdapterLog.info(
-                "native MTP load warmup: completed for \(modelName, privacy: .public) in \(elapsedMs, privacy: .public)ms; first user request decodes with MTP"
+                "native MTP load warmup: AR bootstrap plus verifier warmup completed for \(modelName, privacy: .public) in \(elapsedMs, privacy: .public)ms; first user request decodes with MTP"
             )
         } catch {
             // The failed generation may already have consumed the warm flag;
@@ -1429,7 +1452,8 @@ struct MLXBatchAdapter {
         nativeMTPRequested: Bool = false,
         nativeMTPLoadResolutionReason: String? = nil,
         runtime: RuntimeConfig,
-        maxBatchSize: Int
+        maxBatchSize: Int,
+        onEngineDrained: @Sendable @escaping () async -> Void = {}
     ) async throws -> PreparedStream {
         let trace = generation.ttftTrace
         trace?.mark("batch_prepare_start")
@@ -1747,10 +1771,17 @@ struct MLXBatchAdapter {
         // lease (which the next step waits on) releases right after.
         let producerSubmitAt = CFAbsoluteTimeGetCurrent()
         let producerTask = Task<Void, Never> {
+            var terminalInfo: Generation?
             await withTaskCancellationHandler {
                 for await event in upstream {
                     if case .info = event {
-                        continuation.yield(event)
+                        // `.info` is terminal to every public consumer. Hold
+                        // it until the upstream producer, disk/cache commit,
+                        // and allocator teardown have all completed; yielding
+                        // it here lets an immediate follow-up request enter
+                        // ModelRuntime before this request closes its allocator
+                        // window, suppressing the required inter-request clear.
+                        terminalInfo = event
                         continue
                     }
                     if !Task.isCancelled {
@@ -1783,6 +1814,17 @@ struct MLXBatchAdapter {
                     + "postSubmitMs=\(Int((CFAbsoluteTimeGetCurrent() - producerSubmitAt) * 1000)) "
                     + "(decode + post-gen disk store)"
             )
+            // This callback owns request-scoped allocator teardown. It must
+            // run before the wrapped stream finishes and before the solo
+            // lease is released: otherwise an immediately-following HTTP or
+            // chat request can increment the allocator-window refcount while
+            // this request is between engine drain and outer-task cleanup.
+            // That race suppresses the inter-request cache return and leaves
+            // the next D3 verifier competing with the prior working set.
+            await onEngineDrained()
+            if let terminalInfo {
+                continuation.yield(terminalInfo)
+            }
             continuation.finish()
             if let soloLease {
                 await soloLease.release()
