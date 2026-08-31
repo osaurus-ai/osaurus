@@ -255,7 +255,7 @@ let package = Package(
         // mmap with a byte-verified atomic replacement and advisory fallback.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "69b29d25d3969b3872861264a160028a46145e80"
+            revision: "1a2f4c17b45c57e86fa28c5a1ef2b41c4da94ffd"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
