@@ -5346,33 +5346,24 @@ public actor ModelRuntime {
         return Self.bridgeToolEventStream(events)
     }
 
-    /// Expose a parsed tool call to the agent loop immediately, but keep
-    /// consuming the engine-owned event stream through terminal drain. vMLX
-    /// persists the reusable KV/prefix checkpoint during that drain; cancelling
-    /// as soon as `.toolInvocation` arrived made every following tool step
-    /// re-prefill the entire growing history.
+    /// Stream a parsed tool envelope immediately, but do not complete the
+    /// generation step until the engine-owned event stream reaches terminal
+    /// drain. vMLX persists the reusable KV/prefix checkpoint during that drain;
+    /// completing the public stream first lets fast tools submit the next turn
+    /// before the checkpoint exists and races into a full-history prefill.
     nonisolated static func bridgeToolEventStream(
         _ events: AsyncThrowingStream<ModelRuntimeEvent, Error>
     ) -> AsyncThrowingStream<String, Error> {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let producerTask = Task {
-            // Chat UI streaming must dispatch a parsed local tool call as soon
-            // as vmlx emits `.toolInvocation`. A trailing `.completionInfo`
-            // is useful telemetry, but it is not part of the executable tool
-            // contract: the parser has already closed the envelope and built
-            // canonical JSON. Waiting for stats lets a model/runtime stream
-            // that never reaches EOS leave the UI stuck with a complete-looking
-            // tool row and no actual dispatch. Finish-by-throw immediately,
-            // then silently drain the engine-owned tail so it can persist the
-            // reusable cache checkpoint.
-            var dispatchedTool = false
+            // The tool sentinels remain live-streamed for the native UI/parser,
+            // but `ServiceToolInvocation` is the loop's execution boundary.
+            // Hold that terminal error until upstream finishes so no tool kind
+            // (native, MCP, media, help/config, or orchestration) can race the
+            // following inference against cache persistence.
+            var pendingTool: ServiceToolInvocation?
             do {
                 for try await ev in events {
-                    // Once the call is delivered, the public stream is already
-                    // finished. Continue draining silently so vMLX can commit
-                    // cache state and release its generation lease.
-                    if dispatchedTool { continue }
-
                     if case .completionInfo(
                         let tokenCount,
                         let tokensPerSecond,
@@ -5400,9 +5391,9 @@ public actor ModelRuntime {
                     }
                     switch ev {
                     case .tokens(let s):
-                        if !s.isEmpty { continuation.yield(s) }
+                        if pendingTool == nil, !s.isEmpty { continuation.yield(s) }
                     case .reasoning(let s):
-                        if !s.isEmpty {
+                        if pendingTool == nil, !s.isEmpty {
                             continuation.yield(StreamingReasoningHint.encode(s))
                         }
                     case .prefillProgress(let progress):
@@ -5416,51 +5407,53 @@ public actor ModelRuntime {
                         // only the native ChatView decodes it, to keep the
                         // tool-call card alive instead of showing a frozen
                         // spinner during a long file-write call.
-                        if !envelopeDelta.isEmpty {
+                        if pendingTool == nil, !envelopeDelta.isEmpty {
                             continuation.yield(
                                 StreamingToolCallProgressHint.encode(envelopeDelta)
                             )
                         }
                     case .toolInvocation(let name, let argsJSON):
-                        // Surface the first parsed tool call and terminate this
-                        // generation step immediately. The stream termination
-                        // cancels any remaining decode tail, so post-tool prose
-                        // cannot leak and the chat loop can execute the tool
-                        // without waiting for an optional stats/EOS event.
-                        continuation.yield(StreamingToolHint.encode(name))
-                        continuation.yield(StreamingToolHint.encodeArgs(argsJSON))
-                        let tool = ServiceToolInvocation(
-                            toolName: name,
-                            jsonArguments: argsJSON
-                        )
-                        dispatchedTool = true
-                        continuation.finish(throwing: tool)
-                        continue
+                        // Surface only the first committed tool envelope. Keep
+                        // draining completion/progress events, but suppress any
+                        // post-tool tokens so prose cannot leak after the call.
+                        if pendingTool == nil {
+                            continuation.yield(StreamingToolHint.encode(name))
+                            continuation.yield(StreamingToolHint.encodeArgs(argsJSON))
+                            pendingTool = ServiceToolInvocation(
+                                toolName: name,
+                                jsonArguments: argsJSON
+                            )
+                        }
                     case .completionInfo:
                         continue
                     }
                 }
-                if !dispatchedTool { continuation.finish() }
+                if let pendingTool {
+                    continuation.finish(throwing: pendingTool)
+                } else {
+                    continuation.finish()
+                }
             } catch {
                 if Task.isCancelled {
-                    if !dispatchedTool { continuation.finish() }
-                } else if !dispatchedTool {
-                    continuation.finish(throwing: error)
-                } else {
-                    // The tool is already executing and cannot receive a
-                    // second terminal result. Keep the cache-drain failure
-                    // visible in diagnostics instead of perturbing the loop.
+                    continuation.finish()
+                } else if let pendingTool {
+                    // Preserve tool availability if terminal drain itself
+                    // fails, but make the cache failure diagnosable. The next
+                    // turn may cold-prefill in this exceptional path.
                     genLog.error(
-                        "tool-call terminal drain failed after dispatch: \(error.localizedDescription, privacy: .public)"
+                        "tool-call terminal drain failed before dispatch: \(error.localizedDescription, privacy: .public)"
                     )
+                    continuation.finish(throwing: pendingTool)
+                } else {
+                    continuation.finish(throwing: error)
                 }
             }
         }
 
         continuation.onTermination = { @Sendable termination in
-            // `.finished` includes finish-by-throw used for tool dispatch.
             // Only a real consumer cancellation owns cancellation of the
-            // engine stream; normal tool dispatch must preserve terminal drain.
+            // engine stream. Normal tool dispatch now finishes only after the
+            // terminal cache-persistence drain.
             if case .cancelled = termination {
                 producerTask.cancel()
             }
