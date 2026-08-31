@@ -408,6 +408,24 @@ struct ChatEngineTests {
         #expect(out == "abc")
     }
 
+    @Test("consumer teardown preserves a completed runtime drain")
+    func completedStreamTeardownDoesNotCancelProducer() {
+        #expect(
+            !ChatEngine.shouldCancelProducerOnConsumerCancellation(
+                terminalStatsObserved: true
+            )
+        )
+    }
+
+    @Test("pre-terminal consumer teardown still cancels inference")
+    func preTerminalStreamTeardownCancelsProducer() {
+        #expect(
+            ChatEngine.shouldCancelProducerOnConsumerCancellation(
+                terminalStatsObserved: false
+            )
+        )
+    }
+
     @Test func streamChat_preserves_reasoning_sentinel_for_endpoint_routing() async throws {
         let reasoning = StreamingReasoningHint.encode("private chain")
         let svc = FakeModelService(deltas: [reasoning, "visible"])

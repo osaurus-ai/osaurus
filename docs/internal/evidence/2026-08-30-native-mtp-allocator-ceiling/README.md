@@ -88,3 +88,23 @@ the same vMLX and request-scoped lifecycle (before only the final bound formula
 changed) also completed one approved `get_current_time` call, its tool-result
 continuation, and a coherent follow-up turn. HTTP evidence is used here for the
 served-MTP contract; the rendered app inspection is the user-facing check.
+
+## Rejected QSA repin
+
+The later experimental vMLX pin
+`ca0195ba0f62f36a1d87c67258a59189f43e3e4a` is deliberately excluded from
+this release lane. In the same isolated Release app, cache-disabled back-to-back
+count-to-200 requests both used native MTP D3, accepted 173/173 draft groups,
+and produced the exact 691-token output, but decode fell from 68.5819 tok/s to
+27.9504 tok/s. Target-verifier time grew from 7.428 seconds to 22.039 seconds.
+Enabling disk L2 and prefix restore did not remove the regression. The QSA
+prefill work must recover sustained decode independently before it can replace
+the proven pin.
+
+A fresh build after restoring the proven `e025cd77` pin still measured
+68.6783 tok/s followed immediately by 22.8996 tok/s; verifier time grew from
+7.404 seconds to 27.296 seconds while D3 acceptance remained 173/173 with zero
+AR fallback. Therefore the historical four-row table is not accepted as a
+current back-to-back sustained-decode gate. This PR fixes default D3 activation
+and terminal-drain ownership; sustained thermal/power-state decode remains a
+separate blocked performance gate and is not claimed fixed here.
