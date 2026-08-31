@@ -251,9 +251,11 @@ let package = Package(
         // an explicit bundle-level manual safety block for Ornith 1.5 35B;
         // #346 restores the architecture-scoped compiled GDN/MoE decode path
         // for that model and adds its real q5/q5/q4 affine expert layout.
+        // vmlx-swift#376 heals dtype-misaligned safetensors containers before
+        // mmap with a byte-verified atomic replacement and advisory fallback.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "e025cd77c4adf7f1813d157ea0fbb6514f4e86f4"
+            revision: "69b29d25d3969b3872861264a160028a46145e80"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
