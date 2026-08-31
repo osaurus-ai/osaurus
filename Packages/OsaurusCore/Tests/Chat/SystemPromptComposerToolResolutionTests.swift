@@ -324,6 +324,46 @@ struct SystemPromptComposerToolResolutionTests {
         }
     }
 
+    @Test("custom host-folder chat retains the enabled-tool manifest")
+    func customHostFolderChatPublishesGatewayAlignedManifest() async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            await DynamicCatalogTestLock.shared.run {
+                let fixture = capabilityManifestFixtureTool()
+                ToolRegistry.shared.registerPluginTool(fixture)
+                ToolRegistry.shared.setEnabled(true, for: fixture.name)
+                defer { ToolRegistry.shared.unregister(names: [fixture.name]) }
+
+                AgentManager.shared.updateEnabledToolNames([fixture.name], for: agentId)
+                let folder = FolderContext(
+                    rootPath: URL(
+                        fileURLWithPath: "/tmp/osaurus-capability-folder-\(UUID().uuidString)"
+                    ),
+                    projectType: .unknown,
+                    tree: "./\nRidgeline_Coffee_2025_Sales.xlsx",
+                    manifest: nil,
+                    gitStatus: nil,
+                    isGitRepo: false
+                )
+                FolderToolManager.shared.ensureFolderToolsRegistered()
+                defer { FolderToolManager.shared._unregisterAllForTesting() }
+
+                let context = await SystemPromptComposer.composeChatContext(
+                    agentId: agentId,
+                    executionMode: .hostFolder(folder),
+                    model: "gpt-5"
+                )
+                let schemaNames = Set(context.tools.map(\.function.name))
+                let manifest = context.enabledManifest ?? ""
+                let sectionIds = context.manifest.sections.map(\.id)
+
+                #expect(schemaNames.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+                #expect(schemaNames.contains("capabilities"))
+                #expect(manifest.contains("tool/\(fixture.name)"))
+                #expect(sectionIds.contains("enabledManifest"))
+            }
+        }
+    }
+
     @Test("compact Gemma prompt distinguishes plugin ids from callable tools")
     func compactGemmaPromptTeachesGatewayLoadShape() async {
         // Canonical lock order: Storage → Sandbox → Catalog (innermost).
@@ -1434,6 +1474,10 @@ struct SystemPromptComposerToolResolutionTests {
                         "pattern", "path", "target", "file_pattern", "max_results",
                     ]
                 )
+                let searchDescription = byName["file_search"]?.function.description ?? ""
+                #expect(searchDescription.contains("plain-text"))
+                #expect(searchDescription.contains("file_read"))
+                #expect(searchDescription.contains("sheet_name"))
                 #expect(
                     propertyNames("file_write") == ["path", "content", "mode", "dry_run"]
                 )
