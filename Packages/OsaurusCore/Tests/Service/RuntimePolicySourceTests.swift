@@ -794,7 +794,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "1a2f4c17b45c57e86fa28c5a1ef2b41c4da94ffd"
+        let expectedRuntimeHardenedRevision = "a0c5b801050863c79ec6189bd6bf77de4c194bb3"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -804,7 +804,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the proven vmlx-swift revision with atomic heal-on-load for dtype-misaligned safetensors, serialized evaluated host reads through backing-buffer copies, schema-bound Qwen XML string-array recovery, Gemma reasoning routing, scalar text-only Gemma system prompts, static system-prefix SSD cache boundaries, Nanbeige 4.2 looped-transformer runtime support, Qwen3.5 B-wide position correctness, and requested/architecture/effective BatchEngine capacity provenance. An internally-consistent older pin is still not wired"
+            "Osaurus must consume the proven vmlx-swift revision with atomic heal-on-load for dtype-misaligned safetensors, serialized evaluated host reads through backing-buffer copies, schema-bound Qwen XML string-array recovery, Gemma reasoning routing, scalar text-only Gemma system prompts, static system-prefix and growing tool-loop SSD cache boundaries, Nanbeige 4.2 looped-transformer runtime support, Qwen3.5 B-wide position correctness, and requested/architecture/effective BatchEngine capacity provenance. An internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
