@@ -1347,6 +1347,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// fixed-prefill case without committing kilobytes of filler.
         /// Default 1.
         public let promptRepeat: Int?
+        /// Optional explicit thinking-mode override for matched performance
+        /// comparisons. nil preserves the model bundle/template default.
+        public let enableThinking: Bool?
         /// Optional floor: fail the row when the MEDIAN decode speed drops
         /// below this. Unset = measurement-only row (recommended: absolute
         /// floors are machine-specific; the diff/history trend is the gate).
@@ -1383,6 +1386,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             reps: Int,
             maxTokens: Int,
             promptRepeat: Int? = nil,
+            enableThinking: Bool? = nil,
             minDecodeTokensPerSecond: Double? = nil,
             maxTtftMs: Double? = nil,
             lifecycle: String? = nil,
@@ -1392,6 +1396,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.reps = reps
             self.maxTokens = maxTokens
             self.promptRepeat = promptRepeat
+            self.enableThinking = enableThinking
             self.minDecodeTokensPerSecond = minDecodeTokensPerSecond
             self.maxTtftMs = maxTtftMs
             self.lifecycle = lifecycle

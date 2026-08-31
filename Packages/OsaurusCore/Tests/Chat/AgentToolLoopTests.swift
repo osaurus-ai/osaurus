@@ -2982,7 +2982,7 @@ struct AgentLoopTodoStalenessTests {
 
 @MainActor
 struct AgentLoopAdvisoryTodoCompletionTests {
-    @Test func staleSessionTodoCompleteRejectionRecoversToOrdinaryFinal() async throws {
+    @Test func staleSessionTodoCompleteClosesAsOrdinaryCompletion() async throws {
         let sessionId = UUID().uuidString
         let surface = ScriptedLoopSurface(steps: [
             .toolCalls([
@@ -2991,7 +2991,6 @@ struct AgentLoopAdvisoryTodoCompletionTests {
                     #"{"summary":"STALE_TODO_FOLLOWUP_OK - verified as the requested exact follow-up."}"#
                 )
             ]),
-            .finalResponse,
         ])
 
         let result = try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
@@ -3024,11 +3023,15 @@ struct AgentLoopAdvisoryTodoCompletionTests {
         }
         await AgentTodoStore.shared.clear(for: sessionId)
 
+        // This unit surface does not install ChatView's successful-complete
+        // intercept, so the driver receives the success result and performs
+        // one ordinary final-response step. Production Chat and the evaluator
+        // intercept the same success envelope and end immediately.
         #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 2))
         #expect(surface.executedCalls.map(\.name) == ["complete"])
         let completeResult = try #require(surface.batchOutcomes.first?.first?.result)
-        #expect(ToolEnvelope.isError(completeResult))
-        #expect(AgentToolLoop.isStaleSessionTodoCompleteResult(completeResult))
+        #expect(ToolEnvelope.isSuccess(completeResult))
+        #expect(completeResult.contains("\"outcome\":\"completed\""))
         #expect(surface.steps.isEmpty)
     }
 

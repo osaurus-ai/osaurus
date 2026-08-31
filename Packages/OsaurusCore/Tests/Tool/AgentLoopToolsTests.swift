@@ -338,7 +338,7 @@ struct AgentLoopToolsTests {
     }
 
     @Test("prior-turn todo cannot make an unrelated current run blocked")
-    func complete_rejectsStaleSessionTodoInsideCanonicalRun() async throws {
+    func complete_ignoresStaleSessionTodoInsideCanonicalRun() async throws {
         try await withSession { sessionId in
             // Simulate the prior user turn: the checklist remains visible in
             // the session store after that turn returns a normal final answer.
@@ -348,8 +348,8 @@ struct AgentLoopToolsTests {
             #expect(await AgentTodoStore.shared.todo(for: sessionId) != nil)
 
             // A new canonical run gets a fresh marker. It did not call Todo,
-            // so an old unchecked checklist cannot authorize `complete` or
-            // turn this unrelated response into a BLOCKED banner.
+            // so an old unchecked checklist cannot turn this unrelated
+            // completion into a BLOCKED banner.
             let runScope = AgentTodoRunScope()
             let result =
                 try await ChatExecutionContext.$agentTodoRunScope.withValue(runScope) {
@@ -360,9 +360,9 @@ struct AgentLoopToolsTests {
                     )
                 }
 
-            #expect(ToolEnvelope.isError(result))
-            #expect(result.contains("current run called `todo`"))
-            #expect(result.contains("earlier user turn does not apply"))
+            #expect(ToolEnvelope.isSuccess(result))
+            #expect(result.contains("\"outcome\":\"completed\""))
+            #expect(result.contains("\"pending_todo_items\":0"))
         }
     }
 

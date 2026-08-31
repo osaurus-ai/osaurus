@@ -174,7 +174,8 @@ public enum MicroPerfEvaluator {
         prompt: String,
         maxTokens: Int,
         reps: Int,
-        model: String? = nil
+        model: String? = nil,
+        enableThinking: Bool? = nil
     ) async -> MicroPerfTranscript {
         let resolvedModel =
             model
@@ -192,7 +193,8 @@ public enum MicroPerfEvaluator {
                 model: resolvedModel,
                 prompt: prompt,
                 maxTokens: maxTokens,
-                sessionId: sessionId
+                sessionId: sessionId,
+                enableThinking: enableThinking
             )
         }
 
@@ -501,9 +503,10 @@ public enum MicroPerfEvaluator {
         model: String,
         prompt: String,
         maxTokens: Int,
-        sessionId: String
+        sessionId: String,
+        enableThinking: Bool? = nil
     ) async throws -> MicroPerfSample {
-        let request = ChatCompletionRequest(
+        var request = ChatCompletionRequest(
             model: model,
             messages: [ChatMessage(role: "user", content: prompt)],
             temperature: 0.0,
@@ -518,6 +521,7 @@ public enum MicroPerfEvaluator {
             tool_choice: nil,
             session_id: sessionId
         )
+        request.enable_thinking = enableThinking
         let started = Date()
         var ttftMs: Double?
         var decodeTps: Double?
