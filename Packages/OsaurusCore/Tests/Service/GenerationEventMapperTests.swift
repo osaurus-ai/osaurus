@@ -36,12 +36,6 @@ struct GenerationEventMapperTests {
             defer { lock.unlock() }
             return value
         }
-
-        func record(_ newValue: String) {
-            lock.lock()
-            value = newValue
-            lock.unlock()
-        }
     }
 
     private func makeStream(_ events: [Generation]) -> AsyncStream<Generation> {
@@ -62,25 +56,20 @@ struct GenerationEventMapperTests {
         return out
     }
 
-    @Test func toolBridge_waitsForUpstreamDrainBeforeLoopDispatch() async throws {
-        let upstreamProbe = TerminationProbe()
-        let envelopeProbe = TerminationProbe()
-        let consumerProbe = TerminationProbe()
+    @Test func toolBridge_dispatchesImmediatelyAndDrainsUpstream() async throws {
+        let probe = TerminationProbe()
         let (upstream, upstreamContinuation) =
             AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
         upstreamContinuation.onTermination = { termination in
-            upstreamProbe.record(termination)
+            probe.record(termination)
         }
 
         let bridged = ModelRuntime.bridgeToolEventStream(upstream)
         let consumer = Task { () -> String in
             do {
-                for try await _ in bridged {
-                    envelopeProbe.record("yielded")
-                }
+                for try await _ in bridged {}
                 return "missing"
             } catch let invocation as ServiceToolInvocation {
-                consumerProbe.record(invocation.toolName)
                 return invocation.toolName
             } catch {
                 return "wrong-error"
@@ -90,14 +79,10 @@ struct GenerationEventMapperTests {
         upstreamContinuation.yield(
             .toolInvocation(name: "read_file", argsJSON: #"{"path":"a.txt"}"#)
         )
-        for _ in 0 ..< 100 where envelopeProbe.snapshot() == nil {
-            try await Task.sleep(nanoseconds: 1_000_000)
-        }
-        // The envelope is streamed, but the loop must not execute it until the
-        // upstream terminal drain has persisted reusable cache state.
-        #expect(envelopeProbe.snapshot() == "yielded")
-        #expect(consumerProbe.snapshot() == nil)
-        #expect(upstreamProbe.snapshot() == nil)
+        #expect(await consumer.value == "read_file")
+        // Tool dispatch must not cancel the engine stream: its terminal drain
+        // owns KV/prefix persistence for the following agent-loop step.
+        #expect(probe.snapshot() == nil)
 
         upstreamContinuation.yield(
             .completionInfo(
@@ -111,12 +96,10 @@ struct GenerationEventMapperTests {
         )
         upstreamContinuation.finish()
 
-        #expect(await consumer.value == "read_file")
-
-        for _ in 0 ..< 100 where upstreamProbe.snapshot() == nil {
+        for _ in 0 ..< 100 where probe.snapshot() == nil {
             try await Task.sleep(nanoseconds: 1_000_000)
         }
-        #expect(upstreamProbe.snapshot() == "finished")
+        #expect(probe.snapshot() == "finished")
     }
 
     @Test func chunk_passes_through_as_tokens() async throws {
