@@ -708,10 +708,9 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         let toolbar = NSToolbar(identifier: "ChatToolbar")
         toolbar.allowsUserCustomization = false
         toolbar.autosavesConfiguration = false
-        // Anchor the tab strip at the toolbar's geometric center; without
-        // this it drifts off-axis because of the asymmetric leading/trailing
-        // items and the traffic-light area.
-        toolbar.centeredItemIdentifier = ChatToolbarDelegate.tabsItem
+        // No centered item: the tab strip is leading-aligned (Chrome-style,
+        // tabs grow left to right); the single flexible space pushes the
+        // action/pin items to the trailing edge.
 
         let toolbarDelegate = ChatToolbarDelegate(windowState: windowState)
         toolbar.delegate = toolbarDelegate
@@ -927,17 +926,16 @@ private struct ChatFullScreenHeaderView: View {
     @ObservedObject var windowState: ChatWindowState
 
     var body: some View {
-        ZStack {
-            HStack(spacing: 8) {
-                ChatToolbarSidebarView(windowState: windowState)
-                // Full-screen header has no traffic lights, so only the toggle
-                // precedes this item.
-                ChatToolbarBackView(windowState: windowState, leadingChromeWidth: 76)
-                Spacer()
-                ChatToolbarActionView(windowState: windowState)
-                ChatToolbarTrailingView(windowState: windowState)
-            }
+        HStack(spacing: 8) {
+            ChatToolbarSidebarView(windowState: windowState)
+            // Full-screen header has no traffic lights, so only the toggle
+            // precedes this item.
+            ChatToolbarBackView(windowState: windowState, leadingChromeWidth: 76)
+            // Leading-aligned like Chrome: tabs grow left to right.
             ChatTabStripView(windowState: windowState)
+            Spacer()
+            ChatToolbarActionView(windowState: windowState)
+            ChatToolbarTrailingView(windowState: windowState)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -1027,7 +1025,7 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     // item that AppKit still reserved spacing for, so every chat had a dead
     // gap at the toolbar's right edge.
     private static let itemIdentifiers: [NSToolbarItem.Identifier] = [
-        sidebarItem, backItem, .flexibleSpace, tabsItem, .flexibleSpace, actionItem, pinItem,
+        sidebarItem, backItem, tabsItem, .flexibleSpace, actionItem, pinItem,
     ]
 
     private weak var windowState: ChatWindowState?

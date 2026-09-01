@@ -102,7 +102,7 @@ struct ChatTabStripView: View {
             }
             // Cap the strip so it never crowds the leading/trailing toolbar
             // items; tabs inside share the width and truncate their titles.
-            .frame(maxWidth: 560)
+            .frame(maxWidth: 560, alignment: .leading)
             .frame(height: 30)
             .environment(\.theme, windowState.theme)
         }
