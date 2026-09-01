@@ -73,8 +73,8 @@
       "agent_loop.substantial-single-file-app",
       "agent_loop.targeted-read-and-report",
       "agent_loop.todo-discipline-multistep",
-      "agent_loop.wrap-up-on-budget",
       "agent_loop.workspace-escape-refused",
+      "agent_loop.wrap-up-on-budget",
       "agent_loop.write-new-file",
       "agent_loop.write-then-verify-with-shell"
     ],
@@ -196,7 +196,10 @@
       "cache_proof.prefix-reuse-second-turn",
       "cache_proof.prefix-reuse-three-turns",
       "cache_proof.settings-prompt-revision",
-      "cache_proof.thinking-toggle-boundary"
+      "cache_proof.sustained-decode-deep-context",
+      "cache_proof.thinking-toggle-boundary",
+      "cache_proof.tool-loop-per-call-restore",
+      "cache_proof.tool-loop-write-volume"
     ],
     "CapabilityClaims" : [
       "capability_claims.confirm",
