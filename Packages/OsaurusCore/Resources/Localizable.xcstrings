@@ -102330,7 +102330,7 @@
         "de": { "stringUnit": { "state": "translated", "value": "Raptor v0.5" } },
         "ko": { "stringUnit": { "state": "translated", "value": "Raptor v0.5" } },
         "ru": { "stringUnit": { "state": "translated", "value": "Raptor v0.5" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "Raptor v0.5" } },
+        "zh-Hans": { "stringUnit": { "state": "needs_review", "value": "Raptor v0.5" } },
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "Raptor v0.5" } }
       }
     },
