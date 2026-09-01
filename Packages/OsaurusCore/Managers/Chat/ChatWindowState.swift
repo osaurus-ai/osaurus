@@ -527,11 +527,18 @@ final class ChatWindowState: ObservableObject {
     func closeTab(id: UUID) {
         guard tabs.count > 1, let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
         let closing = tabs[idx]
+        // The removal itself animates (the strip keys a layout animation on
+        // the tab ids, so neighbors slide over); the session swap below is
+        // wrapped un-animated so ChatView's remount doesn't interpolate.
         tabs.remove(at: idx)
         if activeTabId == id {
             let neighbor = tabs[min(idx, tabs.count - 1)]
-            activeTabId = neighbor.id
-            adoptTabSession(neighbor.session)
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                activeTabId = neighbor.id
+                adoptTabSession(neighbor.session)
+            }
         }
         teardownTabSession(closing.session)
     }

@@ -128,6 +128,14 @@ struct ChatTabStripView: View {
             }
             // Cap the strip so it never crowds the leading/trailing toolbar
             // items; tabs inside share the width and truncate their titles.
+            // Tabs slide over when a neighbor closes (Chrome-like). Opening
+            // stays un-animated: `newTab()` disables animations in its
+            // transaction so the strip doesn't interpolate while ChatView
+            // remounts for the fresh session.
+            .animation(
+                windowState.theme.animationQuick(),
+                value: windowState.tabs.map(\.id)
+            )
             .frame(maxWidth: 700, alignment: .leading)
             .frame(height: 30)
             .padding(.leading, needsSidebarInset ? sidebarOpenInset : 0)
