@@ -102,7 +102,7 @@ struct ChatTabStripView: View {
             }
             // Cap the strip so it never crowds the leading/trailing toolbar
             // items; tabs inside share the width and truncate their titles.
-            .frame(maxWidth: 560, alignment: .leading)
+            .frame(maxWidth: 700, alignment: .leading)
             .frame(height: 30)
             .environment(\.theme, windowState.theme)
         }
@@ -201,8 +201,8 @@ private struct ChatTabItemView: View {
         }
         // Inset content past the active shape's feet so text never sits on
         // the curved corners.
-        .padding(.horizontal, Self.footRadius + 4)
-        .frame(minWidth: 44, maxWidth: 200)
+        .padding(.horizontal, Self.footRadius + 10)
+        .frame(minWidth: 44, maxWidth: 260)
         .frame(maxHeight: .infinity)
         .background(alignment: .bottom) {
             if isActive {
