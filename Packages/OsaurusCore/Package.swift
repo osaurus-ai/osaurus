@@ -269,9 +269,13 @@ let package = Package(
         // vmlx-swift#394 gates the native-MTP exact-prompt store behind the
         // canonical hybrid boundary: one reusable record per tool-call cycle
         // instead of an exact+seed pair (~2x ~400MB synchronous writes).
+        // vmlx-swift#396 ends the turn at tool dispatch: consumer termination
+        // after an emitted tool call is a natural .stop (stores run), so the
+        // adapter stops the engine at dispatch instead of draining the
+        // model's post-tool prose to EOS (~110s of dead decode measured).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "de0c26d3fe47ed556824914a5b84d28aaa938ae2"
+            revision: "de82613a9afac92705fe80f9c5156fedd8a0fee9"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
