@@ -25,6 +25,30 @@ enum ThemeJSONEditorError: LocalizedError, Equatable {
 }
 
 enum ThemeJSONEditorCodec {
+    /// Marker used in editor-facing JSON in place of the base64 background
+    /// image. The real payload can be megabytes of base64 on a single line,
+    /// which TextKit cannot line-break without multi-second main-thread
+    /// hangs, and it was never useful to hand-edit anyway.
+    static let imageDataPlaceholderPrefix = "<embedded image"
+
+    static func imageDataPlaceholder(byteCount: Int) -> String {
+        let size = ByteCountFormatter.string(
+            fromByteCount: Int64(byteCount), countStyle: .file)
+        return "\(imageDataPlaceholderPrefix): \(size)>"
+    }
+
+    /// Encode for display in the raw JSON editor: identical to `encode`,
+    /// except the background image payload is replaced with a short
+    /// placeholder. `decodePreservingEditorIdentity` splices the real
+    /// image back when the placeholder is left untouched.
+    static func encodeForEditor(_ theme: CustomTheme) throws -> String {
+        var redacted = theme
+        if let imageData = redacted.background.imageData, !imageData.isEmpty {
+            redacted.background.imageData = imageDataPlaceholder(byteCount: imageData.utf8.count)
+        }
+        return try encode(redacted)
+    }
+
     static func encode(_ theme: CustomTheme) throws -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -59,6 +83,11 @@ enum ThemeJSONEditorCodec {
         decoded.metadata.id = currentTheme.metadata.id
         decoded.metadata.createdAt = currentTheme.metadata.createdAt
         decoded.isBuiltIn = currentTheme.isBuiltIn
+        if let imageData = decoded.background.imageData,
+            imageData.hasPrefix(imageDataPlaceholderPrefix)
+        {
+            decoded.background.imageData = currentTheme.background.imageData
+        }
         return decoded
     }
 }
