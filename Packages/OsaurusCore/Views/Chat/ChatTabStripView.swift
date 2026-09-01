@@ -62,8 +62,10 @@ struct ChatTabStripView: View {
     @ObservedObject var windowState: ChatWindowState
     /// Width of the chrome that precedes this item on the leading edge
     /// (traffic lights + sidebar toggle in the NSToolbar; just the toggle
-    /// in the full-screen header). Same convention as `ChatToolbarBackView`.
-    var leadingChromeWidth: CGFloat = 136
+    /// in the full-screen header). Same convention as `ChatToolbarBackView`,
+    /// plus the inter-item spacing of the (empty) back slot that sits
+    /// between the toggle and this strip.
+    var leadingChromeWidth: CGFloat = 152
 
     /// Hover is tracked at strip level (not per item) so separators can
     /// hide beside the hovered tab, matching Chrome.

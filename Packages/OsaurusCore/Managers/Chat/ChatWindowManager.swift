@@ -1097,6 +1097,12 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     ) -> NSToolbarItem {
         let item = NSToolbarItem(itemIdentifier: identifier)
         let hostingView = NSHostingView(rootView: rootView)
+        // Track the SwiftUI content's intrinsic size continuously — the tab
+        // strip (and the project back-pill) change width at runtime, and a
+        // frame fixed at creation makes those transitions clip/jump.
+        if #available(macOS 13.0, *) {
+            hostingView.sizingOptions = [.intrinsicContentSize]
+        }
         hostingView.frame = NSRect(origin: .zero, size: hostingView.fittingSize)
         item.view = hostingView
         if #available(macOS 13.0, *) {
