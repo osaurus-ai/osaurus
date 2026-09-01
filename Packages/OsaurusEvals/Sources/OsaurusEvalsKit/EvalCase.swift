@@ -1060,6 +1060,30 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let requireClosedReasoning: Bool?
         /// Optional per-turn TTFT ceiling, applied to every measured turn.
         public let maxTtftMs: Double?
+        /// Scripted tool loop: each entry is delivered as a TOOL-CALL
+        /// continuation (assistant `tool_calls` + `role:"tool"` result whose
+        /// content is the entry) instead of a user turn — the exact request
+        /// shape the agent loop produces between tool executions, without
+        /// depending on the model choosing to call a tool. Mutually
+        /// exclusive with `followUpTurns`. All per-turn floors and gates
+        /// apply to these continuation turns unchanged, which is what makes
+        /// cache write/reuse scored PER TOOL CALL.
+        public let toolResultFollowUps: [String]?
+        /// Ceiling on `diskL2Stores` delta across the run — the write-volume
+        /// gate. A tool loop that persists more boundary records than the
+        /// canonical set (one reusable boundary per continuation plus the
+        /// initial session boundaries) regresses SSD write volume for
+        /// low-RAM hosts and fails here.
+        public let maxDiskL2StoresDelta: Int?
+        /// Floor on final-turn decode tok/s as a RATIO of the first measured
+        /// turn's decode tok/s. The sustained-speed gate: an allocator or
+        /// compiled-decode regression that collapses decode as context grows
+        /// (measured live as 50 → 10 tok/s at 20k context before the
+        /// allocator-cap fix) fails here while normal mild degradation
+        /// passes. Applied only when both turns report a decode rate.
+        public let minFinalDecodeTpsRatio: Double?
+        /// Absolute floor on the final turn's decode tok/s.
+        public let minFinalDecodeTps: Double?
 
         public init(
             followUpTurns: [String]? = nil,
@@ -1089,7 +1113,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             requirePrefillProgressAccounting: Bool? = nil,
             requireNonEmptyVisibleTurns: Bool? = nil,
             requireClosedReasoning: Bool? = nil,
-            maxTtftMs: Double? = nil
+            maxTtftMs: Double? = nil,
+            toolResultFollowUps: [String]? = nil,
+            maxDiskL2StoresDelta: Int? = nil,
+            minFinalDecodeTpsRatio: Double? = nil,
+            minFinalDecodeTps: Double? = nil
         ) {
             self.followUpTurns = followUpTurns
             self.systemPrompt = systemPrompt
@@ -1119,6 +1147,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.requireNonEmptyVisibleTurns = requireNonEmptyVisibleTurns
             self.requireClosedReasoning = requireClosedReasoning
             self.maxTtftMs = maxTtftMs
+            self.toolResultFollowUps = toolResultFollowUps
+            self.maxDiskL2StoresDelta = maxDiskL2StoresDelta
+            self.minFinalDecodeTpsRatio = minFinalDecodeTpsRatio
+            self.minFinalDecodeTps = minFinalDecodeTps
         }
     }
 

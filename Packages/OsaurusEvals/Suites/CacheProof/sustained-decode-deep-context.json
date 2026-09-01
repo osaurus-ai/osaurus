@@ -1,0 +1,22 @@
+{
+  "id": "cache_proof.sustained-decode-deep-context",
+  "domain": "cache_proof",
+  "label": "cache proof • decode rate holds as multi-turn context grows",
+  "query": "Write the opening paragraph (about 150 words) of a story about a cartographer mapping an archipelago.",
+  "notes": "The sustained-speed gate for the allocator-cap and compiled-decode regression class: six turns of growing prose context, and the final turn's decode tok/s must stay at or above 60% of the first turn's. The 2026-08-31 collapse this pins was 50 tok/s at small context degrading to ~10 tok/s by ~20k context under the 128MiB allocator cap x memory pressure — a shape every reuse floor passes but this ratio catches. Composes with OSAURUS_EVALS_SIM_RAM_GB to reproduce the pressure variant. Off-CI (needs a local model).",
+  "fixtures": {},
+  "expect": {
+    "cacheProof": {
+      "followUpTurns": [
+        "Continue the story with the next paragraph of about 150 words, introducing the cartographer's apprentice.",
+        "Continue with about 150 words describing the first island they chart together.",
+        "Continue with about 150 words about a storm that damages their survey equipment.",
+        "Continue with about 150 words on how they improvise repairs using island materials.",
+        "Continue with about 150 words concluding the chapter as they complete the chart."
+      ],
+      "maxTokens": 400,
+      "minFinalDecodeTpsRatio": 0.6,
+      "requireNonEmptyVisibleTurns": true
+    }
+  }
+}

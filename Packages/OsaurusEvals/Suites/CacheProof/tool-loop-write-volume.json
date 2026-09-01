@@ -1,0 +1,21 @@
+{
+  "id": "cache_proof.tool-loop-write-volume",
+  "domain": "cache_proof",
+  "label": "cache proof • a tool loop persists the canonical boundary set, not a rung ladder",
+  "query": "You are running a three-step probe with the eval_probe tool. After each tool result, summarize it in one sentence and continue.",
+  "notes": "The SSD write-volume gate for low-RAM hosts: across an initial turn plus three scripted tool continuations, the disk-L2 store counter must stay within the canonical reusable set (one proven cross-turn boundary per request plus initial session/stable boundaries) — a regression back to per-request exact+seed rung pairs (measured live 2026-09-01: 2 x ~100ms ~400MB synchronous records per tool call before the MTP canonical-boundary gate, 1 after) fails the ceiling. Footprint growth is also capped: the store path must not accumulate snapshot copies across the loop. Off-CI (needs a local model).",
+  "fixtures": {},
+  "expect": {
+    "cacheProof": {
+      "toolResultFollowUps": [
+        "PROBE STEP 1 RESULT — status check complete: service healthy, uptime 41 days, queue depth 3, no pending alerts. Configuration hash matches the deployed baseline.",
+        "PROBE STEP 2 RESULT — metrics snapshot: p50 latency 84ms, p95 latency 312ms, error rate 0.02%, cache hit ratio 94.6%. All values within the alerting thresholds configured last quarter.",
+        "PROBE STEP 3 RESULT — cleanup complete: 12 stale entries removed, 0 failures, storage reclaimed 1.8GB. The next scheduled cleanup runs in twenty-four hours."
+      ],
+      "maxTokens": 160,
+      "minDiskL2StoresDelta": 1,
+      "maxDiskL2StoresDelta": 12,
+      "maxFootprintGrowthMb": 6000
+    }
+  }
+}
