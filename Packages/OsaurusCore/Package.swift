@@ -254,9 +254,18 @@ let package = Package(
         // vmlx-swift#376 heals dtype-misaligned safetensors containers before
         // mmap with a byte-verified atomic replacement and advisory fallback;
         // #378 preserves exact reusable boundaries across growing tool loops.
+        // vmlx-swift#379 casts DeepseekV3 MoE expert mixes back to the input
+        // dtype, ending the F32 residual/KV promotion; #386 overlaps the
+        // native-MTP verify graph submission with drafting below 2k context;
+        // #387 abandons the prefetched verify before stats finalize so the
+        // telemetry is truthful; #388 unions the safetensors index with shard
+        // headers so an incomplete index can't veto MTP/vision tensor
+        // evidence; #390 stops persisting the recurrent-state copies the
+        // hybrid restore path never applies (−30-50% disk-cache bytes per
+        // boundary, −70% store latency for MambaCache hybrids).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "1315fdcba7544b2942db5806f8287ca252dddb32"
+            revision: "65ba6986b2a0b21833e78d6aee00789cfdcbfdd3"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
