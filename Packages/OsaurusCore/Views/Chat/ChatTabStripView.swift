@@ -60,10 +60,31 @@ struct ChromeTabShape: Shape {
 
 struct ChatTabStripView: View {
     @ObservedObject var windowState: ChatWindowState
+    /// Width of the chrome that precedes this item on the leading edge
+    /// (traffic lights + sidebar toggle in the NSToolbar; just the toggle
+    /// in the full-screen header). Same convention as `ChatToolbarBackView`.
+    var leadingChromeWidth: CGFloat = 136
 
     /// Hover is tracked at strip level (not per item) so separators can
     /// hide beside the hovered tab, matching Chrome.
     @State private var hoveredTabId: UUID?
+
+    /// The sidebar's user-chosen width, shared with the resizable sidebar
+    /// via the same defaults key so the strip tracks the content edge.
+    @AppStorage("chatSidebarWidth") private var storedSidebarWidth: Double = 240
+
+    /// Leading inset that keeps the first tab at the CONTENT area's left
+    /// edge while the sidebar is open — without it the tabs float over the
+    /// sidebar. When the project back-pill is visible it already supplies
+    /// this inset (and precedes the strip), so the strip adds none.
+    private var sidebarOpenInset: CGFloat {
+        let clamped = min(max(storedSidebarWidth, 260), 460)
+        return max(0, CGFloat(clamped) - leadingChromeWidth)
+    }
+
+    private var needsSidebarInset: Bool {
+        windowState.showSidebar && windowState.session.projectId == nil
+    }
 
     var body: some View {
         // Tabs are chat chrome; the project detail page hides them along
@@ -104,6 +125,8 @@ struct ChatTabStripView: View {
             // items; tabs inside share the width and truncate their titles.
             .frame(maxWidth: 700, alignment: .leading)
             .frame(height: 30)
+            .padding(.leading, needsSidebarInset ? sidebarOpenInset : 0)
+            .animation(windowState.theme.animationQuick(), value: windowState.showSidebar)
             .environment(\.theme, windowState.theme)
         }
     }

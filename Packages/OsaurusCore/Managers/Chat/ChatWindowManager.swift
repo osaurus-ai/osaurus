@@ -932,7 +932,7 @@ private struct ChatFullScreenHeaderView: View {
             // precedes this item.
             ChatToolbarBackView(windowState: windowState, leadingChromeWidth: 76)
             // Leading-aligned like Chrome: tabs grow left to right.
-            ChatTabStripView(windowState: windowState)
+            ChatTabStripView(windowState: windowState, leadingChromeWidth: 76)
             Spacer()
             ChatToolbarActionView(windowState: windowState)
             ChatToolbarTrailingView(windowState: windowState)
