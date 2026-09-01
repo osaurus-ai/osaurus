@@ -199,7 +199,21 @@ enum SeatbeltExecutor {
                 break
             }
         }
-        process.waitUntilExit()
+        // Reap the child — but only wait unconditionally when it exited on
+        // its own. On the timeout path the child can be wedged in an
+        // uninterruptible kernel wait (observed: sandbox checks against a
+        // broken sandboxd/XPC service on CI runners), where even SIGKILL
+        // does not take effect until the syscall returns. A bare
+        // `waitUntilExit()` there blocks forever, defeating the enforced
+        // timeout. Give the SIGKILL a bounded window to land, then abandon
+        // the process; launchd reaps it when the kernel finally releases it.
+        if timedOut {
+            for _ in 0..<20 where process.isRunning {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+        } else {
+            process.waitUntilExit()
+        }
 
         // Drain any bytes still buffered in the pipes, then detach the
         // handlers so the file handles can close. Skipped on the timeout
