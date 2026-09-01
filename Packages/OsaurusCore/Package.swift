@@ -266,9 +266,12 @@ let package = Package(
         // vmlx-swift#391 adds CachePromptIntent.auxiliary: internal utility
         // generations (title/follow-ups/memory/transcript cleanup) restore
         // cache prefixes but never persist prompt boundaries.
+        // vmlx-swift#394 gates the native-MTP exact-prompt store behind the
+        // canonical hybrid boundary: one reusable record per tool-call cycle
+        // instead of an exact+seed pair (~2x ~400MB synchronous writes).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "86d23df8aaa91e568ca3f154db999f0768e81b08"
+            revision: "de0c26d3fe47ed556824914a5b84d28aaa938ae2"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
