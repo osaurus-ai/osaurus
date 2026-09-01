@@ -48,7 +48,7 @@ struct ThemeEditorView: View {
 
     init(theme: CustomTheme, onDismiss: @escaping () -> Void) {
         _editingTheme = State(initialValue: theme)
-        _rawThemeJSON = State(initialValue: (try? ThemeJSONEditorCodec.encode(theme)) ?? "{}")
+        _rawThemeJSON = State(initialValue: (try? ThemeJSONEditorCodec.encodeForEditor(theme)) ?? "{}")
         self.onDismiss = onDismiss
     }
 
@@ -1061,7 +1061,12 @@ struct ThemeEditorView: View {
 
     private func syncRawThemeJSONIfNeeded(_ theme: CustomTheme) {
         guard !rawThemeJSONIsDirty else { return }
-        rawThemeJSON = encodedThemeJSON(theme, fallback: rawThemeJSON)
+        let encoded = encodedThemeJSON(theme, fallback: rawThemeJSON)
+        // Skip no-op updates: replacing the TextEditor text forces a full
+        // TextKit relayout even when nothing changed.
+        if encoded != rawThemeJSON {
+            rawThemeJSON = encoded
+        }
     }
 
     private func refreshRawThemeJSON() {
@@ -1086,7 +1091,7 @@ struct ThemeEditorView: View {
     }
 
     private func encodedThemeJSON(_ theme: CustomTheme, fallback: String) -> String {
-        (try? ThemeJSONEditorCodec.encode(theme)) ?? fallback
+        (try? ThemeJSONEditorCodec.encodeForEditor(theme)) ?? fallback
     }
 
     private func saveTheme() {
