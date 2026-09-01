@@ -266,9 +266,12 @@ let package = Package(
         // vmlx-swift#391 adds CachePromptIntent.auxiliary: internal utility
         // generations (title/follow-ups/memory/transcript cleanup) restore
         // cache prefixes but never persist prompt boundaries.
+        // #392 (mlx#6) reports Metal command-buffer failures through the
+        // error handler instead of throwing in completion handlers, so a GPU
+        // failure fails the one job instead of aborting the process.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "86d23df8aaa91e568ca3f154db999f0768e81b08"
+            revision: "cff1018ad86b32e1024e709ba9e6da76bd618912"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
