@@ -483,9 +483,17 @@ final class ChatWindowState: ObservableObject {
         persistActiveSessionForTabSwitch()
         let fresh = makeFreshSession(agentId: agentId)
         let tab = ChatTab(id: UUID(), session: fresh)
-        tabs.append(tab)
-        activeTabId = tab.id
-        session = fresh
+        // One un-animated update for strip + content: letting SwiftUI's
+        // implicit animations interpolate the strip growing while ChatView
+        // is simultaneously torn down and remounted (the `.id` swap) reads
+        // as a visual glitch.
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            tabs.append(tab)
+            activeTabId = tab.id
+            session = fresh
+        }
         refreshSessions()
         refreshSandboxChanges()
         // KPI: a new tab starts a new conversation, same as sidebar New Chat.

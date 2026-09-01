@@ -60,12 +60,15 @@ struct ChromeTabShape: Shape {
 
 struct ChatTabStripView: View {
     @ObservedObject var windowState: ChatWindowState
-    /// Width of the chrome that precedes this item on the leading edge
-    /// (traffic lights + sidebar toggle in the NSToolbar; just the toggle
-    /// in the full-screen header). Same convention as `ChatToolbarBackView`,
-    /// plus the inter-item spacing of the (empty) back slot that sits
-    /// between the toggle and this strip.
+    /// Fallback for the width of the chrome preceding this item, used only
+    /// until the first live measurement lands (see `measuredChromeX`).
     var leadingChromeWidth: CGFloat = 152
+
+    /// The strip's actual leading x in WINDOW coordinates, measured from
+    /// AppKit. Guessing this from constants proved fragile (toolbar
+    /// inter-item spacing varies with the empty back slot and OS version);
+    /// measuring makes the inset exact by construction.
+    @State private var measuredChromeX: CGFloat?
 
     /// Hover is tracked at strip level (not per item) so separators can
     /// hide beside the hovered tab, matching Chrome.
@@ -81,7 +84,7 @@ struct ChatTabStripView: View {
     /// this inset (and precedes the strip), so the strip adds none.
     private var sidebarOpenInset: CGFloat {
         let clamped = min(max(storedSidebarWidth, 260), 460)
-        return max(0, CGFloat(clamped) - leadingChromeWidth)
+        return max(0, CGFloat(clamped) - (measuredChromeX ?? leadingChromeWidth))
     }
 
     private var needsSidebarInset: Bool {
@@ -128,6 +131,17 @@ struct ChatTabStripView: View {
             .frame(maxWidth: 700, alignment: .leading)
             .frame(height: 30)
             .padding(.leading, needsSidebarInset ? sidebarOpenInset : 0)
+            // Anchored to the strip's OUTER leading edge (after the padding
+            // modifier, so the padding lies inside the measured bounds and
+            // the reading is the pre-inset chrome edge — no feedback loop).
+            .background(alignment: .leading) {
+                WindowXReader { x in
+                    if abs((measuredChromeX ?? -1) - x) > 0.5 {
+                        measuredChromeX = x
+                    }
+                }
+                .frame(width: 0)
+            }
             .animation(windowState.theme.animationQuick(), value: windowState.showSidebar)
             .environment(\.theme, windowState.theme)
         }
@@ -248,6 +262,53 @@ private struct ChatTabItemView: View {
         .onTapGesture(perform: onSelect)
         .onHover(perform: onHover)
         .animation(.easeOut(duration: 0.1), value: isHovered)
+    }
+}
+
+/// Reports the hosting SwiftUI view's leading x in WINDOW coordinates.
+/// SwiftUI's `.global` coordinate space bottoms out at the enclosing
+/// `NSHostingView` (each toolbar item is its own), so window-relative
+/// geometry needs an AppKit bridge.
+private struct WindowXReader: NSViewRepresentable {
+    var onChange: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> ReaderView {
+        ReaderView(onChange: onChange)
+    }
+
+    func updateNSView(_ view: ReaderView, context: Context) {
+        view.onChange = onChange
+        view.report()
+    }
+
+    final class ReaderView: NSView {
+        var onChange: (CGFloat) -> Void
+
+        init(onChange: @escaping (CGFloat) -> Void) {
+            self.onChange = onChange
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            report()
+        }
+
+        override func layout() {
+            super.layout()
+            report()
+        }
+
+        func report() {
+            guard window != nil else { return }
+            let x = convert(CGPoint.zero, to: nil).x
+            let callback = onChange
+            // Defer: `layout` runs mid-layout-pass, and mutating SwiftUI
+            // @State from inside it is undefined (AttributeGraph reentrancy).
+            DispatchQueue.main.async { callback(x) }
+        }
     }
 }
 
