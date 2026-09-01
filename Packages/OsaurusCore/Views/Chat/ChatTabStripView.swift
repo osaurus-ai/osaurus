@@ -15,9 +15,7 @@ struct ChatTabStripView: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        if windowState.tabs.count > 1 {
-            strip
-        }
+        strip
     }
 
     private var strip: some View {
@@ -29,6 +27,7 @@ struct ChatTabStripView: View {
                             ChatTabItemView(
                                 session: tab.session,
                                 isActive: tab.id == windowState.activeTabId,
+                                canClose: windowState.tabs.count > 1,
                                 onSelect: { windowState.selectTab(id: tab.id) },
                                 onClose: { windowState.closeTab(id: tab.id) }
                             )
@@ -71,6 +70,9 @@ struct ChatTabStripView: View {
 private struct ChatTabItemView: View {
     @ObservedObject var session: ChatSession
     let isActive: Bool
+    /// False while this is the window's only tab — `closeTab` refuses to
+    /// close the last tab, so the × is hidden rather than dead.
+    let canClose: Bool
     let onSelect: () -> Void
     let onClose: () -> Void
 
@@ -98,21 +100,23 @@ private struct ChatTabItemView: View {
             // Close affordance keeps a fixed footprint so the tab doesn't
             // resize as the pointer enters it; it's just invisible until
             // hovered or active.
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 14, height: 14)
-                    .background(
-                        Circle()
-                            .fill(theme.tertiaryBackground)
-                            .opacity(isHovered ? 1 : 0)
-                    )
-                    .contentShape(Rectangle())
+            if canClose {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 14, height: 14)
+                        .background(
+                            Circle()
+                                .fill(theme.tertiaryBackground)
+                                .opacity(isHovered ? 1 : 0)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(isHovered || isActive ? 1 : 0)
+                .help(Text(LocalizedStringKey("Close Tab"), bundle: .module))
             }
-            .buttonStyle(.plain)
-            .opacity(isHovered || isActive ? 1 : 0)
-            .help(Text(LocalizedStringKey("Close Tab"), bundle: .module))
         }
         .padding(.horizontal, 10)
         .frame(height: 26)
