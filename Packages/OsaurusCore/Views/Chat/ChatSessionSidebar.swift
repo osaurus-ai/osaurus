@@ -53,6 +53,12 @@ struct ChatSessionSidebar: View {
     var onOpenInNewWindow: ((ChatSessionData) -> Void)? = nil
     /// Open the session in a new tab of this window (browser-style).
     var onOpenInNewTab: ((ChatSessionData) -> Void)? = nil
+    /// The window's agent selector pill, rendered below the Chats | Projects
+    /// lens switcher on the Chats tab. Injected by the hosting `ChatView`
+    /// (the pill needs window state this sidebar deliberately doesn't hold).
+    /// It moved here from the toolbar's centered slot, which the chat tab
+    /// strip now occupies.
+    var agentPicker: AnyView? = nil
 
     enum ExportFormat {
         case markdown
@@ -231,6 +237,15 @@ struct ChatSessionSidebar: View {
                 .padding(.horizontal, 12)
                 .padding(.top, 16)
                 .padding(.bottom, 6)
+
+            // Agent selector pill (Chats lens only — projects group chats
+            // across agents, so the pill is meaningless there).
+            if selectedTab == .chats, let agentPicker {
+                agentPicker
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 6)
+            }
 
             // Header with New Chat button
             sidebarHeader

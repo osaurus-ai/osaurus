@@ -2,65 +2,47 @@
 //  ChatTabStripView.swift
 //  osaurus
 //
-//  Browser-style tab strip for chat windows. Hidden while a window has a
-//  single tab (the default look is unchanged); appears under the toolbar
-//  once a second tab is opened. Each tab shows its conversation's live
-//  title, a streaming indicator, and a close button.
+//  Browser-style tab strip for chat windows. Lives in the toolbar's
+//  centered slot (the space the agent pill vacated when it moved into the
+//  sidebar) and in the themed full-screen header. Tabs compress as more
+//  open, like a browser; each shows its conversation's live title, a
+//  streaming indicator, and a close button.
 //
 
 import SwiftUI
 
 struct ChatTabStripView: View {
     @ObservedObject var windowState: ChatWindowState
-    @Environment(\.theme) private var theme
 
     var body: some View {
-        strip
-    }
-
-    private var strip: some View {
-        HStack(spacing: 4) {
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal) {
-                    HStack(spacing: 4) {
-                        ForEach(windowState.tabs) { tab in
-                            ChatTabItemView(
-                                session: tab.session,
-                                isActive: tab.id == windowState.activeTabId,
-                                canClose: windowState.tabs.count > 1,
-                                onSelect: { windowState.selectTab(id: tab.id) },
-                                onClose: { windowState.closeTab(id: tab.id) }
-                            )
-                            .id(tab.id)
-                        }
-                    }
-                    .padding(.horizontal, 8)
+        // Tabs are chat chrome; the project detail page hides them along
+        // with the rest of the chat-specific toolbar items.
+        if !windowState.isProjectPageVisible {
+            HStack(spacing: 4) {
+                ForEach(windowState.tabs) { tab in
+                    ChatTabItemView(
+                        session: tab.session,
+                        isActive: tab.id == windowState.activeTabId,
+                        canClose: windowState.tabs.count > 1,
+                        onSelect: { windowState.selectTab(id: tab.id) },
+                        onClose: { windowState.closeTab(id: tab.id) }
+                    )
                 }
-                .scrollIndicators(.hidden)
-                .onChange(of: windowState.activeTabId) { _, id in
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        proxy.scrollTo(id, anchor: nil)
-                    }
-                }
-            }
 
-            Button(action: { windowState.newTab() }) {
-                Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 24, height: 24)
-                    .contentShape(Rectangle())
+                Button(action: { windowState.newTab() }) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(windowState.theme.secondaryText)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(Text(LocalizedStringKey("New Tab"), bundle: .module))
             }
-            .buttonStyle(.plain)
-            .help(Text(LocalizedStringKey("New Tab"), bundle: .module))
-            .padding(.trailing, 8)
-        }
-        .frame(height: 34)
-        .background(theme.secondaryBackground)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(theme.primaryBorder.opacity(0.4))
-                .frame(height: 1)
+            // Cap the strip so it never crowds the leading/trailing toolbar
+            // items; tabs inside share the width and truncate their titles.
+            .frame(maxWidth: 560)
+            .environment(\.theme, windowState.theme)
         }
     }
 }
@@ -84,7 +66,7 @@ private struct ChatTabItemView: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 5) {
             if session.isStreaming {
                 Circle()
                     .fill(theme.accentColor)
@@ -97,9 +79,6 @@ private struct ChatTabItemView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
 
-            // Close affordance keeps a fixed footprint so the tab doesn't
-            // resize as the pointer enters it; it's just invisible until
-            // hovered or active.
             if canClose {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
@@ -118,15 +97,15 @@ private struct ChatTabItemView: View {
                 .help(Text(LocalizedStringKey("Close Tab"), bundle: .module))
             }
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 9)
         .frame(height: 26)
-        .frame(minWidth: 60, maxWidth: 180)
+        .frame(minWidth: 36, maxWidth: 180)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(
                     isActive
-                        ? theme.primaryBackground
-                        : (isHovered ? theme.tertiaryBackground.opacity(0.6) : Color.clear))
+                        ? theme.tertiaryBackground.opacity(theme.isDark ? 0.9 : 0.8)
+                        : (isHovered ? theme.tertiaryBackground.opacity(0.45) : Color.clear))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 7, style: .continuous)

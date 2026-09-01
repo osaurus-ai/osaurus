@@ -708,10 +708,10 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         let toolbar = NSToolbar(identifier: "ChatToolbar")
         toolbar.allowsUserCustomization = false
         toolbar.autosavesConfiguration = false
-        // Anchor the agent pill at the toolbar's geometric center; without
+        // Anchor the tab strip at the toolbar's geometric center; without
         // this it drifts off-axis because of the asymmetric leading/trailing
         // items and the traffic-light area.
-        toolbar.centeredItemIdentifier = ChatToolbarDelegate.agentItem
+        toolbar.centeredItemIdentifier = ChatToolbarDelegate.tabsItem
 
         let toolbarDelegate = ChatToolbarDelegate(windowState: windowState)
         toolbar.delegate = toolbarDelegate
@@ -913,7 +913,6 @@ private struct ChatWindowRootView: View {
             if windowState.isFullScreen {
                 ChatFullScreenHeaderView(windowState: windowState)
             }
-            ChatTabStripView(windowState: windowState)
             ChatView(windowState: windowState)
                 .id(ObjectIdentifier(windowState.session))
         }
@@ -938,7 +937,7 @@ private struct ChatFullScreenHeaderView: View {
                 ChatToolbarActionView(windowState: windowState)
                 ChatToolbarTrailingView(windowState: windowState)
             }
-            ChatToolbarAgentView(windowState: windowState)
+            ChatTabStripView(windowState: windowState)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -1006,7 +1005,11 @@ private final class ChatPanel: NSPanel {
 private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     fileprivate static let sidebarItem = NSToolbarItem.Identifier("ChatToolbar.sidebar")
     fileprivate static let backItem = NSToolbarItem.Identifier("ChatToolbar.back")
-    fileprivate static let agentItem = NSToolbarItem.Identifier("ChatToolbar.agent")
+    /// The centered slot. Hosted the agent pill until the pill moved into
+    /// the sidebar's Chats tab; now hosts the chat tab strip. (The old
+    /// "ChatToolbar.agent" identifier falls through to `default: nil` if
+    /// AppKit ever replays it from stale persisted state.)
+    fileprivate static let tabsItem = NSToolbarItem.Identifier("ChatToolbar.tabs")
     fileprivate static let actionItem = NSToolbarItem.Identifier("ChatToolbar.action")
     // The trailing item; hosts the pin (chat) or the settings gear
     // (project page). Named `pin` for backward identity continuity.
@@ -1024,7 +1027,7 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     // item that AppKit still reserved spacing for, so every chat had a dead
     // gap at the toolbar's right edge.
     private static let itemIdentifiers: [NSToolbarItem.Identifier] = [
-        sidebarItem, backItem, .flexibleSpace, agentItem, .flexibleSpace, actionItem, pinItem,
+        sidebarItem, backItem, .flexibleSpace, tabsItem, .flexibleSpace, actionItem, pinItem,
     ]
 
     private weak var windowState: ChatWindowState?
@@ -1064,11 +1067,11 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
                     ChatToolbarBackView(windowState: windowState)
             )
 
-        case Self.agentItem:
+        case Self.tabsItem:
             return makeHostingItem(
                 identifier: itemIdentifier,
                 rootView:
-                    ChatToolbarAgentView(windowState: windowState)
+                    ChatTabStripView(windowState: windowState)
             )
 
         case Self.actionItem:
@@ -1122,95 +1125,6 @@ private struct ChatToolbarSidebarView: View {
             }
         )
         .environment(\.theme, windowState.theme)
-    }
-}
-
-/// Agent selector pill that lives in the toolbar's centered slot.
-private struct ChatToolbarAgentView: View {
-    @ObservedObject var windowState: ChatWindowState
-
-    /// Incremented by the `/agent` slash command notification to pop the
-    /// agent picker open from the input card.
-    @State private var openPickerTrigger: Int = 0
-
-    var body: some View {
-        // The agent pill switches the CHAT's agent; on the project page it
-        // is meaningless (projects group chats across agents) and hides.
-        if windowState.isProjectPageVisible {
-            EmptyView()
-        } else {
-            agentPill
-        }
-    }
-
-    private var agentPill: some View {
-        AgentPill(
-            agents: windowState.agents,
-            activeAgentId: windowState.agentId,
-            onSelectAgent: { newAgentId in
-                windowState.switchAgent(to: newAgentId)
-            },
-            discoveredAgents: windowState.discoveredAgents,
-            onSelectDiscoveredAgent: { agent in
-                NotificationCenter.default.post(
-                    name: .chatToolbarSelectDiscoveredAgent,
-                    object: agent,
-                    userInfo: ["windowId": windowState.windowId]
-                )
-            },
-            activeDiscoveredAgent: windowState.selectedDiscoveredAgent,
-            pairedRelayAgents: windowState.pairedRelayAgents,
-            onSelectRelayAgent: { relay in
-                NotificationCenter.default.post(
-                    name: .chatToolbarSelectRelayAgent,
-                    object: relay,
-                    userInfo: ["windowId": windowState.windowId]
-                )
-            },
-            activeRelayAgent: windowState.selectedRelayAgent,
-            activeRemoteAgentAvatar: windowState.pinnedRemoteAgentAvatar,
-            onOpenActiveAgentSettings: { openActiveAgentSettings() },
-            onOpenRemoteAgentSettings: { openRemoteAgentSettings() },
-            openPickerTrigger: openPickerTrigger
-        )
-        .environment(\.theme, windowState.theme)
-        .onReceive(NotificationCenter.default.publisher(for: .chatToolbarOpenAgentPicker)) { notification in
-            guard let targetWindowId = notification.userInfo?["windowId"] as? UUID,
-                targetWindowId == windowState.windowId
-            else { return }
-            openPickerTrigger &+= 1
-        }
-    }
-
-    /// Deep-link the management window to the active local agent's config.
-    /// Built-in agents have no editable record, so they open the Agents tab
-    /// without a selection.
-    private func openActiveAgentSettings() {
-        let active = windowState.agents.first { $0.id == windowState.agentId }
-        // The built-in Orchestrator has no Agents-tab detail view; its
-        // identity + delegation settings live on the dedicated
-        // Orchestrator tab.
-        if active?.isBuiltIn != false {
-            AppDelegate.shared?.showManagementWindow(initialTab: .orchestrator)
-            return
-        }
-        AppDelegate.shared?.showManagementWindow(
-            initialTab: .agents,
-            deeplinkAgentId: active?.id
-        )
-    }
-
-    /// Deep-link the management window to the active remote agent's detail view.
-    /// Resolves the chat's remote target → persisted `RemoteAgent` id; ephemeral
-    /// peers with no record fall back to the Agents tab.
-    private func openRemoteAgentSettings() {
-        let remoteId = windowState.selectedDiscoveredAgentProviderId.flatMap {
-            RemoteAgentManager.shared.remoteAgentDetailId(forProviderId: $0)
-        }
-        AppDelegate.shared?.showManagementWindow(
-            initialTab: .agents,
-            deeplinkRemoteAgentId: remoteId
-        )
     }
 }
 

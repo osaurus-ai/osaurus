@@ -8727,7 +8727,8 @@ struct ChatView: View {
                                 openProjectId = nil
                                 windowState.enteredChatFromProjectPage = false
                                 windowState.openSessionInNewTab(sessionData)
-                            }
+                            },
+                            agentPicker: AnyView(ChatAgentPickerPill(windowState: windowState))
                         )
                     }
                 }
