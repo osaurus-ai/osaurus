@@ -263,9 +263,12 @@ let package = Package(
         // evidence; #390 stops persisting the recurrent-state copies the
         // hybrid restore path never applies (−30-50% disk-cache bytes per
         // boundary, −70% store latency for MambaCache hybrids).
+        // vmlx-swift#391 adds CachePromptIntent.auxiliary: internal utility
+        // generations (title/follow-ups/memory/transcript cleanup) restore
+        // cache prefixes but never persist prompt boundaries.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "65ba6986b2a0b21833e78d6aee00789cfdcbfdd3"
+            revision: "86d23df8aaa91e568ca3f154db999f0768e81b08"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

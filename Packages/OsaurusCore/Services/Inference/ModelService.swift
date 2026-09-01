@@ -119,6 +119,15 @@ struct GenerationParameters: Sendable {
     /// resident cannot silently convert it into a chat-owned unload target.
     let preserveExistingResidencyOwner: Bool
 
+    /// Internal utility generation (chat title, follow-up suggestions, memory
+    /// distillation, transcript cleanup): its prompt embeds per-turn content
+    /// and is never an exact prefix of a future request, so the engine must
+    /// not persist its prompt boundaries — measured live, one chat turn wrote
+    /// six ~150MB hybrid KV records for its title/suggestion prompts alone.
+    /// The request still restores whatever prefix the cache already holds.
+    /// Rides on `GenerationParameters` for the same reason `loadIntent` does.
+    let auxiliaryCacheIntent: Bool
+
 
     init(
         temperature: Float?,
@@ -146,7 +155,8 @@ struct GenerationParameters: Sendable {
         requestSource: RequestSource = .httpAPI,
         loadIntent: ModelLoadIntent = .interactive,
         claudeCode: ClaudeCodeRunOptions? = nil,
-        preserveExistingResidencyOwner: Bool = false
+        preserveExistingResidencyOwner: Bool = false,
+        auxiliaryCacheIntent: Bool = false
 
     ) {
         self.temperature = temperature
@@ -175,6 +185,7 @@ struct GenerationParameters: Sendable {
         self.loadIntent = loadIntent
         self.claudeCode = claudeCode
         self.preserveExistingResidencyOwner = preserveExistingResidencyOwner
+        self.auxiliaryCacheIntent = auxiliaryCacheIntent
     }
 }
 

@@ -2302,6 +2302,13 @@ struct MLXBatchAdapter {
             if toolChoiceRequiresLocalCall(toolChoice) {
                 lmInput = lmInput.withCacheRestorePolicy(.freshRequiredToolSelection)
             }
+            // Internal utility one-shots (title/follow-ups/memory/transcript
+            // cleanup) never persist prompt boundaries — their prompts embed
+            // per-turn content and are never resumed. Warm-up prefill keeps
+            // its own dedicated intent.
+            if generation.auxiliaryCacheIntent, !generation.warmupPrefill {
+                lmInput = lmInput.withCachePromptIntent(.auxiliary)
+            }
 
             let tokens =
                 lmInput.text.tokenIds
