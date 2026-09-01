@@ -51,6 +51,8 @@ struct ChatSessionSidebar: View {
     var onStop: ((UUID) -> Void)? = nil
     /// Optional callback for opening a session in a new window
     var onOpenInNewWindow: ((ChatSessionData) -> Void)? = nil
+    /// Open the session in a new tab of this window (browser-style).
+    var onOpenInNewTab: ((ChatSessionData) -> Void)? = nil
 
     enum ExportFormat {
         case markdown
@@ -1089,6 +1091,10 @@ struct ChatSessionSidebar: View {
                             onOpenInNewWindow: onOpenInNewWindow != nil
                                 ? {
                                     onOpenInNewWindow?(session)
+                                } : nil,
+                            onOpenInNewTab: onOpenInNewTab != nil
+                                ? {
+                                    onOpenInNewTab?(session)
                                 } : nil
                         )
                         .id(session.id)
@@ -1225,6 +1231,8 @@ private struct SessionRow: View {
     var onStop: (() -> Void)? = nil
     /// Optional callback for opening in a new window
     var onOpenInNewWindow: (() -> Void)? = nil
+    /// Optional callback for opening in a new tab of the current window
+    var onOpenInNewTab: (() -> Void)? = nil
 
     @Environment(\.theme) private var theme
     @Environment(\.themedAlertScope) private var alertScope
@@ -1406,14 +1414,27 @@ private struct SessionRow: View {
                     }
                     Divider()
                 }
-                if let openInNewWindow = onOpenInNewWindow {
-                    Button {
-                        openInNewWindow()
-                    } label: {
-                        Label {
-                            Text("Open in New Window", bundle: .module)
-                        } icon: {
-                            Image(systemName: "macwindow.badge.plus")
+                if onOpenInNewTab != nil || onOpenInNewWindow != nil {
+                    if let openInNewTab = onOpenInNewTab {
+                        Button {
+                            openInNewTab()
+                        } label: {
+                            Label {
+                                Text("Open in New Tab", bundle: .module)
+                            } icon: {
+                                Image(systemName: "plus.square.on.square")
+                            }
+                        }
+                    }
+                    if let openInNewWindow = onOpenInNewWindow {
+                        Button {
+                            openInNewWindow()
+                        } label: {
+                            Label {
+                                Text("Open in New Window", bundle: .module)
+                            } icon: {
+                                Image(systemName: "macwindow.badge.plus")
+                            }
                         }
                     }
                     Divider()

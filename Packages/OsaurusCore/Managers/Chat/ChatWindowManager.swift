@@ -346,7 +346,9 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     /// creation), falling back to the creation-time info for windows whose
     /// state hasn't been registered yet.
     public func findWindow(bySessionId sessionId: UUID) -> ChatWindowInfo? {
-        if let (windowId, _) = windowStates.first(where: { $0.value.session.sessionId == sessionId }) {
+        if let (windowId, _) = windowStates.first(where: { state in
+            state.value.tabSessions.contains { $0.sessionId == sessionId }
+        }) {
             return windows[windowId]
         }
         return windows.values.first { $0.sessionId == sessionId }
@@ -357,7 +359,16 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     /// a sidebar Stop to the owning window's run when it isn't a detached
     /// registry task.
     func session(forSessionId sessionId: UUID) -> ChatSession? {
-        windowStates.values.first { $0.session.sessionId == sessionId }?.session
+        // Prefer the visible (active-tab) instance, then any inactive tab.
+        if let active = windowStates.values.first(where: { $0.session.sessionId == sessionId }) {
+            return active.session
+        }
+        for state in windowStates.values {
+            if let match = state.tabSessions.first(where: { $0.sessionId == sessionId }) {
+                return match
+            }
+        }
+        return nil
     }
 
     /// Check if any windows are visible
@@ -368,7 +379,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     /// True when any open chat session — or any active registry-owned
     /// background run — is currently streaming a model response.
     public var isAnySessionStreaming: Bool {
-        windowStates.values.contains { $0.session.isStreaming }
+        windowStates.values.contains { $0.tabSessions.contains { $0.isStreaming } }
             || BackgroundTaskManager.shared.activeTaskSessions().contains { $0.isStreaming }
     }
 
@@ -387,9 +398,12 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     /// inference context can only run one, and loading a second would evict
     /// the first and cancel its in-flight stream.
     func isOtherWindowStreamingLocalModel(excluding windowId: UUID?) -> Bool {
+        // Exclude only the excluded window's ACTIVE session — a sibling tab
+        // in the same window streaming a local model contends for the single
+        // shared inference slot exactly like another window does.
         let excludedSession = windowId.flatMap { windowStates[$0]?.session }
-        return windowStates.contains { id, state in
-            id != windowId && state.session.isStreamingLocalModel
+        return windowStates.values.contains { state in
+            state.tabSessions.contains { $0 !== excludedSession && $0.isStreamingLocalModel }
         }
             || BackgroundTaskManager.shared.isAnyDetachedTaskStreamingLocalModel(
                 excludingSession: excludedSession
@@ -400,7 +414,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     /// streaming a local model. Used to defer speculative model warm-up while
     /// a user stream is in flight.
     var isAnyWindowStreamingLocalModel: Bool {
-        windowStates.values.contains { $0.session.isStreamingLocalModel }
+        windowStates.values.contains { $0.tabSessions.contains { $0.isStreamingLocalModel } }
             || BackgroundTaskManager.shared.isAnyDetachedTaskStreamingLocalModel()
     }
 
@@ -447,7 +461,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     /// run) with this model selected, don't pay reload cost on their next
     /// keystroke".
     func activeLocalModelNames() -> Set<String> {
-        let windowSessions = windowStates.values.map { $0.session }
+        let windowSessions = windowStates.values.flatMap { $0.tabSessions }
         let detachedSessions = BackgroundTaskManager.shared.activeTaskSessions()
         return Set(
             (windowSessions + detachedSessions).compactMap { session in
@@ -469,7 +483,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     @discardableResult
     func prepareSessionsForExplicitModelUnload(named name: String) -> Int {
         let sessions =
-            windowStates.values.map { $0.session }
+            windowStates.values.flatMap { $0.tabSessions }
             + BackgroundTaskManager.shared.activeTaskSessions()
         var seen: Set<ObjectIdentifier> = []
         var prepared = 0
@@ -702,6 +716,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         let toolbarDelegate = ChatToolbarDelegate(windowState: windowState)
         toolbar.delegate = toolbarDelegate
         panel.chatToolbarDelegate = toolbarDelegate
+        panel.chatWindowState = windowState
         panel.toolbar = toolbar
         panel.toolbarStyle = .unified
 
@@ -792,6 +807,10 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             }
             windowStates[id]?.cleanup()
         } else if let state = windowStates[id] {
+            // The ACTIVE session's run survives the window in the registry,
+            // but inactive tabs are not covered by that detach — save/stop
+            // (or hand off) each of them before the state is dropped.
+            state.teardownInactiveTabSessions()
             // The run survives the window: break only the view links so the
             // detached session can't push alerts or sidebar refreshes into a
             // dead window state. Execution is untouched.
@@ -894,6 +913,7 @@ private struct ChatWindowRootView: View {
             if windowState.isFullScreen {
                 ChatFullScreenHeaderView(windowState: windowState)
             }
+            ChatTabStripView(windowState: windowState)
             ChatView(windowState: windowState)
                 .id(ObjectIdentifier(windowState.session))
         }
@@ -932,9 +952,50 @@ private struct ChatFullScreenHeaderView: View {
 private final class ChatPanel: NSPanel {
     /// Keep toolbar delegate alive (NSToolbar's delegate is weak).
     var chatToolbarDelegate: ChatToolbarDelegate?
+    /// The window's state container, for browser-style tab shortcuts
+    /// (⌘T / ⌘W / ⇧⌘[ / ⇧⌘]).
+    weak var chatWindowState: ChatWindowState?
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+
+    /// ⌘W (the Close menu item) closes the active TAB while more than one is
+    /// open, exactly like a browser; the last tab closes the window.
+    override func performClose(_ sender: Any?) {
+        if let state = chatWindowState, state.tabs.count > 1 {
+            state.closeTab(id: state.activeTabId)
+            return
+        }
+        super.performClose(sender)
+    }
+
+    /// Tab shortcuts that have no menu item: ⌘T opens a new tab,
+    /// ⇧⌘] / ⇧⌘[ cycle tabs. Only fires when no view in the responder
+    /// chain consumed the key.
+    override func keyDown(with event: NSEvent) {
+        if let state = chatWindowState,
+            event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+            event.charactersIgnoringModifiers == "t"
+        {
+            state.newTab()
+            return
+        }
+        if let state = chatWindowState,
+            event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.command, .shift]
+        {
+            switch event.charactersIgnoringModifiers {
+            case "]", "}":
+                state.selectAdjacentTab(offset: 1)
+                return
+            case "[", "{":
+                state.selectAdjacentTab(offset: -1)
+                return
+            default:
+                break
+            }
+        }
+        super.keyDown(with: event)
+    }
 }
 
 // MARK: - Chat Toolbar

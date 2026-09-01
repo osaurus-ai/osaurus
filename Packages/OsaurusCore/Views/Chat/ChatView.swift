@@ -8722,6 +8722,11 @@ struct ChatView: View {
                                     agentId: sessionData.agentId,
                                     sessionData: sessionData
                                 )
+                            },
+                            onOpenInNewTab: { sessionData in
+                                openProjectId = nil
+                                windowState.enteredChatFromProjectPage = false
+                                windowState.openSessionInNewTab(sessionData)
                             }
                         )
                     }

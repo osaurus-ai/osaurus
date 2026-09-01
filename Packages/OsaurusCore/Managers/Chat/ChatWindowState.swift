@@ -39,6 +39,18 @@ public struct ChatThreadIdentity: Equatable, Sendable {
     public let isRemote: Bool
 }
 
+/// One browser-style tab in a chat window. Identity is the tab's own id —
+/// the session it holds is replaceable (in-tab chat switches swap it, just
+/// like the window's single session used to be swapped).
+struct ChatTab: Identifiable, Equatable {
+    let id: UUID
+    var session: ChatSession
+
+    static func == (lhs: ChatTab, rhs: ChatTab) -> Bool {
+        lhs.id == rhs.id && lhs.session === rhs.session
+    }
+}
+
 /// Per-window state container for ChatView - each window creates its own instance
 @MainActor
 final class ChatWindowState: ObservableObject {
@@ -49,9 +61,22 @@ final class ChatWindowState: ObservableObject {
     /// chats while a run is in flight detaches the running session into the
     /// `BackgroundTaskManager` registry (execution continues) and installs a
     /// different `ChatSession` here. `@Published` so the window root view can
-    /// rebuild `ChatView` around the new instance.
-    @Published private(set) var session: ChatSession
+    /// rebuild `ChatView` around the new instance. Always mirrors the active
+    /// tab's session — the didSet keeps the tab entry in sync when in-tab
+    /// navigation replaces the instance.
+    @Published private(set) var session: ChatSession {
+        didSet { syncActiveTabSession() }
+    }
     let foundationModelAvailable: Bool
+
+    // MARK: - Tabs
+
+    /// Browser-style tabs, each holding its own live `ChatSession`. Inactive
+    /// tabs keep their sessions alive in memory (streams keep running); only
+    /// closing a tab tears its session down or hands it to the background
+    /// registry.
+    @Published private(set) var tabs: [ChatTab] = []
+    @Published private(set) var activeTabId: UUID = UUID()
 
     // MARK: - View State
 
@@ -193,6 +218,10 @@ final class ChatWindowState: ObservableObject {
         self.cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
         decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
 
+        let initialTab = ChatTab(id: UUID(), session: self.session)
+        self.tabs = [initialTab]
+        self.activeTabId = initialTab.id
+
         // Configure session
         self.session.windowState = self
         self.session.agentId = agentId
@@ -239,6 +268,10 @@ final class ChatWindowState: ObservableObject {
         self.cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
         decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
 
+        let initialTab = ChatTab(id: UUID(), session: self.session)
+        self.tabs = [initialTab]
+        self.activeTabId = initialTab.id
+
         // Re-link the adopted session to this window so busy alerts and
         // Mode 2 routing reach the view that now displays it.
         self.session.windowState = self
@@ -265,6 +298,10 @@ final class ChatWindowState: ObservableObject {
         selectedDiscoveredAgent = nil
         selectedDiscoveredAgentProviderId = nil
         selectedRelayAgent = nil
+        // Inactive tabs first: each of their sessions is saved and stopped
+        // (or handed to the background registry / unlinked when shared) —
+        // the single-session logic below only covers the active tab.
+        teardownInactiveTabSessions()
         // A registry-shared session is co-owned by its registering owner:
         // this window closing must only unlink, never shut down the shared
         // instance's warm-up controller or stop its run.
@@ -344,6 +381,25 @@ final class ChatWindowState: ObservableObject {
     /// view (never a background-registry handoff — the row is going away,
     /// and an adopted run's completion save would resurrect it).
     func prepareForSessionDeletion(id: UUID) {
+        // An INACTIVE tab showing the doomed conversation just closes; its
+        // session must not be saved on the way out (the row is being
+        // deleted, a save would resurrect it).
+        if let tab = tabs.first(where: {
+            $0.id != activeTabId && $0.session.sessionId == id
+        }) {
+            tabs.removeAll { $0.id == tab.id }
+            let doomed = tab.session
+            if LiveChatSessionRegistry.shared.isShared(doomed) {
+                doomed.windowState = nil
+                doomed.onSessionChanged = nil
+            } else {
+                doomed.warmupController.shutdown()
+                doomed.stop()
+                doomed.onSessionChanged = nil
+                doomed.windowState = nil
+            }
+            return
+        }
         guard session.sessionId == id else { return }
         if releaseSharedSessionIfNeeded() {
             installFreshSession(agentId: agentId)
@@ -354,6 +410,16 @@ final class ChatWindowState: ObservableObject {
 
     func loadSession(_ sessionData: ChatSessionData) {
         guard sessionData.id != session.sessionId else { return }
+        // Browser-style dedupe: if another tab already shows this
+        // conversation, switch to it instead of loading a second copy of
+        // the same transcript into this tab (two live instances of one row
+        // race each other's saves).
+        if let existing = tabs.first(where: {
+            $0.id != activeTabId && $0.session.sessionId == sessionData.id
+        }) {
+            selectTab(id: existing.id)
+            return
+        }
         TTSService.shared.stop()
         if !session.turns.isEmpty { session.save() }
         flushCurrentSession()
@@ -399,6 +465,163 @@ final class ChatWindowState: ObservableObject {
         }
         refreshSessions()
         refreshSandboxChanges()
+    }
+
+    // MARK: - Tabs API
+
+    /// All live sessions this window holds, across every tab. The active
+    /// tab's session is `session`; the rest keep streaming/existing in the
+    /// background of this window.
+    var tabSessions: [ChatSession] {
+        tabs.map(\.session)
+    }
+
+    /// Open a new tab with a fresh empty chat and make it active. The
+    /// outgoing tab keeps its session untouched (no detach — the tab still
+    /// owns it).
+    func newTab() {
+        persistActiveSessionForTabSwitch()
+        let fresh = makeFreshSession(agentId: agentId)
+        let tab = ChatTab(id: UUID(), session: fresh)
+        tabs.append(tab)
+        activeTabId = tab.id
+        session = fresh
+        refreshSessions()
+        refreshSandboxChanges()
+        // KPI: a new tab starts a new conversation, same as sidebar New Chat.
+        FeatureTelemetry.chatSessionStarted()
+    }
+
+    /// Switch the visible chat to another tab. Unlike `loadSession`, the
+    /// outgoing session is neither detached nor released — its tab keeps it
+    /// live, so an in-flight stream keeps rendering into that tab.
+    func selectTab(id: UUID) {
+        guard id != activeTabId, let tab = tabs.first(where: { $0.id == id }) else { return }
+        persistActiveSessionForTabSwitch()
+        activeTabId = id
+        adoptTabSession(tab.session)
+    }
+
+    /// Cycle to the next (+1) or previous (-1) tab, wrapping around.
+    func selectAdjacentTab(offset: Int) {
+        guard tabs.count > 1,
+            let idx = tabs.firstIndex(where: { $0.id == activeTabId })
+        else { return }
+        let next = ((idx + offset) % tabs.count + tabs.count) % tabs.count
+        selectTab(id: tabs[next].id)
+    }
+
+    /// Close a tab. The last remaining tab never closes here — the caller
+    /// (⌘W / close button) falls through to closing the window instead.
+    /// A closing tab's session follows the window-close rules: shared →
+    /// unlink only; mid-run → detach to the background registry; idle →
+    /// save and stop.
+    func closeTab(id: UUID) {
+        guard tabs.count > 1, let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
+        let closing = tabs[idx]
+        tabs.remove(at: idx)
+        if activeTabId == id {
+            let neighbor = tabs[min(idx, tabs.count - 1)]
+            activeTabId = neighbor.id
+            adoptTabSession(neighbor.session)
+        }
+        teardownTabSession(closing.session)
+    }
+
+    /// Open a persisted conversation in a new tab (or focus the tab that
+    /// already shows it).
+    func openSessionInNewTab(_ sessionData: ChatSessionData) {
+        if let existing = tabs.first(where: { $0.session.sessionId == sessionData.id }) {
+            selectTab(id: existing.id)
+            return
+        }
+        newTab()
+        loadSession(sessionData)
+    }
+
+    /// Tear down every tab except the active one. `cleanup()` calls this on
+    /// window close; `ChatWindowManager` also calls it when the ACTIVE
+    /// session was detached to the background (that path skips `cleanup()`
+    /// entirely, which would otherwise strand inactive tabs unsaved).
+    func teardownInactiveTabSessions() {
+        let inactive = tabs.filter { $0.id != activeTabId }
+        tabs.removeAll { $0.id != activeTabId }
+        for tab in inactive {
+            teardownTabSession(tab.session)
+        }
+    }
+
+    /// Make an incoming tab's session the visible one, syncing the window's
+    /// per-agent chrome (theme, pills, dropdown, sidebar filter) the same
+    /// way `loadSession` does for in-tab switches.
+    private func adoptTabSession(_ target: ChatSession) {
+        let targetAgentId = target.agentId ?? Agent.defaultId
+        if targetAgentId != agentId {
+            adoptAgent(targetAgentId)
+        }
+        session = target
+        refreshSessions()
+        refreshSandboxChanges()
+    }
+
+    /// Save the active session and flush memory before another tab takes
+    /// over the visible surface. Deliberately does NOT detach/release — the
+    /// outgoing tab still owns its session.
+    private func persistActiveSessionForTabSwitch() {
+        TTSService.shared.stop()
+        if !session.turns.isEmpty { session.save() }
+        flushCurrentSession()
+    }
+
+    /// Dispose of a session whose tab was closed, mirroring `cleanup()`'s
+    /// per-session rules (see the comments there for why save precedes
+    /// stop and shared instances are only unlinked).
+    private func teardownTabSession(_ closingSession: ChatSession) {
+        if LiveChatSessionRegistry.shared.isShared(closingSession) {
+            if !closingSession.turns.isEmpty { closingSession.save() }
+            closingSession.windowState = nil
+            closingSession.onSessionChanged = nil
+            return
+        }
+        // A mid-run (or clarify-paused) session survives its tab closing the
+        // same way it survives its window closing: adopted into the
+        // background registry, execution untouched.
+        if closingSession.isStreaming || closingSession.awaitingClarify != nil,
+            BackgroundTaskManager.shared.adoptSession(closingSession) != nil
+        {
+            closingSession.windowState = nil
+            closingSession.onSessionChanged = nil
+            return
+        }
+        if !closingSession.turns.isEmpty { closingSession.save() }
+        closingSession.warmupController.shutdown()
+        closingSession.stop()
+        closingSession.onSessionChanged = nil
+        closingSession.windowState = nil
+    }
+
+    /// Keep the active tab's entry pointing at the window's current session
+    /// after in-tab navigation replaces the instance (loadSession /
+    /// startNewChat / switchAgent / attach paths).
+    private func syncActiveTabSession() {
+        guard let idx = tabs.firstIndex(where: { $0.id == activeTabId }) else { return }
+        if tabs[idx].session !== session {
+            tabs[idx].session = session
+        }
+    }
+
+    /// Build a fresh, window-linked `ChatSession` (shared by `newTab` and
+    /// `installFreshSession`).
+    private func makeFreshSession(agentId: UUID, loading data: ChatSessionData? = nil) -> ChatSession {
+        let fresh = ChatSession()
+        fresh.windowState = self
+        fresh.agentId = agentId
+        fresh.applyInitialModelSelection()
+        if let data { fresh.load(from: data) }
+        fresh.onSessionChanged = { [weak self] in
+            self?.refreshSessionsDebounced()
+        }
+        return fresh
     }
 
     // MARK: - Sandbox Changes
@@ -485,15 +708,7 @@ final class ChatWindowState: ObservableObject {
     /// persisted turns), used after the previous one was detached to the
     /// registry.
     private func installFreshSession(agentId: UUID, loading data: ChatSessionData? = nil) {
-        let fresh = ChatSession()
-        fresh.windowState = self
-        fresh.agentId = agentId
-        fresh.applyInitialModelSelection()
-        if let data { fresh.load(from: data) }
-        fresh.onSessionChanged = { [weak self] in
-            self?.refreshSessionsDebounced()
-        }
-        session = fresh
+        session = makeFreshSession(agentId: agentId, loading: data)
     }
 
     /// Attach an existing (registry-owned) live session to this window so
