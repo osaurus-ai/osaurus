@@ -65,6 +65,24 @@ public struct SubagentScope: Sendable, Equatable {
             enableThinking: ChatExecutionContext.currentEnableThinking
         )
     }
+
+    /// The parent turn's explicit Thinking choice, scoped to the model it was
+    /// actually made FOR. `enableThinking` is the toggle state of the PARENT
+    /// model's composer; forwarding it verbatim to a delegated run overrode
+    /// the delegated model's own configured reasoning — a parent running
+    /// Thinking-off forced a child configured Thinking-on into no-think, and
+    /// vice versa (reported live: spawn enforcement not following the
+    /// reasoning set for delegated models). The parent's choice survives only
+    /// when the delegated model IS the parent's model (the documented
+    /// reconstructed-step contract); any other child resolves its own
+    /// persisted per-model options + bundle default through ChatEngine's
+    /// agent-options path, exactly like the visible picker.
+    public func enableThinking(forDelegatedModel model: String?) -> Bool? {
+        guard let parent = parentModelName, let model,
+            model.caseInsensitiveCompare(parent) == .orderedSame
+        else { return nil }
+        return enableThinking
+    }
 }
 
 // MARK: - Resolved model
