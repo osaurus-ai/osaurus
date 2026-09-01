@@ -302,7 +302,9 @@ public struct WhatsNewModal: View {
     /// actually changes. Two consecutive pages that resolve to the same glyph
     /// (or image) keep the same identity and skip the slide transition.
     private func visualIdentity(for page: WhatsNewPage) -> String {
-        page.imageURL?.absoluteString ?? "icon:\(page.systemImage ?? "sparkles")"
+        page.imageURL?.absoluteString
+            ?? page.assetImage.map { "asset:\($0)" }
+            ?? "icon:\(page.systemImage ?? "sparkles")"
     }
 }
 
@@ -322,16 +324,16 @@ private struct ContentAreaView: View {
                         image.resizable().aspectRatio(contentMode: .fill)
                     case .empty:
                         ZStack {
-                            WhatsNewHeroBackground(systemImage: glyph)
+                            WhatsNewHeroBackground(systemImage: glyph, assetImage: page.assetImage)
                             ProgressView()
                         }
                     default:
                         // `.failure` and any future phases fall back to the glyph.
-                        WhatsNewHeroBackground(systemImage: glyph)
+                        WhatsNewHeroBackground(systemImage: glyph, assetImage: page.assetImage)
                     }
                 }
             } else {
-                WhatsNewHeroBackground(systemImage: glyph)
+                WhatsNewHeroBackground(systemImage: glyph, assetImage: page.assetImage)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

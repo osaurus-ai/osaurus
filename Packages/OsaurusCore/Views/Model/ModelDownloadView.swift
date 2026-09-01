@@ -70,6 +70,7 @@ struct ModelDownloadView: View {
 
     /// Theme manager for consistent UI styling
     @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var managementState = ManagementStateManager.shared
 
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -197,6 +198,14 @@ struct ModelDownloadView: View {
             }
 
             refreshGridLists()
+            DispatchQueue.main.async { applyPendingModelDetail() }
+        }
+        .onReceive(managementState.$pendingModelDetailId) { _ in
+            // `$pendingModelDetailId` replays its current value the moment the
+            // subscription is set up, i.e. mid-body during the first render.
+            // Presenting the sheet from there is silently dropped, so hop to
+            // the next runloop turn where the view is installed in a window.
+            DispatchQueue.main.async { applyPendingModelDetail() }
         }
         .onDisappear {
             gridListsRefreshTask?.cancel()
@@ -1864,6 +1873,18 @@ struct ModelDownloadView: View {
     /// actively downloading a model, otherwise on the "Catalog" so new users
     /// see something to browse. Runs once on first appear and yields to a
     /// deep link (which pins the Catalog so the linked model is visible).
+    /// Applies a one-shot request to open a specific model's detail sheet
+    /// (`ManagementStateManager.pendingModelDetailId`, e.g. from a What's New
+    /// CTA). Mirrors `AgentsView.applyPendingRemoteAgentDetail`: resolves the
+    /// repo id against the catalog, then opens the sheet and clears the
+    /// request.
+    private func applyPendingModelDetail() {
+        guard let pendingId = managementState.pendingModelDetailId else { return }
+        guard let model = modelManager.resolveModel(byRepoId: pendingId) else { return }
+        managementState.pendingModelDetailId = nil
+        modelToShowDetails = model
+    }
+
     private func chooseInitialTabIfNeeded() {
         guard !didChooseInitialTab else { return }
         didChooseInitialTab = true
