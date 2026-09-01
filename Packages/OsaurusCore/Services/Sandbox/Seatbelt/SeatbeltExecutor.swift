@@ -202,9 +202,17 @@ enum SeatbeltExecutor {
         process.waitUntilExit()
 
         // Drain any bytes still buffered in the pipes, then detach the
-        // handlers so the file handles can close.
-        stdoutCollector.append(stdoutPipe.fileHandleForReading.availableData)
-        stderrCollector.append(stderrPipe.fileHandleForReading.availableData)
+        // handlers so the file handles can close. Skipped on the timeout
+        // path: `sandbox-exec` execs `/bin/sh` in place, but commands the
+        // shell spawned survive the SIGKILL above and keep the pipe write
+        // ends open, so `availableData` (which blocks until data or EOF)
+        // can wait on an orphan indefinitely — turning the enforced
+        // inactivity timeout back into an unbounded hang. The throw below
+        // discards the buffers anyway.
+        if !timedOut {
+            stdoutCollector.append(stdoutPipe.fileHandleForReading.availableData)
+            stderrCollector.append(stderrPipe.fileHandleForReading.availableData)
+        }
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
         stderrPipe.fileHandleForReading.readabilityHandler = nil
 
