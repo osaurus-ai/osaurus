@@ -53,12 +53,10 @@ struct ChatSessionSidebar: View {
     var onOpenInNewWindow: ((ChatSessionData) -> Void)? = nil
     /// Open the session in a new tab of this window (browser-style).
     var onOpenInNewTab: ((ChatSessionData) -> Void)? = nil
-    /// The window's agent selector pill, rendered below the Chats | Projects
-    /// lens switcher on the Chats tab. Injected by the hosting `ChatView`
-    /// (the pill needs window state this sidebar deliberately doesn't hold).
-    /// It moved here from the toolbar's centered slot, which the chat tab
-    /// strip now occupies.
-    var agentPicker: AnyView? = nil
+    /// Select an agent for this window (agents-focused sidebar prototype —
+    /// replaces the removed agent-selector pill; same effect as picking an
+    /// agent from it).
+    var onSelectAgent: ((UUID) -> Void)? = nil
 
     enum ExportFormat {
         case markdown
@@ -238,15 +236,6 @@ struct ChatSessionSidebar: View {
                 .padding(.top, 16)
                 .padding(.bottom, 12)
 
-            // Agent selector pill (Chats lens only — projects group chats
-            // across agents, so the pill is meaningless there).
-            if selectedTab == .chats, let agentPicker {
-                agentPicker
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 14)
-            }
-
             // Header with New Chat button
             sidebarHeader
 
@@ -255,55 +244,12 @@ struct ChatSessionSidebar: View {
                 // the project detail page in the window's content area.
                 projectListView
             } else {
-                // Search field
-                SidebarSearchField(
-                    text: $searchQuery,
-                    placeholder: "Search chats...",
-                    isFocused: $isSearchFocused,
-                    isSearching: isContentSearchInFlight
-                )
-                .padding(.horizontal, 12)
-                .padding(.bottom, 6)
-
-                // Source filter chips — always visible while the agent has
-                // any session, so the user can never "lose" the rail just
-                // by selecting a filter (or by drilling into a single-source
-                // agent via loadSession). The chip set itself still hides
-                // sources the agent has never used.
-                if !sessions.isEmpty {
-                    sourceFilterRail
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 6)
-                }
-
-                Divider()
-                    .opacity(0.3)
-
-                // Batch action bar for the current multi-selection.
-                if !selectedIds.isEmpty {
-                    selectionActionBar
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
-
-                // Session list
-                if sessions.isEmpty {
-                    emptyState
-                } else if filteredSessions.isEmpty, isContentSearchInFlight {
-                    // The async content lookup hasn't finished — don't claim
-                    // "no results" until the whole search process is complete.
-                    searchingPlaceholder
-                } else if filteredSessions.isEmpty {
-                    SidebarNoResultsView(searchQuery: searchQuery) {
-                        withAnimation(theme.animationQuick()) {
-                            searchQuery = ""
-                            sourceFilter = .all
-                        }
-                    }
-                } else {
-                    sessionList
-                }
+                // Prototype: agents-focused sidebar. One row per agent;
+                // tapping selects it for this window (what the removed
+                // agent-selector pill used to do). The chat-history UI
+                // (search, filters, session list) is parked, unreferenced,
+                // pending the next iteration of this idea.
+                agentListView
             }
         }
         // Adopting a new agent (via the dropdown's switchAgent or the
@@ -358,7 +304,10 @@ struct ChatSessionSidebar: View {
     /// equal-width segments, accent-tinted when selected.
     private var sidebarTabBar: some View {
         HStack(spacing: 4) {
-            tabSegment(.chats, label: "Chats", icon: "bubble.left.and.bubble.right")
+            // Prototype: the primary lens lists AGENTS (the `.chats` case is
+            // kept as the enum value to avoid churning all the lens-reset
+            // logic while the idea is validated).
+            tabSegment(.chats, label: "Agents", icon: "person.2")
             tabSegment(.projects, label: "Projects", icon: "folder")
         }
         .padding(3)
@@ -796,7 +745,7 @@ struct ChatSessionSidebar: View {
             // "History" only reads right for the Chats lens; the Projects
             // lens has its own list and the label made no sense there.
             if selectedTab == .chats {
-                Text("History", bundle: .module)
+                Text("Agents", bundle: .module)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(theme.primaryText)
             }
@@ -1045,6 +994,27 @@ struct ChatSessionSidebar: View {
         .frame(maxWidth: .infinity)
     }
 
+    // MARK: - Agent List (prototype)
+
+    /// Agents-focused sidebar: one row per local agent, active row
+    /// highlighted, tap to make it this window's agent.
+    private var agentListView: some View {
+        ScrollView {
+            LazyVStack(spacing: 2) {
+                ForEach(agentManager.agents) { agent in
+                    AgentSidebarRow(
+                        agent: agent,
+                        isSelected: agent.id == agentId,
+                        onSelect: { onSelectAgent?(agent.id) }
+                    )
+                }
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 8)
+        }
+        .scrollIndicators(.hidden)
+    }
+
     // MARK: - Session List
 
     private var sessionList: some View {
@@ -1132,6 +1102,67 @@ struct ChatSessionSidebar: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Agent Row (prototype)
+
+/// Row in the agents-focused sidebar. Mirrors `SessionRow`'s hover and
+/// selection treatment: avatar, name, checkmark on the active agent.
+private struct AgentSidebarRow: View {
+    let agent: Agent
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            AgentAvatarView(
+                mascotId: agent.avatar,
+                name: agent.displayName,
+                tint: agentColorFor(agent.name),
+                diameter: 26,
+                customImageURL: agent.customAvatarURL,
+                monogramFontSize: 12,
+                borderWidth: 0
+            )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(agent.displayName)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if agent.isBuiltIn {
+                    Text("Orchestrator", bundle: .module)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.secondaryText.opacity(0.85))
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if isSelected {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
+        .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .onTapGesture(perform: onSelect)
+        .onHover { hovering in
+            withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
+                isHovered = hovering
+            }
+        }
+        .animation(theme.springAnimation(responseMultiplier: 0.8), value: isSelected)
     }
 }
 

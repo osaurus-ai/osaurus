@@ -8728,7 +8728,9 @@ struct ChatView: View {
                                 windowState.enteredChatFromProjectPage = false
                                 windowState.openSessionInNewTab(sessionData)
                             },
-                            agentPicker: AnyView(ChatAgentPickerPill(windowState: windowState))
+                            onSelectAgent: { newAgentId in
+                                windowState.switchAgent(to: newAgentId)
+                            }
                         )
                     }
                 }
