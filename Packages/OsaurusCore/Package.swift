@@ -292,9 +292,12 @@ let package = Package(
         // an fp32 activation path (which doubled every KV/disk cache entry
         // and disqualified compiled-decode regions); 21 MoE reducers get the
         // DeepseekV3 score-cast pattern; repo-wide source guard added.
+        // vmlx-swift#408 pins quantized-embedding output to bf16 under the
+        // Gemma-4/DSV4 jang_affine mmap preserve branches (the last audited
+        // f16 seed into bf16 streams; dequant math keeps exact f16 metadata).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "32e683a60aaf2a553226c310359237b81345920c"
+            revision: "2422cfb8e6d499d865ba9546c0e1e2f0bb08c4e5"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
