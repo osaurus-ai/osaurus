@@ -301,21 +301,47 @@ private struct ChatTabItemView: View {
     let onHover: (Bool) -> Void
 
     @Environment(\.theme) private var theme
+    /// Live activity for this tab's session — drives the avatar's spinning
+    /// ring, the same signal the sidebar rows use.
+    @ObservedObject private var activityMonitor = SessionActivityMonitor.shared
+    @ObservedObject private var agentManager = AgentManager.shared
 
     /// The feet of the active tab's shape; content is inset past them.
     private static let footRadius: CGFloat = 8
+    private static let avatarDiameter: CGFloat = 16
 
     private var title: String {
         session.turns.isEmpty ? L("New Chat") : session.title
     }
 
+    private var agent: Agent {
+        agentManager.agent(for: session.agentId ?? Agent.defaultId) ?? .default
+    }
+
+    private var activityStatus: SessionActivityMonitor.Status? {
+        session.sessionId.flatMap { activityMonitor.statuses[$0] }
+    }
+
     var body: some View {
-        HStack(spacing: 5) {
-            if session.isStreaming {
-                Circle()
-                    .fill(theme.accentColor)
-                    .frame(width: 6, height: 6)
-            }
+        HStack(spacing: 6) {
+            AgentAvatarView(
+                mascotId: agent.avatar,
+                name: agent.displayName,
+                tint: theme.accentColor,
+                diameter: Self.avatarDiameter,
+                customImageURL: agent.customAvatarURL,
+                monogramFontSize: 9,
+                borderWidth: 0
+            )
+            .frame(width: Self.avatarDiameter, height: Self.avatarDiameter)
+            .overlay(
+                Group {
+                    if let activityStatus {
+                        TabActivityRing(status: activityStatus)
+                    }
+                }
+                .allowsHitTesting(false)
+            )
 
             Text(title)
                 .font(.system(size: 11.5, weight: .regular))
@@ -539,6 +565,57 @@ private struct WindowXReader: NSViewRepresentable {
             TabStripDebugLog.log("measureTrailing: reserve=\(reserve)")
             return reserve
         }
+    }
+}
+
+/// Compact twin of the sidebar's `SessionActivityRing`, sized for the tab
+/// avatar: spinning accent gradient while the agent works, steady warning
+/// ring while the run waits for input.
+private struct TabActivityRing: View {
+    let status: SessionActivityMonitor.Status
+
+    @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isSpinning = false
+
+    private static let diameter: CGFloat = 21
+    private static let lineWidth: CGFloat = 1.5
+
+    var body: some View {
+        switch status {
+        case .working:
+            if reduceMotion {
+                ring(theme.accentColor.opacity(0.85))
+            } else {
+                Circle()
+                    .stroke(
+                        AngularGradient(
+                            gradient: Gradient(colors: [
+                                theme.accentColor.opacity(0.05),
+                                theme.accentColor,
+                            ]),
+                            center: .center
+                        ),
+                        style: StrokeStyle(lineWidth: Self.lineWidth, lineCap: .round)
+                    )
+                    .frame(width: Self.diameter, height: Self.diameter)
+                    .rotationEffect(.degrees(isSpinning ? 360 : 0))
+                    .animation(
+                        .linear(duration: 1.1).repeatForever(autoreverses: false),
+                        value: isSpinning
+                    )
+                    .onAppear { isSpinning = true }
+                    .onDisappear { isSpinning = false }
+            }
+        case .waitingForInput:
+            ring(theme.warningColor.opacity(0.9))
+        }
+    }
+
+    private func ring(_ color: Color) -> some View {
+        Circle()
+            .stroke(color, lineWidth: Self.lineWidth)
+            .frame(width: Self.diameter, height: Self.diameter)
     }
 }
 
