@@ -8730,6 +8730,12 @@ struct ChatView: View {
                             },
                             onSelectAgent: { newAgentId in
                                 windowState.switchAgent(to: newAgentId)
+                                // Picking an agent surfaces its history right
+                                // away so the user can resume a conversation
+                                // without hunting for the toolbar button.
+                                withAnimation(theme.animationQuick()) {
+                                    windowState.isHistoryPanelVisible = true
+                                }
                             }
                         )
                     }
