@@ -116,17 +116,13 @@ struct ChatTabStripView: View {
         // Tabs are chat chrome; the project detail page hides them along
         // with the rest of the chat-specific toolbar items.
         if !windowState.isProjectPageVisible {
-            // Inside the FIXED-width strip (see `stripWidth`), a plain
-            // flexible row would expand every chip to its 260pt max — the
-            // full proposed width turns `maxWidth` into an expansion
-            // license. ViewThatFits keeps the hugging (ideal-size) layout,
-            // where chips wrap their titles, for as long as it fits, and
-            // only falls back to the space-sharing layout once the strip
-            // is crowded enough that tabs must compress.
-            ViewThatFits(in: .horizontal) {
-                tabsRow(hugging: true)
-                tabsRow(hugging: false)
-            }
+            // The row is laid out at IDEAL size (fixedSize in `tabsRow`), so
+            // chips hug their titles; crowding is handled by shrinking the
+            // per-tab width cap (`maxTabWidth`) as tabs multiply, computed so
+            // the row NEVER exceeds the strip. An overflowing row would push
+            // the "+" button outside the toolbar item's bounds, where it
+            // still draws but no longer hit-tests.
+            tabsRow()
             // Tabs slide over when a neighbor closes (Chrome-like). Opening
             // stays un-animated: `newTab()` disables animations in its
             // transaction so the strip doesn't interpolate while ChatView
@@ -161,9 +157,24 @@ struct ChatTabStripView: View {
         }
     }
 
-    @ViewBuilder
-    private func tabsRow(hugging: Bool) -> some View {
-        let row = HStack(spacing: 0) {
+    /// Per-tab width cap, shrunk as tabs multiply so the whole row (tabs +
+    /// separators + "+" button) always fits inside `stripWidth`.
+    private var maxTabWidth: CGFloat {
+        guard let stripWidth else { return 260 }
+        let count = CGFloat(max(windowState.tabs.count, 1))
+        let plusButtonReserve: CGFloat = 32
+        let separators = count - 1
+        let available = stripWidth - plusButtonReserve - separators
+        return min(260, max(36, available / count))
+    }
+
+    /// Roomy floor for uncrowded strips; yields to the cap when crowded.
+    private var minTabWidth: CGFloat {
+        min(110, maxTabWidth)
+    }
+
+    private func tabsRow() -> some View {
+        HStack(spacing: 0) {
             ForEach(Array(windowState.tabs.enumerated()), id: \.element.id) { index, tab in
                 // Hairline divider between adjacent tabs, suppressed
                 // when either neighbor is active or hovered (their
@@ -179,6 +190,8 @@ struct ChatTabStripView: View {
                     isActive: tab.id == windowState.activeTabId,
                     isHovered: hoveredTabId == tab.id,
                     canClose: windowState.tabs.count > 1,
+                    minWidth: minTabWidth,
+                    maxWidth: maxTabWidth,
                     onSelect: { windowState.selectTab(id: tab.id) },
                     onClose: { windowState.closeTab(id: tab.id) },
                     onHover: { hovering in
@@ -194,12 +207,10 @@ struct ChatTabStripView: View {
             newTabButton
                 .padding(.leading, 6)
         }
-        if hugging {
-            // Ideal-size pass: every chip hugs its title (capped at 260).
-            row.fixedSize(horizontal: true, vertical: false)
-        } else {
-            row
-        }
+        // Ideal-size pass: every chip hugs its title, clamped to the
+        // computed min/max, so the row width is Σ(clamped hug widths) and
+        // never exceeds the strip by construction.
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private func isProminent(_ id: UUID) -> Bool {
@@ -250,6 +261,9 @@ private struct ChatTabItemView: View {
     /// False while this is the window's only tab — `closeTab` refuses to
     /// close the last tab, so the × is hidden rather than dead.
     let canClose: Bool
+    /// Width bounds computed by the strip so the row always fits it.
+    let minWidth: CGFloat
+    let maxWidth: CGFloat
     let onSelect: () -> Void
     let onClose: () -> Void
     let onHover: (Bool) -> Void
@@ -296,7 +310,7 @@ private struct ChatTabItemView: View {
         // Inset content past the active shape's feet so text never sits on
         // the curved corners.
         .padding(.horizontal, Self.footRadius + 14)
-        .frame(minWidth: 110, maxWidth: 260)
+        .frame(minWidth: minWidth, maxWidth: maxWidth)
         .frame(maxHeight: .infinity)
         .background(alignment: .bottom) {
             if isActive {
@@ -342,6 +356,17 @@ private struct WindowXReader: NSViewRepresentable {
         // observer; all writes happen on the main thread (same pattern as
         // ChatWindowState's notificationObservers).
         private nonisolated(unsafe) var resizeObserver: NSObjectProtocol?
+        /// The window whose resizes we track. Held (weakly) SEPARATELY from
+        /// `self.window`: when the window shrinks enough that AppKit folds
+        /// the strip's toolbar item into the overflow menu, this view is
+        /// REMOVED from the window — if resize reporting stopped then, the
+        /// strip's width state would freeze too wide and the item could
+        /// never come back until the window regrew past the stale width.
+        private weak var observedWindow: NSWindow?
+        /// Last chrome-x reading, reused for resize reports that arrive
+        /// while the view is detached (x can't be measured then, but it
+        /// doesn't change with window width anyway).
+        private var lastX: CGFloat?
 
         init(onChange: @escaping (CGFloat, CGFloat) -> Void) {
             self.onChange = onChange
@@ -358,11 +383,13 @@ private struct WindowXReader: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            if let resizeObserver {
-                NotificationCenter.default.removeObserver(resizeObserver)
-                self.resizeObserver = nil
-            }
-            if let window {
+            // Only rebind when landing in a NEW window; keep observing the
+            // old one while detached (overflow-menu case above).
+            if let window, window !== observedWindow {
+                if let resizeObserver {
+                    NotificationCenter.default.removeObserver(resizeObserver)
+                }
+                observedWindow = window
                 resizeObserver = NotificationCenter.default.addObserver(
                     forName: NSWindow.didResizeNotification,
                     object: window,
@@ -378,8 +405,13 @@ private struct WindowXReader: NSViewRepresentable {
         }
 
         func report() {
-            guard let window, let contentView = window.contentView else { return }
-            let x = convert(CGPoint.zero, to: nil).x
+            guard let contentView = observedWindow?.contentView else { return }
+            // A detached view can't measure x; fall back to the last live
+            // reading so width-only updates still flow.
+            if window != nil {
+                lastX = convert(CGPoint.zero, to: nil).x
+            }
+            guard let x = lastX else { return }
             let width = contentView.bounds.width
             let callback = onChange
             // Defer: `layout` runs mid-layout-pass, and mutating SwiftUI
