@@ -9576,32 +9576,28 @@ struct ChatView: View {
 
     private var chatHeader: some View {
         HStack {
-            // With the sidebar collapsed there is no visible cue for which
-            // agent owns the conversation (the selector lives in the
-            // sidebar's Agents list) — surface the identity here. Uses the
-            // effective chat identity so Mode 2 shows the remote agent.
-            if !windowState.showSidebar {
-                let identity = windowState.effectiveChatIdentity
-                HStack(spacing: 8) {
-                    AgentAvatarView(
-                        mascotId: identity.mascotId,
-                        name: identity.name,
-                        tint: agentColorFor(identity.name),
-                        diameter: 22,
-                        customImageURL: identity.customAvatarPath.map {
-                            URL(fileURLWithPath: $0)
-                        },
-                        monogramFontSize: 10,
-                        borderWidth: 0
-                    )
-                    Text(identity.name)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-                }
-                .padding(.leading, 16)
-                .transition(.opacity)
+            // Which agent owns this conversation — always visible, whatever
+            // the sidebar state. Uses the effective chat identity so Mode 2
+            // shows the remote agent.
+            let identity = windowState.effectiveChatIdentity
+            HStack(spacing: 8) {
+                AgentAvatarView(
+                    mascotId: identity.mascotId,
+                    name: identity.name,
+                    tint: agentColorFor(identity.name),
+                    diameter: 22,
+                    customImageURL: identity.customAvatarPath.map {
+                        URL(fileURLWithPath: $0)
+                    },
+                    monogramFontSize: 10,
+                    borderWidth: 0
+                )
+                Text(identity.name)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
             }
+            .padding(.leading, 16)
 
             Spacer()
         }
@@ -9609,7 +9605,6 @@ struct ChatView: View {
         // Purely informational chrome; clicks keep falling through to the
         // thread like the old clear spacer.
         .allowsHitTesting(false)
-        .animation(theme.animationQuick(), value: windowState.showSidebar)
     }
 
     // MARK: - Message Thread
