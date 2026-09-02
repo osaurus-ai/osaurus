@@ -85,8 +85,10 @@ struct ChatTabStripView: View {
     private var stripWidth: CGFloat? {
         guard let windowContentWidth, let measuredChromeX else { return nil }
         let inset = needsSidebarInset ? sidebarOpenInset : 0
+        // No artificial cap: like Chrome, tabs may use the whole bar up to
+        // the trailing buttons; the reserve is what keeps them clear.
         let available = windowContentWidth - measuredChromeX - inset - Self.trailingChromeReserve
-        return max(0, min(700, available))
+        return max(0, available)
     }
 
     /// Hover is tracked at strip level (not per item) so separators can
