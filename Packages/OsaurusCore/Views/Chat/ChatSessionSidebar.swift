@@ -236,7 +236,7 @@ struct ChatSessionSidebar: View {
             sidebarTabBar
                 .padding(.horizontal, 12)
                 .padding(.top, 16)
-                .padding(.bottom, 6)
+                .padding(.bottom, 12)
 
             // Agent selector pill (Chats lens only — projects group chats
             // across agents, so the pill is meaningless there).
@@ -244,7 +244,7 @@ struct ChatSessionSidebar: View {
                 agentPicker
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.horizontal, 12)
-                    .padding(.bottom, 6)
+                    .padding(.bottom, 14)
             }
 
             // Header with New Chat button
