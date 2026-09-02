@@ -368,6 +368,14 @@ extension ModelInfo {
             }
         }
 
+        // External models (HF cache, LM Studio, custom folders) never live under
+        // the models root — they resolve through the external registry, the same
+        // path /api/tags and inference use. Without this, /api/show 404s for a
+        // model that is listed and runnable (issue #2600).
+        if let external = ExternalModelLocator.path(forId: trimmed) {
+            return external
+        }
+
         return nil
     }
 
