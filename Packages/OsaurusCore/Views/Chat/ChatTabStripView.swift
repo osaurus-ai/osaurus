@@ -161,6 +161,14 @@ struct ChatTabStripView: View {
                     {
                         measuredTrailingReserve = trailingReserve
                     }
+                    TabStripDebugLog.log(
+                        "strip: chromeX=\(String(describing: measuredChromeX)) "
+                            + "contentWidth=\(String(describing: windowContentWidth)) "
+                            + "trailingReserve=\(trailingChromeReserve) "
+                            + "inset=\(needsSidebarInset ? sidebarOpenInset : 0) "
+                            + "stripWidth=\(String(describing: stripWidth)) "
+                            + "tabs=\(windowState.tabs.count) maxTab=\(maxTabWidth)"
+                    )
                 }
                 .frame(width: 0)
             }
@@ -346,6 +354,35 @@ private struct ChatTabItemView: View {
     }
 }
 
+/// TEMPORARY debug logger for the strip-geometry investigation. Appends to
+/// `<repo>/tmp/tabstrip-debug.log` (repo root derived from `#filePath` at
+/// compile time). Remove before merge.
+enum TabStripDebugLog {
+    private static let file: URL = {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // Chat
+            .deletingLastPathComponent()  // Views
+            .deletingLastPathComponent()  // OsaurusCore
+            .deletingLastPathComponent()  // Packages
+            .deletingLastPathComponent()  // repo root
+        let dir = root.appendingPathComponent("tmp")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("tabstrip-debug.log")
+    }()
+
+    static func log(_ message: String) {
+        let ts = ISO8601DateFormatter().string(from: Date())
+        guard let data = "[\(ts)] \(message)\n".data(using: .utf8) else { return }
+        if let handle = try? FileHandle(forWritingTo: file) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: file)
+        }
+    }
+}
+
 /// Reports the hosting SwiftUI view's leading x in WINDOW coordinates plus
 /// the window's content width. SwiftUI's `.global` coordinate space bottoms
 /// out at the enclosing `NSHostingView` (each toolbar item is its own), so
@@ -428,6 +465,10 @@ private struct WindowXReader: NSViewRepresentable {
             guard let x = lastX else { return }
             let width = contentView.bounds.width
             let trailing = measureTrailingReserve()
+            TabStripDebugLog.log(
+                "report: x=\(x) contentWidth=\(width) trailing=\(String(describing: trailing)) "
+                    + "inWindow=\(window != nil) windowFrame=\(observedWindow?.frame.width ?? -1)"
+            )
             let callback = onChange
             // Defer: `layout` runs mid-layout-pass, and mutating SwiftUI
             // @State from inside it is undefined (AttributeGraph reentrancy).
@@ -439,7 +480,22 @@ private struct WindowXReader: NSViewRepresentable {
         /// and trailing margin, so the strip's reserve matches whatever is
         /// really visible instead of a guessed constant.
         private func measureTrailingReserve() -> CGFloat? {
-            guard let toolbar = observedWindow?.toolbar else { return nil }
+            guard let toolbar = observedWindow?.toolbar else {
+                TabStripDebugLog.log("measureTrailing: no toolbar")
+                return nil
+            }
+            // The key diagnostic: which items AppKit actually laid out vs.
+            // folded into the overflow menu, and at what frames.
+            let visible = toolbar.visibleItems?.map(\.itemIdentifier.rawValue) ?? []
+            let allItems = toolbar.items.map { item -> String in
+                let frame = item.view?.superview?.frame ?? .zero
+                let fitting = item.view?.fittingSize ?? .zero
+                return "\(item.itemIdentifier.rawValue): fitting=\(fitting.width) "
+                    + "frame=(x:\(frame.origin.x) w:\(frame.width))"
+            }
+            TabStripDebugLog.log(
+                "measureTrailing: visible=\(visible) items=[\(allItems.joined(separator: " | "))]"
+            )
             var reserve: CGFloat = 16  // toolbar trailing margin
             var pastStrip = false
             for item in toolbar.items {
@@ -455,6 +511,7 @@ private struct WindowXReader: NSViewRepresentable {
                 let width = item.view?.fittingSize.width ?? 0
                 reserve += width + 10  // item + inter-item spacing
             }
+            TabStripDebugLog.log("measureTrailing: reserve=\(reserve)")
             return reserve
         }
     }
