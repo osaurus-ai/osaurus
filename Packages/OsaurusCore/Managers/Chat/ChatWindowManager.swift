@@ -915,6 +915,12 @@ private struct ChatWindowRootView: View {
             ChatView(windowState: windowState)
                 .id(ObjectIdentifier(windowState.session))
         }
+        .overlay(alignment: .trailing) {
+            if windowState.isHistoryPanelVisible {
+                ChatHistoryPanel(windowState: windowState)
+                    .transition(.move(edge: .trailing))
+            }
+        }
         .environment(\.theme, windowState.theme)
     }
 }
@@ -1010,6 +1016,8 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     /// "ChatToolbar.agent" identifier falls through to `default: nil` if
     /// AppKit ever replays it from stale persisted state.)
     fileprivate static let tabsItem = NSToolbarItem.Identifier("ChatToolbar.tabs")
+    /// Chat-history panel toggle (agents-sidebar prototype).
+    fileprivate static let historyItem = NSToolbarItem.Identifier("ChatToolbar.history")
     fileprivate static let actionItem = NSToolbarItem.Identifier("ChatToolbar.action")
     // The trailing item; hosts the pin (chat) or the settings gear
     // (project page). Named `pin` for backward identity continuity.
@@ -1029,7 +1037,7 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     private static let itemIdentifiers: [NSToolbarItem.Identifier] = [
         // tabsItem omitted: chat tabs hidden during the agents-sidebar
         // prototype (re-insert after backItem to restore).
-        sidebarItem, backItem, .flexibleSpace, actionItem, pinItem,
+        sidebarItem, backItem, .flexibleSpace, actionItem, historyItem, pinItem,
     ]
 
     private weak var windowState: ChatWindowState?
@@ -1076,6 +1084,13 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
                     ChatTabStripView(windowState: windowState)
             )
 
+        case Self.historyItem:
+            return makeHostingItem(
+                identifier: itemIdentifier,
+                rootView:
+                    ChatToolbarHistoryView(windowState: windowState)
+            )
+
         case Self.actionItem:
             return makeHostingItem(
                 identifier: itemIdentifier,
@@ -1117,6 +1132,28 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
 }
 
 // MARK: - Toolbar Item Views
+
+/// Chat-history panel toggle: opens the trailing panel listing the selected
+/// agent's conversations (agents-focused sidebar prototype).
+private struct ChatToolbarHistoryView: View {
+    @ObservedObject var windowState: ChatWindowState
+
+    var body: some View {
+        // History is chat chrome; it hides on the project page like the pin.
+        if !windowState.isProjectPageVisible {
+            HeaderActionButton(
+                icon: "text.justify",
+                help: windowState.isHistoryPanelVisible ? "Hide chat history" : "Show chat history",
+                action: {
+                    withAnimation(windowState.theme.animationQuick()) {
+                        windowState.isHistoryPanelVisible.toggle()
+                    }
+                }
+            )
+            .environment(\.theme, windowState.theme)
+        }
+    }
+}
 
 /// Sidebar toggle button.
 private struct ChatToolbarSidebarView: View {
