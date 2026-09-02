@@ -283,9 +283,13 @@ let package = Package(
         // followed by an image turn no longer swaps the two feature blocks
         // (same defect #298 fixed for qwen3_5; Qwen3VL also re-applies rows
         // per deepstack layer, covered by the same permutation).
+        // vmlx-swift#405 completes the fp32 sweep: DSV4 dense indexer and
+        // GLM5-next sparse index score in the pool's native dtype instead of
+        // copying full-history pools to fp32 per decode token (selection
+        // logits only; env fallbacks; load-bearing fp32 sites documented).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "428124c8d517cd0f0e8ce77ee98db99b8e4cdab2"
+            revision: "7b63099becc70f1feb929947ae470a3ae7d16f5f"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
