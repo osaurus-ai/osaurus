@@ -200,10 +200,6 @@ struct ChatTabStripView: View {
         return min(260, max(2, available / count))
     }
 
-    /// Roomy floor for uncrowded strips; yields to the cap when crowded.
-    private var minTabWidth: CGFloat {
-        min(110, maxTabWidth)
-    }
 
     private func tabsRow() -> some View {
         HStack(spacing: 0) {
@@ -222,8 +218,7 @@ struct ChatTabStripView: View {
                     isActive: tab.id == windowState.activeTabId,
                     isHovered: hoveredTabId == tab.id,
                     canClose: windowState.tabs.count > 1,
-                    minWidth: minTabWidth,
-                    maxWidth: maxTabWidth,
+                    width: maxTabWidth,
                     onSelect: { windowState.selectTab(id: tab.id) },
                     onClose: { windowState.closeTab(id: tab.id) },
                     onHover: { hovering in
@@ -293,9 +288,10 @@ private struct ChatTabItemView: View {
     /// False while this is the window's only tab — `closeTab` refuses to
     /// close the last tab, so the × is hidden rather than dead.
     let canClose: Bool
-    /// Width bounds computed by the strip so the row always fits it.
-    let minWidth: CGFloat
-    let maxWidth: CGFloat
+    /// Fixed width computed by the strip: every tab renders the SAME width
+    /// (Chrome-style), shrinking together as tabs multiply, so the strip
+    /// reads as a uniform band rather than a ragged row of hugged chips.
+    let width: CGFloat
     let onSelect: () -> Void
     let onClose: () -> Void
     let onHover: (Bool) -> Void
@@ -372,7 +368,7 @@ private struct ChatTabItemView: View {
         // Inset content past the active shape's feet so text never sits on
         // the curved corners.
         .padding(.horizontal, Self.footRadius + 14)
-        .frame(minWidth: minWidth, maxWidth: maxWidth)
+        .frame(width: width)
         .frame(maxHeight: .infinity)
         .background(alignment: .bottom) {
             if isActive {
