@@ -82,6 +82,41 @@ struct CustomProviderForm: Equatable {
 
     mutating func reset() { self = CustomProviderForm() }
 
+    /// Parses a pasted endpoint URL into the form's fields. Forgiving on
+    /// purpose: the scheme is optional (localhost-style hosts default to
+    /// http, everything else https) and a missing path defaults to /v1.
+    /// Returns an empty form (host == "") when no host can be extracted,
+    /// which keeps `canTestAPI` false.
+    static func parse(_ urlString: String) -> CustomProviderForm {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return CustomProviderForm() }
+        let withScheme: String
+        if trimmed.contains("://") {
+            withScheme = trimmed
+        } else {
+            var probe = CustomProviderForm()
+            let hostPart = trimmed.split(separator: "/").first ?? ""
+            probe.host = String(hostPart.split(separator: ":").first ?? "").lowercased()
+            // Local machine and LAN addresses virtually never serve TLS;
+            // everything else (domains, public IPs) defaults to https.
+            let isPrivateLAN =
+                probe.host.hasPrefix("192.168.") || probe.host.hasPrefix("10.")
+                || probe.host.hasSuffix(".local")
+            withScheme = (probe.isLocalhost || isPrivateLAN ? "http://" : "https://") + trimmed
+        }
+        guard let components = URLComponents(string: withScheme),
+            let host = components.host, !host.isEmpty,
+            components.scheme == "http" || components.scheme == "https"
+        else { return CustomProviderForm() }
+        var form = CustomProviderForm()
+        form.protocolKind = components.scheme == "http" ? .http : .https
+        form.host = host
+        form.port = components.port.map(String.init) ?? ""
+        let path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: " "))
+        form.basePath = (path.isEmpty || path == "/") ? "/v1" : path
+        return form
+    }
+
     var endpointPreview: String {
         var url = (protocolKind == .https ? "https://" : "http://") + host
         if !port.isEmpty { url += ":\(port)" }
@@ -219,6 +254,11 @@ final class ConfigureAIState: ObservableObject {
         return nil
     }
     @Published var customForm = CustomProviderForm()
+    /// The raw pasted endpoint URL backing the custom connect dialog's single
+    /// field; `customForm` is derived from it on every edit.
+    @Published var customEndpointURL = "" {
+        didSet { customForm = CustomProviderForm.parse(customEndpointURL) }
+    }
     @Published var isTesting = false
     @Published var isSaving = false
     @Published var testResult: APITestResult? = nil
@@ -642,6 +682,7 @@ final class ConfigureAIState: ObservableObject {
             // so no half-filled form lingers under the next chip tap.
             if screen == .home, apiSubstate == .customForm {
                 apiSubstate = .picker
+                customEndpointURL = ""
                 customForm.reset()
             }
         }
@@ -708,6 +749,7 @@ final class ConfigureAIState: ObservableObject {
         selectedAuthMethod = .apiKey
         oauthTokens = nil
         addedProviderId = nil
+        customEndpointURL = ""
         customForm.reset()
         testResult = nil
         hasFinalizedAPI = false
@@ -1699,7 +1741,7 @@ struct ProviderConnectDialog: View {
             }
         }
         if preset == .custom {
-            return L("Point Osaurus at any OpenAI-compatible server. Localhost endpoints don't need a key.")
+            return L("Paste the URL of any OpenAI-compatible server. Local endpoints don't need a key.")
         }
         if preset.configuration.authType == .none {
             return L("No API key required — connects to your local server")
@@ -1726,29 +1768,15 @@ struct ProviderConnectDialog: View {
             .onChange(of: state.apiKey) { _, _ in state.testResult = nil }
     }
 
-    /// Multi-field form for the custom OpenAI-compatible endpoint: scheme +
-    /// host + port on one row, base path, then an optional key. Mirrors the
-    /// Settings custom-provider form, trimmed to onboarding's dialog width.
+    /// Single paste-the-URL form for the custom OpenAI-compatible endpoint.
+    /// The URL is parsed into scheme/host/port/path behind the scenes
+    /// (`CustomProviderForm.parse`); a resolved preview confirms how the
+    /// paste was understood. Optional key below for authenticated servers.
     private var customEndpointForm: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Picker("", selection: $state.customForm.protocolKind) {
-                    Text(verbatim: "https").tag(RemoteProviderProtocol.https)
-                    Text(verbatim: "http").tag(RemoteProviderProtocol.http)
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .fixedSize()
+            formField("http://localhost:11434/v1", text: $state.customEndpointURL)
 
-                formField("localhost", text: $state.customForm.host)
-
-                formField(L("Port"), text: $state.customForm.port)
-                    .frame(width: 64)
-            }
-
-            formField("/v1", text: $state.customForm.basePath)
-
-            SecureField(L("API key (optional for localhost)"), text: $state.apiKey)
+            SecureField(L("API key (optional for local servers)"), text: $state.apiKey)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, design: .monospaced))
                 .foregroundColor(OnboardingPalette.labelPrimary)
@@ -1763,7 +1791,13 @@ struct ProviderConnectDialog: View {
                         .strokeBorder(OnboardingPalette.fill10, lineWidth: 1)
                 )
 
-            if !state.customForm.host.isEmpty {
+            // Confirm how the paste was understood, but only when parsing
+            // actually added something (scheme, default /v1) beyond the
+            // literal input — echoing an identical URL back is noise.
+            if !state.customForm.host.isEmpty,
+                state.customForm.endpointPreview
+                    != state.customEndpointURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            {
                 Text(state.customForm.endpointPreview)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(OnboardingPalette.labelSecondary)
