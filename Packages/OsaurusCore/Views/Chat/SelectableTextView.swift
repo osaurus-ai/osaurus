@@ -889,7 +889,7 @@ struct SelectableTextView: NSViewRepresentable {
             return intent
         }
         if let raw = attributes[.inlinePresentationIntent] as? NSNumber {
-            return InlinePresentationIntent(rawValue: raw.uint64Value)
+            return InlinePresentationIntent(rawValue: raw.uintValue)
         }
         return []
     }
