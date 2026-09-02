@@ -70,6 +70,25 @@ struct ChatTabStripView: View {
     /// measuring makes the inset exact by construction.
     @State private var measuredChromeX: CGFloat?
 
+    /// The window content width, measured alongside `measuredChromeX`. Used
+    /// to give the strip a FIXED width: if the strip hugged its contents,
+    /// its NSHostingView would snap to the new intrinsic width the instant a
+    /// tab closes while the tabs inside are still sliding — the container
+    /// jump reads as jank. A width that only changes on window resize keeps
+    /// the toolbar item stable while the close animation plays inside it.
+    @State private var windowContentWidth: CGFloat?
+
+    /// Space reserved for the toolbar's trailing items (changes badge +
+    /// new-chat + pin) so the fixed-width strip never runs under them.
+    private static let trailingChromeReserve: CGFloat = 150
+
+    private var stripWidth: CGFloat? {
+        guard let windowContentWidth, let measuredChromeX else { return nil }
+        let inset = needsSidebarInset ? sidebarOpenInset : 0
+        let available = windowContentWidth - measuredChromeX - inset - Self.trailingChromeReserve
+        return max(0, min(700, available))
+    }
+
     /// Hover is tracked at strip level (not per item) so separators can
     /// hide beside the hovered tab, matching Chrome.
     @State private var hoveredTabId: UUID?
@@ -136,16 +155,23 @@ struct ChatTabStripView: View {
                 windowState.theme.animationQuick(),
                 value: windowState.tabs.map(\.id)
             )
-            .frame(maxWidth: 700, alignment: .leading)
+            // Fixed width once measured (see `stripWidth`): the toolbar item
+            // must not resize mid-animation. Content-hugging is only the
+            // pre-measurement fallback for the first layout pass.
+            .frame(width: stripWidth, alignment: .leading)
+            .frame(maxWidth: stripWidth == nil ? 700 : nil, alignment: .leading)
             .frame(height: 30)
             .padding(.leading, needsSidebarInset ? sidebarOpenInset : 0)
             // Anchored to the strip's OUTER leading edge (after the padding
             // modifier, so the padding lies inside the measured bounds and
             // the reading is the pre-inset chrome edge — no feedback loop).
             .background(alignment: .leading) {
-                WindowXReader { x in
+                WindowXReader { x, contentWidth in
                     if abs((measuredChromeX ?? -1) - x) > 0.5 {
                         measuredChromeX = x
+                    }
+                    if abs((windowContentWidth ?? -1) - contentWidth) > 0.5 {
+                        windowContentWidth = contentWidth
                     }
                 }
                 .frame(width: 0)
@@ -273,12 +299,12 @@ private struct ChatTabItemView: View {
     }
 }
 
-/// Reports the hosting SwiftUI view's leading x in WINDOW coordinates.
-/// SwiftUI's `.global` coordinate space bottoms out at the enclosing
-/// `NSHostingView` (each toolbar item is its own), so window-relative
-/// geometry needs an AppKit bridge.
+/// Reports the hosting SwiftUI view's leading x in WINDOW coordinates plus
+/// the window's content width. SwiftUI's `.global` coordinate space bottoms
+/// out at the enclosing `NSHostingView` (each toolbar item is its own), so
+/// window-relative geometry needs an AppKit bridge.
 private struct WindowXReader: NSViewRepresentable {
-    var onChange: (CGFloat) -> Void
+    var onChange: (CGFloat, CGFloat) -> Void
 
     func makeNSView(context: Context) -> ReaderView {
         ReaderView(onChange: onChange)
@@ -290,17 +316,35 @@ private struct WindowXReader: NSViewRepresentable {
     }
 
     final class ReaderView: NSView {
-        var onChange: (CGFloat) -> Void
+        var onChange: (CGFloat, CGFloat) -> Void
+        private var resizeObserver: NSObjectProtocol?
 
-        init(onChange: @escaping (CGFloat) -> Void) {
+        init(onChange: @escaping (CGFloat, CGFloat) -> Void) {
             self.onChange = onChange
             super.init(frame: .zero)
         }
 
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+        deinit {
+            if let resizeObserver {
+                NotificationCenter.default.removeObserver(resizeObserver)
+            }
+        }
+
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            if let resizeObserver {
+                NotificationCenter.default.removeObserver(resizeObserver)
+                self.resizeObserver = nil
+            }
+            if let window {
+                resizeObserver = NotificationCenter.default.addObserver(
+                    forName: NSWindow.didResizeNotification,
+                    object: window,
+                    queue: .main
+                ) { [weak self] _ in self?.report() }
+            }
             report()
         }
 
@@ -310,12 +354,13 @@ private struct WindowXReader: NSViewRepresentable {
         }
 
         func report() {
-            guard window != nil else { return }
+            guard let window, let contentView = window.contentView else { return }
             let x = convert(CGPoint.zero, to: nil).x
+            let width = contentView.bounds.width
             let callback = onChange
             // Defer: `layout` runs mid-layout-pass, and mutating SwiftUI
             // @State from inside it is undefined (AttributeGraph reentrancy).
-            DispatchQueue.main.async { callback(x) }
+            DispatchQueue.main.async { callback(x, width) }
         }
     }
 }
