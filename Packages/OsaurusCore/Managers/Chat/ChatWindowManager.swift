@@ -1285,6 +1285,12 @@ private struct ChatToolbarActionContent: View {
     @ObservedObject var session: ChatSession
 
     var body: some View {
+        // TEMP debug (remove with the tab-strip logging): why is the
+        // new-chat button not rendering?
+        let _ = TabStripDebugLog.log(
+            "actionItem: turns=\(session.turns.count) projectPage=\(windowState.isProjectPageVisible) "
+                + "changes=\(windowState.sandboxChangesCount) sessionId=\(session.sessionId?.uuidString ?? "nil")"
+        )
         HStack(spacing: 0) {
             // Sandbox "Changes" entrypoint: only when the current chat has
             // tracked workspace changes, and never for remote-agent chats
