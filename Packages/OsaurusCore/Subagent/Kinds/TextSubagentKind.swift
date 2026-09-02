@@ -982,7 +982,7 @@ final class TextSubagentKind:
                 deadline: deadline,
                 sessionId: sessionId,
                 temperature: temperature,
-                enableThinking: scope.enableThinking,
+                enableThinking: scope.enableThinking(forDelegatedModel: resolved.name),
                 isInterrupted: { interrupt.isInterrupted },
                 toolset: toolset,
                 onProgress: { [feed] tokens, tokensPerSecond in

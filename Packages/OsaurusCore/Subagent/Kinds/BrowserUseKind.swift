@@ -215,7 +215,7 @@ final class BrowserUseKind: SubagentKind, @unchecked Sendable {
             maxIterations: maxSteps,
             deadline: deadline,
             sessionId: sessionId,
-            enableThinking: scope.enableThinking,
+            enableThinking: scope.enableThinking(forDelegatedModel: resolved.name),
             isInterrupted: { interrupt.isInterrupted },
             toolset: toolset,
             onProgress: { [feed] tokens, tokensPerSecond in
