@@ -496,7 +496,7 @@ private struct WindowXReader: NSViewRepresentable {
             TabStripDebugLog.log(
                 "measureTrailing: visible=\(visible) items=[\(allItems.joined(separator: " | "))]"
             )
-            var reserve: CGFloat = 16  // toolbar trailing margin
+            var reserve: CGFloat = 12  // toolbar trailing margin + safety
             var pastStrip = false
             for item in toolbar.items {
                 if item.itemIdentifier.rawValue == "ChatToolbar.tabs" {
@@ -508,8 +508,13 @@ private struct WindowXReader: NSViewRepresentable {
                     reserve += 8  // its collapsed minimum
                     continue
                 }
-                let width = item.view?.fittingSize.width ?? 0
-                reserve += width + 10  // item + inter-item spacing
+                // LAID-OUT width, not fittingSize: AppKit gives every item a
+                // ~44pt minimum footprint even when its SwiftUI content
+                // measures 0 (the log showed action fitting=0 / frame=44 —
+                // the exact undershoot that folded the pin into overflow).
+                let laidOut = item.view?.superview?.frame.width ?? 0
+                let fitting = item.view?.fittingSize.width ?? 0
+                reserve += max(laidOut, fitting, 44)
             }
             TabStripDebugLog.log("measureTrailing: reserve=\(reserve)")
             return reserve
