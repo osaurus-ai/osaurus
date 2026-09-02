@@ -342,6 +342,10 @@ private struct ChatTabItemView: View {
                 }
                 .allowsHitTesting(false)
             )
+            // Reserve the RING's footprint, not the avatar's: the ring is
+            // drawn as an overlay and otherwise bleeds into the title gap
+            // whenever it appears (and the title would shift with it).
+            .frame(width: TabActivityRing.diameter, height: TabActivityRing.diameter)
 
             Text(title)
                 .font(.system(size: 11.5, weight: .regular))
@@ -578,7 +582,7 @@ private struct TabActivityRing: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isSpinning = false
 
-    private static let diameter: CGFloat = 21
+    static let diameter: CGFloat = 21
     private static let lineWidth: CGFloat = 1.5
 
     var body: some View {
