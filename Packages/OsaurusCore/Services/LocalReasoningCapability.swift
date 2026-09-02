@@ -176,6 +176,15 @@ enum LocalReasoningCapability {
         guard let dir = localDirectory(forModelId: modelId) else {
             return .none
         }
+        return detect(at: dir)
+    }
+
+    /// Directory-based detection for callers that already hold the resolved
+    /// bundle directory (e.g. `ModelInfo.load(from:)` serving /api/show, where
+    /// the id→directory resolution above would re-run discovery and, for
+    /// external bundles, depend on ModelManager cache warmth). Reads disk;
+    /// keep off the main thread.
+    static func detect(at dir: URL) -> Capability {
         let declaredCapability = readDeclaredReasoningCapability(at: dir)
         if let template = readChatTemplate(at: dir) {
             let analyzed = merge(

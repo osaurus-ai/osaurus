@@ -415,6 +415,9 @@ struct ExternalModelLocatorTests {
         writeBundle(at: snapshot)
         try? Data(#"{"model_type":"qwen3","max_position_embeddings":4096}"#.utf8)
             .write(to: snapshot.appendingPathComponent("config.json"))
+        // A Qwen3-style template: thinking markers plus the enable_thinking kwarg.
+        try? Data("{% if enable_thinking %}<think>{% endif %}".utf8)
+            .write(to: snapshot.appendingPathComponent("chat_template.jinja"))
 
         ExternalModelLocator.testRootsOverride = [(root: hfRoot, source: .huggingFaceCache)]
         ExternalModelLocator.rescan()
@@ -429,6 +432,13 @@ struct ExternalModelLocatorTests {
         #expect(info != nil)
         #expect(info?.model.architecture == "qwen3")
         #expect(info?.model.contextLength == 4096)
+
+        // Capabilities come from the runtime's own detectors (issue #2602):
+        // qwen3 defaults to the JSON tool-call format, and the template above
+        // carries thinking markers.
+        #expect(info?.capabilities.contains("completion") == true)
+        #expect(info?.capabilities.contains("tools") == true)
+        #expect(info?.capabilities.contains("thinking") == true)
     }
 
     @Test func rescan_reportsHFCacheSnapshotSkipReason() async {
