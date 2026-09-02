@@ -213,6 +213,17 @@ struct AgentsView: View {
         .onReceive(managementState.$pendingRemoteAgentDetailId) { _ in
             applyPendingRemoteAgentDetail()
         }
+        .onReceive(managementState.$pendingCreateAgent) { pending in
+            // Deep-link from the chat sidebar's New Agent button: land
+            // straight in the Create Agent sheet. One-shot, like the
+            // remote-agent detail request above.
+            guard pending else { return }
+            managementState.pendingCreateAgent = false
+            withAnimation(Self.navTransition) {
+                selectedAgent = nil
+            }
+            isCreating = true
+        }
         .onChange(of: highlightCoordinator.pending) { _, pending in
             // Settings-search landings target the grid (header / agent
             // cards); pop any open detail so the anchored control is

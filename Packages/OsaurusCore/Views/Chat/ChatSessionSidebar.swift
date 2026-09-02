@@ -773,7 +773,8 @@ struct ChatSessionSidebar: View {
             // (currently hidden) tab strip's own plus.
             if selectedTab == .chats {
                 Button {
-                    AppDelegate.shared?.showManagementWindow(initialTab: .agents)
+                    AppDelegate.shared?.showManagementWindow(
+                        initialTab: .agents, deeplinkCreateAgent: true)
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 14, weight: .medium))
@@ -995,6 +996,7 @@ struct ChatSessionSidebar: View {
                     AgentSidebarRow(
                         agent: agent,
                         isSelected: agent.id == agentId,
+                        activityStatus: activityStatus(for: agent),
                         onSelect: { onSelectAgent?(agent.id) }
                     )
                 }
@@ -1003,6 +1005,22 @@ struct ChatSessionSidebar: View {
             .padding(.horizontal, 8)
         }
         .scrollIndicators(.hidden)
+    }
+
+    /// Roll the per-session activity up to the agent: `.working` wins over
+    /// `.waitingForInput`; nil when none of the agent's sessions are live.
+    private func activityStatus(for agent: Agent) -> SessionActivityMonitor.Status? {
+        let statuses = activityMonitor.statuses
+        guard !statuses.isEmpty else { return nil }
+        var rolledUp: SessionActivityMonitor.Status?
+        for session in ChatSessionsManager.shared.sessions {
+            guard (session.agentId ?? Agent.defaultId) == agent.id,
+                let status = statuses[session.id]
+            else { continue }
+            if status == .working { return .working }
+            rolledUp = rolledUp ?? status
+        }
+        return rolledUp
     }
 
     // MARK: - Session List
@@ -1102,6 +1120,9 @@ struct ChatSessionSidebar: View {
 private struct AgentSidebarRow: View {
     let agent: Agent
     let isSelected: Bool
+    /// Live activity rolled up from the agent's sessions: `.working`
+    /// animates the avatar ring exactly like the old session rows.
+    var activityStatus: SessionActivityMonitor.Status? = nil
     let onSelect: () -> Void
 
     @Environment(\.theme) private var theme
@@ -1118,6 +1139,15 @@ private struct AgentSidebarRow: View {
                 monogramFontSize: 12,
                 borderWidth: 0
             )
+            .overlay(
+                Group {
+                    if let activityStatus {
+                        SessionActivityRing(status: activityStatus)
+                    }
+                }
+                .allowsHitTesting(false)
+            )
+            .animation(theme.springAnimation(responseMultiplier: 0.8), value: activityStatus)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(agent.displayName)

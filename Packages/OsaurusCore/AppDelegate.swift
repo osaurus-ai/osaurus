@@ -2374,13 +2374,18 @@ extension AppDelegate {
         deeplinkModelId: String? = nil,
         deeplinkFile: String? = nil,
         deeplinkAgentId: UUID? = nil,
-        deeplinkRemoteAgentId: UUID? = nil
+        deeplinkRemoteAgentId: UUID? = nil,
+        deeplinkCreateAgent: Bool = false
     ) {
         // Remote-agent detail navigation rides the shared management state
         // (mirrors `pendingPluginDetailId`) so it works for both a freshly
         // created window and a reused one without rebuilding the SwiftUI graph.
         if let deeplinkRemoteAgentId {
             ManagementStateManager.shared.pendingRemoteAgentDetailId = deeplinkRemoteAgentId
+        }
+        // Create-agent rides the same shared-state route.
+        if deeplinkCreateAgent {
+            ManagementStateManager.shared.pendingCreateAgent = true
         }
         closePopoverAndPerform { [weak self] in
             guard let self = self else { return }
