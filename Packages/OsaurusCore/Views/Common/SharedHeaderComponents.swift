@@ -555,7 +555,13 @@ struct AgentPill: View {
                 activeAvatar
 
                 Text(displayName)
-                    .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
+                    // Sidebar variant matches the sidebar's 12pt row/label
+                    // type instead of the toolbar's body size.
+                    .font(
+                        sidebarStyle
+                            ? .system(size: 12, weight: .medium)
+                            : theme.font(size: CGFloat(theme.bodySize), weight: .medium)
+                    )
                     .foregroundColor(theme.primaryText)
 
                 // Role glyph for the built-in Orchestrator: marks the pill as
