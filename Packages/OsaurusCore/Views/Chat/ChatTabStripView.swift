@@ -427,6 +427,7 @@ private struct WindowXReader: NSViewRepresentable {
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
         deinit {
+            TabStripDebugLog.log("reader: DEINIT")
             if let resizeObserver {
                 NotificationCenter.default.removeObserver(resizeObserver)
             }
@@ -434,6 +435,10 @@ private struct WindowXReader: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            TabStripDebugLog.log(
+                "reader: viewDidMoveToWindow window=\(window == nil ? "nil" : "set") "
+                    + "observed=\(observedWindow == nil ? "nil" : "set")"
+            )
             // Only rebind when landing in a NEW window; keep observing the
             // old one while detached (overflow-menu case above).
             if let window, window !== observedWindow {
@@ -445,7 +450,10 @@ private struct WindowXReader: NSViewRepresentable {
                     forName: NSWindow.didResizeNotification,
                     object: window,
                     queue: .main
-                ) { [weak self] _ in self?.report() }
+                ) { [weak self] _ in
+                    TabStripDebugLog.log("reader: didResize fired self=\(self == nil ? "nil" : "alive")")
+                    self?.report()
+                }
             }
             report()
         }
