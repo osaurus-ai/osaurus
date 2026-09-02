@@ -98,7 +98,7 @@ struct ToolPermissionView: View {
                     .offset(y: appeared ? 0 : -8)
 
                 if !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    ScrollView(.vertical, showsIndicators: true) {
+                    ContentSizedScrollView(maxHeight: 140) {
                         Text(description)
                             .font(.system(size: 13))
                             .foregroundColor(theme.secondaryText)
@@ -107,7 +107,6 @@ struct ToolPermissionView: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity)
                     }
-                    .frame(maxHeight: 140)
                     .padding(.top, 8)
                     .padding(.horizontal, 24)
                     .opacity(appeared ? 1 : 0)
@@ -260,16 +259,16 @@ struct ToolPermissionView: View {
                 .buttonStyle(.plain)
             }
 
-            ScrollView([.vertical, .horizontal], showsIndicators: true) {
+            ContentSizedScrollView(maxHeight: 200) {
                 Text(prettyArguments)
                     .font(theme.monoFont(size: 11.5))
                     .foregroundColor(theme.primaryText.opacity(0.9))
                     .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: 160)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(theme.codeBlockBackground))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(
@@ -321,6 +320,28 @@ struct ToolPermissionView: View {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             withAnimation(theme.animationQuick()) { copied = false }
         }
+    }
+}
+
+/// Vertical scroll area sized to its content up to `maxHeight`. The card sits
+/// under `.fixedSize`, which lays children out at their ideal height — and a
+/// plain ScrollView's ideal height is its minimum, so capped scroll areas can
+/// collapse to a sliver depending on which layout pass the panel settles on.
+/// Measuring the content and setting an explicit height sidesteps that.
+private struct ContentSizedScrollView<Content: View>: View {
+    let maxHeight: CGFloat
+    @ViewBuilder let content: () -> Content
+
+    @State private var contentHeight: CGFloat?
+
+    var body: some View {
+        ScrollView(.vertical, showsIndicators: true) {
+            content()
+                .onGeometryChange(for: CGFloat.self, of: \.size.height) {
+                    contentHeight = $0
+                }
+        }
+        .frame(height: min(contentHeight ?? maxHeight, maxHeight))
     }
 }
 
