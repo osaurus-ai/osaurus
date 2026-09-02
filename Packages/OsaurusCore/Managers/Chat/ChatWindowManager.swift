@@ -1303,13 +1303,16 @@ private struct ChatToolbarActionContent: View {
                     action: { windowState.isChangesSheetPresented = true }
                 )
             }
-            if !session.turns.isEmpty {
-                HeaderActionButton(
-                    icon: "plus",
-                    help: "New chat",
-                    action: { windowState.startNewChat() }
-                )
-            }
+            // New-chat button retired with the tab strip: its "+" (and ⌘T)
+            // starts a new chat in a new tab, and two adjacent plus buttons
+            // with subtly different semantics read as a mistake.
+            // if !session.turns.isEmpty {
+            //     HeaderActionButton(
+            //         icon: "plus",
+            //         help: "New chat",
+            //         action: { windowState.startNewChat() }
+            //     )
+            // }
         }
         .environment(\.theme, windowState.theme)
     }
