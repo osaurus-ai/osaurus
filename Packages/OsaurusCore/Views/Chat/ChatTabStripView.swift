@@ -79,22 +79,14 @@ struct ChatTabStripView: View {
     @State private var windowContentWidth: CGFloat?
 
     /// Space reserved for the toolbar's trailing items so the fixed-width
-    /// strip never runs under them. Computed from what is actually visible
-    /// (pin is always there; new-chat needs turns; the changes badge needs
-    /// tracked changes) — a worst-case constant left a dead gap between the
-    /// "+" button and the pin whenever the optional items were hidden.
+    /// strip never runs under them (undershooting folds them into the
+    /// toolbar overflow menu). MEASURED by the reader from the actual
+    /// toolbar items after the strip — constants proved wrong twice: too
+    /// big leaves a dead gap, too small hides the pin.
+    @State private var measuredTrailingReserve: CGFloat?
+
     private var trailingChromeReserve: CGFloat {
-        // Pin button + the flexible-space item's minimum + inter-item
-        // spacing + the toolbar's trailing margin. Undershooting folds the
-        // pin into the toolbar overflow menu (invisible), so err generous.
-        var reserve: CGFloat = 96
-        if !windowState.session.turns.isEmpty {
-            reserve += 40  // new-chat button
-        }
-        if windowState.sandboxChangesCount > 0 {
-            reserve += 55  // changes badge
-        }
-        return reserve
+        measuredTrailingReserve ?? 150
     }
 
     private var stripWidth: CGFloat? {
@@ -157,12 +149,17 @@ struct ChatTabStripView: View {
             // modifier, so the padding lies inside the measured bounds and
             // the reading is the pre-inset chrome edge — no feedback loop).
             .background(alignment: .leading) {
-                WindowXReader { x, contentWidth in
+                WindowXReader { x, contentWidth, trailingReserve in
                     if abs((measuredChromeX ?? -1) - x) > 0.5 {
                         measuredChromeX = x
                     }
                     if abs((windowContentWidth ?? -1) - contentWidth) > 0.5 {
                         windowContentWidth = contentWidth
+                    }
+                    if let trailingReserve,
+                        abs((measuredTrailingReserve ?? -1) - trailingReserve) > 0.5
+                    {
+                        measuredTrailingReserve = trailingReserve
                     }
                 }
                 .frame(width: 0)
@@ -354,7 +351,9 @@ private struct ChatTabItemView: View {
 /// out at the enclosing `NSHostingView` (each toolbar item is its own), so
 /// window-relative geometry needs an AppKit bridge.
 private struct WindowXReader: NSViewRepresentable {
-    var onChange: (CGFloat, CGFloat) -> Void
+    /// (leading x, window content width, measured trailing-items reserve —
+    /// nil when no toolbar is available, e.g. full screen).
+    var onChange: (CGFloat, CGFloat, CGFloat?) -> Void
 
     func makeNSView(context: Context) -> ReaderView {
         ReaderView(onChange: onChange)
@@ -366,7 +365,7 @@ private struct WindowXReader: NSViewRepresentable {
     }
 
     final class ReaderView: NSView {
-        var onChange: (CGFloat, CGFloat) -> Void
+        var onChange: (CGFloat, CGFloat, CGFloat?) -> Void
         // `nonisolated(unsafe)`: deinit is nonisolated and only removes the
         // observer; all writes happen on the main thread (same pattern as
         // ChatWindowState's notificationObservers).
@@ -383,7 +382,7 @@ private struct WindowXReader: NSViewRepresentable {
         /// doesn't change with window width anyway).
         private var lastX: CGFloat?
 
-        init(onChange: @escaping (CGFloat, CGFloat) -> Void) {
+        init(onChange: @escaping (CGFloat, CGFloat, CGFloat?) -> Void) {
             self.onChange = onChange
             super.init(frame: .zero)
         }
@@ -428,10 +427,35 @@ private struct WindowXReader: NSViewRepresentable {
             }
             guard let x = lastX else { return }
             let width = contentView.bounds.width
+            let trailing = measureTrailingReserve()
             let callback = onChange
             // Defer: `layout` runs mid-layout-pass, and mutating SwiftUI
             // @State from inside it is undefined (AttributeGraph reentrancy).
-            DispatchQueue.main.async { callback(x, width) }
+            DispatchQueue.main.async { callback(x, width, trailing) }
+        }
+
+        /// Sum the ACTUAL widths of the toolbar items after the tab strip
+        /// (flexible space, action, pin) plus AppKit's inter-item spacing
+        /// and trailing margin, so the strip's reserve matches whatever is
+        /// really visible instead of a guessed constant.
+        private func measureTrailingReserve() -> CGFloat? {
+            guard let toolbar = observedWindow?.toolbar else { return nil }
+            var reserve: CGFloat = 16  // toolbar trailing margin
+            var pastStrip = false
+            for item in toolbar.items {
+                if item.itemIdentifier.rawValue == "ChatToolbar.tabs" {
+                    pastStrip = true
+                    continue
+                }
+                guard pastStrip else { continue }
+                if item.itemIdentifier == .flexibleSpace {
+                    reserve += 8  // its collapsed minimum
+                    continue
+                }
+                let width = item.view?.fittingSize.width ?? 0
+                reserve += width + 10  // item + inter-item spacing
+            }
+            return reserve
         }
     }
 }
