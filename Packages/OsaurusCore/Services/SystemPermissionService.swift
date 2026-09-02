@@ -15,19 +15,38 @@ import Foundation
 
 enum SystemPermissionProbe {
     struct FullDiskResource: Sendable {
-        let relativePath: String
+        /// Where the sentinel lives. `.system` files (like the machine-wide
+        /// TCC database under `/Library`) are absolute; `.home` files are
+        /// resolved against the current user's home directory.
+        enum Location: Sendable { case system, home }
+        let location: Location
+        let path: String
+
+        func url(homeDirectory: URL) -> URL {
+            switch location {
+            case .system: return URL(fileURLWithPath: path)
+            case .home: return homeDirectory.appendingPathComponent(path)
+            }
+        }
     }
 
     /// Sentinel files that are unconditionally Full Disk Access-protected.
-    /// The user's TCC database always exists, so it is the reliable anchor;
-    /// Messages' chat.db rides along for redundancy. The old `~/Library/
-    /// Safari` files are deliberately absent: Safari's live data moved into
-    /// its container, and on upgraded Macs the legacy files can be left
-    /// behind UNPROTECTED — a readable stale bookmark file made the probe
-    /// report FDA as granted when it wasn't (GitHub #2523).
+    ///
+    /// The authoritative gate is the SYSTEM TCC database under `/Library`:
+    /// reading it requires Full Disk Access on every macOS version. The
+    /// per-user TCC database (`~/Library/.../TCC.db`) is NOT a reliable gate —
+    /// on some macOS versions the user's own processes can read it WITHOUT
+    /// FDA, so a probe anchored on it reported a grant that did not exist, and
+    /// toggling FDA off changed nothing (GitHub #2601). Messages' chat.db
+    /// rides along for redundancy but may be absent when Messages was never
+    /// used, so it cannot be the sole anchor. The old `~/Library/Safari`
+    /// files are deliberately absent: Safari's live data moved into its
+    /// container, and on upgraded Macs the legacy files can be left behind
+    /// UNPROTECTED — a readable stale bookmark file made the probe report FDA
+    /// as granted when it wasn't (GitHub #2523).
     static let defaultFullDiskResources: [FullDiskResource] = [
-        .init(relativePath: "Library/Application Support/com.apple.TCC/TCC.db"),
-        .init(relativePath: "Library/Messages/chat.db"),
+        .init(location: .system, path: "/Library/Application Support/com.apple.TCC/TCC.db"),
+        .init(location: .home, path: "Library/Messages/chat.db"),
     ]
 
     static func fullDiskAccessGranted(
@@ -40,7 +59,7 @@ enum SystemPermissionProbe {
         // files are readable, so any-readable added nothing except a
         // false-positive path through a file that lost its protection.
         let existing = resources
-            .map { homeDirectory.appendingPathComponent($0.relativePath) }
+            .map { $0.url(homeDirectory: homeDirectory) }
             .filter { isRegularFile($0, fileManager: fileManager) }
         guard !existing.isEmpty else { return false }
         return existing.allSatisfy { canReadProtectedFile($0, fileManager: fileManager) }
@@ -63,7 +82,16 @@ enum SystemPermissionProbe {
 
         do {
             let handle = try FileHandle(forReadingFrom: url)
-            try handle.close()
+            defer { try? handle.close() }
+            // Actually READ, don't just open. TCC can permit open() on a
+            // protected file while blocking the read, so an open-succeeds /
+            // close probe reports Full Disk Access as granted when it isn't
+            // (osaurus#2601). A blocked read throws; a real grant returns the
+            // bytes. An empty read that does not throw still counts as
+            // readable (a genuinely empty protected file must not false-fail),
+            // but the real sentinels — TCC.db / chat.db — are never empty, so
+            // a grant reads at least one byte.
+            _ = try handle.read(upToCount: 1)
             return true
         } catch {
             return false
