@@ -5858,8 +5858,20 @@ final class ChatSession: ObservableObject {
             // switches modes in another window midway through the run.
             let sandboxEnabled =
                 AgentManager.shared.effectiveAutonomousExec(for: turnAgentId)?.enabled == true
+            // A folder that a background dispatch supplied (Watcher / schedule
+            // / plugin) wins over the sandbox suspension here, exactly as it
+            // does in `prepareChatExecutionMode` (`preferHostFolder`). Without
+            // this the two disagree: the execution mode exposes the host file
+            // tools, but this root binding stays nil, so every folder tool
+            // returns "no working folder is selected" (the Voice Memo Watcher
+            // failure after the user turns sandbox off). Interactive sessions
+            // keep the suspension — the user toggles sandbox off to use a
+            // folder there.
+            let suspendFolderForSandbox =
+                sandboxEnabled && !self.folderContextFromDispatchBookmark
             let turnFolderRoot =
-                sandboxEnabled ? nil : self.activeFolderContext(for: turnAgentId)?.rootPath
+                suspendFolderForSandbox
+                ? nil : self.activeFolderContext(for: turnAgentId)?.rootPath
             await ChatExecutionContext.$currentFolderRoot.withValue(turnFolderRoot) { [self] in
             // Typed run provenance for the whole turn. The session's own
             // persisted `source` is authoritative here (a dispatched
