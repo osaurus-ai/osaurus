@@ -9575,9 +9575,41 @@ struct ChatView: View {
     // MARK: - Header
 
     private var chatHeader: some View {
-        Color.clear
-            .frame(height: 52)
-            .allowsHitTesting(false)
+        HStack {
+            // With the sidebar collapsed there is no visible cue for which
+            // agent owns the conversation (the selector lives in the
+            // sidebar's Agents list) — surface the identity here. Uses the
+            // effective chat identity so Mode 2 shows the remote agent.
+            if !windowState.showSidebar {
+                let identity = windowState.effectiveChatIdentity
+                HStack(spacing: 8) {
+                    AgentAvatarView(
+                        mascotId: identity.mascotId,
+                        name: identity.name,
+                        tint: agentColorFor(identity.name),
+                        diameter: 22,
+                        customImageURL: identity.customAvatarPath.map {
+                            URL(fileURLWithPath: $0)
+                        },
+                        monogramFontSize: 10,
+                        borderWidth: 0
+                    )
+                    Text(identity.name)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                }
+                .padding(.leading, 16)
+                .transition(.opacity)
+            }
+
+            Spacer()
+        }
+        .frame(height: 52)
+        // Purely informational chrome; clicks keep falling through to the
+        // thread like the old clear spacer.
+        .allowsHitTesting(false)
+        .animation(theme.animationQuick(), value: windowState.showSidebar)
     }
 
     // MARK: - Message Thread

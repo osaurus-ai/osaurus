@@ -49,6 +49,8 @@ struct ChatHistoryPanel: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
+            Spacer()
+
             Button {
                 requestImport()
             } label: {
@@ -61,8 +63,6 @@ struct ChatHistoryPanel: View {
             .buttonStyle(.plain)
             .pointingHandCursor()
             .localizedHelp("Import Conversations")
-
-            Spacer()
         }
         .padding(.horizontal, 14)
         .padding(.top, 12)
