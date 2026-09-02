@@ -132,6 +132,7 @@ struct ModelPickerView: View {
     @State private var sortOrder: ModelPickerSortOrder = .default
     @State private var contextFilter: ModelPickerContextFilter = .any
     @State private var visionFilter: ModelPickerVisionFilter = .any
+    @State private var localSourceFilter: ModelPickerLocalSourceFilter = .any
     @State private var showSortPopover = false
     @ObservedObject private var favoritesStore = FavoriteModelsStore.shared
     @Environment(\.theme) private var theme
@@ -340,6 +341,17 @@ struct ModelPickerView: View {
             if tab.key == Self.favoritesTabKey {
                 return tab.models.map { row(for: $0, providerLabel: providerTitle(for: $0)) }
             }
+            // The Local tab is the only one whose models carry an external
+            // provenance (HF cache, LM Studio), so it gets the source filter
+            // — users with other apps' models on disk can narrow to
+            // Osaurus-managed ones. The vision filter applies here too since
+            // local VLMs carry the flag. Both are no-ops at `.any`.
+            if tab.isLocal {
+                let processed = tab.models
+                    .filteredByLocalSource(localSourceFilter)
+                    .filteredByVision(visionFilter)
+                return makeRows(for: ModelPickerTab(key: tab.key, title: tab.title, models: processed))
+            }
             // Context filtering and price sorting only apply to the Osaurus
             // tab, whose models carry context/pricing metadata; other tabs keep
             // their existing alphabetical order. Both steps are no-ops at their
@@ -409,10 +421,17 @@ struct ModelPickerView: View {
     var body: some View {
         let tabs = currentTabs
         let rows = visibleRows(in: tabs)
-        // The sort control is offered only on the Osaurus tab (the only tab
-        // with pricing) and not while the cross-provider search is active.
+        // The sort/filter control is offered on the Osaurus tab (the only tab
+        // with pricing) and on the Local tab when external models (LM Studio,
+        // HF cache) are co-mingled with Osaurus-managed ones — with nothing
+        // external there is nothing to filter by, so the control stays hidden.
+        // Never shown while the cross-provider search is active.
         let activeTab = tabs.first { $0.key == effectiveSelectedTabKey(in: tabs) }
-        let showSort = !isSearching && (activeTab?.isOsaurus ?? false)
+        let showSort =
+            !isSearching
+            && ((activeTab?.isOsaurus ?? false)
+                || (activeTab?.isLocal == true
+                    && !(activeTab?.models.distinctExternalSources.isEmpty ?? true)))
         VStack(spacing: 0) {
             header(showSort: showSort)
             Divider().background(theme.primaryBorder.opacity(0.3))
@@ -575,26 +594,53 @@ struct ModelPickerView: View {
     /// circular control so the user can tell at a glance the list is modified.
     private var isSortOrFilterActive: Bool {
         sortOrder != .default || contextFilter != .any || visionFilter != .any
+            || localSourceFilter != .any
+    }
+
+    /// Chip choices for the Local tab's source filter: the two fixed cases
+    /// plus one chip per external provenance actually present, so the row
+    /// never offers a filter that would match nothing.
+    private var localSourceOptions: [ModelPickerLocalSourceFilter] {
+        let locals = currentTabs.first(where: \.isLocal)?.models ?? []
+        return [.any, .osaurus] + locals.distinctExternalSources.map { .external($0) }
     }
 
     private var sortPopoverView: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            sortSectionHeader(Text("Sort by price", bundle: .module))
+        // The popover's sections track the active tab: the Local tab filters
+        // by model source (Osaurus-managed vs. externally-discovered) and
+        // vision; the Osaurus tab keeps its price sort + context + vision.
+        let isLocalTab =
+            currentTabs.first { $0.key == effectiveSelectedTabKey(in: currentTabs) }?.isLocal == true
+        return VStack(alignment: .leading, spacing: 4) {
+            if isLocalTab {
+                sortSectionHeader(Text("Source", bundle: .module))
 
-            sortRow(.default, Text("Default", bundle: .module), icon: "list.bullet")
-            sortRow(.priceLowToHigh, Text("Cheapest first", bundle: .module), icon: "arrow.up")
-            sortRow(.priceHighToLow, Text("Highest first", bundle: .module), icon: "arrow.down")
-
-            sortSectionHeader(Text("Context limit", bundle: .module))
-
-            FlowLayout(spacing: 8) {
-                ForEach(ModelPickerContextFilter.allCases) { option in
-                    FilterChip(label: option.label, isSelected: contextFilter == option) {
-                        contextFilter = option
+                FlowLayout(spacing: 8) {
+                    ForEach(localSourceOptions) { option in
+                        FilterChip(label: option.label, isSelected: localSourceFilter == option) {
+                            localSourceFilter = option
+                        }
                     }
                 }
+                .padding(.horizontal, 12)
+            } else {
+                sortSectionHeader(Text("Sort by price", bundle: .module))
+
+                sortRow(.default, Text("Default", bundle: .module), icon: "list.bullet")
+                sortRow(.priceLowToHigh, Text("Cheapest first", bundle: .module), icon: "arrow.up")
+                sortRow(.priceHighToLow, Text("Highest first", bundle: .module), icon: "arrow.down")
+
+                sortSectionHeader(Text("Context limit", bundle: .module))
+
+                FlowLayout(spacing: 8) {
+                    ForEach(ModelPickerContextFilter.allCases) { option in
+                        FilterChip(label: option.label, isSelected: contextFilter == option) {
+                            contextFilter = option
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
             }
-            .padding(.horizontal, 12)
 
             sortSectionHeader(Text("Vision", bundle: .module))
 
