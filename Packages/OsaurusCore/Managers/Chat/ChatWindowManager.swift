@@ -932,7 +932,9 @@ private struct ChatFullScreenHeaderView: View {
             // precedes this item.
             ChatToolbarBackView(windowState: windowState, leadingChromeWidth: 76)
             // Leading-aligned like Chrome: tabs grow left to right.
-            ChatTabStripView(windowState: windowState, leadingChromeWidth: 76)
+            // Chat tabs hidden while the agents-focused sidebar prototype
+            // is explored; the tab machinery stays live underneath.
+            // ChatTabStripView(windowState: windowState, leadingChromeWidth: 76)
             Spacer()
             ChatToolbarActionView(windowState: windowState)
             ChatToolbarTrailingView(windowState: windowState)
@@ -1025,7 +1027,9 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     // item that AppKit still reserved spacing for, so every chat had a dead
     // gap at the toolbar's right edge.
     private static let itemIdentifiers: [NSToolbarItem.Identifier] = [
-        sidebarItem, backItem, tabsItem, .flexibleSpace, actionItem, pinItem,
+        // tabsItem omitted: chat tabs hidden during the agents-sidebar
+        // prototype (re-insert after backItem to restore).
+        sidebarItem, backItem, .flexibleSpace, actionItem, pinItem,
     ]
 
     private weak var windowState: ChatWindowState?
