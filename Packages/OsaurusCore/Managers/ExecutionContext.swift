@@ -152,7 +152,14 @@ public final class ExecutionContext: ObservableObject {
         )
         if restored == nil {
             print("[ExecutionContext] Folder bookmark could not be restored, skipping")
+            return
         }
+        // This folder came from a background dispatch's bookmark (Watcher /
+        // schedule / plugin), not an interactive UI pick. Mark it so
+        // `prepareChatExecutionMode` honors it over the agent's default
+        // sandbox — the dispatched agent must be able to see its target
+        // folder (the Voice Memo Watcher "empty folder" bug).
+        await MainActor.run { chatSession.folderContextFromDispatchBookmark = true }
     }
 
     /// Poll until execution completes or the task is cancelled.

@@ -250,18 +250,25 @@ struct ResolveExecutionModeTests {
         }
     }
 
-    /// The source-level policy: only folder-targeted background triggers opt
-    /// in. Interactive / external callers keep sandbox priority.
+    /// A legacy host-WRITE grant does not silently upgrade the honored folder
+    /// into combined mode: `preferHostFolder` yields plain `.hostFolder`
+    /// (natively read-write via the Changes sheet), never `.sandbox` with a
+    /// host bridge — the removed combined-mode surface stays removed.
     @Test
-    func sessionSourcePolicy_onlyAutomationPrefersFolder() {
-        #expect(SessionSource.watcher.prefersConfiguredHostFolder)
-        #expect(SessionSource.schedule.prefersConfiguredHostFolder)
-        #expect(SessionSource.selfSchedule.prefersConfiguredHostFolder)
-        #expect(!SessionSource.chat.prefersConfiguredHostFolder)
-        #expect(!SessionSource.http.prefersConfiguredHostFolder)
-        #expect(!SessionSource.plugin.prefersConfiguredHostFolder)
-        #expect(!SessionSource.channel.prefersConfiguredHostFolder)
-        #expect(!SessionSource.delegation.prefersConfiguredHostFolder)
-        #expect(!SessionSource.imported.prefersConfiguredHostFolder)
+    func preferHostFolder_withWriteGrant_isPlainHostFolderNotCombined() async {
+        await SandboxTestLock.shared.run {
+            registerSandboxExec()
+            defer { ToolRegistry.shared.unregisterAllSandboxTools() }
+
+            let mode = ToolRegistry.shared.resolveExecutionMode(
+                folderContext: sampleFolderContext(),
+                autonomousEnabled: true,
+                allowHostFolderWrites: true,
+                preferHostFolder: true
+            )
+            #expect(mode.usesHostFolderTools)
+            #expect(!mode.usesSandboxTools)
+            #expect(!mode.allowsHostReadTools)  // not combined sandbox+host
+        }
     }
 }

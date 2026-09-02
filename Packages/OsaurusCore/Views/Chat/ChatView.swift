@@ -356,6 +356,16 @@ final class ChatSession: ObservableObject {
     /// (plugin / HTTP / scheduler / watcher) runs, defaults to `.chat` for
     /// user-driven UI sessions.
     var source: SessionSource = .chat
+    /// True when this session's folder was restored from a bookmark that a
+    /// background DISPATCH supplied (a Watcher's watched folder, a scheduled
+    /// task's folder, or a plugin's `folder_bookmark`), as opposed to a
+    /// folder the user picked interactively in the chat UI. Set by
+    /// `ExecutionContext.activateFolderContextIfNeeded`. A dispatched folder
+    /// is an explicit target with no interactive sandbox toggle, so it wins
+    /// over the agent's default sandbox in `prepareChatExecutionMode`
+    /// (`preferHostFolder`); an interactive folder keeps the historical
+    /// sandbox-priority contract, where the user toggles sandbox off instead.
+    var folderContextFromDispatchBookmark: Bool = false
     /// Whether this session's model loads may evict a model someone else is using.
     ///
     /// Set from `DispatchRequest.loadIntent` at the trigger boundary. Headless
@@ -4462,16 +4472,16 @@ final class ChatSession: ObservableObject {
         if autonomous {
             await SandboxToolRegistrar.shared.registerTools(for: agentId)
         }
-        // A folder-targeted background dispatch (Watcher / scheduled task)
-        // honors the folder it was pointed at over the agent's default
-        // sandbox — otherwise the pure-VM agent can't see its own target
-        // files. Interactive chats keep sandbox priority (see
-        // `SessionSource.prefersConfiguredHostFolder`).
+        // A folder that a background dispatch supplied (Watcher / schedule /
+        // plugin folder_bookmark) is an explicit target with no interactive
+        // sandbox toggle, so it wins over the agent's default sandbox —
+        // otherwise the pure-VM agent can't see its own target files.
+        // Interactive folders keep sandbox priority.
         return ToolRegistry.shared.resolveExecutionMode(
             folderContext: activeFolderContext(for: agentId),
             autonomousEnabled: autonomous,
             allowHostFolderWrites: config?.allowHostFolderWrites == true,
-            preferHostFolder: source.prefersConfiguredHostFolder
+            preferHostFolder: folderContextFromDispatchBookmark
         )
     }
 

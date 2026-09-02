@@ -167,21 +167,3 @@ extension SessionSource {
         }
     }
 }
-
-extension SessionSource {
-    /// Background automation triggers that target a host folder and have no
-    /// interactive sandbox toggle. For these, an explicitly-configured folder
-    /// — a Watcher's watched folder, a scheduled task's folder — must win over
-    /// the agent's default sandbox, or the run cannot see its own target files
-    /// (the pure-VM agent reads its jailed `/workspace` and reports "empty").
-    /// Interactive `.chat` and external API callers keep the sandbox-priority
-    /// contract; the user toggles sandbox off to use a folder there.
-    public var prefersConfiguredHostFolder: Bool {
-        switch self {
-        case .watcher, .schedule, .selfSchedule:
-            return true
-        case .chat, .plugin, .http, .channel, .imported, .delegation:
-            return false
-        }
-    }
-}
