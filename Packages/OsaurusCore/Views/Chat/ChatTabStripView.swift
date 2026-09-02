@@ -78,16 +78,28 @@ struct ChatTabStripView: View {
     /// the toolbar item stable while the close animation plays inside it.
     @State private var windowContentWidth: CGFloat?
 
-    /// Space reserved for the toolbar's trailing items (changes badge +
-    /// new-chat + pin) so the fixed-width strip never runs under them.
-    private static let trailingChromeReserve: CGFloat = 150
+    /// Space reserved for the toolbar's trailing items so the fixed-width
+    /// strip never runs under them. Computed from what is actually visible
+    /// (pin is always there; new-chat needs turns; the changes badge needs
+    /// tracked changes) — a worst-case constant left a dead gap between the
+    /// "+" button and the pin whenever the optional items were hidden.
+    private var trailingChromeReserve: CGFloat {
+        var reserve: CGFloat = 60  // pin button + toolbar margins
+        if !windowState.session.turns.isEmpty {
+            reserve += 40  // new-chat button
+        }
+        if windowState.sandboxChangesCount > 0 {
+            reserve += 55  // changes badge
+        }
+        return reserve
+    }
 
     private var stripWidth: CGFloat? {
         guard let windowContentWidth, let measuredChromeX else { return nil }
         let inset = needsSidebarInset ? sidebarOpenInset : 0
         // No artificial cap: like Chrome, tabs may use the whole bar up to
         // the trailing buttons; the reserve is what keeps them clear.
-        let available = windowContentWidth - measuredChromeX - inset - Self.trailingChromeReserve
+        let available = windowContentWidth - measuredChromeX - inset - trailingChromeReserve
         return max(0, available)
     }
 
