@@ -634,9 +634,10 @@ struct AgentPill: View {
             // rows and needs the border to read as an elevated control.
             Self.sidebarShape
                 .strokeBorder(
-                    (isPillHighlighted ? theme.accentColor : theme.primaryBorder)
-                        .opacity(isPillHighlighted ? 0.55 : 0.45),
-                    lineWidth: 1
+                    isPillHighlighted
+                        ? theme.accentColor.opacity(0.7)
+                        : theme.secondaryText.opacity(0.35),
+                    lineWidth: 1.5
                 )
         } else {
             borderLayer(Capsule())
