@@ -42,9 +42,10 @@ struct ChatAgentPickerPill: View {
             },
             activeRelayAgent: windowState.selectedRelayAgent,
             activeRemoteAgentAvatar: windowState.pinnedRemoteAgentAvatar,
-            onOpenActiveAgentSettings: { openActiveAgentSettings() },
-            onOpenRemoteAgentSettings: { openRemoteAgentSettings() },
-            openPickerTrigger: openPickerTrigger
+            // No gear: agent settings stay reachable from the picker rows /
+            // management window; the sidebar pill is purely a selector.
+            openPickerTrigger: openPickerTrigger,
+            sidebarStyle: true
         )
         .environment(\.theme, windowState.theme)
         .onReceive(NotificationCenter.default.publisher(for: .chatToolbarOpenAgentPicker)) { notification in
@@ -55,34 +56,4 @@ struct ChatAgentPickerPill: View {
         }
     }
 
-    /// Deep-link the management window to the active local agent's config.
-    /// Built-in agents have no editable record, so they open the Agents tab
-    /// without a selection.
-    private func openActiveAgentSettings() {
-        let active = windowState.agents.first { $0.id == windowState.agentId }
-        // The built-in Orchestrator has no Agents-tab detail view; its
-        // identity + delegation settings live on the dedicated
-        // Orchestrator tab.
-        if active?.isBuiltIn != false {
-            AppDelegate.shared?.showManagementWindow(initialTab: .orchestrator)
-            return
-        }
-        AppDelegate.shared?.showManagementWindow(
-            initialTab: .agents,
-            deeplinkAgentId: active?.id
-        )
-    }
-
-    /// Deep-link the management window to the active remote agent's detail view.
-    /// Resolves the chat's remote target → persisted `RemoteAgent` id; ephemeral
-    /// peers with no record fall back to the Agents tab.
-    private func openRemoteAgentSettings() {
-        let remoteId = windowState.selectedDiscoveredAgentProviderId.flatMap {
-            RemoteAgentManager.shared.remoteAgentDetailId(forProviderId: $0)
-        }
-        AppDelegate.shared?.showManagementWindow(
-            initialTab: .agents,
-            deeplinkRemoteAgentId: remoteId
-        )
-    }
 }

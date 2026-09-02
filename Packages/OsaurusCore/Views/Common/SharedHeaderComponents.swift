@@ -260,6 +260,11 @@ struct AgentPill: View {
     /// the `/agent` slash command). Each change pops the popover open.
     var openPickerTrigger: Int = 0
 
+    /// Sidebar variant: rounded-rect chrome matching the sidebar's
+    /// Chats | Projects lens switcher (corner radius 8) and full-width
+    /// layout, instead of the toolbar's content-hugging capsule.
+    var sidebarStyle: Bool = false
+
     @State private var isHovered = false
     @State private var isGearHovered = false
     @State private var isPopoverPresented = false
@@ -569,6 +574,9 @@ struct AgentPill: View {
             .padding(.leading, 14)
             .padding(.trailing, 14)
             .padding(.vertical, 6)
+            // Sidebar variant spans the sidebar's content width, like the
+            // lens switcher above it; the toolbar capsule hugs its content.
+            .frame(maxWidth: sidebarStyle ? .infinity : nil)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -582,13 +590,25 @@ struct AgentPill: View {
 
     // MARK: - Chrome
 
+    /// The rounded-rect twin of the sidebar lens switcher (radius 8).
+    private static let sidebarShape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+
+    @ViewBuilder
     private var pillBackground: some View {
+        if sidebarStyle {
+            backgroundLayers(Self.sidebarShape)
+        } else {
+            backgroundLayers(Capsule())
+        }
+    }
+
+    private func backgroundLayers<S: Shape>(_ shape: S) -> some View {
         ZStack {
-            Capsule()
+            shape
                 .fill(theme.secondaryBackground.opacity(isPillHighlighted ? 0.9 : 0.65))
 
             if isPillHighlighted {
-                Capsule()
+                shape
                     .fill(
                         LinearGradient(
                             colors: [theme.accentColor.opacity(0.08), Color.clear],
@@ -600,8 +620,17 @@ struct AgentPill: View {
         }
     }
 
+    @ViewBuilder
     private var pillBorder: some View {
-        Capsule()
+        if sidebarStyle {
+            borderLayer(Self.sidebarShape)
+        } else {
+            borderLayer(Capsule())
+        }
+    }
+
+    private func borderLayer<S: InsettableShape>(_ shape: S) -> some View {
+        shape
             .strokeBorder(
                 LinearGradient(
                     colors: [
