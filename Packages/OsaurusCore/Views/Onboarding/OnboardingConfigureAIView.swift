@@ -592,13 +592,14 @@ final class ConfigureAIState: ObservableObject {
         screen = .byok
     }
 
-    /// "Custom" chip tap: drill into the custom OpenAI-compatible endpoint
-    /// connect screen (host/port/path form instead of a bare key field).
+    /// "Custom" chip tap: open the endpoint-form connect dialog directly over
+    /// the home screen. Unlike preset providers there is no drill-in — the
+    /// chip has no logo/option rows worth a page, so one tap goes straight to
+    /// the form.
     func enterCustomProvider() {
-        substateDirection = .forward
         clearAPICredentials()
         apiSubstate = .customForm
-        screen = .byok
+        connectDialog = .apiKey
     }
 
     func enterClaudeCode() {
@@ -636,6 +637,13 @@ final class ConfigureAIState: ObservableObject {
         if !isAPISuccess {
             testResult = nil
             apiKey = ""
+            // The custom dialog opens straight over the home grid with no
+            // drill-in behind it; an abandoned attempt pops the substate too
+            // so no half-filled form lingers under the next chip tap.
+            if screen == .home, apiSubstate == .customForm {
+                apiSubstate = .picker
+                customForm.reset()
+            }
         }
     }
 
@@ -1512,18 +1520,7 @@ private struct ConfigureAIProviderPanel: View {
     @ViewBuilder
     private func optionRows(_ preset: ProviderPreset) -> some View {
         VStack(spacing: 12) {
-            if preset == .custom {
-                OnboardingOptionRow(
-                    title: "Connect a custom endpoint",
-                    caption:
-                        "Any OpenAI-compatible server, local or remote (LM Studio, vLLM, llama.cpp, and more)",
-                    isVerified: state.isAPISuccess
-                ) {
-                    state.openConnectDialog(.apiKey)
-                }
-            }
-
-            if preset != .custom, oauthKind != nil {
+            if oauthKind != nil {
                 OnboardingOptionRow(
                     title: oauthRowTitle(preset),
                     caption: oauthRowCaption(preset),
@@ -1533,10 +1530,7 @@ private struct ConfigureAIProviderPanel: View {
                 }
             }
 
-            if preset == .custom {
-                // The custom row above is the single connect action — no
-                // preset-key row.
-            } else if preset.configuration.authType == .none {
+            if preset.configuration.authType == .none {
                 // Local presets (Ollama) — no key, one connect action.
                 OnboardingOptionRow(
                     title: LocalizedStringKey(L("Connect to \(displayName(preset))")),
