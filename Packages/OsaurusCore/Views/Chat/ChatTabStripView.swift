@@ -97,8 +97,11 @@ struct ChatTabStripView: View {
         guard let windowContentWidth = liveWidth, let measuredChromeX else { return nil }
         let inset = needsSidebarInset ? sidebarOpenInset : 0
         // No artificial cap: like Chrome, tabs may use the whole bar up to
-        // the trailing buttons; the reserve is what keeps them clear.
-        let available = windowContentWidth - measuredChromeX - inset - trailingChromeReserve
+        // the trailing buttons; the reserve is what keeps them clear. The
+        // extra 12 covers the toolbar item's own ~8pt frame padding (log:
+        // frame = fitting + 8) and live-resize rounding — budgeting to the
+        // exact pixel folds the item on a 1pt overshoot.
+        let available = windowContentWidth - measuredChromeX - inset - trailingChromeReserve - 12
         return max(0, available)
     }
 
@@ -189,7 +192,12 @@ struct ChatTabStripView: View {
         let plusButtonReserve: CGFloat = 32
         let separators = count - 1
         let available = stripWidth - plusButtonReserve - separators
-        return min(260, max(36, available / count))
+        // No hard floor: a floor that exceeds available/count makes the
+        // row's minimum grow past the strip with many tabs, overflowing the
+        // toolbar item — AppKit then folds the whole bar into the overflow
+        // menu (the "disappears on small windows" bug). Cramped tabs beat
+        // no tabs.
+        return min(260, max(2, available / count))
     }
 
     /// Roomy floor for uncrowded strips; yields to the cap when crowded.
