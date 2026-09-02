@@ -25653,6 +25653,35 @@
         }
       }
     },
+    "API key (optional for local servers)": {
+      "comment": "Placeholder for the optional key field in the onboarding custom endpoint dialog.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API-Schlüssel (optional für lokale Server)"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API 키 (로컬 서버는 선택 사항)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API-ключ (необязательно для локальных серверов)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API 密钥（本地服务器可选）"
+          }
+        }
+      }
+    },
     "API Key": {
       "localizations": {
         "de": {
@@ -51253,6 +51282,35 @@
           "stringUnit": {
             "state": "translated",
             "value": "連接 Discord 機器人，便能讓 Osaurus 讀取允許列表中的頻道，並僅向寫入允許列表中的目標發送消息。"
+          }
+        }
+      }
+    },
+    "Connect a custom endpoint": {
+      "comment": "Title of the onboarding connect dialog for a custom OpenAI-compatible endpoint.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eigenen Endpunkt verbinden"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "사용자 지정 엔드포인트 연결"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подключить собственную конечную точку"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接自定义端点"
           }
         }
       }
@@ -142792,6 +142850,35 @@
           "stringUnit": {
             "state": "translated",
             "value": "粘貼你在初始設置時保存的 24 個詞恢復助記詞。我們將恢復原始主密鑰，你現有的智能體和訪問密鑰將重新開始工作。"
+          }
+        }
+      }
+    },
+    "Paste the URL of any OpenAI-compatible server. Local endpoints don't need a key.": {
+      "comment": "Caption of the onboarding connect dialog for a custom OpenAI-compatible endpoint.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Füge die URL eines beliebigen OpenAI-kompatiblen Servers ein. Lokale Endpunkte benötigen keinen Schlüssel."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI 호환 서버의 URL을 붙여넣으세요. 로컬 엔드포인트에는 키가 필요하지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вставьте URL любого сервера, совместимого с OpenAI. Локальным конечным точкам ключ не нужен."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "粘贴任意 OpenAI 兼容服务器的 URL。本地端点无需密钥。"
           }
         }
       }
