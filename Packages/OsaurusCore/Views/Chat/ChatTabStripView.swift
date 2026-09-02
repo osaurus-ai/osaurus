@@ -293,8 +293,8 @@ private struct ChatTabItemView: View {
         }
         // Inset content past the active shape's feet so text never sits on
         // the curved corners.
-        .padding(.horizontal, Self.footRadius + 10)
-        .frame(minWidth: 44, maxWidth: 260)
+        .padding(.horizontal, Self.footRadius + 14)
+        .frame(minWidth: 110, maxWidth: 260)
         .frame(maxHeight: .infinity)
         .background(alignment: .bottom) {
             if isActive {
