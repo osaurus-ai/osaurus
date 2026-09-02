@@ -831,6 +831,19 @@ struct SelectableTextView: NSViewRepresentable {
                     // Inline code styling
                     attrString.addAttribute(.font, value: codeFont, range: range)
                     attrString.addAttribute(.foregroundColor, value: accentColor, range: range)
+                    // A code span naming a real knowledge document becomes a
+                    // clickable link to it (existence-gated, so ordinary
+                    // path-shaped spans are untouched).
+                    if attributes[.link] == nil {
+                        let span = attrString.attributedSubstring(from: range).string
+                        if let match = KnowledgeLinkResolver.linkURL(forCodeSpan: span) {
+                            let linkRange = NSRange(location: range.location, length: match.matchedLength)
+                            attrString.addAttribute(.link, value: match.url, range: linkRange)
+                            attrString.addAttribute(
+                                .underlineStyle, value: NSUnderlineStyle.single.rawValue, range: linkRange
+                            )
+                        }
+                    }
                     return
                 }
 
@@ -1025,6 +1038,8 @@ final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
             if let url {
                 if url.scheme == "artifact" {
                     handleArtifactLink(url)
+                } else if url.scheme == KnowledgeLinkResolver.scheme {
+                    handleKnowledgeLink(url)
                 } else {
                     NSWorkspace.shared.open(url)
                 }
@@ -1042,6 +1057,15 @@ final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
         }
         ChatCrossSelection.shared.clear()
         super.mouseDown(with: event)
+    }
+
+    /// Open the knowledge document a link points at. Falls back to
+    /// revealing it in Finder if no app claims the file type.
+    private func handleKnowledgeLink(_ url: URL) {
+        guard let fileURL = KnowledgeLinkResolver.fileURL(from: url) else { return }
+        if !NSWorkspace.shared.open(fileURL) {
+            NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+        }
     }
 
     private func handleArtifactLink(_ url: URL) {
