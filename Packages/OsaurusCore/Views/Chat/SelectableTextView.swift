@@ -822,34 +822,45 @@ struct SelectableTextView: NSViewRepresentable {
         // Enumerate and fix fonts/styles
         attrString.enumerateAttributes(in: fullRange, options: []) { attributes, range, _ in
             var newFont = baseFont
-
+            // Foundation's markdown parser doesn't always express a code span
+            // through the font: nested forms like `**`code`**` can carry the
+            // code-ness only in the presentation intent, with a non-monospace
+            // font. Check both signals.
+            let intent = Self.inlineIntent(attributes)
+            var traits: NSFontDescriptor.SymbolicTraits = []
             if let existingFont = attributes[.font] as? NSFont {
-                let traits = existingFont.fontDescriptor.symbolicTraits
+                traits = existingFont.fontDescriptor.symbolicTraits
+            }
 
-                // Check for inline code (usually monospace)
-                if traits.contains(.monoSpace) {
-                    // Inline code styling
-                    attrString.addAttribute(.font, value: codeFont, range: range)
-                    attrString.addAttribute(.foregroundColor, value: accentColor, range: range)
-                    // A code span naming a real knowledge document becomes a
-                    // clickable link to it (existence-gated, so ordinary
-                    // path-shaped spans are untouched).
-                    if attributes[.link] == nil {
-                        let span = attrString.attributedSubstring(from: range).string
-                        if let match = KnowledgeLinkResolver.linkURL(forCodeSpan: span) {
-                            let linkRange = NSRange(location: range.location, length: match.matchedLength)
-                            attrString.addAttribute(.link, value: match.url, range: linkRange)
-                            attrString.addAttribute(
-                                .underlineStyle, value: NSUnderlineStyle.single.rawValue, range: linkRange
-                            )
-                        }
+            // Check for inline code
+            if traits.contains(.monoSpace) || intent.contains(.code) {
+                // Inline code styling (bold-wrapped code keeps its bold)
+                let isBoldCode = traits.contains(.bold) || intent.contains(.stronglyEmphasized)
+                let font = isBoldCode ? cachedMonoFont(size: baseFontSize * 0.9, weight: .bold) : codeFont
+                attrString.addAttribute(.font, value: font, range: range)
+                attrString.addAttribute(.foregroundColor, value: accentColor, range: range)
+                // A code span naming a real knowledge document becomes a
+                // clickable link to it (existence-gated, so ordinary
+                // path-shaped spans are untouched).
+                if attributes[.link] == nil {
+                    let span = attrString.attributedSubstring(from: range).string
+                    if let match = KnowledgeLinkResolver.linkURL(forCodeSpan: span) {
+                        let linkRange = NSRange(location: range.location, length: match.matchedLength)
+                        attrString.addAttribute(.link, value: match.url, range: linkRange)
+                        attrString.addAttribute(
+                            .underlineStyle, value: NSUnderlineStyle.single.rawValue, range: linkRange
+                        )
                     }
-                    return
                 }
+                return
+            }
 
-                // Determine weight and italic from existing font
-                let isBold = traits.contains(.bold) || baseWeight == .bold || baseWeight == .semibold
-                let fontIsItalic = traits.contains(.italic) || isItalic
+            if attributes[.font] is NSFont {
+                // Determine weight and italic from existing font or intent
+                let isBold =
+                    traits.contains(.bold) || intent.contains(.stronglyEmphasized)
+                    || baseWeight == .bold || baseWeight == .semibold
+                let fontIsItalic = traits.contains(.italic) || intent.contains(.emphasized) || isItalic
 
                 // Use pre-cached fonts
                 if isBold && fontIsItalic {
@@ -869,6 +880,18 @@ struct SelectableTextView: NSViewRepresentable {
                 attrString.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: range)
             }
         }
+    }
+
+    /// Read the markdown parser's inline presentation intent off a run's
+    /// attributes. Bridged NSAttributedStrings carry it as an NSNumber.
+    static func inlineIntent(_ attributes: [NSAttributedString.Key: Any]) -> InlinePresentationIntent {
+        if let intent = attributes[.inlinePresentationIntent] as? InlinePresentationIntent {
+            return intent
+        }
+        if let raw = attributes[.inlinePresentationIntent] as? NSNumber {
+            return InlinePresentationIntent(rawValue: raw.uint64Value)
+        }
+        return []
     }
 
     // MARK: - Font Helpers
