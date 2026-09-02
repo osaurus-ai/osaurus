@@ -82,39 +82,42 @@ struct CustomProviderForm: Equatable {
 
     mutating func reset() { self = CustomProviderForm() }
 
-    /// Parses a pasted endpoint URL into the form's fields. Forgiving on
-    /// purpose: the scheme is optional (localhost-style hosts default to
-    /// http, everything else https) and a missing path defaults to /v1.
-    /// Returns an empty form (host == "") when no host can be extracted,
-    /// which keeps `canTestAPI` false.
+    /// Parses a pasted endpoint URL into the form's fields. Delegates the
+    /// decomposition to the Settings sheet's `parsePastedEndpoint` so both
+    /// surfaces share one parser (query/fragment stripping, IPv6 literals,
+    /// operation-suffix normalization like /v1/chat/completions -> /v1),
+    /// then layers onboarding's forgiving defaults on top: the scheme is
+    /// optional (local machine and LAN hosts default to http, everything
+    /// else https) and a missing path defaults to /v1. Returns an empty
+    /// form (host == "") when no host can be extracted, which keeps
+    /// `canTestAPI` false.
     static func parse(_ urlString: String) -> CustomProviderForm {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return CustomProviderForm() }
-        let withScheme: String
-        if trimmed.contains("://") {
-            withScheme = trimmed
-        } else {
-            var probe = CustomProviderForm()
-            let hostPart = trimmed.split(separator: "/").first ?? ""
-            probe.host = String(hostPart.split(separator: ":").first ?? "").lowercased()
-            // Local machine and LAN addresses virtually never serve TLS;
-            // everything else (domains, public IPs) defaults to https.
-            let isPrivateLAN =
-                probe.host.hasPrefix("192.168.") || probe.host.hasPrefix("10.")
-                || probe.host.hasSuffix(".local")
-            withScheme = (probe.isLocalhost || isPrivateLAN ? "http://" : "https://") + trimmed
-        }
-        guard let components = URLComponents(string: withScheme),
-            let host = components.host, !host.isEmpty,
-            components.scheme == "http" || components.scheme == "https"
-        else { return CustomProviderForm() }
+        guard !trimmed.isEmpty, !trimmed.contains(" ") else { return CustomProviderForm() }
         var form = CustomProviderForm()
-        form.protocolKind = components.scheme == "http" ? .http : .https
-        form.host = host
-        form.port = components.port.map(String.init) ?? ""
-        let path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: " "))
-        form.basePath = (path.isEmpty || path == "/") ? "/v1" : path
+        if let components = parsePastedEndpoint(trimmed) {
+            form.host = components.host
+            form.port = components.port.map(String.init) ?? ""
+            form.basePath = components.basePath ?? "/v1"
+            form.protocolKind = components.providerProtocol ?? form.inferredScheme
+        } else if !trimmed.contains("://"), !trimmed.contains("/") {
+            // A bare host ("localhost", "myserver.internal") has no pieces
+            // to split, so the shared parser declines it; take it verbatim.
+            form.host = trimmed
+            form.basePath = "/v1"
+            form.protocolKind = form.inferredScheme
+        }
         return form
+    }
+
+    /// Best-guess scheme for input pasted without one: the local machine
+    /// and LAN addresses virtually never serve TLS; domains and public IPs
+    /// default to https.
+    private var inferredScheme: RemoteProviderProtocol {
+        let h = host.lowercased()
+        let isPrivateLAN =
+            h.hasPrefix("192.168.") || h.hasPrefix("10.") || h.hasSuffix(".local")
+        return (isLocalhost || isPrivateLAN) ? .http : .https
     }
 
     var endpointPreview: String {
@@ -128,7 +131,8 @@ struct CustomProviderForm: Equatable {
     /// Studio, llama.cpp server, vLLM, etc. when the user wires them up via
     /// the custom form.
     var isLocalhost: Bool {
-        let h = host.lowercased().trimmingCharacters(in: .whitespaces)
+        // `parsePastedEndpoint` keeps IPv6 literals bracketed ("[::1]").
+        let h = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: " []"))
         return h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "0.0.0.0"
     }
 
