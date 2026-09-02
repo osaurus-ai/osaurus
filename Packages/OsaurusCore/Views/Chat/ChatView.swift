@@ -9161,6 +9161,14 @@ struct ChatView: View {
                         ProjectManager.shared.pendingRevealProjectsTab = true
                     case .openOrchestratorSettings:
                         AppDelegate.shared?.showManagementWindow(initialTab: .orchestrator)
+                    case .openModelDownloads(let modelId):
+                        // Ride the one-shot pending request (mirrors
+                        // `pendingRemoteAgentDetailId`) so the detail sheet
+                        // opens for both a fresh and a reused Models window.
+                        if let modelId {
+                            ManagementStateManager.shared.pendingModelDetailId = modelId
+                        }
+                        AppDelegate.shared?.showManagementWindow(initialTab: .models)
                     case .openSubagentSettings:
                         // Land on the first custom (non-built-in) agent's
                         // Subagents tab (per-agent spawn / image config). With

@@ -64,6 +64,10 @@ public struct CacheProofTurnMetrics: Sendable, Codable {
     /// Every typed progress frame in stream order. Optional so transcripts
     /// recorded before this field was introduced remain decodable.
     public let prefillProgressEvents: [CacheProofProgressEvent]?
+    /// This turn's decode rate from the stats sentinel. Optional so older
+    /// recorded transcripts remain decodable. Sustained-speed gates compare
+    /// the final turn's value against the first turn's.
+    public let decodeTokensPerSecond: Double?
 
     public init(
         turnNumber: Int,
@@ -78,7 +82,8 @@ public struct CacheProofTurnMetrics: Sendable, Codable {
         unclosedReasoning: Bool,
         visibleCharacterCount: Int,
         reasoningCharacterCount: Int,
-        prefillProgressEvents: [CacheProofProgressEvent]? = nil
+        prefillProgressEvents: [CacheProofProgressEvent]? = nil,
+        decodeTokensPerSecond: Double? = nil
     ) {
         self.turnNumber = turnNumber
         self.sessionNumber = sessionNumber
@@ -93,6 +98,7 @@ public struct CacheProofTurnMetrics: Sendable, Codable {
         self.visibleCharacterCount = visibleCharacterCount
         self.reasoningCharacterCount = reasoningCharacterCount
         self.prefillProgressEvents = prefillProgressEvents
+        self.decodeTokensPerSecond = decodeTokensPerSecond
     }
 }
 
@@ -200,6 +206,16 @@ public enum CacheProofEvaluator {
     /// invalidates/re-derives companion states, the exact path the bounded
     /// companion LRU (`ssmCompanionEntryLimit`) must keep from re-growing
     /// to the model's full on-disk size.
+    /// Deterministic scripted tool loop: when `toolResultFollowUps` is
+    /// non-nil, every entry after the first query is sent as a TOOL-CALL
+    /// CONTINUATION instead of a user turn — the history gains a scripted
+    /// assistant `tool_calls` message plus a `role:"tool"` result whose
+    /// content is the entry's payload, exactly the request shape the agent
+    /// loop produces between tool executions. Every request in the run also
+    /// carries the probe tool's schema so the chat template renders the
+    /// same tool contract on each rendering (the assistant-continuation LCP
+    /// layer depends on that). This measures cache write/reuse PER TOOL
+    /// CALL without depending on the model choosing to call a tool.
     public static func run(
         queries: [String],
         model: String? = nil,
@@ -207,7 +223,8 @@ public enum CacheProofEvaluator {
         thinkingPerTurn: [Bool]? = nil,
         systemPrompt: String? = nil,
         systemPromptsPerSession: [String]? = nil,
-        startNewSessionBeforeTurns: [Int] = []
+        startNewSessionBeforeTurns: [Int] = [],
+        toolResultFollowUps: [String]? = nil
     ) async -> CacheProofTranscript {
         let resolvedModel =
             model
@@ -243,14 +260,53 @@ public enum CacheProofEvaluator {
         var footprintAfterTurnMb: [Double] = []
         var turnMetrics: [CacheProofTurnMetrics] = []
 
-        for (turnIndex, query) in queries.enumerated() {
+        // Scripted tool loop: `queries` becomes [initial query] and each
+        // follow-up is delivered as a tool continuation below.
+        let toolFollowUps = toolResultFollowUps ?? []
+        let scriptedToolLoop = toolResultFollowUps != nil
+        let effectiveQueries = scriptedToolLoop
+            ? [queries.first ?? ""] + toolFollowUps
+            : queries
+        let probeTool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "eval_probe",
+                description:
+                    "Deterministic evaluation probe. Returns pre-scripted data for the current step.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "step": .object(["type": .string("integer")])
+                    ]),
+                    "required": .array([.string("step")]),
+                ])
+            )
+        )
+
+        for (turnIndex, query) in effectiveQueries.enumerated() {
             let turnNumber = turnIndex + 1
             if turnNumber > 1, sessionBoundaryTurns.contains(turnNumber) {
                 sessionId = UUID().uuidString
                 sessionNumber += 1
                 history = freshHistory(for: sessionNumber)
             }
-            history.append(ChatMessage(role: "user", content: query))
+            if scriptedToolLoop, turnIndex > 0 {
+                // The continuation request shape the agent loop produces
+                // between tool executions: the previous assistant reply
+                // (appended below with its scripted `tool_calls`) is
+                // followed by the tool's result message.
+                history.append(
+                    ChatMessage(
+                        role: "tool",
+                        content: query,
+                        tool_calls: nil,
+                        tool_call_id: "call_eval_probe_\(turnIndex)",
+                        reasoning_content: nil
+                    )
+                )
+            } else {
+                history.append(ChatMessage(role: "user", content: query))
+            }
             var request = ChatCompletionRequest(
                 model: resolvedModel,
                 messages: history,
@@ -262,7 +318,7 @@ public enum CacheProofEvaluator {
                 presence_penalty: nil,
                 stop: nil,
                 n: nil,
-                tools: nil,
+                tools: scriptedToolLoop ? [probeTool] : nil,
                 tool_choice: nil,
                 session_id: sessionId
             )
@@ -277,6 +333,7 @@ public enum CacheProofEvaluator {
             var cacheRestoredTokens: Int?
             var cacheRestoreDetail: String?
             var prefillTokensPerSecond: Double?
+            var turnDecodeTps: Double?
             var stopReason: String?
             var unclosedReasoning = false
             var prefillProgressEvents: [CacheProofProgressEvent] = []
@@ -317,7 +374,10 @@ public enum CacheProofEvaluator {
                         continue
                     }
                     if let stats = StreamingStatsHint.decode(delta) {
-                        if stats.tokensPerSecond > 0 { lastDecodeTps = stats.tokensPerSecond }
+                        if stats.tokensPerSecond > 0 {
+                            lastDecodeTps = stats.tokensPerSecond
+                            turnDecodeTps = stats.tokensPerSecond
+                        }
                         if let prefill = stats.prefillTokensPerSecond, prefill > 0 {
                             prefillTokensPerSecond = prefill
                         }
@@ -331,8 +391,33 @@ public enum CacheProofEvaluator {
                     }
                     visible += delta
                 }
+            } catch let batch as ServiceToolInvocations {
+                // Batch form first — see the ServiceToolInvocations note:
+                // some provider paths still throw the single form.
+                guard scriptedToolLoop else {
+                    runError =
+                        "turn \(visibleTurns.count + 1)/\(effectiveQueries.count) failed: "
+                        + "unexpected tool invocation batch "
+                        + "(\(batch.invocations.map(\.toolName).joined(separator: ",")))"
+                    break
+                }
+                if stopReason == nil { stopReason = "tool_call" }
+            } catch let invocation as ServiceToolInvocation {
+                // The model called a tool. In the scripted loop this is the
+                // expected end of a turn — the script supplies the next tool
+                // result regardless of what the model asked for, so record
+                // the turn and continue. Outside the scripted loop it is a
+                // genuine surprise and fails the run as before.
+                guard scriptedToolLoop else {
+                    runError =
+                        "turn \(visibleTurns.count + 1)/\(effectiveQueries.count) failed: "
+                        + "unexpected tool invocation \(invocation.toolName)"
+                    break
+                }
+                if stopReason == nil { stopReason = "tool_call" }
             } catch {
-                runError = "turn \(visibleTurns.count + 1)/\(queries.count) failed: \(error)"
+                runError =
+                    "turn \(visibleTurns.count + 1)/\(effectiveQueries.count) failed: \(error)"
                 break
             }
             visibleTurns.append(visible)
@@ -358,17 +443,35 @@ public enum CacheProofEvaluator {
                     unclosedReasoning: unclosedReasoning,
                     visibleCharacterCount: visible.count,
                     reasoningCharacterCount: reasoning.count,
-                    prefillProgressEvents: prefillProgressEvents
+                    prefillProgressEvents: prefillProgressEvents,
+                    decodeTokensPerSecond: turnDecodeTps
                 )
             )
             if let footprint = ProcessMemoryProbe.currentPhysFootprintMB() {
                 footprintAfterTurnMb.append(footprint)
             }
+            // In the scripted tool loop, the assistant reply that precedes a
+            // tool result carries the scripted `tool_calls` — one assistant
+            // message with content + tool_calls, exactly the shape the real
+            // agent loop records before executing a tool.
+            let nextScriptedCall: [ToolCall]? =
+                scriptedToolLoop && turnIndex + 1 < effectiveQueries.count
+                ? [
+                    ToolCall(
+                        id: "call_eval_probe_\(turnIndex + 1)",
+                        type: "function",
+                        function: ToolCallFunction(
+                            name: "eval_probe",
+                            arguments: "{\"step\": \(turnIndex + 1)}"
+                        )
+                    )
+                ]
+                : nil
             history.append(
                 ChatMessage(
                     role: "assistant",
                     content: visible.isEmpty ? nil : visible,
-                    tool_calls: nil,
+                    tool_calls: nextScriptedCall,
                     tool_call_id: nil,
                     reasoning_content: reasoning.isEmpty ? nil : reasoning
                 )

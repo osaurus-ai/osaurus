@@ -74,6 +74,11 @@ public final class ManagementStateManager: ObservableObject {
     /// `PluginsView` observes this and resets it to nil after applying.
     @Published public var pendingPluginDetailId: String?
 
+    /// One-shot request to open the detail sheet for a specific model repo id
+    /// on the Models tab — e.g. from a What's New announcement CTA.
+    /// `ModelDownloadView` observes this and resets it to nil after applying.
+    @Published public var pendingModelDetailId: String?
+
     /// One-shot request to pop the "Add Collection" sheet on the Knowledge
     /// tab — e.g. from the project page's Add Collection shortcut, so the
     /// user isn't dropped on the tab just to click the same button again.

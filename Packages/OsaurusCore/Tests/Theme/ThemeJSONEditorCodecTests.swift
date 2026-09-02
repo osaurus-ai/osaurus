@@ -63,4 +63,47 @@ struct ThemeJSONEditorCodecTests {
         #expect(applied.metadata.name == "Pasted")
         #expect(applied.colors.accentColor == "#abcdef")
     }
+
+    @Test("editor encoding replaces background image payload with a placeholder")
+    func editorEncodingRedactsImageData() throws {
+        var theme = CustomTheme.darkDefault
+        theme.background.type = .image
+        theme.background.imageData = String(repeating: "A", count: 100_000)
+
+        let json = try ThemeJSONEditorCodec.encodeForEditor(theme)
+
+        #expect(!json.contains(String(repeating: "A", count: 100)))
+        #expect(json.contains(ThemeJSONEditorCodec.imageDataPlaceholderPrefix))
+        #expect(json.utf8.count < 10_000)
+    }
+
+    @Test("editor encoding leaves themes without an image untouched")
+    func editorEncodingWithoutImageMatchesPlainEncoding() throws {
+        var theme = CustomTheme.darkDefault
+        theme.background.imageData = nil
+
+        #expect(try ThemeJSONEditorCodec.encodeForEditor(theme) == ThemeJSONEditorCodec.encode(theme))
+    }
+
+    @Test("applying JSON with an untouched placeholder restores the real image")
+    func applyingPlaceholderRestoresImageData() throws {
+        var current = CustomTheme.darkDefault
+        current.background.type = .image
+        current.background.imageData = String(repeating: "B", count: 50_000)
+
+        var edited = try ThemeJSONEditorCodec.decodePreservingEditorIdentity(
+            ThemeJSONEditorCodec.encodeForEditor(current),
+            currentTheme: current
+        )
+        #expect(edited.background.imageData == current.background.imageData)
+
+        // A hand-replaced payload wins over the splice-back.
+        var pasted = current
+        pasted.background.imageData = "cGFzdGVk"
+        edited = try ThemeJSONEditorCodec.decodePreservingEditorIdentity(
+            ThemeJSONEditorCodec.encode(pasted),
+            currentTheme: current
+        )
+        #expect(edited.background.imageData == "cGFzdGVk")
+    }
 }

@@ -2487,11 +2487,32 @@ extension FloatingInputCard {
     /// live catalog / official OpenAI GPT-5.6 contract). When present, the
     /// effort control renders inline with the model chip instead of the
     /// separate options chip.
+    ///
+    /// Resolve LIVE through the registry, not only the picker-item snapshot:
+    /// `ModelPickerItem.reasoningCapabilities` is populated exclusively for
+    /// remote models (Codex metadata, GPT builtin ids), so a LOCAL bundle
+    /// with a stamped effort contract (Qwen3.8's
+    /// `jang_config.reasoning.default_reasoning_effort = "xhigh"`) reached
+    /// the picker popover with nil capabilities. The popover's defaults then
+    /// fell back to the static profile (no `reasoningEffort` key) and its
+    /// Effort row highlighted the FIRST segment — "None" with a Default pill
+    /// — while the model chip, which already resolves through the registry,
+    /// truthfully showed "· Extra High". Observed live 2026-09-01 on
+    /// Qwen3.8-27B: the two surfaces contradicted each other while the
+    /// template correctly rendered xhigh. One resolution source ends the
+    /// divergence; the registry consults the remote catalog first, so
+    /// remote-model behavior is unchanged.
     private var inlineEffortCapabilities: ModelReasoningCapabilities? {
-        guard let capabilities = selectedPickerItem?.reasoningCapabilities,
+        if let capabilities = selectedPickerItem?.reasoningCapabilities,
             !capabilities.isEmpty
+        {
+            return capabilities
+        }
+        guard let model = selectedModel,
+            let declared = ModelProfileRegistry.reasoningCapabilities(for: model),
+            !declared.isEmpty
         else { return nil }
-        return capabilities
+        return declared
     }
 
     /// The reasoning suffix the model chip should display ("· Extra High",

@@ -194,7 +194,11 @@ public actor CoreModelService {
             // the actor. Probing residency from out here and then loading on a
             // later actor hop is a check-then-act race: whatever the probe saw can
             // change before the load runs.
-            loadIntent: intent == .background ? .background : .interactive
+            loadIntent: intent == .background ? .background : .interactive,
+            // Every CoreModelService one-shot is an internal utility (title,
+            // follow-ups, memory distillation, transcript cleanup) whose prompt
+            // is never resumed — the engine must not persist its boundaries.
+            auxiliaryCacheIntent: true
         )
 
         do {

@@ -102316,6 +102316,51 @@
         }
       }
     },
+    "Introducing Raptor v0.5": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Neu: Raptor v0.5" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "신규: Raptor v0.5" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Новинка: Raptor v0.5" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "全新推出：Raptor v0.5" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "全新推出：Raptor v0.5" } }
+      }
+    },
+    "Raptor v0.5": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Raptor v0.5" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Raptor v0.5" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Raptor v0.5" } },
+        "zh-Hans": { "stringUnit": { "state": "needs_review", "value": "Raptor v0.5" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "Raptor v0.5" } }
+      }
+    },
+    "Meet our new recommended model, made for Macs with less memory. Raptor is quick and light on its feet, so your assistant can use tools, work through multi-step tasks, and keep up with long conversations without slowing down your Mac.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Unser neues empfohlenes Modell, gemacht für Macs mit weniger Speicher. Raptor ist schnell und leichtfüßig, damit dein Assistent Werkzeuge nutzen, mehrstufige Aufgaben erledigen und langen Unterhaltungen folgen kann, ohne deinen Mac auszubremsen." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "메모리가 적은 Mac을 위해 만들어진 새로운 추천 모델을 소개합니다. Raptor는 빠르고 가벼워서, 어시스턴트가 도구를 사용하고 여러 단계의 작업을 처리하며 긴 대화를 따라가도 Mac이 느려지지 않습니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Знакомьтесь: наша новая рекомендуемая модель для Mac с небольшим объёмом памяти. Raptor быстрая и лёгкая, поэтому ваш ассистент может пользоваться инструментами, выполнять многошаговые задачи и вести длинные беседы, не замедляя ваш Mac." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "认识我们的新推荐模型，专为内存较小的 Mac 打造。Raptor 快速又轻巧，让你的助手可以使用工具、完成多步任务、跟上长对话，而不会拖慢你的 Mac。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "認識我們的新推薦模型，專為記憶體較小的 Mac 打造。Raptor 快速又輕巧，讓你的助手可以使用工具、完成多步任務、跟上長對話，而不會拖慢你的 Mac。" } }
+      }
+    },
+    "Get it from the model catalog": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Hol es dir aus dem Modellkatalog" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "모델 카탈로그에서 받기" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Скачайте её из каталога моделей" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "从模型目录获取" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "從模型目錄取得" } }
+      }
+    },
+    "Raptor v0.5 is now a Top Pick in the model catalog, and new setups on mainstream hardware start with it by default. Already set up? Grab it any time from Management → Models.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Raptor v0.5 ist jetzt ein Top Pick im Modellkatalog, und neue Einrichtungen auf gängiger Hardware starten standardmäßig damit. Schon eingerichtet? Lade es jederzeit über Verwaltung → Modelle." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Raptor v0.5는 이제 모델 카탈로그의 톱픽이며, 일반적인 하드웨어에서 새로 설정하면 기본으로 이 모델로 시작합니다. 이미 설정을 마쳤다면 언제든지 관리 → 모델에서 받을 수 있습니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Raptor v0.5 теперь входит в топ каталога моделей, и новые установки на массовом железе начинают с неё по умолчанию. Уже всё настроено? Скачайте её в любой момент через Управление → Модели." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "Raptor v0.5 现已成为模型目录中的首选，主流硬件上的新安装会默认从它开始。已经完成设置？随时可以在 管理 → 模型 中获取。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "Raptor v0.5 現已成為模型目錄中的首選，主流硬體上的新安裝會預設從它開始。已經完成設定？隨時可以在 管理 → 模型 中取得。" } }
+      }
+    },
     "Invalid": {
       "extractionState": "manual",
       "localizations": {
