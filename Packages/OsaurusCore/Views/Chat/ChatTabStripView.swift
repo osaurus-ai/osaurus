@@ -114,39 +114,17 @@ struct ChatTabStripView: View {
         // Tabs are chat chrome; the project detail page hides them along
         // with the rest of the chat-specific toolbar items.
         if !windowState.isProjectPageVisible {
-            HStack(spacing: 0) {
-                ForEach(Array(windowState.tabs.enumerated()), id: \.element.id) { index, tab in
-                    // Hairline divider between adjacent tabs, suppressed
-                    // when either neighbor is active or hovered (their
-                    // background shape already provides the edge).
-                    if index > 0 {
-                        separator(
-                            hidden: isProminent(tab.id)
-                                || isProminent(windowState.tabs[index - 1].id)
-                        )
-                    }
-                    ChatTabItemView(
-                        session: tab.session,
-                        isActive: tab.id == windowState.activeTabId,
-                        isHovered: hoveredTabId == tab.id,
-                        canClose: windowState.tabs.count > 1,
-                        onSelect: { windowState.selectTab(id: tab.id) },
-                        onClose: { windowState.closeTab(id: tab.id) },
-                        onHover: { hovering in
-                            if hovering {
-                                hoveredTabId = tab.id
-                            } else if hoveredTabId == tab.id {
-                                hoveredTabId = nil
-                            }
-                        }
-                    )
-                }
-
-                newTabButton
-                    .padding(.leading, 6)
+            // Inside the FIXED-width strip (see `stripWidth`), a plain
+            // flexible row would expand every chip to its 260pt max — the
+            // full proposed width turns `maxWidth` into an expansion
+            // license. ViewThatFits keeps the hugging (ideal-size) layout,
+            // where chips wrap their titles, for as long as it fits, and
+            // only falls back to the space-sharing layout once the strip
+            // is crowded enough that tabs must compress.
+            ViewThatFits(in: .horizontal) {
+                tabsRow(hugging: true)
+                tabsRow(hugging: false)
             }
-            // Cap the strip so it never crowds the leading/trailing toolbar
-            // items; tabs inside share the width and truncate their titles.
             // Tabs slide over when a neighbor closes (Chrome-like). Opening
             // stays un-animated: `newTab()` disables animations in its
             // transaction so the strip doesn't interpolate while ChatView
@@ -178,6 +156,47 @@ struct ChatTabStripView: View {
             }
             .animation(windowState.theme.animationQuick(), value: windowState.showSidebar)
             .environment(\.theme, windowState.theme)
+        }
+    }
+
+    @ViewBuilder
+    private func tabsRow(hugging: Bool) -> some View {
+        let row = HStack(spacing: 0) {
+            ForEach(Array(windowState.tabs.enumerated()), id: \.element.id) { index, tab in
+                // Hairline divider between adjacent tabs, suppressed
+                // when either neighbor is active or hovered (their
+                // background shape already provides the edge).
+                if index > 0 {
+                    separator(
+                        hidden: isProminent(tab.id)
+                            || isProminent(windowState.tabs[index - 1].id)
+                    )
+                }
+                ChatTabItemView(
+                    session: tab.session,
+                    isActive: tab.id == windowState.activeTabId,
+                    isHovered: hoveredTabId == tab.id,
+                    canClose: windowState.tabs.count > 1,
+                    onSelect: { windowState.selectTab(id: tab.id) },
+                    onClose: { windowState.closeTab(id: tab.id) },
+                    onHover: { hovering in
+                        if hovering {
+                            hoveredTabId = tab.id
+                        } else if hoveredTabId == tab.id {
+                            hoveredTabId = nil
+                        }
+                    }
+                )
+            }
+
+            newTabButton
+                .padding(.leading, 6)
+        }
+        if hugging {
+            // Ideal-size pass: every chip hugs its title (capped at 260).
+            row.fixedSize(horizontal: true, vertical: false)
+        } else {
+            row
         }
     }
 
