@@ -12,6 +12,7 @@ import SwiftUI
 struct ChatHistoryPanel: View {
     @ObservedObject var windowState: ChatWindowState
     @Environment(\.theme) private var theme
+    @Environment(\.themedAlertScope) private var alertScope
 
     static let width: CGFloat = 300
 
@@ -38,32 +39,75 @@ struct ChatHistoryPanel: View {
     }
 
     private var header: some View {
-        HStack {
+        // Title + import hug the panel's LEFT edge with a tight top inset:
+        // only the panel's top-RIGHT corner sits under the floating toolbar
+        // buttons (history toggle + pin), so nothing on the left needs to
+        // clear them — the old full-width 48pt inset read as a dead gap.
+        // The × is gone: the toolbar's history button toggles both ways.
+        HStack(spacing: 10) {
             Text("History", bundle: .module)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
-            Spacer()
-
             Button {
-                withAnimation(theme.animationQuick()) {
-                    windowState.isHistoryPanelVisible = false
-                }
+                requestImport()
             } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
+                Image(systemName: "square.and.arrow.down")
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.secondaryText)
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .localizedHelp("Close history")
+            .pointingHandCursor()
+            .localizedHelp("Import Conversations")
+
+            Spacer()
         }
         .padding(.horizontal, 14)
-        // Clears the title-bar region: the panel spans the window's full
-        // height under the transparent toolbar.
-        .padding(.top, 48)
-        .padding(.bottom, 10)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
+    }
+
+    /// Mirrors the old sidebar Import flow: first-time users get the themed
+    /// provider guide; the persisted "don't show again" toggle skips
+    /// straight to the picker. Imports scope to the selected agent (Default
+    /// agent imports unscoped, matching the sidebar behavior).
+    private func requestImport() {
+        let scope = alertScope
+        let agentId = windowState.agentId
+        let startImport = {
+            ChatSessionImportCoordinator.run(
+                agentId: agentId == Agent.defaultId ? nil : agentId,
+                scope: scope,
+                source: .sidebar,
+                onOpen: { windowState.loadSession($0) }
+            )
+        }
+        if ImportGuidePreference.shared.skip {
+            startImport()
+            return
+        }
+        let requestId = UUID()
+        let sheet = ImportGuideSheet {
+            ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+            startImport()
+        }
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: "Import Conversations",
+                message: nil,
+                buttons: [.cancel(L("Cancel"))],
+                showsCloseButton: true,
+                customContent: AnyView(sheet),
+                width: 470,
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
     }
 
     private var emptyState: some View {

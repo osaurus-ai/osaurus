@@ -767,31 +767,21 @@ struct ChatSessionSidebar: View {
                 .localizedHelp("New Project")
             }
 
-            // Import lives on the Chats tab only; New Chat additionally
-            // stays available while drilled into a project (it creates the
-            // chat inside that project).
+            // Agents lens: a single plus that opens agent creation in the
+            // management window. Import moved to the chat-history panel;
+            // New Chat is covered by picking an agent (fresh chat) and the
+            // (currently hidden) tab strip's own plus.
             if selectedTab == .chats {
                 Button {
-                    requestImport()
+                    AppDelegate.shared?.showManagementWindow(initialTab: .agents)
                 } label: {
-                    Image(systemName: "square.and.arrow.down")
+                    Image(systemName: "plus")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(theme.secondaryText)
                 }
                 .buttonStyle(.plain)
                 .pointingHandCursor()
-                .localizedHelp("Import Conversations")
-            }
-
-            if selectedTab == .chats {
-                Button(action: { onNewChat(nil) }) {
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-                .localizedHelp("New Chat")
+                .localizedHelp("New Agent")
             }
         }
         .padding(.horizontal, 16)
