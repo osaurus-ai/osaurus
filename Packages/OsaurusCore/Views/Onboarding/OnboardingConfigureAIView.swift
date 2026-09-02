@@ -73,7 +73,7 @@ struct ResolvedProviderConfig {
     let authType: RemoteProviderAuthType
 }
 
-struct CustomProviderForm {
+struct CustomProviderForm: Equatable {
     var name: String = ""
     var host: String = ""
     var protocolKind: RemoteProviderProtocol = .https
@@ -589,6 +589,15 @@ final class ConfigureAIState: ObservableObject {
         substateDirection = .forward
         clearAPICredentials()
         apiSubstate = .keyForm(preset)
+        screen = .byok
+    }
+
+    /// "Custom" chip tap: drill into the custom OpenAI-compatible endpoint
+    /// connect screen (host/port/path form instead of a bare key field).
+    func enterCustomProvider() {
+        substateDirection = .forward
+        clearAPICredentials()
+        apiSubstate = .customForm
         screen = .byok
     }
 
@@ -1115,8 +1124,8 @@ private struct ConfigureAIHomePanel: View {
     ]
 
     /// Remaining connectable presets revealed by "+ More": every API-key
-    /// picker preset not already featured. The custom OpenAI-compatible form
-    /// stays out of onboarding (it needs a multi-field form; Settings owns it).
+    /// picker preset not already featured. The custom OpenAI-compatible
+    /// endpoint has its own always-visible chip next to Claude Code.
     private static var morePresets: [ProviderPreset] {
         ProviderPreset.apiKeyPickerGroups(includeAzure: false)
             .flatMap(\.presets)
@@ -1160,6 +1169,14 @@ private struct ConfigureAIHomePanel: View {
             }
             .onboardingEntrance(3 + Self.featuredPresets.count)
 
+            OnboardingProviderChip(
+                logo: { OnboardingProviderLogo(preset: .custom, size: 16) },
+                label: L("Custom")
+            ) {
+                state.enterCustomProvider()
+            }
+            .onboardingEntrance(4 + Self.featuredPresets.count)
+
             if !state.showAllProviders {
                 OnboardingProviderChip(
                     logo: {
@@ -1176,7 +1193,7 @@ private struct ConfigureAIHomePanel: View {
                     }
                 }
                 .transition(.scale(scale: 0.85).combined(with: .opacity))
-                .onboardingEntrance(4 + Self.featuredPresets.count)
+                .onboardingEntrance(5 + Self.featuredPresets.count)
             }
         }
     }
@@ -1495,7 +1512,18 @@ private struct ConfigureAIProviderPanel: View {
     @ViewBuilder
     private func optionRows(_ preset: ProviderPreset) -> some View {
         VStack(spacing: 12) {
-            if oauthKind != nil {
+            if preset == .custom {
+                OnboardingOptionRow(
+                    title: "Connect a custom endpoint",
+                    caption:
+                        "Any OpenAI-compatible server, local or remote (LM Studio, vLLM, llama.cpp, and more)",
+                    isVerified: state.isAPISuccess
+                ) {
+                    state.openConnectDialog(.apiKey)
+                }
+            }
+
+            if preset != .custom, oauthKind != nil {
                 OnboardingOptionRow(
                     title: oauthRowTitle(preset),
                     caption: oauthRowCaption(preset),
@@ -1505,7 +1533,10 @@ private struct ConfigureAIProviderPanel: View {
                 }
             }
 
-            if preset.configuration.authType == .none {
+            if preset == .custom {
+                // The custom row above is the single connect action — no
+                // preset-key row.
+            } else if preset.configuration.authType == .none {
                 // Local presets (Ollama) — no key, one connect action.
                 OnboardingOptionRow(
                     title: LocalizedStringKey(L("Connect to \(displayName(preset))")),
@@ -1597,9 +1628,14 @@ struct ProviderConnectDialog: View {
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    if !isOAuth && preset.configuration.authType == .apiKey {
-                        Spacer().frame(height: 20)
-                        keyField(preset)
+                    if !isOAuth {
+                        if preset == .custom {
+                            Spacer().frame(height: 20)
+                            customEndpointForm
+                        } else if preset.configuration.authType == .apiKey {
+                            Spacer().frame(height: 20)
+                            keyField(preset)
+                        }
                     }
 
                     if case .failure(let message) = state.testResult {
@@ -1650,6 +1686,9 @@ struct ProviderConnectDialog: View {
             case nil: return ""
             }
         }
+        if preset == .custom {
+            return L("Connect a custom endpoint")
+        }
         if preset.configuration.authType == .none {
             return L("Connect to \(displayName(preset))")
         }
@@ -1664,6 +1703,9 @@ struct ProviderConnectDialog: View {
             case .xai: return L("This will use your SuperGrok or X Premium+ subscription")
             case nil: return ""
             }
+        }
+        if preset == .custom {
+            return L("Point Osaurus at any OpenAI-compatible server. Localhost endpoints don't need a key.")
         }
         if preset.configuration.authType == .none {
             return L("No API key required — connects to your local server")
@@ -1688,6 +1730,74 @@ struct ProviderConnectDialog: View {
             )
             .frame(maxWidth: 300)
             .onChange(of: state.apiKey) { _, _ in state.testResult = nil }
+    }
+
+    /// Multi-field form for the custom OpenAI-compatible endpoint: scheme +
+    /// host + port on one row, base path, then an optional key. Mirrors the
+    /// Settings custom-provider form, trimmed to onboarding's dialog width.
+    private var customEndpointForm: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Picker("", selection: $state.customForm.protocolKind) {
+                    Text(verbatim: "https").tag(RemoteProviderProtocol.https)
+                    Text(verbatim: "http").tag(RemoteProviderProtocol.http)
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+
+                formField("localhost", text: $state.customForm.host)
+
+                formField(L("Port"), text: $state.customForm.port)
+                    .frame(width: 64)
+            }
+
+            formField("/v1", text: $state.customForm.basePath)
+
+            SecureField(L("API key (optional for localhost)"), text: $state.apiKey)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, design: .monospaced))
+                .foregroundColor(OnboardingPalette.labelPrimary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(OnboardingPalette.fill5)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(OnboardingPalette.fill10, lineWidth: 1)
+                )
+
+            if !state.customForm.host.isEmpty {
+                Text(state.customForm.endpointPreview)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(OnboardingPalette.labelSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .frame(maxWidth: 320)
+        .onChange(of: state.customForm) { _, _ in state.testResult = nil }
+        .onChange(of: state.apiKey) { _, _ in state.testResult = nil }
+    }
+
+    private func formField(_ placeholder: String, text: Binding<String>) -> some View {
+        TextField(placeholder, text: text)
+            .textFieldStyle(.plain)
+            .font(.system(size: 13, design: .monospaced))
+            .foregroundColor(OnboardingPalette.labelPrimary)
+            .autocorrectionDisabled()
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(OnboardingPalette.fill5)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(OnboardingPalette.fill10, lineWidth: 1)
+            )
     }
 
     @ViewBuilder
