@@ -912,13 +912,17 @@ private struct ChatWindowRootView: View {
             if windowState.isFullScreen {
                 ChatFullScreenHeaderView(windowState: windowState)
             }
-            ChatView(windowState: windowState)
-                .id(ObjectIdentifier(windowState.session))
-        }
-        .overlay(alignment: .trailing) {
-            if windowState.isHistoryPanelVisible {
-                ChatHistoryPanel(windowState: windowState)
-                    .transition(.move(edge: .trailing))
+            HStack(spacing: 0) {
+                ChatView(windowState: windowState)
+                    .id(ObjectIdentifier(windowState.session))
+                    .frame(maxWidth: .infinity)
+
+                // Layout sibling, not an overlay: the chat surface must
+                // RESIZE to make room when the history panel opens.
+                if windowState.isHistoryPanelVisible {
+                    ChatHistoryPanel(windowState: windowState)
+                        .transition(.move(edge: .trailing))
+                }
             }
         }
         .environment(\.theme, windowState.theme)
