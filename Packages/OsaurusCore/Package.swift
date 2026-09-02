@@ -287,9 +287,14 @@ let package = Package(
         // GLM5-next sparse index score in the pool's native dtype instead of
         // copying full-history pools to fp32 per decode token (selection
         // logits only; env fallbacks; load-bearing fp32 sites documented).
+        // vmlx-swift#407 pins quantized-module outputs to the activation
+        // dtype: f16 JANG scales no longer silently promote bf16 models to
+        // an fp32 activation path (which doubled every KV/disk cache entry
+        // and disqualified compiled-decode regions); 21 MoE reducers get the
+        // DeepseekV3 score-cast pattern; repo-wide source guard added.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "7b63099becc70f1feb929947ae470a3ae7d16f5f"
+            revision: "32e683a60aaf2a553226c310359237b81345920c"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
