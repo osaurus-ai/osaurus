@@ -84,7 +84,10 @@ struct ChatTabStripView: View {
     /// tracked changes) — a worst-case constant left a dead gap between the
     /// "+" button and the pin whenever the optional items were hidden.
     private var trailingChromeReserve: CGFloat {
-        var reserve: CGFloat = 60  // pin button + toolbar margins
+        // Pin button + the flexible-space item's minimum + inter-item
+        // spacing + the toolbar's trailing margin. Undershooting folds the
+        // pin into the toolbar overflow menu (invisible), so err generous.
+        var reserve: CGFloat = 96
         if !windowState.session.turns.isEmpty {
             reserve += 40  // new-chat button
         }
