@@ -623,7 +623,15 @@ struct AgentPill: View {
     @ViewBuilder
     private var pillBorder: some View {
         if sidebarStyle {
-            borderLayer(Self.sidebarShape)
+            // A more assertive outline than the toolbar capsule's glass
+            // hairline: the sidebar pill sits on a flat column of same-tone
+            // rows and needs the border to read as an elevated control.
+            Self.sidebarShape
+                .strokeBorder(
+                    (isPillHighlighted ? theme.accentColor : theme.primaryBorder)
+                        .opacity(isPillHighlighted ? 0.55 : 0.45),
+                    lineWidth: 1
+                )
         } else {
             borderLayer(Capsule())
         }
