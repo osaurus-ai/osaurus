@@ -90,7 +90,11 @@ struct ChatTabStripView: View {
     }
 
     private var stripWidth: CGFloat? {
-        guard let windowContentWidth, let measuredChromeX else { return nil }
+        // Prefer the delegate-fed width (survives the strip's toolbar item
+        // being folded into overflow, when the reader below goes silent);
+        // the reader's reading seeds the value before the first resize.
+        let liveWidth = windowState.windowContentWidth ?? self.windowContentWidth
+        guard let windowContentWidth = liveWidth, let measuredChromeX else { return nil }
         let inset = needsSidebarInset ? sidebarOpenInset : 0
         // No artificial cap: like Chrome, tabs may use the whole bar up to
         // the trailing buttons; the reserve is what keeps them clear.

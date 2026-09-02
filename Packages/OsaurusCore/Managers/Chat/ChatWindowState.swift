@@ -158,6 +158,19 @@ final class ChatWindowState: ObservableObject {
     /// with later disconnects via the `.remoteProviderStatusChanged` observer.
     @Published var remoteAgentConnectionPhase: RemoteAgentConnectionPhase = .idle
 
+    /// The window's content width, pushed by `ChatWindowDelegate` on every
+    /// resize. The tab strip sizes itself from this — it must come through
+    /// the window state because the strip's own toolbar item (and any AppKit
+    /// observer owned by its views) is REMOVED from the window when AppKit
+    /// folds an oversized item into the toolbar overflow menu, which would
+    /// freeze a view-owned measurement exactly when it's needed most.
+    @Published private(set) var windowContentWidth: CGFloat?
+
+    func updateWindowContentWidth(_ width: CGFloat) {
+        guard abs((windowContentWidth ?? -1) - width) > 0.5 else { return }
+        windowContentWidth = width
+    }
+
     /// True while the window is in native full screen. AppKit draws the
     /// full-screen toolbar with an opaque system backdrop that clashes with
     /// custom themes, so the NSToolbar is hidden in full screen and the

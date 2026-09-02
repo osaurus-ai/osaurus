@@ -1398,6 +1398,16 @@ private final class ChatWindowDelegate: NSObject, NSWindowDelegate {
         manager?.windowDidBecomeKey(id: windowId)
     }
 
+    /// Push the live content width into the window state on every resize so
+    /// the tab strip re-sizes even while its toolbar item is folded into the
+    /// overflow menu (see `ChatWindowState.windowContentWidth`).
+    func windowDidResize(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+            let contentView = window.contentView
+        else { return }
+        manager?.windowState(id: windowId)?.updateWindowContentWidth(contentView.bounds.width)
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         return manager?.windowShouldClose(id: windowId) ?? true
     }
