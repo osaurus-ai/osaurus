@@ -6054,7 +6054,11 @@ extension RemoteProviderService {
     }
 
     private struct OpenAICompatibleModelList: Decodable {
-        let data: [OpenAICompatibleModelEntry]
+        // Optional because a server with zero models may serialize the list
+        // as `"data": null` rather than `[]` (Ollama does — Go marshals a
+        // nil slice as null); an empty catalog is a valid response, not a
+        // decode failure.
+        let data: [OpenAICompatibleModelEntry]?
     }
 
     static func decodeOpenAICompatibleModelsDiscovery(
@@ -6074,14 +6078,15 @@ extension RemoteProviderService {
 
         do {
             let modelsResponse = try JSONDecoder().decode(OpenAICompatibleModelList.self, from: data)
+            let entries = modelsResponse.data ?? []
             var contextLengths: [String: Int] = [:]
-            for entry in modelsResponse.data {
+            for entry in entries {
                 if let contextLength = entry.advertisedContextLength {
                     contextLengths[entry.id] = contextLength
                 }
             }
             return OpenAICompatibleModelDiscovery(
-                models: modelsResponse.data.map { $0.id },
+                models: entries.map { $0.id },
                 contextLengths: contextLengths
             )
         } catch {
