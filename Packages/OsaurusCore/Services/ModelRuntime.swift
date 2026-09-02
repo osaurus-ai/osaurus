@@ -2733,10 +2733,17 @@ public actor ModelRuntime {
     ) -> Int64? {
         let configURL = directory.appendingPathComponent("config.json")
         guard let data = try? Data(contentsOf: configURL),
-            let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let rawConfig = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
+        // VLM wrappers (gemma4_unified, qwen3_5 VL packs) nest the decoder
+        // under `text_config` and keep NOTHING layer-shaped at the top level.
+        // Reading only the top level made this whole function return nil for
+        // those families, silently downgrading them to the 20%-of-weights
+        // fallback — which under-priced Gemma-12B KV ~3x at a 64K cap.
+        let config = resolvedDecoderConfig(rawConfig)
 
-        let attentionLayers = attentionLayerCount(in: config)
+        let layerMix = attentionLayerMix(in: config)
+        let attentionLayers = layerMix.fullAttention + layerMix.slidingAttention
         let hiddenLayers = intValue(config["num_hidden_layers"]) ?? 0
         guard attentionLayers > 0, hiddenLayers > 0 else { return nil }
 
@@ -2764,8 +2771,15 @@ public actor ModelRuntime {
         // its KV at 80 GiB and made a 94 GiB pack look like it needed 128 GB
         // on a 128 GB Mac — a model that in fact loads and decodes fine. Cap
         // the estimate at the KV limit the runtime will actually enforce.
+        // A whole-model sliding-window clamp is only correct when the config
+        // does not declare a per-layer mix: MiMo-style families slide in every
+        // layer, but Gemma4 declares `layer_types` with 8 FULL-attention
+        // layers among 40 sliding ones — clamping those 8 to the 1K window
+        // would under-price exactly the layers that hold the long context.
+        let wholeModelWindowClamp =
+            layerMix.declaredPerLayer ? nil : effectiveKVPositionBudget(config: config)
         let declaredPositions =
-            effectiveKVPositionBudget(config: config)
+            wholeModelWindowClamp
             ?? intValue(config["max_position_embeddings"])
             ?? intValue(config["max_sequence_length"])
             ?? intValue(config["seq_length"])
@@ -2782,26 +2796,55 @@ public actor ModelRuntime {
         }
 
         let dtypeBytes = cacheElementByteWidth(config: config)
+        // Per-token cache dims for one attention layer. MLA families
+        // (DeepSeek/Bailing) materialize per-head keys of (nope + rope) dims
+        // and values of `v_head_dim` — pricing them as symmetric K/V of
+        // `head_dim` misses the 192-dim keys Raptor actually caches.
+        let perTokenCacheDims: Int64
+        if let nope = intValue(config["qk_nope_head_dim"]),
+            let rope = intValue(config["qk_rope_head_dim"]),
+            let vDim = intValue(config["v_head_dim"]),
+            let heads = intValue(config["num_attention_heads"]),
+            nope > 0, vDim > 0, heads > 0
+        {
+            perTokenCacheDims = Int64(heads) * Int64(nope + rope + vDim)
+        } else {
+            perTokenCacheDims = 2 * Int64(kvHeads) * Int64(headDim)
+        }
+        // Sliding-window layers never hold more than the window; pricing them
+        // at the full retention cap turned Gemma's 40 sliding layers into
+        // phantom gigabytes while the nested-config bug simultaneously hid
+        // the 8 full layers. Price each class at what it can actually retain.
+        let slidingWindow = layerMix.slidingWindow ?? maxPositions
+        let slidingPositions = min(maxPositions, max(1, slidingWindow))
         let kvBytes =
-            Int64(attentionLayers)
-            * 2
-            * Int64(kvHeads)
-            * Int64(headDim)
-            * Int64(maxPositions)
+            (Int64(layerMix.fullAttention) * Int64(maxPositions)
+                + Int64(layerMix.slidingAttention) * Int64(slidingPositions))
+            * perTokenCacheDims
             * Int64(dtypeBytes)
 
         // SSM companion state is much smaller than full KV but still real.
         // Count it from the same config so hybrid families have an explicit
         // budget instead of hiding under the percentage fallback.
-        let mambaLayers = mambaLayerCount(in: config)
+        let mambaLayers = layerMix.linearState
         let mambaHeads = intValue(config["mamba_num_heads"]) ?? 0
         let ssmState = intValue(config["ssm_state_size"]) ?? intValue(config["mamba_d_state"]) ?? 0
         let convKernel = intValue(config["conv_kernel"]) ?? intValue(config["mamba_d_conv"]) ?? 0
         let mambaHeadDim = intValue(config["mamba_head_dim"]) ?? 0
+        let mambaStatePerLayer = Int64(max(0, mambaHeads))
+            * Int64(max(0, ssmState + convKernel * max(1, mambaHeadDim)))
+        // GDN/GLA linear-attention layers (qwen3_5, Bailing KDA) keep a
+        // per-head (keyDim x valueDim) matmul state instead of mamba-style
+        // SSM state; their config speaks `linear_*`, not `mamba_*`.
+        let linearVHeads = intValue(config["linear_num_value_heads"]) ?? 0
+        let linearKeyDim = intValue(config["linear_key_head_dim"]) ?? 0
+        let linearValueDim = intValue(config["linear_value_head_dim"]) ?? 0
+        let linearStatePerLayer = Int64(max(0, linearVHeads))
+            * Int64(max(0, linearKeyDim))
+            * Int64(max(0, linearValueDim))
         let ssmBytes =
             Int64(max(0, mambaLayers))
-            * Int64(max(0, mambaHeads))
-            * Int64(max(0, ssmState + convKernel * max(1, mambaHeadDim)))
+            * max(mambaStatePerLayer, linearStatePerLayer)
             * Int64(dtypeBytes)
 
         // Leave room for masks, logits, transient activation slices, and
@@ -2811,37 +2854,115 @@ public actor ModelRuntime {
         return max(floor, kvBytes + ssmBytes + slack)
     }
 
-    private static func attentionLayerCount(in config: [String: Any]) -> Int {
-        let physicalLayers: Int
-        if let blocks = config["layers_block_type"] as? [Any] {
-            physicalLayers = blocks.compactMap { stringValue($0)?.lowercased() }
-                .filter { $0 == "attention" || $0 == "attn" || $0 == "*" }
-                .count
-        } else if let pattern = stringValue(config["hybrid_override_pattern"]), !pattern.isEmpty {
-            physicalLayers = pattern.filter { $0 == "*" || $0 == "A" || $0 == "a" }.count
-        } else {
-            physicalLayers = intValue(config["num_hidden_layers"]) ?? 0
+    /// Per-class layer counts for cache pricing. `declaredPerLayer` records
+    /// whether the config carried an explicit per-layer topology (so the
+    /// whole-model sliding-window clamp must not be applied on top of it).
+    struct AttentionLayerMix {
+        var fullAttention: Int = 0
+        var slidingAttention: Int = 0
+        var linearState: Int = 0
+        var slidingWindow: Int? = nil
+        var declaredPerLayer: Bool = false
+    }
+
+    /// Resolve the decoder-shaped config for VLM wrappers that nest it under
+    /// `text_config` (gemma4_unified, qwen3_5 VL packs). Nested keys win;
+    /// top-level keys (model_type et al.) survive as fallback.
+    static func resolvedDecoderConfig(_ config: [String: Any]) -> [String: Any] {
+        guard intValue(config["num_hidden_layers"]) == nil,
+            let text = config["text_config"] as? [String: Any],
+            intValue(text["num_hidden_layers"]) != nil
+        else { return config }
+        return config.merging(text) { _, nested in nested }
+    }
+
+    static func attentionLayerMix(in config: [String: Any]) -> AttentionLayerMix {
+        var mix = AttentionLayerMix()
+        mix.slidingWindow =
+            intValue(config["sliding_window"])
+            ?? intValue(config["sliding_window_size"])
+            ?? intValue(config["attention_chunk_size"])
+
+        let modelType = stringValue(config["model_type"])?.lowercased() ?? ""
+
+        if let types = config["layer_types"] as? [Any] {
+            // Gemma4 / qwen3_5-style explicit per-layer topology.
+            mix.declaredPerLayer = true
+            for raw in types {
+                switch stringValue(raw)?.lowercased() ?? "" {
+                case "full_attention", "attention", "attn":
+                    mix.fullAttention += 1
+                case "sliding_attention", "chunked_attention":
+                    mix.slidingAttention += 1
+                case "linear_attention", "mamba", "ssm", "recurrent":
+                    mix.linearState += 1
+                default:
+                    // Unknown type: price it as full attention rather than
+                    // silently dropping it from the budget.
+                    mix.fullAttention += 1
+                }
+            }
+            return mix
         }
+
+        if let blocks = config["layers_block_type"] as? [Any] {
+            mix.declaredPerLayer = true
+            for raw in blocks {
+                switch stringValue(raw)?.lowercased() ?? "" {
+                case "attention", "attn", "*":
+                    mix.fullAttention += 1
+                case "mamba", "linear_attention", "ssm":
+                    mix.linearState += 1
+                default:
+                    break
+                }
+            }
+            return mix
+        }
+
+        if let pattern = stringValue(config["hybrid_override_pattern"]), !pattern.isEmpty {
+            mix.declaredPerLayer = true
+            mix.fullAttention = pattern.filter { $0 == "*" || $0 == "A" || $0 == "a" }.count
+            mix.linearState = pattern.filter { $0 == "M" || $0 == "m" }.count
+            return mix
+        }
+
+        let hiddenLayers = intValue(config["num_hidden_layers"]) ?? 0
+
+        // Bailing hybrids (Ling 3.0 / Raptor) declare no per-layer list; the
+        // rule lives in code: every `layer_group_size`-th layer is global
+        // MLA attention, trailing partial-group layers are global too, and
+        // everything else is KDA linear state. Counting all 24 layers as MHA
+        // priced Raptor's KV 3.2x over what its 6 MLA layers can ever hold.
+        if modelType == "bailing_hybrid",
+            let groupSize = intValue(config["layer_group_size"]), groupSize > 1,
+            hiddenLayers > 0
+        {
+            mix.fullAttention = hiddenLayers / groupSize + hiddenLayers % groupSize
+            mix.linearState = hiddenLayers - mix.fullAttention
+            return mix
+        }
+
+        var physicalLayers = hiddenLayers
 
         // Nanbeige 4.2 executes one physical attention stack repeatedly while
         // retaining independent KV state for every (loop, layer) pair. Its
         // runtime therefore creates `physicalLayers * totalLoops` cache slots,
         // not one slot per weight-bearing layer. Keep this architecture-scoped:
         // `num_loops` has unrelated meanings in other model configurations.
-        guard stringValue(config["model_type"])?.lowercased() == "nanbeige",
-            physicalLayers > 0
-        else {
-            return physicalLayers
+        if modelType == "nanbeige", physicalLayers > 0 {
+            let loopLossWeights = config["loop_loss_weights"] as? [Any]
+            let totalLoops =
+                if let loopLossWeights, !loopLossWeights.isEmpty {
+                    loopLossWeights.count + 1
+                } else {
+                    max(1, intValue(config["num_loops"]) ?? 1)
+                }
+            physicalLayers *= totalLoops
         }
 
-        let loopLossWeights = config["loop_loss_weights"] as? [Any]
-        let totalLoops =
-            if let loopLossWeights, !loopLossWeights.isEmpty {
-                loopLossWeights.count + 1
-            } else {
-                max(1, intValue(config["num_loops"]) ?? 1)
-            }
-        return physicalLayers * totalLoops
+        mix.fullAttention = physicalLayers
+        return mix
     }
 
     private static func effectiveKVPositionBudget(config: [String: Any]) -> Int? {
@@ -2862,18 +2983,6 @@ public actor ModelRuntime {
             return window
         }
         return nil
-    }
-
-    private static func mambaLayerCount(in config: [String: Any]) -> Int {
-        if let blocks = config["layers_block_type"] as? [Any] {
-            return blocks.compactMap { stringValue($0)?.lowercased() }
-                .filter { $0 == "mamba" || $0 == "linear_attention" || $0 == "ssm" }
-                .count
-        }
-        if let pattern = stringValue(config["hybrid_override_pattern"]), !pattern.isEmpty {
-            return pattern.filter { $0 == "M" || $0 == "m" }.count
-        }
-        return 0
     }
 
     private static func cacheElementByteWidth(config: [String: Any]) -> Int {
