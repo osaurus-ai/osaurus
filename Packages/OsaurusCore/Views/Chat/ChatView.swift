@@ -4462,10 +4462,16 @@ final class ChatSession: ObservableObject {
         if autonomous {
             await SandboxToolRegistrar.shared.registerTools(for: agentId)
         }
+        // A folder-targeted background dispatch (Watcher / scheduled task)
+        // honors the folder it was pointed at over the agent's default
+        // sandbox — otherwise the pure-VM agent can't see its own target
+        // files. Interactive chats keep sandbox priority (see
+        // `SessionSource.prefersConfiguredHostFolder`).
         return ToolRegistry.shared.resolveExecutionMode(
             folderContext: activeFolderContext(for: agentId),
             autonomousEnabled: autonomous,
-            allowHostFolderWrites: config?.allowHostFolderWrites == true
+            allowHostFolderWrites: config?.allowHostFolderWrites == true,
+            preferHostFolder: source.prefersConfiguredHostFolder
         )
     }
 

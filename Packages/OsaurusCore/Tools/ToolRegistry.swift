@@ -2190,8 +2190,27 @@ public final class ToolRegistry: ObservableObject {
     func resolveExecutionMode(
         folderContext: FolderContext?,
         autonomousEnabled: Bool,
-        allowHostFolderWrites _: Bool = false
+        allowHostFolderWrites _: Bool = false,
+        preferHostFolder: Bool = false
     ) -> ExecutionMode {
+        // `preferHostFolder` honors an explicitly-targeted host folder over the
+        // sandbox. It exists for folder-targeted background dispatches — above
+        // all a Watcher, whose entire purpose is a host folder. Combined
+        // sandbox+host mode was removed in #2250 (pure-VM five-tool contract),
+        // which left such a dispatch with NO way to reach its folder: the
+        // autonomous agent went pure-VM, its file tools jailed to
+        // `/workspace/agents/<id>/`, so it read its own empty workspace and
+        // reported the watched folder "empty" (the Voice Memo Watcher bug).
+        // A watcher has no interactive sandbox toggle, so the folder it was
+        // pointed at must win — trusted host-folder mode, the same surface a
+        // normal folder chat uses (no combined-mode exfiltration path
+        // reintroduced). Interactive chats do NOT set this: a user who picked
+        // the VM boundary keeps it, and toggles sandbox off to use the folder
+        // (the historical `sandbox > host folder` priority, still pinned by
+        // ResolveExecutionModeTests).
+        if preferHostFolder, let folderContext {
+            return .hostFolder(folderContext)
+        }
         if autonomousEnabled {
             guard toolsByName.keys.contains("sandbox_exec") else {
                 // Never fall through to the host folder while the user has
