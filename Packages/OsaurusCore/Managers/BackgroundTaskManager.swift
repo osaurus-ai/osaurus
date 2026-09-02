@@ -842,7 +842,8 @@ public final class BackgroundTaskManager: ObservableObject {
         if let existing = reattach {
             context = ExecutionContext(
                 reattaching: existing,
-                folderBookmark: request.folderBookmark
+                folderBookmark: request.folderBookmark,
+                folderPath: request.folderPath
             )
         } else {
             context = createContext(for: request)
@@ -1294,6 +1295,7 @@ public final class BackgroundTaskManager: ObservableObject {
             agentId: request.agentId!,
             title: request.title,
             folderBookmark: request.folderBookmark,
+            folderPath: request.folderPath,
             source: request.source,
             sourcePluginId: request.sourcePluginId,
             externalSessionKey: request.externalSessionKey,

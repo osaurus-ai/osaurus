@@ -225,7 +225,23 @@ public final class ChatFolderState: ObservableObject {
         bookmark = bookmarkData
         lastKnownPath = path
 
-        guard let bookmarkData else { return nil }
+        guard let bookmarkData else {
+            // Path-only restore: a dispatch (e.g. an orchestrator-created
+            // Watcher) can carry a plain folder path with no picker bookmark.
+            // On a build with filesystem access the path is directly readable;
+            // where the OS withholds access, `buildContext` fails and we fall
+            // through to nil (the Watchers tab then prompts to re-pick, which
+            // mints a bookmark). No security scope to start/stop for a plain
+            // path, so `securityScopedURL` stays nil.
+            guard let path, !path.isEmpty else { return nil }
+            let url = URL(fileURLWithPath: path, isDirectory: true)
+            let built = await FolderContextService.shared.buildContext(from: url)
+            guard generation == myGeneration else { return nil }
+            lastKnownPath = url.standardizedFileURL.path
+            FolderToolManager.shared.ensureFolderToolsRegistered()
+            context = built
+            return built
+        }
 
         // Resolving a security-scoped bookmark does synchronous IPC to the
         // scoped-bookmarks agent; keep it off the main actor.
