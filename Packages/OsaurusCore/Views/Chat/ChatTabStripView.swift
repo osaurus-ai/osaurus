@@ -317,7 +317,10 @@ private struct WindowXReader: NSViewRepresentable {
 
     final class ReaderView: NSView {
         var onChange: (CGFloat, CGFloat) -> Void
-        private var resizeObserver: NSObjectProtocol?
+        // `nonisolated(unsafe)`: deinit is nonisolated and only removes the
+        // observer; all writes happen on the main thread (same pattern as
+        // ChatWindowState's notificationObservers).
+        private nonisolated(unsafe) var resizeObserver: NSObjectProtocol?
 
         init(onChange: @escaping (CGFloat, CGFloat) -> Void) {
             self.onChange = onChange
