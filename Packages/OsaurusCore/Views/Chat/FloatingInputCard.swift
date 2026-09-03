@@ -2467,6 +2467,31 @@ extension FloatingInputCard {
                     Self.statusIndicatesNativeMTPHead($0.nativeMTPStatus)
                 }
                 .map { Self.mtpIdentity($0.name) })
+            // Early, by-WEIGHT capability for models still LOADING, so the
+            // depth row appears during warmup instead of minutes later.
+            // Weight-based (configs lie: JANG_1L has no `mtp` field; a 27B
+            // index omitted its mtp.* tensors) and family-gated to the
+            // Flash-Next/27B targets — other families are untouched. File-only
+            // inspection, run off-main.
+            let loadingNames = await ModelRuntime.shared.loadingModelNames()
+            if !loadingNames.isEmpty {
+                let early: [ModelRuntime.LoadingModelMTPStatus] = await Task.detached {
+                    loadingNames.compactMap { name in
+                        guard
+                            let status = ModelRuntime.inspectLoadingModelMTP(name: name),
+                            status.bundleHasMTP, status.isTargetMTPFamily
+                        else { return nil }
+                        return status
+                    }
+                }.value
+                nativeMTPCapableModels.formUnion(early.map { Self.mtpIdentity($0.name) })
+                // A blocked tuning artifact must gate the EARLY window too —
+                // the resident-summary blocked set only covers loaded models,
+                // so without this the whole warmup would show depth segments
+                // the engine will refuse.
+                nativeMTPManuallyBlockedModels.formUnion(
+                    early.filter(\.isBlocked).map { Self.mtpIdentity($0.name) })
+            }
             let residentIdentities = Set(summaries.map { Self.mtpIdentity($0.name) })
             nativeMTPManuallyBlockedModels.subtract(residentIdentities)
             nativeMTPManuallyBlockedModels.formUnion(

@@ -20,6 +20,16 @@ struct MTPSection: View {
     /// the user would have no way to tell which was real.
     @State private var loadedModels: [ModelRuntime.ModelCacheSummary] = []
 
+    /// By-WEIGHT MTP capability for models still loading, so the detector
+    /// shows during warmup instead of only after it resolves. Populated
+    /// off-main from `MTPBundleInspector.inspect` (weights, not config —
+    /// configs lie: JANG_1L has no `mtp` field; a 27B index omitted its 31
+    /// mtp.* tensors). Scoped to the Flash-Next/27B families the MTP controls
+    /// target.
+    @State private var loadingMTP: [ModelRuntime.LoadingModelMTPStatus] = []
+    /// Memo so a loading bundle's headers are read once, not every 2s poll.
+    @State private var mtpInspectCache: [String: ModelRuntime.LoadingModelMTPStatus] = [:]
+
     /// Metadata for the currently selected drafter folder, re-read
     /// whenever the path changes. `nil` when nothing is selected or the
     /// folder is not a DFlash 2 drafter.
@@ -155,6 +165,27 @@ struct MTPSection: View {
         .task {
             while !Task.isCancelled {
                 loadedModels = await ModelRuntime.shared.cachedModelSummaries()
+                // Early, by-WEIGHT MTP detection for in-flight loads so the
+                // detector appears during warmup. File-only inspection runs
+                // off-main (a heavy load never stalls the UI) and is memoized
+                // per bundle. Restricted to the Flash-Next/27B families.
+                let loadingNames = await ModelRuntime.shared.loadingModelNames()
+                let cache = mtpInspectCache
+                let inspected: [ModelRuntime.LoadingModelMTPStatus] =
+                    loadingNames.isEmpty
+                    ? []
+                    : await Task.detached {
+                        loadingNames.compactMap { name in
+                            cache[name] ?? ModelRuntime.inspectLoadingModelMTP(name: name)
+                        }
+                    }.value
+                for status in inspected { mtpInspectCache[status.name] = status }
+                // Resolved rows take over the moment the engine reports them;
+                // only target-family loads surface early.
+                let resolvedNames = Set(loadedModels.map(\.name))
+                loadingMTP = inspected.filter {
+                    $0.isTargetMTPFamily && !resolvedNames.contains($0.name)
+                }
                 try? await Task.sleep(for: .seconds(2))
             }
         }
@@ -171,13 +202,31 @@ struct MTPSection: View {
     /// already written to the log, reached nobody.
     private var resolvedStateRows: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if loadedModels.isEmpty {
+            // Models still warming: by-WEIGHT detection shown NOW, so the
+            // section is never blank for the whole multi-minute load. The
+            // resolved row replaces this the moment the engine reports it.
+            ForEach(loadingMTP, id: \.name) { model in
+                resolvedRow(
+                    label: model.name,
+                    value: model.bundleHasMTP
+                        ? (model.isBlocked
+                            ? "MTP head detected · blocked by tuning"
+                            : (model.measuredFamilyAutoDepth.map {
+                                "MTP head detected · auto depth \($0)"
+                            } ?? "MTP head detected"))
+                        : "No MTP head",
+                    detail: "Warming up — \(model.statusLine)"
+                )
+            }
+            if loadedModels.isEmpty && loadingMTP.isEmpty {
                 resolvedRow(
                     label: "Resolved state",
                     value: "No model loaded",
                     detail:
                         "Speculative decoding is resolved at model load. Load a model to see what it settled on."
                 )
+            } else if loadedModels.isEmpty {
+                EmptyView()
             } else {
                 ForEach(loadedModels, id: \.name) { model in
                     resolvedRow(
