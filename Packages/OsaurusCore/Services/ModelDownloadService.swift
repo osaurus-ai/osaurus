@@ -561,20 +561,27 @@ final class ModelDownloadService: ObservableObject {
                 // multi shard download with a silently skipped file would
                 // still pass that test. Verify every manifest entry is on
                 // disk at its expected size and report which are missing
-                let fm = FileManager.default
-                let missing: [String] = files.compactMap { file in
-                    guard
-                        let dest = HuggingFaceService.destinationURL(
-                            forRemotePath: file.path,
-                            under: model.localDirectory
-                        )
-                    else {
-                        return file.path
+                // Detached: this orchestration Task inherits the service's
+                // main-actor isolation, and the check below stats every
+                // manifest entry (containment probes + size read per file) —
+                // dozens of disk touches that have stalled main on slow
+                // volumes when run inline.
+                let missing: [String] = await Task.detached(priority: .userInitiated) {
+                    let fm = FileManager.default
+                    return files.compactMap { file in
+                        guard
+                            let dest = HuggingFaceService.destinationURL(
+                                forRemotePath: file.path,
+                                under: model.localDirectory
+                            )
+                        else {
+                            return file.path
+                        }
+                        let attrs = try? fm.attributesOfItem(atPath: dest.path)
+                        let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+                        return size == file.size ? nil : file.path
                     }
-                    let attrs = try? fm.attributesOfItem(atPath: dest.path)
-                    let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
-                    return size == file.size ? nil : file.path
-                }
+                }.value
                 let isComplete = missing.isEmpty
                 let finalState: DownloadState
                 if isComplete {
@@ -589,15 +596,19 @@ final class ModelDownloadService: ObservableObject {
                             "Download incomplete: \(missing.count) of \(files.count) files are missing or have wrong size"
                     )
                 }
+                // Also detached: the report reads config/tokenizer files out
+                // of the bundle it diagnoses.
                 let compatibilityReport =
                     isComplete
-                    ? ModelCompatibilityDiagnostics.report(
-                        modelId: model.id,
-                        modelName: model.name,
-                        modelTypeHint: model.modelType,
-                        bundleURL: model.localDirectory,
-                        externalSource: model.externalSource
-                    )
+                    ? await Task.detached(priority: .userInitiated) {
+                        ModelCompatibilityDiagnostics.report(
+                            modelId: model.id,
+                            modelName: model.name,
+                            modelTypeHint: model.modelType,
+                            bundleURL: model.localDirectory,
+                            externalSource: model.externalSource
+                        )
+                    }.value
                     : nil
                 await MainActor.run {
                     let didFinalize = self.finalizeOrchestration(

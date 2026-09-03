@@ -361,15 +361,31 @@ final class ImageModelDownloadService: ObservableObject {
         total: Int64
     ) async throws {
         try Task.checkCancellation()
+        // Containment validation stats every existing path component (plus
+        // symlink probes) and the resume check stats the destination — once
+        // per file, against whatever disk holds the models directory. This
+        // method runs on the main actor for bookkeeping, so hop the disk
+        // probes off it; they have stalled main on slow disks.
+        let filePath = file.path
+        let expectedSize = file.size
+        let staged: (destination: URL, alreadyComplete: Bool)? =
+            await Task.detached(priority: .userInitiated) {
+                guard
+                    let destination = HuggingFaceService.destinationURL(
+                        forRemotePath: filePath, under: root)
+                else { return nil }
+                let existing =
+                    try? FileManager.default.attributesOfItem(atPath: destination.path)[.size]
+                    as? Int64
+                return (destination, existing == expectedSize)
+            }.value
         guard
-            let destination = HuggingFaceService.destinationURL(forRemotePath: file.path, under: root),
+            let (destination, alreadyComplete) = staged,
             let url = ModelDownloadService.resolveURL(repoId: repoId, path: file.path)
         else { return }
 
         // Skip files already present at the expected size (resume).
-        if let existing = try? FileManager.default.attributesOfItem(atPath: destination.path)[.size]
-            as? Int64, existing == file.size
-        {
+        if alreadyComplete {
             liveBytes[dirName, default: [:]][file.path] = file.size
             updateProgress(dirName, total: total)
             return
