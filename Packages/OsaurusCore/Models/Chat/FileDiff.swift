@@ -152,12 +152,13 @@ struct FileDiff: Equatable {
         // Live previews rescan the whole arg buffer on every streaming
         // delta, so an uncapped buffer makes the stream's total scan cost
         // quadratic — a multi-hundred-KB file write has hung the main
-        // thread this way. Past the cap the card freezes (badged as
-        // truncated) and the real diff replaces it when the call lands.
+        // thread this way. Past the cap the card simply stops growing (the
+        // streaming badge stays up) and the real diff replaces it when the
+        // call lands. `truncated` is left alone: it is the executor's
+        // "diff text was capped" flag, not a preview-scan condition.
         // One-shot previews (failed writes) scan the full payload: they
         // run once, and that card is all the user ever gets.
-        let (scanArgs, cappedForScan) =
-            isStreaming ? cappedScanText(partialArgs) : (partialArgs, false)
+        let scanArgs = isStreaming ? cappedScanText(partialArgs) : partialArgs
         guard
             let body = partialStringField("content", in: scanArgs)
                 ?? partialStringField("new_string", in: scanArgs),
@@ -186,7 +187,7 @@ struct FileDiff: Equatable {
             addedCount: lines.count,
             removedCount: 0,
             isPreview: !isStreaming,
-            truncated: cappedForScan,
+            truncated: false,
             rawDiff: body,
             isStreamingPreview: isStreaming
         )
@@ -200,9 +201,13 @@ struct FileDiff: Equatable {
     /// The scan window for one live-preview pass: the full text while it is
     /// small, a fixed-size prefix once it isn't. Bounding the window is what
     /// turns per-delta cost from O(stream so far) into O(cap).
-    private static func cappedScanText(_ text: String) -> (String, Bool) {
-        guard text.utf8.count > streamingScanCapUTF8 else { return (text, false) }
-        return (String(text.prefix(streamingScanCapUTF8)), true)
+    private static func cappedScanText(_ text: String) -> String {
+        guard text.utf8.count > streamingScanCapUTF8 else { return text }
+        // Byte-bounded via the UTF-8 view (O(1) index) — `String.prefix` counts
+        // Characters, which neither bounds multibyte input nor matches the
+        // guard above. A split scalar at the cut decodes to a replacement
+        // character, harmless in a discarded tail.
+        return String(decoding: text.utf8.prefix(streamingScanCapUTF8), as: UTF8.self)
     }
 
     /// Identifies which known file a still-streaming `file_edit` targets when
@@ -222,7 +227,7 @@ struct FileDiff: Equatable {
         // streaming delta too, and both the arg scan and the `contains`
         // probe below grow with the excerpt. An `old_string` that starts
         // beyond the cap just leaves the card on its placeholder name.
-        let (scanArgs, _) = cappedScanText(partialArgs)
+        let scanArgs = cappedScanText(partialArgs)
         guard let excerpt = partialStringField("old_string", in: scanArgs),
             excerpt.count >= inferenceMinExcerptLength
         else { return nil }
