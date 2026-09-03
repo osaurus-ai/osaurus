@@ -1,0 +1,179 @@
+{
+  "domains" : [
+    "agent_loop",
+    "apple_script",
+    "cache_proof",
+    "capability_claims",
+    "computer_use_loop",
+    "default_agent",
+    "http_api",
+    "memory",
+    "micro_perf",
+    "reasoning_channel",
+    "subagent"
+  ],
+  "generatedAt" : "2026-09-01T22:46:33.270Z",
+  "models" : [
+    {
+      "actionCompletionCoverage" : 0.04964539007092199,
+      "agentLoopDiagnostics" : {
+        "exitCounts" : {
+          "finalResponse" : 139,
+          "lengthExhausted" : 1,
+          "overBudget" : 1
+        },
+        "exitOriginCounts" : {
+          "ordinaryModelFinal" : 139,
+          "unrecorded" : 2
+        },
+        "measuredRows" : 141,
+        "recoveryRetriesTotal" : 0,
+        "rowsWithExitTelemetry" : 141
+      },
+      "cacheTotals" : {
+        "diskL2Evictions" : 56,
+        "diskL2Hits" : 174,
+        "diskL2Misses" : 11799,
+        "diskL2Stores" : 636,
+        "kvPrefixHits" : 0,
+        "kvPrefixMisses" : 0,
+        "pagedEvictions" : 0,
+        "ssmCompanionHits" : 174,
+        "ssmCompanionMisses" : 4,
+        "ssmCompanionReDerives" : 4
+      },
+      "chatModelPassed" : 113,
+      "chatModelScored" : 330,
+      "correctFileDeliveryRate" : 0.014925373134328358,
+      "environment" : {
+        "caseCount" : 19,
+        "catalogHash" : "2e766b2b52f4cf37",
+        "chip" : "Apple M5 Max",
+        "commit" : "1bbd959",
+        "contributor" : "jax-0n-git",
+        "cpuCores" : 18,
+        "harness" : "osaurus",
+        "judge" : "self-judge",
+        "lowPowerMode" : false,
+        "osVersion" : "26.6.2",
+        "powerSource" : "AC",
+        "runModel" : "OsaurusAI/Holo3-35B-A3B-JANGTQ4",
+        "thermalState" : "nominal",
+        "totalRamMb" : 131072
+      },
+      "flakyCases" : 0,
+      "harness" : "osaurus",
+      "loopFreeRate" : 0.07801418439716312,
+      "meanAgentLoopWallTimeMs" : 23215.202393261254,
+      "meanCpuPercent" : 85.31731942492502,
+      "meanDecodeTokensPerSecond" : 21.251987093865782,
+      "meanFirstActionMs" : 7608.685169901167,
+      "meanFirstStepContextTokens" : 3453.8214285714284,
+      "meanFrictionCalls" : 0.006944444444444444,
+      "meanPromptTokensPerTask" : 3575.74,
+      "meanTotalTokensPerTask" : 3748.4768518518517,
+      "meanTtftMs" : 300.32745452776345,
+      "medianModelSteps" : 1,
+      "modelId" : "OsaurusAI/Holo3-35B-A3B-JANGTQ4",
+      "peakCpuPercent" : 209.90072138662788,
+      "peakPhysFootprintMb" : 4992.4711990356445,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 4,
+          "scored" : 141,
+          "skipReasons" : {
+            "other: no AppleScript model installed; applescript/mac_query delegation tools withheld — case skipped" : 3
+          },
+          "skipped" : 3
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 14,
+          "scored" : 32,
+          "skipReasons" : {
+            "other: liveProof environment not ready — Automation permission is denied for this process (error -1743). Grant Osaurus access to the target app under System Settings → Privacy & Security → Automation, then re-run locally." : 3
+          },
+          "skipped" : 3
+        },
+        "cache_proof" : {
+          "errored" : 0,
+          "passed" : 5,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 9,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 9,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 4,
+          "scored" : 49,
+          "skipped" : 0
+        },
+        "http_api" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 17,
+          "skipped" : 0
+        },
+        "memory" : {
+          "errored" : 0,
+          "passed" : 7,
+          "scored" : 8,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 6,
+          "scored" : 6,
+          "skipped" : 0
+        },
+        "reasoning_channel" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 13,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errorCategories" : {
+            "runtime_other" : 1
+          },
+          "errored" : 1,
+          "passed" : 33,
+          "scored" : 35,
+          "skipReasons" : {
+            "missingDependency: live spawn_model_residency lane unavailable on this host: residency lane unavailable: orchestrator 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is not installed locally" : 8,
+            "other: live image lane unavailable on this host: Image edit is not enabled for this agent." : 1,
+            "other: live image lane unavailable on this host: Image generation is not enabled for this agent." : 1,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is neither installed locally nor routable via a connected provider" : 2,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'xai/grok-4.3' is neither installed locally nor routable via a connected provider" : 2
+          },
+          "skipped" : 14
+        }
+      },
+      "startedAt" : "2026-09-01T21:03:58Z",
+      "subsystemPassed" : 0,
+      "subsystemScored" : 16,
+      "topContextContributors" : [
+        "§pluginCreator=714",
+        "tool:redact_file=491",
+        "§enabledManifest=432",
+        "tool:search_and_extract=371",
+        "tool:detect_pii=353",
+        "tool:file_read=279"
+      ],
+      "totalPassed" : 113,
+      "totalScored" : 346
+    }
+  ]
+}
