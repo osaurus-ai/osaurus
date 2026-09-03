@@ -257,10 +257,16 @@ public enum AgentSecretsKeychain {
         guard shouldSeed else { return }
         Task.detached(priority: .utility) {
             _ = allAccounts()
-            accountsCacheLock.lock()
-            seedInFlight = false
-            accountsCacheLock.unlock()
+            clearSeedInFlight()
         }
+    }
+
+    /// Synchronous so the detached seed can take the lock; bare `lock()` /
+    /// `unlock()` are unavailable inside async contexts.
+    private static func clearSeedInFlight() {
+        accountsCacheLock.lock()
+        seedInFlight = false
+        accountsCacheLock.unlock()
     }
 
     // MARK: - Private
