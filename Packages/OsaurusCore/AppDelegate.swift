@@ -8,6 +8,7 @@
 import AVFoundation
 import AppKit
 import Combine
+import CoreServices
 import QuartzCore
 import SwiftUI
 import os.log
@@ -645,7 +646,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         //    `settingsCommand` and AppKit won't auto-present the
         //    placeholder again.
         let presentOnboarding = OnboardingService.shared.shouldShowOnboarding
-        let userInitiatedLaunch = isUserInitiatedLaunch(notification)
+        // Login-item and CLI launches stay hidden in the menu bar (#2609).
+        let silentLaunch = isSilentLaunch
+        let userInitiatedLaunch = isUserInitiatedLaunch(notification) && !silentLaunch
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
 
@@ -662,7 +665,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
             if keychainDisabledTestMode && !keychainDisabledUIPresentationMode {
                 // Headless live-proof launches only need the local HTTP server.
-            } else if presentOnboarding {
+            } else if presentOnboarding && !silentLaunch {
                 showOnboardingWindow()
             } else if userInitiatedLaunch {
                 presentInitialWindow()
@@ -686,7 +689,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // for them. Ask once now (the toast overlay host is up) rather than
             // silently deciding for them. New users / re-onboarders made the
             // choice in onboarding, so this is gated to the no-onboarding path.
-            if !keychainDisabledTestMode && !presentOnboarding {
+            if !keychainDisabledTestMode && !presentOnboarding && !silentLaunch {
                 maybePromptForTelemetryConsent()
 
                 // One-time Product Hunt launch dialog (July 2026). Delayed
@@ -890,6 +893,33 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     /// background-task "View Chat" toast), so we must not also pop an empty chat.
     private func isUserInitiatedLaunch(_ notification: Notification) -> Bool {
         (notification.userInfo?["NSApplicationLaunchIsDefaultLaunchKey"] as? Bool) ?? true
+    }
+
+    /// Launches that should come up silently in the menu bar with no window:
+    /// a Start-at-Login launch (parent process is loginwindow; login-item
+    /// launches still report `NSApplicationLaunchIsDefaultLaunchKey`, so the
+    /// default-launch check alone can't catch them) and a launch triggered by
+    /// the CLI, which only needs the server running. Inconclusive parent
+    /// lookups fall through to the normal visible-launch path.
+    /// Must be evaluated during `applicationDidFinishLaunching`; the current
+    /// AppleEvent that carries `keyAELaunchedAsLogInItem` is only valid there.
+    private var isSilentLaunch: Bool {
+        if ProcessInfo.processInfo.arguments.contains("--launched-by-cli") {
+            return true
+        }
+        if let event = NSAppleEventManager.shared().currentAppleEvent,
+            event.eventID == kAEOpenApplication,
+            event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
+                == keyAELaunchedAsLogInItem
+        {
+            return true
+        }
+        if let parent = NSRunningApplication(processIdentifier: getppid()),
+            parent.bundleIdentifier == "com.apple.loginwindow"
+        {
+            return true
+        }
+        return false
     }
 
     @MainActor
