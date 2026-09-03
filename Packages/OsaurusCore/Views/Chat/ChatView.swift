@@ -356,6 +356,16 @@ final class ChatSession: ObservableObject {
     /// (plugin / HTTP / scheduler / watcher) runs, defaults to `.chat` for
     /// user-driven UI sessions.
     var source: SessionSource = .chat
+    /// True when this session's folder was restored from a bookmark that a
+    /// background DISPATCH supplied (a Watcher's watched folder, a scheduled
+    /// task's folder, or a plugin's `folder_bookmark`), as opposed to a
+    /// folder the user picked interactively in the chat UI. Set by
+    /// `ExecutionContext.activateFolderContextIfNeeded`. A dispatched folder
+    /// is an explicit target with no interactive sandbox toggle, so it wins
+    /// over the agent's default sandbox in `prepareChatExecutionMode`
+    /// (`preferHostFolder`); an interactive folder keeps the historical
+    /// sandbox-priority contract, where the user toggles sandbox off instead.
+    var folderContextFromDispatchBookmark: Bool = false
     /// Whether this session's model loads may evict a model someone else is using.
     ///
     /// Set from `DispatchRequest.loadIntent` at the trigger boundary. Headless
@@ -4462,10 +4472,16 @@ final class ChatSession: ObservableObject {
         if autonomous {
             await SandboxToolRegistrar.shared.registerTools(for: agentId)
         }
+        // A folder that a background dispatch supplied (Watcher / schedule /
+        // plugin folder_bookmark) is an explicit target with no interactive
+        // sandbox toggle, so it wins over the agent's default sandbox —
+        // otherwise the pure-VM agent can't see its own target files.
+        // Interactive folders keep sandbox priority.
         return ToolRegistry.shared.resolveExecutionMode(
             folderContext: activeFolderContext(for: agentId),
             autonomousEnabled: autonomous,
-            allowHostFolderWrites: config?.allowHostFolderWrites == true
+            allowHostFolderWrites: config?.allowHostFolderWrites == true,
+            preferHostFolder: folderContextFromDispatchBookmark
         )
     }
 
@@ -5842,8 +5858,20 @@ final class ChatSession: ObservableObject {
             // switches modes in another window midway through the run.
             let sandboxEnabled =
                 AgentManager.shared.effectiveAutonomousExec(for: turnAgentId)?.enabled == true
+            // A folder that a background dispatch supplied (Watcher / schedule
+            // / plugin) wins over the sandbox suspension here, exactly as it
+            // does in `prepareChatExecutionMode` (`preferHostFolder`). Without
+            // this the two disagree: the execution mode exposes the host file
+            // tools, but this root binding stays nil, so every folder tool
+            // returns "no working folder is selected" (the Voice Memo Watcher
+            // failure after the user turns sandbox off). Interactive sessions
+            // keep the suspension — the user toggles sandbox off to use a
+            // folder there.
+            let suspendFolderForSandbox =
+                sandboxEnabled && !self.folderContextFromDispatchBookmark
             let turnFolderRoot =
-                sandboxEnabled ? nil : self.activeFolderContext(for: turnAgentId)?.rootPath
+                suspendFolderForSandbox
+                ? nil : self.activeFolderContext(for: turnAgentId)?.rootPath
             await ChatExecutionContext.$currentFolderRoot.withValue(turnFolderRoot) { [self] in
             // Typed run provenance for the whole turn. The session's own
             // persisted `source` is authoritative here (a dispatched
@@ -8629,6 +8657,7 @@ struct ChatView: View {
                                 if let projectId {
                                     session.projectId = projectId
                                 }
+                                applyProjectFolderIfNeeded(for: projectId)
                             },
                             onDelete: { id in
                                 // Deleting a chat is an explicit destructive
@@ -8960,6 +8989,7 @@ struct ChatView: View {
                                 windowState.enteredChatFromProjectPage = true
                                 startProjectChat(defaultAgentId: project.defaultAgentId)
                                 session.projectId = project.id
+                                applyProjectFolderIfNeeded(for: project.id)
                             },
                             onDelete: {
                                 ChatSessionsManager.shared.deleteProject(id: project.id)
@@ -10321,6 +10351,24 @@ extension ChatView {
         } else {
             windowState.startNewChat()
         }
+    }
+
+    /// Open a fresh project chat with the project's working folder, if one is
+    /// set. Applied only when the new chat has no folder of its own, so it's a
+    /// default and never overrides a folder the user later picks in the chat
+    /// (mirrors how `defaultAgentId` nudges without locking). Restoring the
+    /// project's security-scoped bookmark is the same path a persisted chat
+    /// folder takes on reopen.
+    private func applyProjectFolderIfNeeded(for projectId: UUID?) {
+        guard let projectId,
+            let project = projectManager.project(for: projectId),
+            project.folderBookmark != nil,
+            !windowState.session.folderState.hasActiveFolder
+        else { return }
+        windowState.session.folderState.restore(
+            bookmark: project.folderBookmark,
+            path: project.folderPath
+        )
     }
 
     private func setupKeyMonitor() {

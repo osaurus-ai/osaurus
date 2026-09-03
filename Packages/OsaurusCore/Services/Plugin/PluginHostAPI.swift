@@ -968,18 +968,26 @@ final class PluginHostContext: @unchecked Sendable {
         // SESSION driving it (the live dispatched session with this id,
         // when one exists) — never a process-wide folder that could belong
         // to an unrelated chat window.
-        let sessionFolderContext: FolderContext? = await MainActor.run {
-            guard let sid = sessionId, let sessionUUID = UUID(uuidString: sid) else { return nil }
-            return BackgroundTaskManager.shared.liveTask(forSessionId: sessionUUID)?
-                .chatSession?.folderState.context
+        let sessionFolder: (context: FolderContext?, fromDispatch: Bool) = await MainActor.run {
+            guard let sid = sessionId, let sessionUUID = UUID(uuidString: sid) else {
+                return (nil, false)
+            }
+            let session = BackgroundTaskManager.shared.liveTask(forSessionId: sessionUUID)?
+                .chatSession
+            return (session?.folderState.context, session?.folderContextFromDispatchBookmark ?? false)
         }
+        let sessionFolderContext = sessionFolder.context
         let (execMode, agentModel, toolMode) = await MainActor.run {
             () -> (ExecutionMode, String?, ToolSelectionMode) in
+            // Mirror the driving session's own folder-vs-sandbox decision so a
+            // plugin inference sees the SAME tool surface the dispatched run
+            // resolved — a dispatch-supplied folder wins for both.
             let mode = ToolRegistry.shared.resolveExecutionMode(
                 folderContext: sessionFolderContext,
                 autonomousEnabled: resolved.autonomousEnabled,
                 allowHostFolderWrites: AgentManager.shared.effectiveAutonomousExec(for: agentId)?
-                    .allowHostFolderWrites == true
+                    .allowHostFolderWrites == true,
+                preferHostFolder: sessionFolder.fromDispatch
             )
             // Snapshot the agent's effective model so it can ride along to
             // `composeChatContext` as the chat-model fallback

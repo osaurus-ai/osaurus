@@ -14,6 +14,21 @@ import Testing
 @Suite("Remote provider model discovery")
 struct RemoteProviderModelDiscoveryTests {
 
+    @Test func emptyOllamaCatalog_nullDataDecodesAsNoModels() throws {
+        // Ollama with zero models pulled serializes the list as
+        // `"data": null` (Go nil slice), not `[]`; that's a reachable,
+        // protocol-correct server and must not read as a decode failure.
+        let body = Data(#"{"object":"list","data":null}"#.utf8)
+
+        let models = try RemoteProviderService.decodeOpenAICompatibleModelsResponse(
+            data: body,
+            statusCode: 200,
+            provider: makeProvider()
+        )
+
+        #expect(models.isEmpty)
+    }
+
     @Test func openAICompatibleDiscovery_usesManualModelsWhenModelsEndpointIsMissing() throws {
         let provider = makeProvider(
             manualModelIds: [" MiniMax-Text-01 ", "", "minimax-text-01"]

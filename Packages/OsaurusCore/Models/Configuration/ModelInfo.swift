@@ -282,10 +282,22 @@ extension ModelInfo {
         let parameterCount = ModelMetadataParser.parameterCount(from: modelId)
         let quantization = ModelMetadataParser.quantizationOllama(from: modelId)
 
-        // Detect capabilities
+        // Detect capabilities (Ollama-compatible names: completion, vision,
+        // tools, thinking). Reuses the same detectors the runtime consults, so
+        // /api/show reports what a request against this bundle actually gets.
         var capabilities = ["completion"]
         if VLMDetection.isVLM(at: directory) {
             capabilities.append("vision")
+        }
+        if MLXService.supportsLocalToolCalling(
+            modelName: modelId,
+            modelId: modelId,
+            modelDirectory: directory
+        ) {
+            capabilities.append("tools")
+        }
+        if LocalReasoningCapability.detect(at: directory).supportsThinking {
+            capabilities.append("thinking")
         }
 
         // Load generation parameters
@@ -366,6 +378,14 @@ extension ModelInfo {
                     }
                 }
             }
+        }
+
+        // External models (HF cache, LM Studio, custom folders) never live under
+        // the models root — they resolve through the external registry, the same
+        // path /api/tags and inference use. Without this, /api/show 404s for a
+        // model that is listed and runnable (issue #2600).
+        if let external = ExternalModelLocator.path(forId: trimmed) {
+            return external
         }
 
         return nil

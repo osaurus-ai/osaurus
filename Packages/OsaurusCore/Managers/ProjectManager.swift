@@ -53,6 +53,45 @@ public final class ProjectManager: ObservableObject {
         notify(project.id)
     }
 
+    /// Mint a security-scoped bookmark for `url` and store it as the
+    /// project's working folder. Minting does synchronous IPC that can stall
+    /// for seconds, so it runs off the main actor (same as
+    /// `ChatFolderState.setFolder`) to stay clear of the app-hang watchdog.
+    /// Returns the display path on success, nil if the bookmark could not be
+    /// created or the project no longer exists.
+    @discardableResult
+    public func setFolder(_ url: URL, for projectId: UUID) async -> String? {
+        let bookmark: Data
+        do {
+            bookmark = try await Task.detached(priority: .userInitiated) {
+                try url.bookmarkData(
+                    options: .withSecurityScope,
+                    includingResourceValuesForKeys: nil,
+                    relativeTo: nil
+                )
+            }.value
+        } catch {
+            return nil
+        }
+        guard var project = project(for: projectId) else { return nil }
+        let path = url.standardizedFileURL.path
+        project.folderBookmark = bookmark
+        project.folderPath = path
+        update(project)
+        return path
+    }
+
+    /// Remove the project's working folder. New chats in the project fall
+    /// back to starting folder-less, as before.
+    public func clearFolder(for projectId: UUID) {
+        guard var project = project(for: projectId),
+            project.folderBookmark != nil || project.folderPath != nil
+        else { return }
+        project.folderBookmark = nil
+        project.folderPath = nil
+        update(project)
+    }
+
     /// Deletes the project record. Callers are responsible for clearing
     /// `projectId` on member sessions (see `ChatSessionsManager`).
     public func delete(id: UUID) {

@@ -6055,6 +6055,32 @@ extension RemoteProviderService {
 
     private struct OpenAICompatibleModelList: Decodable {
         let data: [OpenAICompatibleModelEntry]
+
+        private enum CodingKeys: String, CodingKey {
+            case data
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            // A missing `data` key means the response isn't OpenAI-shaped at
+            // all and must stay a decode failure — it's what routes off-schema
+            // servers to the manual-model fallback. But `"data": null` is a
+            // server with zero models: Ollama serializes an empty catalog
+            // that way (Go marshals a nil slice as null), and that's a valid,
+            // empty list rather than an error.
+            guard container.contains(.data) else {
+                throw DecodingError.keyNotFound(
+                    CodingKeys.data,
+                    DecodingError.Context(
+                        codingPath: container.codingPath,
+                        debugDescription: "No 'data' key in /models response"
+                    )
+                )
+            }
+            data =
+                try container.decodeIfPresent([OpenAICompatibleModelEntry].self, forKey: .data)
+                ?? []
+        }
     }
 
     static func decodeOpenAICompatibleModelsDiscovery(
@@ -6074,14 +6100,15 @@ extension RemoteProviderService {
 
         do {
             let modelsResponse = try JSONDecoder().decode(OpenAICompatibleModelList.self, from: data)
+            let entries = modelsResponse.data
             var contextLengths: [String: Int] = [:]
-            for entry in modelsResponse.data {
+            for entry in entries {
                 if let contextLength = entry.advertisedContextLength {
                     contextLengths[entry.id] = contextLength
                 }
             }
             return OpenAICompatibleModelDiscovery(
-                models: modelsResponse.data.map { $0.id },
+                models: entries.map { $0.id },
                 contextLengths: contextLengths
             )
         } catch {

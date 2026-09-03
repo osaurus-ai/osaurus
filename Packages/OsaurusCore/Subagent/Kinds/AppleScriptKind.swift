@@ -300,7 +300,7 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
             dictionaryContext: knowledge.dictionary,
             recipeContext: knowledge.recipes,
             literals: literals,
-            enableThinking: scope.enableThinking
+            enableThinking: scope.enableThinking(forDelegatedModel: resolved.name)
         )
         return try Self.mapOutcome(result, model: resolved.name, mode: mode)
     }

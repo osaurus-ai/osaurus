@@ -73,7 +73,7 @@ struct ResolvedProviderConfig {
     let authType: RemoteProviderAuthType
 }
 
-struct CustomProviderForm {
+struct CustomProviderForm: Equatable {
     var name: String = ""
     var host: String = ""
     var protocolKind: RemoteProviderProtocol = .https
@@ -81,6 +81,44 @@ struct CustomProviderForm {
     var basePath: String = "/v1"
 
     mutating func reset() { self = CustomProviderForm() }
+
+    /// Parses a pasted endpoint URL into the form's fields. Delegates the
+    /// decomposition to the Settings sheet's `parsePastedEndpoint` so both
+    /// surfaces share one parser (query/fragment stripping, IPv6 literals,
+    /// operation-suffix normalization like /v1/chat/completions -> /v1),
+    /// then layers onboarding's forgiving defaults on top: the scheme is
+    /// optional (local machine and LAN hosts default to http, everything
+    /// else https) and a missing path defaults to /v1. Returns an empty
+    /// form (host == "") when no host can be extracted, which keeps
+    /// `canTestAPI` false.
+    static func parse(_ urlString: String) -> CustomProviderForm {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains(" ") else { return CustomProviderForm() }
+        var form = CustomProviderForm()
+        if let components = parsePastedEndpoint(trimmed) {
+            form.host = components.host
+            form.port = components.port.map(String.init) ?? ""
+            form.basePath = components.basePath ?? "/v1"
+            form.protocolKind = components.providerProtocol ?? form.inferredScheme
+        } else if !trimmed.contains("://"), !trimmed.contains("/") {
+            // A bare host ("localhost", "myserver.internal") has no pieces
+            // to split, so the shared parser declines it; take it verbatim.
+            form.host = trimmed
+            form.basePath = "/v1"
+            form.protocolKind = form.inferredScheme
+        }
+        return form
+    }
+
+    /// Best-guess scheme for input pasted without one: the local machine
+    /// and LAN addresses virtually never serve TLS; domains and public IPs
+    /// default to https.
+    private var inferredScheme: RemoteProviderProtocol {
+        let h = host.lowercased()
+        let isPrivateLAN =
+            h.hasPrefix("192.168.") || h.hasPrefix("10.") || h.hasSuffix(".local")
+        return (isLocalhost || isPrivateLAN) ? .http : .https
+    }
 
     var endpointPreview: String {
         var url = (protocolKind == .https ? "https://" : "http://") + host
@@ -93,7 +131,8 @@ struct CustomProviderForm {
     /// Studio, llama.cpp server, vLLM, etc. when the user wires them up via
     /// the custom form.
     var isLocalhost: Bool {
-        let h = host.lowercased().trimmingCharacters(in: .whitespaces)
+        // `parsePastedEndpoint` keeps IPv6 literals bracketed ("[::1]").
+        let h = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: " []"))
         return h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "0.0.0.0"
     }
 
@@ -219,6 +258,11 @@ final class ConfigureAIState: ObservableObject {
         return nil
     }
     @Published var customForm = CustomProviderForm()
+    /// The raw pasted endpoint URL backing the custom connect dialog's single
+    /// field; `customForm` is derived from it on every edit.
+    @Published var customEndpointURL = "" {
+        didSet { customForm = CustomProviderForm.parse(customEndpointURL) }
+    }
     @Published var isTesting = false
     @Published var isSaving = false
     @Published var testResult: APITestResult? = nil
@@ -592,6 +636,16 @@ final class ConfigureAIState: ObservableObject {
         screen = .byok
     }
 
+    /// "Custom" chip tap: open the endpoint-form connect dialog directly over
+    /// the home screen. Unlike preset providers there is no drill-in — the
+    /// chip has no logo/option rows worth a page, so one tap goes straight to
+    /// the form.
+    func enterCustomProvider() {
+        clearAPICredentials()
+        apiSubstate = .customForm
+        connectDialog = .apiKey
+    }
+
     func enterClaudeCode() {
         substateDirection = .forward
         screen = .claudeCode
@@ -627,6 +681,14 @@ final class ConfigureAIState: ObservableObject {
         if !isAPISuccess {
             testResult = nil
             apiKey = ""
+            // The custom dialog opens straight over the home grid with no
+            // drill-in behind it; an abandoned attempt pops the substate too
+            // so no half-filled form lingers under the next chip tap.
+            if screen == .home, apiSubstate == .customForm {
+                apiSubstate = .picker
+                customEndpointURL = ""
+                customForm.reset()
+            }
         }
     }
 
@@ -691,6 +753,7 @@ final class ConfigureAIState: ObservableObject {
         selectedAuthMethod = .apiKey
         oauthTokens = nil
         addedProviderId = nil
+        customEndpointURL = ""
         customForm.reset()
         testResult = nil
         hasFinalizedAPI = false
@@ -1115,8 +1178,8 @@ private struct ConfigureAIHomePanel: View {
     ]
 
     /// Remaining connectable presets revealed by "+ More": every API-key
-    /// picker preset not already featured. The custom OpenAI-compatible form
-    /// stays out of onboarding (it needs a multi-field form; Settings owns it).
+    /// picker preset not already featured. The custom OpenAI-compatible
+    /// endpoint has its own always-visible chip next to Claude Code.
     private static var morePresets: [ProviderPreset] {
         ProviderPreset.apiKeyPickerGroups(includeAzure: false)
             .flatMap(\.presets)
@@ -1160,6 +1223,14 @@ private struct ConfigureAIHomePanel: View {
             }
             .onboardingEntrance(3 + Self.featuredPresets.count)
 
+            OnboardingProviderChip(
+                logo: { OnboardingProviderLogo(preset: .custom, size: 16) },
+                label: L("Custom")
+            ) {
+                state.enterCustomProvider()
+            }
+            .onboardingEntrance(4 + Self.featuredPresets.count)
+
             if !state.showAllProviders {
                 OnboardingProviderChip(
                     logo: {
@@ -1176,7 +1247,7 @@ private struct ConfigureAIHomePanel: View {
                     }
                 }
                 .transition(.scale(scale: 0.85).combined(with: .opacity))
-                .onboardingEntrance(4 + Self.featuredPresets.count)
+                .onboardingEntrance(5 + Self.featuredPresets.count)
             }
         }
     }
@@ -1597,9 +1668,14 @@ struct ProviderConnectDialog: View {
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    if !isOAuth && preset.configuration.authType == .apiKey {
-                        Spacer().frame(height: 20)
-                        keyField(preset)
+                    if !isOAuth {
+                        if preset == .custom {
+                            Spacer().frame(height: 20)
+                            customEndpointForm
+                        } else if preset.configuration.authType == .apiKey {
+                            Spacer().frame(height: 20)
+                            keyField(preset)
+                        }
                     }
 
                     if case .failure(let message) = state.testResult {
@@ -1650,6 +1726,9 @@ struct ProviderConnectDialog: View {
             case nil: return ""
             }
         }
+        if preset == .custom {
+            return L("Connect a custom endpoint")
+        }
         if preset.configuration.authType == .none {
             return L("Connect to \(displayName(preset))")
         }
@@ -1664,6 +1743,9 @@ struct ProviderConnectDialog: View {
             case .xai: return L("This will use your SuperGrok or X Premium+ subscription")
             case nil: return ""
             }
+        }
+        if preset == .custom {
+            return L("Paste the URL of any OpenAI-compatible server. Local endpoints don't need a key.")
         }
         if preset.configuration.authType == .none {
             return L("No API key required — connects to your local server")
@@ -1688,6 +1770,66 @@ struct ProviderConnectDialog: View {
             )
             .frame(maxWidth: 300)
             .onChange(of: state.apiKey) { _, _ in state.testResult = nil }
+    }
+
+    /// Single paste-the-URL form for the custom OpenAI-compatible endpoint.
+    /// The URL is parsed into scheme/host/port/path behind the scenes
+    /// (`CustomProviderForm.parse`); a resolved preview confirms how the
+    /// paste was understood. Optional key below for authenticated servers.
+    private var customEndpointForm: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            formField("http://localhost:11434/v1", text: $state.customEndpointURL)
+
+            SecureField(L("API key (optional for local servers)"), text: $state.apiKey)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, design: .monospaced))
+                .foregroundColor(OnboardingPalette.labelPrimary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(OnboardingPalette.fill5)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(OnboardingPalette.fill10, lineWidth: 1)
+                )
+
+            // Confirm how the paste was understood, but only when parsing
+            // actually added something (scheme, default /v1) beyond the
+            // literal input — echoing an identical URL back is noise.
+            if !state.customForm.host.isEmpty,
+                state.customForm.endpointPreview
+                    != state.customEndpointURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            {
+                Text(state.customForm.endpointPreview)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(OnboardingPalette.labelSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .frame(maxWidth: 320)
+        .onChange(of: state.customForm) { _, _ in state.testResult = nil }
+        .onChange(of: state.apiKey) { _, _ in state.testResult = nil }
+    }
+
+    private func formField(_ placeholder: String, text: Binding<String>) -> some View {
+        TextField(placeholder, text: text)
+            .textFieldStyle(.plain)
+            .font(.system(size: 13, design: .monospaced))
+            .foregroundColor(OnboardingPalette.labelPrimary)
+            .autocorrectionDisabled()
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(OnboardingPalette.fill5)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(OnboardingPalette.fill10, lineWidth: 1)
+            )
     }
 
     @ViewBuilder

@@ -3,6 +3,50 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.24.4</title>
+            <pubDate>Wed, 02 Sep 2026 20:23:11 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.24.4</sparkle:version>
+            <sparkle:shortVersionString>0.24.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.24.4/Osaurus-0.24.4.dmg" length="74604563" type="application/octet-stream" sparkle:edSignature="8eVQaNWWB/4fJ5ot8PUqILt9eLqpEqbQ4moOrFkMGL5m0/SkZLBHX6DYyfmNrR4HxLzTEP3K1sGqa6XBauUDDA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Repin vmlx-swift to de0c26d3 (one canonical boundary record per tool-call cycle) (#2589) by @jjang-ai
+- Mark internal utility generations as auxiliary cache intent (repin vmlx 86d23df8) (#2586) by @jjang-ai
+- Evals: cache write/reuse scored per tool call + sustained-decode collapse gate (#2588) by @jjang-ai
+- Repin vmlx-swift to 65ba6986 (index-union MTP evidence, hybrid cache dedup, DSV3 dtype, verify prefetch) (#2585) by @jjang-ai
+
+## 🚀 Features
+
+- added custom endpoint support to onboarding (#2599) by @RaajeevChandran
+- added source filter to the model picker's local tab (#2597) by @RaajeevChandran
+- added raptor v0.5 in what's new modal (#2577) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- fix /api/show for external models and report tool/thinking capabilities (#2606) by @RaajeevChandran
+- Full Disk Access probe: anchor on the system TCC database, and read (#2601) (#2605) by @jjang-ai
+- Watcher/dispatch agents can actually reach their target folder (#2603) by @jjang-ai
+- fail image jobs on recovered mlx gpu errors instead of crashing and repin vmlx-swift (#2587) by @RaajeevChandran
+- RAM-Safety preflight: price KV headroom by each family's real cache topology (#2595) by @jjang-ai
+- fix unreadable approval content in tool approval modal (#2575) by @RaajeevChandran
+- Delegated runs resolve their own model's reasoning, not the parent's toggle (#2592) by @jjang-ai
+- Stop the engine at tool dispatch (kill zombie post-tool decode); repin vmlx de82613a (#2591) by @jjang-ai
+- Model picker: resolve local effort capabilities live (None vs Extra-High contradiction) (#2590) by @jjang-ai
+- fix theme editor freezes (#2578) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- Repin vmlx-swift to 5a63b9be: healer opt-in (#2604) + GLM-5.3 crash/wired/loader fixes (#2607) by @jjang-ai
+- Repin vmlx-swift to 2422cfb8: fp32 cascade fixes, MLA/QSA/GDN decode perf, Qwen3VL media order (#2598) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.24.3...0.24.4
+]]></description>
+        </item>
+        <item>
             <title>0.24.3</title>
             <pubDate>Mon, 31 Aug 2026 23:09:11 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

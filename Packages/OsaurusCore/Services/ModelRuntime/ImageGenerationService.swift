@@ -367,6 +367,17 @@ public actor ImageGenerationService {
                 MLXCacheIOLock.withSerializedMLXCacheIO {
                     Memory.clearCache()
                 }
+                // Recovered-error window for this job. Since the fork's
+                // metal completion handlers report GPU command-buffer
+                // failures through the global MLX error handler instead of
+                // aborting the process, a failed buffer lets the denoise
+                // loop run to completion with garbage arrays and the engine
+                // stream can end without any `.failed` event. We hold the
+                // EXCLUSIVE image lane for the whole window (load through
+                // VAE decode), so any error recorded between here and the
+                // drain finishing belongs to this job: abandon it rather
+                // than report `.completed` with corrupt output.
+                let mlxErrorEpoch = MLXErrorRecovery.errorSequence()
                 var cancelled = false
                 var produced: [GeneratedImage] = []
                 func cancelRequested() -> Bool {
@@ -420,6 +431,13 @@ public actor ImageGenerationService {
 
                     if cancelled {
                         continuation.yield(.cancelled)
+                    } else if let mlxErr = MLXErrorRecovery.errorSince(mlxErrorEpoch) {
+                        // The engine stream finished, but a GPU-side error was
+                        // recovered during this job's window — any produced
+                        // files decode from arrays downstream of the failed
+                        // command buffer. Fail the job and discard them.
+                        continuation.yield(
+                            .failed(message: MLXForwardPassError(message: mlxErr).localizedDescription, hfAuth: false))
                     } else {
                         continuation.yield(.completed(images: produced))
                     }
@@ -451,6 +469,14 @@ public actor ImageGenerationService {
                     Memory.clearCache()
                 }
                 await MetalGate.shared.exitImageGeneration()
+                // A recovered GPU error may have corrupted the resident
+                // weights (e.g. the failure hit during load). Drop residency
+                // so the next job reloads from disk. Runs after the image
+                // gate is released — `unload()` takes the teardown lane
+                // itself, which is exclusive against ours.
+                if MLXErrorRecovery.errorSince(mlxErrorEpoch) != nil {
+                    await self.unload()
+                }
             }
             continuation.onTermination = { _ in task.cancel() }
         }

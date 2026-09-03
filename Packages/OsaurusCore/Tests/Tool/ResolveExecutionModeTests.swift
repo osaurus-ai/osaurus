@@ -188,4 +188,87 @@ struct ResolveExecutionModeTests {
             #expect(mode.folderContext == nil)
         }
     }
+
+    // MARK: - Folder-targeted background dispatch (Watcher) honors the folder
+
+    /// A Watcher (or scheduled task) is pointed at a host folder and has no
+    /// interactive sandbox toggle. With `preferHostFolder`, that folder wins
+    /// over the agent's default sandbox — the fix for the Voice Memo Watcher
+    /// bug where the pure-VM agent read its jailed `/workspace` and reported
+    /// the watched folder "empty".
+    @Test
+    func preferHostFolder_honorsFolderOverSandbox() async {
+        await SandboxTestLock.shared.run {
+            registerSandboxExec()
+            defer { ToolRegistry.shared.unregisterAllSandboxTools() }
+
+            let mode = ToolRegistry.shared.resolveExecutionMode(
+                folderContext: sampleFolderContext(),
+                autonomousEnabled: true,
+                preferHostFolder: true
+            )
+            #expect(mode.usesHostFolderTools)
+            #expect(!mode.usesSandboxTools)
+            #expect(mode.folderContext != nil)
+        }
+    }
+
+    /// `preferHostFolder` with NO folder is inert: an automation agent that
+    /// targets no folder still runs in its pure-VM sandbox.
+    @Test
+    func preferHostFolder_withoutFolder_staysSandbox() async {
+        await SandboxTestLock.shared.run {
+            registerSandboxExec()
+            defer { ToolRegistry.shared.unregisterAllSandboxTools() }
+
+            let mode = ToolRegistry.shared.resolveExecutionMode(
+                folderContext: nil,
+                autonomousEnabled: true,
+                preferHostFolder: true
+            )
+            #expect(mode.usesSandboxTools)
+            #expect(!mode.usesHostFolderTools)
+        }
+    }
+
+    /// The default (`preferHostFolder: false`, interactive chats) keeps the
+    /// historical sandbox-priority contract intact — no security regression
+    /// for a user who deliberately chose the VM boundary with a folder open.
+    @Test
+    func default_keepsSandboxPriority_forInteractiveChat() async {
+        await SandboxTestLock.shared.run {
+            registerSandboxExec()
+            defer { ToolRegistry.shared.unregisterAllSandboxTools() }
+
+            let mode = ToolRegistry.shared.resolveExecutionMode(
+                folderContext: sampleFolderContext(),
+                autonomousEnabled: true
+                // preferHostFolder defaults false
+            )
+            #expect(mode.usesSandboxTools)
+            #expect(!mode.usesHostFolderTools)
+        }
+    }
+
+    /// A legacy host-WRITE grant does not silently upgrade the honored folder
+    /// into combined mode: `preferHostFolder` yields plain `.hostFolder`
+    /// (natively read-write via the Changes sheet), never `.sandbox` with a
+    /// host bridge — the removed combined-mode surface stays removed.
+    @Test
+    func preferHostFolder_withWriteGrant_isPlainHostFolderNotCombined() async {
+        await SandboxTestLock.shared.run {
+            registerSandboxExec()
+            defer { ToolRegistry.shared.unregisterAllSandboxTools() }
+
+            let mode = ToolRegistry.shared.resolveExecutionMode(
+                folderContext: sampleFolderContext(),
+                autonomousEnabled: true,
+                allowHostFolderWrites: true,
+                preferHostFolder: true
+            )
+            #expect(mode.usesHostFolderTools)
+            #expect(!mode.usesSandboxTools)
+            #expect(!mode.allowsHostReadTools)  // not combined sandbox+host
+        }
+    }
 }

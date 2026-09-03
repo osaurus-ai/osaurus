@@ -8,6 +8,7 @@
 import AVFoundation
 import AppKit
 import Combine
+import CoreServices
 import QuartzCore
 import SwiftUI
 import os.log
@@ -28,6 +29,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     /// clicks inside our own windows, so this fills the gap for outside clicks.
     private var popoverDismissMonitor: Any?
     private var cancellables: Set<AnyCancellable> = []
+    /// Set when a silent (login-item/CLI) launch skipped the telemetry consent
+    /// prompt; consumed on the next foreground activation, which is the first
+    /// moment there is a window to host the alert.
+    private var telemetryConsentDeferredToActivation = false
     let updater = UpdaterViewModel()
 
     private var activityDot: NSView?
@@ -645,7 +650,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         //    `settingsCommand` and AppKit won't auto-present the
         //    placeholder again.
         let presentOnboarding = OnboardingService.shared.shouldShowOnboarding
-        let userInitiatedLaunch = isUserInitiatedLaunch(notification)
+        // Login-item and CLI launches stay hidden in the menu bar (#2609).
+        let silentLaunch = isSilentLaunch
+        let userInitiatedLaunch = isUserInitiatedLaunch(notification) && !silentLaunch
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
 
@@ -662,7 +669,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
             if keychainDisabledTestMode && !keychainDisabledUIPresentationMode {
                 // Headless live-proof launches only need the local HTTP server.
-            } else if presentOnboarding {
+            } else if presentOnboarding && !silentLaunch {
                 showOnboardingWindow()
             } else if userInitiatedLaunch {
                 presentInitialWindow()
@@ -687,15 +694,26 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // silently deciding for them. New users / re-onboarders made the
             // choice in onboarding, so this is gated to the no-onboarding path.
             if !keychainDisabledTestMode && !presentOnboarding {
-                maybePromptForTelemetryConsent()
+                if silentLaunch {
+                    // No window to host the alert yet; ask on the first
+                    // foreground activation instead so upgraders whose only
+                    // launches are login-item/CLI still get the one-time ask.
+                    self.telemetryConsentDeferredToActivation = true
+                } else {
+                    maybePromptForTelemetryConsent()
+                }
 
                 // One-time Product Hunt launch dialog (July 2026). Delayed
                 // past the consent prompt's own 900ms settle so the two can
                 // never race for a scope; if consent is still pending the
-                // eligibility gate defers to the next activation.
-                Task { @MainActor [weak self] in
-                    try? await Task.sleep(for: .seconds(2))
-                    self?.presentProductHuntLaunchDialogIfEligible()
+                // eligibility gate defers to the next activation. Silent
+                // launches skip it here; `applicationDidBecomeActive`
+                // re-checks eligibility on the next foreground activation.
+                if !silentLaunch {
+                    Task { @MainActor [weak self] in
+                        try? await Task.sleep(for: .seconds(2))
+                        self?.presentProductHuntLaunchDialogIfEligible()
+                    }
                 }
             }
 
@@ -890,6 +908,33 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     /// background-task "View Chat" toast), so we must not also pop an empty chat.
     private func isUserInitiatedLaunch(_ notification: Notification) -> Bool {
         (notification.userInfo?["NSApplicationLaunchIsDefaultLaunchKey"] as? Bool) ?? true
+    }
+
+    /// Launches that should come up silently in the menu bar with no window:
+    /// a Start-at-Login launch (parent process is loginwindow; login-item
+    /// launches still report `NSApplicationLaunchIsDefaultLaunchKey`, so the
+    /// default-launch check alone can't catch them) and a launch triggered by
+    /// the CLI, which only needs the server running. Inconclusive parent
+    /// lookups fall through to the normal visible-launch path.
+    /// Must be evaluated during `applicationDidFinishLaunching`; the current
+    /// AppleEvent that carries `keyAELaunchedAsLogInItem` is only valid there.
+    private var isSilentLaunch: Bool {
+        if ProcessInfo.processInfo.arguments.contains("--launched-by-cli") {
+            return true
+        }
+        if let event = NSAppleEventManager.shared().currentAppleEvent,
+            event.eventID == kAEOpenApplication,
+            event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
+                == keyAELaunchedAsLogInItem
+        {
+            return true
+        }
+        if let parent = NSRunningApplication(processIdentifier: getppid()),
+            parent.bundleIdentifier == "com.apple.loginwindow"
+        {
+            return true
+        }
+        return false
     }
 
     @MainActor
@@ -1116,10 +1161,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     /// gates make this a cheap no-op outside the campaign window and after
     /// it has been seen.
     public func applicationDidBecomeActive(_ notification: Notification) {
+        let promptForConsent = telemetryConsentDeferredToActivation
+        telemetryConsentDeferredToActivation = false
+
         // Give the activation (window ordering, focus restoration) a beat to
         // settle so the alert lands in the window the user actually sees.
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+            if promptForConsent {
+                self?.maybePromptForTelemetryConsent()
+            }
             self?.presentProductHuntLaunchDialogIfEligible()
         }
     }
@@ -1782,6 +1833,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
     // Expose a method to show the popover programmatically (e.g., for Cmd+,)
     public func showPopover() {
+        // Onboarding is a mandatory first step (matches the reopen path). A
+        // silently launched fresh install lands here via the status item or
+        // the CLI `ui` command with onboarding never presented; without this
+        // the user reaches chat with no model/agent configured.
+        if OnboardingService.shared.shouldShowOnboarding {
+            showOnboardingWindow()
+            return
+        }
         guard let statusButton = statusItem?.button else { return }
         if let popover, popover.isShown {
             // Already visible; bring app to front

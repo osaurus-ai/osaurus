@@ -118,8 +118,10 @@ struct WriteKnowledgeToolTests {
         #expect(ToolEnvelope.isSuccess(envelope))
         #expect(envelope.contains("1 created"))
         #expect(envelope.contains("1 replaced"))
-        #expect(envelope.contains("a.md"))
-        #expect(envelope.contains("b.md"))
+        // Collection-qualified backticked paths are what the chat renderer
+        // turns into clickable knowledge links.
+        #expect(envelope.contains("`packaging/a.md`"))
+        #expect(envelope.contains("`packaging/b.md`"))
         // The loop closure a proposal queue structurally cannot offer.
         #expect(envelope.contains("search_knowledge"))
     }

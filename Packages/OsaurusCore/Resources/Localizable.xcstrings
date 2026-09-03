@@ -25653,6 +25653,35 @@
         }
       }
     },
+    "API key (optional for local servers)": {
+      "comment": "Placeholder for the optional key field in the onboarding custom endpoint dialog.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API-Schlüssel (optional für lokale Server)"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API 키 (로컬 서버는 선택 사항)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API-ключ (необязательно для локальных серверов)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API 密钥（本地服务器可选）"
+          }
+        }
+      }
+    },
     "API Key": {
       "localizations": {
         "de": {
@@ -43583,6 +43612,40 @@
         }
       }
     },
+    "Choose a folder new chats in this project open with": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wähle einen Ordner, mit dem neue Chats in diesem Projekt öffnen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 프로젝트의 새 채팅이 열릴 폴더를 선택하세요"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выберите папку, с которой будут открываться новые чаты в этом проекте"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择此项目中新聊天打开时使用的文件夹"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選擇此專案中新聊天開啟時使用的資料夾"
+          }
+        }
+      }
+    },
     "Choose a folder this agent may read and write inside.": {
       "localizations": {
         "de": {
@@ -44355,6 +44418,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "選擇檔案…"
+          }
+        }
+      }
+    },
+    "Choose Folder…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ordner auswählen…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "폴더 선택…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выбрать папку…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择文件夹…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選擇資料夾…"
           }
         }
       }
@@ -51253,6 +51350,35 @@
           "stringUnit": {
             "state": "translated",
             "value": "連接 Discord 機器人，便能讓 Osaurus 讀取允許列表中的頻道，並僅向寫入允許列表中的目標發送消息。"
+          }
+        }
+      }
+    },
+    "Connect a custom endpoint": {
+      "comment": "Title of the onboarding connect dialog for a custom OpenAI-compatible endpoint.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eigenen Endpunkt verbinden"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "사용자 지정 엔드포인트 연결"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подключить собственную конечную точку"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接自定义端点"
           }
         }
       }
@@ -122482,6 +122608,40 @@
         }
       }
     },
+    "New chats in this project open with this folder.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neue Chats in diesem Projekt öffnen mit diesem Ordner."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 프로젝트의 새 채팅은 이 폴더로 시작합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Новые чаты в этом проекте открываются с этой папкой."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此项目中的新聊天将以此文件夹打开。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此專案中的新聊天將以此資料夾開啟。"
+          }
+        }
+      }
+    },
     "New chats started from this project use this agent.": {
       "localizations": {
         "de": {
@@ -142792,6 +142952,35 @@
           "stringUnit": {
             "state": "translated",
             "value": "粘貼你在初始設置時保存的 24 個詞恢復助記詞。我們將恢復原始主密鑰，你現有的智能體和訪問密鑰將重新開始工作。"
+          }
+        }
+      }
+    },
+    "Paste the URL of any OpenAI-compatible server. Local endpoints don't need a key.": {
+      "comment": "Caption of the onboarding connect dialog for a custom OpenAI-compatible endpoint.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Füge die URL eines beliebigen OpenAI-kompatiblen Servers ein. Lokale Endpunkte benötigen keinen Schlüssel."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI 호환 서버의 URL을 붙여넣으세요. 로컬 엔드포인트에는 키가 필요하지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вставьте URL любого сервера, совместимого с OpenAI. Локальным конечным точкам ключ не нужен."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "粘贴任意 OpenAI 兼容服务器的 URL。本地端点无需密钥。"
           }
         }
       }
@@ -165348,6 +165537,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "移除文件"
+          }
+        }
+      }
+    },
+    "Remove folder": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ordner entfernen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "폴더 제거"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить папку"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除文件夹"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除資料夾"
           }
         }
       }
@@ -214110,6 +214333,24 @@
         }
       }
     },
+    "Toggle Sidebar": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Seitenleiste ein-/ausblenden" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "사이드바 표시/가리기" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Показать/скрыть боковую панель" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "切换侧边栏" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "切換側邊欄" } }
+      }
+    },
+    "Next Agent": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Nächster Agent" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "다음 에이전트" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Следующий агент" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "下一个智能体" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "下一個智能體" } }
+      }
+    },
     "Toggle Voice Detection": {
       "extractionState": "stale",
       "localizations": {
@@ -231107,6 +231348,40 @@
         }
       }
     },
+    "Working Folder": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arbeitsordner"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "작업 폴더"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Рабочая папка"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作文件夹"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作資料夾"
+          }
+        }
+      }
+    },
     "Working folder is read-only in sandbox mode — code runs in the sandbox": {
       "comment": "Tooltip text for the folder chip when sandbox mode is enabled and the working folder is read-only.",
       "extractionState": "stale",
@@ -236217,6 +236492,453 @@
     },
     "Queueing video (quoted %@)…": {
       "comment": "A message that appears in the chat log while the system is generating a video. The argument is the price quoted for the video, in credits."
+    },
+    "A GUI app inherits a narrower PATH than your terminal. If `claude` lives somewhere unusual, symlink it into /usr/local/bin.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Eine GUI-App erbt einen engeren PATH als dein Terminal. Wenn `claude` an einem ungewöhnlichen Ort liegt, verlinke es per Symlink nach /usr/local/bin." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "GUI 앱은 터미널보다 좁은 PATH를 상속합니다. `claude`가 특이한 위치에 있다면 /usr/local/bin에 심볼릭 링크를 만드세요." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "GUI-приложение наследует более узкий PATH, чем терминал. Если `claude` установлен в необычном месте, создайте симлинк в /usr/local/bin." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "GUI 应用继承的 PATH 比终端更窄。如果 `claude` 安装在不常见的位置，请将其符号链接到 /usr/local/bin。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "GUI 應用程式繼承的 PATH 比終端機更窄。如果 `claude` 安裝在不常見的位置，請將其符號連結到 /usr/local/bin。" } }
+      }
+    },
+    "Add Folder": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Ordner hinzufügen" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "폴더 추가" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Добавить папку" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "添加文件夹" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "新增資料夾" } }
+      }
+    },
+    "Allow file changes": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Dateiänderungen erlauben" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "파일 변경 허용" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Разрешить изменение файлов" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "允许文件更改" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "允許檔案變更" } }
+      }
+    },
+    "Allow Osaurus configuration changes": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Osaurus-Konfigurationsänderungen erlauben" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Osaurus 구성 변경 허용" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Разрешить изменение конфигурации Osaurus" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "允许更改 Osaurus 配置" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "允許變更 Osaurus 設定" } }
+      }
+    },
+    "Allow Osaurus read tools": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Osaurus-Lesewerkzeuge erlauben" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Osaurus 읽기 도구 허용" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Разрешить инструменты чтения Osaurus" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "允许 Osaurus 读取工具" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "允許 Osaurus 讀取工具" } }
+      }
+    },
+    "Allow shell commands": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Shell-Befehle erlauben" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "셸 명령 허용" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Разрешить команды оболочки" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "允许 Shell 命令" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "允許 Shell 指令" } }
+      }
+    },
+    "Already installed? Show where Osaurus looked": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Bereits installiert? Zeigen, wo Osaurus gesucht hat" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "이미 설치되어 있나요? Osaurus가 찾아본 위치 보기" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Уже установлено? Показать, где искал Osaurus" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "已安装？查看 Osaurus 查找过的位置" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "已安裝？查看 Osaurus 尋找過的位置" } }
+      }
+    },
+    "Attach a scoped MCP bridge for status, list, describe, and search.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Eine begrenzte MCP-Bridge für Status, Auflisten, Beschreiben und Suchen anbinden." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "상태, 목록, 설명, 검색용으로 범위가 제한된 MCP 브리지를 연결합니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Подключить ограниченный MCP-мост для статуса, списка, описания и поиска." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "附加范围受限的 MCP 桥接，用于状态、列表、描述和搜索。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "附加範圍受限的 MCP 橋接，用於狀態、列表、描述和搜尋。" } }
+      }
+    },
+    "Attach Files": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Dateien anhängen" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "파일 첨부" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Прикрепить файлы" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "附加文件" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "附加檔案" } }
+      }
+    },
+    "Auto-approve Bash under your macOS account. This is not the Osaurus sandbox.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Bash unter deinem macOS-Konto automatisch genehmigen. Dies ist nicht die Osaurus-Sandbox." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "macOS 계정에서 Bash를 자동 승인합니다. Osaurus 샌드박스가 아닙니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Автоматически одобрять Bash под вашей учётной записью macOS. Это не песочница Osaurus." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "在你的 macOS 账户下自动批准 Bash。这不是 Osaurus 沙盒。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "在你的 macOS 帳戶下自動核准 Bash。這不是 Osaurus 沙箱。" } }
+      }
+    },
+    "Auto-approve Edit, Write, and NotebookEdit. These run with your macOS file access, starting in the chat folder.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Edit, Write und NotebookEdit automatisch genehmigen. Sie laufen mit deinem macOS-Dateizugriff, beginnend im Chat-Ordner." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Edit, Write, NotebookEdit를 자동 승인합니다. macOS 파일 접근 권한으로 채팅 폴더에서 시작해 실행됩니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Автоматически одобрять Edit, Write и NotebookEdit. Они работают с вашим доступом к файлам macOS, начиная с папки чата." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "自动批准 Edit、Write 和 NotebookEdit。它们以你的 macOS 文件访问权限运行，从聊天文件夹开始。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "自動核准 Edit、Write 和 NotebookEdit。它們以你的 macOS 檔案存取權限執行，從聊天資料夾開始。" } }
+      }
+    },
+    "Changes will apply when the sandbox starts.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Änderungen werden beim Start der Sandbox wirksam." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "변경 사항은 샌드박스가 시작될 때 적용됩니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Изменения вступят в силу при запуске песочницы." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "更改将在沙盒启动时生效。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "變更將在沙箱啟動時生效。" } }
+      }
+    },
+    "Checking Claude Code…": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Claude Code wird geprüft…" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Claude Code 확인 중…" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Проверка Claude Code…" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在检查 Claude Code…" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在檢查 Claude Code…" } }
+      }
+    },
+    "Claude Code isn't installed": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Claude Code ist nicht installiert" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Claude Code가 설치되어 있지 않습니다" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Claude Code не установлен" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "未安装 Claude Code" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "未安裝 Claude Code" } }
+      }
+    },
+    "Claude Code isn't installed, or its `claude` command isn't on this app's PATH. Install it, then restart Osaurus.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Claude Code ist nicht installiert, oder sein `claude`-Befehl ist nicht im PATH dieser App. Installiere es und starte Osaurus neu." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Claude Code가 설치되어 있지 않거나 `claude` 명령이 이 앱의 PATH에 없습니다. 설치한 다음 Osaurus를 다시 시작하세요." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Claude Code не установлен, или его команда `claude` отсутствует в PATH этого приложения. Установите его и перезапустите Osaurus." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "未安装 Claude Code，或其 `claude` 命令不在此应用的 PATH 中。请安装后重新启动 Osaurus。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "未安裝 Claude Code，或其 `claude` 指令不在此應用程式的 PATH 中。請安裝後重新啟動 Osaurus。" } }
+      }
+    },
+    "Claude Code isn't signed in": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Claude Code ist nicht angemeldet" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Claude Code에 로그인되어 있지 않습니다" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Вход в Claude Code не выполнен" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "Claude Code 未登录" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "Claude Code 未登入" } }
+      }
+    },
+    "Claude Code models are in your model picker now. Requests draw on your subscription's limits, shared with your terminal sessions.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Die Claude-Code-Modelle sind jetzt in deiner Modellauswahl. Anfragen zählen gegen die Limits deines Abos, gemeinsam mit deinen Terminal-Sitzungen." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "이제 모델 선택기에서 Claude Code 모델을 사용할 수 있습니다. 요청은 터미널 세션과 공유되는 구독 한도에서 차감됩니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Модели Claude Code теперь в вашем списке моделей. Запросы расходуют лимиты подписки, общие с сеансами в терминале." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "Claude Code 模型现已加入你的模型选择器。请求会消耗你的订阅额度，与终端会话共享。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "Claude Code 模型現已加入你的模型選擇器。請求會消耗你的訂閱額度，與終端機工作階段共享。" } }
+      }
+    },
+    "Claude Code runs as a text generator with every built-in and MCP tool disabled.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Claude Code läuft als Textgenerator, alle integrierten und MCP-Werkzeuge sind deaktiviert." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Claude Code가 모든 내장 도구와 MCP 도구가 비활성화된 텍스트 생성기로 실행됩니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Claude Code работает как генератор текста, все встроенные и MCP-инструменты отключены." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "Claude Code 作为文本生成器运行，所有内置工具和 MCP 工具均已禁用。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "Claude Code 作為文字產生器執行，所有內建工具和 MCP 工具均已停用。" } }
+      }
+    },
+    "Claude Code runs its own agent loop under your macOS account. Read, Grep, and Glob are allowed by default; every wider capability is opt-in.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Claude Code führt seine eigene Agentenschleife unter deinem macOS-Konto aus. Read, Grep und Glob sind standardmäßig erlaubt; jede weitergehende Fähigkeit ist Opt-in." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Claude Code가 macOS 계정에서 자체 에이전트 루프를 실행합니다. Read, Grep, Glob은 기본 허용이며, 더 넓은 기능은 모두 옵트인입니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Claude Code выполняет собственный агентный цикл под вашей учётной записью macOS. Read, Grep и Glob разрешены по умолчанию; каждая более широкая возможность включается отдельно." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "Claude Code 在你的 macOS 账户下运行自己的智能体循环。Read、Grep 和 Glob 默认允许，更广泛的能力均需手动开启。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "Claude Code 在你的 macOS 帳戶下執行自己的代理迴圈。Read、Grep 和 Glob 預設允許，更廣泛的能力均需手動開啟。" } }
+      }
+    },
+    "Context used: %@ tokens": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Kontext verwendet: %@ Token" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "컨텍스트 사용량: %@ 토큰" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Использовано контекста: %@ токенов" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "已用上下文：%@ 个 token" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "已用上下文：%@ 個 token" } }
+      }
+    },
+    "Empty scans ~/models, HF_HUB_CACHE, HF_HOME/hub, and ~/.cache/huggingface/hub.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Leer durchsucht ~/models, HF_HUB_CACHE, HF_HOME/hub und ~/.cache/huggingface/hub." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "비워 두면 ~/models, HF_HUB_CACHE, HF_HOME/hub, ~/.cache/huggingface/hub를 검색합니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Пустое значение сканирует ~/models, HF_HUB_CACHE, HF_HOME/hub и ~/.cache/huggingface/hub." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "留空时扫描 ~/models、HF_HUB_CACHE、HF_HOME/hub 和 ~/.cache/huggingface/hub。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "留空時掃描 ~/models、HF_HUB_CACHE、HF_HOME/hub 和 ~/.cache/huggingface/hub。" } }
+      }
+    },
+    "Install it, then come back:": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Installiere es und komm dann zurück:" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "설치한 다음 다시 돌아오세요:" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Установите его и вернитесь:" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "安装后再回到这里：" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "安裝後再回到這裡：" } }
+      }
+    },
+    "Installed version": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Installierte Version" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "설치된 버전" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Установленная версия" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "已安装版本" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "已安裝版本" } }
+      }
+    },
+    "Open Claude Code and complete sign-in:": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Öffne Claude Code und schließe die Anmeldung ab:" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Claude Code를 열고 로그인을 완료하세요:" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Откройте Claude Code и завершите вход:" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "打开 Claude Code 并完成登录：" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "開啟 Claude Code 並完成登入：" } }
+      }
+    },
+    "Organization": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Organisation" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "조직" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Организация" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "组织" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "組織" } }
+      }
+    },
+    "Osaurus delegates sign-in and requests to Anthropic's Claude Code CLI. Credentials stay with the CLI; model requests run in the cloud.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Osaurus delegiert Anmeldung und Anfragen an Anthropics Claude-Code-CLI. Zugangsdaten bleiben bei der CLI; Modellanfragen laufen in der Cloud." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Osaurus는 로그인과 요청을 Anthropic의 Claude Code CLI에 위임합니다. 자격 증명은 CLI에 남고, 모델 요청은 클라우드에서 실행됩니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Osaurus делегирует вход и запросы CLI Claude Code от Anthropic. Учётные данные остаются в CLI; запросы к моделям выполняются в облаке." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "Osaurus 将登录和请求委托给 Anthropic 的 Claude Code CLI。凭据保留在 CLI 中，模型请求在云端运行。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "Osaurus 將登入和請求委託給 Anthropic 的 Claude Code CLI。憑證保留在 CLI 中，模型請求在雲端執行。" } }
+      }
+    },
+    "Osaurus runs your local `claude` command, so Claude Code has to be installed first.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Osaurus führt deinen lokalen `claude`-Befehl aus, daher muss Claude Code zuerst installiert sein." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Osaurus는 로컬 `claude` 명령을 실행하므로 먼저 Claude Code가 설치되어 있어야 합니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Osaurus запускает вашу локальную команду `claude`, поэтому сначала нужно установить Claude Code." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "Osaurus 运行你本地的 `claude` 命令，因此必须先安装 Claude Code。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "Osaurus 執行你本機的 `claude` 指令，因此必須先安裝 Claude Code。" } }
+      }
+    },
+    "Permit agent, provider, model, plugin, and MCP configuration writes.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Schreibzugriff auf Agenten-, Provider-, Modell-, Plugin- und MCP-Konfiguration erlauben." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "에이전트, 제공자, 모델, 플러그인, MCP 구성 쓰기를 허용합니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Разрешить запись конфигурации агентов, провайдеров, моделей, плагинов и MCP." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "允许写入智能体、提供方、模型、插件和 MCP 配置。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "允許寫入代理、供應商、模型、外掛和 MCP 設定。" } }
+      }
+    },
+    "Plan": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Tarif" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "요금제" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Тариф" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "订阅方案" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "訂閱方案" } }
+      }
+    },
+    "Re-check": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Erneut prüfen" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "다시 확인" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Проверить снова" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "重新检查" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "重新檢查" } }
+      }
+    },
+    "Sign in with Claude": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Mit Claude anmelden" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Claude로 로그인" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Войти через Claude" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "使用 Claude 登录" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "使用 Claude 登入" } }
+      }
+    },
+    "Sign in with the Anthropic account that has your Pro or Max subscription.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Melde dich mit dem Anthropic-Konto an, das dein Pro- oder Max-Abo enthält." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Pro 또는 Max 구독이 있는 Anthropic 계정으로 로그인하세요." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Войдите с учётной записью Anthropic, на которой оформлена подписка Pro или Max." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "使用拥有 Pro 或 Max 订阅的 Anthropic 账户登录。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "使用擁有 Pro 或 Max 訂閱的 Anthropic 帳戶登入。" } }
+      }
+    },
+    "Sign-in status needs a terminal check": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Anmeldestatus erfordert eine Prüfung im Terminal" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "로그인 상태는 터미널에서 확인해야 합니다" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Статус входа нужно проверить в терминале" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "登录状态需要在终端中检查" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "登入狀態需要在終端機中檢查" } }
+      }
+    },
+    "Signed in and ready": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Angemeldet und bereit" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "로그인 완료, 사용 준비됨" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Вход выполнен, всё готово" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "已登录，随时可用" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "已登入，隨時可用" } }
+      }
+    },
+    "Text only": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Nur Text" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "텍스트 전용" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Только текст" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "仅文本" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "僅文字" } }
+      }
+    },
+    "the Osaurus server is not running — tell the user to start it from the Osaurus app": {
+      "shouldTranslate": false
+    },
+    "They are read-only. You cannot change Osaurus's configuration; describe the change the user should make instead.": {
+      "shouldTranslate": false
+    },
+    "they are switched off for this agent — tell the user to enable \"Give It Osaurus's Own Tools\" in Osaurus settings": {
+      "shouldTranslate": false
+    },
+    "This Claude Code version doesn't provide machine-readable sign-in status. Osaurus won't guess or inspect its credentials.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Diese Claude-Code-Version liefert keinen maschinenlesbaren Anmeldestatus. Osaurus rät nicht und untersucht die Zugangsdaten nicht." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "이 Claude Code 버전은 기계가 읽을 수 있는 로그인 상태를 제공하지 않습니다. Osaurus는 추측하거나 자격 증명을 들여다보지 않습니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Эта версия Claude Code не предоставляет машиночитаемый статус входа. Osaurus не будет гадать и не станет проверять её учётные данные." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "此版本的 Claude Code 不提供机器可读的登录状态。Osaurus 不会猜测，也不会检查其凭据。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "此版本的 Claude Code 不提供機器可讀的登入狀態。Osaurus 不會猜測，也不會檢查其憑證。" } }
+      }
+    },
+    "This opens Claude Code's own sign-in in your browser. Osaurus never sees your credentials.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Dies öffnet die eigene Anmeldung von Claude Code in deinem Browser. Osaurus sieht deine Zugangsdaten nie." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "브라우저에서 Claude Code 자체 로그인이 열립니다. Osaurus는 자격 증명을 절대 보지 않습니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Откроется собственная страница входа Claude Code в браузере. Osaurus никогда не видит ваши учётные данные." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "这会在浏览器中打开 Claude Code 自己的登录页面。Osaurus 绝不会看到你的凭据。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "這會在瀏覽器中開啟 Claude Code 自己的登入頁面。Osaurus 絕不會看到你的憑證。" } }
+      }
+    },
+    "This setting will apply when the sandbox starts.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Diese Einstellung wird beim Start der Sandbox wirksam." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "이 설정은 샌드박스가 시작될 때 적용됩니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Эта настройка вступит в силу при запуске песочницы." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "此设置将在沙盒启动时生效。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "此設定將在沙箱啟動時生效。" } }
+      }
+    },
+    "This sign-in isn't a Pro or Max subscription, so requests bill through whatever credential Claude Code is configured with.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Diese Anmeldung ist kein Pro- oder Max-Abo, daher werden Anfragen über die Zugangsdaten abgerechnet, mit denen Claude Code konfiguriert ist." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "이 로그인은 Pro 또는 Max 구독이 아니므로, 요청은 Claude Code에 구성된 자격 증명으로 청구됩니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Этот вход не относится к подписке Pro или Max, поэтому запросы оплачиваются через те учётные данные, с которыми настроен Claude Code." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "此登录不是 Pro 或 Max 订阅，因此请求将通过 Claude Code 配置的凭据计费。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "此登入不是 Pro 或 Max 訂閱，因此請求將透過 Claude Code 設定的憑證計費。" } }
+      }
+    },
+    "Use Claude Code": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Claude Code verwenden" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Claude Code 사용" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Использовать Claude Code" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "使用 Claude Code" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "使用 Claude Code" } }
+      }
+    },
+    "Use your Claude Code account": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Dein Claude-Code-Konto verwenden" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Claude Code 계정 사용" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Использовать вашу учётную запись Claude Code" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "使用你的 Claude Code 账户" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "使用你的 Claude Code 帳戶" } }
+      }
+    },
+    "Use your signed-in Claude Code CLI": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Deine angemeldete Claude-Code-CLI verwenden" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "로그인된 Claude Code CLI 사용" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Использовать CLI Claude Code, в котором выполнен вход" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "使用已登录的 Claude Code CLI" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "使用已登入的 Claude Code CLI" } }
+      }
+    },
+    "Waiting for your browser…": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Warten auf deinen Browser…" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "브라우저를 기다리는 중…" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Ожидание браузера…" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在等待浏览器…" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在等待瀏覽器…" } }
+      }
+    },
+    "You can inspect this Osaurus install through these tools: %@. They are the only Osaurus tools available — others named in your instructions are not present on this run.": {
+      "shouldTranslate": false
+    },
+    "You can use the Claude Code models after signing in. Updating Claude Code enables status checks and browser sign-in from this screen.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Nach der Anmeldung kannst du die Claude-Code-Modelle verwenden. Ein Update von Claude Code ermöglicht Statusprüfungen und Browser-Anmeldung direkt von diesem Bildschirm." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "로그인 후 Claude Code 모델을 사용할 수 있습니다. Claude Code를 업데이트하면 이 화면에서 상태 확인과 브라우저 로그인을 사용할 수 있습니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "После входа можно использовать модели Claude Code. Обновление Claude Code включает проверку статуса и вход через браузер прямо с этого экрана." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "登录后即可使用 Claude Code 模型。更新 Claude Code 后可在此界面进行状态检查和浏览器登录。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "登入後即可使用 Claude Code 模型。更新 Claude Code 後可在此畫面進行狀態檢查和瀏覽器登入。" } }
+      }
+    },
+    "You do NOT have Osaurus's configuration tools (osaurus_status, osaurus_list, and similar) on this run, because %@. Do not try to call them and do not speculate about permission errors. If the user asks about Osaurus's configuration, say plainly that you can't read it right now, explain why, and offer what they can check themselves.": {
+      "shouldTranslate": false
+    },
+    "Open With": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Öffnen mit" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "다음으로 열기" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Открыть в приложении" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "打开方式" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "打開方式" } }
+      }
+    },
+    "Show in Finder": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Im Finder zeigen" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Finder에서 보기" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Показать в Finder" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "在访达中显示" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "在 Finder 中顯示" } }
+      }
+    },
+    "Document Not Found": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Dokument nicht gefunden" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "문서를 찾을 수 없음" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Документ не найден" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "未找到文档" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "找不到文件" } }
+      }
+    },
+    "This knowledge document no longer exists in its collection.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Dieses Wissensdokument existiert nicht mehr in seiner Sammlung." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "이 지식 문서는 더 이상 컬렉션에 존재하지 않습니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Этот документ знаний больше не существует в своей коллекции." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "该知识文档已不存在于其集合中。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "此知識文件已不存在於其集合中。" } }
+      }
     }
   },
   "version": "1.1"

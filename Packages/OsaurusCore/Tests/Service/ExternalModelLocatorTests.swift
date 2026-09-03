@@ -383,6 +383,64 @@ struct ExternalModelLocatorTests {
         #expect(report?.skipped.isEmpty == true)
     }
 
+    @Test func modelInfo_resolvesExternalHFCacheBundle() async {
+        await OsaurusTestGlobals.withPathsLock {
+            modelInfo_resolvesExternalHFCacheBundle_body()
+        }
+    }
+
+    private func modelInfo_resolvesExternalHFCacheBundle_body() {
+        let previousRoot = OsaurusPaths.overrideRoot
+        let previousOverride = ExternalModelLocator.testRootsOverride
+        let manifestRoot = makeTempDir()
+        let hfRoot = makeTempDir()
+        OsaurusPaths.overrideRoot = manifestRoot
+        ExternalModelLocator.invalidateInMemory()
+        defer {
+            OsaurusPaths.overrideRoot = previousRoot
+            ExternalModelLocator.testRootsOverride = previousOverride
+            ExternalModelLocator.invalidateInMemory()
+            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+            try? FileManager.default.removeItem(at: manifestRoot)
+            try? FileManager.default.removeItem(at: hfRoot)
+        }
+
+        let fm = FileManager.default
+        let rev = "abc123"
+        let modelDir = hfRoot.appendingPathComponent("models--org--repo", isDirectory: true)
+        let refsDir = modelDir.appendingPathComponent("refs", isDirectory: true)
+        try? fm.createDirectory(at: refsDir, withIntermediateDirectories: true)
+        try? Data(rev.utf8).write(to: refsDir.appendingPathComponent("main"))
+        let snapshot = modelDir.appendingPathComponent("snapshots/\(rev)", isDirectory: true)
+        writeBundle(at: snapshot)
+        try? Data(#"{"model_type":"qwen3","max_position_embeddings":4096}"#.utf8)
+            .write(to: snapshot.appendingPathComponent("config.json"))
+        // A Qwen3-style template: thinking markers plus the enable_thinking kwarg.
+        try? Data("{% if enable_thinking %}<think>{% endif %}".utf8)
+            .write(to: snapshot.appendingPathComponent("chat_template.jinja"))
+
+        ExternalModelLocator.testRootsOverride = [(root: hfRoot, source: .huggingFaceCache)]
+        ExternalModelLocator.rescan()
+
+        // Drop any memoized ModelInfo entry so the lookup re-probes from disk.
+        NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+
+        // /api/show resolves metadata through ModelInfo.load; before the
+        // external-registry fallback this returned nil for hf-cache models
+        // even though /api/tags listed them (issue #2600).
+        let info = ModelInfo.load(modelId: "org/repo")
+        #expect(info != nil)
+        #expect(info?.model.architecture == "qwen3")
+        #expect(info?.model.contextLength == 4096)
+
+        // Capabilities come from the runtime's own detectors (issue #2602):
+        // qwen3 defaults to the JSON tool-call format, and the template above
+        // carries thinking markers.
+        #expect(info?.capabilities.contains("completion") == true)
+        #expect(info?.capabilities.contains("tools") == true)
+        #expect(info?.capabilities.contains("thinking") == true)
+    }
+
     @Test func rescan_reportsHFCacheSnapshotSkipReason() async {
         await OsaurusTestGlobals.withPathsLock {
             rescan_reportsHFCacheSnapshotSkipReason_body()

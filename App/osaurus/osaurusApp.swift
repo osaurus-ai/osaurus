@@ -167,6 +167,24 @@ private extension osaurusApp {
 
     var viewMenuCommands: some Commands {
         CommandGroup(after: .sidebar) {
+            Button {
+                Task { @MainActor in
+                    ChatWindowManager.shared.toggleSidebarInFocusedWindow()
+                }
+            } label: {
+                Text(verbatim: L("Toggle Sidebar"))
+            }
+            .keyboardShortcut("b", modifiers: .command)
+
+            Button {
+                Task { @MainActor in
+                    ChatWindowManager.shared.cycleAgentInFocusedWindow()
+                }
+            } label: {
+                Text(verbatim: L("Next Agent"))
+            }
+            .keyboardShortcut(".", modifiers: [.command, .shift])
+
             Divider()
 
             Menu {

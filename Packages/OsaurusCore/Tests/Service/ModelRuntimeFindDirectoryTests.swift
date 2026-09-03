@@ -848,4 +848,180 @@ struct ModelRuntimeFindDirectoryTests {
         let json = #"{"model_type":"\#(modelType)","n_routed_experts":\#(routedExperts)}"#
         try Data(json.utf8).write(to: dir.appendingPathComponent("config.json"))
     }
+
+    // MARK: - Family-aware KV headroom edge cases
+    //
+    // The RAM-Safety preflight prices "one target-model weight footprint plus
+    // architecture-aware KV, SSM, and activation headroom". These cases pin
+    // that pricing for the exact family shapes that broke in the field:
+    // Gemma4's decoder nested under `text_config` (the pricer used to see no
+    // layers at all and fall back to 20%-of-weights, ~3x UNDER Gemma-12B's
+    // real KV), sliding/full `layer_types` mixes, qwen3_5 linear/full mixes,
+    // and Bailing's in-code layer-group rule with MLA cache dims (which used
+    // to be priced as 24 MHA layers, ~3x OVER what 6 MLA layers can hold).
+
+    @Test("Gemma4: nested text_config + sliding/full mix prices real KV, not the fallback")
+    func gemma4NestedSlidingFullHeadroom() throws {
+        let dir = try makeIsolatedDir()
+        // Real gemma-4-12B geometry: 48 layers = 8 full + 40 sliding(1024),
+        // kv 8 heads x 256 dims, decoder entirely under text_config.
+        let layerTypes = Array(
+            repeating: #""sliding_attention","sliding_attention","sliding_attention","sliding_attention","sliding_attention","full_attention""#,
+            count: 8
+        ).joined(separator: ",")
+        let config = """
+            {
+              "model_type": "gemma4_unified",
+              "text_config": {
+                "model_type": "gemma4",
+                "num_hidden_layers": 48,
+                "num_attention_heads": 16,
+                "num_key_value_heads": 8,
+                "head_dim": 256,
+                "sliding_window": 1024,
+                "max_position_embeddings": 262144,
+                "layer_types": [\(layerTypes)]
+              }
+            }
+            """
+        try Data(config.utf8).write(to: dir.appendingPathComponent("config.json"))
+
+        let weights: Int64 = 8 * 1024 * 1024 * 1024
+        let headroom = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: weights,
+            modelDirectory: dir,
+            kvRetentionCap: 65_536
+        )
+        // 8 full x 65536 + 40 sliding x 1024 positions, 2*8*256 dims, bf16,
+        // +25% slack = 5.39 GiB. The old nested-config bug returned the 20%
+        // fallback (1.6 GiB) — under-priced ~3x.
+        let expected = Int64(
+            Double((8 * 65_536 + 40 * 1_024) * 2 * 8 * 256 * 2) * 1.25)
+        #expect(headroom == expected)
+        #expect(headroom > 4 * 1024 * 1024 * 1024)
+        #expect(headroom < 7 * 1024 * 1024 * 1024)
+    }
+
+    @Test("layer_types full layers are not clamped by the whole-model sliding window")
+    func slidingWindowDoesNotClampDeclaredFullLayers() throws {
+        let dir = try makeIsolatedDir()
+        // Two identical configs except one declares layer_types. With the
+        // per-layer mix, the full layer must be priced at the retention cap
+        // (65536), not at the 1K window — that difference is the whole bug.
+        let config = """
+            {
+              "model_type": "test_mix",
+              "num_hidden_layers": 2,
+              "num_attention_heads": 8,
+              "num_key_value_heads": 8,
+              "head_dim": 128,
+              "sliding_window": 1024,
+              "max_position_embeddings": 262144,
+              "layer_types": ["full_attention", "sliding_attention"]
+            }
+            """
+        try Data(config.utf8).write(to: dir.appendingPathComponent("config.json"))
+        let headroom = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: 1024,
+            modelDirectory: dir,
+            kvRetentionCap: 65_536
+        )
+        let expected = max(
+            Int64(512 * 1024 * 1024),
+            Int64(Double((65_536 + 1_024) * 2 * 8 * 128 * 2) * 1.25))
+        #expect(headroom == expected)
+    }
+
+    @Test("qwen3_5 hybrid: only full_attention layers hold KV; GDN state is priced separately")
+    func qwen35LinearFullMixHeadroom() throws {
+        let dir = try makeIsolatedDir()
+        // Real 27B geometry: 64 layers = 16 full + 48 linear (GDN), kv 4
+        // heads x 256 dims. The old count priced all 64 as full attention.
+        let types = (0..<64).map { i in
+            (i + 1) % 4 == 0 ? #""full_attention""# : #""linear_attention""#
+        }.joined(separator: ",")
+        let config = """
+            {
+              "model_type": "qwen3_5",
+              "num_hidden_layers": 64,
+              "num_attention_heads": 24,
+              "num_key_value_heads": 4,
+              "head_dim": 256,
+              "max_position_embeddings": 262144,
+              "linear_num_value_heads": 32,
+              "linear_key_head_dim": 128,
+              "linear_value_head_dim": 128,
+              "layer_types": [\(types)]
+            }
+            """
+        try Data(config.utf8).write(to: dir.appendingPathComponent("config.json"))
+        let headroom = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: 16 * 1024 * 1024 * 1024,
+            modelDirectory: dir,
+            kvRetentionCap: 65_536
+        )
+        let kv = Int64(16) * 65_536 * (2 * 4 * 256) * 2
+        let gdnState = Int64(48) * (32 * 128 * 128) * 2
+        let expected = Int64(Double(kv + gdnState) * 1.25)
+        #expect(headroom == expected)
+        // The old all-layers-are-attention count priced this at ~20 GiB.
+        #expect(headroom < 8 * 1024 * 1024 * 1024)
+    }
+
+    @Test("bailing_hybrid: layer-group rule + MLA dims replace the 24-MHA-layer overprice")
+    func bailingHybridMLAHeadroom() throws {
+        let dir = try makeIsolatedDir()
+        // Real Raptor geometry: 24 layers, group size 4 => 6 MLA + 18 KDA;
+        // MLA caches 16 heads x (128 nope + 64 rope + 128 v) per token.
+        let config = """
+            {
+              "model_type": "bailing_hybrid",
+              "architectures": ["BailingMoeV3ForCausalLM"],
+              "num_hidden_layers": 24,
+              "layer_group_size": 4,
+              "num_attention_heads": 16,
+              "num_key_value_heads": 16,
+              "head_dim": 128,
+              "qk_nope_head_dim": 128,
+              "qk_rope_head_dim": 64,
+              "v_head_dim": 128,
+              "max_position_embeddings": 131072
+            }
+            """
+        try Data(config.utf8).write(to: dir.appendingPathComponent("config.json"))
+        let headroom = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: 6 * 1024 * 1024 * 1024,
+            modelDirectory: dir,
+            kvRetentionCap: 65_536
+        )
+        let expected = Int64(Double(6 * 65_536 * (16 * (128 + 64 + 128)) * 2) * 1.25)
+        #expect(headroom == expected)
+        // The old MHA-every-layer count priced this at ~16 GiB — enough to
+        // false-refuse a 16 GB Mac that actually runs Raptor fine.
+        #expect(headroom < 6 * 1024 * 1024 * 1024)
+    }
+
+    @Test("whole-model sliding window clamp is preserved for configs without layer_types")
+    func wholeModelSlidingClampStillApplies() throws {
+        let dir = try makeIsolatedDir()
+        let config = """
+            {
+              "model_type": "mimo_style",
+              "num_hidden_layers": 32,
+              "num_attention_heads": 32,
+              "num_key_value_heads": 8,
+              "head_dim": 128,
+              "sliding_window_size": 8192,
+              "max_position_embeddings": 262144
+            }
+            """
+        try Data(config.utf8).write(to: dir.appendingPathComponent("config.json"))
+        let headroom = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: 1024,
+            modelDirectory: dir,
+            kvRetentionCap: 65_536
+        )
+        let expected = Int64(Double(32 * 8_192 * (2 * 8 * 128) * 2) * 1.25)
+        #expect(headroom == expected)
+    }
 }

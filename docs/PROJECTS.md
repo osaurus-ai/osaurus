@@ -7,6 +7,7 @@ The mental model: agents are *who* you talk to; a project is *what* you're worki
 - **Instructions** — shared guidance prepended to every chat in the project (see [Agent Loop](AGENT_LOOP.md)).
 - **Knowledge** — collections every chat in the project can search, on top of each agent's own grants (see [KNOWLEDGE.md](KNOWLEDGE.md)).
 - **Memory** — a shared memory namespace every chat in the project reads and writes, across agents (see [MEMORY.md](MEMORY.md)).
+- **Working Folder** — an optional folder new chats in the project open with, so you don't re-pick it every time.
 
 > **Orthogonal to agents.** A project can hold chats from any agent, and an agent can be used in any project or none. Project membership lives on the chat session, not the agent.
 
@@ -20,6 +21,7 @@ The mental model: agents are *who* you talk to; a project is *what* you're worki
 - [Shared Instructions](#shared-instructions)
 - [Shared Knowledge](#shared-knowledge)
 - [Shared Memory](#shared-memory)
+- [Working Folder](#working-folder)
 - [Immediate vs Distilled Memory](#immediate-vs-distilled-memory)
 - [KV-Cache Safety](#kv-cache-safety)
 - [Storage](#storage)
@@ -30,7 +32,7 @@ The mental model: agents are *who* you talk to; a project is *what* you're worki
 ## Getting Started
 
 1. Sidebar → **Projects** tab → **New Project**
-2. On the project page, set **Instructions**, grant **Knowledge** collections, and optionally pick a **Default Agent**
+2. On the project page, set **Instructions**, grant **Knowledge** collections, optionally pick a **Default Agent**, and optionally choose a **Working Folder**
 3. **New Chat** from the project page — the chat is a member of the project
 4. Chat with any agent. Instructions and knowledge apply automatically, and everything the chats learn accumulates in the project's shared memory
 
@@ -95,6 +97,17 @@ The override is **directional and namespace-scoped**:
 - **Write:** a project chat's distillate is mirrored into the project namespace. When the agent's own memory is **off**, the distill writes to the **project namespace only** — never the agent's own episodes, pinned facts, or identity. So "memory off" still means "this agent builds no personal memory of me"; it just contributes to the project pool while in the project.
 
 Everything stays under the global memory switch (`bufferTurn` and `performDistillSession` both enforce `config.enabled`).
+
+---
+
+## Working Folder
+
+A project can pin a **working folder** that new chats in the project open with, so you don't re-select it on every chat.
+
+- **Model.** `Project.folderBookmark` (a `.withSecurityScope` bookmark) plus a non-sensitive `Project.folderPath` for display, mirroring how a chat session persists its own folder (`ChatSessionData`). Minted off the main actor in `ProjectManager.setFolder` to stay clear of the app-hang watchdog.
+- **Apply.** When a new chat starts from the project (`ChatView.applyProjectFolderIfNeeded`), the project's bookmark is restored onto the chat's `ChatFolderState` — the same path a persisted chat folder takes on reopen. The chat then persists its own copy of the folder, so it survives independently of the project.
+- **A default, not a lock.** The folder is applied only when the new chat has no folder of its own, and it never overrides a folder the user later picks in that chat. Existing chats moved into the project are left untouched — silently repointing a live chat's working directory would be surprising.
+- **Stale handling.** If the folder is moved or deleted, restore fails gracefully and keeps `folderPath` for display, exactly like a stale chat-session bookmark.
 
 ---
 
