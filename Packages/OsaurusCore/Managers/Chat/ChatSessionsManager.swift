@@ -34,16 +34,25 @@ final class ChatSessionsManager: ObservableObject {
     /// speculative ChatView prewarm, `queue.sync` inside the database can
     /// park the launch main thread behind whatever the serial queue is
     /// busy with (post-open maintenance, a checkpoint, a large write).
-    /// Pulling one metadata read through the queue off the main actor
-    /// first means init's load runs against a drained queue and warm
-    /// pages. The sync-load-in-init contract for real windows is
-    /// unchanged — this only reorders who pays first.
+    /// Draining the queue once off the main actor first means init's load
+    /// runs against an idle queue. The sync-load-in-init contract for real
+    /// windows is unchanged — this only reorders who pays first.
+    ///
+    /// Same readiness gate as `prewarmChatView`: with encrypted storage and
+    /// the key not yet resident, `ensureOpen` returns before scheduling any
+    /// open, and nothing later reloads a manager created empty — the first
+    /// real window would show an empty sidebar. Skipping is safe; the first
+    /// window creates `shared` on demand once the key is resident.
     static func prewarmShared() async {
         guard !isInstantiated else { return }
+        guard StorageKeyManager.shared.isStorageReadyForWrites else { return }
         if ChatHistoryDatabase.shared.isOpenNonBlocking {
             let db = ChatHistoryDatabase.shared
+            // `isOpen` is a `queue.sync` no-op: it waits behind whatever the
+            // serial queue is busy with without paying a full metadata decode
+            // that init would only repeat.
             _ = await Task.detached(priority: .userInitiated) {
-                db.loadAllMetadata()
+                db.isOpen
             }.value
         }
         _ = ChatSessionsManager.shared
