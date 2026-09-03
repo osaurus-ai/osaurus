@@ -1103,18 +1103,12 @@ final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
         super.mouseDown(with: event)
     }
 
-    /// Open the knowledge document a link points at, without stealing focus:
-    /// the owning app opens the file behind Osaurus so the chat stays in
-    /// view. Falls back to revealing it in Finder if no app claims the type.
+    /// Open the knowledge document a link points at. Falls back to
+    /// revealing it in Finder if no app claims the file type.
     private func handleKnowledgeLink(_ url: URL) {
         guard let fileURL = KnowledgeLinkResolver.fileURL(from: url) else { return }
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = false
-        NSWorkspace.shared.open(fileURL, configuration: configuration) { _, error in
-            guard error != nil else { return }
-            DispatchQueue.main.async {
-                NSWorkspace.shared.activateFileViewerSelecting([fileURL])
-            }
+        if !NSWorkspace.shared.open(fileURL) {
+            NSWorkspace.shared.activateFileViewerSelecting([fileURL])
         }
     }
 
