@@ -22,7 +22,35 @@ final class ChatSessionsManager: ObservableObject {
 
     private var cancellables: Set<AnyCancellable> = []
 
+    /// Whether `shared` has been created (and its synchronous first load
+    /// paid). Lets the launch prewarm decide to warm the read path first
+    /// instead of letting a speculative view construction be the first
+    /// toucher.
+    private(set) static var isInstantiated = false
+
+    /// Launch-prewarm entry point: create `shared` with the database queue
+    /// warmed. The first toucher of `shared` pays a synchronous
+    /// `loadAll()` on the main actor, and when that toucher is the
+    /// speculative ChatView prewarm, `queue.sync` inside the database can
+    /// park the launch main thread behind whatever the serial queue is
+    /// busy with (post-open maintenance, a checkpoint, a large write).
+    /// Pulling one metadata read through the queue off the main actor
+    /// first means init's load runs against a drained queue and warm
+    /// pages. The sync-load-in-init contract for real windows is
+    /// unchanged — this only reorders who pays first.
+    static func prewarmShared() async {
+        guard !isInstantiated else { return }
+        if ChatHistoryDatabase.shared.isOpenNonBlocking {
+            let db = ChatHistoryDatabase.shared
+            _ = await Task.detached(priority: .userInitiated) {
+                db.loadAllMetadata()
+            }.value
+        }
+        _ = ChatSessionsManager.shared
+    }
+
     private init() {
+        Self.isInstantiated = true
         // Load synchronously so the first reader (ChatWindowState.init)
         // sees populated sessions. Deferring this via Task caused the
         // sidebar to render empty on first open until something else

@@ -749,6 +749,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     // into a single main-thread stall during the launch settle.
                     try? await Task.sleep(for: .seconds(1.0))
                     guard !Self.isUnderResourcePressure else { return }
+                    // Warm the sessions manager's first read through the
+                    // database queue off the main actor before the ChatView
+                    // prewarm makes it the first toucher of
+                    // `ChatSessionsManager.shared` on main.
+                    await ChatSessionsManager.prewarmShared()
                     ChatWindowManager.shared.prewarmChatView()
                     // And the menu-bar popover content, so the first click on
                     // the status item doesn't pay the panel's first realization.
