@@ -748,6 +748,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     // first code block a chat cell renders doesn't pay the
                     // engine boot on main.
                     prewarmHighlightrOffMain()
+                    // Same for the agent-secret account memo: the chat-preview
+                    // compose reads it synchronously, and headless composers
+                    // (HTTP, subagents, channels) never run the ChatView
+                    // prewarm, so seed it here for the whole process.
+                    AgentSecretsKeychain.prewarmAccounts()
                     self?.prewarmManagementWindow()
                     // Warm ChatView's (deep, slow-to-realize) generic metadata too,
                     // spaced out so the two heavy SwiftUI realizations don't stack
@@ -1512,8 +1517,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         //
         // Aptabase rides along: it batches analytics in memory and its own
         // `willTerminate` flush is async, which `_exit(0)` would skip.
-        // `flushForQuit`'s post-flush sleep gives the send air on its worker
-        // thread while the group waits. No-op unless telemetry is consented.
+        // `prepareQuitFlush` reads the consent gates on main and hands back the
+        // blocking send-and-wait for a worker thread while the group waits.
+        //
+        // Budgets: the two 3.0s-default drains (Keychain, ConfigDiskWriter)
+        // get an explicit sub-cap so they can finish inside the group deadline
+        // — a slow securityd write that lands at 2.4s must still be honored,
+        // not cut off by `_exit`. The deadline itself stays under the 3.0s
+        // app-hang watchdog so a timed-out flush isn't filed as a hang. No-op unless telemetry is consented.
         let flushGroup = DispatchGroup()
         let flushWorkers = DispatchQueue.global(qos: .userInitiated)
         var flushes: [@Sendable () -> Void] = [
@@ -1521,8 +1532,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             { ComputerUsePolicyStore.flushPendingWrites() },
             { SandboxConfigurationStore.flushPendingWrites() },
             { SubagentConfigurationStore.flushPendingWrites() },
-            { ConfigDiskWriter.flushPendingWrites() },
-            { Keychain.flushPendingWrites() },
+            { ConfigDiskWriter.flushPendingWrites(timeout: 2.5) },
+            { Keychain.flushPendingWrites(timeout: 2.5) },
         ]
         if let telemetryFlush = TelemetryService.shared.prepareQuitFlush() {
             flushes.append(telemetryFlush)
@@ -1534,7 +1545,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 flushGroup.leave()
             }
         }
-        if flushGroup.wait(timeout: .now() + 3.0) == .timedOut {
+        if flushGroup.wait(timeout: .now() + 2.8) == .timedOut {
             NSLog("Osaurus quit flush timed out; exiting with writes possibly pending")
         }
 

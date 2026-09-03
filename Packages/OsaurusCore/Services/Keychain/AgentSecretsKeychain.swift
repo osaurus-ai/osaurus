@@ -130,7 +130,7 @@ public enum AgentSecretsKeychain {
         }
         if KeychainQueryHelpers.disablesKeychainForProcess { return false }
         let didWrite = Keychain.write(service: service, account: account, data: valueData)
-        if didWrite { invalidateAccountsCache() }
+        if didWrite { noteAccountSaved(account) }
         return didWrite
     }
 
@@ -156,7 +156,7 @@ public enum AgentSecretsKeychain {
         }
         if KeychainQueryHelpers.disablesKeychainForProcess { return true }
         let didDelete = Keychain.delete(service: service, account: account)
-        if didDelete { invalidateAccountsCache() }
+        if didDelete { noteAccountsRemoved { $0 == account } }
         return didDelete
     }
 
@@ -212,7 +212,7 @@ public enum AgentSecretsKeychain {
         for account in allAccounts() where account.hasPrefix(prefix) {
             Keychain.delete(service: service, account: account)
         }
-        invalidateAccountsCache()
+        noteAccountsRemoved { $0.hasPrefix(prefix) }
     }
 
     // MARK: - Environment Safety
@@ -246,8 +246,20 @@ public enum AgentSecretsKeychain {
     /// composition runs on the main actor) finds a warm cache instead of a
     /// blocking `SecItemCopyMatching` + `LAContext` round-trip.
     public static func prewarmAccounts() {
+        // Single-flight: a cold read can be reached from every compose while
+        // the seed is still in flight (or from every compose forever while
+        // the keychain is locked and the enumeration stays non-definitive),
+        // and each spawn would take the process-wide Keychain lock again.
+        accountsCacheLock.lock()
+        let shouldSeed = cachedAccounts == nil && !seedInFlight
+        if shouldSeed { seedInFlight = true }
+        accountsCacheLock.unlock()
+        guard shouldSeed else { return }
         Task.detached(priority: .utility) {
             _ = allAccounts()
+            accountsCacheLock.lock()
+            seedInFlight = false
+            accountsCacheLock.unlock()
         }
     }
 
@@ -276,10 +288,28 @@ public enum AgentSecretsKeychain {
         return []
     }
 
-    /// Drop the account-name memo after a mutation so the next read re-queries.
-    private static func invalidateAccountsCache() {
+    nonisolated(unsafe) private static var seedInFlight = false
+
+    /// Maintain the memo in place after a write rather than dropping it: the
+    /// non-blocking `secretIDs` reader would otherwise answer `[]` for every
+    /// compose between the mutation and the re-seed — including the very send
+    /// that follows a `store_secret` — telling the model no secrets exist on
+    /// exactly the turns that matter. Account names only change through this
+    /// type, so the edit is exact. A never-seeded memo stays nil.
+    private static func noteAccountSaved(_ account: String) {
         accountsCacheLock.lock()
-        cachedAccounts = nil
+        if var cached = cachedAccounts, !cached.contains(account) {
+            cached.append(account)
+            cachedAccounts = cached
+        }
+        accountsCacheLock.unlock()
+    }
+
+    private static func noteAccountsRemoved(where shouldRemove: (String) -> Bool) {
+        accountsCacheLock.lock()
+        if let cached = cachedAccounts {
+            cachedAccounts = cached.filter { !shouldRemove($0) }
+        }
         accountsCacheLock.unlock()
     }
 
@@ -299,7 +329,7 @@ public enum AgentSecretsKeychain {
         // `SecItemCopyMatching` takes a process-wide Keychain lock and has hung
         // the UI when reached from `secretIDs` during chat-preview composition
         // on the main thread. Account names change only through this type's own
-        // writes, so memoize the enumeration and invalidate it on every
+        // writes, so memoize the enumeration and maintain it in place on every
         // mutation. Only a definitive enumeration is cached: a locked or
         // transiently failing keychain must not latch an empty account list.
         let outcome = Keychain.fetchAllItems(service: service, returnData: false)
