@@ -39,7 +39,7 @@ enum ModelListTab: String, CaseIterable, AnimatedTabItem {
 /// Manages MLX model catalog, discovery, and resolution.
 /// Download orchestration is handled by ModelDownloadService.
 @MainActor
-final class ModelManager: NSObject, ObservableObject {
+public final class ModelManager: NSObject, ObservableObject {
     static let shared = ModelManager()
 
     /// Diagnostics logger usable from the `nonisolated static` discovery paths.
@@ -712,35 +712,30 @@ extension ModelManager {
     /// Order is a fallback only — `ModelDownloadView.filteredSuggestedModels`
     /// sorts by curated-first → top-pick → `releasedAt` desc → name.
     nonisolated fileprivate static let curatedSuggestedModels: [MLXModel] = [
-        // MARK: Top Picks
-
-        curated(
-            id: "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
-            description:
-                "Liquid AI LFM2.5 8B hybrid MoE (~1B active), MXFP8 — high-precision, fast Apple Silicon chat. 128K context.",
-            modelType: "lfm2_moe",
-            releasedAt: date("2026-05-29"),
-            useCase: .general
-        ),
-
         // MARK: Gemma 4 — multimodal
         //
-        // Onboarding recommendation spine (2026-07-08, GUI-verified in the
-        // dev-built app — every model below loads, calls tools, reasons with
-        // thinking on, and leaks no markup into visible content):
-        //   • Mainstream RAM → Bonsai 27B, selecting its 1-bit or ternary
-        //                      variant from the machine's model-memory budget.
-        //   • Larger RAM     → Ornith 1.0 MXFP8 (9B / 35B, below).
+        // Onboarding recommendation spine (2026-08-31). Top Pick membership
+        // controls the first-run shortlist; the memory-fit selector below still
+        // refuses to auto-default into the `.tight` band:
+        //   • Mainstream RAM → Raptor v0.5 8B-A1B JANG_6M (~1B active) and
+        //                      Gemma 4 12B-it-MXFP8 as RAM allows. LFM2.5 8B
+        //                      and dense Ornith 1.5 9B remain in the catalog,
+        //                      but Raptor is the small-active-set first-run
+        //                      default once it comfortably fits.
+        //   • Larger RAM     → Ornith 1.5 35B-A3B MXFP8 (below).
         //   • Smaller RAM → official OsaurusAI Gemma 4 at the highest non-QAT,
         //                    non-MXFP4 precision that exists: `12B-it-MXFP8`
         //                    (the only MXFP8 Gemma the org ships) and the
         //                    `E4B/E2B-it-8bit` retention builds (no E-series
-        //                    MXFP8 exists on the HF org).
+        //                    MXFP8 exists on the HF org). Nanbeige 4.2 3B
+        //                    JANG_6M is the text-quality exception in this
+        //                    band (looped transformer; JANG_6M beats the
+        //                    family's MXFP8 on fidelity — see that entry).
         // A *recommended* Gemma build must never be `qat` or plain `MXFP4`, so
         // the 5 Gemma `qat-MXFP4` builds (E2B/E4B/12B/31B/26B-A4B) stay in the
         // catalog but are not Top Picks. Qwen 3.6 (incl. MXFP8-MTP), Nemotron-3
-        // and LFM2.5 also remain catalog-only for now: they are installable and
-        // selectable, just not part of the auto-default recommendation spine.
+        // and Bonsai remain catalog-only: they are installable and selectable,
+        // just not part of the auto-default recommendation spine.
 
         curated(
             id: "OsaurusAI/gemma-4-12B-it-MXFP8",
@@ -867,34 +862,70 @@ extension ModelManager {
             useCase: .vision
         ),
 
-        // MARK: Ornith 1.0 (DeepReinforce, Qwen 3.5 hybrid backbone)
-        //
-        // Vision-language agentic-coding models on the Qwen 3.5 hybrid
-        // architecture (Gated-DeltaNet linear attention + full attention),
-        // so they reuse the existing `qwen3_5` / `qwen3_5_moe` runtime
-        // classes. MXFP8 is the curated Top Pick representative per family
-        // (precision-first, matching the Qwen 3.6 convention); the MXFP4 and
-        // JANG_4M siblings stay auto-fetched and collapse into each family
-        // card's Versions picker.
+        // MARK: Raptor v0.5 (Ling 3 / BailingMoeV3 — Top Pick)
 
         curated(
-            id: "OsaurusAI/Ornith-1.0-9B-MXFP8",
+            id: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M",
             description:
-                "Ornith 1.0 9B vision-language model, tuned for agentic coding on a Qwen 3.5 hybrid backbone. MXFP8 — near-lossless precision. 256K context.",
+                "Raptor v0.5 8B-A1B text model on the Ling 3 architecture. JANG_6M — fast agentic tool use with ~1B active parameters. 128K context.",
             isTopSuggestion: true,
+            bootstrapDownloadSizeBytes: 6_783_354_784,
+            modelType: "bailing_hybrid",
+            releasedAt: date("2026-08-25"),
+            useCase: .general
+        ),
+
+        // MARK: Ornith 1.5 (Qwen 3.5 hybrid backbone)
+        //
+        // Successor to the 1.0 MXFP8 Top Picks. Those Hub repos
+        // (`Ornith-1.0-9B-MXFP8` / `Ornith-1.0-35B-MXFP8`) were removed, so
+        // onboarding downloads of the old IDs died at the file-list fetch
+        // ("Could not retrieve file list from Hugging Face"). 1.5 keeps the
+        // same `qwen3_5` / `qwen3_5_moe` runtime classes (Gated-DeltaNet
+        // linear attention + full attention). MXFP8 is the curated Top Pick
+        // representative per family (precision-first); JANG siblings stay
+        // auto-fetched and collapse into each family card's Versions picker.
+
+        curated(
+            id: "OsaurusAI/Ornith-1.5-9B-MXFP8",
+            description:
+                "Ornith 1.5 9B vision-language model, tuned for agentic coding on a Qwen 3.5 hybrid backbone. MXFP8 — near-lossless precision. 256K context.",
             modelType: "qwen3_5",
-            releasedAt: date("2026-06-26"),
+            releasedAt: date("2026-08-19"),
             useCase: .vision
         ),
 
         curated(
-            id: "OsaurusAI/Ornith-1.0-35B-MXFP8",
+            id: "OsaurusAI/Ornith-1.5-35B-A3B-MXFP8",
             description:
-                "Ornith 1.0 35B vision-language MoE, state-of-the-art open agentic coding for its size. MXFP8 — near-lossless precision. 256K context.",
+                "Ornith 1.5 35B-A3B vision-language MoE, state-of-the-art open agentic coding for its size. MXFP8 — near-lossless precision. 256K context.",
             isTopSuggestion: true,
             modelType: "qwen3_5_moe",
-            releasedAt: date("2026-06-26"),
+            releasedAt: date("2026-08-19"),
             useCase: .vision
+        ),
+
+        // MARK: Nanbeige 4.2 (looped transformer — Top Pick)
+        //
+        // 22 physical layers × 2 loops (44 KV slots), text-only, 256K, tools
+        // + thinking. The MXFP8 sibling is format coverage and loses on
+        // fidelity *and* size to both JANG profiles (live card: Tokyo-capital
+        // miss on MXFP8; JANG_6M is 5/5 top-1, KL 0.001). So this family
+        // breaks the MXFP8-only Top Pick rule on purpose — JANG_6M is the
+        // one we recommend. Hub weight shard is ~3.9 GB; bootstrap that
+        // measurement so first-launch hardware selection isn't the 0.5
+        // byte/param JANG fallback (~1.5 GB), which would look comfortable
+        // on an 8 GB Mac when the real working set is ~4.5 GB.
+
+        curated(
+            id: "OsaurusAI/Nanbeige4.2-3B-JANG_6M",
+            description:
+                "Nanbeige 4.2 3B looped-transformer reasoning model (en + zh). 6-bit affine JANG — the quality pick of the family. 256K context.",
+            isTopSuggestion: true,
+            bootstrapDownloadSizeBytes: 3_921_000_000,
+            modelType: "nanbeige",
+            releasedAt: date("2026-07-28"),
+            useCase: .general
         ),
 
         // MARK: Bonsai (prism-ml, Qwen 3.5 dense backbone)
@@ -903,17 +934,18 @@ extension ModelManager {
         // prism-ml's Bonsai checkpoints. Text matrices use affine JANG
         // (schema-2 discrete storage — not JANGTQ/MXTQ or a codebook
         // sidecar); vision components stay 4-bit affine. Same `qwen3_5`
-        // runtime class as Qwen 3.6 / Ornith dense builds. Both variants are
-        // Top Picks so the normalized Bonsai family can select the best build
-        // for this Mac. Their mixed text/vision precision cannot be estimated
-        // accurately from `27B × bit-width`, so the current Hub sizes bootstrap
+        // runtime class as Qwen 3.6 / Ornith dense builds. Demoted from Top
+        // Picks (2026-08-26): user feedback showed the dense 27B — every
+        // parameter active per token, unlike an MoE — decodes far too slowly
+        // for a recommended default, so both variants are catalog-only now.
+        // Their mixed text/vision precision cannot be estimated accurately
+        // from `27B × bit-width`, so the current Hub sizes bootstrap
         // first-launch hardware selection until `ModelSizeCache` refreshes.
 
         curated(
             id: "OsaurusAI/Bonsai-27b-Ternary-JANG",
             description:
                 "Bonsai 27B dense vision model on a Qwen 3.5 backbone. Ternary (2-bit slot) affine JANG text weights — ~8 GB on disk.",
-            isTopSuggestion: true,
             bootstrapDownloadSizeBytes: 8_040_700_199,
             modelType: "qwen3_5",
             releasedAt: date("2026-07-14"),
@@ -924,7 +956,6 @@ extension ModelManager {
             id: "OsaurusAI/Bonsai-27b-1bit-JANG",
             description:
                 "Bonsai 27B dense vision model on a Qwen 3.5 backbone. 1-bit affine JANG text weights — smallest of the family at ~4.7 GB.",
-            isTopSuggestion: true,
             bootstrapDownloadSizeBytes: 4_679_030_015,
             modelType: "qwen3_5",
             releasedAt: date("2026-07-14"),
@@ -1298,6 +1329,22 @@ extension ModelManager {
             releasedAt: date("2026-06-02"),
             useCase: .smallest
         ),
+
+        // MARK: LFM2.5 (Liquid AI hybrid MoE — catalog only, listed last)
+        //
+        // Kept at the tail of the catalog so LFM rows always render at the
+        // bottom of order-following lists (the onboarding chooser keeps
+        // catalog order). Raptor v0.5 now occupies the mainstream-RAM Top Pick
+        // slot; LFM2.5 remains available as an installable alternative.
+
+        curated(
+            id: "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
+            description:
+                "Liquid AI LFM2.5 8B hybrid MoE (~1B active), MXFP8 — high-precision, fast Apple Silicon chat. 128K context.",
+            modelType: "lfm2_moe",
+            releasedAt: date("2026-05-29"),
+            useCase: .general
+        ),
     ]
 
     /// Lowercased IDs of curated entries. Used by the Recommended-tab sort to
@@ -1322,6 +1369,11 @@ extension ModelManager {
         "osaurusai/gemma-4-26b-a4b-it-jang_4m",
         "osaurusai/gemma-4-26b-a4b-it-mxfp4",
         "osaurusai/diffusiongemma-26b-a4b-it-mxfp8",
+        // Ornith 1.0 MXFP8 Top Picks were removed from the Hub (404 on
+        // `/tree/main`); 1.5 MXFP8 is the replacement. Keep them retired so
+        // a re-upload or stale org listing cannot re-surface a dead download.
+        "osaurusai/ornith-1.0-9b-mxfp8",
+        "osaurusai/ornith-1.0-35b-mxfp8",
     ]
 
     /// HF `pipeline_tag` values that mark a repo as chat-capable (text or
@@ -1879,7 +1931,7 @@ extension ModelManager {
     nonisolated(unsafe) static var scanLocalModelsOverrideForTests: ((URL) -> [MLXModel])?
     nonisolated(unsafe) static var localModelsScanWaitLimitOverrideForTests: TimeInterval?
 
-    nonisolated static func invalidateLocalModelsCache() {
+    public nonisolated static func invalidateLocalModelsCache() {
         localModelsCacheCondition.lock()
         cachedLocalModels = nil
         localModelsScanInFlight = false
@@ -1908,6 +1960,28 @@ extension ModelManager {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
                 continuation.resume(returning: discoverLocalModels())
+            }
+        }
+    }
+
+    /// Wait until the launch-time managed-model scan has actually published
+    /// its cache. Unlike `discoverLocalModels()`, this dispatch-only gate does
+    /// not treat the ordinary 10-second UI protection timeout as an
+    /// authoritative empty catalog. It is used only when a request must
+    /// validate an already-persisted explicit model option before generation.
+    nonisolated static func awaitLocalModelsCacheReadyForDispatch() async {
+        if isLocalModelsCacheWarm { return }
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                localModelsCacheCondition.lock()
+                if cachedLocalModels == nil && !localModelsScanInFlight {
+                    startLocalModelsScanLocked()
+                }
+                while cachedLocalModels == nil && localModelsScanInFlight {
+                    localModelsCacheCondition.wait()
+                }
+                localModelsCacheCondition.unlock()
+                continuation.resume()
             }
         }
     }

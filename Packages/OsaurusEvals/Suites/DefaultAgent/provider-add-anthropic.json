@@ -1,18 +1,19 @@
 {
   "id": "default_agent.provider-add-anthropic",
   "domain": "default_agent",
-  "label": "default agent • add Anthropic provider (action + provider enum)",
+  "label": "default agent • add Anthropic provider (declarative apply)",
   "query": "Add Anthropic as a cloud provider and call it \"Claude\".",
-  "notes": "Consolidated write selection: osaurus_provider with action 'add' and provider 'anthropic'. In the eval the credential sheet is bypassed (resolves cancelled) so no Keychain write happens; the assertion scores the model's tool CALL, recorded before the result. No secret should ever appear in the arguments.",
+  "notes": "Declarative write selection: osaurus_config apply with a providers entry (provider 'anthropic', name 'Claude'). In the eval the credential sheet is bypassed (resolves cancelled) so no Keychain write happens; the assertion scores the model's tool CALL, recorded before the result. No secret should ever appear in the document or the arguments.",
   "fixtures": {},
   "expect": {
     "defaultAgent": {
-      "mustCallTools": ["osaurus_provider"],
+      "mustCallTools": ["osaurus_config"],
       "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
       "argsMustContain": [
-        { "tool": "osaurus_provider", "args": { "action": "add", "provider": "anthropic" } }
+        { "tool": "osaurus_config", "args": { "action": "apply", "yaml": "anthropic" } },
+        { "tool": "osaurus_config", "args": { "yaml": "providers" } }
       ],
-      "maxIterations": 4
+      "maxIterations": 8
     }
   }
 }

@@ -336,14 +336,16 @@ struct ProvidersView: View {
 
     private var headerSection: some View {
         HStack {
-            Text(
-                manager.configuration.providers.isEmpty
-                    ? "Add your first connection"
-                    : "\(manager.configuration.providers.count) connection\(manager.configuration.providers.count == 1 ? "" : "s")",
-                bundle: .module
-            )
-            .font(.system(size: 12, weight: .medium))
-            .foregroundColor(theme.secondaryText)
+            // The empty state already prompts the user to add a connection, so
+            // only show the running count once there is at least one.
+            if !manager.configuration.providers.isEmpty {
+                Text(
+                    "\(manager.configuration.providers.count) connection\(manager.configuration.providers.count == 1 ? "" : "s")",
+                    bundle: .module
+                )
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+            }
 
             Spacer()
 
@@ -386,18 +388,6 @@ struct ProvidersView: View {
                 .font(.system(size: 14))
                 .foregroundColor(theme.secondaryText)
                 .multilineTextAlignment(.center)
-
-            Button(action: { showAddSheet = true }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 14))
-                    Text("Connect a Service", bundle: .module)
-                        .font(.system(size: 14, weight: .medium))
-                }
-                .foregroundColor(theme.accentColor)
-            }
-            .buttonStyle(PlainButtonStyle())
-            .padding(.top, 8)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 60)
@@ -1374,7 +1364,7 @@ private struct ProviderEditSheet: View {
 
             sheetFooter
         }
-        .frame(width: 560, height: 660)
+        .fittedSheetFrame(width: 560, height: 660)
         .background(themeManager.currentTheme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(

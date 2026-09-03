@@ -1058,6 +1058,7 @@ struct WhatsAppSettingsView: View {
                     defaultAgentId: $inboundAgentId,
                     routes: $inboundRoutes
                 )
+                AgentChannelPluginPreloadOverflowNotice(agentId: inboundAgentId)
                 SettingsToggle(
                     title: L("Reply Automatically"),
                     description: L(
@@ -1065,6 +1066,9 @@ struct WhatsAppSettingsView: View {
                     ),
                     isOn: $inboundAutoReplyEnabled
                 )
+                if !inboundAutoReplyEnabled {
+                    AgentChannelAutoReplyOffNotice()
+                }
                 SettingsToggle(
                     title: L("Require Mention in Groups"),
                     description: L(

@@ -25,7 +25,7 @@ struct SubagentJobEvaluatorSeedTests {
     /// exists" branch and does not touch `AgentStore` / `AgentManager`.
     private var existingAgent: Agent {
         Agent.builtInAgents.first
-            ?? Agent(id: UUID(), name: "eval-seed-agent", description: "", systemPrompt: "")
+            ?? Agent(id: UUID(), name: "eval-seed-agent", description: "", systemPrompt: "", autonomousExec: AutonomousExecConfig(enabled: false))
     }
 
     @Test func seedsAgentAndHandoffDuringBodyThenRestores() async {

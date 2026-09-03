@@ -10,14 +10,12 @@ struct ChatSessionStopTests {
 
     private func enableDefaultAgentTools(warmModelsOnLoad: Bool) {
         var chatConfig = ChatConfigurationStore.load()
-        chatConfig.disableTools = false
         chatConfig.warmModelsOnLoad = warmModelsOnLoad
         chatConfig.autoGenerateChatTitles = false
         ChatConfigurationStore.save(chatConfig)
 
         DefaultAgentConfigurationStore.save(
             DefaultAgentConfiguration(
-                disableTools: false,
                 autonomousExec: nil,
                 toolSelectionMode: .manual,
                 manualToolNames: ["todo"]
@@ -619,6 +617,7 @@ struct ChatSessionStopTests {
             enableDefaultAgentTools(warmModelsOnLoad: true)
 
             let session = ChatSession()
+            session.toolsDisabledForTestingOverride = false
             session.selectedModel = "chat-session-tool-loop-test-model"
             session.forceChatEngineRouteForTests = true
             let engine = PostToolEmptyExhaustionChatEngine()
@@ -668,6 +667,7 @@ struct ChatSessionStopTests {
             enableDefaultAgentTools(warmModelsOnLoad: false)
 
             let session = ChatSession()
+            session.toolsDisabledForTestingOverride = false
             session.selectedModel = "chat-session-reasoning-retry-test-model"
             session.forceChatEngineRouteForTests = true
             let engine = ReasoningRetryChatEngine()

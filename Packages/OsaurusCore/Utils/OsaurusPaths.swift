@@ -183,7 +183,15 @@ public enum OsaurusPaths {
     /// Current size of the disk KV cache in bytes. Returns 0 when the
     /// directory doesn't exist yet.
     public static func diskKVCacheUsageBytes() -> Int {
-        let url = diskKVCache()
+        directorySizeIfExists(at: diskKVCache())
+    }
+
+    /// Size of `url`, or 0 when it does not exist yet. Split out of
+    /// `diskKVCacheUsageBytes` so callers that resolve a CONFIGURED cache
+    /// directory can measure that one instead of the default. Reporting the
+    /// default directory's size while a custom directory is the one being
+    /// capped produces a plausible number about the wrong thing.
+    public static func directorySizeIfExists(at url: URL) -> Int {
         guard FileManager.default.fileExists(atPath: url.path) else { return 0 }
         return directorySize(at: url)
     }
@@ -286,6 +294,13 @@ public enum OsaurusPaths {
         root().appendingPathComponent("skills", isDirectory: true)
     }
 
+    /// Declarative configuration templates directory
+    /// (`~/.osaurus/templates/`). The only place `osaurus_config` reads
+    /// or writes YAML documents by name — never arbitrary paths.
+    public static func configTemplates() -> URL {
+        root().appendingPathComponent("templates", isDirectory: true)
+    }
+
     /// Artifacts directory
     public static func artifacts() -> URL {
         root().appendingPathComponent("artifacts", isDirectory: true)
@@ -320,6 +335,20 @@ public enum OsaurusPaths {
     /// Rebuildable from the collection folders (the markdown source of truth).
     public static func knowledgeDatabaseFile() -> URL {
         knowledge().appendingPathComponent("knowledge.sqlite")
+    }
+
+    /// Knowledge write log: `~/.osaurus/knowledge/write_log.sqlite`.
+    ///
+    /// Deliberately NOT in `knowledge.sqlite`. That file is a derived index —
+    /// deleting it is the supported recovery for a corrupt or stale index,
+    /// and it rebuilds from the markdown source of truth losing nothing. The
+    /// write log breaks that invariant: it holds the prior content of every
+    /// agent-made change, which exists nowhere else once the file is
+    /// overwritten. Keeping it here would mean the standard fix for an
+    /// unrelated index problem silently destroys the undo history that makes
+    /// call-time write approval safe.
+    public static func knowledgeWriteLogDatabaseFile() -> URL {
+        knowledge().appendingPathComponent("write_log.sqlite")
     }
 
     /// Per-collection VecturaKit vector index directory. Like the memory

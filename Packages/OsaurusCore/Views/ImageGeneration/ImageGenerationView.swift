@@ -370,7 +370,7 @@ private struct ImageGenerationSettingsTab: View {
     private func videoJobDetail(_ job: DurableMediaJob) -> String {
         var values = [job.state.rawValue.replacingOccurrences(of: "_", with: " ").capitalized]
         if let quote = job.quoteUSD {
-            values.append(String(format: "$%.4f", quote))
+            values.append(OsaurusRouter.formatUSDAsCredits(quote))
         }
         if let error = job.errorMessage, !error.isEmpty {
             values.append(error)
@@ -495,7 +495,7 @@ private struct ImageGenerationSettingsTab: View {
         }
         options += zip(candidates, targets).map { item, target in
             let price = item.mediaModel?.pricing?.minimumUSD.map {
-                String(format: " · from $%.4f", $0)
+                " · from \(OsaurusRouter.formatUSDAsCredits($0))"
             } ?? ""
             return .init(
                 tag: Optional(target),

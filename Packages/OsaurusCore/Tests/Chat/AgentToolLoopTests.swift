@@ -38,6 +38,7 @@ private final class ScriptedLoopSurface {
     var willProcessCallIds: [String] = []
     var batchOutcomes: [[AgentLoopToolOutcome]] = []
     var emittedFinalTexts: [String] = []
+    var emittedToolRejectionTexts: [String] = []
     var incompleteContinuationPreparations = 0
     var cancelOnIncompleteContinuation = false
     var trackedTaskContinuationPreparations = 0
@@ -112,6 +113,9 @@ private final class ScriptedLoopSurface {
             hooks.emitFallbackText = { text in
                 self.emittedFinalTexts.append(text)
             }
+        }
+        hooks.emitToolRejectionText = { text in
+            self.emittedToolRejectionTexts.append(text)
         }
         return hooks
     }
@@ -622,6 +626,307 @@ struct AgentToolLoopTests {
             Issue.record("visible partial content must not be concatenated with a transparent replay")
             return
         }
+    }
+
+    // MARK: - Exit diagnostics (campaign: agent-loop premature stops)
+
+    /// Capture the diagnostics side channel for one scripted run.
+    private func runCapturingDiagnostics(
+        steps: [AgentLoopModelStep]
+    ) async throws -> (AgentToolLoop.RunResult, AgentToolLoop.ExitDiagnostics?) {
+        let surface = ScriptedLoopSurface(steps: steps)
+        var hooks = surface.makeHooks()
+        var captured: AgentToolLoop.ExitDiagnostics?
+        hooks.recordExitDiagnostics = { captured = $0 }
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: hooks
+        )
+        return (result, captured)
+    }
+
+    /// The reason this telemetry exists: a run that ANSWERED and a run that
+    /// GAVE UP after exhausting announce-only recovery return byte-identical
+    /// `RunResult`s. Behaviour is unchanged — the two runs really do end the
+    /// same way — but they are no longer indistinguishable to an operator.
+    @Test func exitDiagnosticsSeparateAnAnswerFromAnExhaustedRecovery() async throws {
+        let (ordinary, ordinaryDiagnostics) = try await runCapturingDiagnostics(
+            steps: [.finalResponse]
+        )
+        // Budget is `maxAnnouncedToolCallRetries` (2); the third announce-only
+        // turn exhausts recovery and the preamble is kept as the answer.
+        let (surrendered, surrenderedDiagnostics) = try await runCapturingDiagnostics(
+            steps: [.announcedToolCall, .announcedToolCall, .announcedToolCall]
+        )
+
+        // Both end as `.finalResponse` on iteration 1 — the ambiguity this
+        // telemetry addresses. If this assertion ever fails, BEHAVIOUR
+        // changed and that is a separate review question.
+        #expect(ordinary.exit == .finalResponse)
+        #expect(surrendered.exit == .finalResponse)
+        #expect(ordinary == surrendered)
+
+        // The diagnostics separate them.
+        #expect(ordinaryDiagnostics?.origin == .ordinaryModelFinal)
+        #expect(ordinaryDiagnostics?.counters.total == 0)
+        #expect(surrenderedDiagnostics?.origin == .announcedToolCallRecoveryExhausted)
+        #expect((surrenderedDiagnostics?.counters.announcedToolCall ?? 0) > 0)
+    }
+
+    /// Counters are RUN TOTALS, not the current streak. A successful tool
+    /// step resets the driver's `consecutive*` counters, so reading those at
+    /// exit would report zero for an alternating stall/tool pattern — the
+    /// exact shape that burns wall-clock while making no net progress.
+    @Test func exitDiagnosticsCountRecoveriesAcrossAResettingToolStep() async throws {
+        let (_, diagnostics) = try await runCapturingDiagnostics(
+            steps: [
+                .announcedToolCall,
+                .toolCalls([inv("file_read")]),
+                .announcedToolCall,
+                .finalResponse,
+            ]
+        )
+        #expect(diagnostics?.origin == .ordinaryModelFinal)
+        #expect(diagnostics?.counters.announcedToolCall == 2)
+    }
+
+    // MARK: - Announce-only turns (osaurus#2439)
+
+    /// The failure the user reported as "the file_write calls are not
+    /// executing". The model wrote "Let me write the first batch:" and
+    /// stopped; the loop read that as a finished answer and ended the turn,
+    /// so nothing ran and the next turn the model concluded its own tools
+    /// were broken. Text that only announces a call is recoverable.
+    @Test func announceOnlyTextIsRecoverableNotFinal() {
+        let announcements = [
+            "Let me write the first batch:",
+            "Reading the core wiki pages and writing them:",
+            "Good — the wiki is cloned. Let me start:",
+            "The file-write tool is still down. Let me take a different approach:",
+            "Let me check the result",
+            "I'll write the remaining documents now",
+        ]
+        for text in announcements {
+            let step = AgentLoopModelStep.classifyTerminal(
+                contentIsBlank: false,
+                thinkingIsBlank: true,
+                stopReason: "stop",
+                requiresVisibleFinalResponse: false,
+                toolsWereOffered: true,
+                content: text
+            )
+            guard case .announcedToolCall = step else {
+                Issue.record("announce-only text must not end the run: \(text)")
+                return
+            }
+        }
+    }
+
+    /// The guard that matters most: a real answer must never be re-run. A
+    /// false positive here costs the user a duplicated response.
+    @Test func genuineAnswersStayFinal() {
+        let answers = [
+            "I loaded 10 wiki pages into the collection. Search for `Execute-MSI` to find them.",
+            "Here is what I found:\n\n- Home.md\n- README.md\n- Toolkit-Usage.md",
+            "The repo is cloned at `~/psapp/wiki`.",
+            "Done. Both files were written.",
+            "```\nlet me start:\n```",
+        ]
+        for text in answers {
+            let step = AgentLoopModelStep.classifyTerminal(
+                contentIsBlank: false,
+                thinkingIsBlank: true,
+                stopReason: "stop",
+                requiresVisibleFinalResponse: false,
+                toolsWereOffered: true,
+                content: text
+            )
+            guard case .finalResponse = step else {
+                Issue.record("a real answer must stay final: \(text)")
+                return
+            }
+        }
+    }
+
+    /// With no tools in the schema there is no call to be missing, so the
+    /// same text is simply the answer.
+    @Test func announceOnlyTextIsFinalWhenNoToolsWereOffered() {
+        let step = AgentLoopModelStep.classifyTerminal(
+            contentIsBlank: false,
+            thinkingIsBlank: true,
+            stopReason: "stop",
+            requiresVisibleFinalResponse: false,
+            toolsWereOffered: false,
+            content: "Let me write the first batch:"
+        )
+        guard case .finalResponse = step else {
+            Issue.record("tools-off turns have no missing call to recover")
+            return
+        }
+    }
+
+    /// Surfaces that do not pass `content` keep their previous behaviour
+    /// exactly — the recovery is opt-in per call site.
+    @Test func omittedContentPreservesFinalResponseClassification() {
+        let step = AgentLoopModelStep.classifyTerminal(
+            contentIsBlank: false,
+            thinkingIsBlank: true,
+            stopReason: "stop",
+            requiresVisibleFinalResponse: false,
+            toolsWereOffered: true
+        )
+        guard case .finalResponse = step else {
+            Issue.record("classification must be unchanged when content is not supplied")
+            return
+        }
+    }
+
+    /// `stop=length` and reasoning-only outcomes are decided before the
+    /// announcement check and keep their own typed recoveries.
+    @Test func announceCheckDoesNotShadowEarlierTerminalReasons() {
+        let truncated = AgentLoopModelStep.classifyTerminal(
+            contentIsBlank: false,
+            thinkingIsBlank: true,
+            stopReason: "length",
+            requiresVisibleFinalResponse: false,
+            toolsWereOffered: true,
+            content: "Let me write the first batch:"
+        )
+        guard case .lengthExhausted = truncated else {
+            Issue.record("an output-cap stop stays authoritative")
+            return
+        }
+    }
+
+    // MARK: - Continuation requests (osaurus#2439)
+
+    /// "keeps stopping and asking to be let to continue". The model ends a
+    /// turn it was asked to finish by requesting permission to carry on. The
+    /// classifier flags the shape; the driver decides, using the pending-todo
+    /// count, whether it is a stall or a real question.
+    @Test func permissionToContinueIsFlagged() {
+        let stalls = [
+            "I'm actively working on pages 2-11 of the documentation scrape. "
+                + "Let me keep this going — would you like me to continue or make any adjustments?",
+            "Shall I continue?",
+            "That's 22 of 30 done. Want me to keep going?",
+            "I can do the rest the same way. Should I proceed?",
+        ]
+        for text in stalls {
+            let step = AgentLoopModelStep.classifyTerminal(
+                contentIsBlank: false,
+                thinkingIsBlank: true,
+                stopReason: "stop",
+                requiresVisibleFinalResponse: false,
+                toolsWereOffered: true,
+                content: text
+            )
+            guard case .continuationRequest = step else {
+                Issue.record("permission-to-continue must be flagged: \(text)")
+                return
+            }
+        }
+    }
+
+    /// A substantive question is the model doing the right thing and must
+    /// still reach the user. This is the boundary the whole fix rests on.
+    @Test func substantiveQuestionsAreNotTreatedAsStalls() {
+        let questions = [
+            "Which version of the toolkit do you mean — v3 or v4.1?",
+            "The wiki and the docs site disagree on the default log path. Which should I trust?",
+            "Do you want the nested function pages too, or just the top-level categories?",
+            "I found 62 documents. Should I delete them all, or only the v3 ones?",
+        ]
+        for text in questions {
+            let step = AgentLoopModelStep.classifyTerminal(
+                contentIsBlank: false,
+                thinkingIsBlank: true,
+                stopReason: "stop",
+                requiresVisibleFinalResponse: false,
+                toolsWereOffered: true,
+                content: text
+            )
+            guard case .finalResponse = step else {
+                Issue.record("a real question must end the turn: \(text)")
+                return
+            }
+        }
+    }
+
+    /// Only the CLOSING line counts — a mid-answer aside about continuing
+    /// does not make a finished answer a stall.
+    @Test func continuationPhraseMidAnswerDoesNotFlag() {
+        let step = AgentLoopModelStep.classifyTerminal(
+            contentIsBlank: false,
+            thinkingIsBlank: true,
+            stopReason: "stop",
+            requiresVisibleFinalResponse: false,
+            toolsWereOffered: true,
+            content: "You asked whether I should continue, so I did.\nAll 30 pages are loaded."
+        )
+        guard case .finalResponse = step else {
+            Issue.record("a completed answer must not be re-run")
+            return
+        }
+    }
+
+    /// The nudge has to grant the authorization explicitly and point at
+    /// `clarify` for questions that really do need the user.
+    @Test func continuationNoticeAuthorizesAndRedirectsRealQuestions() {
+        let notice = AgentToolLoop.continuationRequestNotice(pending: 9)
+        #expect(notice.contains("Yes — continue"))
+        #expect(notice.contains("9 items remain"))
+        #expect(notice.contains("`clarify`"))
+        #expect(AgentToolLoop.continuationRequestNotice(pending: 1).contains("1 item remains"))
+    }
+
+    /// The stream consumer's cut is authoritative — it stopped reading, so
+    /// whatever terminal reason the runtime reports describes a generation
+    /// nobody finished. A wall of one repeated sentence is never an answer.
+    @Test func repetitionLoopOutranksTheReportedStopReason() {
+        for stopReason in ["stop", "length", nil] {
+            let step = AgentLoopModelStep.classifyTerminal(
+                contentIsBlank: false,
+                thinkingIsBlank: true,
+                stopReason: stopReason,
+                requiresVisibleFinalResponse: false,
+                toolsWereOffered: true,
+                content: "Let me continue:",
+                repetitionLoopPhrase: "let me continue"
+            )
+            guard case .repetitionLoop(let phrase) = step else {
+                Issue.record("a cut stream must classify as a loop (stop=\(stopReason ?? "nil"))")
+                return
+            }
+            #expect(phrase == "let me continue")
+        }
+    }
+
+    /// Turns the consumer did not cut are unaffected.
+    @Test func absentRepetitionPhraseLeavesClassificationUnchanged() {
+        let step = AgentLoopModelStep.classifyTerminal(
+            contentIsBlank: false,
+            thinkingIsBlank: true,
+            stopReason: "stop",
+            requiresVisibleFinalResponse: false,
+            toolsWereOffered: true,
+            content: "All ten documents are loaded."
+        )
+        guard case .finalResponse = step else {
+            Issue.record("an ordinary turn must not be treated as a loop")
+            return
+        }
+    }
+
+    /// The notice has to name the repeated phrase — a generic "you repeated
+    /// yourself" gives a small model nothing to steer away from.
+    @Test func repetitionNoticeNamesThePhraseAndDemandsOneAction() {
+        let notice = AgentToolLoop.repetitionLoopNotice(phrase: "let me continue")
+        #expect(notice.contains("let me continue"))
+        #expect(notice.contains("exactly ONE concrete thing"))
+        // Degrades cleanly when the phrase was not captured.
+        #expect(!AgentToolLoop.repetitionLoopNotice(phrase: nil).contains("(\"\")"))
     }
 
     @Test func recoveryIdempotencyOrdinalDistinguishesLogicalReplayOnly() {
@@ -1257,6 +1562,7 @@ struct AgentToolLoopTests {
         // into the state machine (mirrors the historical chat path).
         #expect(surface.executedCalls.map(\.name) == ["bad_tool"])
         #expect(state.lastResultClass == .error)
+        #expect(surface.emittedToolRejectionTexts == ["no"])
         // No batch-complete callback on early stop.
         #expect(surface.batchOutcomes.isEmpty)
     }
@@ -1668,6 +1974,36 @@ struct AgentToolLoopTests {
         )
         #expect(result == AgentToolLoop.RunResult(exit: .cancelled, iterations: 1))
         #expect(surface.executedCalls.map(\.name) == ["first_tool"])
+        #expect(surface.emittedToolRejectionTexts.isEmpty)
+    }
+
+    @Test func cancellationWinsOverAConcurrentDenialWithoutSyntheticText() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("approval_tool")])
+        ])
+        let baseHooks = surface.makeHooks()
+        var hooks = baseHooks
+        hooks.executeTool = { invocation, callId in
+            _ = await baseHooks.executeTool(invocation, callId)
+            surface.cancelled = true
+            return AgentLoopToolExecution(
+                result: ToolEnvelope.failure(
+                    kind: .userDenied,
+                    message: "cancelled approval",
+                    tool: invocation.toolName
+                ),
+                isError: true
+            )
+        }
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: hooks
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .cancelled, iterations: 1))
+        #expect(surface.emittedToolRejectionTexts.isEmpty)
     }
 
     @Test func cancellationBeforeFirstIteration() async throws {
@@ -1849,6 +2185,7 @@ struct AgentToolLoopTests {
         // executed rows even on the rejection exit.
         #expect(surface.batchOutcomes.count == 1)
         #expect(surface.batchOutcomes[0].map(\.wasError) == [false, true])
+        #expect(surface.emittedToolRejectionTexts == ["no"])
     }
 
     @Test func batchExecutorDedupesDuplicateReadSiblingsWithinOneBatch() async throws {
@@ -2645,7 +2982,7 @@ struct AgentLoopTodoStalenessTests {
 
 @MainActor
 struct AgentLoopAdvisoryTodoCompletionTests {
-    @Test func staleSessionTodoCompleteRejectionRecoversToOrdinaryFinal() async throws {
+    @Test func staleSessionTodoCompleteClosesAsOrdinaryCompletion() async throws {
         let sessionId = UUID().uuidString
         let surface = ScriptedLoopSurface(steps: [
             .toolCalls([
@@ -2654,7 +2991,6 @@ struct AgentLoopAdvisoryTodoCompletionTests {
                     #"{"summary":"STALE_TODO_FOLLOWUP_OK - verified as the requested exact follow-up."}"#
                 )
             ]),
-            .finalResponse,
         ])
 
         let result = try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
@@ -2687,11 +3023,15 @@ struct AgentLoopAdvisoryTodoCompletionTests {
         }
         await AgentTodoStore.shared.clear(for: sessionId)
 
+        // This unit surface does not install ChatView's successful-complete
+        // intercept, so the driver receives the success result and performs
+        // one ordinary final-response step. Production Chat and the evaluator
+        // intercept the same success envelope and end immediately.
         #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 2))
         #expect(surface.executedCalls.map(\.name) == ["complete"])
         let completeResult = try #require(surface.batchOutcomes.first?.first?.result)
-        #expect(ToolEnvelope.isError(completeResult))
-        #expect(AgentToolLoop.isStaleSessionTodoCompleteResult(completeResult))
+        #expect(ToolEnvelope.isSuccess(completeResult))
+        #expect(completeResult.contains("\"outcome\":\"completed\""))
         #expect(surface.steps.isEmpty)
     }
 

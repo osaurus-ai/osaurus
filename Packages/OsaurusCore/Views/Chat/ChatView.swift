@@ -36,6 +36,15 @@ struct QueuedSend: Equatable {
     var oneOffSkillId: UUID?
 }
 
+/// A manual model change made after a conversation already has content.
+/// Prefix/KV caches are model-scoped, so the new model must rebuild context;
+/// it may also interpret the existing transcript differently. Kept as IDs so
+/// the composer resolves the freshest user-facing display names.
+struct ModelSwitchContinuityWarning: Equatable, Sendable {
+    let previousModelId: String
+    let newModelId: String
+}
+
 /// Equatable wrapper around `ChatEmptyState` so it only re-renders when one of
 /// its actual inputs changes. `ChatView` observes the whole `ChatSession`
 /// object, so its body re-evaluates on any `@Published` mutation — including
@@ -128,15 +137,26 @@ final class ChatSession: ObservableObject {
     /// prompt. Kept as one testable inventory so a new settings surface
     /// cannot refresh only its display cache while leaving warm-up state on
     /// the previous rendered bytes.
+    ///
+    /// The model-availability signals are here because spawn-target
+    /// runnability is live execution truth (`SpawnDescriptors`): a remote
+    /// provider connecting/disconnecting or a local model install/delete can
+    /// rewrite the spawn tool enums without any settings edit. The pipeline is
+    /// equality-guarded (`recomputePreviewContext` compares composed bytes),
+    /// so these fire a required rewarm only when the rendered prompt or tool
+    /// schema actually changed.
     static let promptShapeNotificationNames: [Notification.Name] = [
         .agentUpdated,
         .activeAgentChanged,
         .toolsListChanged,
         .appConfigurationChanged,
         .agentChannelConfigurationChanged,
+        .remoteProviderModelsChanged,
+        .localModelsChanged,
     ]
 
     @Published var turns: [ChatTurn] = []
+
     @Published var isStreaming: Bool = false {
         didSet {
             guard isStreaming != oldValue else { return }
@@ -292,6 +312,7 @@ final class ChatSession: ObservableObject {
     @Published var input: String = ""
     @Published var pendingAttachments: [Attachment] = []
     @Published var selectedModel: String? = nil
+    @Published var modelSwitchContinuityWarning: ModelSwitchContinuityWarning?
     /// Proactive model + KV-cache warm-up for faster first-token latency.
     let warmupController = ChatWarmupController()
     @Published var pickerItems: [ModelPickerItem] = []
@@ -335,6 +356,16 @@ final class ChatSession: ObservableObject {
     /// (plugin / HTTP / scheduler / watcher) runs, defaults to `.chat` for
     /// user-driven UI sessions.
     var source: SessionSource = .chat
+    /// True when this session's folder was restored from a bookmark that a
+    /// background DISPATCH supplied (a Watcher's watched folder, a scheduled
+    /// task's folder, or a plugin's `folder_bookmark`), as opposed to a
+    /// folder the user picked interactively in the chat UI. Set by
+    /// `ExecutionContext.activateFolderContextIfNeeded`. A dispatched folder
+    /// is an explicit target with no interactive sandbox toggle, so it wins
+    /// over the agent's default sandbox in `prepareChatExecutionMode`
+    /// (`preferHostFolder`); an interactive folder keeps the historical
+    /// sandbox-priority contract, where the user toggles sandbox off instead.
+    var folderContextFromDispatchBookmark: Bool = false
     /// Whether this session's model loads may evict a model someone else is using.
     ///
     /// Set from `DispatchRequest.loadIntent` at the trigger boundary. Headless
@@ -348,6 +379,12 @@ final class ChatSession: ObservableObject {
     /// flattened into `.chatUI` on its way to the model, losing the distinction
     /// entirely.
     var loadIntent: ModelLoadIntent = .interactive
+    /// Enforced delegation budget for `.delegation`-dispatched sessions:
+    /// (per-generation response-token cap, assistant tool-loop turn cap).
+    /// Set once by `ExecutionContext` from the `DispatchRequest`; nil for
+    /// every ordinary chat. Consumed at the two loop-limit sites below —
+    /// RAM admission prices delegated children from exactly these values.
+    var delegationBudget: DelegatedRunContract?
     var sourcePluginId: String?
     var externalSessionKey: String?
     var dispatchTaskId: UUID?
@@ -576,6 +613,10 @@ final class ChatSession: ObservableObject {
     private var followUpGenerationStarted = false
 
     /// Weak back-reference to the owning window state (set by ChatWindowState).
+    /// Single-slot by design, last-writer-wins: when two windows attach the
+    /// same registry-shared session, the most recent attach owns
+    /// busy-alert/sidebar routing; the earlier window still renders live via
+    /// the published transcript. Known, accepted limitation.
     weak var windowState: ChatWindowState?
 
     /// True when this window is pointed at a paired/discovered remote Osaurus
@@ -695,6 +736,31 @@ final class ChatSession: ObservableObject {
     /// budget pipeline. Re-captures the pre-send preview when the feature is
     /// toggled or the foreground app changes, until the first send locks it.
     nonisolated(unsafe) private var screenContextCancellable: AnyCancellable?
+
+    #if DEBUG
+        /// Task-scoped test seam for chat lifecycle suites whose mock engines
+        /// intentionally exercise plain generation without the built-in tool
+        /// loop. This is not persisted, user-configurable, or process-global;
+        /// child Tasks created by `send()` inherit the enclosing test value.
+        @TaskLocal static var toolsDisabledForTesting = false
+
+        /// Lets the few lifecycle tests that intentionally exercise AgentLoop
+        /// opt back in while their enclosing storage fixture stays plain-chat.
+        var toolsDisabledForTestingOverride: Bool?
+
+        /// Set only by `isolatePromptShapeReconcilerForTests()`: silences the
+        /// lifecycle `refreshContextEstimates()` tasks so a test can pin the
+        /// pre-send reconcile as the sole prompt-shape change consumer.
+        private var suppressLifecycleContextRefreshForTests = false
+
+        /// Detach this session from the SHARED `ModelPickerItemCache.$items`
+        /// subscription so a test can install its own picker items without
+        /// the process-global cache snapshot clobbering them. Isolation
+        /// seam only — production sessions must keep tracking the cache.
+        func detachPickerCacheForTesting() {
+            modelCacheCancellable = nil
+        }
+    #endif
 
     init() {
         // Warm the agent-secret account memo off the main thread before the
@@ -917,6 +983,20 @@ final class ChatSession: ObservableObject {
             .sink { [weak self] newModel in
                 guard let self = self, !self.isLoadingModel else { return }
                 guard let model = newModel else { return }
+                let previousModel = self.selectedModel
+                if Self.shouldWarnAboutModelSwitch(
+                    previousModel: previousModel,
+                    newModel: model,
+                    hasConversation: self.hasVisibleThreadMessages
+                ), let previousModel
+                {
+                    self.modelSwitchContinuityWarning = ModelSwitchContinuityWarning(
+                        previousModelId: previousModel,
+                        newModelId: model
+                    )
+                } else if previousModel == nil || !self.hasVisibleThreadMessages {
+                    self.modelSwitchContinuityWarning = nil
+                }
                 self.lastManualModelSelection = model
                 let pid = self.agentId ?? Agent.defaultId
                 // Mode 2 (remote agent run): the model is pinned to the remote
@@ -980,9 +1060,16 @@ final class ChatSession: ObservableObject {
         //     the agent snapshot + registered tools + folder + model, never
         //     sandbox status. A sandbox toggle still re-prices via
         //     .agentUpdated (autonomous flag) + .toolsListChanged (tools).
+        // The map closure must be @Sendable: several of these notifications
+        // (.localModelsChanged from the models scan queue,
+        // .remoteProviderModelsChanged from provider connects) post from
+        // background threads, and a closure that inherited this init's
+        // MainActor isolation would trap the runtime's isolation check when
+        // Combine invokes it synchronously on the posting thread. The
+        // debounce below hops to RunLoop.main before any isolated work runs.
         let voidNotification: (Notification.Name) -> AnyPublisher<Void, Never> = {
             NotificationCenter.default.publisher(for: $0)
-                .map { _ in () }.eraseToAnyPublisher()
+                .map { @Sendable _ in () }.eraseToAnyPublisher()
         }
         // Channel destination edits rewrite a dynamic prompt section;
         // Default-agent and global chat settings rewrite system/tool policy.
@@ -1038,6 +1125,15 @@ final class ChatSession: ObservableObject {
         if MockChatData.isEnabled {
             rebuildVisibleBlocks()
         }
+    }
+
+    nonisolated static func shouldWarnAboutModelSwitch(
+        previousModel: String?,
+        newModel: String,
+        hasConversation: Bool
+    ) -> Bool {
+        guard hasConversation, let previousModel else { return false }
+        return previousModel.caseInsensitiveCompare(newModel) != .orderedSame
     }
 
     deinit {
@@ -1142,8 +1238,8 @@ final class ChatSession: ObservableObject {
     func applyAgentDefaultModelForDispatch() {
         guard source != .chat else { return }
         guard
-            let model = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId),
-            pickerItems.contains(where: { $0.id == model }),
+            let configured = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId),
+            let model = Self.resolvePickerModelId(configured, in: pickerItems),
             selectedModel != model
         else { return }
         isLoadingModel = true
@@ -1161,7 +1257,9 @@ final class ChatSession: ObservableObject {
     private func applyEffectiveModel(for agentId: UUID?) {
         isLoadingModel = true
         let effectiveModel = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId)
-        if let model = effectiveModel, pickerItems.contains(where: { $0.id == model }) {
+        if let configured = effectiveModel,
+            let model = Self.resolvePickerModelId(configured, in: pickerItems)
+        {
             selectedModel = model
         } else if Self.pendingLocalDefaultModelId(for: agentId, in: pickerItems.map(\.id)) != nil {
             // First-run local setup includes temporary Osaurus Cloud access:
@@ -1177,6 +1275,32 @@ final class ChatSession: ObservableObject {
         applyImageModelDefaults(for: selectedModel)
         isLoadingModel = false
         notifySessionBecameActive()
+    }
+
+    /// Resolve an agent-configured model string to a picker item id.
+    ///
+    /// Agent configs written through the server API or JSON can name a local
+    /// model by its short installed alias (e.g. "my-model-4bit") rather than
+    /// the canonical "Org/Repo" id picker items carry. The engine and the
+    /// subagent resolution path both accept those aliases via
+    /// `ModelManager.findInstalledModel(named:)`, so selection must too —
+    /// otherwise a dispatched (channel / schedule / delegation) session
+    /// silently falls back to the first chat-capable model instead of the
+    /// agent's configured one. `aliasResolver` is injectable for tests; the
+    /// default consults the non-blocking installed-model cache.
+    static func resolvePickerModelId(
+        _ configured: String,
+        in items: [ModelPickerItem],
+        aliasResolver: (String) -> String? = {
+            ModelManager.findInstalledModelFromCache(named: $0)?.id
+        }
+    ) -> String? {
+        if items.contains(where: { $0.id == configured }) { return configured }
+        guard
+            let resolved = aliasResolver(configured),
+            items.contains(where: { $0.id == resolved })
+        else { return nil }
+        return resolved
     }
 
     /// The agent's pinned default model when it's a local model that isn't
@@ -1444,13 +1568,38 @@ final class ChatSession: ObservableObject {
     }
 
     var selectedModelSupportsAudio: Bool {
-        guard let model = selectedModel else { return false }
-        return ModelMediaCapabilities.from(modelId: model).supportsAudio
+        selectedModelSendCapabilities.supportsAudio
     }
 
     var selectedModelSupportsVideo: Bool {
-        guard let model = selectedModel else { return false }
-        return ModelMediaCapabilities.from(modelId: model).supportsVideo
+        selectedModelSendCapabilities.supportsVideo
+    }
+
+    /// Media capabilities the SEND path gates on. Must resolve exactly like
+    /// the composer's attach gate (`FloatingInputCard.mediaCapabilityDescriptor`)
+    /// — the name-only matcher requires a "-vl" suffix that community bundles
+    /// like "Qwen3.6-35B-A3B-6bit" don't carry, so gating the send on it
+    /// silently dropped a video the composer had happily accepted: the model
+    /// then answers "I don't see any video". Same failure class as the remote
+    /// image drop documented on `modelSupportsImages`.
+    /// The SEND gate, and it is a second site: the picker deciding a modality
+    /// is allowed does not make `buildUserChatMessage` include it. This getter
+    /// used to omit the checkpoint audio fact, so on gemma-4 E2B — a bundle
+    /// that carries `embed_audio.embedding_projection` — the picker accepted a
+    /// `.wav`, the chip appeared, and then `supportsAudio` was false here, so
+    /// the audio was dropped and the plain (partless) initializer ran.
+    /// Instrumented live: the user message reached the engine with
+    /// `parts= images=0 audios=0` while an image turn in the same session
+    /// reached it with `images=1`.
+    private var selectedModelSendCapabilities: ModelMediaCapabilities.Capabilities {
+        guard let model = selectedModel else { return .textOnly }
+        let localModel = ModelManager.findInstalledMLXModelFromCache(named: model)
+        return ModelMediaCapabilities.composerCapabilities(
+            modelId: model,
+            fallbackSupportsImages: selectedModelSupportsImages,
+            localModelType: localModel?.modelType,
+            localHasAudioTensors: localModel?.hasAudioTensors ?? false
+        )
     }
 
     /// Get the currently selected ModelPickerItem
@@ -1550,6 +1699,34 @@ final class ChatSession: ObservableObject {
             )
     }
 
+    /// Whether `send` must refuse because of `localModelBusyInOtherWindow`.
+    ///
+    /// Delegated child sessions are exempt. Their orchestrating parent is
+    /// itself a chat run whose `isStreaming` stays true for the whole turn —
+    /// including the spawn tool call that is parked awaiting THIS child — so
+    /// the cross-window busy guard would always count the parent and
+    /// silently no-op the delegated send (leaving the child task running
+    /// until its wall-clock deadline). The parent's generation is idle while
+    /// it awaits the child, and local-model arbitration for delegations
+    /// already happened reject-before-evict in the spawn pipeline
+    /// (`SubagentAdmission` + `SubagentResidency` coexistence/handoff), so
+    /// this user-facing refusal must not apply.
+    var refusesLocalBusySend: Bool {
+        Self.refusesLocalBusySend(
+            source: source,
+            localModelBusyInOtherWindow: localModelBusyInOtherWindow
+        )
+    }
+
+    /// Pure contract for `refusesLocalBusySend` (unit-testable without live
+    /// window/registry state).
+    static func refusesLocalBusySend(
+        source: SessionSource,
+        localModelBusyInOtherWindow: Bool
+    ) -> Bool {
+        source != .delegation && localModelBusyInOtherWindow
+    }
+
     /// Backing store for the streaming-mutated `visibleBlocks` / group-header map.
     /// Deliberately NOT `@Published` — mutations go through the store's own
     /// `objectWillChange`, not the session's, so ChatView's body + every sibling
@@ -1610,7 +1787,7 @@ final class ChatSession: ObservableObject {
 
     private func rebuildVisibleBlocksImpl() {
         let agent = AgentManager.shared.agent(for: agentId ?? Agent.defaultId)
-        let localName = agent?.isBuiltIn == true ? L("Osaurus") : (agent?.name ?? L("Osaurus"))
+        let localName = agent?.displayName ?? L("Osaurus")
         // In Mode 2 the remote agent owns the conversation, so its name heads
         // the thread; otherwise fall back to the local agent's name.
         let displayName = threadAgentDisplayName ?? localName
@@ -1923,12 +2100,20 @@ final class ChatSession: ObservableObject {
     /// (`recomputePreviewContext`).
     private func composePreview() -> ComposedContext {
         let effectiveId = agentId ?? Agent.defaultId
-        return SystemPromptComposer.composePreviewContext(
-            agentId: effectiveId,
-            executionMode: estimatedChatExecutionMode(agentId: effectiveId),
-            model: selectedModel,
-            modelType: selectedPickerItem?.modelType
-        )
+        // Price the popover under this session's source, exactly as the send
+        // binds it. Source-scoped gates (channel publish tool + Channel
+        // Destinations section) read the task-local; previewing with it unset
+        // showed a smaller context than the send then composed, which read as
+        // "dynamic tools appeared" when the send's manifest replaced the
+        // estimate.
+        return ChatExecutionContext.$currentSessionSource.withValue(source) {
+            SystemPromptComposer.composePreviewContext(
+                agentId: effectiveId,
+                executionMode: estimatedChatExecutionMode(agentId: effectiveId),
+                model: selectedModel,
+                modelType: selectedPickerItem?.modelType
+            )
+        }
     }
 
     /// Builds the full user message text, prepending any attached document contents wrapped in XML tags.
@@ -2023,7 +2208,9 @@ final class ChatSession: ObservableObject {
             tool_call_id: nil,
             reasoning_content: turn.thinkingIsBlank ? nil : turn.thinking,
             reasoning_item_id: turn.reasoningItemId,
-            reasoning_encrypted: turn.reasoningEncrypted
+            reasoning_encrypted: turn.reasoningEncrypted,
+            responses_output_items: turn.responsesOutputItems.isEmpty
+                ? nil : turn.responsesOutputItems
         )
     }
 
@@ -2517,6 +2704,7 @@ final class ChatSession: ObservableObject {
         pendingAttachments = []
         pendingOneOffSkillId = nil
         queuedSend = nil
+        modelSwitchContinuityWarning = nil
         voiceInputState = .idle
         showVoiceOverlay = false
         transientSessionIdForCurrentRun = nil
@@ -2863,6 +3051,20 @@ final class ChatSession: ObservableObject {
         func reconcilePromptShapeBeforeSendForTests() -> Bool {
             reconcilePromptShapeBeforeSend()
         }
+
+        /// Test seam: make the pre-send reconcile the ONLY consumer of a
+        /// prompt-shape change by detaching the debounced budget-input
+        /// pipeline and suppressing the lifecycle `refreshContextEstimates`
+        /// tasks (session init/picker refresh) that are already enqueued on
+        /// the main actor when the test gets control. In the running app all
+        /// three consumers uphold the same contract (recompose + warm-up
+        /// invalidation on a shape change); a test that pins the pre-send
+        /// path must silence the other two to stay deterministic under a
+        /// busy main run loop.
+        func isolatePromptShapeReconcilerForTests() {
+            contextEstimateCancellable = nil
+            suppressLifecycleContextRefreshForTests = true
+        }
     #endif
 
     // MARK: - Persistence Methods
@@ -3172,7 +3374,23 @@ final class ChatSession: ObservableObject {
     /// budget-input pipeline uses `refreshPreviewEstimate()` instead so it
     /// never fans the memory DB read out across every signal.
     private func refreshContextEstimates() async {
+        #if DEBUG
+            if suppressLifecycleContextRefreshForTests { return }
+        #endif
+        // Same stale-warm-claim contract as `reconcilePromptShapeBeforeSend`:
+        // when this lifecycle refresh consumes an established preview baseline
+        // and observes a real shape change (e.g. a Settings save that landed
+        // while a storage-key rotation deferred the recompose), the previously
+        // warmed prefix is stale and must be invalidated here — the pre-send
+        // reconcile afterwards truthfully sees "no change" because this call
+        // already advanced the baseline. Session reset/load are unaffected:
+        // they clear the baseline (nil → no invalidation) and reset the
+        // warmup controller themselves.
+        let hadPromptShapeBaseline = cachedPreviewContext != nil
         let previewChanged = recomputePreviewContext()
+        if previewChanged, hadPromptShapeBaseline {
+            invalidateWarmupAfterContextShapeChange()
+        }
         let memoryChanged = await refreshMemoryTokens()
         let screenChanged = await refreshScreenContextPreview()
         if previewChanged || memoryChanged || screenChanged {
@@ -3368,6 +3586,38 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// Drain worker-shared artifacts deposited for this session by spawned
+    /// helpers (`SpawnArtifactCollector`) and attach them to the assistant
+    /// turn that owns `callId` (or the latest assistant turn when the call
+    /// row is unknown — the background report-back path). Runs after every
+    /// spawn tool return — failure/cancel envelopes included, so artifacts a
+    /// worker shared before failing still reach the user — and renders
+    /// through the same `turn.sharedArtifacts` surface as generated media.
+    func promoteWorkerSharedArtifacts(callId: String? = nil) async {
+        guard let sid = sessionId else { return }
+        // Resolve the owning turn BEFORE draining: with no assistant turn to
+        // attach to (yet), the artifacts must stay in the collector for the
+        // next drain point instead of being silently dropped with their
+        // store files orphaned on disk.
+        let callOwner = callId.flatMap { id in
+            turns.last(where: { turn in
+                turn.role == .assistant
+                    && (turn.toolCalls?.contains { $0.id == id } ?? false)
+            })
+        }
+        guard let owner = callOwner ?? turns.last(where: { $0.role == .assistant }) else {
+            return
+        }
+        let artifacts = SpawnArtifactCollector.drain(sessionId: sid.uuidString)
+        guard !artifacts.isEmpty else { return }
+        owner.sharedArtifacts.append(contentsOf: artifacts)
+        for artifact in artifacts {
+            await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
+        }
+        isDirty = true
+        rebuildVisibleBlocks()
+    }
+
     /// Convert a successful native image tool result into the same enriched
     /// artifact envelope that `share_artifact` uses, so generated/edited images
     /// render as first-class chat cards.
@@ -3400,94 +3650,14 @@ final class ChatSession: ObservableObject {
         }
     }
 
-    /// Translate a `SharedArtifact.ResolutionFailure` into a
-    /// `ToolEnvelope.failure` whose `message` tells the model exactly
-    /// what went wrong AND what to try next. The "next" hint is keyed on
-    /// `executionMode` so every mode gets a callable public file-tool hint.
+    /// Translate a `SharedArtifact.ResolutionFailure` into a model-readable
+    /// failure envelope. The mapping lives on `SharedArtifact` so the
+    /// spawned-worker intercept (`SpawnArtifactCollector`) shares it.
     private static func shareArtifactFailureEnvelope(
         reason: SharedArtifact.ResolutionFailure,
         executionMode: ExecutionMode
     ) -> String {
-        let toolName = "share_artifact"
-        let listingHint: String
-        switch executionMode {
-        case .sandbox:
-            listingHint =
-                "Verify the file with `file_read`/`file_search`, "
-                + "or pass `content`+`filename` for inline data."
-        case .hostFolder:
-            listingHint =
-                "Verify the file with `file_read`/`file_search`, or pass `content`+`filename` "
-                + "for inline data."
-        case .none:
-            listingHint =
-                "Pass `content`+`filename` for inline data, or attach a working folder/sandbox first."
-        }
-
-        // Local helpers prefix every message with `share_artifact failed: `
-        // and fill in the always-the-same `tool` / `retryable` fields, so
-        // the per-case branches read at the level of the actual diagnostic.
-        func fail(
-            _ kind: ToolEnvelope.Kind,
-            _ message: String,
-            field: String? = nil,
-            expected: String? = nil
-        ) -> String {
-            ToolEnvelope.failure(
-                kind: kind,
-                message: "share_artifact failed: \(message)",
-                field: field,
-                expected: expected,
-                tool: toolName,
-                retryable: true
-            )
-        }
-
-        switch reason {
-        case .markersMissing:
-            return fail(
-                .executionError,
-                "marker block missing from tool result. This is a tool-runtime bug — "
-                    + "retry once; if it persists, share the content inline."
-            )
-        case .noContentOrPath:
-            return fail(
-                .invalidArgs,
-                "neither `path` nor `content` was provided. Pass an existing file path, "
-                    + "or `content`+`filename` for inline text."
-            )
-        case .destinationRejected(let filename):
-            return fail(
-                .invalidArgs,
-                "filename `\(filename)` was rejected (would escape the artifacts directory). "
-                    + "Pass a plain basename like `report.md`.",
-                field: "filename",
-                expected: "single-segment filename without `..` or absolute path"
-            )
-        case .pathRejected(let path):
-            return fail(
-                .invalidArgs,
-                "path `\(path)` was rejected (escapes the trusted root, is an unrelated absolute "
-                    + "path, or contains traversal). \(listingHint)",
-                field: "path",
-                expected: "path under the agent home / working folder"
-            )
-        case .fileNotFound(let path, let searchedLocations):
-            let searchedSummary =
-                searchedLocations.isEmpty
-                ? "(no candidates resolved)"
-                : searchedLocations.joined(separator: ", ")
-            return fail(
-                .executionError,
-                "file not found for `\(path)`. Searched: \(searchedSummary). \(listingHint)"
-            )
-        case .copyFailed(let source, let detail):
-            return fail(
-                .executionError,
-                "copy from `\(source)` to artifacts dir threw: \(detail). "
-                    + "Retry once; if it persists, share the content inline."
-            )
-        }
+        SharedArtifact.failureEnvelope(reason: reason, executionMode: executionMode)
     }
 
     private struct RunContext {
@@ -3710,6 +3880,29 @@ final class ChatSession: ObservableObject {
     /// preview and the sent prompt folder-less and consistent.
     private func activeFolderContext(for agentId: UUID) -> FolderContext? {
         agentId == Agent.defaultId ? nil : folderState.context
+    }
+
+    /// Per-run options for the Claude Code subprocess backend.
+    ///
+    /// The working directory starts Claude Code in the folder the user picked
+    /// for this chat. It is not an Osaurus sandbox; enabled Claude Code tools
+    /// retain the macOS user's normal filesystem access. `agentId` travels
+    /// with the run because the
+    /// subprocess is out of process: the `@TaskLocal` chat identity cannot
+    /// follow it, so the MCP bridge mints a grant naming this agent instead.
+    private func claudeCodeRunOptions(for agentId: UUID) -> ClaudeCodeRunOptions {
+        let config = AgentManager.shared.effectiveClaudeCodeConfig(for: agentId)
+        let root = activeFolderContext(for: agentId)?.rootPath
+        return ClaudeCodeRunOptions(
+            mode: config.mode,
+            allowWrites: config.allowWrites,
+            allowShell: config.allowShell,
+            allowOsaurusTools: config.allowOsaurusTools,
+            allowOsaurusConfigWrites: config.allowOsaurusConfigWrites,
+            osaurusCLIPath: ClaudeCodeConfiguration.embeddedCLIPath(),
+            workingDirectory: root,
+            agentId: agentId
+        )
     }
 
     private func estimatedChatExecutionMode(agentId: UUID) -> ExecutionMode {
@@ -4279,10 +4472,16 @@ final class ChatSession: ObservableObject {
         if autonomous {
             await SandboxToolRegistrar.shared.registerTools(for: agentId)
         }
+        // A folder that a background dispatch supplied (Watcher / schedule /
+        // plugin folder_bookmark) is an explicit target with no interactive
+        // sandbox toggle, so it wins over the agent's default sandbox —
+        // otherwise the pure-VM agent can't see its own target files.
+        // Interactive folders keep sandbox priority.
         return ToolRegistry.shared.resolveExecutionMode(
             folderContext: activeFolderContext(for: agentId),
             autonomousEnabled: autonomous,
-            allowHostFolderWrites: config?.allowHostFolderWrites == true
+            allowHostFolderWrites: config?.allowHostFolderWrites == true,
+            preferHostFolder: folderContextFromDispatchBookmark
         )
     }
 
@@ -4532,6 +4731,13 @@ final class ChatSession: ObservableObject {
                     }
                     continue
                 }
+                // Preserve the complete provider-authored Responses output Item
+                // for exact stateless replay (phase, ids, reasoning, and future
+                // fields), independently of the flattened visible transcript.
+                if let responseItem = StreamingResponsesOutputItemHint.decode(delta) {
+                    currentTurn.responsesOutputItems.append(responseItem)
+                    continue
+                }
                 // Captured OpenAI Responses reasoning item (id + encrypted blob).
                 // Not visible text — stash it on the turn so the next request
                 // re-emits it before this turn's function_call(s).
@@ -4588,6 +4794,8 @@ final class ChatSession: ObservableObject {
                     }
                     currentTurn.generationTokenCount = stats.tokenCount
                     currentTurn.terminalStopReason = stats.stopReason
+                    currentTurn.inputTokenCount = stats.inputTokenCount
+                    currentTurn.cachedInputTokenCount = stats.cachedInputTokenCount
                     // Vmlx tells us the model never closed `</think>` before
                     // EOS / max_tokens. Persist on the turn so the bubble
                     // renderer can surface a one-line banner suggesting
@@ -4646,6 +4854,20 @@ final class ChatSession: ObservableObject {
                         turn: currentTurn
                     )
                     processor.receiveDelta(delta)
+
+                    // The model has collapsed into a phrase-repetition loop.
+                    // Leaving the stream running spends the entire output
+                    // budget on one repeated sentence and floods the
+                    // transcript with it (osaurus#2439, turn 144: ~200 copies
+                    // of "Let me continue:"). Stop consuming — the normal
+                    // end-of-stream path below finalises whatever was already
+                    // revealed, and the turn is classified as a loop so the
+                    // driver can nudge instead of presenting it as an answer.
+                    if processor.hasDetectedRepetitionLoop {
+                        currentTurn.repetitionLoopPhrase =
+                            processor.repeatedPhrase ?? ""
+                        break
+                    }
                 }
 
                 // Hand the main run loop a turn so SwiftUI can actually paint
@@ -4688,7 +4910,24 @@ final class ChatSession: ObservableObject {
         }
 
         if let first = firstDeltaTime {
-            currentTurn.timeToFirstToken = first.timeIntervalSince(streamStartTime)
+            // Split cold model load out of TTFT.
+            //
+            // `streamStartTime` is stamped immediately before `streamChat`, and
+            // no delta can arrive until the weights are resident — so a cold
+            // container load lands inside this window and used to be reported
+            // as time-to-first-token. A 64 GB M3 Max showed "TTFT 215.61s" on a
+            // ~1.8k-token prompt: no machine prefills 1.8k tokens in 215s, so
+            // the number was measuring a 27 GB load and reading as an engine
+            // fault. Both halves are kept; neither is hidden.
+            //
+            // `modelLoadSeconds` is clamped to the window by the manager, so
+            // the subtraction cannot go negative and cannot turn an honest
+            // slow turn into a reassuring fast one.
+            let wallClock = first.timeIntervalSince(streamStartTime)
+            let loadSeconds = InferenceProgressManager.shared.modelLoadSeconds(
+                from: streamStartTime, to: first)
+            currentTurn.modelLoadSeconds = loadSeconds > 0 ? loadSeconds : nil
+            currentTurn.timeToFirstToken = max(0, wallClock - loadSeconds)
             // Stamp the steady-state tok/s. Single source of truth across
             // local-MLX, remote-API, with-tools, and thinking-on/off paths.
             //
@@ -5075,7 +5314,7 @@ final class ChatSession: ObservableObject {
                 let cost = generated.compactMap(\.settledCostUSD).first
                 turn.content = "\(L("Generated images")): \(generated.count)"
                 if let cost {
-                    turn.content += " · \(String(format: "$%.4f", cost))"
+                    turn.content += " · \(OsaurusRouter.formatUSDAsCredits(cost))"
                 }
             }
         } catch is CancellationError {
@@ -5186,7 +5425,10 @@ final class ChatSession: ObservableObject {
                 return
             }
 
-            turn.content = String(format: L("Queueing video (quoted $%.4f)…"), quote.usd)
+            turn.content = String(
+                format: L("Queueing video (quoted %@)…"),
+                OsaurusRouter.formatUSDAsCredits(quote.usd)
+            )
             rebuildVisibleBlocks()
             let turnID = turn.id
             let media = try await MediaGenerationCoordinator.shared.generateVideo(
@@ -5248,7 +5490,7 @@ final class ChatSession: ObservableObject {
             turn.sharedArtifacts.append(processed.artifact)
             let label = media.kind.isVideo ? L("Generated video") : L("Generated image")
             if let cost = media.settledCostUSD {
-                turn.content = "\(label) · \(String(format: "$%.4f", cost))"
+                turn.content = "\(label) · \(OsaurusRouter.formatUSDAsCredits(cost))"
             } else {
                 turn.content = label
             }
@@ -5325,8 +5567,9 @@ final class ChatSession: ObservableObject {
         // Authoritative guard for every send path (interactive, regeneration,
         // queued, VAD, programmatic): never start a local generation while
         // another window is already running one. `sendCurrent` checks this
-        // first so the draft survives; this backstops the rest.
-        if localModelBusyInOtherWindow {
+        // first so the draft survives; this backstops the rest. Delegated
+        // child sessions are exempt (see `refusesLocalBusySend`).
+        if refusesLocalBusySend {
             windowState?.showLocalModelBusyAlert = true
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
@@ -5455,7 +5698,7 @@ final class ChatSession: ObservableObject {
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
         }
-        if localModelBusyInOtherWindow {
+        if refusesLocalBusySend {
             windowState?.showLocalModelBusyAlert = true
             // `sendCurrent` already cleared the composer, and the warm-up
             // await above widened the window in which another window can
@@ -5568,19 +5811,38 @@ final class ChatSession: ObservableObject {
         // streaming pipeline (e.g. from a sandbox plugin running on a
         // detached task) couldn't tell what agent they belonged to.
         let turnAgentId = agentId ?? Agent.defaultId
+        let turnModelId = selectedModel
+        let turnModelType = selectedPickerItem?.modelType
+        let turnSupportsImages = selectedModelSupportsImages
+        let turnSupportsAudio = selectedModelSupportsAudio
+        let turnSupportsVideo = selectedModelSupportsVideo
         let imageSettings = imageComposerSettings
-        // Freeze prompt-affecting model controls at send time. Every model
-        // step in the agent loop reconstructs its request; reading the live UI
-        // dictionary inside that loop can change the prompt halfway through a
-        // run, and carrying only local-only `modelOptions` drops the explicit
-        // Thinking choice on any wire-encoded continuation.
-        let turnGenerationControls = ChatTurnGenerationControls.capture(
-            activeModelOptions: activeModelOptions
-        )
+        let turnModelOptions = activeModelOptions
+        let storedTurnModelOptions = turnModelId.flatMap {
+            ModelOptionsStore.shared.storedExplicitOptions(for: $0)
+        }
 
         currentTask = Task { @MainActor [weak self] in
             guard let self else { return }
             guard self.isRunActive(runId) else { return }
+            // Freeze prompt-affecting controls only after recovering a saved
+            // explicit Thinking choice that launch-time cold-cache
+            // normalization may have provisionally hidden. No default is
+            // synthesized: absent choices still defer to the bundle.
+            let turnGenerationControls = await ChatTurnGenerationControls.captureForSend(
+                modelId: turnModelId,
+                activeModelOptions: turnModelOptions,
+                storedExplicitOptions: storedTurnModelOptions
+            ) { modelId in
+                _ = await LocalReasoningCapability.resolveForDispatch(modelId: modelId)
+            }
+            guard self.isRunActive(runId) else { return }
+            if self.selectedModel == turnModelId,
+                self.activeModelOptions.isEmpty,
+                let recovered = turnGenerationControls.modelOptions
+            {
+                self.activeModelOptions = recovered
+            }
             // A send issued right after a session switch / app launch can
             // race the fire-and-forget bookmark restore; wait for it so this
             // turn composes WITH the folder instead of silently folder-less.
@@ -5596,8 +5858,20 @@ final class ChatSession: ObservableObject {
             // switches modes in another window midway through the run.
             let sandboxEnabled =
                 AgentManager.shared.effectiveAutonomousExec(for: turnAgentId)?.enabled == true
+            // A folder that a background dispatch supplied (Watcher / schedule
+            // / plugin) wins over the sandbox suspension here, exactly as it
+            // does in `prepareChatExecutionMode` (`preferHostFolder`). Without
+            // this the two disagree: the execution mode exposes the host file
+            // tools, but this root binding stays nil, so every folder tool
+            // returns "no working folder is selected" (the Voice Memo Watcher
+            // failure after the user turns sandbox off). Interactive sessions
+            // keep the suspension — the user toggles sandbox off to use a
+            // folder there.
+            let suspendFolderForSandbox =
+                sandboxEnabled && !self.folderContextFromDispatchBookmark
             let turnFolderRoot =
-                sandboxEnabled ? nil : self.activeFolderContext(for: turnAgentId)?.rootPath
+                suspendFolderForSandbox
+                ? nil : self.activeFolderContext(for: turnAgentId)?.rootPath
             await ChatExecutionContext.$currentFolderRoot.withValue(turnFolderRoot) { [self] in
             // Typed run provenance for the whole turn. The session's own
             // persisted `source` is authoritative here (a dispatched
@@ -5606,18 +5880,22 @@ final class ChatSession: ObservableObject {
             // Source-scoped capabilities (proactive channel publishing) read
             // this instead of inferring provenance from surface flags.
             await ChatExecutionContext.$currentSessionSource.withValue(source) { [self] in
+            // Weak handle to THIS session for the whole turn, so a
+            // `background: true` spawn dispatch can deliver its report-back
+            // digest to the exact launching conversation later.
+            await ChatExecutionContext.$currentChatSessionBox.withValue(WeakChatSessionBox(self)) { [self] in
             await ChatExecutionContext.$currentAgentId.withValue(turnAgentId) { [self] in
             await ChatExecutionContext.$currentProjectId.withValue(self.projectId) { [self] in
             await ChatExecutionContext.$currentUserRequest.withValue(
                 trimmed.isEmpty ? nil : trimmed
             ) { [self] in
             await ChatExecutionContext.$currentModelName.withValue(
-                self.selectedModel
+                turnModelId
             ) { [self] in
             await ChatExecutionContext.$currentEnableThinking.withValue(
                 turnGenerationControls.enableThinking
             ) { [self] in
-                debugLog("send: task started runId=\(runId) model=\(self.selectedModel ?? "nil")")
+                debugLog("send: task started runId=\(runId) model=\(turnModelId ?? "nil")")
                 // A Stop can land between beginRun (synchronous in send) and
                 // this task's first line: stop() has then already finalized
                 // this runId, and the deferred finalizeRun below would no-op
@@ -5649,7 +5927,7 @@ final class ChatSession: ObservableObject {
                 // (a second MLX graph, gated exclusive to LLM eval) instead of
                 // the chat engine. The same run lifecycle (defer finalizeRun,
                 // currentTask cancellation) applies.
-                                    if self.isVideoGenerationModel(self.selectedModel) {
+                                    if self.isVideoGenerationModel(turnModelId) {
                                         await self.runVideoGeneration(
                                             prompt: trimmed,
                                             attachments: attachments,
@@ -5659,7 +5937,7 @@ final class ChatSession: ObservableObject {
                                         )
                                         return
                                     }
-                if self.isImageGenerationModel(self.selectedModel) {
+                if self.isImageGenerationModel(turnModelId) {
                     await self.runImageGeneration(
                         prompt: trimmed,
                         attachments: attachments,
@@ -5816,22 +6094,33 @@ final class ChatSession: ObservableObject {
                         }
                     }
 
+                    #if DEBUG
+                        let requestToolsDisabled =
+                            toolsDisabledForTestingOverride ?? Self.toolsDisabledForTesting
+                    #else
+                        let requestToolsDisabled = false
+                    #endif
                     let context = await SystemPromptComposer.composeChatContext(
-                        agentId: effectiveAgentId,
-                        executionMode: executionMode,
-                        model: selectedModel,
-                        modelType: selectedPickerItem?.modelType,
-                        query: trimmed,
-                        messages: priorUserMessages,
-                        toolsDisabled: chatCfg.disableTools,
-                        additionalToolNames: (cachedSession?.loadedToolNames ?? [])
-                            .union(skillReferencedTools),
-                        frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
-                        frozenToolSpecs: cachedSession?.initialToolSpecs,
-                        frozenManifest: cachedSession?.frozenManifest,
-                        frozenSoul: cachedSession?.frozenSoul,
-                        trace: ttftTrace,
-                        projectId: projectId
+                        ComposeRequest(
+                            agentId: effectiveAgentId,
+                            executionMode: executionMode,
+                            model: turnModelId,
+                            modelType: turnModelType,
+                            query: trimmed,
+                            messages: priorUserMessages,
+                            // Tool availability belongs to the active agent.
+                            // Folding in the hidden legacy chat-wide bit made
+                            // every custom agent schema-less.
+                            toolsDisabled: requestToolsDisabled,
+                            additionalToolNames: (cachedSession?.loadedToolNames ?? [])
+                                .union(skillReferencedTools),
+                            frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
+                            frozenToolSpecs: cachedSession?.initialToolSpecs,
+                            frozenManifest: cachedSession?.frozenManifest,
+                            frozenSoul: cachedSession?.frozenSoul,
+                            trace: ttftTrace,
+                            projectId: projectId
+                        )
                     )
                     guard isRunActive(runId) else { return }
 
@@ -5880,7 +6169,10 @@ final class ChatSession: ObservableObject {
                     // command (resolved above, before compose, so the tools it
                     // references made it into the schema).
                     if let oneOff = oneOffSkillSection {
-                        sys += "\n\n## Active Skill: \(oneOff.name)\n\n\(oneOff.body)"
+                        sys += "\n\n" + SkillManager.activeSkillPromptSection(
+                            name: oneOff.name,
+                            body: oneOff.body
+                        )
                     }
 
                     // Initial request schema. `ToolExecutionScope` appends tools
@@ -5960,9 +6252,16 @@ final class ChatSession: ObservableObject {
                         )
                     }
 
-                                        let effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(
+                                        var effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(
                                             for: effectiveAgentId
                                         )
+                    if let delegationBudget = self.delegationBudget {
+                        // Delegated child: the contract's per-generation
+                        // response ceiling is ENFORCED here (admission
+                        // priced it). Tighten-only.
+                        effectiveMaxTokensForAgent = delegationBudget
+                            .clampedResponseTokens(agentConfigured: effectiveMaxTokensForAgent)
+                    }
 
                     // KV-cache-aware history compaction: shared window
                     // resolution + reservations via `AgentLoopBudget` (parity
@@ -5971,9 +6270,19 @@ final class ChatSession: ObservableObject {
                     // budget; the system prefix is never rewritten so paged-KV
                     // reuse survives compaction.
                     let loopBudgetManager: ContextBudgetManager = await {
-                        let contextWindow = await AgentLoopBudget.resolveContextWindow(
-                            modelId: selectedModel ?? "default"
+                        var contextWindow = await AgentLoopBudget.resolveContextWindow(
+                            modelId: turnModelId ?? "default"
                         )
+                        if let delegationBudget = self.delegationBudget {
+                            // Delegated child: the contract's position
+                            // ceiling is ENFORCED here — the budget manager
+                            // trims history to this window on every request,
+                            // so the ceiling holds even when tool results
+                            // grow the transcript. Admission priced exactly
+                            // this number.
+                            contextWindow = delegationBudget
+                                .clampedContextWindow(resolved: contextWindow)
+                        }
                         return AgentLoopBudget.makeBudgetManager(
                             contextWindow: contextWindow,
                             systemPromptChars: sys.count,
@@ -6016,9 +6325,9 @@ final class ChatSession: ObservableObject {
                             let base = Self.buildUserChatMessage(
                                 content: t.content,
                                 attachments: t.attachments,
-                                supportsImages: selectedModelSupportsImages,
-                                supportsAudio: selectedModelSupportsAudio,
-                                supportsVideo: selectedModelSupportsVideo
+                                supportsImages: turnSupportsImages,
+                                supportsAudio: turnSupportsAudio,
+                                supportsVideo: turnSupportsVideo
                             )
                             // Replay the frozen memory / screen-context block
                             // this turn was originally sent with, so its wire
@@ -6075,7 +6384,13 @@ final class ChatSession: ObservableObject {
                         return msgs
                     }
 
-                    let maxAttempts = max(chatCfg.maxToolAttempts ?? 15, 1)
+                    var maxAttempts = max(chatCfg.maxToolAttempts ?? 15, 1)
+                    if let delegationBudget = self.delegationBudget {
+                        // Delegated child: the contract's turn ceiling is
+                        // ENFORCED here (admission priced it). Tighten-only.
+                        maxAttempts = delegationBudget
+                            .clampedToolAttempts(surfaceConfigured: maxAttempts)
+                    }
                     // Reset within-message dedupe/bias tracking for this user
                     // turn (lastListing intentionally persists across messages).
                     taskState.beginMessage()
@@ -6299,6 +6614,16 @@ final class ChatSession: ObservableObject {
                                 }
                             }
                         }
+                        // Worker-shared artifacts: a spawned helper's
+                        // `share_artifact` was processed at worker time into
+                        // the PARENT session's artifact store and deposited in
+                        // `SpawnArtifactCollector` (the spawn payload carries
+                        // only an `artifacts_shared` count). Drain after EVERY
+                        // spawn return and attach to the owning assistant turn.
+                        if SubagentCapabilityRegistry.spawn.toolNames.contains(inv.toolName) {
+                            await self.promoteWorkerSharedArtifacts(callId: callId)
+                        }
+
                         if let fileCard = WorkspaceFileReference.cardResult(
                             toolResult: resultText,
                             toolName: inv.toolName
@@ -6351,6 +6676,13 @@ final class ChatSession: ObservableObject {
                         return AgentLoopToolExecution(result: resultText)
                     }
 
+                    // Enforces a forced `tool_choice` at the execution
+                    // boundary — chat templates that ignore the
+                    // `tool_choice_name` hint leave decoding unconstrained,
+                    // so a mismatched call must be refused here, not run.
+                    // Armed per iteration in `modelStep`.
+                    let forcedToolGate = ForcedToolChoiceGate()
+
                     // The historical single-call path: registry dispatch
                     // (permission gate included) followed by post-processing.
                     // Thrown errors become rejection envelopes flagged
@@ -6361,6 +6693,9 @@ final class ChatSession: ObservableObject {
                         _ inv: ServiceToolInvocation,
                         callId: String
                     ) async -> AgentLoopToolExecution {
+                        if let violation = forcedToolGate.violationEnvelope(calledTool: inv.toolName) {
+                            return AgentLoopToolExecution(result: violation)
+                        }
                         do {
                             // Never print a direct secret-set value to the
                             // process log. Execution below still receives the
@@ -6433,6 +6768,12 @@ final class ChatSession: ObservableObject {
                             // run (remaining calls in the batch are skipped). Turn persistence
                             // happens in `onBatchComplete`, in slot order.
                             let rejectionMessage = ToolEnvelope.fromError(error, tool: inv.toolName)
+                            // A spawn that threw (failed/cancelled/over-budget)
+                            // may still have deposited artifacts its worker
+                            // shared before dying — surface them anyway.
+                            if SubagentCapabilityRegistry.spawn.toolNames.contains(inv.toolName) {
+                                await self.promoteWorkerSharedArtifacts(callId: callId)
+                            }
                             return AgentLoopToolExecution(result: rejectionMessage, isError: true)
                         }
                     }
@@ -6840,13 +7181,14 @@ final class ChatSession: ObservableObject {
                                 userText: trimmed,
                                 attempt: attempt
                             )
+                            forcedToolGate.arm(requestedToolChoice)
                             var req = ChatCompletionRequest(
                                 // Mode 2: the wire omits the model and routing is
                                 // by provider id, so don't pass the local
                                 // `selectedModel` — it can lag the async agent pin
                                 // and would only leak a stale prefix internally.
                                 model: self.isRemoteAgentTarget
-                                    ? "default" : (self.selectedModel ?? "default"),
+                                    ? "default" : (turnModelId ?? "default"),
                                 messages: msgs,
                                 temperature: effectiveTemp,
                                 max_tokens: effectiveMaxTokensForAgent,
@@ -6861,6 +7203,7 @@ final class ChatSession: ObservableObject {
                                 session_id: self.sessionId?.uuidString
                             )
                             req.samplingParametersAreImplicit = true
+                            req.claudeCodeOptions = self.claudeCodeRunOptions(for: turnAgentId)
                             // Mode 2 routing signal: tells `RemoteProviderService`
                             // to target the peer's `/agents/{address}/run`
                             // endpoint (remote agent runs fully server-side). The
@@ -6950,7 +7293,7 @@ final class ChatSession: ObservableObject {
                                     runId: runId,
                                     streamStartTime: streamStartTime,
                                     ttftTrace: ttftTrace,
-                                    selectedModel: self.selectedModel
+                                    selectedModel: turnModelId
                                 )
                                 assistantTurn = finalTurn
                                 // Stream finished naturally without a tool call — reset
@@ -6992,7 +7335,17 @@ final class ChatSession: ObservableObject {
                                         // so `requiresVisibleFinalResponse` is
                                         // false and a reasoning-only stop would
                                         // otherwise count as a finished answer.
-                                        toolsWereOffered: !iterationToolSpecs.isEmpty
+                                        toolsWereOffered: !iterationToolSpecs.isEmpty,
+                                        // Lets the classifier tell a real
+                                        // answer from a bare "Let me write
+                                        // the first batch:" preamble whose
+                                        // tool call never arrived.
+                                        content: assistantTurn.contentIsBlank
+                                            ? nil : assistantTurn.content,
+                                        // Set only when the stream consumer
+                                        // cut the turn on a repetition loop.
+                                        repetitionLoopPhrase:
+                                            assistantTurn.repetitionLoopPhrase
                                     )
                                 }
                                 hasStructuredToolWorkThisRun = true
@@ -7208,6 +7561,51 @@ final class ChatSession: ObservableObject {
                                 assistantTurn.appendContentAndNotify(text)
                             }
                             self.rebuildVisibleBlocks()
+                        },
+                        emitToolRejectionText: { message in
+                            // Chat intentionally stops after an interactive
+                            // denial or terminal tool failure so the model
+                            // cannot retry a side effect or hallucinate its
+                            // result. Close that stopped turn visibly with the
+                            // canonical envelope message instead of leaving a
+                            // blank assistant bubble / eternal-looking task.
+                            assistantTurn.pendingToolName = nil
+                            assistantTurn.clearPendingToolArgs()
+                            let prefix = L("The requested action was not completed.")
+                            let visible = message.isEmpty ? prefix : prefix + " " + message
+                            let separator = assistantTurn.contentIsEmpty ? "" : "\n\n"
+                            assistantTurn.appendContentAndNotify(separator + visible)
+                            self.rebuildVisibleBlocks()
+                        },
+                        finalVisibleText: {
+                            // Grounded-claim check scope: only runs where the
+                            // configure surface is actually offered, so agents
+                            // without `osaurus_config` are never second-guessed
+                            // about changes made through their own tools.
+                            guard
+                                toolScope.modelVisibleSpecs.contains(where: {
+                                    $0.function.name == GroundedConfigClaimCheck.configToolName
+                                })
+                            else { return nil }
+                            return assistantTurn.content
+                        },
+                        prepareGroundedClaimRetry: {
+                            // Same persistence-backed boundary as the tracked-
+                            // task continuation: the ungrounded final stays
+                            // visible in the transcript (the user sees the
+                            // model correct itself), but it is excluded from
+                            // the next model request so the retry's history
+                            // stays a valid assistant/tool sequence. No model
+                            // text is edited or synthesized here.
+                            debugLog(
+                                "send: grounded-claim guard staged a corrective notice; "
+                                    + "excluding ungrounded final and retrying"
+                            )
+                            assistantTurn.modelContextExcluded = true
+                            let retryTurn = ChatTurn(role: .assistant, content: "")
+                            self.turns.append(retryTurn)
+                            assistantTurn = retryTurn
+                            self.rebuildVisibleBlocks()
                         }
                     )
 
@@ -7243,8 +7641,19 @@ final class ChatSession: ObservableObject {
                         // window — the driver ended the run before sending a
                         // doomed request. Surface the distinct failure on the
                         // assistant bubble instead of a generic stream error.
-                        assistantTurn.content = AgentToolLoop.overBudgetMessage
-                        lastStreamError = AgentToolLoop.overBudgetMessage
+                        // Name the user's cap when that is the ceiling, so the
+                        // advice points at the setting that decided the number
+                        // rather than at a model window that had room.
+                        var overBudgetWindowSource: AgentLoopBudget.ContextWindowSource?
+                        if let overBudgetModel = turnModelId {
+                            overBudgetWindowSource = AgentLoopBudget
+                                .resolveContextWindowResolutionSync(modelId: overBudgetModel)
+                                .source
+                        }
+                        let overBudgetText = AgentToolLoop.overBudgetMessage(
+                            windowSource: overBudgetWindowSource)
+                        assistantTurn.content = overBudgetText
+                        lastStreamError = overBudgetText
                         rebuildVisibleBlocks()
                     }
 
@@ -7313,7 +7722,7 @@ final class ChatSession: ObservableObject {
                                         to: trimmedFinalMessages
                                     )
                                 var finalReq = ChatCompletionRequest(
-                                    model: selectedModel ?? "default",
+                                    model: turnModelId ?? "default",
                                     // Same watermark-trimmed view of history the
                                     // loop iterations used — the raw array can
                                     // exceed the window precisely when the cap
@@ -7332,6 +7741,7 @@ final class ChatSession: ObservableObject {
                                     session_id: sessionId?.uuidString
                                 )
                                 finalReq.samplingParametersAreImplicit = true
+                                finalReq.claudeCodeOptions = claudeCodeRunOptions(for: turnAgentId)
                                 finalReq.runAsRemoteAgent = isRemoteAgentTarget
                                 finalReq.cacheStableSystemPrefix =
                                     isRemoteAgentTarget ? nil : context.staticPrefix
@@ -7369,7 +7779,7 @@ final class ChatSession: ObservableObject {
                                     runId: runId,
                                     streamStartTime: Date(),
                                     ttftTrace: ttftTrace,
-                                    selectedModel: self.selectedModel
+                                    selectedModel: turnModelId
                                 )
                                 assistantTurn = finalTurn
                             } catch {
@@ -7459,6 +7869,7 @@ final class ChatSession: ObservableObject {
             }  // ChatExecutionContext.$currentUserRequest.withValue
             }  // ChatExecutionContext.$currentProjectId.withValue
             }  // ChatExecutionContext.$currentAgentId.withValue
+            }  // ChatExecutionContext.$currentChatSessionBox.withValue
             }  // ChatExecutionContext.$currentSessionSource.withValue
             }  // ChatExecutionContext.$currentFolderRoot.withValue
         }
@@ -8072,6 +8483,10 @@ struct ChatView: View {
             // request the user resolves; rendered above the input bar like the
             // other prompt cards.
             .overlay { ComputerUseConfirmOverlay() }
+            // osaurus_config plan-review approvals: the dedicated diff card
+            // every apply awaits. Same process-wide queue pattern as the
+            // Computer Use card.
+            .overlay { ConfigPlanApprovalCard() }
             .sheet(isPresented: $showTopUpSheet) {
                 CreditsTopUpSheet()
                     .environment(\.theme, theme)
@@ -8252,9 +8667,10 @@ struct ChatView: View {
                                 if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: id) {
                                     BackgroundTaskManager.shared.cancelTask(liveTask.id)
                                 }
-                                if session.sessionId == id {
-                                    session.reset()
-                                }
+                                // Detach this window first (registry-shared
+                                // instances are released, never reset in
+                                // place) before the row is deleted.
+                                windowState.prepareForSessionDeletion(id: id)
                                 ChatSessionsManager.shared.delete(id: id)
                                 windowState.refreshSessions()
                             },
@@ -8452,6 +8868,11 @@ struct ChatView: View {
                                 isCompact: windowState.showSidebar,
                                 isEmptyChat: !observedSession.hasVisibleThreadMessages,
                                 onClearChat: { observedSession.reset() },
+                                modelSwitchContinuityWarning:
+                                    observedSession.modelSwitchContinuityWarning,
+                                onDismissModelSwitchContinuityWarning: {
+                                    observedSession.modelSwitchContinuityWarning = nil
+                                },
                                 onCaptureScreenshot: { observedSession.captureScreenshotFromSlashCommand() },
                                 onGenerateTitle: { observedSession.generateTitleFromSlashCommand() },
                                 onSkillSelected: { skillId in
@@ -8735,13 +9156,15 @@ struct ChatView: View {
                     case .openSecurityDoc(let url):
                         NSWorkspace.shared.open(url)
                     case .openStorageSettings, .exportPlaintextBackup:
-                        // Both actions land on the Storage panel.
+                        // Both actions land on the storage-encryption panel,
+                        // which lives on the Privacy tab now that the
+                        // standalone Storage tab is gone.
                         // `exportPlaintextBackup` doesn't auto-open
                         // the file picker — the user clicks
                         // "Export plaintext backup…" once they're
                         // there, which is the safer flow because it
                         // forces them to pick a destination.
-                        AppDelegate.shared?.showManagementWindow(initialTab: .storage)
+                        AppDelegate.shared?.showManagementWindow(initialTab: .privacy)
                     case .openPrivacySettings:
                         AppDelegate.shared?.showManagementWindow(initialTab: .privacy)
                     case .openComputerUseSettings:
@@ -8766,6 +9189,16 @@ struct ChatView: View {
                             windowState.showSidebar = true
                         }
                         ProjectManager.shared.pendingRevealProjectsTab = true
+                    case .openOrchestratorSettings:
+                        AppDelegate.shared?.showManagementWindow(initialTab: .orchestrator)
+                    case .openModelDownloads(let modelId):
+                        // Ride the one-shot pending request (mirrors
+                        // `pendingRemoteAgentDetailId`) so the detail sheet
+                        // opens for both a fresh and a reused Models window.
+                        if let modelId {
+                            ManagementStateManager.shared.pendingModelDetailId = modelId
+                        }
+                        AppDelegate.shared?.showManagementWindow(initialTab: .models)
                     case .openSubagentSettings:
                         // Land on the first custom (non-built-in) agent's
                         // Subagents tab (per-agent spawn / image config). With
@@ -8853,6 +9286,16 @@ struct ChatView: View {
                 pendingRedactionReview = state
             }
             privacyPresenterToken = token
+
+            // Presenter for the redaction tools' PII-model download gate,
+            // rendered on this window's ThemedAlertHost overlay so it
+            // matches every other app dialog. Value-captured scope (no
+            // windowState retain); last-write-wins across windows, same
+            // pragmatic behavior as other global presenters.
+            let downloadScope = ThemedAlertScope.chat(windowState.windowId)
+            await PIIModelDownloadGate.shared.registerPresenter {
+                await PIIModelDownloadAlertFlow.run(scope: downloadScope)
+            }
         }
         .onDisappear {
             // Drop only this window's registration — by passing the

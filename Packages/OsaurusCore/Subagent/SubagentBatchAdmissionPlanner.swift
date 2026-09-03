@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import os
 
 enum SubagentBatchAdmissionRejection: String, Sendable, Equatable {
     case invalidParallelLimit
@@ -29,6 +30,112 @@ enum SubagentBatchLimitingFactor: String, Sendable, Hashable {
     case memoryEstimateUnavailable
 }
 
+/// What a specific delegation will actually ask the child to hold: the
+/// seed/input size and the configured output ceiling. Used to price the
+/// child's incremental KV/SSM state from the BOUNDED request instead of the
+/// model-wide retention cap. Characters are converted at the repo-standard
+/// chars/4 estimate with a 1.5× safety factor plus a 1024-token margin for
+/// the child's system prompt and template overhead — conservative, but not
+/// "the whole 64K window".
+public struct SubagentChildRequestEstimate: Sendable, Equatable {
+    public let seedCharacters: Int?
+    public let maxOutputTokens: Int?
+    /// A position ceiling the child's execution path ENFORCES outright —
+    /// for a delegated chat session, the target agent's resolved context
+    /// window (`AgentLoopBudget.resolveContextWindow`: bundle window ∩ the
+    /// user's context-length cap), which the loop's budget manager trims
+    /// history to on every request. Unlike seed/output, this bound holds
+    /// even when tool results grow the transcript, because trimming applies
+    /// to the whole outbound context.
+    public let enforcedPositionCeiling: Int?
+
+    public init(
+        seedCharacters: Int?,
+        maxOutputTokens: Int?,
+        enforcedPositionCeiling: Int? = nil
+    ) {
+        self.seedCharacters = seedCharacters
+        self.maxOutputTokens = maxOutputTokens
+        self.enforcedPositionCeiling = enforcedPositionCeiling
+    }
+
+    /// nil when nothing bounded is known (fail back to the cap-priced
+    /// conservative estimate). Token math rounds UP (ceiling) — a
+    /// truncating estimate would shave the bound in the unsafe direction.
+    /// Two independent bounds can contribute and the TIGHTER one wins:
+    /// seed + output (requires BOTH — a seed without an output ceiling, or
+    /// vice versa, is an incomplete contract, not a bound) and the
+    /// execution-enforced position ceiling.
+    func boundedPositionBudget(policyCap: Int?) -> Int? {
+        var candidates: [Int] = []
+        if let seedCharacters, let maxOutputTokens,
+            seedCharacters >= 0, maxOutputTokens > 0
+        {
+            // chars/4 tokens × 1.5 safety = chars × 3 / 8, rounded up.
+            // Every step overflow-checked and failing CLOSED: a value that
+            // cannot be represented contributes no candidate, so the fall
+            // back is conservative cap pricing, never a wrapped bound.
+            let (seedTimes3, mulOverflow) = seedCharacters.multipliedReportingOverflow(by: 3)
+            if !mulOverflow {
+                let (numerator, addOverflow) = seedTimes3.addingReportingOverflow(7)
+                if !addOverflow {
+                    let seedTokens = numerator / 8
+                    let (requested, sumOverflow) =
+                        seedTokens.addingReportingOverflow(maxOutputTokens)
+                    if !sumOverflow { candidates.append(requested) }
+                }
+            }
+        }
+        // The 4096 floor applies ONLY to the seed+output candidate: that
+        // form measures nothing about the child's wrapper/system/template
+        // context, so the floor absorbs it. An enforced position ceiling is
+        // fully MEASURED (dispatched prompt + composed system prompt +
+        // composer tool reservation) and enforced verbatim by the session's
+        // window clamp, so it prices as-is — no hidden floor.
+        var floored = candidates.map { max(4096, $0) }
+        if let enforcedPositionCeiling, enforcedPositionCeiling > 0 {
+            floored.append(enforcedPositionCeiling)
+        }
+        guard let tightest = floored.min() else { return nil }
+        if let policyCap, policyCap > 0 {
+            return min(tightest, policyCap)
+        }
+        return tightest
+    }
+
+    /// Conservative wave envelope for a batch: each job's safe position
+    /// budget is resolved INDEPENDENTLY (uncapped — the policy cap clamps
+    /// later, and clamping commutes with max), and the wave is priced at
+    /// the MAXIMUM per-child bound, carried as a pure position ceiling.
+    ///
+    /// Never combine heterogeneous jobs field-by-field: an estimate built
+    /// from "max seed + max output" alongside "max ceiling" would take the
+    /// MIN of those two candidate bounds, letting one job's small ceiling
+    /// under-price another job's large seed+output request.
+    ///
+    /// nil (fail closed to cap pricing for the whole canonical-model
+    /// group) when the batch is empty or ANY job lacks a valid bound —
+    /// a wave must never be under-priced by its cheapest member.
+    static func waveEnvelope(
+        of estimates: [SubagentChildRequestEstimate?]
+    ) -> SubagentChildRequestEstimate? {
+        guard !estimates.isEmpty else { return nil }
+        var perJobBudgets: [Int] = []
+        for estimate in estimates {
+            guard let budget = estimate?.boundedPositionBudget(policyCap: nil) else {
+                return nil
+            }
+            perJobBudgets.append(budget)
+        }
+        guard let maximum = perJobBudgets.max() else { return nil }
+        return SubagentChildRequestEstimate(
+            seedCharacters: nil,
+            maxOutputTokens: nil,
+            enforcedPositionCeiling: maximum
+        )
+    }
+}
+
 /// Authoritative memory facts resolved by `ModelRuntime`.
 ///
 /// `targetLoadFootprintBytes` is the model's effective load footprint, not
@@ -39,10 +146,58 @@ struct SubagentBatchMemoryFacts: Sendable, Equatable {
     let targetAlreadyResident: Bool
     let targetLoadFootprintBytes: UInt64?
     let perActiveChildHeadroomBytes: UInt64?
+    /// Request-bounded per-child active-state price: the same KV/SSM
+    /// estimator as `perActiveChildHeadroomBytes` but clamped to what THIS
+    /// delegation can actually allocate (seed/input tokens + the child's
+    /// configured max output, with margin) instead of the model-wide KV
+    /// retention cap. A 2K-output child must not be priced as though it
+    /// immediately materializes a 64K-retention cache — on a 16 GB Mac
+    /// that difference alone turns an affordable single same-resident-model
+    /// child into `ramSlots == 0` (#2221 owns the math; #2498 made the
+    /// path common). nil = no request estimate was available; admission
+    /// then falls back to the conservative cap-priced value (fail closed,
+    /// never cheaper than the physics).
+    let requestBoundedChildHeadroomBytes: UInt64?
     let reclaimableBytes: UInt64?
     let releasableParentBytes: UInt64
     let resolvedLoadBudgetBytes: UInt64?
     let osHeadroomBytes: UInt64
+
+    init(
+        canonicalModelKey: String,
+        targetAlreadyResident: Bool,
+        targetLoadFootprintBytes: UInt64?,
+        perActiveChildHeadroomBytes: UInt64?,
+        requestBoundedChildHeadroomBytes: UInt64? = nil,
+        reclaimableBytes: UInt64?,
+        releasableParentBytes: UInt64,
+        resolvedLoadBudgetBytes: UInt64?,
+        osHeadroomBytes: UInt64
+    ) {
+        self.canonicalModelKey = canonicalModelKey
+        self.targetAlreadyResident = targetAlreadyResident
+        self.targetLoadFootprintBytes = targetLoadFootprintBytes
+        self.perActiveChildHeadroomBytes = perActiveChildHeadroomBytes
+        self.requestBoundedChildHeadroomBytes = requestBoundedChildHeadroomBytes
+        self.reclaimableBytes = reclaimableBytes
+        self.releasableParentBytes = releasableParentBytes
+        self.resolvedLoadBudgetBytes = resolvedLoadBudgetBytes
+        self.osHeadroomBytes = osHeadroomBytes
+    }
+
+    /// The per-child price admission actually uses: the request-bounded
+    /// estimate when one exists, never above the conservative cap-priced
+    /// estimate (a request estimate can only SHRINK the charge; if a
+    /// caller ever supplies a larger one, the conservative value wins so
+    /// the estimate cannot inflate past the model-wide envelope).
+    var effectiveChildHeadroomBytes: UInt64? {
+        switch (requestBoundedChildHeadroomBytes, perActiveChildHeadroomBytes) {
+        case (let bounded?, let cap?): return min(bounded, cap)
+        case (let bounded?, nil): return bounded
+        case (nil, let cap?): return cap
+        case (nil, nil): return nil
+        }
+    }
 }
 
 struct SubagentBatchAdmissionInput: Sendable, Equatable {
@@ -86,7 +241,51 @@ struct SubagentBatchAdmissionPlan: Sendable, Equatable {
 }
 
 enum SubagentBatchAdmissionPlanner {
+    private static let log = Logger(
+        subsystem: "ai.osaurus", category: "SubagentAdmission")
+
+    /// One complete diagnostics line per admission decision. Every term of
+    /// the RAM math is named so a 16 GB rejection can be attributed to the
+    /// exact term (per-child price vs reclaimable vs OS reserve vs budget)
+    /// from the log alone — the precondition for changing the policy.
+    private static func logDiagnostics(
+        _ input: SubagentBatchAdmissionInput,
+        _ plan: SubagentBatchAdmissionPlan
+    ) {
+        let m = input.memory
+        let mb = { (v: UInt64?) -> String in
+            v.map { String(format: "%.2fGB", Double($0) / 1_073_741_824) } ?? "nil"
+        }
+        log.info(
+            """
+            [admission] model=\(m?.canonicalModelKey ?? "?", privacy: .public) \
+            resident=\(m?.targetAlreadyResident ?? false) \
+            jobs=\(input.localJobCount)+\(input.remoteJobCount)r \
+            limits(agent=\(input.agentParallelLimit) engine=\(input.engineParallelLimit) \
+            batching=\(input.continuousBatchingEnabled) ramSafety=\(input.ramSafetyEnabled)) \
+            weights=\(mb(m?.targetLoadFootprintBytes), privacy: .public) \
+            perChildCap=\(mb(m?.perActiveChildHeadroomBytes), privacy: .public) \
+            perChildBounded=\(mb(m?.requestBoundedChildHeadroomBytes), privacy: .public) \
+            reclaimable=\(mb(m?.reclaimableBytes), privacy: .public) \
+            releasableParent=\(mb(m?.releasableParentBytes), privacy: .public) \
+            osReserve=\(mb(m?.osHeadroomBytes), privacy: .public) \
+            loadBudget=\(mb(m?.resolvedLoadBudgetBytes), privacy: .public) \
+            -> verdict=\(String(describing: plan.verdict), privacy: .public) \
+            ramSlots=\(plan.ramSlots.map(String.init) ?? "nil", privacy: .public) \
+            localCapacity=\(plan.localCapacity) parallelism=\(plan.localParallelism) \
+            limiting=\(plan.limitingFactors.map(\.rawValue).sorted().joined(separator: ","), privacy: .public)
+            """)
+    }
+
     static func plan(_ input: SubagentBatchAdmissionInput) -> SubagentBatchAdmissionPlan {
+        let plan = planInternal(input)
+        logDiagnostics(input, plan)
+        return plan
+    }
+
+    private static func planInternal(
+        _ input: SubagentBatchAdmissionInput
+    ) -> SubagentBatchAdmissionPlan {
         let localJobs = max(0, input.localJobCount)
         let remoteJobs = max(0, input.remoteJobCount)
         let requestedJobs = saturatingIntAdd(localJobs, remoteJobs)
@@ -170,7 +369,7 @@ enum SubagentBatchAdmissionPlanner {
         }
         let localSlots = min(localJobs, localCapacity)
 
-        let perChild = input.memory?.perActiveChildHeadroomBytes
+        let perChild = input.memory?.effectiveChildHeadroomBytes
         let incrementalWeight = input.memory.flatMap { facts -> UInt64? in
             facts.targetAlreadyResident ? 0 : facts.targetLoadFootprintBytes
         }
@@ -210,7 +409,7 @@ enum SubagentBatchAdmissionPlanner {
     ) -> MemoryCapacity? {
         guard let facts,
             let footprint = positive(facts.targetLoadFootprintBytes),
-            let perChild = positive(facts.perActiveChildHeadroomBytes),
+            let perChild = positive(facts.effectiveChildHeadroomBytes),
             let reclaimable = facts.reclaimableBytes
         else {
             return nil

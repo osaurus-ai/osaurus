@@ -239,6 +239,55 @@ struct OpenAICodexOAuthServiceTests {
         #expect(summary.modelMetadata["gpt-5.5-internal"] == nil)
     }
 
+    @Test func decodeModelCatalog_preservesContextWindowPerModel() throws {
+        // The catalog's `context_window` is the authoritative per-model window.
+        // Luna carries a large window, an older slug omits the field entirely,
+        // and a non-positive value must be treated as "unknown" (nil) so callers
+        // fall back rather than trusting a zero window.
+        let payload = """
+            {"models":[
+                {"slug":"gpt-5.6-luna","visibility":"list","priority":1,"shell_type":"shell_command","context_window":1048576},
+                {"slug":"gpt-5.2-codex","visibility":"list","priority":2,"shell_type":"shell_command","context_window":272000},
+                {"slug":"gpt-5.5","visibility":"list","priority":3,"shell_type":"shell_command"},
+                {"slug":"gpt-5.4","visibility":"list","priority":4,"shell_type":"shell_command","context_window":0}
+            ]}
+            """
+        let (_, summary) = try OpenAICodexOAuthService.decodeModelCatalog(Data(payload.utf8))
+
+        #expect(summary.modelMetadata["gpt-5.6-luna"]?.contextWindow == 1_048_576)
+        #expect(summary.modelMetadata["gpt-5.2-codex"]?.contextWindow == 272_000)
+        // Missing field -> nil, so window resolution falls back instead of capping.
+        #expect(summary.modelMetadata["gpt-5.5"]?.contextWindow == nil)
+        // Non-positive window is rejected as unusable.
+        #expect(summary.modelMetadata["gpt-5.4"]?.contextWindow == nil)
+    }
+
+    @Test func decodeModelCatalog_preservesInputModalitiesPerModel() throws {
+        let payload = """
+            {"models":[
+                {"slug":"gpt-5.6-sol","visibility":"list","priority":1,
+                 "shell_type":"shell_command","input_modalities":["text","image"]},
+                {"slug":"gpt-5.6-text","visibility":"list","priority":2,
+                 "shell_type":"shell_command","input_modalities":["text"]},
+                {"slug":"gpt-5.5","visibility":"list","priority":3,
+                 "shell_type":"shell_command"}
+            ]}
+            """
+        let (_, summary) = try OpenAICodexOAuthService.decodeModelCatalog(Data(payload.utf8))
+
+        let vision = try #require(summary.modelMetadata["gpt-5.6-sol"])
+        #expect(vision.inputModalities == ["text", "image"])
+        #expect(vision.supportsImageInput)
+
+        let textOnly = try #require(summary.modelMetadata["gpt-5.6-text"])
+        #expect(!textOnly.supportsImageInput)
+
+        // codex-rs defaults legacy catalog entries to text + image.
+        let legacy = try #require(summary.modelMetadata["gpt-5.5"])
+        #expect(legacy.inputModalities == nil)
+        #expect(legacy.supportsImageInput)
+    }
+
     @Test func decodeModelCatalog_throwsTypedErrorForUnreadablePayload() {
         #expect(throws: OpenAICodexOAuthError.self) {
             _ = try OpenAICodexOAuthService.decodeModelCatalog(Data(#"{"models":"unexpected"}"#.utf8))

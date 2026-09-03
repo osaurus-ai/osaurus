@@ -96,16 +96,33 @@ public enum XAIOAuthService {
     /// Models reachable through the xAI OAuth ("Grok Build" / SuperGrok / X
     /// Premium+) entitlement. The OAuth access token is denied access to the
     /// `/models` endpoint (HTTP 403), so — like Codex — model discovery uses
-    /// this built-in catalog rather than a live query. `grok-4.5` is the
-    /// default, matching xAI (it is the Grok Build default on the API and
-    /// CLI); `grok-4.5-latest` and `grok-build-latest` are aliases of it and
-    /// are intentionally not listed separately.
+    /// this built-in catalog rather than a live query. `grok-4.6` is the
+    /// default, matching xAI (it is the current Grok Build default on the
+    /// API and CLI); `-latest` aliases are intentionally not listed
+    /// separately.
     public static let supportedModels: [String] = [
+        "grok-4.6",
         "grok-4.5",
         "grok-4.3",
         "grok-build-0.1",
-        "grok-4.20-beta-latest-reasoning",
-        "grok-4.20-beta-latest-non-reasoning",
+        "grok-4.20-0309-reasoning",
+        "grok-4.20-0309-non-reasoning",
+        "grok-4.20-multi-agent-0309",
+    ]
+
+    /// Documented context windows (docs.x.ai) for the OAuth catalog above,
+    /// keyed by slug. Since the OAuth `/models` endpoint 403s, there is no
+    /// live source for this — these are the vendor-published window sizes,
+    /// used in place of a live per-model discovery response the way Codex's
+    /// `lastContextWindows` is used for its (reachable) live catalog.
+    public static let contextWindows: [String: Int] = [
+        "grok-4.6": 500_000,
+        "grok-4.5": 500_000,
+        "grok-4.3": 1_000_000,
+        "grok-build-0.1": 256_000,
+        "grok-4.20-0309-reasoning": 1_000_000,
+        "grok-4.20-0309-non-reasoning": 1_000_000,
+        "grok-4.20-multi-agent-0309": 1_000_000,
     ]
 
     // MARK: - Provider Factory

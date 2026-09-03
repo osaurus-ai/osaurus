@@ -68,6 +68,19 @@ public struct EvalCaseTelemetry: Sendable, Codable {
     /// Number of model steps (loop iterations that called the model).
     /// `promptTokensTotal / modelSteps` is the mean per-step context size.
     public let modelSteps: Int?
+    /// How the agent loop ENDED (`AgentToolLoop.Exit`) — e.g. `finalResponse`,
+    /// `iterationCapReached`, `toolRejected`. Present on every agent-loop row,
+    /// including passing ones, so a report can group outcomes by termination
+    /// instead of only by pass/fail.
+    public let loopExit: String?
+    /// WHICH branch produced `loopExit` (`AgentToolLoop.ExitOrigin`).
+    /// `finalResponse` is returned from six distinct sites, three of them
+    /// give-up paths after a bounded recovery was exhausted, so `loopExit`
+    /// alone cannot separate an answer from a surrender.
+    public let loopExitOrigin: String?
+    /// Bounded-recovery attempts spent across the run. These are uncharged
+    /// against the iteration budget and previously left no trace at all.
+    public let loopRecoveryRetries: Int?
     /// Peak physical footprint (Activity-Monitor "Memory") sampled across
     /// the case, in megabytes — the value the AGENTS.md RAM gate reads.
     public let peakPhysFootprintMb: Double?
@@ -90,10 +103,16 @@ public struct EvalCaseTelemetry: Sendable, Codable {
     /// KV prefix-cache misses gained during this case — pairs with hits
     /// to show whether later iterations reused or re-prefilled.
     public let kvPrefixMissesDelta: Int?
+    /// Paged-KV boundaries evicted during this case. A non-zero value is not
+    /// itself a failure, but omitting it can make an apparent prefix-hit win
+    /// hide cache churn on long or concurrent runs.
+    public let pagedEvictionsDelta: Int?
     /// SSM-companion cache hits gained during this case — the cache-reuse
     /// signal for hybrid SSM models (Qwen-style), where a KV-prefix hit
     /// alone is not sufficient proof (per AGENTS.md cache-proof rules).
     public let ssmCompanionHitsDelta: Int?
+    /// SSM-companion lookups that missed during this case.
+    public let ssmCompanionMissesDelta: Int?
     /// SSM-companion re-derivations gained during this case. A re-derive
     /// is the SSM analog of a cold prefill; rising re-derives with flat
     /// hits means the companion cache isn't being reused.
@@ -111,6 +130,34 @@ public struct EvalCaseTelemetry: Sendable, Codable {
     /// Disk-L2 KV-cache stores gained during this case — proves the disk
     /// lane is actively persisting prefixes for later reuse.
     public let diskL2StoresDelta: Int?
+    /// Disk-L2 boundaries removed by quota enforcement during this case.
+    public let diskL2EvictionsDelta: Int?
+    /// The `--mtp` control this run was executed under (`off`/`auto`/`dN`),
+    /// echoed onto every agent-loop row so a report is self-describing.
+    /// nil = no explicit control (process default resolution).
+    public let mtpRequested: String?
+    /// Load-time MTP launch status from the runtime's resolved plan —
+    /// INDEPENDENT resolution evidence (not inferred from token stats).
+    public let mtpLoadStatus: String?
+    /// Per-request resolved draft strategy under current settings
+    /// ("none" or "native_mtp:dN·…") captured while the model was
+    /// resident — the second independent evidence layer.
+    public let mtpRequestStrategy: String?
+    /// Native-MTP evidence aggregated across the case's model steps, from
+    /// the runtime's own per-generation stats (never inferred from
+    /// settings). All nil = native MTP produced none of this case's tokens.
+    /// `mtpDepth` is the max configured depth observed; `mtpActiveDepth`
+    /// the min end-of-step depth (the most-downshifted step); the counters
+    /// are sums. Drafted tokens = accepted + rejected.
+    public let mtpDepth: Int?
+    public let mtpActiveDepth: Int?
+    public let mtpVerifyCalls: Int?
+    public let mtpAcceptedDraftTokens: Int?
+    public let mtpBonusTokens: Int?
+    public let mtpRejectedTokens: Int?
+    public let mtpARFallbackTokens: Int?
+    /// Model steps whose tokens were produced by the native-MTP iterator.
+    public let mtpStepsWithMTP: Int?
 
     public init(
         decodeTokensPerSecond: Double? = nil,
@@ -122,16 +169,33 @@ public struct EvalCaseTelemetry: Sendable, Codable {
         peakContextTokens: Int? = nil,
         totalModelTokens: Int? = nil,
         modelSteps: Int? = nil,
+        loopExit: String? = nil,
+        loopExitOrigin: String? = nil,
+        loopRecoveryRetries: Int? = nil,
         peakPhysFootprintMb: Double? = nil,
         meanCpuPercent: Double? = nil,
         peakCpuPercent: Double? = nil,
         kvPrefixHitsDelta: Int? = nil,
         kvPrefixMissesDelta: Int? = nil,
+        pagedEvictionsDelta: Int? = nil,
         ssmCompanionHitsDelta: Int? = nil,
+        ssmCompanionMissesDelta: Int? = nil,
         ssmCompanionReDerivesDelta: Int? = nil,
         diskL2HitsDelta: Int? = nil,
         diskL2MissesDelta: Int? = nil,
-        diskL2StoresDelta: Int? = nil
+        diskL2StoresDelta: Int? = nil,
+        diskL2EvictionsDelta: Int? = nil,
+        mtpRequested: String? = nil,
+        mtpLoadStatus: String? = nil,
+        mtpRequestStrategy: String? = nil,
+        mtpDepth: Int? = nil,
+        mtpActiveDepth: Int? = nil,
+        mtpVerifyCalls: Int? = nil,
+        mtpAcceptedDraftTokens: Int? = nil,
+        mtpBonusTokens: Int? = nil,
+        mtpRejectedTokens: Int? = nil,
+        mtpARFallbackTokens: Int? = nil,
+        mtpStepsWithMTP: Int? = nil
     ) {
         self.decodeTokensPerSecond = decodeTokensPerSecond
         self.prefillTokensPerSecond = prefillTokensPerSecond
@@ -140,6 +204,9 @@ public struct EvalCaseTelemetry: Sendable, Codable {
         self.completionTokens = completionTokens
         self.promptTokensTotal = promptTokensTotal
         self.peakContextTokens = peakContextTokens
+        self.loopExit = loopExit
+        self.loopExitOrigin = loopExitOrigin
+        self.loopRecoveryRetries = loopRecoveryRetries
         self.totalModelTokens = totalModelTokens
         self.modelSteps = modelSteps
         self.peakPhysFootprintMb = peakPhysFootprintMb
@@ -147,11 +214,25 @@ public struct EvalCaseTelemetry: Sendable, Codable {
         self.peakCpuPercent = peakCpuPercent
         self.kvPrefixHitsDelta = kvPrefixHitsDelta
         self.kvPrefixMissesDelta = kvPrefixMissesDelta
+        self.pagedEvictionsDelta = pagedEvictionsDelta
         self.ssmCompanionHitsDelta = ssmCompanionHitsDelta
+        self.ssmCompanionMissesDelta = ssmCompanionMissesDelta
         self.ssmCompanionReDerivesDelta = ssmCompanionReDerivesDelta
         self.diskL2HitsDelta = diskL2HitsDelta
         self.diskL2MissesDelta = diskL2MissesDelta
         self.diskL2StoresDelta = diskL2StoresDelta
+        self.diskL2EvictionsDelta = diskL2EvictionsDelta
+        self.mtpRequested = mtpRequested
+        self.mtpLoadStatus = mtpLoadStatus
+        self.mtpRequestStrategy = mtpRequestStrategy
+        self.mtpDepth = mtpDepth
+        self.mtpActiveDepth = mtpActiveDepth
+        self.mtpVerifyCalls = mtpVerifyCalls
+        self.mtpAcceptedDraftTokens = mtpAcceptedDraftTokens
+        self.mtpBonusTokens = mtpBonusTokens
+        self.mtpRejectedTokens = mtpRejectedTokens
+        self.mtpARFallbackTokens = mtpARFallbackTokens
+        self.mtpStepsWithMTP = mtpStepsWithMTP
     }
 
     /// True when no field carries a measurement — used to avoid emitting
@@ -160,12 +241,21 @@ public struct EvalCaseTelemetry: Sendable, Codable {
         decodeTokensPerSecond == nil && prefillTokensPerSecond == nil
             && ttftMs == nil && firstActionMs == nil && completionTokens == nil
             && promptTokensTotal == nil && peakContextTokens == nil
+            && loopExit == nil && loopExitOrigin == nil && loopRecoveryRetries == nil
             && totalModelTokens == nil && modelSteps == nil
             && peakPhysFootprintMb == nil && meanCpuPercent == nil
             && peakCpuPercent == nil && kvPrefixHitsDelta == nil
-            && kvPrefixMissesDelta == nil && ssmCompanionHitsDelta == nil
+            && kvPrefixMissesDelta == nil && pagedEvictionsDelta == nil
+            && ssmCompanionHitsDelta == nil && ssmCompanionMissesDelta == nil
             && ssmCompanionReDerivesDelta == nil && diskL2HitsDelta == nil
             && diskL2MissesDelta == nil && diskL2StoresDelta == nil
+            && diskL2EvictionsDelta == nil
+            && mtpRequested == nil && mtpLoadStatus == nil
+            && mtpRequestStrategy == nil
+            && mtpDepth == nil && mtpActiveDepth == nil
+            && mtpVerifyCalls == nil && mtpAcceptedDraftTokens == nil
+            && mtpBonusTokens == nil && mtpRejectedTokens == nil
+            && mtpARFallbackTokens == nil && mtpStepsWithMTP == nil
     }
 }
 
@@ -810,14 +900,19 @@ public struct EvalReport: Sendable, Codable {
             let misses = t.kvPrefixMissesDelta ?? 0
             parts.append("KV +\(hits)hit/+\(misses)miss")
         }
+        if let evictions = t.pagedEvictionsDelta, evictions != 0 {
+            parts.append("paged +\(evictions)evict")
+        }
         if let ssmHits = t.ssmCompanionHitsDelta {
+            let misses = t.ssmCompanionMissesDelta ?? 0
             let red = t.ssmCompanionReDerivesDelta ?? 0
-            parts.append("SSM +\(ssmHits)hit/+\(red)rederive")
+            parts.append("SSM +\(ssmHits)hit/+\(misses)miss/+\(red)rederive")
         }
         if let l2Hits = t.diskL2HitsDelta {
             let stores = t.diskL2StoresDelta ?? 0
-            if l2Hits != 0 || stores != 0 {
-                parts.append("L2 +\(l2Hits)hit/+\(stores)store")
+            let evictions = t.diskL2EvictionsDelta ?? 0
+            if l2Hits != 0 || stores != 0 || evictions != 0 {
+                parts.append("L2 +\(l2Hits)hit/+\(stores)store/+\(evictions)evict")
             }
         }
         if let prompt = t.promptTokensTotal {
@@ -926,15 +1021,30 @@ public struct EvalReport: Sendable, Codable {
         }
         let kvHits = telemetered.compactMap(\.kvPrefixHitsDelta).reduce(0, +)
         let kvMisses = telemetered.compactMap(\.kvPrefixMissesDelta).reduce(0, +)
-        if kvHits != 0 || kvMisses != 0 {
-            lines.append("  KV prefix      +\(kvHits) hits  +\(kvMisses) misses (suite-wide delta)")
+        let pagedEvictions = telemetered.compactMap(\.pagedEvictionsDelta).reduce(0, +)
+        if kvHits != 0 || kvMisses != 0 || pagedEvictions != 0 {
+            lines.append(
+                "  KV prefix      +\(kvHits) hits  +\(kvMisses) misses  "
+                    + "+\(pagedEvictions) paged evictions (suite-wide delta)"
+            )
+        }
+        let ssmHits = telemetered.compactMap(\.ssmCompanionHitsDelta).reduce(0, +)
+        let ssmMisses = telemetered.compactMap(\.ssmCompanionMissesDelta).reduce(0, +)
+        let ssmReDerives = telemetered.compactMap(\.ssmCompanionReDerivesDelta).reduce(0, +)
+        if ssmHits != 0 || ssmMisses != 0 || ssmReDerives != 0 {
+            lines.append(
+                "  SSM companion  +\(ssmHits) hits  +\(ssmMisses) misses  "
+                    + "+\(ssmReDerives) rederives (suite-wide delta)"
+            )
         }
         let l2Hits = telemetered.compactMap(\.diskL2HitsDelta).reduce(0, +)
         let l2Misses = telemetered.compactMap(\.diskL2MissesDelta).reduce(0, +)
         let l2Stores = telemetered.compactMap(\.diskL2StoresDelta).reduce(0, +)
-        if l2Hits != 0 || l2Misses != 0 || l2Stores != 0 {
+        let l2Evictions = telemetered.compactMap(\.diskL2EvictionsDelta).reduce(0, +)
+        if l2Hits != 0 || l2Misses != 0 || l2Stores != 0 || l2Evictions != 0 {
             lines.append(
-                "  KV disk-L2     +\(l2Hits) hits  +\(l2Misses) misses  +\(l2Stores) stores (suite-wide delta)"
+                "  KV disk-L2     +\(l2Hits) hits  +\(l2Misses) misses  "
+                    + "+\(l2Stores) stores  +\(l2Evictions) evictions (suite-wide delta)"
             )
         }
         return lines

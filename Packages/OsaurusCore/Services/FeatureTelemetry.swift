@@ -307,6 +307,25 @@ enum FeatureTelemetry {
         )
     }
 
+    /// A sandbox startup or per-agent provisioning failure. Every property is
+    /// a closed, low-cardinality token produced by the registrar; never pass
+    /// through an error message, path, domain, environment value, or agent id.
+    static func sandboxProvisionFailure(
+        category: String,
+        backend: String,
+        phase: String,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "sandbox_provision_failure",
+            [
+                "category": category,
+                "backend": backend,
+                "phase": phase,
+            ]
+        )
+    }
+
     // MARK: - Feature adoption / scope
 
     /// A model finished downloading. The model id comes from the curated
@@ -380,6 +399,7 @@ enum FeatureTelemetry {
         case .chat: return "chat"
         case .voice: return "voice"
         case .themes: return "themes"
+        case .orchestrator: return "orchestrator"
         case .models: return "models"
         case .providers: return "providers"
         case .imageGeneration: return "image_generation"
@@ -391,7 +411,6 @@ enum FeatureTelemetry {
         case .search: return "search"
         case .skills: return "skills"
         case .commands: return "commands"
-        case .plugins: return "plugins"
         case .schedules: return "schedules"
         case .watchers: return "watchers"
         case .sandbox: return "sandbox"
@@ -401,7 +420,6 @@ enum FeatureTelemetry {
         case .privacy: return "privacy"
         case .permissions: return "permissions"
         case .identity: return "identity"
-        case .storage: return "storage"
         case .credits: return "credits"
         case .insights: return "insights"
         }
@@ -484,10 +502,15 @@ enum FeatureTelemetry {
     nonisolated static func sourceToken(_ source: InferenceSource) -> String {
         switch source {
         case .chatUI: return "chat_ui"
+        case .agent: return "agent"
         case .httpAPI: return "http_api"
         case .plugin: return "plugin"
         case .p2p: return "p2p"
         case .scheduled: return "scheduled"
+        case .channel: return "channel"
+        case .schedule: return "schedule"
+        case .watcher: return "watcher"
+        case .selfSchedule: return "self_schedule"
         }
     }
 

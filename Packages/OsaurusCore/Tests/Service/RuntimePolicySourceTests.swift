@@ -61,6 +61,14 @@ struct RuntimePolicySourceTests {
         }
     }
 
+    @Test("HTTP max tokens does not invent a hidden reasoning budget")
+    func httpMaxTokensDoesNotInventReasoningBudget() throws {
+        let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
+        #expect(!adapter.contains("apiReasoningAnswerBudget"))
+        #expect(!adapter.contains("mlxParams.requestedReasoningBudgetTokens ="))
+        #expect(adapter.contains("Do not invent a reasoning budget from `max_tokens`"))
+    }
+
     @Test("production prompt entry points wait for the initial plugin catalog")
     func promptCompositionWaitsForPluginCatalog() throws {
         let manager = try Self.source("Managers/Plugin/PluginManager.swift")
@@ -786,7 +794,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "08fde1d6aa812e948e68aba4b3b6b63f2e66d85e"
+        let expectedRuntimeHardenedRevision = "5a63b9be36470ed47afb82cb0114ba6973c4fc6e"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -796,7 +804,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the proven vmlx-swift revision with schema-bound Qwen XML string-array recovery, Gemma reasoning routing, scalar text-only Gemma system prompts, static system-prefix SSD cache boundaries, Nanbeige 4.2 looped-transformer runtime support, and actor-consistent atomic BatchEngine capacity snapshots together with the existing runtime checkpoints. An internally-consistent older pin is still not wired"
+            "Osaurus must consume the proven vmlx-swift revision with atomic heal-on-load for dtype-misaligned safetensors, serialized evaluated host reads through backing-buffer copies, schema-bound Qwen XML string-array recovery, Gemma reasoning routing, scalar text-only Gemma system prompts, static system-prefix and growing tool-loop SSD cache boundaries, Nanbeige 4.2 looped-transformer runtime support, Qwen3.5 B-wide position correctness, and requested/architecture/effective BatchEngine capacity provenance. An internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
@@ -1224,7 +1232,12 @@ struct RuntimePolicySourceTests {
         #expect(controller.contains("previous.cache != next.cache"))
         #expect(controller.contains("previous.memorySafety != next.memorySafety"))
         #expect(controller.contains("previous.multimodal != next.multimodal"))
-        #expect(controller.contains("previous.mtp != next.mtp"))
+        // Deliberately NOT `previous.mtp != next.mtp` any more: comparing the
+        // whole struct evicted every resident model for a per-request depth
+        // change. Only load-affecting MTP fields (mode off<->on, the DFlash 2
+        // drafter) force the refresh; depth re-resolves per request.
+        #expect(controller.contains("mtpLoadInputsChanged(previous: previous.mtp, next: next.mtp)"))
+        #expect(controller.contains("(previous.mode == .off) != (next.mode == .off)"))
         #expect(controller.contains("await ModelRuntime.shared.clearAll()"))
     }
 
@@ -1245,11 +1258,17 @@ struct RuntimePolicySourceTests {
 
         #expect(!chat.contains(#"label: "Context Length""#))
         #expect(!chat.contains("tempChatContextLength"))
-        #expect(
-            chat.contains(#"label: "Default Agent Max Output Tokens""#)
+        // The default agent's per-response output cap moved to Settings →
+        // Orchestrator; it must keep disclaiming that it is not the context
+        // window or KV retention.
+        let orchestrator = try Self.source(
+            "Views/Settings/OrchestratorSettingsView.swift"
         )
         #expect(
-            chat.contains(
+            orchestrator.contains(#"label: "Max Output Tokens""#)
+        )
+        #expect(
+            orchestrator.contains(
                 "This is not the model context window or KV retention."
             )
         )
@@ -1415,10 +1434,12 @@ struct RuntimePolicySourceTests {
         #expect(
             adapter.contains("post-generation disk-cache store")
                 && adapter.contains("for await event in upstream")
-                && adapter.contains(
-                    "if case .info = event {\n                        continuation.yield(event)\n                        continue\n                    }"
-                ),
-            "adapter must forward terminal info but keep draining vmlx until the upstream stream finishes, so the solo lease covers post-generation cache persistence"
+                && adapter.contains("terminalInfo = event")
+                && adapter.contains("await onEngineDrained()")
+                && adapter.contains("if let terminalInfo {")
+                && adapter.contains("continuation.yield(terminalInfo)")
+                && adapter.contains("continuation.finish()"),
+            "adapter must hold terminal info until vmlx, cache persistence, and allocator teardown have drained, so an immediate follow-up cannot overlap the prior allocator window"
         )
         #expect(
             adapter.contains("continuation.onTermination = { @Sendable _ in")
@@ -1827,6 +1848,7 @@ struct RuntimePolicySourceTests {
         #expect(helper.contains("func cancelAll()"))
         #expect(helper.contains("task.cancel()"))
         #expect(handler.contains("private let requestTasks = HTTPRequestTaskRegistry()"))
+        #expect(handler.contains("\"inference_activity\": inferenceActivities.map"))
         #expect(handler.contains("requestTasks.cancelAll()"))
         #expect(handler.contains("private func runRequestTask("))
         #expect(handler.contains("requestTasks.insert(id: id, task: task)"))
@@ -1850,10 +1872,16 @@ struct RuntimePolicySourceTests {
         #expect(handler.contains("if disconnected.value { throw CancellationError() }"))
         #expect(handler.contains("let channelClosed = SendableBool(false)"))
         #expect(handler.contains("let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)"))
-        #expect(handler.contains("let responseFinished = SendableBool(false)"))
-        #expect(handler.contains("let wasResidentBeforeComplete = SendableBool(false)"))
-        #expect(handler.contains("await ModelRuntime.shared.cancelGeneration(name: model)"))
-        #expect(handler.contains("wasResidentBeforeComplete.value = await ModelRuntime.shared.isResident(name: model)"))
+        #expect(
+            !handler.contains("ModelRuntime.shared.cancelGeneration(name:"),
+            "A disconnected HTTP client must not cancel every concurrent request sharing its model"
+        )
+        #expect(
+            handler.contains(
+                "channelCloseFuture.snapshot()?.whenComplete { _ in\n            task.cancel()"
+            ),
+            "Disconnect cancellation must stay scoped to the exact route task"
+        )
         #expect(
             handler.contains(
                 "try Task.checkCancellation()\n                    var resp = try await chatEngine.completeChat(request: enrichedReq)"
@@ -2724,7 +2752,8 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("configuration: serverSettings.resolvedModelConfiguration("))
         #expect(runtime.contains("loadConfiguration: mtpPlan.loadConfiguration"))
         #expect(runtime.contains("draftStrategy: mtpPlan.draftStrategy"))
-        #expect(runtime.contains("draftStrategy: holder.draftStrategy"))
+        #expect(runtime.contains("let requestStrategy = Self.requestDraftStrategy(holder.draftStrategy)"))
+        #expect(runtime.contains("draftStrategy: requestStrategy"))
         #expect(runtime.contains("params.draftStrategy = draftStrategy"))
         #expect(adapter.contains("draftStrategy: MLXLMCommon.DraftStrategy?"))
         #expect(adapter.contains("draftStrategy: draftStrategy"))
@@ -3364,8 +3393,10 @@ struct RuntimePolicySourceTests {
             "Tool-budget wrap-up calls use the same implicit-sampling contract as normal UI turns."
         )
         #expect(
-            chatView.contains("let turnGenerationControls = ChatTurnGenerationControls.capture("),
-            "Chat UI must freeze prompt-affecting model controls once at send time instead of rereading mutable UI state between tool iterations."
+            chatView.contains(
+                "let turnGenerationControls = await ChatTurnGenerationControls.captureForSend("
+            ),
+            "Chat UI must freeze prompt-affecting model controls once at send time, after bounded cold-cache recovery, instead of rereading mutable UI state between tool iterations."
         )
         #expect(
             chatView.contains("turnGenerationControls.apply(to: &req)"),
@@ -3424,23 +3455,6 @@ struct RuntimePolicySourceTests {
             toolsView.contains("private var visibleTools: [ToolRegistry.ToolEntry]")
                 && toolsView.contains("ShowAllToolsButton("),
             "Plugin and connection cards should cap expanded rows and expose an explicit show-all control."
-        )
-
-        let sandboxCardStart = try #require(toolsView.range(of: "private struct SandboxPluginToolCard"))
-        let sandboxCardEnd =
-            toolsView.range(
-                of: "// MARK: - Tool Plugin Card",
-                range: sandboxCardStart.upperBound ..< toolsView.endIndex
-            )?.lowerBound ?? toolsView.endIndex
-        let sandboxCard = String(toolsView[sandboxCardStart.lowerBound ..< sandboxCardEnd])
-
-        #expect(
-            sandboxCard.contains("@State private var showAllTools = false")
-                && sandboxCard.contains("private var visibleToolSpecs: [SandboxToolSpec]")
-                && sandboxCard.contains("toolGroupRenderCapValue")
-                && sandboxCard.contains("ForEach(visibleToolSpecs, id: \\.id)")
-                && sandboxCard.contains("ShowAllToolsButton("),
-            "Custom tool cards must use the same capped expansion path as other tool cards; otherwise a large JSON tool recipe can freeze the Tools page."
         )
     }
 
@@ -3511,8 +3525,8 @@ struct RuntimePolicySourceTests {
         )
     }
 
-    @Test("local streamWithTools dispatches parsed tool invocation without waiting for optional stats")
-    func localStreamWithToolsDispatchesParsedToolInvocationWithoutWaitingForOptionalStats() throws {
+    @Test("local streamWithTools dispatches immediately and preserves cache drain")
+    func localStreamWithToolsDispatchesImmediatelyAndPreservesCacheDrain() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
         let streamStart = try #require(
             runtime.range(of: "func streamWithTools("),
@@ -3530,21 +3544,22 @@ struct RuntimePolicySourceTests {
         let afterToolCase = streamWithTools[toolCase.lowerBound...]
 
         #expect(
-            streamWithTools.contains("A trailing `.completionInfo`")
-                && streamWithTools.contains("complete-looking")
+            streamWithTools.contains("var dispatchedTool = false")
                 && afterToolCase.contains("ServiceToolInvocation(")
                 && afterToolCase.contains("toolName: name")
                 && afterToolCase.contains("jsonArguments: argsJSON")
-                && afterToolCase.contains("continuation.finish(throwing: tool)"),
-            "streamWithTools must treat parsed vMLX toolInvocation as terminal for dispatch; waiting for optional completion stats can leave the UI stuck after a complete tool call."
+                && afterToolCase.contains("dispatchedTool = true")
+                && afterToolCase.contains("continuation.finish(throwing: tool)")
+                && afterToolCase.contains("continue"),
+            "streamWithTools must dispatch the parsed invocation immediately, then keep consuming the upstream vMLX stream so cache persistence can finish behind the running tool."
         )
         #expect(
-            afterToolCase.contains("return"),
-            "After surfacing the parsed tool invocation the producer task must return rather than run on."
-        )
-        #expect(
-            !streamWithTools.contains("var pendingTool: ServiceToolInvocation?"),
-            "The local streaming path must not hold a parsed tool invocation in pending state while draining for a later completionInfo event."
+            streamWithTools.contains("continuation.yield(StreamingToolHint.encode(name))")
+                && streamWithTools.contains("continuation.yield(StreamingToolHint.encodeArgs(argsJSON))")
+                && streamWithTools.contains("if dispatchedTool { continue }")
+                && streamWithTools.contains("if case .cancelled = termination")
+                && streamWithTools.contains("producerTask.cancel()"),
+            "The native UI must receive the tool envelope immediately, while only a real consumer cancellation may cancel the engine-owned terminal drain."
         )
         #expect(
             !afterToolCase.contains("pendingTools.append"),
@@ -3880,5 +3895,23 @@ struct RuntimePolicySourceTests {
         #expect(!crashReporting.contains("event.user = nil"))
         #expect(crashReporting.contains("event.serverName = nil"))
         #expect(crashReporting.contains("options.sendDefaultPii = false"))
+    }
+
+    @Test("manual MTP block stays visible and truthful in the model picker")
+    func manualMTPBlockPickerWiring() throws {
+        let picker = try Self.source("Views/Chat/FloatingInputCard.swift")
+
+        #expect(picker.contains("nativeMTPManuallyBlockedModels"))
+        #expect(picker.contains("manual=blocked"))
+        #expect(
+            picker.contains(
+                "nativeMTPManuallyBlockedModels.contains(identity) ? \"off\" : nativeMTPSelection"
+            ),
+            "A globally saved manual depth must render as Off for a bundle whose runtime blocks manual MTP."
+        )
+        #expect(
+            picker.contains("? [ModelOptionSegment(id: \"off\", label: L(\"Off\"))]"),
+            "Blocked bundles must not advertise selectable Auto or explicit-depth chips."
+        )
     }
 }

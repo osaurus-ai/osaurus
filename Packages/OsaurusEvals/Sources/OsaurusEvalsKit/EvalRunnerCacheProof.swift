@@ -132,10 +132,27 @@ extension EvalRunner {
             )
         }
 
+        if exp.followUpTurns != nil, exp.toolResultFollowUps != nil {
+            return Self.errored(
+                testCase, label: label, modelId: modelId,
+                note: "cache proof must set either followUpTurns or "
+                    + "toolResultFollowUps, not both"
+            )
+        }
+        if let toolFollowUps = exp.toolResultFollowUps, toolFollowUps.isEmpty {
+            return Self.errored(
+                testCase, label: label, modelId: modelId,
+                note: "toolResultFollowUps must contain at least one payload"
+            )
+        }
         // Minimal prefix-sharing shape when the case doesn't author turns:
-        // the same query twice under one session.
+        // the same query twice under one session. In the scripted tool loop
+        // only the initial query is authored; each payload becomes a
+        // tool-call continuation inside the evaluator.
         let authoredQueries: [String]
-        if let followUps = exp.followUpTurns, !followUps.isEmpty {
+        if exp.toolResultFollowUps != nil {
+            authoredQueries = [testCase.query]
+        } else if let followUps = exp.followUpTurns, !followUps.isEmpty {
             authoredQueries = [testCase.query] + followUps
         } else {
             authoredQueries = [testCase.query, testCase.query]
@@ -187,7 +204,8 @@ extension EvalRunner {
             thinkingPerTurn: exp.thinkingPerTurn,
             systemPrompt: isolatedInputs.systemPrompt,
             systemPromptsPerSession: isolatedInputs.systemPromptsPerSession,
-            startNewSessionBeforeTurns: exp.startNewSessionBeforeTurns ?? []
+            startNewSessionBeforeTurns: exp.startNewSessionBeforeTurns ?? [],
+            toolResultFollowUps: exp.toolResultFollowUps
         )
         let elapsedMs = Date().timeIntervalSince(started) * 1000
         let sample = sampler.stop()
@@ -310,6 +328,14 @@ extension EvalRunner {
                 transcript.diskL2StoresDelta >= floor,
                 pass: "disk-L2 stores +\(transcript.diskL2StoresDelta) ≥ \(floor)",
                 fail: "disk-L2 stores +\(transcript.diskL2StoresDelta) below floor \(floor)"
+            )
+        }
+        if let ceiling = exp.maxDiskL2StoresDelta {
+            check(
+                transcript.diskL2StoresDelta <= ceiling,
+                pass: "disk-L2 stores +\(transcript.diskL2StoresDelta) ≤ \(ceiling) (write-volume gate)",
+                fail: "disk-L2 stores +\(transcript.diskL2StoresDelta) EXCEEDS ceiling \(ceiling) — "
+                    + "more boundary records than the canonical reusable set"
             )
         }
 
@@ -486,6 +512,55 @@ extension EvalRunner {
                         $0.ttftMs == nil || ($0.ttftMs ?? 0) > ceiling
                     }.map { String($0.turnNumber) }.joined(separator: ",")
             )
+        }
+
+        // Sustained-speed gates: decode rate on the FINAL turn vs the FIRST
+        // measured turn. Catches allocator-cap and compiled-decode
+        // regressions that collapse decode as context grows while every
+        // reuse floor still passes.
+        if exp.minFinalDecodeTpsRatio != nil || exp.minFinalDecodeTps != nil {
+            let decodeReadings = turnMetrics.compactMap { turn in
+                turn.decodeTokensPerSecond.map { (turn.turnNumber, $0) }
+            }
+            if let first = decodeReadings.first, let last = decodeReadings.last,
+                decodeReadings.count >= 2 || exp.minFinalDecodeTpsRatio == nil
+            {
+                if let ratioFloor = exp.minFinalDecodeTpsRatio, first.1 > 0 {
+                    let ratio = last.1 / first.1
+                    check(
+                        ratio >= ratioFloor,
+                        pass: String(
+                            format: "sustained decode: turn %d %.1f tok/s vs turn %d %.1f tok/s "
+                                + "(ratio %.2f ≥ %.2f)",
+                            last.0, last.1, first.0, first.1, ratio, ratioFloor
+                        ),
+                        fail: String(
+                            format: "decode COLLAPSED: turn %d %.1f tok/s vs turn %d %.1f tok/s "
+                                + "(ratio %.2f below floor %.2f)",
+                            last.0, last.1, first.0, first.1, ratio, ratioFloor
+                        )
+                    )
+                }
+                if let absFloor = exp.minFinalDecodeTps {
+                    check(
+                        last.1 >= absFloor,
+                        pass: String(
+                            format: "final-turn decode %.1f tok/s ≥ %.1f", last.1, absFloor
+                        ),
+                        fail: String(
+                            format: "final-turn decode %.1f tok/s below floor %.1f", last.1,
+                            absFloor
+                        )
+                    )
+                }
+            } else {
+                check(
+                    false,
+                    pass: "",
+                    fail: "sustained-decode gate set but decode readings unavailable "
+                        + "(\(decodeReadings.count) turn(s) reported a rate)"
+                )
+            }
         }
 
         // AGENTS.md hybrid rule: on a hybrid-SSM model, KV movement without

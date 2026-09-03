@@ -38,6 +38,10 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
                         + "as shown in the configured target list."
                 ),
             ]),
+            "background": .object([
+                "type": .string("boolean"),
+                "description": .string(SpawnInputContract.backgroundParameterDescription),
+            ]),
         ]),
         "required": .array([.string("input"), .string("agent")]),
     ])
@@ -135,9 +139,15 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
         // The shared host owns the recursion guard, live feed, permission
         // verdict, residency handoff, compact-result normalization, and
         // telemetry; the kind owns model resolution + the bounded text loop.
-        return await SubagentSession.runWithVisiblePreparation(
-            TextSubagentKind(agentID: agentID, input: input),
-            tool: name
-        )
+        // The name lookup here only seeds the human-readable feed title;
+        // `resolveModel` re-resolves the agent authoritatively.
+        let agentName = await MainActor.run {
+            AgentManager.shared.agent(for: agentID)?.name
+        }
+        let kind = TextSubagentKind(agentID: agentID, agentName: agentName, input: input)
+        if ArgumentCoercion.bool(args["background"]) == true {
+            return await SubagentSession.dispatchInBackground(kind, tool: name)
+        }
+        return await SubagentSession.runWithVisiblePreparation(kind, tool: name)
     }
 }

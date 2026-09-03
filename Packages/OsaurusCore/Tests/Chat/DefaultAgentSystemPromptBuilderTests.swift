@@ -6,8 +6,10 @@
 //  derived from the live `ConfigurationDomainRegistry` (single source of
 //  truth — it lists the registered domains' consolidated write tools), it
 //  teaches DIRECT action-tool use (no capability-search protocol), it routes
-//  out-of-scope asks to `osaurus_agent`, and it stays byte-stable across
-//  calls within the same generation so the KV-cache reuse story holds.
+//  non-Osaurus work to delegation (create the agent via `osaurus_config`,
+//  then run it with `spawn_agent` in the same turn), and it stays
+//  byte-stable across calls within the same generation so the KV-cache
+//  reuse story holds.
 //
 //  Tests use `_renderForTests` for byte-level assertions against an
 //  arbitrary domain list (no shared-cache mutation) and the live
@@ -106,7 +108,7 @@ struct DefaultAgentSystemPromptBuilderTests {
         // Regression pin: the first same-turn rewrite framed EVERY request as
         // "state the change, then call the tool". gemma-4-12B (compact's only
         // audience) applied that framing to read questions too: it lazy-loaded
-        // tools that are already resident (`capabilities_load tool/osaurus_status`
+        // tools that are already resident (`capabilities_load tool/osaurus_inspect`
         // — a mustNotCall in every read case) and chained reads until the
         // iteration cap, ending with an EMPTY final answer (read-status,
         // honesty-no-schedules, read-describe-agent regressions in the
@@ -117,34 +119,44 @@ struct DefaultAgentSystemPromptBuilderTests {
             domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])],
             compact: true
         )
-        #expect(compact.contains("always available"))
+        #expect(compact.contains("Look things up any time"))
         #expect(compact.contains("no loading step"))
         #expect(compact.contains("For a question"))
         #expect(compact.contains("reply in plain text"))
         #expect(compact.contains("do not call more tools"))
+        // Ornith-9B regression: framing the lookup tools as "read tools" /
+        // "Reads" primed the model to invent `<read><name>…` markup instead
+        // of real tool calls, and compact under-specified osaurus_help's
+        // action shape. The compact prompt must name actions explicitly and
+        // never coin a "read tools" noun.
+        #expect(compact.contains("{action: 'topics' | 'read', topic: ...}"))
+        #expect(!compact.contains("read tools"))
+        #expect(!compact.contains("Reads are"))
     }
 
     @Test
-    func render_compactScopesLazyLoadToChangeToolsOnly() {
-        // Regression pin (20260702-230751 full re-measure): the load-on-demand
-        // line said "if the ONE YOU NEED isn't already available, call
-        // `capabilities_load`" — generic enough that gemma-4-12B applied it to
-        // reads, opening read-only turns with `capabilities_load
-        // ids=[tool/osaurus_status, tool/osaurus_list]` (a mustNotCall in
-        // every read fixture) and even loading the WRITE tool
-        // `osaurus_schedule` just to LIST schedules — burning 3-4-iteration
-        // budgets into empty finals (read-status, read-describe-agent,
-        // honesty-no-schedules pass→fail). The instruction must scope loading
-        // to CHANGE tools at the load-decision site and explicitly exclude
-        // reads, routing look-ups to the read tools.
+    func render_compactScopesTheWriteToolToChangesOnly() {
+        // Regression lineage (20260702-230751 full re-measure): generic
+        // "use the tool" guidance made gemma-4-12B route READ questions
+        // through write-tool machinery, burning 3-4-iteration budgets into
+        // empty finals (read-status, read-describe-agent,
+        // honesty-no-schedules pass→fail). The compact prompt must scope
+        // `osaurus_config` to changes at the decision site and explicitly
+        // route look-ups to the read tools. It must also spell out the
+        // YAML workflow, since the compact tool schema strips the prose
+        // that would otherwise teach it.
         let compact = DefaultAgentSystemPromptBuilder._renderForTests(
             domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])],
             compact: true
         )
-        #expect(compact.contains("if the change tool you need isn't already available"))
-        #expect(compact.contains("Loading is for change tools only"))
-        #expect(compact.contains("reads never need it"))
-        #expect(compact.contains("call the read tools directly"))
+        // Gap 0.5 consolidation: the change workflow is stated once in the
+        // shared write contract, which the compact prompt embeds verbatim.
+        #expect(compact.contains(ConfigurationReadNextStep.writeContract))
+        #expect(compact.contains("only the keys to change"))
+        #expect(compact.contains("`osaurus_config` is for changes only"))
+        #expect(compact.contains("call `osaurus_inspect` or `osaurus_help` directly"))
+        #expect(!compact.contains("capabilities_load"))
+        #expect(!compact.contains("capabilities_discover"))
     }
 
     @Test
@@ -186,20 +198,134 @@ struct DefaultAgentSystemPromptBuilderTests {
     }
 
     @Test
-    func render_compactOutOfScopeOffersAgentHandoffExplicitly() {
-        // The out-of-scope rubric (and the product contract) is a two-part
-        // reply: say the agent only configures Osaurus AND offer the
-        // create/switch handoff. The compact variant's old "Offer
-        // `osaurus_agent` (`create` or `activate`)" tool-jargon lost the
-        // second part on small models — pin the action words instead.
+    func render_compactDelegationTeachesCreateThenSpawn() {
+        // Orchestrator-first contract: the delegation rubric is a two-part
+        // ACTION, not an offer — create the fitting agent (an `agents:`
+        // entry via `osaurus_config`) and run the task with `spawn_agent`
+        // in the SAME turn. Pin the route words so small models don't fall
+        // back to offering a switch or asking permission.
         let compact = DefaultAgentSystemPromptBuilder._renderForTests(
             domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])],
             compact: true
         )
-        #expect(compact.contains("Out of scope"))
-        #expect(compact.contains("offer to create"))
-        #expect(compact.contains("switch"))
-        #expect(compact.contains("osaurus_agent"))
+        #expect(compact.contains("Delegation"))
+        #expect(compact.contains("`agents:` entry"))
+        #expect(compact.contains("spawn_agent"))
+        #expect(compact.contains("SAME turn"))
+        #expect(compact.contains("spawnable right away"))
+    }
+
+    @Test
+    func render_bothVariantsPinTheOrchestratorPersona() {
+        // Orchestrator-first persona (live regression: asked "i want to make
+        // a website", the assistant replied "Building a website is outside
+        // what I can do directly here", listed two options, and ended with
+        // "Want me to…? tell me a bit about the site…" — a decline, a menu,
+        // and questions instead of create+spawn). Both variants must:
+        // (a) identify as the orchestrator who gets anything done,
+        // (b) teach create-then-spawn in the SAME turn and reporting the
+        //     spawn result as the answer,
+        // (c) forbid suggesting an agent switch or re-sending the request
+        //     (the conversation always stays here — `active_agent` only
+        //     governs NEW chats),
+        // (d) demand brevity: no option menus, act first, assume sensibly.
+        for compact in [false, true] {
+            let rendered = DefaultAgentSystemPromptBuilder._renderForTests(
+                domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])],
+                compact: compact
+            )
+            #expect(rendered.contains("orchestrator"), "variant compact=\(compact)")
+            #expect(rendered.contains("spawn_agent"), "variant compact=\(compact)")
+            #expect(rendered.contains("SAME turn"), "variant compact=\(compact)")
+            #expect(rendered.contains("spawn result"), "variant compact=\(compact)")
+            #expect(rendered.contains("Never suggest"), "variant compact=\(compact)")
+            #expect(rendered.contains("NEW chats"), "variant compact=\(compact)")
+            #expect(rendered.contains("option menus"), "variant compact=\(compact)")
+            #expect(rendered.contains("`clarify`"), "variant compact=\(compact)")
+            // The decline framing is gone: no "Out of scope" section header,
+            // and no live-chat handoff wording ("answered by that agent")
+            // from the reverted active_agent retargeting.
+            #expect(!rendered.contains("Out of scope"), "variant compact=\(compact)")
+            #expect(!rendered.contains("answered by that agent"), "variant compact=\(compact)")
+        }
+    }
+
+    @Test
+    func render_compactTeachesTheKnowledgeGapContracts() {
+        // Ornith-9B knowledge-gap pins (26/53 run): the model concluded
+        // "Osaurus can't delete agents" (delete = prune), narrated an API-key
+        // paste flow (rotation = set_api_key), and said "Osaurus doesn't do
+        // slash commands" (no read result names the `commands` section). The
+        // compact prompt must teach delete-via-prune, set_api_key, and the
+        // full section roster — rendered from ConfigSectionID so it can
+        // never drift from the real schema.
+        let compact = DefaultAgentSystemPromptBuilder._renderForTests(
+            domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])],
+            compact: true
+        )
+        #expect(compact.contains("prune: true"))
+        #expect(compact.contains("set_api_key: true"))
+        #expect(compact.contains("never the key value"))
+        for section in ConfigSectionID.allNames {
+            #expect(compact.contains(section), "roster must name section \(section)")
+        }
+        // yaml_shape short-circuit: read results now carry the shape, so the
+        // prompt routes schema calls to the "when they don't" case only.
+        #expect(compact.contains("yaml_shape"))
+    }
+
+    @Test
+    func render_fullVariantTeachesTheSameKnowledgeContracts() {
+        // Grok iter-5 pins: with only the compact variant taught, the full
+        // prompt let a frontier model claim it can't download models (zero
+        // calls) and map "core model" onto default_agent.model. The full
+        // variant must carry the roster, the install-vs-use split, the
+        // foundation value, and the dry-run contract too.
+        let full = DefaultAgentSystemPromptBuilder._renderForTests(
+            domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])],
+            compact: false
+        )
+        for section in ConfigSectionID.allNames {
+            #expect(full.contains(section), "full roster must name section \(section)")
+        }
+        #expect(full.contains("starts the download"))
+        #expect(full.contains("default_agent.model"))
+        #expect(full.contains("foundation"))
+        #expect(full.contains("prune: true"))
+        #expect(full.contains("set_api_key: true"))
+        #expect(full.contains("never report a planned change as done"))
+        // Scope reduction 2: the full prompt must route server/chat/app
+        // asks to the Settings UI instead of the removed sections.
+        #expect(full.contains("Settings UI"))
+    }
+
+    @Test
+    func render_compactForbidsNarratedToolCalls() {
+        // Ornith-9B degeneration pin (provider-add-anthropic, 0 calls): the
+        // model typed tool-call JSON and invented results in its reply text
+        // instead of emitting real calls. The compact rules must forbid it.
+        let compact = DefaultAgentSystemPromptBuilder._renderForTests(
+            domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])],
+            compact: true
+        )
+        #expect(compact.contains("Emit tool calls only as real tool calls"))
+        #expect(compact.contains("never type a tool call"))
+    }
+
+    @Test
+    func render_compactDelegationForbidsDoingTheWorkInChat() {
+        // Ornith-9B handoff pin (handoff-non-osaurus-task): asked for a
+        // Python script, the model wrote the script (or offered to co-write
+        // it) instead of delegating. The delegation rubric must still say to
+        // never produce the work in chat — the orchestrator spawns a
+        // specialist and relays the result.
+        let compact = DefaultAgentSystemPromptBuilder._renderForTests(
+            domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])],
+            compact: true
+        )
+        #expect(
+            compact.contains("never produce that work in chat"),
+            "compact prompt must forbid doing the work in chat")
     }
 
     @Test
@@ -207,9 +333,7 @@ struct DefaultAgentSystemPromptBuilderTests {
         let rendered = DefaultAgentSystemPromptBuilder._renderForTests(
             domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])]
         )
-        #expect(rendered.contains("osaurus_status"))
-        #expect(rendered.contains("osaurus_list"))
-        #expect(rendered.contains("osaurus_describe"))
+        #expect(rendered.contains("osaurus_inspect"))
     }
 
     @Test
@@ -231,16 +355,19 @@ struct DefaultAgentSystemPromptBuilderTests {
     }
 
     @Test
-    func render_routesOutOfScopeToAgentTool() {
+    func render_routesNonOsaurusWorkToDelegation() {
         let rendered = DefaultAgentSystemPromptBuilder._renderForTests(
             domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])]
         )
-        // Out-of-scope asks must be handed off to creating/switching an agent
-        // via `osaurus_agent`, not refused flatly.
-        #expect(rendered.contains("Out of scope"))
-        #expect(rendered.contains("osaurus_agent"))
+        // Non-Osaurus asks are delegated (create the agent via an
+        // `osaurus_config` apply, then spawn it), never refused flatly and
+        // never handed off by suggesting the user switch agents.
+        #expect(rendered.contains("Delegation"))
+        #expect(rendered.contains("osaurus_config"))
         #expect(rendered.contains("create"))
-        #expect(rendered.contains("activate"))
+        #expect(rendered.contains("spawn_agent"))
+        // `active_agent` stays documented as the NEW-chats pointer only.
+        #expect(rendered.contains("active_agent"))
     }
 
     @Test
@@ -253,18 +380,17 @@ struct DefaultAgentSystemPromptBuilderTests {
         let compact = DefaultAgentSystemPromptBuilder._renderForTests(domains: domains, compact: true)
 
         // Compact keeps the full tool surface + scope guardrails (read tools,
-        // every write tool by name, out-of-scope handoff) but teaches the
-        // load-on-demand flow: writes load via `capabilities_load`, with
-        // NO `capabilities_discover` step.
-        #expect(compact.contains("osaurus_status"))
+        // every write tool by name, the delegation contract, the declarative
+        // YAML workflow) with trimmed prose. Neither variant teaches the
+        // capability-search protocol.
+        #expect(compact.contains("osaurus_inspect"))
         #expect(compact.contains("`osaurus_provider`"))
         #expect(compact.contains("`osaurus_model`"))
         #expect(compact.contains("action"))
-        #expect(compact.contains("Out of scope"))
-        #expect(compact.contains("osaurus_agent"))
-        #expect(compact.contains("capabilities_load"))
+        #expect(compact.contains("Delegation"))
+        #expect(compact.contains("osaurus_config"))
+        #expect(!compact.contains("capabilities_load"))
         #expect(!compact.contains("capabilities_discover"))
-        // The full variant loads writes directly — it must NOT teach lazy load.
         #expect(!full.contains("capabilities_load"))
     }
 

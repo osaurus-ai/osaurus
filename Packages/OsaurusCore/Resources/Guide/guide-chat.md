@@ -6,7 +6,7 @@ order: 50
 
 # Chat and the Agent Loop
 
-Every Osaurus chat is an agent loop: the model thinks, calls tools, tracks progress, and finishes with a summary. There is no separate "agent mode" — the loop is always on.
+Every **custom-agent** chat is an agent loop: the model thinks, calls tools, tracks progress, and finishes with a summary. There is no separate "agent mode" — the loop is always on for custom agents. The built-in Orchestrator is the exception (see The Orchestrator topic): it configures Osaurus and delegates work, and it never receives a working folder or sandbox.
 
 ## What you'll see in chat
 
@@ -18,7 +18,7 @@ Every Osaurus chat is an agent loop: the model thinks, calls tools, tracks progr
 
 ## Working folder
 
-The folder selector on the chat input bar grants the current chat access to one folder: file read/write/edit/search, shell, and undo/history tools (plus git tools if it's a repo). It's per-chat, persists across relaunch, and new chats start folder-less.
+On a **custom agent**, the folder selector on the chat input bar grants the current chat access to one folder: file read/write/edit/search, shell, and undo/history tools (plus git tools if it's a repo). It's per-chat, persists across relaunch, and new chats start folder-less. The Orchestrator does not show this chip and cannot operate on a selected folder — create or switch to a custom agent first.
 
 ## Sandbox toggle
 
@@ -34,5 +34,5 @@ On macOS 26+, the sandbox toggle on the input bar runs shell/code work inside an
 ## Tips
 
 - Be specific; let the todo list show progress on long tasks.
-- Use a working folder for repo work, the sandbox for scripts and package installs, and neither for plain Q&A.
+- On a custom agent, use a working folder for repo work, the sandbox for scripts and package installs, and neither for plain Q&A. Stay on the Orchestrator for setup and delegation.
 - Tool approvals are per-tool; you can grant "always allow" per agent in Permissions.

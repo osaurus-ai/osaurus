@@ -7,6 +7,12 @@
 
 import Foundation
 
+enum ModelChatEndpointCapability: String, Codable, Sendable {
+    case supported
+    case unsupported
+    case unknown
+}
+
 /// Represents a model in the model picker with rich metadata
 struct ModelPickerItem: Identifiable, Hashable {
     /// The source/provider of the model
@@ -14,6 +20,11 @@ struct ModelPickerItem: Identifiable, Hashable {
         case foundation
         case local  // MLX models
         case imageGeneration  // on-device image models (vMLXFlux)
+        /// The locally-installed Claude Code CLI, driven as a subprocess.
+        /// Local in the sense that matters here — no Osaurus-held credential
+        /// and no Osaurus-managed connection — but it does reach the network
+        /// through the user's own signed-in CLI.
+        case claudeCode
         case remote(providerName: String, providerId: UUID)
 
         var displayName: String {
@@ -24,6 +35,8 @@ struct ModelPickerItem: Identifiable, Hashable {
                 return "Local Models"
             case .imageGeneration:
                 return "Image Models"
+            case .claudeCode:
+                return "Claude Code"
             case .remote(let providerName, _):
                 return providerName
             }
@@ -35,6 +48,7 @@ struct ModelPickerItem: Identifiable, Hashable {
             case .foundation: return "foundation"
             case .local: return "local"
             case .imageGeneration: return "image"
+            case .claudeCode: return "claude-code"
             case .remote(_, let providerId): return "remote-\(providerId.uuidString)"
             }
         }
@@ -47,8 +61,10 @@ struct ModelPickerItem: Identifiable, Hashable {
                 return 1
             case .imageGeneration:
                 return 2
-            case .remote:
+            case .claudeCode:
                 return 3
+            case .remote:
+                return 4
             }
         }
 
@@ -95,9 +111,20 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// model2vec, etc.). Set from `MLXModel.isEmbedding` for local items so
     /// `isLikelyChatCapable` can exclude them without re-reading config.json.
     let isEmbedding: Bool
+    /// Provider-scoped chat endpoint support. OpenAI's `/v1/models` listing
+    /// exposes only ids, so those rows remain explicitly unknown instead of a
+    /// successful listing being misrepresented as a chat capability claim.
+    let chatEndpointCapability: ModelChatEndpointCapability
 
     /// Description of the model (optional)
     let description: String?
+
+    /// Human-readable provenance for externally-discovered local bundles
+    /// (e.g. "LM Studio", "Hugging Face cache"), from
+    /// `MLXModel.externalSource`. `nil` for Osaurus-managed local models and
+    /// every non-local source. Drives the Local tab's source filter so users
+    /// with other apps' models on disk can narrow to Osaurus-managed ones.
+    let externalSource: String?
 
     /// Input price in micro-USD per million tokens, parsed from the Osaurus
     /// router metadata. Used only to sort the Osaurus tab by price; `nil` for
@@ -108,8 +135,10 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// unknown, matching `inputPriceMicroPerMTok`.
     let outputPriceMicroPerMTok: Int64?
 
-    /// Context window in tokens, from the Osaurus router metadata. Used only to
-    /// filter the Osaurus tab by context limit; `nil` when unknown.
+    /// Context window in tokens, from the Osaurus router metadata or the
+    /// ChatGPT/Codex catalog's `context_window`. Also read by
+    /// `AgentToolLoop.providerContextWindow` to resolve the runtime/chat
+    /// budget for remote models; `nil` when the source has no window.
     let contextLength: Int?
 
     /// Whether Router metadata explicitly advertises tool calling. Nil for
@@ -144,7 +173,9 @@ struct ModelPickerItem: Identifiable, Hashable {
         modelType: String? = nil,
         isMLXFormat: Bool = true,
         isEmbedding: Bool = false,
+        chatEndpointCapability: ModelChatEndpointCapability = .supported,
         description: String? = nil,
+        externalSource: String? = nil,
         inputPriceMicroPerMTok: Int64? = nil,
         outputPriceMicroPerMTok: Int64? = nil,
         contextLength: Int? = nil,
@@ -166,7 +197,9 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.modelType = modelType
         self.isMLXFormat = isMLXFormat
         self.isEmbedding = isEmbedding
+        self.chatEndpointCapability = chatEndpointCapability
         self.description = description
+        self.externalSource = externalSource
         self.inputPriceMicroPerMTok = inputPriceMicroPerMTok
         self.outputPriceMicroPerMTok = outputPriceMicroPerMTok
         self.contextLength = contextLength
@@ -207,6 +240,17 @@ extension ModelPickerItem {
         )
     }
 
+    /// Create a picker item for one Claude Code CLI model alias.
+    static func claudeCode(_ model: ClaudeCodeModel) -> ModelPickerItem {
+        ModelPickerItem(
+            id: model.pickerId,
+            displayName: model.displayName,
+            source: .claudeCode,
+            description: L("Runs through your signed-in Claude Code CLI"),
+            supportsToolCalling: true
+        )
+    }
+
     /// Create a local MLX model picker item from an MLXModel.
     static func fromMLXModel(_ model: MLXModel) -> ModelPickerItem {
         return ModelPickerItem(
@@ -219,7 +263,8 @@ extension ModelPickerItem {
             modelType: model.modelType,
             isMLXFormat: model.isMLXFormat,
             isEmbedding: model.isEmbedding,
-            description: model.description
+            description: model.description,
+            externalSource: model.externalSource
         )
     }
 
@@ -260,7 +305,7 @@ extension ModelPickerItem {
     static func fromMediaModel(_ model: MediaModelInfo, providerId: UUID) -> ModelPickerItem {
         let details = [
             model.privacy,
-            model.pricing?.minimumUSD.map { String(format: "From $%.4f", $0) },
+            model.pricing?.minimumUSD.map { "From \(OsaurusRouter.formatUSDAsCredits($0))" },
         ]
         .compactMap { $0 }
         .joined(separator: " · ")
@@ -291,6 +336,8 @@ extension ModelPickerItem {
             displayName: (catalogDisplayName?.isEmpty == false ? catalogDisplayName : nil)
                 ?? displayName(fromModelId: modelId),
             source: .remote(providerName: providerName, providerId: providerId),
+            isVLM: metadata?.supportsImageInput ?? true,
+            contextLength: metadata?.contextWindow,
             reasoningCapabilities: metadata.flatMap(ModelReasoningCapabilities.init(codex:))
         )
     }
@@ -299,7 +346,8 @@ extension ModelPickerItem {
     /// GPT-5.6 models attach the documented public reasoning profile
     /// (`none` … `max`, never Codex-only `ultra`); every other id keeps the
     /// plain `/v1/models` id/display behavior and the generic static
-    /// profile fallback.
+    /// profile fallback. Context length comes from `officialOpenAIContextWindow`
+    /// since `/v1/models` never reports one (see that table's doc comment).
     static func fromOfficialOpenAIModel(
         modelId: String,
         providerName: String,
@@ -309,8 +357,42 @@ extension ModelPickerItem {
             id: modelId,
             displayName: displayName(fromModelId: modelId),
             source: .remote(providerName: providerName, providerId: providerId),
+            chatEndpointCapability: .unknown,
+            description:
+                "Chat compatibility is unknown because OpenAI /v1/models does not publish endpoint capabilities.",
+            contextLength: officialOpenAIContextWindow(forModelId: modelId),
             reasoningCapabilities: isPublicGPT56ModelId(modelId) ? .officialOpenAIGPT56 : nil
         )
+    }
+
+    /// Context window (tokens) for known `api.openai.com` model families,
+    /// keyed by the documented slug prefix (longest match wins so dated
+    /// snapshots like `gpt-5.5-2026-01-01` still resolve). OpenAI's `/v1/models`
+    /// endpoint never reports a context window — confirmed against the live
+    /// API, which returns only `id`/`object`/`created`/`owned_by` — so this is
+    /// the only source for the official API-key route. Values are from
+    /// `developers.openai.com/api/docs/models/<slug>`; update when OpenAI ships
+    /// a new family. Scoped to the official host only — never applied to
+    /// OpenAI-compatible proxies, whose `id` values aren't OpenAI's to trust.
+    private static let officialOpenAIContextWindows: [(prefix: String, tokens: Int)] = [
+        ("gpt-5.6", 1_050_000),
+        ("gpt-5.5", 1_050_000),
+        ("gpt-5.4", 1_050_000),
+        ("gpt-5.2", 400_000),
+        ("gpt-5", 400_000),
+        ("gpt-4.1", 1_047_576),
+        ("gpt-4o", 128_000),
+        ("o4-mini", 200_000),
+        ("o3", 200_000),
+        ("gpt-3.5-turbo", 16_385),
+    ]
+
+    static func officialOpenAIContextWindow(forModelId modelId: String) -> Int? {
+        let bare = (modelId.split(separator: "/").last.map(String.init) ?? modelId).lowercased()
+        return officialOpenAIContextWindows
+            .filter { bare.hasPrefix($0.prefix) }
+            .max { $0.prefix.count < $1.prefix.count }?
+            .tokens
     }
 
     /// Whether a (possibly provider-prefixed) id names a GPT-5.6 model
@@ -359,8 +441,10 @@ extension ModelPickerItem {
 
 extension OsaurusRouterModel {
     /// Compact one-line summary for the model picker: underlying provider,
-    /// input/output price, and context window. e.g.
-    /// "<upstream> · $2.00/M in · $4.00/M out · 131K ctx".
+    /// input/output price, and context window. Prefers the router's
+    /// ready-to-show credits pricing (e.g. "<upstream> · 28.8 credits/M in ·
+    /// 100 credits/M out · 131K ctx"), falling back to the legacy `$` display
+    /// strings when the server doesn't ship the credits siblings.
     var pickerDescription: String? {
         var parts: [String] = []
 
@@ -369,12 +453,18 @@ extension OsaurusRouterModel {
             parts.append(trimmedProvider)
         }
 
-        let input = inputDisplay.trimmingCharacters(in: .whitespacesAndNewlines)
+        let inputCredits = inputCreditsDisplay?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let input = inputCredits.isEmpty
+            ? inputDisplay.trimmingCharacters(in: .whitespacesAndNewlines)
+            : inputCredits
         if !input.isEmpty {
             parts.append("\(input) in")
         }
 
-        let output = outputDisplay.trimmingCharacters(in: .whitespacesAndNewlines)
+        let outputCredits = outputCreditsDisplay?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let output = outputCredits.isEmpty
+            ? outputDisplay.trimmingCharacters(in: .whitespacesAndNewlines)
+            : outputCredits
         if !output.isEmpty {
             parts.append("\(output) out")
         }
@@ -439,6 +529,7 @@ extension ModelPickerItem {
     /// picker is never left empty when models exist.
     var isLikelyChatCapable: Bool {
         if mediaModel != nil { return false }
+        if chatEndpointCapability == .unsupported { return false }
         switch source {
         case .foundation:
             // Foundation is Apple's on-device chat model.
@@ -456,6 +547,8 @@ extension ModelPickerItem {
             // Image models produce images, not chat completions — never a
             // default chat pick (but still selectable to enter image mode).
             return false
+        case .claudeCode:
+            return true
         case .remote:
             return !Self.isLikelyEmbeddingOrRerankerID(id)
         }
@@ -518,6 +611,8 @@ extension ModelPickerItem {
             return 5
         case .foundation:
             return 10
+        case .claudeCode:
+            return 12
         case .remote:
             return isLikelyChatCapable ? 15 : 30
         }
@@ -603,6 +698,32 @@ enum ModelPickerContextFilter: CaseIterable, Identifiable, Hashable {
     }
 }
 
+/// Source filter for the Local tab, so users who run other model apps on the
+/// same machine (LM Studio, a shared Hugging Face cache) can narrow the list
+/// to Osaurus-managed models or to one external source. The external cases
+/// are built dynamically from the sources actually present, so the chips only
+/// ever offer real choices.
+enum ModelPickerLocalSourceFilter: Identifiable, Hashable {
+    case any
+    /// Osaurus-managed models: catalog downloads, Foundation, and on-device
+    /// image models — everything without an external provenance.
+    case osaurus
+    /// One externally-discovered provenance, matched against
+    /// `ModelPickerItem.externalSource` (e.g. "LM Studio").
+    case external(String)
+
+    var id: Self { self }
+
+    /// Short chip label. External sources render their provenance verbatim.
+    var label: String {
+        switch self {
+        case .any: return "Any"
+        case .osaurus: return "Osaurus"
+        case .external(let source): return source
+        }
+    }
+}
+
 /// Vision-capability filter for the Osaurus tab.
 enum ModelPickerVisionFilter: CaseIterable, Identifiable, Hashable {
     case any
@@ -628,6 +749,24 @@ extension Array where Element == ModelPickerItem {
     func filteredByContext(_ context: ModelPickerContextFilter) -> [ModelPickerItem] {
         guard let minTokens = context.minTokens else { return self }
         return filter { ($0.contextLength ?? 0) >= minTokens }
+    }
+
+    /// Keep only models matching the local source filter; `.any` returns the
+    /// receiver unchanged. `.osaurus` keeps everything without an external
+    /// provenance (Foundation and image models included).
+    func filteredByLocalSource(_ source: ModelPickerLocalSourceFilter) -> [ModelPickerItem] {
+        switch source {
+        case .any: return self
+        case .osaurus: return filter { $0.externalSource == nil }
+        case .external(let name): return filter { $0.externalSource == name }
+        }
+    }
+
+    /// The distinct external provenances present, sorted for stable chip
+    /// order. Empty when every model is Osaurus-managed, which hides the
+    /// Local tab's source filter entirely.
+    var distinctExternalSources: [String] {
+        Set(compactMap(\.externalSource)).sorted()
     }
 
     /// Keep only models matching the vision filter; `.any` returns the receiver
@@ -687,6 +826,11 @@ struct ModelPickerTab: Identifiable, Equatable {
     /// `groupedByTab()` pins it). This is the only tab whose models carry
     /// pricing, so it's the only one offering the price-sort control.
     var isOsaurus: Bool { title == "Osaurus" }
+
+    /// The Local tab (Foundation + on-device models), identified by its
+    /// stable key. The only tab whose models carry an external provenance,
+    /// so the only one offering the source filter.
+    var isLocal: Bool { key == "local" }
 }
 
 // MARK: - Grouping
@@ -801,6 +945,15 @@ extension Array where Element == ModelPickerItem {
             case .local, .imageGeneration:
                 // On-device image models live in the Local tab alongside LLMs.
                 localModels.append(model)
+            case .claudeCode:
+                // Its own tab rather than the Local one: these models are not
+                // on-device, and grouping them under "Local" would misrepresent
+                // where the prompt actually goes.
+                let key = model.source.uniqueKey
+                if remoteModels[key] == nil {
+                    remoteOrder.append((key: key, title: model.source.displayName))
+                }
+                remoteModels[key, default: []].append(model)
             case .remote(let providerName, _):
                 let key = model.source.uniqueKey
                 if remoteModels[key] == nil {

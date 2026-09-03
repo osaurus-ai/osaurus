@@ -83,6 +83,28 @@ struct MicroPerfFixtureTests {
     }
 
     @Test
+    func explicitThinkingModeDecodesWithoutChangingBundleDefaultSemantics() throws {
+        let off = try JSONDecoder().decode(
+            EvalCase.self,
+            from: Data(
+                """
+                {"id":"micro_perf.off","domain":"micro_perf","query":"count","fixtures":{},"expect":{"microPerf":{"reps":2,"maxTokens":8,"enableThinking":false}}}
+                """.utf8
+            )
+        )
+        #expect(off.expect.microPerf?.enableThinking == false)
+
+        let unspecified = EvalCase(
+            id: "micro_perf.default",
+            domain: "micro_perf",
+            query: "count",
+            fixtures: .init(),
+            expect: .init(microPerf: .init(reps: 2, maxTokens: 8))
+        )
+        #expect(unspecified.expect.microPerf?.enableThinking == nil)
+    }
+
+    @Test
     func statsComputeMedianAndStdev() {
         let odd = MicroPerfStats(nonEmpty: [3, 1, 2])
         #expect(odd?.median == 2)

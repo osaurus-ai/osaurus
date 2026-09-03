@@ -10,7 +10,7 @@ Osaurus runs a local HTTP server so other apps, scripts, and SDKs can use your m
 
 ## Basics
 
-- Default base URL: `http://127.0.0.1:1337`. The port and network exposure live in the Server tab (or ask the assistant to change them — changing port/exposure restarts the server).
+- Default base URL: `http://127.0.0.1:1337`. The port and network exposure are changed only in the Server tab of the Settings UI (the chat assistant cannot change them); changing port/exposure restarts the server.
 - List models: `GET /v1/models` — only downloaded models appear.
 - Chat: `POST /v1/chat/completions` (SSE streaming with `stream: true`). Also `POST /v1/responses` (Open Responses), `/anthropic/v1/messages`, and Ollama's `/api/chat`.
 - OpenAI SDK: set `base_url="http://127.0.0.1:1337/v1"` and any placeholder key (e.g. `"osaurus"`) on loopback; use a real access key from the Server tab if network exposure is on.
@@ -23,7 +23,7 @@ Osaurus runs a local HTTP server so other apps, scripts, and SDKs can use your m
 
 ## Sessions and caching
 
-Pass an optional `session_id` to group turns; KV-cache reuse is automatic. Prefix caching, paged KV, and the on-disk cache are configurable under Server settings (cache changes unload loaded models to take effect).
+Pass an optional `session_id` to group turns; KV-cache reuse is automatic. Prefix caching, paged KV, and the on-disk cache are configured in Settings → Server (cache changes unload loaded models to take effect); they are not part of the declarative configuration document.
 
 ## Server settings you can change
 
@@ -32,3 +32,13 @@ Port, network exposure, generation defaults (temperature / top-p / top-k / max t
 ## MCP surface
 
 `GET /mcp/tools` and `POST /mcp/call` expose Osaurus tools over HTTP; `osaurus mcp` runs Osaurus as a stdio MCP server for other AI apps.
+
+## Configuration endpoints (loopback only)
+
+The declarative configuration surface (see the Declarative Configuration topic) is also exposed over local HTTP for automation:
+
+- `GET /admin/config/export` — the current setup as a YAML document (never contains secrets).
+- `POST /admin/config/plan` — body `{"yaml": "<document>"}` (or `{"template": "<name>"}`), optional `"prune": true`; returns the diff without changing anything.
+- `POST /admin/config/apply` — same body; high-risk changes return `409` with the risk list until re-sent with `"confirm_high_risk": true`.
+
+Unlike other admin routes, these are strictly restricted to local (loopback) callers — an access key never admits a remote caller, even with network exposure on. The `osaurus config` CLI wraps these endpoints.

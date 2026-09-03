@@ -33,6 +33,11 @@ public enum SessionSource: String, Codable, CaseIterable, Sendable {
     /// (ChatGPT, Claude, generic JSON). Continues as a normal chat;
     /// the source tag keeps provenance visible in the sidebar.
     case imported
+    /// True agent delegation: an orchestrating agent's `spawn_agent` /
+    /// `spawn_batch` call dispatched a real headless chat session that runs
+    /// under the TARGET agent's own settings and persists in its chat
+    /// history. One fresh session per delegation call.
+    case delegation
 }
 
 // MARK: - UI Helpers
@@ -70,6 +75,8 @@ extension SessionSource {
             return "self-scheduled"
         case .imported:
             return "imported"
+        case .delegation:
+            return "delegated"
         }
     }
 
@@ -84,6 +91,7 @@ extension SessionSource {
         case .watcher: return "eye.fill"
         case .selfSchedule: return "alarm.fill"
         case .imported: return "square.and.arrow.down.fill"
+        case .delegation: return "arrow.triangle.branch"
         }
     }
 
@@ -98,6 +106,7 @@ extension SessionSource {
         case .watcher: return "Watcher"
         case .selfSchedule: return "Self-scheduled"
         case .imported: return "Imported"
+        case .delegation: return "Delegated"
         }
     }
 }
@@ -141,10 +150,20 @@ extension SessionSource {
         switch self {
         // Imported sessions only reach inference when the user continues
         // them in the chat window, so they carry chat-UI intent.
-        case .chat, .imported: return .chatUI
+        //
+        // Delegated sessions carry chat-UI residency intent: the orchestrating
+        // chat turn is synchronously (or via report-back) waiting on them,
+        // and the parent's `ChatResidencyHandoff` restore must be able to
+        // reclaim the helper's model afterwards — chat-owned residency is
+        // exactly the class that restore may evict; a `.scheduled` owner
+        // would be protected and block the parent's reload.
+        case .chat, .imported, .delegation: return .chatUI
         case .http: return .httpAPI
         case .plugin: return .plugin
-        case .channel, .schedule, .watcher, .selfSchedule: return .scheduled
+        case .channel: return .channel
+        case .schedule: return .schedule
+        case .watcher: return .watcher
+        case .selfSchedule: return .selfSchedule
         }
     }
 }

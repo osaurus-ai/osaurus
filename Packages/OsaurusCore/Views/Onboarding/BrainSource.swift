@@ -22,16 +22,26 @@ enum BrainSource: Equatable {
     case local
     /// A bring-your-own-key cloud provider (OpenAI, Anthropic, xAI, Venice, …).
     case providerKey(ProviderPreset)
+    /// The user's own signed-in Claude Code CLI. Distinct from every other
+    /// case: it stores no credential (the CLI owns the session), creates no
+    /// `RemoteProvider`, and runs as a local subprocess even though the model
+    /// itself is remote — so it is neither `local` nor `provider_key`.
+    case claudeCode
 
     /// Low-cardinality analytics token for `brain_source_selected` and the
     /// `brain_source` dimension on `message_sent`. `hosted` matches the
     /// vocabulary `FeatureTelemetry.recordOnboardingBrainSource` documents
-    /// (`local` | `hosted` | `provider_key`).
+    /// (`local` | `hosted` | `provider_key` | `claude_code`).
+    ///
+    /// `claude_code` extends that vocabulary rather than folding into an
+    /// existing token: reporting it as `local` would overstate on-device usage,
+    /// and as `provider_key` would imply a stored credential that doesn't exist.
     var telemetryValue: String {
         switch self {
         case .osaurus: return "hosted"
         case .local: return "local"
         case .providerKey: return "provider_key"
+        case .claudeCode: return "claude_code"
         }
     }
 

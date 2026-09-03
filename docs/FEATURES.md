@@ -26,6 +26,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Projects                         | Stable    | "Key Features"     | PROJECTS.md                   | Models/Project/Project.swift, Managers/ProjectManager.swift, Views/Chat/ProjectDetailView.swift, Managers/Chat/ChatSessionsManager.swift, Services/Chat/SystemPromptComposer.swift, Services/Memory/MemoryService.swift |
 | Privacy Filter                   | Experimental | "Key Features"  | PRIVACY_FILTER.md             | PrivacyFilter/Core/PrivacyFilterPipeline.swift, PrivacyFilter/Core/PrivacyFilterEngine.swift, PrivacyFilter/Core/RegexEntityDetector.swift, PrivacyFilter/Store/PrivacyFilterStore.swift, PrivacyFilter/Views/PrivacyView.swift, PrivacyFilter/Views/RedactionReviewSheet.swift, Services/Provider/WireTransportProbe.swift, Views/Chat/RedactionHighlighter.swift, Views/Chat/RedactionHoverController.swift |
 | Agents                         | Stable    | "Agents"         | (in README)                   | Managers/AgentManager.swift, Models/Agent/Agent.swift, Views/Agent/AgentsView.swift         |
+| Orchestrator (default agent)     | Stable    | "Orchestrator"     | ORCHESTRATOR.md               | Models/Agent/DefaultAgentConfiguration.swift, Services/Chat/DefaultAgentSystemPromptBuilder.swift, Views/Settings/OrchestratorSettingsView.swift |
 | Agent DB & Self-Scheduling       | Stable    | "Agents"           | AGENT_DB.md                   | Storage/AgentDatabase.swift, Storage/SchedulerDatabase.swift, Managers/NextRunScheduler.swift, Tools/Database/, Views/Agent/AgentDBTabViews.swift, Views/Agent/NextRunPanelView.swift |
 | Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule/Schedule.swift, Views/Schedule/SchedulesView.swift      |
 | Watchers                         | Stable    | "Watchers"         | WATCHERS.md                   | Managers/WatcherManager.swift, Models/Watcher/Watcher.swift, Views/Watcher/WatchersView.swift         |
@@ -485,6 +486,8 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 - `Managers/AgentManager.swift` — Agent lifecycle and active agent management
 - `Views/Agent/AgentsView.swift` — Agent gallery and management UI
 
+**The Orchestrator (built-in default agent):** the in-memory `Agent.default` ("Osaurus", `Agent.defaultId`) is the default chat agent. Unspecified new windows open on it; a chat can also open directly on a custom agent. It is a configuration + delegation agent: it inspects and changes Osaurus through the declarative `osaurus_config` tool (plan → approval card → apply) and delegates work to allowed custom agents and local/cloud models as subagents. It never gets a sandbox, working folder, browser, or computer use — for filesystem work, create or switch to a custom agent and pick the working folder there. Its identity (custom display name via `DefaultAgentConfiguration.displayName`, persona, temperature, max tokens) and delegation helpers (spawn allow-list, budgets, RAM safety — `SubagentConfiguration`) are edited in **Settings → Orchestrator** (`Views/Settings/OrchestratorSettingsView.swift`) and covered by the declarative document's `default_agent` / `delegation` sections. See [ORCHESTRATOR.md](ORCHESTRATOR.md) for the full guide.
+
 **Features:**
 
 - **Custom System Prompts** — Define unique instructions for each agent
@@ -500,7 +503,7 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 
 | Group | Setting | Toggle | Default | Gates |
 |---|---|---|---|---|
-| Model Access | `disableTools` (inverted) | Tools | on | All tool use |
+| Model Access | `toolsEnabled` | Tools | on | All tool use (custom agents only) |
 | Model Access | `disableMemory` (inverted) | Memory | on | Passive memory injection + recording |
 | Output | `renderChartEnabled` | Charts | off | `render_chart` |
 | Output | `speakEnabled` | Voice | off | `speak` |

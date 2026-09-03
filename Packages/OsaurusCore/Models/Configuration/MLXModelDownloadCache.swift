@@ -36,6 +36,11 @@ public enum MLXModelDownloadCache {
     /// downloaded models, which is enough to trip the main-thread hang
     /// watchdog when the Models / onboarding grid evaluates it per row.
     private nonisolated(unsafe) static var vlmStorage: [String: Bool] = [:]
+    /// Cached "this bundle's checkpoint actually carries audio tensors".
+    /// Same reason as `vlmStorage`: the underlying probe reads the
+    /// safetensors index off disk, and the composer asks for it from a
+    /// SwiftUI body getter that must never fault a bundle read.
+    private nonisolated(unsafe) static var audioStorage: [String: Bool] = [:]
     private nonisolated(unsafe) static var didInstallObserver = false
     private nonisolated(unsafe) static var observerToken: NSObjectProtocol?
 
@@ -85,6 +90,21 @@ public enum MLXModelDownloadCache {
         lock.unlock()
     }
 
+    /// Cached audio-tensor verdict. `nil` means the id was never probed.
+    public static func cachedAudio(for modelId: String) -> Bool? {
+        ensureObserverInstalled()
+        lock.lock()
+        defer { lock.unlock() }
+        return audioStorage[modelId]
+    }
+
+    public static func setAudio(_ value: Bool, for modelId: String) {
+        ensureObserverInstalled()
+        lock.lock()
+        audioStorage[modelId] = value
+        lock.unlock()
+    }
+
     /// Invalidate a single entry. Call after a targeted change that
     /// flips a specific model's downloaded state.
     public static func invalidate(modelId: String) {
@@ -92,6 +112,7 @@ public enum MLXModelDownloadCache {
         storage.removeValue(forKey: modelId)
         dateStorage.removeValue(forKey: modelId)
         vlmStorage.removeValue(forKey: modelId)
+        audioStorage.removeValue(forKey: modelId)
         lock.unlock()
     }
 
@@ -103,6 +124,7 @@ public enum MLXModelDownloadCache {
         storage.removeAll(keepingCapacity: true)
         dateStorage.removeAll(keepingCapacity: true)
         vlmStorage.removeAll(keepingCapacity: true)
+        audioStorage.removeAll(keepingCapacity: true)
         lock.unlock()
     }
 

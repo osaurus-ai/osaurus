@@ -25,7 +25,7 @@ enum ToolPolicyStyle {
 
     static func color(for policy: ToolPermissionPolicy, theme: ThemeProtocol) -> Color {
         switch policy {
-        case .auto: theme.accentColor
+        case .auto: theme.successColor
         case .ask: .orange
         case .deny: theme.errorColor
         }
@@ -51,6 +51,59 @@ enum ToolPolicyStyle {
     }
 }
 
+// MARK: - Menu Pill
+
+/// Button style that wraps a menu label in a capsule without touching the
+/// label's own layout. A custom `ButtonStyle` passes `configuration.label`
+/// through verbatim, so the label's spacing/padding survive — unlike
+/// `.bordered`, which re-lays out the label and ignores its `HStack` spacing.
+private struct PillButtonStyle: ButtonStyle {
+    let fill: Color
+    let stroke: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(Capsule().fill(fill))
+            .overlay(Capsule().stroke(stroke, lineWidth: 1))
+            .contentShape(Capsule())
+            .opacity(configuration.isPressed ? 0.65 : 1)
+    }
+}
+
+/// A pill-shaped dropdown whose visible chrome is a fully custom `label`. It is
+/// a real `Menu` (so clicking works) rendered as a button with `PillButtonStyle`
+/// and the system menu indicator hidden — the label owns all spacing, padding,
+/// background, and colors.
+struct MenuPill<MenuContent: View, Label: View>: View {
+    let fill: Color
+    let stroke: Color
+    private let menuContent: () -> MenuContent
+    private let label: () -> Label
+
+    init(
+        fill: Color,
+        stroke: Color,
+        @ViewBuilder menuContent: @escaping () -> MenuContent,
+        @ViewBuilder label: @escaping () -> Label
+    ) {
+        self.fill = fill
+        self.stroke = stroke
+        self.menuContent = menuContent
+        self.label = label
+    }
+
+    var body: some View {
+        Menu {
+            menuContent()
+        } label: {
+            label()
+        }
+        .menuStyle(.button)
+        .buttonStyle(PillButtonStyle(fill: fill, stroke: stroke))
+        .menuIndicator(.hidden)
+    }
+}
+
 // MARK: - Tool Policy Menu
 
 /// Reusable permission-behavior selector menu for a single tool entry.
@@ -60,8 +113,12 @@ struct ToolPolicyMenu: View {
     let info: ToolRegistry.ToolPolicyInfo
     let onChange: () -> Void
 
+    private var color: Color {
+        ToolPolicyStyle.color(for: info.effectivePolicy, theme: theme)
+    }
+
     var body: some View {
-        Menu {
+        MenuPill(fill: color.opacity(0.14), stroke: color.opacity(0.22)) {
             ForEach([ToolPermissionPolicy.auto, .ask, .deny], id: \.self) { policy in
                 Button {
                     ToolRegistry.shared.setPolicy(policy, for: toolName)
@@ -69,9 +126,7 @@ struct ToolPolicyMenu: View {
                 } label: {
                     HStack {
                         Image(systemName: ToolPolicyStyle.icon(for: policy))
-                            .foregroundColor(ToolPolicyStyle.color(for: policy, theme: theme))
                         Text(ToolPolicyStyle.title(for: policy))
-                            .foregroundColor(ToolPolicyStyle.color(for: policy, theme: theme))
                         if policy == info.effectivePolicy {
                             Image(systemName: "checkmark")
                         }
@@ -79,25 +134,20 @@ struct ToolPolicyMenu: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 Image(systemName: ToolPolicyStyle.icon(for: info.effectivePolicy))
-                    .font(.system(size: 9))
-                    .foregroundColor(ToolPolicyStyle.color(for: info.effectivePolicy, theme: theme))
+                    .font(.system(size: 9, weight: .semibold))
                 Text(ToolPolicyStyle.compactTitle(for: info.effectivePolicy))
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(ToolPolicyStyle.color(for: info.effectivePolicy, theme: theme))
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(.system(size: 10, weight: .semibold))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+                    .opacity(0.7)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                Capsule()
-                    .fill(ToolPolicyStyle.color(for: info.effectivePolicy, theme: theme).opacity(0.12))
-            )
+            .foregroundStyle(color)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
         }
-        .menuStyle(.borderlessButton)
         .fixedSize()
         .help(Text("Choose whether this tool runs automatically, asks first, or is blocked", bundle: .module))
         .accessibilityLabel(
@@ -305,7 +355,7 @@ struct ToolFilterMenu<Option: ToolCatalogFilterOption>: View {
     @Binding var selection: Option
 
     var body: some View {
-        Menu {
+        MenuPill(fill: theme.tertiaryBackground, stroke: theme.inputBorder) {
             ForEach(options, id: \.self) { option in
                 Button {
                     selection = option
@@ -319,28 +369,20 @@ struct ToolFilterMenu<Option: ToolCatalogFilterOption>: View {
                 }
             }
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: 7) {
                 Image(systemName: icon)
                     .font(.system(size: 10, weight: .semibold))
                 Text(selection.title)
                     .font(.system(size: 11, weight: .medium))
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(theme.tertiaryText)
             }
             .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 9)
-            .frame(height: 28)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(theme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
         }
-        .menuStyle(.borderlessButton)
         .fixedSize()
         .accessibilityLabel(Text("\(accessibilityTitle): \(selection.title)"))
     }

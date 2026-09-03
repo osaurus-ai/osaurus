@@ -42,7 +42,15 @@ enum GenerationEventMapper {
         modelName: String = "",
         trace: TTFTTrace? = nil,
         suppressProgressUI: Bool = false,
-        onConsumerCancellation: @escaping @Sendable () -> Void = {}
+        onConsumerCancellation: @escaping @Sendable () -> Void = {},
+        /// Fired exactly once, at the FIRST real output event (chunk,
+        /// reasoning, tool call, or tool-call progress). This is the
+        /// boundary the swap-attribution window closes on: prefill and
+        /// TTFT work happen before it, decode after.
+        onFirstModelOutput: @escaping @Sendable () -> Void = {},
+        /// Fired when vmlx emits its authoritative terminal stats. Cache
+        /// persistence may still be draining after this boundary.
+        onCompletionInfo: @escaping @Sendable () -> Void = {}
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
         let task = Task {
@@ -76,6 +84,7 @@ enum GenerationEventMapper {
                 let ms = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
                 trace?.set("first_token_ms", ms)
                 trace?.mark("first_model_output")
+                onFirstModelOutput()
             }
 
             // Route the "prefill is done" signal to the surface that started
@@ -91,6 +100,7 @@ enum GenerationEventMapper {
 
             for await event in events {
                 if case .info(let info) = event {
+                    onCompletionInfo()
                     sawCompletionInfo = true
                     terminalInfoAt = CFAbsoluteTimeGetCurrent()
                     finalTokenCount = info.generationTokenCount
@@ -101,7 +111,8 @@ enum GenerationEventMapper {
                             tokensPerSecond: info.tokensPerSecond,
                             unclosedReasoning: info.unclosedReasoning,
                             stopReason: Self.openAIStopReason(from: info.stopReason),
-                            promptTokensPerSecond: info.promptTokensPerSecond
+                            promptTokensPerSecond: info.promptTokensPerSecond,
+                            mtp: Self.mtpSummary(from: info)
                         )
                     )
                     // `.info` is vmlx's authoritative logical completion.
@@ -216,7 +227,8 @@ enum GenerationEventMapper {
                         tokensPerSecond: 0,
                         unclosedReasoning: sawReasoning,
                         stopReason: nil,
-                        promptTokensPerSecond: 0
+                        promptTokensPerSecond: 0,
+                        mtp: nil
                     )
                 )
             }
@@ -279,10 +291,65 @@ enum GenerationEventMapper {
     /// One log line + one signpost event per completion. Pulled out of
     /// `map` so the per-event switch reads as the wire-format translation
     /// it actually is.
+    /// Project vmlx's per-generation MTP stats into the transportable
+    /// summary, or nil when native MTP did not produce these tokens.
+    /// `acceptedByDepth[n]` counts verify cycles that accepted exactly `n`
+    /// draft tokens, so the accepted-token total is Σ n·count.
+    private static func mtpSummary(from info: GenerateCompletionInfo) -> MTPStatsSummary? {
+        guard let mtp = info.nativeMTPStats else { return nil }
+        let accepted = mtp.acceptedByDepth.enumerated().reduce(0) { $0 + $1.offset * $1.element }
+        return MTPStatsSummary(
+            depth: mtp.depth,
+            activeDepth: mtp.activeDepth,
+            verifyCalls: mtp.verifyCalls,
+            acceptedDraftTokens: accepted,
+            bonusTokens: mtp.bonusTokens,
+            rejectedTokens: mtp.rejectedTokens,
+            arFallbackTokens: mtp.arFallbackTokens,
+            adaptiveDownshifts: mtp.adaptiveDownshifts,
+            adaptiveFallbackReason: mtp.adaptiveFallbackReason
+        )
+    }
+
     private static func logCompletionInfo(_ info: GenerateCompletionInfo) {
         mapperLog.info(
             "[perf] mlxStats promptTokens=\(info.promptTokenCount, privacy: .public) promptTps=\(info.promptTokensPerSecond, privacy: .public) promptMs=\(Int(info.promptTime * 1000), privacy: .public) genTokens=\(info.generationTokenCount, privacy: .public) genTps=\(info.tokensPerSecond, privacy: .public) genMs=\(Int(info.generateTime * 1000), privacy: .public) stop=\(String(describing: info.stopReason), privacy: .public) unclosedReasoning=\(info.unclosedReasoning, privacy: .public)"
         )
+
+        // Which decode path actually ran. vmlx populates `nativeMTPStats` ONLY
+        // when the native-MTP iterator was the one that produced these tokens;
+        // every other path (plain AR, dFlash-2) leaves it nil. Nothing in the
+        // app read this field, so a turn that requested MTP and was silently
+        // excluded by `canUseNativeMTP` — bounded KV window, media in the
+        // input, or any sampler whose logits depend on sampled history — was
+        // indistinguishable from one where MTP ran and simply didn't help.
+        // Both just showed a tok/s number. That made every MTP measurement
+        // unfalsifiable, so it is logged before anything else is measured.
+        //
+        // `mtp=off` here does NOT by itself mean the gate rejected the turn —
+        // it means native MTP did not produce these tokens, which also covers
+        // "not requested". Distinguishing REQUESTED-but-excluded from
+        // not-requested needs the gate itself to report its reason, and the
+        // gate lives in vmlx (`GenerateParameters.canUseNativeMTP`). This line
+        // makes the effect observable; the reason is still a vmlx-side gap.
+        if let mtp = info.nativeMTPStats {
+            let accepted = mtp.acceptedByDepth.map(String.init).joined(separator: "/")
+            mapperLog.info(
+                "[perf] decodePath=nativeMTP depth=\(mtp.depth, privacy: .public) activeDepth=\(mtp.activeDepth, privacy: .public) verifyCalls=\(mtp.verifyCalls, privacy: .public) acceptedByDepth=\(accepted, privacy: .public) avgCommittedPerVerify=\(mtp.avgCommittedPerVerify, privacy: .public) avgAcceptProb=\(mtp.avgAcceptProbability, privacy: .public) bonus=\(mtp.bonusTokens, privacy: .public) rejected=\(mtp.rejectedTokens, privacy: .public) arFallbackTokens=\(mtp.arFallbackTokens, privacy: .public) downshifts=\(mtp.adaptiveDownshifts, privacy: .public) fallbackReason=\(mtp.adaptiveFallbackReason ?? "-", privacy: .public) verifier=\(mtp.verifierMode, privacy: .public) cacheMode=\(mtp.cacheMode, privacy: .public)"
+            )
+            PrefillDebugLog.shared.log(
+                "     STEP-MTP   depth=\(mtp.depth) active=\(mtp.activeDepth) "
+                    + "verifyCalls=\(mtp.verifyCalls) acceptedByDepth=\(accepted) "
+                    + "avgCommitted=\(String(format: "%.2f", mtp.avgCommittedPerVerify)) "
+                    + "avgAcceptProb=\(String(format: "%.3f", mtp.avgAcceptProbability)) "
+                    + "arFallback=\(mtp.arFallbackTokens) downshifts=\(mtp.adaptiveDownshifts) "
+                    + "fallbackReason=\(mtp.adaptiveFallbackReason ?? "-") "
+                    + "verifier=\(mtp.verifierMode) cacheMode=\(mtp.cacheMode)"
+            )
+        } else {
+            mapperLog.info("[perf] decodePath=plain mtp=off")
+            PrefillDebugLog.shared.log("     STEP-MTP   decodePath=plain mtp=off")
+        }
 
         // Prefill diagnostics: vmlx's actual processed-prompt count + prefill
         // timing for this step, then the cumulative cache counters AFTER it.

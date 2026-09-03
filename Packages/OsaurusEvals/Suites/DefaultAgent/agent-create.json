@@ -1,18 +1,19 @@
 {
   "id": "default_agent.agent-create",
   "domain": "default_agent",
-  "label": "default agent • create a custom agent",
+  "label": "default agent • create a custom agent (declarative apply)",
   "query": "Create a new custom agent named \"Researcher\" that specializes in web research and concise summaries.",
-  "notes": "action 'create' (needs name). Under the isolated config root the new agent lands in the throwaway temp store. This is the exact write whose persistence regression started this work — the selection assertion pins action 'create' on osaurus_agent.",
+  "notes": "osaurus_config apply with an agents entry (matched/created by name). Under the isolated config root the new agent lands in the throwaway temp store. This is the exact write whose persistence regression started this work — the selection assertion pins the apply carrying the agents section and the requested name.",
   "fixtures": {},
   "expect": {
     "defaultAgent": {
-      "mustCallTools": ["osaurus_agent"],
+      "mustCallTools": ["osaurus_config"],
       "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
       "argsMustContain": [
-        { "tool": "osaurus_agent", "args": { "action": "create", "name": "Researcher" } }
+        { "tool": "osaurus_config", "args": { "action": "apply", "yaml": "Researcher" } },
+        { "tool": "osaurus_config", "args": { "yaml": "agents" } }
       ],
-      "maxIterations": 4
+      "maxIterations": 8
     }
   }
 }

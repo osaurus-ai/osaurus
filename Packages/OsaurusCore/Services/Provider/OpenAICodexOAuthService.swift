@@ -101,19 +101,38 @@ public struct CodexModelMetadata: Sendable, Equatable, Hashable {
     /// reasoning contract for the model.
     public let supportedReasoningLevels: [CodexReasoningLevel]
     public let usesResponsesLite: Bool
+    /// Total context window in tokens, straight from the catalog's
+    /// `context_window` field. Authoritative per-model window — nil when the
+    /// entry omits it (older catalogs, fallback models). Osaurus applies its
+    /// own safety margin downstream, so this stays the raw catalog value.
+    public let contextWindow: Int?
+    /// Input modalities from the live Codex catalog. A missing field means
+    /// legacy metadata; Codex itself defaults that case to text + image.
+    public let inputModalities: [String]?
+
+    /// Mirrors codex-rs's backward-compatible default: image input is allowed
+    /// unless the catalog explicitly publishes a modality list without it.
+    public var supportsImageInput: Bool {
+        guard let inputModalities else { return true }
+        return inputModalities.contains { $0.caseInsensitiveCompare("image") == .orderedSame }
+    }
 
     public init(
         slug: String,
         displayName: String? = nil,
         defaultReasoningLevel: String? = nil,
         supportedReasoningLevels: [CodexReasoningLevel] = [],
-        usesResponsesLite: Bool = false
+        usesResponsesLite: Bool = false,
+        contextWindow: Int? = nil,
+        inputModalities: [String]? = nil
     ) {
         self.slug = slug
         self.displayName = displayName
         self.defaultReasoningLevel = defaultReasoningLevel
         self.supportedReasoningLevels = supportedReasoningLevels
         self.usesResponsesLite = usesResponsesLite
+        self.contextWindow = contextWindow
+        self.inputModalities = inputModalities
     }
 }
 
@@ -280,6 +299,19 @@ public enum OpenAICodexOAuthService {
     /// successful discovery / for fallback models that predate the catalog.
     public static func modelMetadata(forSlug slug: String) -> CodexModelMetadata? {
         lastDiscoverySummaryBox.withLock { $0?.modelMetadata[slug] }
+    }
+
+    /// Slug -> advertised context window from the latest catalog. Only slugs
+    /// whose entry carried a positive `context_window` appear. Empty before the
+    /// first successful discovery, letting callers fall back to their own
+    /// default window resolution.
+    public static var lastContextWindows: [String: Int] {
+        lastDiscoverySummaryBox.withLock { summary in
+            guard let summary else { return [:] }
+            return summary.modelMetadata.reduce(into: [:]) { map, pair in
+                if let window = pair.value.contextWindow { map[pair.key] = window }
+            }
+        }
     }
 
     /// Live model catalog fetched from the ChatGPT/Codex backend, matching what
@@ -499,7 +531,7 @@ public enum OpenAICodexOAuthService {
     /// catalog for older or unrecognized versions (non-semver values like
     /// "osaurus-1.2.3" get the wrong subset entirely). Bump this to the
     /// current Codex CLI release when new models stop appearing in discovery.
-    public static let codexClientVersion = "0.144.1"
+    public static let codexClientVersion = "0.151.0"
 
     /// Codex CLI-style `User-Agent`, mirroring codex-rs's
     /// `get_codex_user_agent()` format:
@@ -542,6 +574,8 @@ public enum OpenAICodexOAuthService {
         let display_name: String?
         let default_reasoning_level: String?
         let supported_reasoning_levels: [ReasoningLevelEntry]?
+        let context_window: Int?
+        let input_modalities: [String]?
 
         /// The publishable capability slice of this entry, preserving the
         /// catalog's level order and dropping malformed (effort-less) levels.
@@ -558,7 +592,9 @@ public enum OpenAICodexOAuthService {
                     else { return nil }
                     return CodexReasoningLevel(effort: effort, description: level.description)
                 },
-                usesResponsesLite: use_responses_lite == true
+                usesResponsesLite: use_responses_lite == true,
+                contextWindow: context_window.flatMap { $0 > 0 ? $0 : nil },
+                inputModalities: input_modalities
             )
         }
     }

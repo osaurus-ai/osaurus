@@ -27,6 +27,12 @@ enum SpawnInputContract {
         + "or infer what an opaque label means. Never refer to a previous/earlier message, content "
         + "above, or prior conversation; copy the exact required information into this input."
 
+    static let backgroundParameterDescription =
+        "Optional; default false. When true, the tool returns immediately and the helper keeps "
+        + "running in the background; its result arrives later as a follow-up message in this "
+        + "conversation. Use for long-running work. Do not wait, poll, or re-dispatch the same "
+        + "task — acknowledge to the user that the helper will report back."
+
     /// Enforce only the structural part of the standalone-input contract.
     ///
     /// Whether prose depends on parent-chat state cannot be decided safely by
@@ -524,6 +530,11 @@ public enum SpawnDescriptors {
         switch item.source {
         case .remote(let providerName, _):
             return (false, providerName)
+        case .claudeCode:
+            // Not local: the CLI runs on this Mac, but inference happens on
+            // Anthropic's servers, so the locality badge must not claim
+            // on-device.
+            return (false, ModelPickerItem.Source.claudeCode.displayName)
         case .local, .foundation, .imageGeneration:
             return (true, nil)
         }

@@ -1,0 +1,603 @@
+{
+  "disconnected": {
+    "client_disconnected": true,
+    "data_lines": 250,
+    "duration_seconds": 1.5243,
+    "ended_epoch": 1788152673.22484,
+    "finish_reason": null,
+    "http_status": 200,
+    "label": "DISCONNECT_A",
+    "started_epoch": 1788152671.7005372,
+    "ttft_seconds": 0.1097,
+    "usage": null
+  },
+  "final_idle": true,
+  "model": "lfm2.5-2.6b-jang_6m",
+  "survivor": {
+    "data_lines": 1184,
+    "duration_seconds": 8.6422,
+    "ended_epoch": 1788152680.548161,
+    "finish_reason": "length",
+    "http_status": 200,
+    "label": "SURVIVOR_B",
+    "started_epoch": 1788152671.905914,
+    "ttft_seconds": 1.4199,
+    "usage": {
+      "completion_tokens": 1200,
+      "prompt_tokens": 30,
+      "tokens_per_second": 165.2428,
+      "total_tokens": 1230
+    }
+  },
+  "timeline": [
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "75da8de0-5acb-4372-bfc3-fb258fb4b668",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        },
+        {
+          "can_cancel": false,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "prefilling",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:31Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "75da8de0-5acb-4372-bfc3-fb258fb4b668",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        },
+        {
+          "can_cancel": false,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "prefilling",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:32Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "75da8de0-5acb-4372-bfc3-fb258fb4b668",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        },
+        {
+          "can_cancel": false,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "prefilling",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:32Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "75da8de0-5acb-4372-bfc3-fb258fb4b668",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        },
+        {
+          "can_cancel": false,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "prefilling",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:32Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "75da8de0-5acb-4372-bfc3-fb258fb4b668",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        },
+        {
+          "can_cancel": false,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "prefilling",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:32Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "75da8de0-5acb-4372-bfc3-fb258fb4b668",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        },
+        {
+          "can_cancel": false,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "prefilling",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:33Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:33Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:33Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:33Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:34Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:34Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:34Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:35Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:35Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:35Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:35Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:36Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:36Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:36Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:36Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:37Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:37Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:37Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:37Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:38Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:38Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:38Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:38Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:39Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:39Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:39Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:39Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:40Z"
+    },
+    {
+      "active_count": 1,
+      "activities": [
+        {
+          "can_cancel": true,
+          "cancellation_requested": false,
+          "id": "ba32ec5c-52ad-4aca-a323-6b66e3317fe3",
+          "model": "lfm2.5-2.6b-jang_6m",
+          "phase": "generating",
+          "source": "HTTP API",
+          "started_at": "2026-08-31T05:04:31Z"
+        }
+      ],
+      "timestamp": "2026-08-31T05:04:40Z"
+    },
+    {
+      "active_count": 0,
+      "activities": [],
+      "timestamp": "2026-08-31T05:04:40Z"
+    }
+  ]
+}

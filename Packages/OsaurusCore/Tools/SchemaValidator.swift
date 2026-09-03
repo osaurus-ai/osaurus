@@ -149,10 +149,24 @@ public struct SchemaValidator {
                 let nested = value as? [String: Any]
             {
                 let inner = validateObject(nested, schemaObject: propSchemaObj)
-                if !inner.isValid { return inner }
+                if !inner.isValid { return prefixingPath(inner, parent: key) }
             }
         }
         return .ok()
+    }
+
+    /// Re-anchor a nested failure at its parent path so the model can find
+    /// the offending value — `intents[2]: Property 'kind' must be one of ...`
+    /// instead of a bare `kind` complaint that is unactionable in a batch.
+    private static func prefixingPath(
+        _ result: ValidationResult,
+        parent: String
+    ) -> ValidationResult {
+        guard !result.isValid else { return result }
+        let field = result.field.map { "\(parent).\($0)" } ?? parent
+        let message = result.errorMessage.map { "\(parent): \($0)" }
+            ?? "Invalid value at \(parent)."
+        return .fail(message, field: field)
     }
 
     // MARK: - Value validation (single value against its schema)
@@ -283,7 +297,7 @@ public struct SchemaValidator {
                     let nested = element as? [String: Any]
                 {
                     let inner = validateObject(nested, schemaObject: itemsSchema)
-                    if !inner.isValid { return inner }
+                    if !inner.isValid { return prefixingPath(inner, parent: elementKey) }
                 }
             }
         }

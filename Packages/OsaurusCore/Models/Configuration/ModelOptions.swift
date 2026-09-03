@@ -46,12 +46,18 @@ struct ModelOptionDefinition: Identifiable, Sendable {
     let label: String
     let icon: String?
     let kind: Kind
+    /// Footnote rendered under the row's controls — for options whose
+    /// selection changes MORE than the labeled value (e.g. Speculative
+    /// Depth also forces greedy sampling while active). Nil for rows the
+    /// label fully describes.
+    let help: String?
 
-    init(id: String, label: String, icon: String? = nil, kind: Kind) {
+    init(id: String, label: String, icon: String? = nil, kind: Kind, help: String? = nil) {
         self.id = id
         self.label = label
         self.icon = icon
         self.kind = kind
+        self.help = help
     }
 }
 

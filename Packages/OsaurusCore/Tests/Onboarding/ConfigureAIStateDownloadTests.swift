@@ -335,6 +335,21 @@ struct ConfigureAIStateDownloadTests {
         #expect(state.draftModel?.id == picked.id)
     }
 
+    /// Picking a different model after a failed download must clear the
+    /// "download already started" latch so the new selection can be
+    /// downloaded (and so "Change model" stays available).
+    @Test func selectLocalModel_clearsStartedDownloadLatch() {
+        let (state, model) = makeStateWithModel()
+        defer { clear(model) }
+
+        state.hasStartedLocalDownload = true
+        let replacement = makeModel("replacement")
+        state.selectLocalModel(replacement)
+
+        #expect(state.selectedModel?.id == replacement.id)
+        #expect(state.hasStartedLocalDownload == false)
+    }
+
     /// Cancel / X / Esc / scrim-tap all route here: the dialog closes and the
     /// committed selection is untouched even though the draft had moved.
     @Test func cancelModelChooser_closesWithoutChangingSelection() {

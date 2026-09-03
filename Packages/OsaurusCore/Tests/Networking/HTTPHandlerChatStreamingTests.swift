@@ -95,6 +95,7 @@ struct HTTPHandlerChatStreamingTests {
                 name: "HTTPStrictContext-\(UUID().uuidString.prefix(6))",
                 systemPrompt: "DO-NOT-INJECT-HTTP-CONTEXT",
                 agentAddress: "http-strict-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: false),
                 manualToolNames: ["capabilities_discover"]
             )
             AgentManager.shared.add(agent)
@@ -871,7 +872,8 @@ struct HTTPHandlerChatStreamingTests {
             let scopedAgent = Agent(
                 name: "HTTPAgentRunSentinel-\(UUID().uuidString.prefix(6))",
                 systemPrompt: "Test identity",
-                agentAddress: "http-agent-run-\(UUID().uuidString)"
+                agentAddress: "http-agent-run-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             AgentManager.shared.add(scopedAgent)
 
@@ -950,8 +952,8 @@ struct HTTPHandlerChatStreamingTests {
                     return AsyncThrowingStream { continuation in
                         continuation.finish(
                             throwing: ServiceToolInvocation(
-                                toolName: "osaurus_status",
-                                jsonArguments: "{}"
+                                toolName: "osaurus_inspect",
+                                jsonArguments: "{\"action\": \"status\"}"
                             )
                         )
                     }
@@ -997,7 +999,7 @@ struct HTTPHandlerChatStreamingTests {
             request.disablePersistenceForTests()
             let reqBody = ChatCompletionRequest(
                 model: "osaurusai--gemma-4-12b-it-qat-jang_4m",
-                messages: [ChatMessage(role: "user", content: "Use osaurus_status, then answer.")],
+                messages: [ChatMessage(role: "user", content: "Use osaurus_inspect, then answer.")],
                 temperature: 0,
                 max_tokens: 64,
                 stream: true,
@@ -1053,8 +1055,8 @@ struct HTTPHandlerChatStreamingTests {
                     return AsyncThrowingStream { continuation in
                         continuation.finish(
                             throwing: ServiceToolInvocation(
-                                toolName: "osaurus_status",
-                                jsonArguments: "{}"
+                                toolName: "osaurus_inspect",
+                                jsonArguments: "{\"action\": \"status\"}"
                             )
                         )
                     }
@@ -1098,7 +1100,7 @@ struct HTTPHandlerChatStreamingTests {
             request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
             request.disablePersistenceForTests()
             request.httpBody = #"""
-                {"model":"fake","stream":true,"tool_choice":"auto","messages":[{"role":"user","content":"use osaurus_status"}]}
+                {"model":"fake","stream":true,"tool_choice":"auto","messages":[{"role":"user","content":"use osaurus_inspect"}]}
                 """#.data(using: .utf8)
 
             let (data, resp) = try await URLSession.shared.data(for: request)
@@ -1107,7 +1109,7 @@ struct HTTPHandlerChatStreamingTests {
             #expect(body.contains("\"osaurus_agent_tool\""))
             #expect(body.contains("\"phase\":\"started\""))
             #expect(body.contains("\"phase\":\"completed\""))
-            #expect(body.contains("\"name\":\"osaurus_status\""))
+            #expect(body.contains("\"name\":\"osaurus_inspect\""))
             #expect(body.contains("status tool finished"))
         }
     }
@@ -1157,7 +1159,8 @@ struct HTTPHandlerChatStreamingTests {
             let custom = Agent(
                 name: "HTTPAgentRunTools-\(UUID().uuidString.prefix(6))",
                 systemPrompt: "Test identity",
-                agentAddress: "http-agent-run-tools-\(UUID().uuidString)"
+                agentAddress: "http-agent-run-tools-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             AgentManager.shared.add(custom)
 
@@ -1192,7 +1195,7 @@ struct HTTPHandlerChatStreamingTests {
             let requests = await engine.requests
             #expect(requests.count == 2)
             let defaultNames = Set(requests[0].tools?.map(\.function.name) ?? [])
-            #expect(defaultNames == ToolRegistry.defaultAgentAllowedToolNames)
+            #expect(defaultNames == ToolRegistry.orchestratorAllowedToolNames)
 
             let customSystemMessage = requests[1].messages.first { $0.role == "system" }
             #expect(customSystemMessage?.content?.contains("Test identity") == true)

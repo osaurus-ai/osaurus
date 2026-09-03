@@ -329,6 +329,11 @@ struct ChatMessage: Codable, Sendable {
     /// Server-encrypted reasoning blob paired with `reasoning_item_id`. In-memory
     /// only; re-sent verbatim on the Responses path for chain continuity.
     let reasoning_encrypted: String?
+    /// Provider-native Responses output Items captured from
+    /// `response.output_item.done`. Kept off the Chat Completions JSON wire and
+    /// replayed verbatim on later Responses turns so item ids, assistant phase,
+    /// encrypted reasoning, and future typed fields survive.
+    var responses_output_items: [JSONValue]? = nil
 
     /// Extract image URLs from content parts (supports both data URLs and http URLs)
     var imageUrls: [String] {
@@ -479,7 +484,8 @@ extension ChatMessage {
         tool_call_id: String?,
         reasoning_content: String? = nil,
         reasoning_item_id: String? = nil,
-        reasoning_encrypted: String? = nil
+        reasoning_encrypted: String? = nil,
+        responses_output_items: [JSONValue]? = nil
     ) {
         self.role = role
         self.content = content
@@ -490,6 +496,7 @@ extension ChatMessage {
         self.reasoning_content = reasoning_content
         self.reasoning_item_id = reasoning_item_id
         self.reasoning_encrypted = reasoning_encrypted
+        self.responses_output_items = responses_output_items
     }
 
     /// Initialize from a route adapter that already normalized OpenAI-style
@@ -781,6 +788,12 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// (e.g. a leftover prefix like `fugu/...`) can't redirect an agent run to a
     /// different provider. Not decoded from OpenAI JSON, not sent to providers.
     var remoteAgentProviderId: UUID? = nil
+    /// Local-only: per-agent behavior for the Claude Code subprocess backend
+    /// (mode + tool opt-ins + working directory). Set by the chat surface from
+    /// the active agent's `claudeCode` config; read only by `ClaudeCodeService`
+    /// and ignored by every other backend. Not decoded from OpenAI JSON and
+    /// never forwarded to a provider.
+    var claudeCodeOptions: ClaudeCodeRunOptions? = nil
     /// Local-only: when true, model-load and prefill progress are not surfaced
     /// through `InferenceProgressManager` (background warm-up requests).
     var suppressProgressUI: Bool = false
@@ -862,6 +875,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.runAsRemoteAgent = runAsRemoteAgent
         copy.remoteAgentLogModel = remoteAgentLogModel
         copy.remoteAgentProviderId = remoteAgentProviderId
+        copy.claudeCodeOptions = claudeCodeOptions
         copy.suppressProgressUI = suppressProgressUI
         copy.warmupPrefill = warmupPrefill
         copy.cacheStableSystemPrefix = cacheStableSystemPrefix
@@ -912,6 +926,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.runAsRemoteAgent = runAsRemoteAgent
         copy.remoteAgentLogModel = remoteAgentLogModel
         copy.remoteAgentProviderId = remoteAgentProviderId
+        copy.claudeCodeOptions = claudeCodeOptions
         copy.suppressProgressUI = suppressProgressUI
         copy.warmupPrefill = warmupPrefill
         copy.cacheStableSystemPrefix = cacheStableSystemPrefix

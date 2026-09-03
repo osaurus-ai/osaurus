@@ -77,6 +77,43 @@ struct RemoteProviderManagerRouterConnectTests {
         #expect(!RemoteProviderManager.isTransientConnectError(URLError(.userAuthenticationRequired)))
     }
 
+    /// The OpenAI-compatible discovery path (LM Studio, custom endpoints) wraps
+    /// a raw transport `URLError` into `.requestFailedWithDiagnostics`. The
+    /// underlying code must still drive the transient/permanent verdict —
+    /// otherwise an offline-at-launch failure is misclassified as terminal and
+    /// the recovery sweeps never reconnect it (the reported "broken after
+    /// update until manual refresh" bug).
+    @Test func isTransientConnectError_unwrapsDiagnosticsTransportError() {
+        func wrapped(_ underlying: Error) -> RemoteProviderServiceError {
+            let diagnostics = ProviderReplayDiagnosticBundle(
+                phase: "model_discovery",
+                request: URLRequest(url: URL(string: "http://localhost:1234/v1/models")!),
+                transportError: underlying
+            )
+            return .requestFailedWithDiagnostics("Network error", diagnostics)
+        }
+
+        // Transient underlying transport errors stay transient through the wrap.
+        #expect(RemoteProviderManager.isTransientConnectError(wrapped(URLError(.notConnectedToInternet))))
+        #expect(RemoteProviderManager.isTransientConnectError(wrapped(URLError(.networkConnectionLost))))
+        #expect(RemoteProviderManager.isTransientConnectError(wrapped(URLError(.cannotConnectToHost))))
+
+        // Terminal transport errors, and a non-URLError transport failure with
+        // no recoverable code, remain terminal.
+        #expect(!RemoteProviderManager.isTransientConnectError(wrapped(URLError(.userAuthenticationRequired))))
+        #expect(
+            !RemoteProviderManager.isTransientConnectError(
+                RemoteProviderServiceError.requestFailedWithDiagnostics(
+                    "boom",
+                    ProviderReplayDiagnosticBundle(
+                        phase: "model_discovery",
+                        request: URLRequest(url: URL(string: "http://localhost:1234/v1/models")!)
+                    )
+                )
+            )
+        )
+    }
+
     // MARK: - Retry-After hint extraction
 
     @Test func retryAfterHint_extractsTypedRateLimitHints() {

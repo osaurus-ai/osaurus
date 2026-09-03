@@ -24,6 +24,29 @@ extends those policies. The in-app and marketing copy must match this posture �
 usage metadata needed to bill credits" — with upstream providers disclaimed
 rather than guaranteed.
 
+## Money Representation and Credits Display
+
+Money crosses the wire and moves through the app as integer **micro-USD**
+strings (`1 USD = 1_000_000 micro`): `balance_micro`, `cost_micro`,
+`amount_micro`, and friends. Micro-USD stays the internal arithmetic unit
+everywhere — request bodies, optimistic balance debits, thresholds, and the
+on-device billing ledger.
+
+The user-facing unit is the **credit**: `1 credit = 100 micro = $0.0001`, so
+`$1 = 10,000 credits`. Display conversion is exact local integer math
+(`credits = micro / 100`) via `OsaurusRouter.formatMicroAsCredits`, which
+groups thousands (`"7250000"` -> `72,500 credits`), renders sub-credit legacy
+residue as two decimals (`"7250037"` -> `72,500.37 credits`), and shows
+`<1 credit` for non-zero legacy charges below one credit. Cloud media costs
+held as USD doubles convert through `OsaurusRouter.formatUSDAsCredits`.
+
+Dollars appear in exactly one place: the Stripe top-up flow (`$` presets, the
+`$5.00` minimum, and the payment amount), because that is a real-money
+purchase. The top-up sheet shows the credits the user receives alongside the
+`$` amount they pay. Model pricing in the picker prefers the router's
+ready-to-show `input_credits_display` / `output_credits_display` strings and
+falls back to the legacy `$` display fields when a server doesn't ship them.
+
 ## Connection Lifecycle
 
 Router availability depends on the local Osaurus identity. When identity is
@@ -175,7 +198,7 @@ local billing ledger:
 - Credits activity is based on `/credits/usage`, with local ledger rows matched
   by Router request id when available.
 - Transaction summaries come from `/credits/transactions` and separate credits,
-  debits, and net movement in micro-USD.
+  debits, and net movement in micro-USD (displayed as credits).
 - Ledger summaries are local-only aggregates over recent encrypted
   `RouterBillingEntry` rows, including outcome counts and model totals.
 - Signed request diagnostics are generated locally by signing representative

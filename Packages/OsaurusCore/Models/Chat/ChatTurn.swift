@@ -215,6 +215,15 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Populated only on the Responses path; nil everywhere else.
     var reasoningItemId: String? = nil
     var reasoningEncrypted: String? = nil
+    /// Complete provider-authored Responses output Items, captured in wire
+    /// order and replayed on follow-up turns. This preserves semantics that
+    /// the flattened ChatTurn fields cannot represent (notably assistant
+    /// commentary/final phase and future typed item fields).
+    var responsesOutputItems: [JSONValue] = []
+    /// Provider-reported prompt usage for this assistant response, including
+    /// the subset served from OpenAI's prompt cache when available.
+    var inputTokenCount: Int? = nil
+    var cachedInputTokenCount: Int? = nil
     /// Keeps an abandoned protocol attempt visible in the transcript while
     /// preventing it from re-entering model history. This is set only when an
     /// agent/tool generation ends with incomplete reasoning and the loop
@@ -311,9 +320,22 @@ final class ChatTurn: ObservableObject, Identifiable {
 
     // MARK: - Generation Benchmarks
 
-    /// Wall-clock time from request start to first visible token.
+    /// Time from request start to first visible token, EXCLUDING any cold
+    /// model load that happened inside that window.
     /// Persisted with the turn for billing / latency reporting.
+    ///
+    /// The exclusion matters. Loading a container happens between the send and
+    /// the first token, so it used to be billed here: a 64 GB M3 Max reported
+    /// "TTFT 215.61s" for a ~1.8k-token prompt, which is not a prefill rate any
+    /// machine produces — it was a 27 GB bundle loading. Reporting the sum made
+    /// a healthy engine look broken. The load is now carried separately in
+    /// `modelLoadSeconds`; neither number is hidden.
     var timeToFirstToken: TimeInterval?
+
+    /// Seconds of cold model loading that fell inside this turn's
+    /// time-to-first-token window, or nil when the model was already resident
+    /// (the overwhelmingly common case, and the one that must look unchanged).
+    var modelLoadSeconds: TimeInterval?
     /// Tokens generated per second (GPU-timed for MLX, UI-estimated for
     /// remote APIs). Ephemeral — not persisted. The exporter recomputes
     /// it from token count and stream duration when needed, which
@@ -335,6 +357,11 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// The agent loop uses it to avoid treating a reasoning-only `length`
     /// completion as a successful final response.
     var terminalStopReason: String?
+    /// Set when the stream consumer cut this turn short because the model
+    /// collapsed into a phrase-repetition loop; carries the repeated phrase
+    /// for the model-facing notice. Nil for every normally-completed turn.
+    /// Transient run state — not persisted, like `unclosedReasoning`.
+    var repetitionLoopPhrase: String?
 
     /// Osaurus Router billing snapshot captured from the in-stream summary
     /// frame (cost, token counts, status). Persisted so a reloaded chat still

@@ -1,18 +1,19 @@
 {
   "id": "default_agent.watcher-create",
   "domain": "default_agent",
-  "label": "default agent • create a folder watcher",
+  "label": "default agent • create a folder watcher (declarative apply)",
   "query": "Watch my ~/Downloads folder and organize new files into subfolders by type whenever something lands there.",
-  "notes": "Gap-closure write surface: the new osaurus_watcher domain. Pins action 'create' with the Downloads path. Watchers require a custom agent_id (the Default agent is refused with a typed error naming osaurus_agent), so the happy path is agent create -> watcher create; the extra iterations cover that recovery. The tool also validates the directory exists, so on eval hosts without ~/Downloads the call still counts for selection scoring.",
+  "notes": "Watchers require a custom agent (by name); the declarative document can carry BOTH the `agents:` entry and the `watchers:` entry in ONE apply — the exact multi-domain composition the consolidation exists for. A model that applies them in two steps is equally correct. Pins the Downloads path and the watchers section. The applier validates the directory exists, so on eval hosts without ~/Downloads the call still counts for selection scoring.",
   "fixtures": {},
   "expect": {
     "defaultAgent": {
-      "mustCallTools": ["osaurus_watcher"],
-      "mustNotCallTools": ["capabilities_discover", "capabilities_load", "osaurus_schedule"],
+      "mustCallTools": ["osaurus_config"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
       "argsMustContain": [
-        { "tool": "osaurus_watcher", "args": { "action": "create", "path": "Downloads" } }
+        { "tool": "osaurus_config", "args": { "action": "apply", "yaml": "Downloads" } },
+        { "tool": "osaurus_config", "args": { "yaml": "watchers" } }
       ],
-      "maxIterations": 6
+      "maxIterations": 8
     }
   }
 }

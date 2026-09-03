@@ -50,6 +50,7 @@
       "agent_loop.delegation-applescript-task",
       "agent_loop.delegation-mac-query",
       "agent_loop.delegation-no-inline-script",
+      "agent_loop.detect-pii-in-file",
       "agent_loop.duplicate-call-avoidance",
       "agent_loop.edit-file-then-verify",
       "agent_loop.edit-one-key-preserve-others",
@@ -57,6 +58,7 @@
       "agent_loop.html-source-roundtrip",
       "agent_loop.idempotent-already-satisfied",
       "agent_loop.impossible-task-declines",
+      "agent_loop.list-folder-contents",
       "agent_loop.listing-navigation-discipline",
       "agent_loop.multi-file-create-trio",
       "agent_loop.no-clarify-when-default-obvious",
@@ -71,10 +73,16 @@
       "agent_loop.substantial-single-file-app",
       "agent_loop.targeted-read-and-report",
       "agent_loop.todo-discipline-multistep",
-      "agent_loop.wrap-up-on-budget",
       "agent_loop.workspace-escape-refused",
+      "agent_loop.wrap-up-on-budget",
       "agent_loop.write-new-file",
       "agent_loop.write-then-verify-with-shell"
+    ],
+    "AgentLoopBatchNative" : [
+      "agent_loop.spawn-batch-native-two"
+    ],
+    "AgentLoopBatchSerialized" : [
+      "agent_loop.spawn-batch-safe-serialized-two"
     ],
     "AgentLoopFrontier" : [
       "frontier.agent-db-workflow",
@@ -188,7 +196,10 @@
       "cache_proof.prefix-reuse-second-turn",
       "cache_proof.prefix-reuse-three-turns",
       "cache_proof.settings-prompt-revision",
-      "cache_proof.thinking-toggle-boundary"
+      "cache_proof.sustained-decode-deep-context",
+      "cache_proof.thinking-toggle-boundary",
+      "cache_proof.tool-loop-per-call-restore",
+      "cache_proof.tool-loop-write-volume"
     ],
     "CapabilityClaims" : [
       "capability_claims.confirm",
@@ -276,14 +287,20 @@
       "default_agent.agent-delete",
       "default_agent.agent-update",
       "default_agent.agent-update-capabilities",
+      "default_agent.channels-kill-switch",
+      "default_agent.channels-telegram-read-only",
+      "default_agent.command-create",
       "default_agent.error-recovery-missing-id",
       "default_agent.handoff-non-osaurus-task",
       "default_agent.help-explain-skills",
       "default_agent.help-explain-watchers",
       "default_agent.help-what-can-osaurus-do",
+      "default_agent.knowledge-collection-create",
       "default_agent.mcp-add",
+      "default_agent.mcp-add-stdio",
       "default_agent.mcp-disable",
       "default_agent.mcp-remove",
+      "default_agent.mcp-token-ref",
       "default_agent.model-cancel",
       "default_agent.model-delete",
       "default_agent.model-download",
@@ -291,6 +308,7 @@
       "default_agent.plugin-uninstall",
       "default_agent.provider-add-anthropic",
       "default_agent.provider-add-openrouter",
+      "default_agent.provider-add-secret-ref",
       "default_agent.provider-remove",
       "default_agent.provider-rotate-key",
       "default_agent.provider-update-host",
@@ -306,12 +324,12 @@
       "default_agent.schedule-enable",
       "default_agent.schedule-reassign-agent",
       "default_agent.schedule-update",
-      "default_agent.settings-app-dark-mode",
-      "default_agent.settings-chat-core-model",
+      "default_agent.search-provider-ranking",
       "default_agent.settings-default-agent-model",
+      "default_agent.settings-delegation-budgets",
       "default_agent.settings-memory-disable",
-      "default_agent.settings-server-port",
-      "default_agent.settings-voice-tts",
+      "default_agent.settings-server-redirect",
+      "default_agent.settings-tool-policy-ask",
       "default_agent.watcher-create"
     ],
     "HTTPAPI" : [

@@ -56,8 +56,8 @@ final class ServerController: ObservableObject {
         await controller.applySpawnBatchLimit(normalized)
     }
 
-    /// Applies runtime settings on behalf of the `osaurus_settings`
-    /// configure tool. Routes through the live controller when one is
+    /// Applies runtime settings on behalf of the declarative
+    /// `osaurus_config` surface (its `server:` section). Routes through the live controller when one is
     /// wired (restart-aware: port/expose/CORS changes restart the NIO
     /// socket, cache/multimodal changes unload models). Returns `nil`
     /// when no controller exists yet — the settings are persisted and
@@ -72,8 +72,8 @@ final class ServerController: ObservableObject {
         return await controller.saveRuntimeSettings(settings)
     }
 
-    /// Current runtime settings + server liveness for the
-    /// `osaurus_settings` configure tool. Prefers the live controller's
+    /// Current runtime settings + server liveness for the declarative
+    /// configure surface (exporter/applier). Prefers the live controller's
     /// published value (identical to the store snapshot after every
     /// save, but authoritative mid-flight).
     static func runtimeSettingsForConfigureTool() -> (
@@ -85,8 +85,8 @@ final class ServerController: ObservableObject {
         return (ServerRuntimeSettingsStore.snapshot(), false)
     }
 
-    /// Current app-shell configuration for the `osaurus_settings`
-    /// configure tool `get` action. Prefers the live controller's
+    /// Current app-shell configuration for the declarative configure
+    /// surface (exporter). Prefers the live controller's
     /// published value.
     static func appShellSettingsForConfigureTool() -> ServerConfiguration {
         ServerControllerHolder.shared.controller?.configuration
@@ -95,7 +95,7 @@ final class ServerController: ObservableObject {
     }
 
     /// Applies app-shell settings (start at login / hide dock icon) on
-    /// behalf of the `osaurus_settings` configure tool, mirroring the
+    /// behalf of the declarative `osaurus_config` surface, mirroring the
     /// General settings pane: persist, sync the live controller's
     /// published configuration, and (re)register the login item.
     static func applyAppShellSettingsFromConfigureTool(
@@ -255,6 +255,10 @@ final class ServerController: ObservableObject {
 
     /// Stops the running server
     func stopServer() async {
+        // Bridge grants authenticate against this server instance. Never let
+        // one survive a stop/restart boundary, even if the server already
+        // finished closing by the time this call arrives.
+        await ClaudeCodeBridgeGrantStore.shared.revokeAll()
         // If nothing to stop, return
         guard serverActor != nil else { return }
         if !isRestarting { serverHealth = .stopping }
@@ -280,6 +284,7 @@ final class ServerController: ObservableObject {
 
     /// Ensures the server is properly shut down before app termination
     func ensureShutdown() async {
+        await ClaudeCodeBridgeGrantStore.shared.revokeAll()
         guard serverActor != nil else { return }
 
         print("[Osaurus] Ensuring NIO server shutdown before app termination")
@@ -540,7 +545,11 @@ final class ServerController: ObservableObject {
     ) -> Bool {
         previous.cache != next.cache
             || previous.multimodal != next.multimodal
-            || previous.mtp != next.mtp
+            // Only the MTP fields that change what gets LOADED force a reload.
+            // Comparing the whole `mtp` struct meant changing the draft-token
+            // depth — a per-request value — evicted every resident model, so a
+            // quick depth switch cost a full 27B reload on the next turn.
+            || mtpLoadInputsChanged(previous: previous.mtp, next: next.mtp)
             // These values are consumed while constructing the model graph.
             // Compare effective settings so nil versus an explicit default
             // does not unload a resident model unnecessarily.
@@ -553,6 +562,28 @@ final class ServerController: ObservableObject {
             // Persisting a new profile while retaining the old container makes
             // the settings panel lie until a manual reload.
             || previous.memorySafety != next.memorySafety
+    }
+
+    /// Whether an MTP settings change alters what the model LOAD must produce.
+    ///
+    /// The MTP head is either in the graph or it is not, and that is decided at
+    /// load: `mode == .off` loads without it, and a DFlash 2 drafter is a
+    /// different set of weights entirely. Those need a reload.
+    ///
+    /// The DEPTH does not. `draftTokenLimit` only clamps the recommended depth
+    /// downward, and the depth is applied per request — so it is re-resolved
+    /// from current settings on each generate instead of being frozen at load.
+    /// Auto vs Force-On likewise selects between already-loaded weights.
+    nonisolated static func mtpLoadInputsChanged(
+        previous: VMLXServerMTPSettings,
+        next: VMLXServerMTPSettings
+    ) -> Bool {
+        (previous.mode == .off) != (next.mode == .off)
+            || previous.dflash2DrafterPath != next.dflash2DrafterPath
+            || previous.dflash2BlockSize != next.dflash2BlockSize
+            || previous.keepDraftCacheSeparate != next.keepDraftCacheSeparate
+            || previous.acceptedTokensOnlyEnterBaseCache
+                != next.acceptedTokensOnlyEnterBaseCache
     }
 
     /// Settings captured by `RuntimeConfig.snapshot()` but not by a loaded

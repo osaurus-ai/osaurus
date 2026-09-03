@@ -42,6 +42,11 @@ public enum WhatsNewAction: Hashable, Sendable {
     case openChannelsSettings
     /// Reveal the chat sidebar's Projects tab.
     case openProjects
+    /// Open Settings → Orchestrator (identity + delegation helpers).
+    case openOrchestratorSettings
+    /// Open Management → Models (curated download catalog). A non-nil
+    /// `modelId` also opens that model's detail sheet on arrival.
+    case openModelDownloads(modelId: String?)
 }
 
 public struct WhatsNewPage: Identifiable, Hashable, Sendable {
@@ -59,6 +64,10 @@ public struct WhatsNewPage: Identifiable, Hashable, Sendable {
     /// Gives each page its own glyph instead of a single shared sparkle.
     /// Falls back to a generic sparkle in the view when nil.
     public let systemImage: String?
+    /// Bundled asset-catalog image rendered over the accent gradient instead
+    /// of `systemImage` (e.g. the Osaurus logo). Takes precedence over
+    /// `systemImage`; `imageURL` still wins over both.
+    public let assetImage: String?
     /// When set, the modal renders a prominent button labelled `actionLabel`
     /// in the footer that invokes `action`. Use sparingly — most pages should
     /// be informational only.
@@ -73,6 +82,7 @@ public struct WhatsNewPage: Identifiable, Hashable, Sendable {
         description: String,
         imageURL: URL? = nil,
         systemImage: String? = nil,
+        assetImage: String? = nil,
         actionLabel: String? = nil,
         action: WhatsNewAction? = nil
     ) {
@@ -83,6 +93,7 @@ public struct WhatsNewPage: Identifiable, Hashable, Sendable {
         self.description = description
         self.imageURL = imageURL
         self.systemImage = systemImage
+        self.assetImage = assetImage
         self.actionLabel = actionLabel
         self.action = action
     }
@@ -108,6 +119,8 @@ public enum WhatsNewContent {
         browserUse_0_22_9,
         channels_0_22_13,
         projects_0_22_23,
+        orchestrator_0_24_0,
+        raptor_0_24_4,
     ]
 
     /// First-launch announcement for native Browser Use in 0.22.9.
@@ -216,6 +229,71 @@ public enum WhatsNewContent {
                 systemImage: "folder.badge.plus",
                 actionLabel: "Open Projects",
                 action: .openProjects
+            ),
+        ]
+    )
+
+    /// First-launch announcement for the Orchestrator in 0.24.0. Three
+    /// pages: the default agent's new role (declarative config + delegation),
+    /// the delegation helpers and their safety rails, and the new
+    /// Settings → Orchestrator tab for identity + delegation. The final CTA
+    /// deep-links to Settings → Orchestrator.
+    private static let orchestrator_0_24_0 = WhatsNewRelease(
+        version: "0.24.0",
+        pages: [
+            WhatsNewPage(
+                id: "orchestrator-0.24.0:summary",
+                title: "The Orchestrator",
+                titlePrefix: "Introducing",
+                description:
+                    "Your default agent grew up. Beyond setting up Osaurus and answering questions, it now manages your whole configuration as one reviewable document — it plans every change, shows you exactly what would happen, and applies only after you approve — and it can delegate real work to your agents.",
+                systemImage: "point.3.connected.trianglepath.dotted"
+            ),
+            WhatsNewPage(
+                id: "orchestrator-0.24.0:delegation",
+                title: "Delegates work to your agents",
+                eyebrow: "Introducing the Orchestrator",
+                description:
+                    "Ask for something bigger and the Orchestrator can spawn your custom agents and allowed local or cloud models as helpers — in parallel, each within budgets you set for tokens, turns, tool calls, and time. A RAM-safety preflight keeps parallel local models from overwhelming your Mac, and results flow back into one conversation.",
+                systemImage: "square.stack.3d.up.fill"
+            ),
+            WhatsNewPage(
+                id: "orchestrator-0.24.0:settings",
+                title: "Make it yours",
+                eyebrow: "Introducing the Orchestrator",
+                description:
+                    "The Orchestrator has its own home in Settings: give it a name, write its persona, tune its generation, and choose exactly which agents and models it may delegate to. Delegation stays off until you allow specific helpers.",
+                systemImage: "slider.horizontal.3",
+                actionLabel: "Open Orchestrator settings",
+                action: .openOrchestratorSettings
+            ),
+        ]
+    )
+
+    /// First-launch announcement for the Raptor v0.5 model in 0.24.4.
+    /// Two pages: what the model is (agentic tool use tuned for Macs with
+    /// less RAM — only ~1B of its 8B parameters active per token) and where
+    /// to get it. The final CTA deep-links to Management → Models.
+    private static let raptor_0_24_4 = WhatsNewRelease(
+        version: "0.24.4",
+        pages: [
+            WhatsNewPage(
+                id: "raptor-0.24.4:summary",
+                title: "Raptor v0.5",
+                titlePrefix: "Introducing",
+                description:
+                    "Meet our new recommended model, made for Macs with less memory. Raptor is quick and light on its feet, so your assistant can use tools, work through multi-step tasks, and keep up with long conversations without slowing down your Mac.",
+                assetImage: "osaurus-logo"
+            ),
+            WhatsNewPage(
+                id: "raptor-0.24.4:download",
+                title: "Get it from the model catalog",
+                eyebrow: "Introducing Raptor v0.5",
+                description:
+                    "Raptor v0.5 is now a Top Pick in the model catalog, and new setups on mainstream hardware start with it by default. Already set up? Grab it any time from Management → Models.",
+                systemImage: "arrow.down.circle.fill",
+                actionLabel: "Open Models",
+                action: .openModelDownloads(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M")
             ),
         ]
     )

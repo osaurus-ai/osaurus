@@ -288,7 +288,7 @@ struct RemoteChatRequestEncodingTests {
 
     @Test func openResponsesRequest_defaultSingleUserMessage_usesTextShorthand() throws {
         let request = Self.makeRequest(model: "gpt-5.2", maxTokens: 1024)
-        let responsesRequest = request.toOpenResponsesRequest()
+        let responsesRequest = try request.toOpenResponsesRequest()
         let payload = try Self.encodeAsDictionary(responsesRequest)
 
         #expect(payload["input"] as? String == "hi")
@@ -336,7 +336,7 @@ struct RemoteChatRequestEncodingTests {
             veniceParameters: nil
         )
 
-        let responsesRequest = request.toOpenResponsesRequest(alwaysUseInputItems: true)
+        let responsesRequest = try request.toOpenResponsesRequest(alwaysUseInputItems: true)
         guard case .items(let items) = responsesRequest.input else {
             Issue.record("expected items input")
             return
@@ -408,7 +408,7 @@ struct RemoteChatRequestEncodingTests {
             veniceParameters: nil
         )
 
-        let responsesRequest = request.toOpenResponsesRequest(alwaysUseInputItems: true)
+        let responsesRequest = try request.toOpenResponsesRequest(alwaysUseInputItems: true)
         guard case .items(let items) = responsesRequest.input else {
             Issue.record("expected items input")
             return
@@ -471,7 +471,7 @@ struct RemoteChatRequestEncodingTests {
             veniceParameters: nil
         )
 
-        let responsesRequest = request.toOpenResponsesRequest(alwaysUseInputItems: true)
+        let responsesRequest = try request.toOpenResponsesRequest(alwaysUseInputItems: true)
         guard case .items(let items) = responsesRequest.input else {
             Issue.record("expected items input")
             return
@@ -493,7 +493,7 @@ struct RemoteChatRequestEncodingTests {
             maxTokens: 1024,
             reasoningEffort: "high"
         )
-        let responsesRequest = request.toOpenResponsesRequest(alwaysUseInputItems: true)
+        let responsesRequest = try request.toOpenResponsesRequest(alwaysUseInputItems: true)
         let payload = try Self.encodeAsDictionary(responsesRequest)
         let reasoning = try #require(payload["reasoning"] as? [String: Any])
         #expect(reasoning["effort"] as? String == "high")
@@ -502,10 +502,234 @@ struct RemoteChatRequestEncodingTests {
 
     @Test func openResponsesRequest_forcedInputItems_usesList() throws {
         let request = Self.makeRequest(model: "gpt-5.2", maxTokens: 1024)
-        let responsesRequest = request.toCodexOpenResponsesRequest()
+        let responsesRequest = try request.toCodexOpenResponsesRequest()
         let payload = try Self.encodeAsDictionary(responsesRequest)
 
         #expect(payload["input"] is [[String: Any]])
+    }
+
+    @Test func openResponsesRequest_encodesStatelessCacheAndJSONContracts() throws {
+        var request = Self.makeRequest(
+            model: "gpt-5.6-sol",
+            maxTokens: 1024,
+            reasoningEffort: "high"
+        )
+        request.promptCacheKey = "osaurus-session-123"
+        request.response_format = ResponseFormat(type: "json_object")
+
+        let payload = try Self.encodeAsDictionary(try request.toOpenResponsesRequest())
+        #expect(payload["store"] as? Bool == false)
+        #expect(payload["include"] as? [String] == ["reasoning.encrypted_content"])
+        #expect(payload["prompt_cache_key"] as? String == "osaurus-session-123")
+        let reasoning = try #require(payload["reasoning"] as? [String: Any])
+        #expect(reasoning["context"] == nil)
+        let text = try #require(payload["text"] as? [String: Any])
+        let format = try #require(text["format"] as? [String: Any])
+        #expect(format["type"] as? String == "json_object")
+    }
+
+    @Test func openResponsesRequest_preservesImageDetailAndRejectsDroppedMedia() throws {
+        let imageRequest = Self.makeRequest(
+            model: "gpt-5.6-sol",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(
+                    role: "user",
+                    content: "inspect",
+                    contentParts: [
+                        .text("inspect"),
+                        .imageUrl(url: "data:image/png;base64,AAAA", detail: "original"),
+                    ]
+                )
+            ]
+        )
+        let imagePayload = try Self.encodeAsDictionary(
+            try imageRequest.toOpenResponsesRequest(alwaysUseInputItems: true)
+        )
+        let input = try #require(imagePayload["input"] as? [[String: Any]])
+        let content = try #require(input.first?["content"] as? [[String: Any]])
+        let image = try #require(content.first { ($0["type"] as? String) == "input_image" })
+        #expect(image["detail"] as? String == "original")
+
+        let audioRequest = Self.makeRequest(
+            model: "gpt-5.6-sol",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(
+                    role: "user",
+                    content: "listen",
+                    contentParts: [
+                        .text("listen"),
+                        .audioInput(data: "AAAA", format: "wav"),
+                    ]
+                )
+            ]
+        )
+        #expect(throws: RemoteProviderServiceError.self) {
+            try audioRequest.toOpenResponsesRequest()
+        }
+    }
+
+    @Test func openResponsesRequest_replaysProviderNativeItemsVerbatim() throws {
+        let nativeItem = JSONValue.object([
+            "type": .string("message"),
+            "id": .string("msg_123"),
+            "status": .string("completed"),
+            "role": .string("assistant"),
+            "phase": .string("final_answer"),
+            "content": .array([
+                .object([
+                    "type": .string("output_text"),
+                    "text": .string("done"),
+                ])
+            ]),
+        ])
+        let request = Self.makeRequest(
+            model: "gpt-5.6-sol",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(role: "user", content: "work"),
+                ChatMessage(
+                    role: "assistant",
+                    content: "done",
+                    tool_calls: nil,
+                    tool_call_id: nil,
+                    responses_output_items: [nativeItem]
+                ),
+                ChatMessage(role: "user", content: "continue"),
+            ]
+        )
+
+        let payload = try Self.encodeAsDictionary(
+            try request.toOpenResponsesRequest(alwaysUseInputItems: true)
+        )
+        let input = try #require(payload["input"] as? [[String: Any]])
+        let replayed = try #require(input.first { ($0["id"] as? String) == "msg_123" })
+        #expect(replayed["phase"] as? String == "final_answer")
+        #expect(replayed["status"] as? String == "completed")
+    }
+
+    @Test func openResponsesRequest_setsStrictOnlyForCompatibleSchemas() throws {
+        let strictTool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "lookup",
+                description: nil,
+                parameters: .object([
+                    "type": .string("object"),
+                    "additionalProperties": .bool(false),
+                    "required": .array([.string("query")]),
+                    "properties": .object([
+                        "query": .object(["type": .string("string")])
+                    ]),
+                ])
+            )
+        )
+        let request = Self.makeRequest(
+            model: "gpt-5.6-sol",
+            maxTokens: 1024,
+            tools: [strictTool, Self.weatherTool]
+        )
+        let payload = try Self.encodeAsDictionary(try request.toOpenResponsesRequest())
+        let tools = try #require(payload["tools"] as? [[String: Any]])
+        #expect(tools.first { ($0["name"] as? String) == "lookup" }?["strict"] as? Bool == true)
+        #expect(
+            tools.first { ($0["name"] as? String) == "get_weather" }?["strict"] as? Bool == false
+        )
+        #expect(payload["parallel_tool_calls"] as? Bool == true)
+    }
+
+    @Test func openResponsesStream_surfacesFailuresRefusalsItemsAndUsage() throws {
+        var failureState = RemoteProviderService.StreamingState(
+            stopSequences: [],
+            trackContent: false
+        )
+        let failure = Data(
+            #"{"type":"response.failed","response":{"error":{"code":"server_error","message":"backend unavailable"}}}"#.utf8
+        )
+        let failureOutcome = try RemoteProviderService.handleOpenResponsesEvent(
+            failure,
+            state: &failureState,
+            yield: { _ in }
+        )
+        if case .finishWithError(let error) = failureOutcome {
+            #expect(error.localizedDescription.contains("backend unavailable"))
+        } else {
+            Issue.record("response.failed must terminate with the provider error")
+        }
+
+        var refusalState = RemoteProviderService.StreamingState(
+            stopSequences: [],
+            trackContent: false
+        )
+        _ = try RemoteProviderService.handleOpenResponsesEvent(
+            Data(#"{"type":"response.refusal.delta","delta":"unsafe "}"#.utf8),
+            state: &refusalState,
+            yield: { _ in }
+        )
+        let refusalOutcome = try RemoteProviderService.handleOpenResponsesEvent(
+            Data(#"{"type":"response.refusal.done","refusal":"unsafe request"}"#.utf8),
+            state: &refusalState,
+            yield: { _ in }
+        )
+        if case .finishWithError(let error) = refusalOutcome {
+            #expect(error.localizedDescription.contains("unsafe request"))
+        } else {
+            Issue.record("response.refusal.done must not become an empty success")
+        }
+
+        var completedState = RemoteProviderService.StreamingState(
+            stopSequences: [],
+            trackContent: false
+        )
+        var yielded: [String] = []
+        let completed = Data(
+            #"""
+            {"type":"response.completed","response":{
+              "usage":{"input_tokens":120,"output_tokens":7,"total_tokens":127,
+                "input_tokens_details":{"cached_tokens":80}},
+              "output":[{"type":"message","id":"msg_done","status":"completed",
+                "role":"assistant","phase":"final_answer",
+                "content":[{"type":"output_text","text":"done"}]}]
+            }}
+            """#.utf8
+        )
+        let completedOutcome = try RemoteProviderService.handleOpenResponsesEvent(
+            completed,
+            state: &completedState,
+            yield: { yielded.append($0) }
+        )
+        if case .finishNormal = completedOutcome {
+            // expected
+        } else {
+            Issue.record("response.completed must finish normally")
+        }
+        #expect(completedState.providerUsage?.prompt_tokens == 120)
+        #expect(completedState.providerUsage?.completion_tokens == 7)
+        #expect(completedState.providerCachedInputTokens == 80)
+        let rawItem = try #require(
+            yielded.compactMap(StreamingResponsesOutputItemHint.decode).first
+        )
+        if case .object(let object) = rawItem {
+            #expect(object["phase"] == .string("final_answer"))
+        } else {
+            Issue.record("completed output item was not preserved as JSON")
+        }
+
+        let nonStreamingRefusal = Data(
+            #"""
+            {"id":"resp_1","object":"response","created_at":1,"status":"completed",
+             "model":"gpt-5.6-sol","output":[{"type":"message","id":"msg_1",
+             "status":"completed","role":"assistant","content":[
+             {"type":"refusal","refusal":"policy blocked"}]}]}
+            """#.utf8
+        )
+        #expect(throws: RemoteProviderServiceError.self) {
+            try RemoteProviderService.parseResponse(
+                nonStreamingRefusal,
+                providerType: .openResponses
+            )
+        }
     }
 
     @Test func openResponsesRequest_decodesOpenAIStyleMessageItemWithoutType() throws {
@@ -557,7 +781,7 @@ struct RemoteChatRequestEncodingTests {
         }
     }
 
-    @Test func openResponsesRequest_rejectsInvalidExplicitMessageType() throws {
+    @Test func openResponsesRequest_preservesUnknownExplicitItemType() throws {
         let data = Data(
             #"""
             {
@@ -574,14 +798,27 @@ struct RemoteChatRequestEncodingTests {
             """#.utf8
         )
 
-        #expect(throws: DecodingError.self) {
-            try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        let request = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        guard case .items(let items) = request.input,
+            let first = items.first,
+            case .raw(let raw) = first,
+            case .object(let object) = raw
+        else {
+            Issue.record("unknown Responses item was not preserved as raw JSON")
+            return
         }
+        #expect(object["type"] == .string("not_message"))
+        #expect(object["content"] == .string("Hello!"))
     }
 
     @Test func codexRequest_removesMaxOutputTokens() throws {
         let request = Self.makeRequest(model: "gpt-5.2", maxTokens: 1024)
-        let payload = try Self.decodeAsDictionary(request.toCodexOpenResponsesRequest().toCodexOAuthPayloadData())
+        let payload = try Self.decodeAsDictionary(
+            request.toCodexOpenResponsesRequest().toCodexOAuthPayloadData(
+                sessionId: nil,
+                usesResponsesLite: false
+            )
+        )
 
         #expect(payload["input"] is [[String: Any]])
         #expect(payload["max_output_tokens"] == nil)
@@ -601,7 +838,7 @@ struct RemoteChatRequestEncodingTests {
         )
         let sessionId = "019f4860-9ca3-7000-81e9-08939c58b0fa"
         let data = try request.toCodexOpenResponsesRequest()
-            .toCodexOAuthPayloadData(responsesLiteSessionId: sessionId)
+            .toCodexOAuthPayloadData(sessionId: sessionId, usesResponsesLite: true)
         let payload = try Self.decodeAsDictionary(data)
 
         #expect(payload["tools"] == nil)
@@ -621,10 +858,17 @@ struct RemoteChatRequestEncodingTests {
         #expect(input.count == 3)
         #expect(input[0]["type"] as? String == "additional_tools")
         #expect(input[0]["role"] as? String == "developer")
+        #expect((input[0]["id"] as? String)?.hasPrefix("at_") == true)
         let embeddedTools = try #require(input[0]["tools"] as? [[String: Any]])
-        #expect(embeddedTools.first?["name"] as? String == "get_weather")
+        let functions = try #require(embeddedTools.first)
+        #expect(functions["type"] as? String == "namespace")
+        #expect(functions["name"] as? String == "functions")
+        let nestedTools = try #require(functions["tools"] as? [[String: Any]])
+        #expect(nestedTools.first?["type"] as? String == "function")
+        #expect(nestedTools.first?["name"] as? String == "get_weather")
         #expect(input[1]["type"] as? String == "message")
         #expect(input[1]["role"] as? String == "developer")
+        #expect((input[1]["id"] as? String)?.hasPrefix("msg_") == true)
         let developerContent = try #require(input[1]["content"] as? [[String: Any]])
         #expect(developerContent.first?["type"] as? String == "input_text")
         #expect(developerContent.first?["text"] as? String == "Be concise.")
@@ -642,12 +886,15 @@ struct RemoteChatRequestEncodingTests {
             ]
         )
         let payload = try Self.decodeAsDictionary(
-            request.toCodexOpenResponsesRequest().toCodexOAuthPayloadData()
+            request.toCodexOpenResponsesRequest().toCodexOAuthPayloadData(
+                sessionId: nil,
+                usesResponsesLite: false
+            )
         )
 
         #expect(payload["tools"] is [[String: Any]])
         #expect(payload["instructions"] as? String == "Be concise.")
-        #expect(payload["parallel_tool_calls"] == nil)
+        #expect(payload["parallel_tool_calls"] as? Bool == true)
         #expect(payload["prompt_cache_key"] == nil)
     }
 
@@ -662,7 +909,10 @@ struct RemoteChatRequestEncodingTests {
                 reasoningEffort: effort
             )
             let data = try request.toCodexOpenResponsesRequest()
-                .toCodexOAuthPayloadData(responsesLiteSessionId: "019f4860-9ca3-7000-81e9-08939c58b0fa")
+                .toCodexOAuthPayloadData(
+                    sessionId: "019f4860-9ca3-7000-81e9-08939c58b0fa",
+                    usesResponsesLite: true
+                )
             let payload = try Self.decodeAsDictionary(data)
             let reasoning = try #require(payload["reasoning"] as? [String: Any])
             #expect(reasoning["effort"] as? String == effort)
@@ -692,7 +942,7 @@ struct RemoteChatRequestEncodingTests {
             reasoningEffort: "none"
         )
         let payload = try Self.encodeAsDictionary(
-            request.toOpenResponsesRequest(alwaysUseInputItems: true)
+            try request.toOpenResponsesRequest(alwaysUseInputItems: true)
         )
         let reasoning = try #require(payload["reasoning"] as? [String: Any])
         #expect(reasoning["effort"] as? String == "none")
@@ -1059,6 +1309,111 @@ struct RemoteChatRequestEncodingTests {
         #expect(try #require(array.first)["content"] is [[String: Any]])
     }
 
+    /// Issue #2559: a Router model can advertise vision while its live
+    /// upstream still rejects array-form user content. Remembering that
+    /// rejection must downgrade the whole replayed history on the next turn,
+    /// otherwise the original image poisons every later text-only request.
+    @Test func routerImageRejection_quarantinesCatalogVisionClaimForLaterTurns() async throws {
+        let model = "openai/gpt-5.6-sol"
+        let service = RemoteProviderService(
+            provider: RemoteProvider(
+                name: "Osaurus Router",
+                host: "router.osaurus.ai",
+                providerProtocol: .https,
+                port: nil,
+                basePath: "/v1",
+                authType: .none,
+                providerType: .osaurusRouter
+            ),
+            models: [model],
+            resolvedHeaders: [:]
+        )
+        await service.updateOsaurusRouterVisionModels([model])
+
+        let history = [
+            ChatMessage(
+                role: "user",
+                content: "describe this",
+                contentParts: [
+                    .text("describe this"),
+                    .imageUrl(url: "data:image/png;base64,BBBB", detail: nil),
+                ]
+            ),
+            ChatMessage(role: "user", content: "There is no image attached now."),
+        ]
+
+        let before = await service.routerWireCompatibleMessagesForCurrentCapabilities(
+            history,
+            modelId: model
+        )
+        #expect(before.first?.contentParts != nil)
+
+        await service.recordRouterImageInputRejection(for: model)
+
+        let after = await service.routerWireCompatibleMessagesForCurrentCapabilities(
+            history,
+            modelId: model
+        )
+        #expect(after.first?.contentParts == nil)
+        #expect(after.first?.content?.contains("removed") == true)
+        #expect(after.last?.content == "There is no image attached now.")
+    }
+
+    /// A Router metadata quarantine must never leak into the ChatGPT OAuth
+    /// path. Current Codex models support input_image; one rejection is a
+    /// payload defect to diagnose, not permission to silently disable vision.
+    @Test func codexImageRejection_doesNotQuarantineVisionModel() async throws {
+        let model = "gpt-5.6-sol"
+        let service = RemoteProviderService(
+            provider: OpenAICodexOAuthService.makeProvider(),
+            models: [model],
+            resolvedHeaders: [:]
+        )
+        let history = [
+            ChatMessage(
+                role: "user",
+                content: "describe this",
+                contentParts: [
+                    .text("describe this"),
+                    .imageUrl(url: "data:image/png;base64,BBBB", detail: nil),
+                ]
+            ),
+            ChatMessage(role: "user", content: "There is no image attached now."),
+        ]
+
+        let before = await service.codexMessagesForCurrentCapabilities(
+            history,
+            modelId: model
+        )
+        let beforePayload = try Self.makeRequest(
+            model: model,
+            maxTokens: nil,
+            messages: before
+        ).toCodexOpenResponsesRequest().toCodexOAuthPayloadData(
+            sessionId: nil,
+            usesResponsesLite: false
+        )
+        #expect(String(decoding: beforePayload, as: UTF8.self).contains("input_image"))
+
+        await service.recordRouterImageInputRejection(for: model)
+
+        let after = await service.codexMessagesForCurrentCapabilities(
+            history,
+            modelId: model
+        )
+        let afterPayload = try Self.makeRequest(
+            model: model,
+            maxTokens: nil,
+            messages: after
+        ).toCodexOpenResponsesRequest().toCodexOAuthPayloadData(
+            sessionId: nil,
+            usesResponsesLite: false
+        )
+        let wire = String(decoding: afterPayload, as: UTF8.self)
+        #expect(wire.contains("input_image"))
+        #expect(wire.contains("There is no image attached now."))
+    }
+
     /// Audio/video have no mapping on any Router upstream: they are removed
     /// (with the notice) even for vision-capable models, while supported
     /// image parts stay multimodal.
@@ -1094,8 +1449,14 @@ struct RemoteChatRequestEncodingTests {
             "user message content must be a string"
         )
         #expect(friendly?.contains("attachment") == true)
+        #expect(friendly?.contains("retry") == true)
         #expect(
             RemoteProviderService.friendlyUpstreamRejection("some other upstream error") == nil
+        )
+        #expect(
+            RemoteProviderService.isUserMediaContentShapeRejection(
+                Data(#"{"error":{"message":"USER MESSAGE CONTENT MUST BE A STRING"}}"#.utf8)
+            )
         )
 
         // End-to-end through the error-envelope extractor, as the streaming
@@ -1264,7 +1625,7 @@ struct RemoteChatRequestEncodingTests {
             ]
         )
 
-        let responses = request.toOpenResponsesRequest()
+        let responses = try request.toOpenResponsesRequest()
 
         guard case .items(let items) = responses.input, items.count == 1,
             case .message(let message) = items[0],
@@ -1293,7 +1654,7 @@ struct RemoteChatRequestEncodingTests {
             messages: [ChatMessage(role: "user", content: "just text")]
         )
 
-        let responses = request.toOpenResponsesRequest()
+        let responses = try request.toOpenResponsesRequest()
 
         guard case .text(let text) = responses.input else {
             Issue.record("expected text shorthand input")
@@ -1745,7 +2106,7 @@ struct RemoteChatRequestEncodingTests {
             ]
         )
 
-        let responses = request.toOpenResponsesRequest(alwaysUseInputItems: true)
+        let responses = try request.toOpenResponsesRequest(alwaysUseInputItems: true)
 
         #expect(!Self.functionCallIds(in: responses).contains("call_orphan"))
         Self.assertOpenResponsesToolPairing(responses)
@@ -1765,7 +2126,7 @@ struct RemoteChatRequestEncodingTests {
             ]
         )
 
-        let responses = request.toOpenResponsesRequest(alwaysUseInputItems: true)
+        let responses = try request.toOpenResponsesRequest(alwaysUseInputItems: true)
 
         #expect(!Self.functionCallOutputIds(in: responses).contains("call_ghost"))
         Self.assertOpenResponsesToolPairing(responses)
@@ -1797,7 +2158,7 @@ struct RemoteChatRequestEncodingTests {
             ]
         )
 
-        let responses = request.toOpenResponsesRequest(alwaysUseInputItems: true)
+        let responses = try request.toOpenResponsesRequest(alwaysUseInputItems: true)
         guard case .items(let items) = responses.input else {
             Issue.record("expected items input")
             return
@@ -1915,7 +2276,7 @@ struct RemoteChatRequestEncodingTests {
 
     @Test func trimThenEncode_openResponses_noOrphans() throws {
         let trimmed = Self.tinyTrimmed(Self.makeToolLoopHistory(units: 14))
-        let responses = Self.makeRequest(
+        let responses = try Self.makeRequest(
             model: "gpt-5.2",
             maxTokens: 1024,
             messages: trimmed

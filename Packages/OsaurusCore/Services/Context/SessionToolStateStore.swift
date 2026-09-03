@@ -224,6 +224,30 @@ actor SessionToolStateStore {
         states[sessionId] = entry
     }
 
+    /// Drop loaded tools within `universe` that are no longer in `allowed`.
+    /// Reattaching dispatch surfaces call this so a grant narrowed BETWEEN
+    /// dispatches takes effect on the next inbound message instead of
+    /// lingering until the session dies — the store only ever accumulates,
+    /// so without this a revoked plugin tool stayed in the schema forever.
+    /// Scoped to `universe` (e.g. the registered plugin tools) so
+    /// mid-session `capabilities_load` picks of built-ins are untouched.
+    /// A removal changes the tool schema and re-prefills the session once;
+    /// that is the correct cost of a permission change. Returns the names
+    /// actually removed (empty set when nothing changed).
+    @discardableResult
+    func retainLoadedTools(
+        _ sessionId: String,
+        allowed: Set<String>,
+        among universe: Set<String>
+    ) -> Set<String> {
+        guard var entry = states[sessionId] else { return [] }
+        let revoked = entry.loadedToolNames.intersection(universe).subtracting(allowed)
+        guard !revoked.isEmpty else { return [] }
+        entry.loadedToolNames.subtract(revoked)
+        states[sessionId] = entry
+        return revoked
+    }
+
     // MARK: - Frozen user-message prefixes (HTTP / plugin paths)
 
     /// The session's frozen per-user-message memory prefixes (empty when

@@ -121,6 +121,23 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
         // current run's task state.
         ChatExecutionContext.agentTodoRunScope?.markTodoWritten()
         let stored = update.todo
+        // Did anything actually run since the last checklist write? Newly
+        // checked items with no intervening tool call are the model marking
+        // work it only described. The write is still accepted — a list can be
+        // legitimately re-scoped, and refusing it would strand the run with no
+        // way to correct the list — but the reply must not launder the claim
+        // into a fact the model can quote back at itself later.
+        //
+        // Requires a PRE-EXISTING checklist: the first list of a session may
+        // legitimately arrive with items already checked (planning steps, work
+        // done before the list existed), and there is no earlier count to
+        // compare it against.
+        let didToolWork =
+            ChatExecutionContext.agentTodoRunScope?.consumeToolWorkSinceLastTodo() ?? true
+        let previousDoneCount = update.previousDoneCount
+        let unverifiedCompletions =
+            update.changed && !didToolWork
+            && (previousDoneCount.map { stored.doneCount > $0 } ?? false)
         if !update.changed {
             return ToolEnvelope.success(
                 tool: name,
@@ -130,6 +147,20 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
                     + "next concrete pending action now. Before the final answer, send one last "
                     + "tool update only if status changed; never print the checklist as prose. "
                     + "Then answer the user once and stop."
+            )
+        }
+        if unverifiedCompletions {
+            let newlyChecked = stored.doneCount - (previousDoneCount ?? 0)
+            return ToolEnvelope.success(
+                tool: name,
+                text:
+                    "Todo recorded, but NOT verified: you checked off \(newlyChecked) more "
+                    + "item(s) and no tool has run since your last checklist. Checking a box "
+                    + "does not do the work and this reply is not evidence that it happened — "
+                    + "do not cite it later as proof. If those items really are done, run the "
+                    + "tool that proves it (read back the file, list the directory, re-run the "
+                    + "search) before relying on them; if they are not done, uncheck them and "
+                    + "do the work now."
             )
         }
         return ToolEnvelope.success(
@@ -203,34 +234,24 @@ public final class CompleteTool: OsaurusTool, @unchecked Sendable {
         }
 
         // A session Todo is intentionally persistent UI state. It is not
-        // permission for an unrelated later turn to close as BLOCKED. Under
-        // the canonical loop, `complete` is valid only after this same run
-        // executed a valid Todo call. Bare/direct tool callers do not publish
-        // a run scope and retain their historical behavior.
-        if let runScope = ChatExecutionContext.agentTodoRunScope,
-            !runScope.hasCurrentRunTodo
-        {
-            return ToolEnvelope.failure(
-                kind: .rejected,
-                message:
-                    "`complete` is only valid after this current run called `todo`. "
-                    + "A checklist from an earlier user turn does not apply. Answer the "
-                    + "current request normally and stop.",
-                tool: name,
-                retryable: true,
-                metadata: [
-                    "reason": Self.staleSessionTodoReason,
-                    "executed": false,
-                ]
-            )
-        }
+        // permission for an unrelated later turn to close as BLOCKED. A
+        // canonical run that did not write Todo may still use `complete` as a
+        // structured final answer (small local models commonly do this even
+        // when the prompt asks for plain prose); in that case ignore any stale
+        // session checklist and close as completed. Only a Todo explicitly
+        // written in this run may turn completion into a blocked outcome.
+        // Bare/direct tool callers do not publish a run scope and retain their
+        // historical session-checklist behavior.
+        let shouldInspectSessionTodo =
+            ChatExecutionContext.agentTodoRunScope?.hasCurrentRunTodo ?? true
 
         // Pending items mean this is an honest blocked terminal, not success.
         // The canonical loop separately requires a fresh Todo update after
         // the latest action before this tool may execute. Keep the remaining
         // items visible and return typed outcome data so headless/API callers
         // receive the same truth as Chat's blocked completion banner.
-        if let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty,
+        if shouldInspectSessionTodo,
+            let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty,
             let todo = await AgentTodoStore.shared.todo(for: sessionId)
         {
             let pending = todo.totalCount - todo.doneCount

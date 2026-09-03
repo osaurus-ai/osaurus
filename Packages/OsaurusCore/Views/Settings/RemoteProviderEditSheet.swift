@@ -121,6 +121,10 @@ struct RemoteProviderEditSheet: View {
     /// on the grouped "Use an API key" sub-list instead of the OAuth-first top
     /// level. Used by the empty-state "Use an API key" shortcut.
     var startAtAPIKeyPicker: Bool = false
+    /// When `true` and no `initialPreset` is given, the add flow opens directly
+    /// on the Claude Code setup step. Used by the empty-state shortcut, which
+    /// surfaces Claude Code as a first-class row.
+    var startAtClaudeCode: Bool = false
     let onSave: (RemoteProvider, String?, RemoteProviderOAuthTokens?) -> Void
 
     var body: some View {
@@ -131,6 +135,7 @@ struct RemoteProviderEditSheet: View {
                 AddProviderFlow(
                     initialPreset: initialPreset,
                     startAtAPIKeyPicker: startAtAPIKeyPicker,
+                    startAtClaudeCode: startAtClaudeCode,
                     onSave: onSave
                 )
             }
@@ -149,12 +154,14 @@ private struct AddProviderFlow: View {
 
     let initialPreset: ProviderPreset?
     var startAtAPIKeyPicker: Bool = false
+    var startAtClaudeCode: Bool = false
     let onSave: (RemoteProvider, String?, RemoteProviderOAuthTokens?) -> Void
 
     @State private var selectedPreset: ProviderPreset?
     /// When `selectedPreset == nil`, controls whether the OAuth-first top level
     /// (`false`) or the grouped "Use an API key" sub-list (`true`) is shown.
     @State private var showingAPIKeyPicker = false
+    @State private var showingClaudeCodeSetup = false
     @State private var apiKey: String = ""
     /// The connection method pinned for the selected provider. Set at selection
     /// time from the catalog (OAuth for top-level rows, `.apiKey` for the "Use
@@ -224,7 +231,17 @@ private struct AddProviderFlow: View {
             // Content - stepped flow
             ZStack {
                 if selectedPreset == nil {
-                    if showingAPIKeyPicker {
+                    if showingClaudeCodeSetup {
+                        ClaudeCodeSetupStep(
+                            onBack: {
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                    showingClaudeCodeSetup = false
+                                }
+                            },
+                            onDone: { dismiss() }
+                        )
+                        .transition(stepTransition)
+                    } else if showingAPIKeyPicker {
                         apiKeyProviderSelectionStep
                             .transition(stepTransition)
                     } else {
@@ -241,8 +258,9 @@ private struct AddProviderFlow: View {
             }
             .animation(.spring(response: 0.35, dampingFraction: 0.85), value: selectedPreset)
             .animation(.spring(response: 0.35, dampingFraction: 0.85), value: showingAPIKeyPicker)
+            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: showingClaudeCodeSetup)
         }
-        .frame(width: 540, height: 620)
+        .fittedSheetFrame(width: 540, height: 620)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
@@ -261,6 +279,8 @@ private struct AddProviderFlow: View {
                 selectedAuthMethod =
                     ProviderCatalog.entry(for: initialPreset)?.authMethods.first ?? .apiKey
                 selectedPreset = initialPreset
+            } else if startAtClaudeCode {
+                showingClaudeCodeSetup = true
             } else if startAtAPIKeyPicker {
                 showingAPIKeyPicker = true
             }
@@ -377,9 +397,30 @@ private struct AddProviderFlow: View {
                 // then a single "Use an API key" drill-in that holds every
                 // paste-a-key vendor, Ollama (local), and the custom endpoint.
                 VStack(spacing: 10) {
-                    ForEach(ProviderCatalog.topLevel) { entry in
+                    // Claude Code is not a `RemoteProvider` — it's a local
+                    // service driving the user's own `claude` binary — so it
+                    // gets a plain row and its own step rather than a catalog
+                    // entry, which would imply a host/key/Keychain record.
+                    // Placed second, after OpenAI, so it sits with the other
+                    // subscription-backed sign-ins rather than below them.
+                    ForEach(Array(ProviderCatalog.topLevel.enumerated()), id: \.element.id) {
+                        index,
+                        entry in
                         ProviderRowCard(entry: entry) {
                             selectCatalogEntry(entry)
+                        }
+
+                        if index == 0 {
+                            ProviderRowCard(
+                                icon: "terminal.fill",
+                                title: "Claude Code",
+                                subtitle: "Use your signed-in Claude Code CLI",
+                                gradient: ClaudeCodeConfiguration.brandGradient
+                            ) {
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                    showingClaudeCodeSetup = true
+                                }
+                            }
                         }
                     }
 

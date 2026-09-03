@@ -182,7 +182,7 @@ enum AgentSubagentRunner {
             maxResponseTokens: maxTokens
         )
         let watermark = CompactionWatermark()
-        let engine = ChatEngine(source: .chatUI)
+        let engine = ChatEngine(source: .chatUI, activitySource: .agent)
 
         /// One probe for all three cancel sources, in specificity order: the
         /// subagent's own stop button first, then its wall-clock budget, then

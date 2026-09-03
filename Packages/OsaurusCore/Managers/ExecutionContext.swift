@@ -28,6 +28,10 @@ public final class ExecutionContext: ObservableObject {
 
     let chatSession: ChatSession
     let folderBookmark: Data?
+    /// Plain folder path for a dispatch whose folder has no picker bookmark
+    /// (e.g. an orchestrator-created Watcher). Restored directly when no
+    /// bookmark is present so the run still reaches its target folder.
+    let folderPath: String?
 
     /// Whether execution is currently in progress
     public var isExecuting: Bool { chatSession.isStreaming }
@@ -39,17 +43,21 @@ public final class ExecutionContext: ObservableObject {
         agentId: UUID,
         title: String? = nil,
         folderBookmark: Data? = nil,
+        folderPath: String? = nil,
         source: SessionSource = .chat,
         sourcePluginId: String? = nil,
         externalSessionKey: String? = nil,
-        loadIntent: ModelLoadIntent = .interactive
+        loadIntent: ModelLoadIntent = .interactive,
+        delegationBudget: DelegatedRunContract? = nil
     ) {
         self.id = id
         self.agentId = agentId
         self.title = title
         self.folderBookmark = folderBookmark
+        self.folderPath = folderPath
 
         let session = ChatSession()
+        session.delegationBudget = delegationBudget
         session.agentId = agentId
         // Align persisted session id with the dispatch task id so plugins
         // and HTTP pollers can deep-link to the same row, and so
@@ -76,12 +84,14 @@ public final class ExecutionContext: ObservableObject {
     /// model is re-applied in `prepare()` once picker items load.
     public init(
         reattaching existing: ChatSessionData,
-        folderBookmark: Data? = nil
+        folderBookmark: Data? = nil,
+        folderPath: String? = nil
     ) {
         self.id = existing.id
         self.agentId = existing.agentId ?? Agent.defaultId
         self.title = existing.title
         self.folderBookmark = folderBookmark
+        self.folderPath = folderPath
 
         let session = ChatSession()
         session.agentId = existing.agentId
@@ -105,11 +115,12 @@ public final class ExecutionContext: ObservableObject {
     /// instance verbatim — no new session, no disk hydration — so all
     /// existing publishers (`isStreaming`, `turns`, `awaitingClarify`, …)
     /// keep firing uninterrupted.
-    init(adopting session: ChatSession, folderBookmark: Data? = nil) {
+    init(adopting session: ChatSession, folderBookmark: Data? = nil, folderPath: String? = nil) {
         self.id = session.sessionId ?? UUID()
         self.agentId = session.agentId ?? Agent.defaultId
         self.title = session.title
         self.folderBookmark = folderBookmark
+        self.folderPath = folderPath
         self.chatSession = session
     }
 
@@ -143,14 +154,25 @@ public final class ExecutionContext: ObservableObject {
     /// without one, a reattached session keeps its own restored folder. Never
     /// touches any other session's folder or process-wide state.
     private func activateFolderContextIfNeeded() async {
-        guard let bookmark = folderBookmark else { return }
+        // A dispatch may carry a picker bookmark (GUI-created Watcher) OR a
+        // plain path (orchestrator-created Watcher, whose config tool stores
+        // no bookmark). Either must reach the run — a path-only dispatch used
+        // to drop the folder entirely because only the bookmark was threaded.
+        guard folderBookmark != nil || (folderPath?.isEmpty == false) else { return }
         let restored = await chatSession.folderState.restoreAndWait(
-            bookmark: bookmark,
-            path: nil
+            bookmark: folderBookmark,
+            path: folderPath
         )
         if restored == nil {
-            print("[ExecutionContext] Folder bookmark could not be restored, skipping")
+            print("[ExecutionContext] Dispatch folder could not be restored, skipping")
+            return
         }
+        // This folder came from a background dispatch (Watcher / schedule /
+        // plugin), not an interactive UI pick. Mark it so
+        // `prepareChatExecutionMode` honors it over the agent's default
+        // sandbox — the dispatched agent must be able to see its target
+        // folder (the Voice Memo Watcher "empty folder" bug).
+        await MainActor.run { chatSession.folderContextFromDispatchBookmark = true }
     }
 
     /// Poll until execution completes or the task is cancelled.

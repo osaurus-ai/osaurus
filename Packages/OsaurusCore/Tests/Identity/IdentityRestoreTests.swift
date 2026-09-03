@@ -155,7 +155,8 @@ struct RecoverFromMnemonicSheetLogicTests {
             systemPrompt: "",
             isBuiltIn: false,
             createdAt: Date(),
-            updatedAt: Date()
+            updatedAt: Date(),
+            autonomousExec: AutonomousExecConfig(enabled: false)
         )
         agent.agentIndex = index
         agent.agentAddress = try AgentKey.deriveAddress(masterKey: masterKey, index: index)

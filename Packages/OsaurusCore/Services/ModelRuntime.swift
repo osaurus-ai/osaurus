@@ -235,6 +235,11 @@ public actor ModelRuntime {
         let isCurrent: Bool
         let draftStrategyDescription: String?
         let nativeMTPDepth: Int?
+        /// Positions the DFlash 2 drafter emits per forward — the depth that
+        /// actually ran. `DraftStrategy.dflash2` carries only the REQUESTED
+        /// value (`nil` = use the checkpoint's own), so the strategy alone
+        /// cannot say what the runtime settled on.
+        let dflash2BlockSize: Int?
         let nativeMTPStatus: String?
         let nativeMTPReason: String?
         let mlxPressStatus: MLXPressStatus
@@ -281,18 +286,20 @@ public actor ModelRuntime {
         let weightsFingerprint: String
         let isVLM: Bool
         let draftStrategy: MLXLMCommon.DraftStrategy?
+        let dflash2BlockSize: Int?
         let nativeMTPStatus: String?
         let nativeMTPReason: String?
         /// Numeric allocator-cache cap resolved from the user-visible
         /// memory-safety plan used for this exact load. `nil` means no numeric
-        /// cap; the family-specific uncapped requirement is tracked separately
+        /// cap; the decode-path-specific admitted-ceiling requirement is
+        /// tracked separately
         /// so ordinary models still use Osaurus's dynamic reuse heuristic.
         let allocatorCacheLimitBytes: Int?
-        /// Plain affine DSV4 requires MLX's admitted allocator ceiling rather
-        /// than Osaurus's generic weight-scaled reuse heuristic. Its routed
-        /// decode intermediates otherwise churn out of the allocator cache on
-        /// every token even though RAM admission already accepted the model.
-        let requiresUncappedMLXAllocatorCache: Bool
+        /// Load-time plain-affine DSV4 fact. Native MTP is deliberately not
+        /// frozen here because MTP Off/Auto/manual depth is request-scoped.
+        /// Both paths may temporarily use the admitted allocator ceiling while
+        /// a generation is active; neither may retain it between requests.
+        let requiresAdmittedMLXAllocatorCeiling: Bool
         var cacheTopology: ModelCacheTopologySnapshot?
         init(
             name: String,
@@ -301,10 +308,11 @@ public actor ModelRuntime {
             weightsFingerprint: String,
             isVLM: Bool = false,
             draftStrategy: MLXLMCommon.DraftStrategy? = nil,
+            dflash2BlockSize: Int? = nil,
             nativeMTPStatus: String? = nil,
             nativeMTPReason: String? = nil,
             allocatorCacheLimitBytes: Int? = nil,
-            requiresUncappedMLXAllocatorCache: Bool = false
+            requiresAdmittedMLXAllocatorCeiling: Bool = false
         ) {
             self.name = name
             self.container = container
@@ -312,16 +320,26 @@ public actor ModelRuntime {
             self.weightsFingerprint = weightsFingerprint
             self.isVLM = isVLM
             self.draftStrategy = draftStrategy
+            self.dflash2BlockSize = dflash2BlockSize
             self.nativeMTPStatus = nativeMTPStatus
             self.nativeMTPReason = nativeMTPReason
             self.allocatorCacheLimitBytes = allocatorCacheLimitBytes
-            self.requiresUncappedMLXAllocatorCache = requiresUncappedMLXAllocatorCache
+            self.requiresAdmittedMLXAllocatorCeiling = requiresAdmittedMLXAllocatorCeiling
         }
     }
+
+    /// `DFlash2TokenIterator` guards `effectiveBlockSize >= 2` and throws
+    /// `blockSizeTooSmall` below it. Mirrored here so an unusable width is
+    /// dropped at resolve time instead of failing every request.
+    static let dflash2MinimumBlockSize = 2
 
     private struct NativeMTPLaunchPlan: Sendable {
         let loadConfiguration: LoadConfiguration
         let draftStrategy: MLXLMCommon.DraftStrategy?
+        /// Effective DFlash 2 block width, resolved here from the same two
+        /// inputs `DFlash2TokenIterator` uses (`requestedBlockSize ??
+        /// config.blockSize`) so the readout cannot disagree with the run.
+        var dflash2BlockSize: Int? = nil
         let statusLine: String?
         let reason: String
         let memorySafetySummary: String
@@ -491,6 +509,11 @@ public actor ModelRuntime {
     }
     private var activeGenerationTasks: [UInt64: ActiveGenerationRecord] = [:]
     private var nextGenerationTaskID: UInt64 = 0
+    /// Number of in-flight generations whose resolved decode path needs the
+    /// admitted MLX freed-buffer ceiling. The ceiling is request-scoped: a
+    /// long-lived app must not retain up to the full RAM-admission budget after
+    /// the request ends.
+    private var admittedAllocatorGenerationCount = 0
 
     /// Last request source (chat UI / HTTP API / plugin / P2P) that generated
     /// against each resident model. Read by the chat-window-close path so it
@@ -1232,8 +1255,11 @@ public actor ModelRuntime {
                 name: holder.name,
                 bytes: holder.weightsSizeBytes,
                 isCurrent: holder.name == currentModelName,
-                draftStrategyDescription: Self.describeDraftStrategy(holder.draftStrategy),
-                nativeMTPDepth: Self.nativeMTPDepth(holder.draftStrategy),
+                draftStrategyDescription: Self.describeDraftStrategy(
+                    Self.requestDraftStrategy(holder.draftStrategy)),
+                nativeMTPDepth: Self.nativeMTPDepth(
+                    Self.requestDraftStrategy(holder.draftStrategy)),
+                dflash2BlockSize: holder.dflash2BlockSize,
                 nativeMTPStatus: holder.nativeMTPStatus,
                 nativeMTPReason: holder.nativeMTPReason,
                 mlxPressStatus: holder.container.mlxPressStatus(),
@@ -1253,6 +1279,72 @@ public actor ModelRuntime {
             if lhs.isCurrent != rhs.isCurrent { return lhs.isCurrent }
             return lhs.name < rhs.name
         }
+    }
+
+    /// Result of a user-initiated SSD cache purge.
+    struct DiskCacheClearResult: Sendable {
+        /// Bytes that were counted against the quota before clearing.
+        let reclaimedBytes: Int
+        /// How many resident models had their coordinator cleared.
+        let clearedModelCount: Int
+        /// True when nothing was resident, so only the on-disk sweep ran.
+        let clearedWithoutResidentModel: Bool
+    }
+
+    /// Purge the on-SSD prompt cache.
+    ///
+    /// Routes through `CacheCoordinator.clear()` for every resident model,
+    /// which takes `MLXDiskCacheIOLock` before deleting — so a purge cannot
+    /// unlink a payload that an in-flight restore is mid-read. It also removes
+    /// every `.safetensors` in the cache directory, not just indexed rows,
+    /// which is the one path that reclaims orphans left by a crash between the
+    /// file write and the index insert.
+    ///
+    /// With no model resident there is no coordinator to route through, so the
+    /// directory sweep runs directly. That case is reported back to the caller
+    /// rather than silently doing less than the user asked for.
+    @discardableResult
+    func clearDiskCaches() async -> DiskCacheClearResult {
+        var reclaimed = 0
+        var cleared = 0
+        for holder in modelCache.values {
+            guard let coordinator = holder.container.cacheCoordinator else { continue }
+            reclaimed = max(
+                reclaimed,
+                coordinator.snapshotStats().diskStats?.currentPayloadBytes ?? 0)
+            coordinator.clear()
+            cleared += 1
+        }
+        if cleared > 0 {
+            return DiskCacheClearResult(
+                reclaimedBytes: reclaimed,
+                clearedModelCount: cleared,
+                clearedWithoutResidentModel: false)
+        }
+        // No resident model: sweep the configured directory ourselves.
+        let dir =
+            ServerRuntimeSettingsStore.load()
+            .flatMap { Self.cacheDiskDirectoryOverride(for: $0.cache) }
+            ?? OsaurusPaths.diskKVCache()
+        var swept = 0
+        if
+            let items = try? FileManager.default.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: [.fileSizeKey])
+        {
+            for url in items where url.pathExtension == "safetensors" {
+                let size =
+                    (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                if (try? FileManager.default.removeItem(at: url)) != nil { swept += size }
+            }
+            // Drop the index rows too, otherwise the next quota pass accounts
+            // for files that are already gone.
+            let index = dir.appendingPathComponent("cache_index.db")
+            try? FileManager.default.removeItem(at: index)
+        }
+        return DiskCacheClearResult(
+            reclaimedBytes: swept,
+            clearedModelCount: 0,
+            clearedWithoutResidentModel: true)
     }
 
     /// Final monotonic cache counters for one resident holder. The caller
@@ -1690,6 +1782,7 @@ public actor ModelRuntime {
             childOwnershipToken: loadingRecord.childOwnershipToken
         )
         loadingTasks.removeValue(forKey: name)
+        SwapPressureMonitor.shared.markLoadCompleted(model: name)
         currentModelName = name
         Memory.cacheLimit = mlxCacheLimit()
 
@@ -1705,17 +1798,23 @@ public actor ModelRuntime {
         // Native-MTP bundles historically ran their FIRST request in plain
         // autoregressive mode (the registry's cold-warmup rule), so the one
         // request most users judge a model by silently lost the speculative
-        // speedup. Pay that warmup here instead, with a hidden two-token
-        // greedy generation, so the first user request decodes with MTP.
-        // Failure is non-fatal: the request path's cold-warmup rule remains
-        // as the fallback.
+        // speedup. Pay both the AR bootstrap and a real verifier warmup here.
+        // Use the same bounded allocator window as a visible MTP request so
+        // warmup materializes the actual D3 working set, then retain only its
+        // most-recently-used portion under the persistent ceiling.
+        let warmupStrategy = Self.requestDraftStrategy(holder.draftStrategy)
+        let usesWarmupAllocatorWindow = beginGenerationAllocatorWindowIfNeeded(
+            holder: holder,
+            requestStrategy: warmupStrategy
+        )
         await MLXBatchAdapter.warmupNativeMTPAtLoad(
             modelName: name,
             container: holder.container,
-            draftStrategy: holder.draftStrategy,
+            draftStrategy: warmupStrategy,
             runtime: getConfig(),
             maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
         )
+        finishGenerationAllocatorWindowIfNeeded(usesWarmupAllocatorWindow)
         return holder
     }
 
@@ -1831,6 +1930,19 @@ public actor ModelRuntime {
         let claim = UUID()
         residencyUnloadClaims[name] = claim
         defer { finishResidencyUnloadClaim(name: name, claim: claim) }
+        let unloadActivityID = UUID()
+        await InferenceActivityRegistry.shared.begin(
+            id: unloadActivityID,
+            modelName: name,
+            source: lastUseSource[name] ?? .chatUI,
+            sessionID: nil,
+            phase: .unloading
+        )
+        defer {
+            Task {
+                await InferenceActivityRegistry.shared.finish(id: unloadActivityID)
+            }
+        }
 
         if reason == .idlePolicy, let idleDecisionID {
             await ModelResidencyManager.shared.cancel(
@@ -1933,6 +2045,8 @@ public actor ModelRuntime {
         residentMetadata.removeValue(forKey: name)
         lastUseSource.removeValue(forKey: name)
         if currentModelName == name { currentModelName = nil }
+        // End of the residency episode once nothing is resident.
+        SwapPressureMonitor.shared.endEpisodeIfIdle(residentCount: modelCache.count)
         if didRemove {
             if let retiredCacheCounters {
                 await MLXBatchAdapter.Registry.shared.recordRetiredCacheCounters(
@@ -2320,33 +2434,122 @@ public actor ModelRuntime {
         let byModel = max(totalWeights / 4, 1 * 1024 * 1024 * 1024)
         let bySystem = min(systemRAM / 8, 8 * 1024 * 1024 * 1024)
         let dynamicLimit = min(byModel, bySystem)
-        let uncappedLimit = modelCache.values.contains {
-            $0.requiresUncappedMLXAllocatorCache
-        } ? max(dynamicLimit, Memory.memoryLimit) : nil
         return Self.effectiveMLXCacheLimit(
             dynamicLimit: dynamicLimit,
-            configuredLimits: modelCache.values.map(\.allocatorCacheLimitBytes),
-            uncappedLimit: uncappedLimit
+            configuredLimits: modelCache.values.map(\.allocatorCacheLimitBytes)
         )
     }
 
-    /// Keep Osaurus's weight-scaled reuse heuristic as a ceiling, but never
-    /// exceed the allocator cap visibly resolved for any resident model. The
-    /// previous post-load assignment discarded Safe Auto's 128 MiB cap and
-    /// silently replaced it with at least 1 GiB.
+    /// Native MTP and plain affine DSV4 both keep large decode intermediates
+    /// live across repeated forwards. A tiny persistent MLX reuse cache makes
+    /// those buffers churn without lowering physical footprint. This decision
+    /// is based on the resolved runtime path, not a model-name allowlist.
+    nonisolated static func requiresAdmittedMLXAllocatorCeiling(
+        isPlainDeepseekV4AffineJANG: Bool,
+        usesNativeMTP: Bool
+    ) -> Bool {
+        isPlainDeepseekV4AffineJANG || usesNativeMTP
+    }
+
+    /// Persistent, idle-between-requests MLX freed-buffer ceiling. It must
+    /// honor the user-visible cap: retaining the full load-admission budget in
+    /// a server process caused Qwen3.8 2L to grow from ~51 GiB to ~91 GiB over
+    /// a handful of API/chat/tool turns.
     nonisolated static func effectiveMLXCacheLimit(
         dynamicLimit: Int,
-        configuredLimits: [Int?],
-        uncappedLimit: Int? = nil
+        configuredLimits: [Int?]
     ) -> Int {
         guard dynamicLimit > 0 else { return 0 }
-        if let uncappedLimit {
-            return max(dynamicLimit, uncappedLimit)
-        }
         guard let configuredLimit = configuredLimits.compactMap({ $0 }).min() else {
             return dynamicLimit
         }
         return min(dynamicLimit, max(0, configuredLimit))
+    }
+
+    /// The only allocator clamp a session holder may carry is one the user
+    /// explicitly typed into Memory Safety. The memory-safety *profile
+    /// defaults* (Safe Auto and Strict both resolve the allocator cap to a
+    /// fixed 128 MiB) must not override the weight-scaled `mlxCacheLimit()`
+    /// dynamic limit: past roughly 13k tokens of context a 128 MiB
+    /// freed-buffer pool cannot hold even one KV-sized decode intermediate,
+    /// so recycling silently stops and every decoded token pays fresh
+    /// zero-filled page allocation. Measured on Raptor 8B-A1B (same build,
+    /// same machine, single-variable A/B): decode 14.4 tok/s at 17.7k
+    /// context under the profile cap vs 47.7-52 tok/s at 14k with a working
+    /// pool; per-tool-step delta-prefill 1.3-3.0 s vs 0.3-0.5 s. The
+    /// dynamic limit stays bounded (weights/4, capped at RAM/8 and 8 GiB),
+    /// so the Qwen3.8 RSS-creep protection above is preserved.
+    nonisolated static func explicitAllocatorCacheLimitBytes(
+        customAllocatorCacheBytes: UInt64?
+    ) -> Int? {
+        customAllocatorCacheBytes.map { Int(min(UInt64(Int.max), $0)) }
+    }
+
+    /// Decode-time ceiling. Native MTP / affine DSV4 may reuse large
+    /// intermediates while a request is active, but the allocator pool must
+    /// never be allowed to consume the entire load-admission budget. That
+    /// budget includes weights, KV, framework state and OS headroom; treating
+    /// it as a freed-buffer allowance let a 21 GiB Qwen bundle peak near
+    /// 91 GiB during richer chat/tool turns.
+    ///
+    /// The active reuse allowance is therefore bounded twice:
+    /// - one third of the resident model's on-disk weight bytes (activation
+    ///   demand scales with model shape, not total machine RAM); and
+    /// - one eighth of physical RAM, capped at 16 GiB (small Macs retain
+    ///   proportionally less, while large Macs do not turn spare RAM into an
+    ///   unbounded allocator pool).
+    ///
+    /// The already-admitted memory limit remains the final hard ceiling, and
+    /// the user-visible persistent cap remains the floor so this helper never
+    /// lowers an explicit larger setting.
+    nonisolated static func effectiveGenerationMLXCacheLimit(
+        persistentLimit: Int,
+        admittedMemoryLimit: Int,
+        modelWeightsBytes: Int64,
+        physicalMemoryBytes: UInt64,
+        requiresAdmittedCeiling: Bool
+    ) -> Int {
+        guard requiresAdmittedCeiling else { return max(0, persistentLimit) }
+        let gib = Int64(1024 * 1024 * 1024)
+        let weightScaled = max(gib, max(0, modelWeightsBytes) / 3)
+        let systemScaled = min(Int64(16) * gib, Int64(physicalMemoryBytes / 8))
+        let boundedReuse = max(0, min(weightScaled, systemScaled))
+        let admitted = max(0, Int64(admittedMemoryLimit))
+        let persistent = max(0, Int64(persistentLimit))
+        return Int(min(Int64(Int.max), min(admitted, max(persistent, boundedReuse))))
+    }
+
+    private func beginGenerationAllocatorWindowIfNeeded(
+        holder: SessionHolder,
+        requestStrategy: MLXLMCommon.DraftStrategy?
+    ) -> Bool {
+        let usesAdmittedCeiling = Self.requiresAdmittedMLXAllocatorCeiling(
+            isPlainDeepseekV4AffineJANG: holder.requiresAdmittedMLXAllocatorCeiling,
+            usesNativeMTP: requestStrategy?.usesNativeMTP == true
+        )
+        guard usesAdmittedCeiling else { return false }
+        admittedAllocatorGenerationCount += 1
+        Memory.cacheLimit = Self.effectiveGenerationMLXCacheLimit(
+            persistentLimit: mlxCacheLimit(),
+            admittedMemoryLimit: Memory.memoryLimit,
+            modelWeightsBytes: holder.weightsSizeBytes,
+            physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory,
+            requiresAdmittedCeiling: true
+        )
+        return true
+    }
+
+    private func finishGenerationAllocatorWindowIfNeeded(_ active: Bool) {
+        guard active else { return }
+        admittedAllocatorGenerationCount = max(0, admittedAllocatorGenerationCount - 1)
+        guard admittedAllocatorGenerationCount == 0 else { return }
+        // Every producer has reached its engine-owned terminal fence before
+        // this wrapper completes. Drain once more, return only freed buffers,
+        // then restore the persistent user-visible ceiling. Resident weights,
+        // KV state and disk/SSM companion caches are untouched.
+        Stream.gpu.synchronize()
+        Memory.clearCache()
+        Memory.cacheLimit = mlxCacheLimit()
     }
 
     /// Flexible-mode resident-weights soft cap. Also read by
@@ -2530,10 +2733,17 @@ public actor ModelRuntime {
     ) -> Int64? {
         let configURL = directory.appendingPathComponent("config.json")
         guard let data = try? Data(contentsOf: configURL),
-            let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let rawConfig = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
+        // VLM wrappers (gemma4_unified, qwen3_5 VL packs) nest the decoder
+        // under `text_config` and keep NOTHING layer-shaped at the top level.
+        // Reading only the top level made this whole function return nil for
+        // those families, silently downgrading them to the 20%-of-weights
+        // fallback — which under-priced Gemma-12B KV ~3x at a 64K cap.
+        let config = resolvedDecoderConfig(rawConfig)
 
-        let attentionLayers = attentionLayerCount(in: config)
+        let layerMix = attentionLayerMix(in: config)
+        let attentionLayers = layerMix.fullAttention + layerMix.slidingAttention
         let hiddenLayers = intValue(config["num_hidden_layers"]) ?? 0
         guard attentionLayers > 0, hiddenLayers > 0 else { return nil }
 
@@ -2561,8 +2771,15 @@ public actor ModelRuntime {
         // its KV at 80 GiB and made a 94 GiB pack look like it needed 128 GB
         // on a 128 GB Mac — a model that in fact loads and decodes fine. Cap
         // the estimate at the KV limit the runtime will actually enforce.
+        // A whole-model sliding-window clamp is only correct when the config
+        // does not declare a per-layer mix: MiMo-style families slide in every
+        // layer, but Gemma4 declares `layer_types` with 8 FULL-attention
+        // layers among 40 sliding ones — clamping those 8 to the 1K window
+        // would under-price exactly the layers that hold the long context.
+        let wholeModelWindowClamp =
+            layerMix.declaredPerLayer ? nil : effectiveKVPositionBudget(config: config)
         let declaredPositions =
-            effectiveKVPositionBudget(config: config)
+            wholeModelWindowClamp
             ?? intValue(config["max_position_embeddings"])
             ?? intValue(config["max_sequence_length"])
             ?? intValue(config["seq_length"])
@@ -2579,26 +2796,55 @@ public actor ModelRuntime {
         }
 
         let dtypeBytes = cacheElementByteWidth(config: config)
+        // Per-token cache dims for one attention layer. MLA families
+        // (DeepSeek/Bailing) materialize per-head keys of (nope + rope) dims
+        // and values of `v_head_dim` — pricing them as symmetric K/V of
+        // `head_dim` misses the 192-dim keys Raptor actually caches.
+        let perTokenCacheDims: Int64
+        if let nope = intValue(config["qk_nope_head_dim"]),
+            let rope = intValue(config["qk_rope_head_dim"]),
+            let vDim = intValue(config["v_head_dim"]),
+            let heads = intValue(config["num_attention_heads"]),
+            nope > 0, vDim > 0, heads > 0
+        {
+            perTokenCacheDims = Int64(heads) * Int64(nope + rope + vDim)
+        } else {
+            perTokenCacheDims = 2 * Int64(kvHeads) * Int64(headDim)
+        }
+        // Sliding-window layers never hold more than the window; pricing them
+        // at the full retention cap turned Gemma's 40 sliding layers into
+        // phantom gigabytes while the nested-config bug simultaneously hid
+        // the 8 full layers. Price each class at what it can actually retain.
+        let slidingWindow = layerMix.slidingWindow ?? maxPositions
+        let slidingPositions = min(maxPositions, max(1, slidingWindow))
         let kvBytes =
-            Int64(attentionLayers)
-            * 2
-            * Int64(kvHeads)
-            * Int64(headDim)
-            * Int64(maxPositions)
+            (Int64(layerMix.fullAttention) * Int64(maxPositions)
+                + Int64(layerMix.slidingAttention) * Int64(slidingPositions))
+            * perTokenCacheDims
             * Int64(dtypeBytes)
 
         // SSM companion state is much smaller than full KV but still real.
         // Count it from the same config so hybrid families have an explicit
         // budget instead of hiding under the percentage fallback.
-        let mambaLayers = mambaLayerCount(in: config)
+        let mambaLayers = layerMix.linearState
         let mambaHeads = intValue(config["mamba_num_heads"]) ?? 0
         let ssmState = intValue(config["ssm_state_size"]) ?? intValue(config["mamba_d_state"]) ?? 0
         let convKernel = intValue(config["conv_kernel"]) ?? intValue(config["mamba_d_conv"]) ?? 0
         let mambaHeadDim = intValue(config["mamba_head_dim"]) ?? 0
+        let mambaStatePerLayer = Int64(max(0, mambaHeads))
+            * Int64(max(0, ssmState + convKernel * max(1, mambaHeadDim)))
+        // GDN/GLA linear-attention layers (qwen3_5, Bailing KDA) keep a
+        // per-head (keyDim x valueDim) matmul state instead of mamba-style
+        // SSM state; their config speaks `linear_*`, not `mamba_*`.
+        let linearVHeads = intValue(config["linear_num_value_heads"]) ?? 0
+        let linearKeyDim = intValue(config["linear_key_head_dim"]) ?? 0
+        let linearValueDim = intValue(config["linear_value_head_dim"]) ?? 0
+        let linearStatePerLayer = Int64(max(0, linearVHeads))
+            * Int64(max(0, linearKeyDim))
+            * Int64(max(0, linearValueDim))
         let ssmBytes =
             Int64(max(0, mambaLayers))
-            * Int64(max(0, mambaHeads))
-            * Int64(max(0, ssmState + convKernel * max(1, mambaHeadDim)))
+            * max(mambaStatePerLayer, linearStatePerLayer)
             * Int64(dtypeBytes)
 
         // Leave room for masks, logits, transient activation slices, and
@@ -2608,37 +2854,115 @@ public actor ModelRuntime {
         return max(floor, kvBytes + ssmBytes + slack)
     }
 
-    private static func attentionLayerCount(in config: [String: Any]) -> Int {
-        let physicalLayers: Int
-        if let blocks = config["layers_block_type"] as? [Any] {
-            physicalLayers = blocks.compactMap { stringValue($0)?.lowercased() }
-                .filter { $0 == "attention" || $0 == "attn" || $0 == "*" }
-                .count
-        } else if let pattern = stringValue(config["hybrid_override_pattern"]), !pattern.isEmpty {
-            physicalLayers = pattern.filter { $0 == "*" || $0 == "A" || $0 == "a" }.count
-        } else {
-            physicalLayers = intValue(config["num_hidden_layers"]) ?? 0
+    /// Per-class layer counts for cache pricing. `declaredPerLayer` records
+    /// whether the config carried an explicit per-layer topology (so the
+    /// whole-model sliding-window clamp must not be applied on top of it).
+    struct AttentionLayerMix {
+        var fullAttention: Int = 0
+        var slidingAttention: Int = 0
+        var linearState: Int = 0
+        var slidingWindow: Int? = nil
+        var declaredPerLayer: Bool = false
+    }
+
+    /// Resolve the decoder-shaped config for VLM wrappers that nest it under
+    /// `text_config` (gemma4_unified, qwen3_5 VL packs). Nested keys win;
+    /// top-level keys (model_type et al.) survive as fallback.
+    static func resolvedDecoderConfig(_ config: [String: Any]) -> [String: Any] {
+        guard intValue(config["num_hidden_layers"]) == nil,
+            let text = config["text_config"] as? [String: Any],
+            intValue(text["num_hidden_layers"]) != nil
+        else { return config }
+        return config.merging(text) { _, nested in nested }
+    }
+
+    static func attentionLayerMix(in config: [String: Any]) -> AttentionLayerMix {
+        var mix = AttentionLayerMix()
+        mix.slidingWindow =
+            intValue(config["sliding_window"])
+            ?? intValue(config["sliding_window_size"])
+            ?? intValue(config["attention_chunk_size"])
+
+        let modelType = stringValue(config["model_type"])?.lowercased() ?? ""
+
+        if let types = config["layer_types"] as? [Any] {
+            // Gemma4 / qwen3_5-style explicit per-layer topology.
+            mix.declaredPerLayer = true
+            for raw in types {
+                switch stringValue(raw)?.lowercased() ?? "" {
+                case "full_attention", "attention", "attn":
+                    mix.fullAttention += 1
+                case "sliding_attention", "chunked_attention":
+                    mix.slidingAttention += 1
+                case "linear_attention", "mamba", "ssm", "recurrent":
+                    mix.linearState += 1
+                default:
+                    // Unknown type: price it as full attention rather than
+                    // silently dropping it from the budget.
+                    mix.fullAttention += 1
+                }
+            }
+            return mix
         }
+
+        if let blocks = config["layers_block_type"] as? [Any] {
+            mix.declaredPerLayer = true
+            for raw in blocks {
+                switch stringValue(raw)?.lowercased() ?? "" {
+                case "attention", "attn", "*":
+                    mix.fullAttention += 1
+                case "mamba", "linear_attention", "ssm":
+                    mix.linearState += 1
+                default:
+                    break
+                }
+            }
+            return mix
+        }
+
+        if let pattern = stringValue(config["hybrid_override_pattern"]), !pattern.isEmpty {
+            mix.declaredPerLayer = true
+            mix.fullAttention = pattern.filter { $0 == "*" || $0 == "A" || $0 == "a" }.count
+            mix.linearState = pattern.filter { $0 == "M" || $0 == "m" }.count
+            return mix
+        }
+
+        let hiddenLayers = intValue(config["num_hidden_layers"]) ?? 0
+
+        // Bailing hybrids (Ling 3.0 / Raptor) declare no per-layer list; the
+        // rule lives in code: every `layer_group_size`-th layer is global
+        // MLA attention, trailing partial-group layers are global too, and
+        // everything else is KDA linear state. Counting all 24 layers as MHA
+        // priced Raptor's KV 3.2x over what its 6 MLA layers can ever hold.
+        if modelType == "bailing_hybrid",
+            let groupSize = intValue(config["layer_group_size"]), groupSize > 1,
+            hiddenLayers > 0
+        {
+            mix.fullAttention = hiddenLayers / groupSize + hiddenLayers % groupSize
+            mix.linearState = hiddenLayers - mix.fullAttention
+            return mix
+        }
+
+        var physicalLayers = hiddenLayers
 
         // Nanbeige 4.2 executes one physical attention stack repeatedly while
         // retaining independent KV state for every (loop, layer) pair. Its
         // runtime therefore creates `physicalLayers * totalLoops` cache slots,
         // not one slot per weight-bearing layer. Keep this architecture-scoped:
         // `num_loops` has unrelated meanings in other model configurations.
-        guard stringValue(config["model_type"])?.lowercased() == "nanbeige",
-            physicalLayers > 0
-        else {
-            return physicalLayers
+        if modelType == "nanbeige", physicalLayers > 0 {
+            let loopLossWeights = config["loop_loss_weights"] as? [Any]
+            let totalLoops =
+                if let loopLossWeights, !loopLossWeights.isEmpty {
+                    loopLossWeights.count + 1
+                } else {
+                    max(1, intValue(config["num_loops"]) ?? 1)
+                }
+            physicalLayers *= totalLoops
         }
 
-        let loopLossWeights = config["loop_loss_weights"] as? [Any]
-        let totalLoops =
-            if let loopLossWeights, !loopLossWeights.isEmpty {
-                loopLossWeights.count + 1
-            } else {
-                max(1, intValue(config["num_loops"]) ?? 1)
-            }
-        return physicalLayers * totalLoops
+        mix.fullAttention = physicalLayers
+        return mix
     }
 
     private static func effectiveKVPositionBudget(config: [String: Any]) -> Int? {
@@ -2659,18 +2983,6 @@ public actor ModelRuntime {
             return window
         }
         return nil
-    }
-
-    private static func mambaLayerCount(in config: [String: Any]) -> Int {
-        if let blocks = config["layers_block_type"] as? [Any] {
-            return blocks.compactMap { stringValue($0)?.lowercased() }
-                .filter { $0 == "mamba" || $0 == "linear_attention" || $0 == "ssm" }
-                .count
-        }
-        if let pattern = stringValue(config["hybrid_override_pattern"]), !pattern.isEmpty {
-            return pattern.filter { $0 == "M" || $0 == "m" }.count
-        }
-        return 0
     }
 
     private static func cacheElementByteWidth(config: [String: Any]) -> Int {
@@ -2991,12 +3303,14 @@ public actor ModelRuntime {
         let targetAlreadyResident: Bool
         let targetLoadFootprintBytes: Int64?
         let perActiveChildHeadroomBytes: Int64?
+        let requestBoundedChildHeadroomBytes: Int64?
         let resolvedLoadBudgetBytes: UInt64?
         let memorySafetyAllowsLoad: Bool
     }
 
     private func subagentMemoryProfile(
-        for modelName: String
+        for modelName: String,
+        requestEstimate: SubagentChildRequestEstimate? = nil
     ) async -> SubagentMemoryProfile? {
         let trimmed = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
@@ -3046,6 +3360,29 @@ public actor ModelRuntime {
                 kvRetentionCap: preliminaryPlan.cache.defaultMaxKVSize
             )
         }
+        // Request-bounded price: the SAME estimator, clamped to what this
+        // delegation can actually allocate. A bounded 2K-output child must
+        // not be charged the full retention-cap envelope — on a 16 GB Mac
+        // that difference alone drives ramSlots to 0 for an affordable
+        // same-resident-model spawn. Estimate stays conservative: seed
+        // chars/4 ×1.5, plus the child's max output, plus a 1024-token
+        // margin for the child system prompt and template overhead, never
+        // below 4096 and never above the policy cap (the planner's
+        // `effectiveChildHeadroomBytes` additionally clamps to the
+        // cap-priced value, so this can only shrink the charge).
+        let requestBoundedChildHeadroomBytes: Int64? = {
+            guard let estimate = requestEstimate,
+                let footprint = targetLoadFootprintBytes,
+                let boundedPositions = estimate.boundedPositionBudget(
+                    policyCap: preliminaryPlan.cache.defaultMaxKVSize)
+            else { return nil }
+            return Self.estimatedKVHeadroomBytes(
+                forWeights: footprint,
+                modelDirectory: localURL,
+                modelName: canonicalName,
+                kvRetentionCap: boundedPositions
+            )
+        }()
         let estimatedWorkingSetBytes = targetLoadFootprintBytes.flatMap {
             Self.estimatedMemorySafetyWorkingSetBytes(
                 loadFootprintBytes: $0,
@@ -3068,6 +3405,7 @@ public actor ModelRuntime {
             targetAlreadyResident: targetAlreadyResident,
             targetLoadFootprintBytes: targetLoadFootprintBytes,
             perActiveChildHeadroomBytes: perActiveChildHeadroomBytes,
+            requestBoundedChildHeadroomBytes: requestBoundedChildHeadroomBytes,
             resolvedLoadBudgetBytes: admissionPlan.resolvedLoadBudgetBytes,
             memorySafetyAllowsLoad: admissionPlan.blockingIssues.isEmpty
         )
@@ -3085,9 +3423,13 @@ public actor ModelRuntime {
 
     func subagentBatchMemoryFacts(
         for modelName: String,
-        residencyPlan: ResidencyPlan
+        residencyPlan: ResidencyPlan,
+        requestEstimate: SubagentChildRequestEstimate? = nil
     ) async -> SubagentBatchMemoryFacts? {
-        guard let profile = await subagentMemoryProfile(for: modelName) else {
+        guard
+            let profile = await subagentMemoryProfile(
+                for: modelName, requestEstimate: requestEstimate)
+        else {
             return nil
         }
         let releasableParentBytes: Int64 =
@@ -3116,6 +3458,8 @@ public actor ModelRuntime {
             perActiveChildHeadroomBytes: profile.perActiveChildHeadroomBytes.flatMap(
                 Self.nonnegativeUInt64
             ),
+            requestBoundedChildHeadroomBytes: profile.requestBoundedChildHeadroomBytes
+                .flatMap(Self.nonnegativeUInt64),
             // Match the existing subagent handoff preflight exactly. The
             // broader model-load estimator also counts speculative pages,
             // which are not part of the conservative handoff admission
@@ -3152,33 +3496,11 @@ public actor ModelRuntime {
     }
 
     private static func availableMemoryBytes() -> Int64 {
-        var stats = vm_statistics64()
-        var count = mach_msg_type_number_t(
-            MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size
-        )
-        let host = mach_host_self()
-        defer { mach_port_deallocate(mach_task_self_, host) }
-        let result = withUnsafeMutablePointer(to: &stats) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics64(host, HOST_VM_INFO64, $0, &count)
-            }
-        }
-        guard result == KERN_SUCCESS else { return 0 }
-        var rawPageSize: vm_size_t = 0
-        host_page_size(host, &rawPageSize)
-        let pageSize = Int64(rawPageSize)
-        // Count what macOS can NOT reclaim (wired, compressor-resident, and
-        // non-purgeable anonymous pages) and report the rest as available.
-        // Summing free+inactive+speculative queues instead misses the file
-        // cache sitting in the ACTIVE queue — after materializing a ~90 GB
-        // weight pack that is most of physical memory, and the shortfall
-        // guard then refuses a reload on an otherwise idle machine.
-        let unreclaimablePages =
-            Int64(stats.wire_count)
-            + Int64(stats.compressor_page_count)
-            + max(0, Int64(stats.internal_page_count) - Int64(stats.purgeable_count))
-        let physical = Int64(ProcessInfo.processInfo.physicalMemory)
-        return max(0, physical - unreclaimablePages * pageSize)
+        // One host-memory definition for normal loads, residency handoffs,
+        // and subagent admission. Do not duplicate vm_statistics arithmetic:
+        // the old handoff copy drifted and falsely refused sequential children
+        // after ACTIVE mmap/file-cache pages grew during child 1.
+        ChatResidencyHandoff.availableMemoryBytes()
     }
 
     private func residentWeightBytes(excluding excludedName: String? = nil) -> Int64 {
@@ -3610,6 +3932,11 @@ public actor ModelRuntime {
         }
 
         try Task.checkCancellation()
+        // Genuinely cold from here (cache hits and in-flight waits returned
+        // above): swap growth during this episode is what the swap-pressure
+        // banner reports as coinciding with the load. Warm reuse never
+        // resets the baseline; a second cold load extends the same episode.
+        SwapPressureMonitor.shared.beginResidencyEpisode(model: name)
         guard let localURL = Self.findLocalDirectory(forModelId: id) else {
             throw NSError(
                 domain: "ModelRuntime",
@@ -3620,6 +3947,32 @@ public actor ModelRuntime {
         genLog.info(
             "loadContainer: local directory model=\(name, privacy: .public) path=\(localURL.path, privacy: .public)"
         )
+
+        // Older local copies do not receive corrected Hub sidecars. Migrate
+        // only the exact Ornith 1.5 35B-A3B Qwen3.5-MoE bundle before vMLX
+        // inspects MTP policy; every other MTP family remains untouched.
+        do {
+            if try LocalGenerationDefaults.repairOrnith15A3BManualMTPBlockIfNeeded(
+                at: localURL,
+                modelName: name
+            ) {
+                genLog.warning(
+                    "stamped Ornith 1.5 35B MTP safety metadata model=\(name, privacy: .public) manualBlocked=true"
+                )
+            }
+        } catch {
+            genLog.error(
+                "failed to stamp Ornith 1.5 35B MTP safety metadata model=\(name, privacy: .public): \(String(describing: error), privacy: .public)"
+            )
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 422,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Ornith 1.5 35B requires a local MTP safety update, but Osaurus could not update its bundle metadata. \(error.localizedDescription)"
+                ]
+            )
+        }
         let loadBundleFacts = LoadBundleFacts.inspect(bundleURL: localURL)
 
         // One-time, idempotent bundle-metadata repair for the Laguna XS 2.1
@@ -3672,7 +4025,15 @@ public actor ModelRuntime {
         )
 
         let probe = MLXModel(id: id, name: name, description: "", downloadURL: "")
-        let completeVerified = await ModelDownloadService.ensureComplete(for: probe, directory: localURL)
+        // `.automatic`: a load may fill in absent metadata, but it must not
+        // rebuild a bundle the user deliberately trimmed or edited. Missing
+        // weights are caught loudly by `verifyShardManifest` below and fixed
+        // by the Repair button, not silently re-downloaded behind the user.
+        let completeVerified = await ModelDownloadService.ensureComplete(
+            for: probe,
+            directory: localURL,
+            intent: .automatic
+        )
         if !completeVerified {
             // `ensureComplete` returns false when the remote file list couldn't
             // be fetched (offline / HF down) or a missing-file fetch failed. A
@@ -3919,13 +4280,23 @@ public actor ModelRuntime {
                 weightsFingerprint: Self.weightsFingerprint(for: localURL),
                 isVLM: isVLM,
                 draftStrategy: mtpPlan.draftStrategy,
+                dflash2BlockSize: mtpPlan.dflash2BlockSize,
                 nativeMTPStatus: mtpPlan.statusLine,
                 nativeMTPReason: mtpPlan.reason,
-                allocatorCacheLimitBytes: mtpPlan.loadConfiguration.maxResidentBytes
-                    .applyAsCacheLimitInt(
-                        physicalMemory: ProcessInfo.processInfo.physicalMemory
-                    ),
-                requiresUncappedMLXAllocatorCache:
+                // Only a user-typed Memory Safety override may clamp the MLX
+                // freed-buffer pool below the weight-scaled dynamic limit.
+                // Routing the resolved plan value here folded the profile
+                // default (128 MiB for Safe Auto / Strict) into every load,
+                // which collapses deep-context decode under memory pressure
+                // (see `explicitAllocatorCacheLimitBytes`).
+                allocatorCacheLimitBytes: Self.explicitAllocatorCacheLimitBytes(
+                    customAllocatorCacheBytes:
+                        serverSettings.memorySafety.customAllocatorCacheBytes
+                ),
+                // Store the load-time DSV4 fact. Native MTP is resolved per
+                // request so toggling MTP Off cannot keep using the enlarged
+                // request allocator window.
+                requiresAdmittedMLXAllocatorCeiling:
                     loadBundleFacts.isPlainDeepseekV4AffineJANG
             )
 
@@ -3974,6 +4345,11 @@ public actor ModelRuntime {
                 loadingTasks.removeValue(forKey: name)
             }
             supersededLoadingTaskIDs.remove(loadID)
+            // A failed/cancelled cold load must not leave a stale swap
+            // baseline behind (unless another model remains resident, whose
+            // episode continues).
+            SwapPressureMonitor.shared.endEpisodeOnLoadFailure(
+                model: name, residentCount: modelCache.count)
             throw error
         }
     }
@@ -4248,9 +4624,23 @@ public actor ModelRuntime {
     ) -> (enabled: Bool, capGB: Double) {
         guard freeBytes > 0 else { return (true, configuredCapGB) }
         let freeGB = Double(freeBytes) / 1_073_741_824.0
-        let safeCapGB = min(configuredCapGB, freeGB * freeFraction)
-        if safeCapGB < minUsefulGB { return (false, configuredCapGB) }
-        return (true, safeCapGB)
+        let headroomGB = freeGB * freeFraction
+
+        // Disable only when the VOLUME is too full to host a useful cache.
+        //
+        // The old test was `min(configured, headroom) < minUseful`, which also
+        // fired when the user's own share was the smaller term — so choosing a
+        // deliberately small cache silently switched the tier OFF instead of
+        // giving them the small cache they asked for. On a 256 GB disk a 0.2%
+        // share is 0.51 GB, under the 1 GB floor, and the cache just stopped
+        // existing.
+        //
+        // Same shape as the auto-size floor: a bound meant to protect a
+        // nearly-full disk must not override a number the user typed. Their
+        // machine, their call — and a 0.51 GB cache still resumes short
+        // conversations, which beats no cache at all.
+        if headroomGB < minUsefulGB { return (false, configuredCapGB) }
+        return (true, min(configuredCapGB, headroomGB))
     }
 
     nonisolated static func cacheDiskDirectoryOverride(
@@ -4575,7 +4965,7 @@ public actor ModelRuntime {
         {
             return true
         }
-        // Ornith 1.0 (OsaurusAI) — same qwen3_5 / qwen3_5_moe model_type as
+        // Ornith (OsaurusAI 1.0 / 1.5) — same qwen3_5 / qwen3_5_moe model_type as
         // the block above (hybrid linear+full attention, `ArraysCache`
         // companion slots for the linear-attention layers) but the bundle
         // ids carry no "qwen" substring. 9B is the dense qwen3_5 variant,
@@ -4723,6 +5113,15 @@ public actor ModelRuntime {
         )
         defer { finishModelDeletionProtectedAccess(deletionAccess) }
 
+        let activityID = parameters.activityID
+        await InferenceActivityRegistry.shared.begin(
+            id: activityID,
+            modelName: modelName,
+            source: parameters.activitySource,
+            sessionID: parameters.sessionId,
+            phase: modelCache[modelName] == nil ? .loading : .queued
+        )
+
         genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
         await markModelActiveForResidency(modelName)
         // Ownership belongs only to the handoff that cold-published this
@@ -4779,6 +5178,7 @@ public actor ModelRuntime {
             if parameters.suppressProgressUI {
                 WarmupProgressHub.shared.finish(model: modelName)
             }
+            await InferenceActivityRegistry.shared.finish(id: activityID)
             throw error
         }
         if shouldReportModelLoad {
@@ -4793,6 +5193,7 @@ public actor ModelRuntime {
             } else {
                 await scheduleIdleResidency(for: modelName)
             }
+            await InferenceActivityRegistry.shared.finish(id: activityID)
             throw CancellationError()
         }
 
@@ -4809,7 +5210,14 @@ public actor ModelRuntime {
             ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
         }
 
+        await InferenceActivityRegistry.shared.update(id: activityID, phase: .prefilling)
+
         let prepared: MLXBatchAdapter.PreparedStream
+        let requestStrategy = Self.requestDraftStrategy(holder.draftStrategy)
+        let usesGenerationAllocatorWindow = beginGenerationAllocatorWindowIfNeeded(
+            holder: holder,
+            requestStrategy: requestStrategy
+        )
         do {
             prepared = try await MLXBatchAdapter.generate(
                 modelName: modelName,
@@ -4820,9 +5228,16 @@ public actor ModelRuntime {
                 generation: parameters,
                 toolChoice: toolChoice,
                 stopSequences: stopSequences,
-                draftStrategy: holder.draftStrategy,
+                draftStrategy: requestStrategy,
+                nativeMTPRequested: ServerRuntimeSettingsStore.snapshot().mtp.mode != .off,
+                nativeMTPLoadResolutionReason: holder.nativeMTPReason,
                 runtime: cfg,
-                maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
+                maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize,
+                onEngineDrained: { [weak self] in
+                    await self?.finishGenerationAllocatorWindowIfNeeded(
+                        usesGenerationAllocatorWindow
+                    )
+                }
             )
         } catch {
             if !parameters.suppressProgressUI {
@@ -4832,6 +5247,8 @@ public actor ModelRuntime {
             }
             await ModelLease.shared.release(modelName)
             await scheduleIdleResidency(for: modelName)
+            finishGenerationAllocatorWindowIfNeeded(usesGenerationAllocatorWindow)
+            await InferenceActivityRegistry.shared.finish(id: activityID)
             throw error
         }
 
@@ -4851,11 +5268,16 @@ public actor ModelRuntime {
             } onCancel: {
                 innerProducer.cancel()
             }
+            finishGenerationAllocatorWindowIfNeeded(usesGenerationAllocatorWindow)
             await ModelLease.shared.release(modelName)
             await self.scheduleIdleResidency(for: modelName)
             self.clearGenerationTask(id: genID)
+            await InferenceActivityRegistry.shared.finish(id: activityID)
         }
         activeGenerationTasks[genID] = ActiveGenerationRecord(modelName: modelName, task: activeTask)
+        await InferenceActivityRegistry.shared.installCancellation(id: activityID) {
+            activeTask.cancel()
+        }
 
         return GenerationEventMapper.map(
             events: prepared.stream,
@@ -4868,6 +5290,29 @@ public actor ModelRuntime {
                 // producer and releases this stream's ModelLease before a
                 // residency restore can evict the child model.
                 activeTask.cancel()
+            },
+            onFirstModelOutput: {
+                // The FIRST emitted output closes the cold load's
+                // swap-attribution window (issue #2501): swap growth during
+                // load, prefill, and TTFT is attributed to the model; growth
+                // after decode starts is not. Firing this before
+                // `MLXBatchAdapter.generate` would close the window before
+                // any prefill work happened. Later calls no-op.
+                SwapPressureMonitor.shared.noteFirstOutput(model: modelName)
+                Task {
+                    await InferenceActivityRegistry.shared.update(
+                        id: activityID,
+                        phase: .generating
+                    )
+                }
+            },
+            onCompletionInfo: {
+                Task {
+                    await InferenceActivityRegistry.shared.update(
+                        id: activityID,
+                        phase: .finishing
+                    )
+                }
             }
         )
     }
@@ -5032,6 +5477,17 @@ public actor ModelRuntime {
             modelId: modelId,
             modelName: modelName
         )
+        return Self.bridgeToolEventStream(events)
+    }
+
+    /// Expose a parsed tool call to the agent loop immediately, but keep
+    /// consuming the engine-owned event stream through terminal drain. vMLX
+    /// persists the reusable KV/prefix checkpoint during that drain; cancelling
+    /// as soon as `.toolInvocation` arrived made every following tool step
+    /// re-prefill the entire growing history.
+    nonisolated static func bridgeToolEventStream(
+        _ events: AsyncThrowingStream<ModelRuntimeEvent, Error>
+    ) -> AsyncThrowingStream<String, Error> {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let producerTask = Task {
             // Chat UI streaming must dispatch a parsed local tool call as soon
@@ -5040,16 +5496,24 @@ public actor ModelRuntime {
             // contract: the parser has already closed the envelope and built
             // canonical JSON. Waiting for stats lets a model/runtime stream
             // that never reaches EOS leave the UI stuck with a complete-looking
-            // tool row and no actual dispatch. Finish-by-throw immediately and
-            // let `onTermination` cancel the now-unneeded decode tail.
+            // tool row and no actual dispatch. Finish-by-throw immediately,
+            // then silently drain the engine-owned tail so it can persist the
+            // reusable cache checkpoint.
+            var dispatchedTool = false
             do {
                 for try await ev in events {
+                    // Once the call is delivered, the public stream is already
+                    // finished. Continue draining silently so vMLX can commit
+                    // cache state and release its generation lease.
+                    if dispatchedTool { continue }
+
                     if case .completionInfo(
                         let tokenCount,
                         let tokensPerSecond,
                         let unclosedReasoning,
                         let stopReason,
-                        let promptTokensPerSecond
+                        let promptTokensPerSecond,
+                        let mtp
                     ) = ev {
                         continuation.yield(
                             StreamingStatsHint.encode(
@@ -5057,7 +5521,8 @@ public actor ModelRuntime {
                                 tokensPerSecond: tokensPerSecond,
                                 unclosedReasoning: unclosedReasoning,
                                 stopReason: stopReason,
-                                prefillTokensPerSecond: promptTokensPerSecond
+                                prefillTokensPerSecond: promptTokensPerSecond,
+                                mtp: mtp
                             )
                         )
                         continue
@@ -5091,35 +5556,50 @@ public actor ModelRuntime {
                             )
                         }
                     case .toolInvocation(let name, let argsJSON):
-                        // Surface the first parsed tool call and terminate this
-                        // generation step immediately. The stream termination
-                        // cancels any remaining decode tail, so post-tool prose
-                        // cannot leak and the chat loop can execute the tool
-                        // without waiting for an optional stats/EOS event.
+                        // Surface the first parsed tool call and terminate the
+                        // public generation step immediately so the tool can
+                        // execute without waiting for optional stats/EOS. The
+                        // producer deliberately keeps draining the engine tail
+                        // below; vMLX retains its generation lease until cache
+                        // persistence and allocator teardown finish, so the
+                        // following inference cannot race the saved boundary.
                         continuation.yield(StreamingToolHint.encode(name))
                         continuation.yield(StreamingToolHint.encodeArgs(argsJSON))
                         let tool = ServiceToolInvocation(
                             toolName: name,
                             jsonArguments: argsJSON
                         )
+                        dispatchedTool = true
                         continuation.finish(throwing: tool)
-                        return
+                        continue
                     case .completionInfo:
                         continue
                     }
                 }
-                continuation.finish()
+                if !dispatchedTool { continuation.finish() }
             } catch {
                 if Task.isCancelled {
-                    continuation.finish()
-                } else {
+                    if !dispatchedTool { continuation.finish() }
+                } else if !dispatchedTool {
                     continuation.finish(throwing: error)
+                } else {
+                    // The tool is already executing and cannot receive a
+                    // second terminal result. Keep the cache-drain failure
+                    // visible in diagnostics instead of perturbing the loop.
+                    genLog.error(
+                        "tool-call terminal drain failed after dispatch: \(error.localizedDescription, privacy: .public)"
+                    )
                 }
             }
         }
 
-        continuation.onTermination = { @Sendable _ in
-            producerTask.cancel()
+        continuation.onTermination = { @Sendable termination in
+            // `.finished` includes finish-by-throw used for tool dispatch.
+            // Only a real consumer cancellation owns cancellation of the
+            // engine stream; normal tool dispatch must preserve terminal drain.
+            if case .cancelled = termination {
+                producerTask.cancel()
+            }
         }
 
         return stream
@@ -5323,11 +5803,67 @@ public actor ModelRuntime {
             jangConfig: jangConfig,
             status: status
         )
-        let draftStrategy = settings.resolvedMTPDraftStrategy(
+        // Resolve the loaded strategy WITHOUT the draft-token limit: the limit
+        // is a per-request clamp (`requestDraftStrategy`), not a load input.
+        // Baking it in here froze the clamped depth into the holder, so after
+        // "limit 1" a later "limit 2" or Auto stayed at depth 1 until a full
+        // reload — observed live from the picker ladder.
+        var unclampedSettings = settings
+        unclampedSettings.mtp.draftTokenLimit = nil
+        let draftStrategy = unclampedSettings.resolvedMTPDraftStrategy(
             configData: configData,
             jangConfig: jangConfig,
             status: status
         )
+        // `DFlash2TokenIterator` resolves its width as
+        // `requestedBlockSize ?? config.blockSize`. Mirror exactly that, from
+        // the same drafter metadata, so the number shown is the number that
+        // drafted rather than a UI-side guess. Nil unless DFlash 2 is what
+        // actually resolved — a value here would otherwise imply a drafter is
+        // running when none is.
+        let dflash2BlockSize: Int? = {
+            guard draftStrategy?.dflash2DrafterPath != nil,
+                let selection = settings.resolvedDFlash2Selection(configData: configData)
+            else { return nil }
+            return settings.mtp.dflash2BlockSize ?? selection.blockSize
+        }()
+
+        // A width below the runtime's floor cannot draft. `DFlash2TokenIterator`
+        // throws `blockSizeTooSmall`, and BatchEngine's solo-fast-path catch
+        // turns any such throw into a zero-token stream stamped `.cancelled` —
+        // so the user sees "I wasn't able to generate a response to that.
+        // Please try rephrasing your request." on every turn, with nothing in
+        // the UI or the app log pointing at the setting that caused it.
+        //
+        // This is NOT a new limit: the runtime already refuses this width. It
+        // drops the drafter so the request degrades to ordinary decoding —
+        // exactly what a missing drafter folder already does in
+        // `resolvedDFlash2Selection` — and names the reason instead of
+        // blaming the user's prompt.
+        if let width = dflash2BlockSize, width < Self.dflash2MinimumBlockSize {
+            let downgrade =
+                "DFlash 2 block size \(width) is below the runtime minimum of "
+                + "\(Self.dflash2MinimumBlockSize); drafting is off and this model "
+                + "is decoding normally."
+            genLog.error(
+                "dflash2 width unusable model=\(modelName, privacy: .public) width=\(width, privacy: .public)"
+            )
+            let memorySafetyPlan = Self.resolveMemorySafetyLoadPlan(
+                modelName: modelName,
+                modelDirectory: modelDirectory,
+                settings: settings,
+                baseLoadConfiguration: loadConfiguration,
+                inspectBundleFacts: true
+            )
+            return NativeMTPLaunchPlan(
+                loadConfiguration: memorySafetyPlan.loadConfiguration,
+                draftStrategy: nil,
+                dflash2BlockSize: nil,
+                statusLine: status?.statusLine,
+                reason: downgrade,
+                memorySafetySummary: memorySafetyPlan.displaySummary
+            )
+        }
         let memorySafetyPlan = Self.resolveMemorySafetyLoadPlan(
             modelName: modelName,
             modelDirectory: modelDirectory,
@@ -5339,6 +5875,7 @@ public actor ModelRuntime {
         return NativeMTPLaunchPlan(
             loadConfiguration: memorySafetyPlan.loadConfiguration,
             draftStrategy: draftStrategy,
+            dflash2BlockSize: dflash2BlockSize,
             statusLine: status?.statusLine,
             reason: launch.reason,
             memorySafetySummary: memorySafetyPlan.displaySummary
@@ -5375,6 +5912,103 @@ public actor ModelRuntime {
         return plan
     }
 
+    /// Re-resolves the speculative strategy from CURRENT settings on every
+    /// request, instead of reusing the one frozen into the holder at load.
+    ///
+    /// The MTP head's presence is a load-time fact, but the DEPTH is not: it is
+    /// a per-request parameter, and the server's draft-token limit only clamps
+    /// it downward. Freezing it at load meant a depth change had to evict the
+    /// model to take effect — a full 27B reload for a value the next generate
+    /// could simply have read.
+    ///
+    /// Turning MTP off is honoured here too: the loaded head is left in the
+    /// graph (unloading it is what a reload is for) but no longer drafts, so
+    /// switching back on is instant.
+    nonisolated static func requestDraftStrategy(
+        _ loaded: MLXLMCommon.DraftStrategy?
+    ) -> MLXLMCommon.DraftStrategy? {
+        guard case .some(.nativeMTP(let depth, let verifierMode)) = loaded else {
+            // DFlash 2 and the no-drafter case are load-time decisions.
+            return loaded
+        }
+        let mtp = ServerRuntimeSettingsStore.snapshot().mtp
+        if mtp.mode == .off { return nil }
+        // An explicit user depth (the 1/2/3 buttons) governs the request
+        // exactly — it is an activation contract, not a hint or a cap.
+        if mtp.mode == .forceOn, let manual = mtp.explicitDepth,
+            (1...3).contains(manual), manual != depth
+        {
+            return .nativeMTP(depth: manual, verifierMode: verifierMode)
+        }
+        guard let limit = mtp.draftTokenLimit, limit > 0, limit < depth else {
+            return loaded
+        }
+        return .nativeMTP(depth: limit, verifierMode: verifierMode)
+    }
+
+    // Greedy-while-MTP is enforced in exactly ONE place: MLXBatchAdapter,
+    // on the parameters that actually run, with a surfaced log and a
+    // "greedy enforced" marker in the strategy description below. A second
+    // upstream copy of the coercion briefly existed here and was removed —
+    // duplicate policy sites drift.
+
+    /// Public projection of a resident model's native-MTP RESOLUTION — the
+    /// load-time launch result and the draft strategy a request issued NOW
+    /// would run under the current settings snapshot. This is independent
+    /// evidence for harnesses that must PROVE which decode path a run was
+    /// configured for (osaurus#2526): generated-token stats alone cannot
+    /// distinguish "MTP off" from "MTP requested but gate-excluded".
+    public struct MTPResolutionSnapshot: Sendable, Equatable {
+        /// Resident model this resolution belongs to (exact holder name).
+        public let modelName: String
+        /// Load-time launch status line from the resolved MTP plan
+        /// (nil = the load recorded no MTP status).
+        public let loadStatus: String?
+        /// Load-time reason (why MTP engaged, was blocked, or was skipped).
+        public let loadReason: String?
+        /// The strategy a request would run RIGHT NOW under current
+        /// settings: "none" for plain AR, "native_mtp:dN·…" when native
+        /// MTP is configured.
+        public let requestStrategy: String
+        /// Configured native-MTP depth of `requestStrategy` (nil = not
+        /// native MTP). This is the CONFIGURED depth; adaptive execution
+        /// may run a lower/higher active depth without changing it.
+        public let requestConfiguredDepth: Int?
+    }
+
+    /// Resolution snapshot for a resident model, matched by exact name
+    /// first, then case-insensitively, then — when exactly one local model
+    /// is resident — that model (its own name is reported, so a mismatch
+    /// stays visible). nil when no resident model matches: callers must
+    /// treat that as "resolution unavailable", never as "MTP off".
+    public static func mtpResolution(forModel name: String) async -> MTPResolutionSnapshot? {
+        await shared.mtpResolutionSnapshot(forModel: name)
+    }
+
+    private func mtpResolutionSnapshot(forModel name: String) -> MTPResolutionSnapshot? {
+        let holder: SessionHolder?
+        if let exact = modelCache.values.first(where: { $0.name == name }) {
+            holder = exact
+        } else if let ci = modelCache.values.first(where: {
+            $0.name.lowercased() == name.lowercased()
+        }) {
+            holder = ci
+        } else if modelCache.count == 1 {
+            holder = modelCache.values.first
+        } else {
+            holder = nil
+        }
+        guard let holder else { return nil }
+        let strategy = Self.requestDraftStrategy(holder.draftStrategy)
+        return MTPResolutionSnapshot(
+            modelName: holder.name,
+            loadStatus: holder.nativeMTPStatus,
+            loadReason: holder.nativeMTPReason,
+            requestStrategy: Self.describeDraftStrategy(strategy),
+            requestConfiguredDepth: Self.nativeMTPDepth(strategy)
+        )
+    }
+
     private nonisolated static func describeDraftStrategy(
         _ strategy: MLXLMCommon.DraftStrategy?
     ) -> String {
@@ -5384,7 +6018,10 @@ public actor ModelRuntime {
         case .some(.none):
             return "none"
         case .some(.nativeMTP(depth: let depth, verifierMode: _)):
-            return "native_mtp:d\(depth)"
+            // The greedy marker keeps the sampler coercion SURFACED: this
+            // string reaches the Live Activity readout, cachedModelSummaries,
+            // and the load-plan log line.
+            return "native_mtp:d\(depth)·greedy-when-active"
         case .some(let strategy):
             return strategy.kindName
         }

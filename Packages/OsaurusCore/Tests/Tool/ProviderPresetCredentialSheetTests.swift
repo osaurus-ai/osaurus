@@ -3,7 +3,8 @@
 //  OsaurusCoreTests
 //
 //  Pins down the preset-as-single-source-of-truth contract that the
-//  chat-driven `osaurus_provider` tool (action `add`) relies on:
+//  chat-driven provider add (an `osaurus_config` apply with a
+//  `providers:` entry) relies on:
 //
 //   * `ProviderCredentialRequest(preset:)` derives the right
 //     `providerType` and `instructions` from each preset, so OpenRouter
@@ -15,8 +16,8 @@
 //   * Vendor presets that share `RemoteProviderType.openaiLegacy`
 //     (DeepSeek, OpenRouter, xAI, Venice, Ollama) carry their own host
 //     in `preset.configuration`, not the generic `api.openai.com`.
-//   * `ProviderToolShared.resolve(_:)` accepts the canonical `provider`
-//     ids *and* the deprecated `provider_type` aliases ("openrouter",
+//   * `ConfigProviderPresets.resolve(_:)` accepts the canonical
+//     `provider` ids *and* the deprecated aliases ("openrouter",
 //     "openai_compatible", etc.).
 //   * The legacy `ProviderCredentialRequest(providerType:)` init still
 //     produces correct instructions for callers that only have a
@@ -261,17 +262,17 @@ struct ProviderPresetCredentialSheetTests {
 
     @Test
     func resolver_acceptsCanonicalProviderIds() {
-        // Every id surfaced in the tool schema description must resolve;
+        // Every id surfaced in the document schema reference must resolve;
         // a typo here would render the corresponding vendor unreachable
         // from chat even though the catalog has its entry.
-        for id in ProviderToolShared.canonicalIds {
-            #expect(ProviderToolShared.resolve(id) != nil, "unresolved id: \(id)")
+        for id in ConfigProviderPresets.canonicalIds {
+            #expect(ConfigProviderPresets.resolve(id) != nil, "unresolved id: \(id)")
         }
     }
 
     @Test
     func resolver_resolvesOpenrouterToOpenrouterPreset() {
-        guard case .preset(let preset) = ProviderToolShared.resolve("openrouter") else {
+        guard case .preset(let preset) = ConfigProviderPresets.resolve("openrouter") else {
             Issue.record("openrouter must resolve to a preset")
             return
         }
@@ -280,11 +281,11 @@ struct ProviderPresetCredentialSheetTests {
 
     @Test
     func resolver_legacyOpenaiCompatibleAliasResolvesToCustom() {
-        // The chat tool used to expose `openai_compatible` as a sibling
+        // The chat surface used to expose `openai_compatible` as a sibling
         // of `openrouter`. Keep it accepted but route it to `.custom`
         // so the sheet asks for a host instead of inheriting OpenAI
         // branding by accident.
-        guard case .preset(let preset) = ProviderToolShared.resolve("openai_compatible") else {
+        guard case .preset(let preset) = ConfigProviderPresets.resolve("openai_compatible") else {
             Issue.record("openai_compatible must resolve to a preset")
             return
         }
@@ -293,7 +294,7 @@ struct ProviderPresetCredentialSheetTests {
 
     @Test
     func resolver_codexOauthAliasIsSpecialCase() {
-        if case .codexOAuth = ProviderToolShared.resolve("codex_oauth") {
+        if case .codexOAuth = ConfigProviderPresets.resolve("codex_oauth") {
             return
         }
         Issue.record("codex_oauth must resolve to the codexOAuth special case")
@@ -301,7 +302,7 @@ struct ProviderPresetCredentialSheetTests {
 
     @Test
     func resolver_osaurusAgentAliasIsSpecialCase() {
-        if case .osaurusAgent = ProviderToolShared.resolve("osaurus_agent") {
+        if case .osaurusAgent = ConfigProviderPresets.resolve("osaurus_agent") {
             return
         }
         Issue.record("osaurus_agent must resolve to the osaurusAgent special case")
@@ -309,72 +310,24 @@ struct ProviderPresetCredentialSheetTests {
 
     @Test
     func resolver_unknownIdReturnsNil() {
-        #expect(ProviderToolShared.resolve("nonexistent_vendor") == nil)
+        #expect(ConfigProviderPresets.resolve("nonexistent_vendor") == nil)
     }
 
     @Test
     func resolver_isCaseInsensitive() {
-        #expect(ProviderToolShared.resolve("OpenRouter") != nil)
-        #expect(ProviderToolShared.resolve("DEEPSEEK") != nil)
+        #expect(ConfigProviderPresets.resolve("OpenRouter") != nil)
+        #expect(ConfigProviderPresets.resolve("DEEPSEEK") != nil)
     }
-
-    // MARK: - Tool schema contract
-
-    @Test
-    func providerTool_schemaRequiresOnlyActionWithEnumsAndNoProviderType() {
-        // The consolidated tool marks only `action` required at the schema
-        // level; per-action required fields (`name` + `provider` for add) are
-        // validated at runtime and returned as typed errors. The schema must
-        // therefore (a) require exactly `action`, (b) expose `action` and
-        // `provider` as real JSON-Schema enums, and (c) NOT carry the
-        // deprecated `provider_type` property at all.
-        let tool = OsaurusProviderTool()
-        guard case .object(let schema) = tool.parameters else {
-            Issue.record("osaurus_provider schema must be an object")
-            return
-        }
-        guard case .array(let required) = schema["required"] else {
-            Issue.record("osaurus_provider schema must declare a `required` array")
-            return
-        }
-        let requiredNames: [String] = required.compactMap { value in
-            if case .string(let s) = value { return s }
-            return nil
-        }
-        #expect(requiredNames == ["action"])
-
-        guard case .object(let props) = schema["properties"] else {
-            Issue.record("osaurus_provider schema must declare `properties`")
-            return
-        }
-        // `provider_type` is gone entirely.
-        #expect(props["provider_type"] == nil)
-        // `action` is an enum of the four operations.
-        if case .object(let action) = props["action"], case .array(let actionEnum) = action["enum"] {
-            let vals = actionEnum.compactMap { if case .string(let s) = $0 { return s } else { return nil } }
-            #expect(Set(vals) == ["add", "update", "remove", "set_credentials"])
-        } else {
-            Issue.record("`action` must be a string enum")
-        }
-        // `provider` is an enum sourced from the canonical ids.
-        if case .object(let provider) = props["provider"], case .array(let provEnum) = provider["enum"] {
-            let vals = provEnum.compactMap { if case .string(let s) = $0 { return s } else { return nil } }
-            #expect(Set(vals) == Set(ProviderToolShared.canonicalIds))
-        } else {
-            Issue.record("`provider` must be a string enum")
-        }
-    }
-
     // MARK: - Azure deployments → manualModelIds
 
     @Test
     func parseManualModelIds_singleEntryYieldsOneId() {
-        #expect(OsaurusProviderTool.parseManualModelIds("gpt-4o") == ["gpt-4o"])
+        #expect(ConfigApplier.parseManualModelIds("gpt-4o") == ["gpt-4o"])
     }
 
     @Test
     func parseManualModelIds_commaAndNewlineSeparated() {
-        let parsed = OsaurusProviderTool.parseManualModelIds(
+        let parsed = ConfigApplier.parseManualModelIds(
             "gpt-4o, gpt-4o-mini\nprod-chat"
         )
         #expect(parsed == ["gpt-4o", "gpt-4o-mini", "prod-chat"])
@@ -385,7 +338,7 @@ struct ProviderPresetCredentialSheetTests {
         // Matches `RemoteProviderEditSheet.parseManualModelIds` — the first
         // spelling wins so chat-driven Azure providers persist identically
         // to those configured via Settings.
-        let parsed = OsaurusProviderTool.parseManualModelIds(
+        let parsed = ConfigApplier.parseManualModelIds(
             "GPT-4o, gpt-4o,  gpt-4o "
         )
         #expect(parsed == ["GPT-4o"])
@@ -393,8 +346,8 @@ struct ProviderPresetCredentialSheetTests {
 
     @Test
     func parseManualModelIds_emptyAndWhitespaceCollapseToEmptyArray() {
-        #expect(OsaurusProviderTool.parseManualModelIds("") == [])
-        #expect(OsaurusProviderTool.parseManualModelIds(" , \n , ") == [])
+        #expect(ConfigApplier.parseManualModelIds("") == [])
+        #expect(ConfigApplier.parseManualModelIds(" , \n , ") == [])
     }
 
     @Test
@@ -417,7 +370,7 @@ struct ProviderPresetCredentialSheetTests {
         // `.openaiLegacy` providers pass through unknown extra fields as
         // custom headers, so the reserved keys must stay opaque or Azure
         // would leak its endpoint into the headers map.
-        #expect(OsaurusProviderTool.reservedExtraKeys.contains("host"))
-        #expect(OsaurusProviderTool.reservedExtraKeys.contains("deployment"))
+        #expect(ConfigApplier.reservedExtraKeys.contains("host"))
+        #expect(ConfigApplier.reservedExtraKeys.contains("deployment"))
     }
 }

@@ -24,6 +24,9 @@ struct SandboxStartupMetricsTests {
         try? FileManager.default.removeItem(
             at: OsaurusPaths.container().appendingPathComponent("startup-metrics.json")
         )
+        try? FileManager.default.removeItem(
+            at: OsaurusPaths.container().appendingPathComponent("startup-failures.json")
+        )
     }
 
     private func makeSample(kind: SandboxBootSample.BootKind = .cold) -> SandboxBootSample {
@@ -85,5 +88,56 @@ struct SandboxStartupMetricsTests {
         #expect(SandboxStartupMetricsStore.latencyBucket(45.0) == "15_60s")
         #expect(SandboxStartupMetricsStore.latencyBucket(180.0) == "1_5m")
         #expect(SandboxStartupMetricsStore.latencyBucket(600.0) == "gte_5m")
+    }
+
+    @Test
+    func failureSamples_areSanitizedAndCapped() async {
+        await withStore {
+            for index in 0..<(SandboxStartupMetricsStore.maxSamples + 2) {
+                SandboxStartupMetricsStore.recordFailure(
+                    SandboxStartupFailureSample(
+                        recordedAt: Date(timeIntervalSince1970: Double(index)),
+                        category: "runtime_start_failed",
+                        backend: "vm",
+                        phase: "runtime_start"
+                    )
+                )
+            }
+
+            let samples = SandboxStartupMetricsStore.loadFailures()
+            #expect(samples.count == SandboxStartupMetricsStore.maxSamples)
+            #expect(samples.first?.recordedAt == Date(timeIntervalSince1970: 2))
+            #expect(samples.last?.category == "runtime_start_failed")
+            #expect(samples.last?.backend == "vm")
+            #expect(samples.last?.phase == "runtime_start")
+        }
+    }
+
+    @Test
+    func failureTelemetryTokens_useClosedVocabulary() {
+        #expect(
+            SandboxToolRegistrar.failureTelemetryTokens(
+                kind: .containerUnavailable,
+                backend: .seatbelt
+            ) == ("container_unavailable", "seatbelt", "availability")
+        )
+        #expect(
+            SandboxToolRegistrar.failureTelemetryTokens(
+                kind: .provisioningFailed,
+                backend: .virtualMachine
+            ) == ("agent_provision_failed", "vm", "agent_provision")
+        )
+        #expect(
+            SandboxToolRegistrar.failureTelemetryTokens(
+                kind: .startupFailed,
+                backend: .virtualMachine
+            ) == ("runtime_start_failed", "vm", "runtime_start")
+        )
+        #expect(
+            SandboxToolRegistrar.failureTelemetryTokens(
+                kind: .vmnetOwnedByOtherProcess,
+                backend: .virtualMachine
+            ) == ("vmnet_in_use", "vm", "vm_ownership")
+        )
     }
 }

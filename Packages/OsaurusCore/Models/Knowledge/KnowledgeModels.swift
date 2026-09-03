@@ -224,3 +224,85 @@ public struct KnowledgeProposal: Sendable, Equatable, Identifiable {
         self.updatedAt = updatedAt
     }
 }
+
+// MARK: - Write log
+
+/// What a logged knowledge mutation did to the document at `relPath`.
+public enum KnowledgeWriteOperation: String, Sendable, Equatable, CaseIterable {
+    /// The document did not exist before this write.
+    case create
+    /// The document existed and its content was replaced.
+    case replace
+    /// The document existed and was removed.
+    case delete
+}
+
+/// One durable record of an agent-made change to a collection folder.
+///
+/// Reversibility is what makes call-time approval safe: a reviewer cannot
+/// realistically catch fabricated reference material by skimming a diff, but
+/// anyone can revert once `search_knowledge` starts returning nonsense. That
+/// only works if the record outlives the chat that produced it, so this lives
+/// in the knowledge database rather than in an in-memory per-session log like
+/// `FileOperationLog`.
+///
+/// `priorContent` is the whole previous document, not a diff: reverting must
+/// not depend on the current file still being what the agent left behind.
+public struct KnowledgeWriteRecord: Sendable, Equatable, Identifiable {
+    public var id: Int
+    public var collectionId: String
+    public var relPath: String
+    public var operation: KnowledgeWriteOperation
+    /// Previous document content. Empty for `.create`, which reverts by
+    /// deleting the file.
+    public var priorContent: String
+    /// SHA-256 of `priorContent`, or "" when there was no prior document.
+    public var priorContentHash: String
+    /// SHA-256 of what this write left on disk, or "" for a delete. A revert
+    /// compares the file against this to notice that someone changed the
+    /// document afterwards, so undoing an agent cannot silently discard a
+    /// human's later edit. Uniform across all three operations, which is why
+    /// it is recorded separately rather than inferred from `operation`.
+    public var resultContentHash: String
+    /// Groups every write from one agent run so a bad bulk import can be
+    /// reverted as a unit. This is the revert that matters in practice.
+    public var runId: String
+    /// Agent id (UUID string) that made the change; "" when unknown.
+    public var createdBy: String
+    /// Short reason supplied by the calling agent.
+    public var rationale: String
+    public var createdAt: String
+    /// Set when this write has been reverted, so history stays readable
+    /// instead of the row disappearing.
+    public var revertedAt: String?
+
+    public var isReverted: Bool { revertedAt != nil }
+
+    public init(
+        id: Int,
+        collectionId: String,
+        relPath: String,
+        operation: KnowledgeWriteOperation,
+        priorContent: String,
+        priorContentHash: String,
+        resultContentHash: String,
+        runId: String,
+        createdBy: String,
+        rationale: String,
+        createdAt: String,
+        revertedAt: String? = nil
+    ) {
+        self.id = id
+        self.collectionId = collectionId
+        self.relPath = relPath
+        self.operation = operation
+        self.priorContent = priorContent
+        self.priorContentHash = priorContentHash
+        self.resultContentHash = resultContentHash
+        self.runId = runId
+        self.createdBy = createdBy
+        self.rationale = rationale
+        self.createdAt = createdAt
+        self.revertedAt = revertedAt
+    }
+}

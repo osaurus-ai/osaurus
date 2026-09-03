@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 
 actor ChatEngine: Sendable, ChatEngineProtocol {
     private let services: [ModelService]
@@ -17,9 +18,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
     /// Source of the inference (for logging purposes)
     private var inferenceSource: InferenceSource = .httpAPI
+    /// Display-only producer attribution. Residency continues to use
+    /// `inferenceSource`; delegated helpers are chat-owned but shown as Agent.
+    private let activitySource: InferenceSource?
 
     init(
-        services: [ModelService] = [FoundationModelService(), MLXService()],
+        services: [ModelService] = [FoundationModelService(), ClaudeCodeService(), MLXService()],
         installedModelsProvider: @escaping @Sendable () -> [String] = {
             MLXService.getAvailableModels()
         },
@@ -40,7 +44,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     ModelOptionsStore.shared.loadOptions(for: modelId)
                 }
             },
-        source: InferenceSource = .httpAPI
+        source: InferenceSource = .httpAPI,
+        activitySource: InferenceSource? = nil
     ) {
         self.services = services
         self.installedModelsProvider = installedModelsProvider
@@ -48,6 +53,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         self.reasoningCapabilityProvider = reasoningCapabilityProvider
         self.agentModelOptionsProvider = agentModelOptionsProvider
         self.inferenceSource = source
+        self.activitySource = activitySource
     }
     /// Errors thrown by `ChatEngine` that carry a classification so the
     /// HTTP layer can emit a proper 4xx/5xx instead of a generic 500.
@@ -249,6 +255,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             jsonMode: isJSONObject,
             modelOptions: modelOptions,
             sessionId: request.session_id,
+            activitySource: activitySource,
             ttftTrace: trace,
             idempotencyKey: request.idempotencyKey,
             runAsRemoteAgent: request.runAsRemoteAgent,
@@ -257,6 +264,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             cacheStableSystemPrefix: request.cacheStableSystemPrefix,
             requestSource: inferenceSource,
             loadIntent: request.backgroundModelLoad ? .background : .interactive,
+            claudeCode: request.claudeCodeOptions,
             preserveExistingResidencyOwner: request.preserveExistingResidencyOwner
         )
 
@@ -371,6 +379,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         effectiveModel: String,
         stream: Bool
     ) {
+        // Warmup prefills replay conversation history to heat the KV cache;
+        // they are not a user message even when that history happens to end
+        // with a user turn.
+        guard !request.warmupPrefill else { return }
         guard FeatureTelemetry.isPrimaryUserTurn(request.messages) else { return }
         let info = FeatureTelemetry.messageInfo(
             service: service,
@@ -566,8 +578,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
     private static func canonicalToolArgumentsJSON(
         _ json: String,
-        schema: JSONValue? = nil,
-        toolName: String? = nil
+        schema: JSONValue? = nil
     ) -> String {
         let candidates = [
             json,
@@ -582,20 +593,19 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             return json
         }
         let normalized = normalizeNestedJSONStringValues(object)
+        // Schema-invalid arguments are preserved (coerced but NOT replaced):
+        // this string becomes both the assistant's recorded tool call and the
+        // executed invocation. Substituting an `_error` sentinel here destroyed
+        // the model's real arguments, so tool-level recovery never saw them,
+        // and models pattern-matched the sentinel from their own history and
+        // re-emitted it as arguments on later calls. Enforcement lives at
+        // execution time: `ToolRegistry.preflight` re-validates and returns a
+        // typed `invalid_args` envelope after the tool's own
+        // `normalizeArgumentsBeforeValidation` has had a chance to repair the
+        // call.
         let coerced: Any
         if let schema {
-            let candidate = SchemaValidator.coerceArguments(normalized, against: schema)
-            let result = SchemaValidator.validate(arguments: candidate, against: schema)
-            if result.isValid {
-                coerced = candidate
-            } else if let invalid = invalidToolArgumentsJSON(
-                toolName: toolName,
-                result: result
-            ) {
-                return invalid
-            } else {
-                coerced = normalized
-            }
+            coerced = SchemaValidator.coerceArguments(normalized, against: schema)
         } else {
             coerced = normalized
         }
@@ -604,33 +614,6 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             let string = String(data: data, encoding: .utf8)
         else {
             return json
-        }
-        return string
-    }
-
-    private static func invalidToolArgumentsJSON(
-        toolName: String?,
-        result: SchemaValidator.ValidationResult
-    ) -> String? {
-        var object: [String: Any] = [
-            "_error": "invalid_tool_arguments",
-            "_message": result.errorMessage ?? "invalid tool arguments",
-            "_expected": "schema-compliant arguments",
-        ]
-        if let field = result.field {
-            object["_field"] = field
-        }
-        if let toolName {
-            object["_tool"] = toolName
-        }
-        guard
-            let data = try? JSONSerialization.data(
-                withJSONObject: object,
-                options: .osaurusCanonical
-            ),
-            let string = String(data: data, encoding: .utf8)
-        else {
-            return nil
         }
         return string
     }
@@ -701,8 +684,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     name: inv.toolName,
                     arguments: canonicalToolArgumentsJSON(
                         inv.jsonArguments,
-                        schema: schemasByName[inv.toolName] ?? nil,
-                        toolName: inv.toolName
+                        schema: schemasByName[inv.toolName] ?? nil
                     )
                 ),
                 geminiThoughtSignature: inv.geminiThoughtSignature
@@ -1031,6 +1013,17 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             warmupPrefill: warmupPrefill
         )
 
+        // vMLX emits the authoritative stats event before it performs its
+        // synchronous GPU drain and cache persistence.  The HTTP writer is
+        // allowed to finish the client-visible response as soon as it sees
+        // those stats, which can drop this wrapping stream while the producer
+        // is still unwinding the final upstream iteration.  Treating that
+        // narrow window as a client cancellation aborts the engine-owned
+        // drain and leaves the following request contending with unfinished
+        // Metal/cache work.  This lock-backed latch distinguishes that normal
+        // terminal race from a real pre-terminal disconnect.
+        let terminalStatsObserved = OSAllocatedUnfairLock(initialState: false)
+
         // Capture the background-task id at construction time (still on
         // the parent task) so the detached producer below can forward
         // token-usage deltas to `BackgroundTaskManager.recordUsage(...)`
@@ -1113,6 +1106,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             do {
                 for try await delta in inner {
                     if let stats = StreamingStatsHint.decode(delta) {
+                        terminalStatsObserved.withLock { $0 = true }
                         statsHintCount += 1
                         outputTokenCount = stats.tokenCount
                         // Stats hint carries the authoritative cumulative
@@ -1330,8 +1324,19 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         continuation.onTermination = { @Sendable termination in
             switch termination {
             case .cancelled:
-                print("[Osaurus][Stream] Consumer cancelled - stopping producer task")
-                producerTask.cancel()
+                let sawTerminalStats = terminalStatsObserved.withLock { $0 }
+                if !Self.shouldCancelProducerOnConsumerCancellation(
+                    terminalStatsObserved: sawTerminalStats
+                ) {
+                    // Logical generation is complete.  Keep the producer
+                    // alive long enough to drain the runtime-owned terminal
+                    // work; the vMLX solo lease and Metal gate are released
+                    // only after that drain finishes.
+                    print("[Osaurus][Stream] Consumer closed after terminal stats - draining producer")
+                } else {
+                    print("[Osaurus][Stream] Consumer cancelled before terminal stats - stopping producer task")
+                    producerTask.cancel()
+                }
             case .finished:
                 // Normal completion, producer should already be done
                 break
@@ -1341,6 +1346,16 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         }
 
         return stream
+    }
+
+    /// A dropped consumer is an actual inference cancellation only before the
+    /// runtime's authoritative terminal-stats event.  After that event the
+    /// producer owns a short GPU/cache drain which must be allowed to finish.
+    /// Kept pure and internal so the boundary cannot regress unnoticed.
+    nonisolated static func shouldCancelProducerOnConsumerCancellation(
+        terminalStatsObserved: Bool
+    ) -> Bool {
+        !terminalStatsObserved
     }
 
     func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {

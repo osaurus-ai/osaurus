@@ -144,7 +144,10 @@ struct ChatEmptyState: View {
 
     /// Subtitle rendered beneath the greeting. Same precedence as
     /// `greetingText`: remote description → per-agent override
-    /// (`Agent.chatSubtitle`) → localized default.
+    /// (`Agent.chatSubtitle`) → the agent's own description → localized
+    /// default. One rule for every agent: each one introduces itself (the
+    /// built-in Orchestrator's description carries its role the same way a
+    /// custom agent's does).
     private var subtitleText: LocalizedStringKey {
         // Remote agent run: surface the remote agent's own description (so it
         // introduces itself), never the local agent's custom
@@ -161,6 +164,10 @@ struct ChatEmptyState: View {
             !custom.isEmpty
         {
             return LocalizedStringKey(custom)
+        }
+        let description = activeAgent.description.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !description.isEmpty {
+            return LocalizedStringKey(description)
         }
         return "How can I help you today?"
     }
@@ -274,6 +281,9 @@ struct ChatEmptyState: View {
                     .font(theme.font(size: CGFloat(theme.bodySize) + 2))
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 480)
                     .transition(.opacity)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 15)
@@ -406,25 +416,24 @@ struct ChatEmptyState: View {
         }
     }
 
+    /// Compact suggestion pills in a centered, weight-balanced wrapping
+    /// flow. Pills are single-line and size to their label, and the layout
+    /// repartitions rows to even widths, so any action count lays out
+    /// cleanly — no orphan grid cells, wrapped labels, or clipped rows.
     private var staggeredQuickActions: some View {
-        LazyVGrid(
-            columns: [
-                GridItem(.flexible(), spacing: 12),
-                GridItem(.flexible(), spacing: 12),
-            ],
-            spacing: 12
-        ) {
+        FlowLayout(spacing: 8, alignment: .center, balanced: true) {
             ForEach(Array(effectiveQuickActions.enumerated()), id: \.element.id) { index, action in
                 QuickActionButton(action: action, onTap: onQuickAction)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 15)
                     .animation(
-                        theme.springAnimation().delay(0.35 + Double(index) * 0.05),
+                        theme.springAnimation().delay(0.3 + Double(index) * 0.04),
                         value: hasAppeared
                     )
             }
         }
-        .frame(maxWidth: 440)
+        .frame(maxWidth: 460)
+        .padding(.top, 8)
     }
 
     // MARK: - Helpers
@@ -1118,6 +1127,9 @@ private struct ChatEmptyStateNoModels: View {
 
 // MARK: - Quick Action Button (shared by Chat & Work empty states)
 
+/// One compact suggestion pill: glyph + single-line label in a capsule.
+/// Sized to its content so a wrapping flow can pack any number of actions
+/// into tidy centered rows.
 struct QuickActionButton: View {
     let action: AgentQuickAction
     let onTap: (String) -> Void
@@ -1129,51 +1141,42 @@ struct QuickActionButton: View {
         Button {
             onTap(action.prompt)
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: 7) {
                 Image(systemName: action.icon)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
-                    .frame(width: 20)
 
-                // 2-line ceiling lets long localized labels and the rare
-                // 2-word AI emit ("Strategy Review") wrap instead of
-                // truncating with an ellipsis. `minimumScaleFactor`
-                // shrinks the type as a last resort. `fixedSize(vertical)`
-                // grows the row instead of clipping when wrapping fires.
+                // Single line, capped so an unusually long custom-agent
+                // label truncates instead of producing a pill wider than
+                // the flow container.
                 Text(action.text)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.85)
-                    .multilineTextAlignment(.leading)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 280, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .opacity(isHovered ? 1 : 0)
-                    .offset(x: isHovered ? 0 : -5)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 16)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 8)
             .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                Capsule()
                     .fill(
                         isHovered
                             ? theme.secondaryBackground
-                            : theme.secondaryBackground.opacity(theme.isDark ? 0.5 : 0.8)
+                            : theme.secondaryBackground.opacity(theme.isDark ? 0.45 : 0.7)
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        Capsule()
                             .strokeBorder(
                                 isHovered
-                                    ? theme.primaryBorder
-                                    : theme.primaryBorder.opacity(theme.isDark ? 0.3 : 0.5),
+                                    ? theme.accentColor.opacity(0.4)
+                                    : theme.primaryBorder.opacity(theme.isDark ? 0.35 : 0.55),
                                 lineWidth: 1
                             )
                     )
             )
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .onHover { hovering in

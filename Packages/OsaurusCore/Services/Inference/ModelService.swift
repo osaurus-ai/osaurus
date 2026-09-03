@@ -53,6 +53,14 @@ struct GenerationParameters: Sendable {
     /// MLX cache layer — vmlx's `CacheCoordinator` handles prefix reuse
     /// autonomously via content addressing.
     let sessionId: String?
+    /// Stable identity for one local inference step. Live Activity and
+    /// cancellation use this instead of a model name so disconnecting one
+    /// client cannot stop unrelated requests sharing the same model.
+    let activityID: UUID
+    /// User-visible trigger attribution. Separate from `requestSource`, which
+    /// also controls residency ownership and therefore must remain `.chatUI`
+    /// for delegated handoff/reload semantics.
+    let activitySource: RequestSource
     /// Optional TTFT trace for diagnostic timing instrumentation.
     let ttftTrace: TTFTTrace?
     /// Stable per-logical-step idempotency token. Forwarded only to the
@@ -96,10 +104,30 @@ struct GenerationParameters: Sendable {
     /// argument so it survives the whole ChatEngine → MLXService → ModelRuntime
     /// path without every layer having to re-plumb it.
     let loadIntent: ModelLoadIntent
+
+    /// Per-agent options for the Claude Code subprocess backend (mode +
+    /// tool opt-ins + working directory). Nil everywhere else; only
+    /// `ClaudeCodeService` reads it.
+    ///
+    /// Rides on `GenerationParameters` for the same reason `loadIntent` does:
+    /// it has to survive the whole ChatEngine → service path without every
+    /// layer re-plumbing an extra argument.
+    let claudeCode: ClaudeCodeRunOptions?
+
     /// Preserve a non-nil residency owner when this request reuses an already
     /// resident model. Nested subagents set this so using an API/plugin-owned
     /// resident cannot silently convert it into a chat-owned unload target.
     let preserveExistingResidencyOwner: Bool
+
+    /// Internal utility generation (chat title, follow-up suggestions, memory
+    /// distillation, transcript cleanup): its prompt embeds per-turn content
+    /// and is never an exact prefix of a future request, so the engine must
+    /// not persist its prompt boundaries — measured live, one chat turn wrote
+    /// six ~150MB hybrid KV records for its title/suggestion prompts alone.
+    /// The request still restores whatever prefix the cache already holds.
+    /// Rides on `GenerationParameters` for the same reason `loadIntent` does.
+    let auxiliaryCacheIntent: Bool
+
 
     init(
         temperature: Float?,
@@ -116,6 +144,8 @@ struct GenerationParameters: Sendable {
         jsonMode: Bool = false,
         modelOptions: [String: ModelOptionValue] = [:],
         sessionId: String? = nil,
+        activityID: UUID = UUID(),
+        activitySource: RequestSource? = nil,
         ttftTrace: TTFTTrace? = nil,
         idempotencyKey: String? = nil,
         runAsRemoteAgent: Bool = false,
@@ -124,7 +154,10 @@ struct GenerationParameters: Sendable {
         cacheStableSystemPrefix: String? = nil,
         requestSource: RequestSource = .httpAPI,
         loadIntent: ModelLoadIntent = .interactive,
-        preserveExistingResidencyOwner: Bool = false
+        claudeCode: ClaudeCodeRunOptions? = nil,
+        preserveExistingResidencyOwner: Bool = false,
+        auxiliaryCacheIntent: Bool = false
+
     ) {
         self.temperature = temperature
         self.maxTokens = maxTokens
@@ -140,6 +173,8 @@ struct GenerationParameters: Sendable {
         self.jsonMode = jsonMode
         self.modelOptions = modelOptions
         self.sessionId = sessionId
+        self.activityID = activityID
+        self.activitySource = activitySource ?? requestSource
         self.ttftTrace = ttftTrace
         self.idempotencyKey = idempotencyKey
         self.runAsRemoteAgent = runAsRemoteAgent
@@ -148,7 +183,9 @@ struct GenerationParameters: Sendable {
         self.cacheStableSystemPrefix = cacheStableSystemPrefix
         self.requestSource = requestSource
         self.loadIntent = loadIntent
+        self.claudeCode = claudeCode
         self.preserveExistingResidencyOwner = preserveExistingResidencyOwner
+        self.auxiliaryCacheIntent = auxiliaryCacheIntent
     }
 }
 
@@ -339,6 +376,29 @@ enum StreamingReasoningItemHint: Sendable {
     }
 }
 
+/// In-band transport for one completed, provider-authored Responses output
+/// Item. The item is kept as generic JSON so newer OpenAI item fields survive
+/// without waiting for Osaurus's typed response models to catch up. ChatView
+/// persists these in wire order and the Responses adapter replays them
+/// verbatim on subsequent requests.
+enum StreamingResponsesOutputItemHint: Sendable {
+    private static let prefix = "\u{FFFE}responses_output_item:"
+
+    static func encode(_ item: JSONValue) -> String {
+        guard let data = try? JSONEncoder.osaurusCanonical().encode(item) else {
+            return prefix + "null"
+        }
+        return prefix + String(decoding: data, as: UTF8.self)
+    }
+
+    static func decode(_ delta: String) -> JSONValue? {
+        guard delta.hasPrefix(prefix) else { return nil }
+        let json = String(delta.dropFirst(prefix.count))
+        guard let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(JSONValue.self, from: data)
+    }
+}
+
 /// In-band signaling for local prefill progress before the first generated
 /// token. Payload is JSON so additional fields can be added later without
 /// changing the sentinel prefix or colliding with visible model text.
@@ -402,13 +462,30 @@ enum StreamingStatsHint: Sendable {
     /// (incl. KV-reused prefix) was processed before the first generated
     /// token, the headline TTFT driver for long-context Mac runs.
     private static let prefillFlagPrefix = "prefill="
+    /// Provider-reported prompt usage and the subset served from cache. These
+    /// stay optional because local runtimes and many compatible providers do
+    /// not report them.
+    private static let inputTokensFlagPrefix = "input="
+    private static let cachedInputTokensFlagPrefix = "cached_input="
+    /// Native-MTP decode-path evidence for this generation, carried as one
+    /// flag so older decoders skip it whole. Format:
+    /// `mtp=<depth>/<activeDepth>/<verifyCalls>/<accepted>/<bonus>/<rejected>/<arFallback>/<downshifts>[/<percent-encoded reason>]`.
+    /// Absent = native MTP did not produce these tokens (not requested OR
+    /// gate-excluded — same meaning as `GenerateCompletionInfo.nativeMTPStats
+    /// == nil`). The fallback reason is percent-encoded because vmlx emits
+    /// reasons like `adaptive_accept_ratio=0.33_depth=1` whose `=` would
+    /// otherwise be ambiguous and a future `,` would split the flag list.
+    private static let mtpFlagPrefix = "mtp="
 
     static func encode(
         tokenCount: Int,
         tokensPerSecond: Double,
         unclosedReasoning: Bool = false,
         stopReason: String? = nil,
-        prefillTokensPerSecond: Double? = nil
+        prefillTokensPerSecond: Double? = nil,
+        inputTokenCount: Int? = nil,
+        cachedInputTokenCount: Int? = nil,
+        mtp: MTPStatsSummary? = nil
     ) -> String {
         let tps = String(format: "%.4f", locale: posixLocale, tokensPerSecond)
         var flags: [String] = []
@@ -425,6 +502,27 @@ enum StreamingStatsHint: Sendable {
             let pf = String(format: "%.4f", locale: posixLocale, prefillTokensPerSecond)
             flags.append("\(prefillFlagPrefix)\(pf)")
         }
+        if let inputTokenCount, inputTokenCount >= 0 {
+            flags.append("\(inputTokensFlagPrefix)\(inputTokenCount)")
+        }
+        if let cachedInputTokenCount, cachedInputTokenCount >= 0 {
+            flags.append("\(cachedInputTokensFlagPrefix)\(cachedInputTokenCount)")
+        }
+        if let mtp {
+            var fields = [
+                "\(mtp.depth)", "\(mtp.activeDepth)", "\(mtp.verifyCalls)",
+                "\(mtp.acceptedDraftTokens)", "\(mtp.bonusTokens)",
+                "\(mtp.rejectedTokens)", "\(mtp.arFallbackTokens)",
+                "\(mtp.adaptiveDownshifts)",
+            ]
+            if let reason = mtp.adaptiveFallbackReason,
+                let encoded = reason.addingPercentEncoding(
+                    withAllowedCharacters: .alphanumerics),
+                !encoded.isEmpty {
+                fields.append(encoded)
+            }
+            flags.append("\(mtpFlagPrefix)\(fields.joined(separator: "/"))")
+        }
         let suffix = flags.isEmpty ? "" : ";\(flags.joined(separator: ","))"
         return "\(statsPrefix)\(tokenCount);\(tps)\(suffix)"
     }
@@ -436,7 +534,10 @@ enum StreamingStatsHint: Sendable {
         tokensPerSecond: Double,
         unclosedReasoning: Bool,
         stopReason: String?,
-        prefillTokensPerSecond: Double?
+        prefillTokensPerSecond: Double?,
+        inputTokenCount: Int?,
+        cachedInputTokenCount: Int?,
+        mtp: MTPStatsSummary?
     )? {
         guard delta.hasPrefix(statsPrefix) else { return nil }
         let payload = delta.dropFirst(statsPrefix.count)
@@ -460,7 +561,41 @@ enum StreamingStatsHint: Sendable {
             guard flag.hasPrefix(prefillFlagPrefix) else { return nil }
             return Double(flag.dropFirst(prefillFlagPrefix.count))
         }.first
-        return (count, tps, unclosed, stopReason, prefillTokensPerSecond)
+        let inputTokenCount = flags.compactMap { flag -> Int? in
+            guard flag.hasPrefix(inputTokensFlagPrefix) else { return nil }
+            return Int(flag.dropFirst(inputTokensFlagPrefix.count))
+        }.first
+        let cachedInputTokenCount = flags.compactMap { flag -> Int? in
+            guard flag.hasPrefix(cachedInputTokensFlagPrefix) else { return nil }
+            return Int(flag.dropFirst(cachedInputTokensFlagPrefix.count))
+        }.first
+        let mtp = flags.compactMap { flag -> MTPStatsSummary? in
+            guard flag.hasPrefix(mtpFlagPrefix) else { return nil }
+            let fields = flag.dropFirst(mtpFlagPrefix.count).split(separator: "/")
+            guard fields.count >= 8,
+                let depth = Int(fields[0]), let active = Int(fields[1]),
+                let verify = Int(fields[2]), let accepted = Int(fields[3]),
+                let bonus = Int(fields[4]), let rejected = Int(fields[5]),
+                let arFallback = Int(fields[6]), let downshifts = Int(fields[7])
+            else { return nil }
+            let reason = fields.count >= 9
+                ? String(fields[8]).removingPercentEncoding : nil
+            return MTPStatsSummary(
+                depth: depth, activeDepth: active, verifyCalls: verify,
+                acceptedDraftTokens: accepted, bonusTokens: bonus,
+                rejectedTokens: rejected, arFallbackTokens: arFallback,
+                adaptiveDownshifts: downshifts, adaptiveFallbackReason: reason)
+        }.first
+        return (
+            count,
+            tps,
+            unclosed,
+            stopReason,
+            prefillTokensPerSecond,
+            inputTokenCount,
+            cachedInputTokenCount,
+            mtp
+        )
     }
 }
 

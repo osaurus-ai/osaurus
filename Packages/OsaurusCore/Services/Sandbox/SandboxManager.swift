@@ -48,8 +48,8 @@
 
         /// Fallback source for the guest kernel: the full Kata tarball,
         /// verified by digest before extraction. Release builds bundle the
-        /// extracted 14 MiB `vmlinux` in the signed app instead (see
-        /// `SandboxRuntimeAssets`), so this 277 MiB download only runs for
+        /// extracted ~18 MiB `vmlinux` in the signed app instead (see
+        /// `SandboxRuntimeAssets`), so this ~665 MiB download only runs for
         /// dev builds or bundles stripped of the resource. Mismatch is
         /// fail-closed (the file is deleted and provisioning aborts).
         private static let kernelDownloadURLs: [DownloadSource] = [
@@ -59,26 +59,10 @@
             )
         ]
 
-        /// Fail-closed fallback for the initfs when the digest-pinned
-        /// `vminit` OCI pull (the primary path — see
-        /// `SandboxRuntimeAssets.initfsReference`) is unreachable. The blob
-        /// lives on R2 (mutable bucket) so digest verification is the only
-        /// thing standing between a CDN compromise and an attacker-chosen
-        /// guest filesystem. Update this constant when the blob is
-        /// intentionally rotated — it must stay protocol-compatible with
-        /// the pinned Containerization SDK.
-        private static let initfsDownloadURLs: [DownloadSource] = [
-            // "https://github.com/osaurus-ai/osaurus/releases/latest/download/init.ext4"
-            DownloadSource(
-                url: "https://pub-5f3c2bf70e93411790bbcd6419d2f8fa.r2.dev/init.ext4",
-                expectedSHA256: "fa08b6993e3682d88bfb964e02bdf4ca234df616bac047f24cec6a4548a42aea"
-            )
-        ]
-
         /// Bound the cost of hashing — well above either current artifact
-        /// (Kata tarball ~30 MB, initfs ~100 MB) but stops a runaway
+        /// (Kata tarball ~665 MiB, initfs ~100 MiB) but stops a runaway
         /// download from silently growing into a multi-GB hash job.
-        private static let maxArtifactDownloadBytes: Int = 512 * 1024 * 1024
+        private static let maxArtifactDownloadBytes: Int = 768 * 1024 * 1024
 
         /// Host-side Unix socket path for the bridge server (relayed into guest via vsock).
         /// Symlinks are resolved because a Unix socket path is capped at 104
@@ -510,6 +494,11 @@
                 cfg.memoryInBytes = UInt64(inputs.memoryGB).gib()
                 cfg.process.arguments = ["sleep", "infinity"]
                 cfg.process.workingDirectory = "/"
+                // Pin the security boundary explicitly instead of inheriting
+                // SDK defaults. Containerization 0.41 narrows its default to
+                // the OCI baseline; keeping the policy here prevents a future
+                // dependency change from silently restoring privileged caps.
+                Self.applyProcessRestrictions(to: &cfg.process)
 
                 let bridgeRelay = UnixSocketConfiguration(
                     source: URL(fileURLWithPath: inputs.bridgeSocketPath),
@@ -519,6 +508,16 @@
                 cfg.sockets = [bridgeRelay]
                 cfg.mounts.append(.share(source: inputs.workspace, destination: "/workspace"))
             }
+        }
+
+        /// Apply the same explicit process boundary to init and every exec
+        /// path. Kept as a pure seam so the capability contract can be tested
+        /// without booting a VM.
+        nonisolated static func applyProcessRestrictions(
+            to config: inout LinuxProcessConfiguration
+        ) {
+            config.capabilities = .defaultOCICapabilities
+            config.noNewPrivileges = true
         }
 
         /// Warm-restart create: hands the persisted `rootfs.ext4` to the
@@ -1787,6 +1786,7 @@
             let process = try await container.exec(UUID().uuidString) { config in
                 config.arguments = args
                 config.environmentVariables = environ
+                Self.applyProcessRestrictions(to: &config)
                 config.stdin = stdin
                 config.stdout = stdout
                 config.stderr = stderr
@@ -2492,13 +2492,11 @@
 
         // MARK: - Private: InitFS Management
 
-        /// Resolve the guest initfs, preferring the digest-pinned `vminit`
-        /// OCI artifact (~64 MiB compressed, pulled with the SDK's
-        /// concurrent layer downloader) over the legacy 256 MiB raw ext4
-        /// blob. The raw-blob mirror remains as a fail-closed (digest
-        /// verified) fallback when the registry is unreachable. Both paths
-        /// stage the same `initfs.ext4` file, so a cached file from either
-        /// origin short-circuits the whole function.
+        /// Resolve the guest initfs from the digest-pinned `vminit` OCI
+        /// artifact (~64 MiB compressed, pulled with the SDK's concurrent
+        /// layer downloader). Do not fall back to the legacy mutable raw-ext4
+        /// mirror: it carries the 0.35 protocol and is incompatible with the
+        /// 0.41 SDK. A registry failure is surfaced and can be retried.
         private func ensureInitFS(store: ImageStore) async throws -> Containerization.Mount {
             let stagedPath = OsaurusPaths.containerInitFSFile()
 
@@ -2508,20 +2506,8 @@
                 do {
                     try await Self.buildInitFSFromOCI(store: store, at: stagedPath)
                 } catch {
-                    debugLog(
-                        "[Sandbox] vminit OCI pull failed (\(error.localizedDescription)); falling back to raw initfs mirror"
-                    )
-                    do {
-                        await startStep(.downloadInitFS, detail: L("Resolving CDN mirror"))
-                        try await downloadFile(
-                            from: Self.initfsDownloadURLs,
-                            to: stagedPath,
-                            stepID: .downloadInitFS
-                        )
-                    } catch {
-                        await endStep(.downloadInitFS, status: .failed)
-                        throw error
-                    }
+                    await endStep(.downloadInitFS, status: .failed)
+                    throw error
                 }
                 await endStep(.downloadInitFS, status: .completed)
             }
@@ -2565,9 +2551,9 @@
             try OsaurusPaths.ensureExists(kernelDir)
 
             // Preferred path: install the kernel bundled in the signed app
-            // (release builds stage the extracted, digest-verified vmlinux
-            // in Resources/SandboxRuntime). Near-instant: one hash + one
-            // copy instead of a 277 MiB download.
+            // (release builds stage the extracted, digest-verified production
+            // vmlinux in Resources/SandboxRuntime). Near-instant: one hash +
+            // one copy instead of a ~665 MiB download.
             if let bundled = SandboxRuntimeAssets.bundledKernelURL() {
                 await startStep(.downloadKernel, detail: L("Installing bundled kernel"))
                 do {
@@ -2595,7 +2581,7 @@
 
             await startStep(.downloadKernel, detail: L("Resolving GitHub mirror"))
 
-            let stableTarball = kernelDir.appendingPathComponent("kata.tar.xz")
+            let stableTarball = kernelDir.appendingPathComponent("kata.tar.zst")
             do {
                 try await downloadFile(
                     from: Self.kernelDownloadURLs,
@@ -2660,48 +2646,26 @@
                     "[SandboxManager] tar exit: \(tarProcess.terminationStatus), stderr: \(tarErrOutput.prefix(200))"
                 )
 
-                // vmlinux.container is a symlink → vmlinux-X.Y.Z-N in the Kata tarball.
-                // Resolve it by copying (which follows symlinks) rather than moving.
                 let expectedPath =
                     extractDir
-                    .appendingPathComponent("opt/kata/share/kata-containers/vmlinux.container")
+                    .appendingPathComponent(SandboxRuntimeAssets.kernelArchivePath)
 
-                let extractedKernel: URL
-                if FileManager.default.fileExists(atPath: expectedPath.path) {
-                    extractedKernel = expectedPath
-                } else {
-                    let findProcess = Process()
-                    findProcess.executableURL = URL(fileURLWithPath: "/usr/bin/find")
-                    findProcess.arguments = [
-                        extractDir.path, "-name", "vmlinux*", "!", "-name", "vmlinuz*", "!", "-name", "*.container",
-                    ]
-                    let findPipe = Pipe()
-                    findProcess.standardOutput = findPipe
-                    findProcess.standardError = FileHandle.nullDevice
-                    try findProcess.run()
-                    findProcess.waitUntilExit()
-
-                    let findOutput =
-                        String(data: findPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                    let foundPaths = findOutput.split(separator: "\n").map(String.init)
-
-                    guard let firstPath = foundPaths.first, !firstPath.isEmpty else {
-                        throw SandboxError.provisionFailed("No vmlinux kernel found in Kata tarball")
-                    }
-                    extractedKernel = URL(fileURLWithPath: firstPath)
+                guard FileManager.default.fileExists(atPath: expectedPath.path) else {
+                    throw SandboxError.provisionFailed(
+                        "Production kernel \(SandboxRuntimeAssets.kernelVersion) not found in Kata tarball"
+                    )
                 }
 
-                let resolvedKernel = extractedKernel.resolvingSymlinksInPath()
                 // The tarball is digest-verified before extraction, but pin
                 // the extracted binary too so the bundled-kernel path and
                 // the download path install byte-identical kernels.
                 try Self.verifySHA256(
-                    of: resolvedKernel,
+                    of: expectedPath,
                     expected: SandboxRuntimeAssets.kernelSHA256,
                     maxBytes: Self.maxArtifactDownloadBytes
                 )
                 try? FileManager.default.removeItem(at: kernelPath)
-                try FileManager.default.copyItem(at: resolvedKernel, to: kernelPath)
+                try FileManager.default.copyItem(at: expectedPath, to: kernelPath)
             }.value
         }
 
@@ -2874,6 +2838,7 @@
             let process = try await container.exec(UUID().uuidString) { config in
                 config.arguments = args
                 config.environmentVariables = environ
+                Self.applyProcessRestrictions(to: &config)
                 config.stdout = stdoutWire
                 config.stderr = stderrWire
             }

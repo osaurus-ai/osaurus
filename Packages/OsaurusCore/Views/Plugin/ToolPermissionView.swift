@@ -30,6 +30,17 @@ struct ToolPermissionView: View {
     var spawnModelOptions: [SpawnModelChoice] = []
     var initialSpawnModel: String? = nil
     var onModelSelected: ((String) -> Void)? = nil
+    /// Knowledge writes replace the generic JSON arguments block with a
+    /// per-document manifest and diffs. Approving a document replacement out
+    /// of a pretty-printed JSON blob is not informed consent, and knowledge
+    /// consent moved to this modal precisely so it could be reviewed here.
+    /// Nil for every other tool, which keeps the JSON block.
+    var knowledgeWritePreview: KnowledgeWritePreview? = nil
+    /// Hides "Always Allow" (the caller also passes a nil `onAllowForRun`) so
+    /// this call cannot be pre-granted. Set for destructive tools where a
+    /// blanket grant would be the wrong thing to be able to give. See
+    /// `PerCallApprovalTool`.
+    var perCallApprovalOnly: Bool = false
 
     @ObservedObject private var themeManager = ThemeManager.shared
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -87,7 +98,7 @@ struct ToolPermissionView: View {
                     .offset(y: appeared ? 0 : -8)
 
                 if !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    ScrollView(.vertical, showsIndicators: true) {
+                    ContentSizedScrollView(maxHeight: 140) {
                         Text(description)
                             .font(.system(size: 13))
                             .foregroundColor(theme.secondaryText)
@@ -96,14 +107,19 @@ struct ToolPermissionView: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity)
                     }
-                    .frame(maxHeight: 140)
                     .padding(.top, 8)
                     .padding(.horizontal, 24)
                     .opacity(appeared ? 1 : 0)
                     .offset(y: appeared ? 0 : -4)
                 }
 
-                if hasArguments {
+                if let knowledgeWritePreview {
+                    KnowledgeWritePreviewView(preview: knowledgeWritePreview)
+                        .padding(.top, 12)
+                        .padding(.horizontal, 24)
+                        .opacity(appeared ? 1 : 0)
+                        .offset(y: appeared ? 0 : 4)
+                } else if hasArguments {
                     argumentsBlock
                         .padding(.top, 12)
                         .padding(.horizontal, 24)
@@ -243,16 +259,16 @@ struct ToolPermissionView: View {
                 .buttonStyle(.plain)
             }
 
-            ScrollView([.vertical, .horizontal], showsIndicators: true) {
+            ContentSizedScrollView(maxHeight: 200) {
                 Text(prettyArguments)
                     .font(theme.monoFont(size: 11.5))
                     .foregroundColor(theme.primaryText.opacity(0.9))
                     .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: 160)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(theme.codeBlockBackground))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(
@@ -285,11 +301,13 @@ struct ToolPermissionView: View {
                     action: onAllow
                 )
             }
-            HStack(spacing: 10) {
-                if let onAllowForRun {
-                    RunAllowButton(action: onAllowForRun)
+            if !perCallApprovalOnly {
+                HStack(spacing: 10) {
+                    if let onAllowForRun {
+                        RunAllowButton(action: onAllowForRun)
+                    }
+                    AlwaysAllowButton(action: { showAlwaysAllowConfirm = true })
                 }
-                AlwaysAllowButton(action: { showAlwaysAllowConfirm = true })
             }
         }
     }
@@ -302,6 +320,28 @@ struct ToolPermissionView: View {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             withAnimation(theme.animationQuick()) { copied = false }
         }
+    }
+}
+
+/// Vertical scroll area sized to its content up to `maxHeight`. The card sits
+/// under `.fixedSize`, which lays children out at their ideal height — and a
+/// plain ScrollView's ideal height is its minimum, so capped scroll areas can
+/// collapse to a sliver depending on which layout pass the panel settles on.
+/// Measuring the content and setting an explicit height sidesteps that.
+private struct ContentSizedScrollView<Content: View>: View {
+    let maxHeight: CGFloat
+    @ViewBuilder let content: () -> Content
+
+    @State private var contentHeight: CGFloat?
+
+    var body: some View {
+        ScrollView(.vertical, showsIndicators: true) {
+            content()
+                .onGeometryChange(for: CGFloat.self, of: \.size.height) {
+                    contentHeight = $0
+                }
+        }
+        .frame(height: min(contentHeight ?? maxHeight, maxHeight))
     }
 }
 
@@ -478,5 +518,70 @@ private struct AlwaysAllowButton: View {
         .preferredColorScheme(.dark)
         .padding(40)
         .background(Color.black.opacity(0.8))
+    }
+
+    /// The batch shape that motivated this rendering: the 62-document import
+    /// from osaurus#2439, shown as a manifest rather than a JSON blob.
+    #Preview("Tool Permission - Knowledge Batch Write") {
+        ToolPermissionView(
+            toolName: "write_knowledge",
+            description: "Create or replace documents in a knowledge collection.",
+            argumentsJSON: "{}",
+            onAllow: { print("Allowed") },
+            onDeny: { print("Denied") },
+            onAlwaysAllow: { print("Always Allow") },
+            knowledgeWritePreview: KnowledgeWritePreview(
+                collectionName: "packaging",
+                entries: [
+                    KnowledgeWritePreviewEntry(
+                        relPath: "usage/how-to-deploy.md",
+                        operation: .replace,
+                        diff: """
+                            --- usage/how-to-deploy.md (before)
+                            +++ usage/how-to-deploy.md (after)
+                            -Applies to PSAppDeployToolkit v3.
+                            +Applies to PSAppDeployToolkit v4.1.
+                            """,
+                        diffTruncated: false,
+                        deletedContent: "",
+                        addedLines: 1,
+                        removedLines: 1,
+                        problem: nil
+                    ),
+                    KnowledgeWritePreviewEntry(
+                        relPath: "getting-started/download.md",
+                        operation: .create,
+                        diff: """
+                            --- getting-started/download.md (before (new file))
+                            +++ getting-started/download.md (after)
+                            +# Download
+                            +Install from the PowerShell Gallery.
+                            """,
+                        diffTruncated: false,
+                        deletedContent: "",
+                        addedLines: 2,
+                        removedLines: 0,
+                        problem: nil
+                    ),
+                    KnowledgeWritePreviewEntry(
+                        relPath: "manual.pdf",
+                        operation: .create,
+                        diff: "",
+                        diffTruncated: false,
+                        deletedContent: "",
+                        addedLines: 0,
+                        removedLines: 0,
+                        problem: "Path manual.pdf is not a markdown document; "
+                            + "only markdown documents can be written."
+                    ),
+                ],
+                rationale: "Replace the v3 wiki content with the 4.1 docs site.",
+                parseError: nil
+            )
+        )
+        .environment(\.theme, LightTheme())
+        .preferredColorScheme(.light)
+        .padding(40)
+        .background(Color.gray.opacity(0.2))
     }
 #endif

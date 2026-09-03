@@ -94,6 +94,11 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
     /// sorted) — the report-embedded record of what composition this run
     /// measured, decodable without the profile file.
     public let experimentFeatures: [String]?
+    /// Native-MTP control the run executed under (`off`/`auto`/`d1`..`d3`,
+    /// from `--mtp`). nil = no explicit control (eval-process default
+    /// resolution, which is Auto). Reports carrying different values are
+    /// not silently comparable.
+    public let mtpControl: String?
 
     public init(
         chip: String? = nil,
@@ -119,7 +124,8 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
         simulatedRamMb: Int? = nil,
         experimentProfile: String? = nil,
         experimentProfileHash: String? = nil,
-        experimentFeatures: [String]? = nil
+        experimentFeatures: [String]? = nil,
+        mtpControl: String? = nil
     ) {
         self.chip = chip
         self.totalRamMb = totalRamMb
@@ -145,6 +151,7 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
         self.experimentProfile = experimentProfile
         self.experimentProfileHash = experimentProfileHash
         self.experimentFeatures = experimentFeatures
+        self.mtpControl = mtpControl
     }
 
     /// Copy with an experiment profile stamped in — the CLI applies this
@@ -208,7 +215,8 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
             lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled,
             powerSource: providingPowerSource(),
             contributor: nonEmpty(environment["OSAURUS_EVALS_CONTRIBUTOR"]),
-            simulatedRamMb: simulatedRamMb(environment: environment)
+            simulatedRamMb: simulatedRamMb(environment: environment),
+            mtpControl: EvalMTPControlState.requested?.label
         )
     }
 

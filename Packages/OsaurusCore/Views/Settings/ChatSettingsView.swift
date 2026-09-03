@@ -10,8 +10,9 @@
 //  load-modify-write on `ChatConfiguration` touching only the chat-owned
 //  fields (top-P, tool attempts, clipboard, greeting
 //  persona, compaction model) so the General settings' hotkey + core-model
-//  values — which live in the same struct — are never clobbered. The default-agent
-//  persona / generation knobs persist to `DefaultAgentConfiguration`.
+//  values — which live in the same struct — are never clobbered. The
+//  default-agent persona / generation knobs live in Settings →
+//  Orchestrator (`OrchestratorSettingsView` → `DefaultAgentConfiguration`).
 //  Tools and memory are deliberately not surfaced here: the default
 //  agent's tools toggle lives in the Agents tab and the global memory
 //  switch in the Memory tab, so this view never writes either.
@@ -30,22 +31,18 @@ struct ChatSettingsView: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     // Chat settings state
-    @State private var tempSystemPrompt: String = ""
-    @State private var tempChatTemperature: String = ""
-    @State private var tempChatMaxTokens: String = ""
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
     @State private var tempEnableClipboardMonitoring: Bool = false
     @State private var tempWarmModelsOnLoad: Bool = true
     /// AI-generated chat titles from the first completed exchange. Default
-    /// off while the feature bakes across releases (see
-    /// `ChatConfiguration.autoGenerateChatTitles`).
-    @State private var tempAutoGenerateChatTitles: Bool = false
+    /// on (see `ChatConfiguration.autoGenerateChatTitles`).
+    @State private var tempAutoGenerateChatTitles: Bool = true
     /// Master switch for AI-generated follow-up questions after a completed
-    /// turn. Default off while the feature bakes across releases (see
+    /// turn. Default on (see
     /// `ChatConfiguration.generateFollowUpSuggestions`). Per-agent prompt /
     /// rules / model tweaks live in each agent's settings.
-    @State private var tempGenerateFollowUpSuggestions: Bool = false
+    @State private var tempGenerateFollowUpSuggestions: Bool = true
     /// Smooth streaming: pace the visible reveal at ~180 tok/s regardless
     /// of how fast / bursty the network delivers tokens. Default on.
     /// Bound to `UserDefaults` key `chatSmoothStreamingEnabled` which
@@ -73,21 +70,21 @@ struct ChatSettingsView: View {
     @State private var showAutoAllowAllConfirm = false
     /// Roll up runs of consecutive thinking / tool-call rows into a single
     /// expandable "Worked for …" row so agent loops don't push the
-    /// conversation out of view. Default off. Bound to `UserDefaults` key
+    /// conversation out of view. Default on. Bound to `UserDefaults` key
     /// `ContentBlock.ActivityRollupSetting.defaultsKey`, read by
     /// `BlockMemoizer` on every display rebuild. Applied immediately (a
     /// notification rebuilds open chats), so it's excluded from the
     /// debounced save baseline.
     @AppStorage(ContentBlock.ActivityRollupSetting.defaultsKey)
-    private var activityRollupEnabled: Bool = false
+    private var activityRollupEnabled: Bool = true
     /// Make ⌘N start a new chat in the frontmost chat window (the sidebar
     /// "New Chat" action) instead of opening a new window; "New Window" then
-    /// moves to ⇧⌘N. Default off to preserve the historical ⌘N behavior.
+    /// moves to ⇧⌘N. Default on.
     /// Bound to `UserDefaults` key `NewChatShortcutSetting.defaultsKey`,
     /// read by the app's File menu commands. Applied immediately, so it's
     /// excluded from the debounced save baseline.
     @AppStorage(NewChatShortcutSetting.defaultsKey)
-    private var cmdNStartsNewChatInCurrentWindow: Bool = false
+    private var cmdNStartsNewChatInCurrentWindow: Bool = true
     /// Model that runs LLM context compaction (summarizing older messages
     /// when a chat outgrows its context window). Same provider/name split
     /// as the Core Model picker; empty = "ask on first use" (the first-run
@@ -317,15 +314,8 @@ struct ChatSettingsView: View {
     @ViewBuilder private var chatSection: some View {
         SettingsSection(title: "Chat", icon: "text.bubble") {
             VStack(alignment: .leading, spacing: 20) {
-                // System Prompt
-                StyledSettingsTextArea(
-                    label: "System Prompt",
-                    text: $tempSystemPrompt,
-                    placeholder: "Enter the default Osaurus agent's instructions...",
-                    hint: "Optional. Persona for the built-in Osaurus agent."
-                )
-                .settingsLandingAnchor("settings.chat.systemPrompt")
-
+                // The default agent's persona / temperature / max tokens
+                // moved to Settings → Orchestrator (OrchestratorSettingsView).
                 SettingsToggle(
                     title: L("Smooth Streaming"),
                     description:
@@ -421,26 +411,6 @@ struct ChatSettingsView: View {
     @ViewBuilder private var generationSection: some View {
         SettingsSection(title: "Generation", icon: "slider.horizontal.3") {
             VStack(alignment: .leading, spacing: 12) {
-                SettingsSliderField(
-                    label: "Temperature",
-                    help: "Randomness (0–2). Higher = more creative",
-                    text: $tempChatTemperature,
-                    range: 0 ... 2,
-                    step: 0.1,
-                    defaultValue: 0.7,
-                    formatString: "%.1f",
-                    anchorId: "settings.chat.temperature"
-                )
-                SettingsStepperField(
-                    label: "Default Agent Max Output Tokens",
-                    help:
-                        "Optional per-response output cap for the default agent. Leave blank to inherit the active model bundle's generation_config maximum. This is not the model context window or KV retention.",
-                    text: $tempChatMaxTokens,
-                    range: 1 ... 65536,
-                    step: 1024,
-                    defaultValue: 16384,
-                    anchorId: "settings.chat.maxTokens"
-                )
                 SettingsSliderField(
                     label: "Top P Override",
                     help: "Sampling diversity (0–1)",
@@ -711,25 +681,17 @@ struct ChatSettingsView: View {
         Task { @MainActor in
             await Task.yield()
             let chat: ChatConfiguration = ChatConfigurationStore.load()
-            let defaultAgent = DefaultAgentConfigurationStore.load()
-            applyLoadedConfiguration(chat: chat, defaultAgent: defaultAgent)
+            applyLoadedConfiguration(chat: chat)
         }
     }
 
-    private func applyLoadedConfiguration(
-        chat: ChatConfiguration,
-        defaultAgent: DefaultAgentConfiguration
-    ) {
-        // The Default agent's persona and generation knobs live on
-        // `DefaultAgentConfiguration` (split off from `ChatConfiguration`);
-        // the numeric generation knobs (top-P and tool
-        // attempts) and clipboard settings live on `ChatConfiguration`.
-        // Tools and memory are intentionally NOT surfaced here: the default
-        // agent's tools toggle lives in the Agents tab and the global memory
-        // switch lives in the Memory tab.
-        tempSystemPrompt = defaultAgent.systemPrompt
-        tempChatTemperature = defaultAgent.temperature.map { String($0) } ?? ""
-        tempChatMaxTokens = defaultAgent.maxTokens.map(String.init) ?? ""
+    private func applyLoadedConfiguration(chat: ChatConfiguration) {
+        // The Default agent's persona and generation knobs moved to
+        // Settings → Orchestrator (`DefaultAgentConfiguration`); the numeric
+        // generation knobs (top-P and tool attempts) and clipboard settings
+        // live on `ChatConfiguration`. Tools and memory are intentionally
+        // NOT surfaced here: the default agent's tools toggle lives in the
+        // Agents tab and the global memory switch lives in the Memory tab.
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
         tempEnableClipboardMonitoring = chat.enableClipboardMonitoring
@@ -749,9 +711,6 @@ struct ChatSettingsView: View {
     private func resetToDefaults() {
         let chatDefaults = ChatConfiguration.default
 
-        tempSystemPrompt = ""
-        tempChatTemperature = ""
-        tempChatMaxTokens = ""
         tempChatTopP = ""
         tempChatMaxToolAttempts = ""
         tempEnableClipboardMonitoring = chatDefaults.enableClipboardMonitoring
@@ -768,9 +727,6 @@ struct ChatSettingsView: View {
 
     /// Snapshot of exactly the fields that `saveConfiguration` persists.
     private struct SaveableFormState: Equatable {
-        var systemPrompt: String
-        var temperature: String
-        var maxTokens: String
         var topP: String
         var maxToolAttempts: String
         var enableClipboardMonitoring: Bool
@@ -783,9 +739,6 @@ struct ChatSettingsView: View {
 
     private var currentFormState: SaveableFormState {
         SaveableFormState(
-            systemPrompt: tempSystemPrompt,
-            temperature: tempChatTemperature,
-            maxTokens: tempChatMaxTokens,
             topP: tempChatTopP,
             maxToolAttempts: tempChatMaxToolAttempts,
             enableClipboardMonitoring: tempEnableClipboardMonitoring,
@@ -823,18 +776,6 @@ struct ChatSettingsView: View {
     // MARK: - Configuration Saving
 
     private func saveConfiguration() {
-        let trimmedTemp = tempChatTemperature.trimmingCharacters(in: .whitespacesAndNewlines)
-        let parsedTemp: Float? = {
-            guard !trimmedTemp.isEmpty, let v = Float(trimmedTemp) else { return nil }
-            return max(0.0, min(2.0, v))
-        }()
-
-        let trimmedMax = tempChatMaxTokens.trimmingCharacters(in: .whitespacesAndNewlines)
-        let parsedMax: Int? = {
-            guard !trimmedMax.isEmpty, let v = Int(trimmedMax) else { return nil }
-            return max(1, v)
-        }()
-
         let trimmedTopPChat = tempChatTopP.trimmingCharacters(in: .whitespacesAndNewlines)
         let parsedTopP: Float? = {
             guard !trimmedTopPChat.isEmpty, let v = Float(trimmedTopPChat) else { return nil }
@@ -871,69 +812,12 @@ struct ChatSettingsView: View {
             tempCompactionModelName.isEmpty ? nil : tempCompactionModelName
         ChatConfigurationStore.save(chatCfg)
 
-        // Persist default-agent specific fields to their own store. Tools
-        // (`disableTools`) are intentionally NOT written here — the default
-        // agent's tools toggle lives in the Agents tab, and the global memory
-        // switch lives in the Memory tab; this view leaves both untouched.
-        var defaultAgentCfg = DefaultAgentConfigurationStore.load()
-        defaultAgentCfg.systemPrompt = tempSystemPrompt
-        defaultAgentCfg.temperature = parsedTemp
-        defaultAgentCfg.maxTokens = parsedMax
-        DefaultAgentConfigurationStore.save(defaultAgentCfg)
+        // Default-agent specific fields (persona / temperature / max tokens)
+        // are owned by Settings → Orchestrator and never written here.
 
         // Re-baseline so the dirty check clears now that the live form matches
         // what's persisted.
         savedFormState = currentFormState
-    }
-}
-
-// MARK: - Styled Settings Text Area
-
-private struct StyledSettingsTextArea: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let label: String
-    @Binding var text: String
-    let placeholder: String
-    let hint: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(LocalizedStringKey(label), bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
-
-            ZStack(alignment: .topLeading) {
-                // Themed placeholder overlay
-                if text.isEmpty {
-                    Text(LocalizedStringKey(placeholder), bundle: .module)
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundColor(themeManager.currentTheme.placeholderText)
-                        .padding(.top, 12)
-                        .padding(.leading, 12)
-                        .allowsHitTesting(false)
-                }
-
-                TextEditor(text: $text)
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 100, maxHeight: 160)
-                    .padding(10)
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(themeManager.currentTheme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                    )
-            )
-
-            Text(LocalizedStringKey(hint), bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(themeManager.currentTheme.tertiaryText)
-        }
     }
 }
 

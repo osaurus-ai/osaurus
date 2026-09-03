@@ -23,6 +23,23 @@ final class ModelOptionsStore: ObservableObject {
 
     private init() {}
 
+    /// Return only choices written by the versioned, explicit-choice store,
+    /// without consulting the model profile. This is intentionally narrower
+    /// than `loadOptions`: launch-time UI normalization can run before the
+    /// local-model capability scan lands, but the send path still needs to
+    /// know whether an explicit Thinking choice exists so it can await the
+    /// authoritative off-main capability resolution. Legacy unversioned
+    /// payloads are excluded because they may contain historical injected
+    /// defaults that require the migration in `loadOptions`.
+    func storedExplicitOptions(for modelId: String) -> [String: ModelOptionValue]? {
+        guard let data = userDefaults.data(forKey: prefix + modelId),
+            let stored = try? JSONDecoder().decode(StoredOptions.self, from: data)
+        else {
+            return nil
+        }
+        return stored.options.isEmpty ? nil : stored.options
+    }
+
     /// Load persisted options for a specific model ID
     func loadOptions(for modelId: String) -> [String: ModelOptionValue]? {
         guard let data = userDefaults.data(forKey: prefix + modelId) else { return nil }

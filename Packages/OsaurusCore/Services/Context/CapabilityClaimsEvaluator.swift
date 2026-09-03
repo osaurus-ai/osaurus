@@ -36,10 +36,16 @@ public struct CapabilityClaimsTranscript: Sendable, Codable {
     public struct ToolInvocation: Sendable, Codable {
         public let name: String
         public let arguments: String
+        /// Truncated result envelope the model actually saw (execution
+        /// result or held-replay). nil only when execution never resolved
+        /// (the call is recorded before the tool runs, so a hang/timeout
+        /// still leaves the invocation on the transcript).
+        public let resultPreview: String?
 
-        public init(name: String, arguments: String) {
+        public init(name: String, arguments: String, resultPreview: String? = nil) {
             self.name = name
             self.arguments = arguments
+            self.resultPreview = resultPreview
         }
     }
 
@@ -211,6 +217,35 @@ public enum CapabilityClaimsEvaluator {
         // as an instant empty-final failure.
         var emptyTurnRetries = 0
         var pendingEmptyTurnNotice: String?
+        // Production parity (`AgentToolLoop` grounded-claim invariant): a
+        // final answer that is a fabricated tool envelope, or that claims a
+        // config change no apply landed, gets the factual notice and one
+        // bounded regeneration in the real chat loop. Mirroring it keeps the
+        // eval lane measuring the shipped behavior; without it the harness
+        // would score a pre-correction answer production never shows.
+        var hasGroundedApply = false
+        var groundedClaimRetries = 0
+        // Production parity (`AgentToolLoop` + `AgentTaskState`): the chat
+        // surface replays held results for repeated identical reads and, for
+        // other tools, nudges after the 3rd identical call ("results won't
+        // change — act on what you have"). Without the same state here the
+        // eval lane is HARSHER than production: a small model that read-loops
+        // on `osaurus_inspect` gets the nudge in the real app but silently
+        // burns its whole iteration budget in the harness.
+        let taskState = AgentTaskState()
+        var pendingStateNotice: String?
+        // Production parity (`AgentToolLoop` budget bookkeeping): when the
+        // remaining iteration budget drops to the policy threshold, the chat
+        // surface stages "Tool call budget: N of M remaining — wrap up" so
+        // the model applies/answers before the cap instead of scheduling
+        // more reads. Without it the eval lane cuts the model off with no
+        // warning production would have given.
+        let budgetWarningThreshold = AgentLoopPolicy(
+            maxIterations: maxIterations,
+            stopOnToolRejection: false,
+            dedupeNoticeEnabled: true
+        ).budgetWarningThreshold
+        var pendingBudgetNotice: String?
         // Decode speed, token-weighted across model steps so a long final
         // answer dominates a 2-token tool-call turn (same weighting as the
         // agent-loop evaluator). Only the no-tool answer step carries an
@@ -254,21 +289,43 @@ public enum CapabilityClaimsEvaluator {
                         ChatMessage(role: "system", content: firstTurnPrompt)
                     ]
                     requestMessages.append(contentsOf: history)
+                    var notices: [String] = []
                     if let notice = pendingEmptyTurnNotice {
+                        notices.append(notice)
+                        pendingEmptyTurnNotice = nil
+                    }
+                    if let notice = pendingStateNotice {
+                        notices.append(notice)
+                        pendingStateNotice = nil
+                    }
+                    if let notice = pendingBudgetNotice {
+                        notices.append(notice)
+                        pendingBudgetNotice = nil
+                    }
+                    if !notices.isEmpty {
                         // Same transient-notice contract as the production
                         // loop: the nudge rides once and is not persisted
                         // into `history`, so the transcript stays clean.
                         requestMessages = AgentLoopBudget.appendingTransientNotices(
-                            [notice],
+                            notices,
                             to: requestMessages
                         )
-                        pendingEmptyTurnNotice = nil
                     }
 
                     let request = ChatCompletionRequest(
                         model: resolvedModel,
                         messages: requestMessages,
-                        temperature: 0.0,
+                        // nil = the model bundle's generation_config defaults
+                        // (production parity; AgentLoopEvaluator does the same).
+                        // The lane used to pin 0.0, but greedy decode is a mode
+                        // the shipped app never uses and it drove sampled-decode
+                        // models (Ornith ships do_sample temperature 0.6 /
+                        // top_k 20) into repetition collapse ("." loops) the
+                        // production path does not exhibit — and it made
+                        // repeated runs byte-identical replays, voiding
+                        // mean/min statistics. The judge request below stays
+                        // at 0.0: scoring must remain deterministic.
+                        temperature: nil,
                         max_tokens: 2048,
                         stream: false,
                         top_p: nil,
@@ -317,6 +374,26 @@ public enum CapabilityClaimsEvaluator {
                             pendingEmptyTurnNotice = AgentToolLoop.emptyTurnNotice
                             continue
                         }
+                        // Grounded-claim check, gated exactly like chat: only
+                        // when the configure surface is in the offered schema.
+                        if !visible.isEmpty,
+                            groundedClaimRetries < AgentToolLoop.maxGroundedClaimRetries,
+                            frozenTools.contains(where: {
+                                $0.function.name == GroundedConfigClaimCheck.configToolName
+                            }),
+                            let notice = GroundedConfigClaimCheck.notice(
+                                finalText: visible,
+                                hasGroundedApply: hasGroundedApply
+                            )
+                        {
+                            // The ungrounded final never entered `history`
+                            // (only tool-call turns are appended), matching
+                            // chat's model-context exclusion of the abandoned
+                            // attempt. The retry overwrites `finalText`.
+                            groundedClaimRetries += 1
+                            pendingStateNotice = notice
+                            continue
+                        }
                         // Tool-call-free answer → the loop is done.
                         break
                     }
@@ -339,6 +416,33 @@ public enum CapabilityClaimsEvaluator {
                         toolCalls.append(
                             .init(name: call.function.name, arguments: call.function.arguments)
                         )
+                        // Held-result replay for repeated identical reads,
+                        // mirroring `AgentToolLoop`: the result cannot have
+                        // changed, so replay it and tell the model.
+                        if let held = taskState.heldResult(
+                            name: call.function.name,
+                            argsJSON: call.function.arguments
+                        ) {
+                            toolCalls[toolCalls.count - 1] = .init(
+                                name: call.function.name,
+                                arguments: call.function.arguments,
+                                resultPreview: String(held.prefix(500))
+                            )
+                            history.append(
+                                ChatMessage(
+                                    role: "tool",
+                                    content: held,
+                                    tool_calls: nil,
+                                    tool_call_id: call.id
+                                )
+                            )
+                            if let escalation = taskState.lastReplayNotice {
+                                pendingStateNotice = "[System Notice] " + escalation
+                            } else {
+                                pendingStateNotice = AgentToolLoop.dedupeNotice
+                            }
+                            continue
+                        }
                         // Headless harness: there is no [Allow] button, so an
                         // `.ask` tool would otherwise suspend forever on
                         // `ToolPermissionPromptService`. Bind BOTH approval
@@ -361,6 +465,20 @@ public enum CapabilityClaimsEvaluator {
                                         )
                                     }
                             }
+                        toolCalls[toolCalls.count - 1] = .init(
+                            name: call.function.name,
+                            arguments: call.function.arguments,
+                            resultPreview: String(toolResult.prefix(500))
+                        )
+                        if !hasGroundedApply,
+                            GroundedConfigClaimCheck.isGroundedApplyOutcome(
+                                toolName: call.function.name,
+                                argumentsJSON: call.function.arguments,
+                                result: toolResult
+                            )
+                        {
+                            hasGroundedApply = true
+                        }
                         history.append(
                             ChatMessage(
                                 role: "tool",
@@ -369,6 +487,18 @@ public enum CapabilityClaimsEvaluator {
                                 tool_call_id: call.id
                             )
                         )
+                        // Repeated-identical-call nudge, mirroring the
+                        // production driver's `state.record` + `nextStepBias`
+                        // sequence (3+ identical calls arms an advisory
+                        // "results won't change — act on what you have").
+                        taskState.record(
+                            name: call.function.name,
+                            argsJSON: call.function.arguments,
+                            result: toolResult
+                        )
+                        if let bias = taskState.nextStepBias() {
+                            pendingStateNotice = "[System Notice] " + bias
+                        }
                     }
 
                     // Drain tools loaded via capabilities_load: record them
@@ -382,6 +512,17 @@ public enum CapabilityClaimsEvaluator {
                             loadedToolNames.append(name)
                         }
                     }
+
+                    // Same budget bookkeeping as production: one warning per
+                    // iteration once the remaining budget reaches the
+                    // threshold, staged for the NEXT request.
+                    let remaining = maxIterations - iterations
+                    if remaining > 0, remaining <= budgetWarningThreshold {
+                        pendingBudgetNotice = AgentToolLoop.budgetWarningNotice(
+                            remaining: remaining,
+                            maxIterations: maxIterations
+                        )
+                    }
                 }
                 if iterations >= maxIterations { hitCap = true }
                 if hitCap {
@@ -392,7 +533,8 @@ public enum CapabilityClaimsEvaluator {
                     let wrapUpRequest = ChatCompletionRequest(
                         model: resolvedModel,
                         messages: [ChatMessage(role: "system", content: firstTurnPrompt)] + history,
-                        temperature: 0.0,
+                        // Bundle defaults, same as the loop requests above.
+                        temperature: nil,
                         max_tokens: 2048,
                         stream: false,
                         top_p: nil,
@@ -473,8 +615,8 @@ public enum CapabilityClaimsEvaluator {
     /// with a wall-clock `timeout`.
     ///
     /// The `default_agent` lane drives REAL configure tools, a few of which
-    /// reach live services (the Hugging Face metadata probe behind
-    /// `osaurus_model` download, the plugin registry, an MCP connect). With
+    /// reach live services (the Hugging Face metadata probe behind an
+    /// `osaurus_config` models apply, the plugin registry, an MCP connect). With
     /// no network — or a slow one — those awaits can stall the whole suite.
     /// The tool CALL is already recorded on the transcript BEFORE this runs,
     /// so the deterministic `argsMustContain` / `mustCallTools` checks score

@@ -273,6 +273,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         let admissionWaitSeconds: Double?
         let residencyMode: String?
         let engineOccupancy: ModelBatchCapacitySnapshot?
+        /// Capacity provenance reconciled after a cold engine has resolved.
+        /// Kept separate so admission-time occupancy remains truthful.
+        let resolvedEngineCapacity: ModelBatchCapacitySnapshot?
         let engineQueuedAtAdmission: Bool
 
         init(
@@ -290,6 +293,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             admissionWaitSeconds: Double?,
             residencyMode: String?,
             engineOccupancy: ModelBatchCapacitySnapshot? = nil,
+            resolvedEngineCapacity: ModelBatchCapacitySnapshot? = nil,
             engineQueuedAtAdmission: Bool = false
         ) {
             self.wave = wave
@@ -306,6 +310,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             self.admissionWaitSeconds = admissionWaitSeconds
             self.residencyMode = residencyMode
             self.engineOccupancy = engineOccupancy
+            self.resolvedEngineCapacity = resolvedEngineCapacity
             self.engineQueuedAtAdmission = engineQueuedAtAdmission
         }
 
@@ -329,9 +334,24 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 "capacity_snapshot":
                     localJobs > 0 ? "post_admission_capacity_plan" : "not_applicable",
                 "engine_capacity_source":
-                    engineOccupancy == nil ? "configured_cold_start" : "atomic_live",
+                    resolvedEngineCapacity != nil
+                    ? "atomic_post_execution"
+                    : (engineOccupancy == nil ? "configured_cold_start" : "atomic_live"),
+                "engine_requested_max":
+                    (resolvedEngineCapacity ?? engineOccupancy)?.requestedMaximum
+                    ?? NSNull(),
+                "engine_architecture_max":
+                    (resolvedEngineCapacity ?? engineOccupancy)?.architectureMaximum
+                    ?? NSNull(),
+                "engine_effective_max":
+                    (resolvedEngineCapacity ?? engineOccupancy)?.configuredMaximum
+                    ?? NSNull(),
+                // Compatibility alias retained for older consumers. New evals
+                // must score `engine_effective_max` and the two provenance
+                // fields above rather than treating this as a request width.
                 "engine_configured_max":
-                    engineOccupancy?.configuredMaximum ?? NSNull(),
+                    (resolvedEngineCapacity ?? engineOccupancy)?.configuredMaximum
+                    ?? NSNull(),
                 "engine_active_at_admission":
                     engineOccupancy?.activeCount ?? NSNull(),
                 "engine_pending_at_admission":
@@ -342,6 +362,29 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                     engineOccupancy?.isAcceptingRequests ?? NSNull(),
                 "engine_queued_at_admission": engineQueuedAtAdmission,
             ]
+        }
+
+        func reconcilingResolvedEngineCapacity(
+            _ snapshot: ModelBatchCapacitySnapshot
+        ) -> BatchWaveDiagnostic {
+            BatchWaveDiagnostic(
+                wave: wave,
+                jobs: jobs,
+                remoteJobs: remoteJobs,
+                localJobs: localJobs,
+                localModelKey: localModelKey,
+                effectiveLocalSlots: effectiveLocalSlots,
+                engineSlots: engineSlots,
+                ramSlots: ramSlots,
+                localSubwaveSizes: localSubwaveSizes,
+                limitingFactors: limitingFactors,
+                verdict: verdict,
+                admissionWaitSeconds: admissionWaitSeconds,
+                residencyMode: residencyMode,
+                engineOccupancy: engineOccupancy,
+                resolvedEngineCapacity: snapshot,
+                engineQueuedAtAdmission: engineQueuedAtAdmission
+            )
         }
     }
 
@@ -414,6 +457,20 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
 
         func snapshot() -> [BatchWaveDiagnostic] {
             values.sorted { $0.wave < $1.wave }
+        }
+
+        func localModelKeys() -> [String] {
+            Array(Set(values.compactMap(\.localModelKey))).sorted()
+        }
+
+        func reconcileResolvedEngineCapacity(
+            for modelKey: String,
+            with snapshot: ModelBatchCapacitySnapshot
+        ) {
+            values = values.map { value in
+                guard value.localModelKey == modelKey else { return value }
+                return value.reconcilingResolvedEngineCapacity(snapshot)
+            }
         }
     }
 
@@ -506,7 +563,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         let feed = SubagentFeed(
             toolCallId: parentScope.toolCallId,
             kindId: SubagentCapabilityRegistry.spawn.id,
-            title: "spawn batch (\(jobs.count))"
+            title: "spawn batch (\(jobs.count))",
+            agentId: parentScope.agentId,
+            parentSessionId: parentScope.sessionId
         )
         let interrupt = InterruptToken()
         SubagentFeedRegistry.shared.register(feed)
@@ -782,6 +841,23 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             localAdmissionPlanOverride: localAdmissionPlanOverride,
             diagnostics: diagnostics
         )
+        // A cold first wave has no engine snapshot at admission time. After
+        // its children settle, the same production registry can report the
+        // engine's requested, architecture, and effective widths. Reconcile
+        // those immutable capacity facts into the persisted wave so evals do
+        // not guess from a model name or confuse a requested width with the
+        // post-clamp width. Occupancy timing fields remain explicitly named
+        // `*_at_admission` and retain their original point-in-time values.
+        for modelKey in await diagnostics.localModelKeys() {
+            if let snapshot = await ModelRuntime.shared.batchEngineCapacitySnapshot(
+                for: modelKey
+            ) {
+                await diagnostics.reconcileResolvedEngineCapacity(
+                    for: modelKey,
+                    with: snapshot
+                )
+            }
+        }
         let cacheAfter = await ModelRuntime.batchDiagnosticsSnapshot()
         let executionWaves = await diagnostics.snapshot()
         let ordered = results.sorted { $0.job.index < $1.job.index }
@@ -902,8 +978,14 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                         )
                         continue
                     }
+                    // Seed the human name so the feed title (captured before
+                    // `resolveModel`) shows the agent, not its UUID.
+                    let agentName = await MainActor.run {
+                        AgentManager.shared.agent(for: agentID)?.name
+                    }
                     kind = TextSubagentKind(
                         agentID: agentID,
+                        agentName: agentName,
                         input: job.input,
                         modelOverride: Self.modelOverrideForTests,
                         permissionPreauthorized: true
@@ -1588,11 +1670,22 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             snapshot: engineOccupancy
         )
         let residencyPlan = residencyPlanOverride ?? first.run.textResidencyPlan
+        // Bounded pricing only when EVERY local job supplies an estimate;
+        // one unknown job reverts the whole wave to the conservative
+        // cap-priced charge (a wave must never be under-priced by its
+        // cheapest member). Each job's safe position budget is resolved
+        // independently — including a delegated job's enforced ceiling —
+        // and the wave is priced at the MAXIMUM per-child bound (see
+        // `SubagentChildRequestEstimate.waveEnvelope`).
+        let waveEstimate = SubagentChildRequestEstimate.waveEnvelope(
+            of: localJobs.map { $0.run.kind.admissionRequestEstimate() }
+        )
         let memoryFacts: SubagentBatchMemoryFacts?
         if let residencyPlan {
             memoryFacts = await ModelRuntime.shared.subagentBatchMemoryFacts(
                 for: first.run.resolved.name,
-                residencyPlan: residencyPlan
+                residencyPlan: residencyPlan,
+                requestEstimate: waveEstimate
             )
         } else {
             // Non-text local kinds exist only in model-free test seams today.

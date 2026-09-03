@@ -18,6 +18,10 @@ public struct MCPCommand: Command {
         }
 
         fputs("[MCP] Starting MCP command...\n", stderr)
+        let toolFilter = MCPToolFilter.parse(args: args)
+        if let toolFilter {
+            fputs("[MCP] Tool allow-list: \(toolFilter.summary)\n", stderr)
+        }
         let credential = resolvedAccessKey(args: args)
         let networkExposed = Configuration.resolveExposeToNetwork()
         if let credential {
@@ -80,7 +84,10 @@ public struct MCPCommand: Command {
                 } else {
                     throw MCPError.internalError("Failed to list tools: unexpected response shape")
                 }
-                return .init(tools: tools)
+                guard let toolFilter else { return .init(tools: tools) }
+                let admitted = tools.filter { toolFilter.admits($0.name) }
+                fputs("[MCP] Tools: \(admitted.count) of \(tools.count) after allow-list\n", stderr)
+                return .init(tools: admitted)
             } catch let error as MCPError {
                 throw error
             } catch {
@@ -92,6 +99,13 @@ public struct MCPCommand: Command {
         // Register CallTool -> POST /mcp/call
         await server.withMethodHandler(MCP.CallTool.self) { params in
             fputs("[MCP] Handling CallTool: \(params.name)\n", stderr)
+            // Enforce the allow-list here too. `ListTools` only controls what a
+            // well-behaved client is *shown*; nothing stops it calling a name it
+            // learned elsewhere, and the excluded set includes dispatch tools.
+            if let toolFilter, !toolFilter.admits(params.name) {
+                fputs("[MCP] Refused \(params.name): not in allow-list\n", stderr)
+                throw MCPError.invalidParams("Tool '\(params.name)' is not available on this server")
+            }
             struct CallBody: Encodable {
                 let name: String
                 let arguments: MCP.Value?
@@ -206,7 +220,8 @@ public struct MCPCommand: Command {
         url: URL,
         method: String,
         timeout: TimeInterval,
-        credential: AccessKeyCredential?
+        credential: AccessKeyCredential?,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -215,8 +230,25 @@ public struct MCPCommand: Command {
         if let credential {
             request.setValue("Bearer \(credential.token)", forHTTPHeaderField: "Authorization")
         }
+        // Present the per-turn bridge grant when Osaurus spawned us for one of
+        // its own chat turns. It tells the server which agent's tool call this
+        // is — identity the process boundary would otherwise drop, since the
+        // server sees an ordinary loopback request either way. Absent for a
+        // user-configured MCP client, which is exactly the caller that should
+        // not be able to act as an agent.
+        if let grant = environment[bridgeGrantEnvironmentKey],
+            !grant.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            request.setValue(grant, forHTTPHeaderField: bridgeGrantHeaderName)
+        }
         return request
     }
+
+    /// Kept in sync with `ClaudeCodeBridgeGrantStore` in OsaurusCore. The CLI
+    /// does not depend on Core, so the two constants are duplicated rather than
+    /// shared; `MCPBridgeGrantTests` pins the literals on both sides.
+    static let bridgeGrantEnvironmentKey = "OSAURUS_MCP_BRIDGE_GRANT"
+    static let bridgeGrantHeaderName = "X-Osaurus-Bridge-Grant"
 
     private static let accessKeyOptionNames: Set<String> = [
         "--access-key",
@@ -274,12 +306,22 @@ public struct MCPCommand: Command {
     private static func printUsage() {
         let usage = """
             Usage:
-              osaurus mcp [--access-key KEY]
+              osaurus mcp [--access-key KEY] [--tools PATTERNS]
 
             Runs an MCP stdio server that proxies tool discovery and calls to
             the local Osaurus HTTP server. Local-only servers can rely on
             loopback trust. If Server > Network exposure is enabled, provide an
             access key with --access-key or OSAURUS_MCP_ACCESS_KEY.
+
+            --tools limits which tools are exposed. Comma-separated names, each
+            optionally ending in '*' to match by prefix. Omitted, every tool is
+            proxied — which is 170+ definitions once plugins are loaded, so
+            clients with a narrow purpose should scope this down:
+
+              osaurus mcp --tools "osaurus_status,osaurus_list,osaurus_describe"
+              osaurus mcp --tools "osaurus_*"
+
+            Excluded tools are hidden from tools/list and refused on call.
 
             Accepted environment variables:
               OSAURUS_MCP_ACCESS_KEY, OSAURUS_ACCESS_KEY, OSAURUS_API_KEY,

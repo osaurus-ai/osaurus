@@ -1,18 +1,23 @@
 {
   "id": "default_agent.agent-update",
   "domain": "default_agent",
-  "label": "default agent • update an agent by id",
-  "query": "Rename the agent 2a9f4c7d-1e83-4b56-9d02-7f1a6c3e8b45 to \"Helper\".",
-  "notes": "action 'update' with id (+ name patch). Unknown id → typed not-found error (no mutation). The selection assertion pins action 'update', distinguishing a patch from create.",
-  "fixtures": {},
+  "label": "default agent • patch an agent by name",
+  "query": "Update the agent \"Eval Browser Agent\" so its system prompt tells it to keep answers concise.",
+  "notes": "Merge semantics: an agents entry naming an EXISTING agent patches only the provided keys. The agent is seeded so the patch SUCCEEDS. The selection assertion pins the apply carrying a system_prompt key for the named agent, distinguishing a patch from a create with a new name.",
+  "fixtures": {
+    "seedAgents": [
+      { "id": "2a9f4c7d-1e83-4b56-9d02-7f1a6c3e8b45", "name": "Eval Browser Agent" }
+    ]
+  },
   "expect": {
     "defaultAgent": {
-      "mustCallTools": ["osaurus_agent"],
+      "mustCallTools": ["osaurus_config"],
       "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
       "argsMustContain": [
-        { "tool": "osaurus_agent", "args": { "action": "update" } }
+        { "tool": "osaurus_config", "args": { "action": "apply", "yaml": "system_prompt" } },
+        { "tool": "osaurus_config", "args": { "yaml": "Eval Browser Agent" } }
       ],
-      "maxIterations": 4
+      "maxIterations": 8
     }
   }
 }

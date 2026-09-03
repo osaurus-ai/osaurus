@@ -1,0 +1,26 @@
+{
+  "id": "agent_loop.detect-pii-in-file",
+  "domain": "agent_loop",
+  "label": "agent loop • detect PII in a selected-folder file without mutation",
+  "query": "Inspect contact.txt for personally identifiable information using the dedicated PII detection tool. Do not modify the file. Report the detected categories.",
+  "notes": "Read-only regression for the reported Downloads-cleanup goal. Uses synthetic PII in a disposable workspace, requires detect_pii rather than an unsupported-access refusal, and asserts that the source file is unchanged.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "contact.txt", "contents": "Synthetic contact: qa.fixture@example.com or (555) 010-4477.\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "mustCallTools": ["detect_pii"],
+      "noToolErrors": true,
+      "finalTextContains": ["email", "phone"],
+      "files": [
+        {
+          "path": "contact.txt",
+          "equals": "Synthetic contact: qa.fixture@example.com or (555) 010-4477.\n"
+        }
+      ]
+    }
+  }
+}

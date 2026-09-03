@@ -66,7 +66,7 @@ struct PromptSectionOrderingTests {
                 name: "OrderingTestAgent-\(UUID().uuidString.prefix(6))",
                 systemPrompt: "Test identity",
                 agentAddress: "test-ordering-\(UUID().uuidString)",
-                autonomousExec: autonomous ? AutonomousExecConfig(enabled: true) : nil,
+                autonomousExec: AutonomousExecConfig(enabled: autonomous),
                 toolSelectionMode: toolSelectionMode,
                 manualToolNames: manualToolNames,
                 toolsEnabled: !toolsDisabled,
@@ -255,7 +255,8 @@ struct PromptSectionOrderingTests {
             let agent = Agent(
                 name: "OrderingTestAgent-Folder",
                 systemPrompt: "Test identity",
-                agentAddress: "test-ordering-folder-\(UUID().uuidString)"
+                agentAddress: "test-ordering-folder-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             AgentManager.shared.add(agent)
             let tmp = URL(fileURLWithPath: NSTemporaryDirectory())

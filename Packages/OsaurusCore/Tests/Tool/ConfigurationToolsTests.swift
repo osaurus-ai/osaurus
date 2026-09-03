@@ -46,96 +46,82 @@ struct ConfigurationToolsGateContractTests {
         }
     }
 
-    /// Every consolidated configure tool, paired with a representative
-    /// `action` to prove the gate fires before the action is even read.
-    private func makeWriteTools() -> [any OsaurusTool] {
-        [
-            OsaurusProviderTool(),
-            OsaurusModelTool(),
-            OsaurusMCPTool(),
-            OsaurusPluginTool(),
-            OsaurusScheduleTool(),
-            OsaurusWatcherTool(),
-            OsaurusAgentTool(),
-        ]
-    }
-
-    // MARK: - Write tools: gate fires before argument / action parsing
+    // MARK: - Write tool: gate fires before argument / action parsing
 
     @Test
-    func everyConsolidatedWrite_refusesWithoutAgentContext() async throws {
-        for tool in makeWriteTools() {
-            // A populated `action` proves the gate short-circuits before
-            // dispatch — the response is the gate failure, not an action-
-            // specific validation error.
-            let result = try await executeWithoutAgentContext(
-                tool,
-                args: "{\"action\": \"add\"}"
-            )
-            #expect(ToolEnvelope.isError(result), "\(tool.name) should gate-fail without agent context")
-            #expect(
-                result.contains("chat session context"),
-                "\(tool.name) gate message should name the missing session context; got \(result)"
-            )
-        }
+    func configWrite_refusesWithoutAgentContext() async throws {
+        // A populated `action` proves the gate short-circuits before
+        // dispatch — the response is the gate failure, not an action-
+        // specific validation error.
+        let result = try await executeWithoutAgentContext(
+            OsaurusConfigTool(),
+            args: "{\"action\": \"apply\"}"
+        )
+        #expect(ToolEnvelope.isError(result), "osaurus_config should gate-fail without agent context")
+        #expect(
+            result.contains("chat session context"),
+            "osaurus_config gate message should name the missing session context; got \(result)"
+        )
     }
 
     @Test
-    func everyConsolidatedWrite_refusesFromCustomAgent() async throws {
-        for tool in makeWriteTools() {
-            let result = try await executeAsCustomAgent(
-                tool,
-                args: "{\"action\": \"add\"}"
-            )
-            #expect(ToolEnvelope.isError(result), "\(tool.name) should gate-fail from a custom agent")
-            #expect(
-                result.contains("Default agent"),
-                "\(tool.name) gate message should name the Default agent; got \(result)"
-            )
-        }
-    }
-
-    // MARK: - Read tools: same gate applies
-
-    @Test
-    func status_refusesWithoutAgentContext() async throws {
-        let result = try await executeWithoutAgentContext(OsaurusStatusTool())
-        #expect(ToolEnvelope.isError(result))
-    }
-
-    @Test
-    func status_refusesFromCustomAgent() async throws {
-        let result = try await executeAsCustomAgent(OsaurusStatusTool())
-        #expect(ToolEnvelope.isError(result))
-        #expect(result.contains("Default agent"))
-    }
-
-    @Test
-    func list_refusesFromCustomAgent() async throws {
+    func configWrite_refusesFromCustomAgent() async throws {
         let result = try await executeAsCustomAgent(
-            OsaurusListTool(),
-            args: "{\"scope\": \"providers\"}"
+            OsaurusConfigTool(),
+            args: "{\"action\": \"apply\"}"
+        )
+        #expect(ToolEnvelope.isError(result), "osaurus_config should gate-fail from a custom agent")
+        #expect(
+            result.contains("Default agent"),
+            "osaurus_config gate message should name the Default agent; got \(result)"
+        )
+    }
+
+    // MARK: - Read tool: same gate applies
+
+    @Test
+    func inspect_refusesWithoutAgentContext() async throws {
+        let result = try await executeWithoutAgentContext(
+            OsaurusInspectTool(),
+            args: "{\"action\": \"status\"}"
+        )
+        #expect(ToolEnvelope.isError(result))
+    }
+
+    @Test
+    func inspect_refusesFromCustomAgent() async throws {
+        let result = try await executeAsCustomAgent(
+            OsaurusInspectTool(),
+            args: "{\"action\": \"status\"}"
         )
         #expect(ToolEnvelope.isError(result))
         #expect(result.contains("Default agent"))
     }
 
     @Test
-    func describe_refusesFromCustomAgent() async throws {
+    func inspectList_refusesFromCustomAgent() async throws {
         let result = try await executeAsCustomAgent(
-            OsaurusDescribeTool(),
-            args: "{\"scope\": \"providers\", \"id\": \"x\"}"
+            OsaurusInspectTool(),
+            args: "{\"action\": \"list\", \"scope\": \"providers\"}"
+        )
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("Default agent"))
+    }
+
+    @Test
+    func inspectDescribe_refusesFromCustomAgent() async throws {
+        let result = try await executeAsCustomAgent(
+            OsaurusInspectTool(),
+            args: "{\"action\": \"describe\", \"scope\": \"providers\", \"id\": \"x\"}"
         )
         #expect(ToolEnvelope.isError(result))
         #expect(result.contains("Default agent"))
     }
 }
 
-/// Schema ergonomics surfaced by the Default-agent eval matrix: a small
-/// model says "disable" / "Monday", so the consolidated tools must accept
-/// those directly instead of forcing the `enable` + `enabled:false` idiom
-/// or a 3-letter weekday code (either gap sends the model into a retry
-/// loop it can't escape within its iteration budget).
+/// Pins the `osaurus_config` action surface — the whole configure write
+/// contract for the Default agent. Removing an action silently downgrades
+/// the agent's configuration ability.
 @Suite
 struct ConsolidatedActionSchemaTests {
 
@@ -151,32 +137,27 @@ struct ConsolidatedActionSchemaTests {
     }
 
     @Test
-    func mcpTool_offersDisableAsFirstClassAction() {
-        let actions = actionEnum(of: OsaurusMCPTool())
-        #expect(actions.contains("enable"))
-        #expect(actions.contains("disable"), "osaurus_mcp must expose a first-class `disable` action")
+    func configTool_offersTheFullDeclarativeSurface() {
+        let actions = actionEnum(of: OsaurusConfigTool())
+        #expect(Set(actions) == ["schema", "export", "plan", "apply", "templates"])
     }
 
     @Test
-    func scheduleTool_offersDisableAsFirstClassAction() {
-        let actions = actionEnum(of: OsaurusScheduleTool())
-        #expect(actions.contains("enable"))
-        #expect(actions.contains("disable"), "osaurus_schedule must expose a first-class `disable` action")
-    }
-
-    @Test
-    func watcherTool_offersDisableAsFirstClassAction() {
-        let actions = actionEnum(of: OsaurusWatcherTool())
-        #expect(actions.contains("enable"))
-        #expect(actions.contains("disable"), "osaurus_watcher must expose a first-class `disable` action")
+    func inspectTool_offersTheThreeReadDepths() {
+        let actions = actionEnum(of: OsaurusInspectTool())
+        #expect(Set(actions) == ["status", "list", "describe"])
     }
 }
 
-/// Pins the read-scope surface of `osaurus_list` / `osaurus_describe`.
-/// These scopes are a product contract: the configuration agent can only
-/// answer "what skills/watchers/themes/… do I have?" from live state when
-/// the scope is offered in the schema enum. Removing one silently
-/// downgrades the agent to reciting the guide.
+/// Pins the read-scope surface of `osaurus_inspect`. These scopes are a
+/// product contract: the configuration agent can only answer "what
+/// skills/watchers/themes/… do I have?" from live state when the scope is
+/// offered in the schema enum — prompt compaction strips description prose
+/// but KEEPS enums, so this list is the only roster a compact-schema model
+/// ever sees (removing it regressed scope-less/junk-arg calls immediately).
+/// The enum ALSO carries the settings document sections: those execute as
+/// a teaching failure that redirects to osaurus_config export/apply
+/// (`unknownScopeFailure`) instead of a generic schema rejection.
 @Suite
 struct ConfigurationReadScopeTests {
 
@@ -195,32 +176,97 @@ struct ConfigurationReadScopeTests {
         "search",
     ]
 
+    /// Document sections (export/apply redirect) plus the removed
+    /// `server`/`chat`/`app` names (Settings-UI-only teach). Both stay in
+    /// the enum so the SchemaValidator lets them through to
+    /// `unknownScopeFailure` instead of a generic rejection.
+    private static let settingsSections: Set<String> = [
+        "server", "chat", "app", "memory", "default_agent", "active_agent",
+        "tools", "delegation",
+    ]
+
     @Test
-    func listTool_offersEveryReadScope() {
-        #expect(scopeEnum(of: OsaurusListTool()) == Self.expectedScopes)
+    func inspectTool_offersEveryReadScope() {
+        let offered = scopeEnum(of: OsaurusInspectTool())
+        #expect(offered.isSuperset(of: Self.expectedScopes))
+        #expect(
+            OsaurusInspectTool.knownReadScopes
+                == Self.expectedScopes.union(["mcp_providers"]))
     }
 
     @Test
-    func describeTool_offersEveryReadScope() {
-        #expect(scopeEnum(of: OsaurusDescribeTool()) == Self.expectedScopes)
+    func inspectTool_scopeEnumCarriesSettingsSectionsForTheRedirect() {
+        let offered = scopeEnum(of: OsaurusInspectTool())
+        #expect(offered.isSuperset(of: Self.settingsSections))
+    }
+
+    @Test
+    func entitySectionNames_resolveAsScopeAliases() {
+        #expect(OsaurusInspectTool.canonicalScope("mcp_servers") == "mcp")
+        #expect(OsaurusInspectTool.canonicalScope("knowledge_collections") == "knowledge")
+        #expect(OsaurusInspectTool.canonicalScope("search_providers") == "search")
+        #expect(OsaurusInspectTool.canonicalScope("agents") == "agents")
+    }
+
+    @Test
+    func unknownScope_documentSection_redirectsToExportApply() {
+        let envelope = OsaurusInspectTool.unknownScopeFailure(scope: "memory", tool: "osaurus_inspect")
+        #expect(envelope.contains("DOCUMENT SECTION"))
+        #expect(envelope.contains("export"))
+        #expect(envelope.contains("apply"))
+        #expect(envelope.contains("memory"))
+    }
+
+    @Test
+    func unknownScope_removedSection_teachesSettingsUIOnly() {
+        // Scope reduction 2: the removed section names must get the honest
+        // "Settings UI only" answer, not the export redirect.
+        for scope in ["server", "chat", "app"] {
+            let envelope = OsaurusInspectTool.unknownScopeFailure(scope: scope, tool: "osaurus_inspect")
+            #expect(envelope.contains("Settings UI"), "no redirect for `\(scope)`")
+            #expect(!envelope.contains("DOCUMENT SECTION"))
+            #expect(!envelope.contains("export"))
+        }
+    }
+
+    @Test
+    func unknownScope_nonSection_listsValidScopes() {
+        let envelope = OsaurusInspectTool.unknownScopeFailure(scope: "bogus", tool: "osaurus_inspect")
+        #expect(envelope.contains("Unknown scope"))
+        #expect(envelope.contains("agents"))
+        #expect(!envelope.contains("DOCUMENT SECTION"))
+    }
+
+    @Test
+    func describeFoundation_teachesTheBuiltInModelValue() async throws {
+        // "foundation" is a model VALUE (Apple's built-in on-device model),
+        // not an installed model entry; verifying it against the installed
+        // list comes back empty and models refuse a valid setting.
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+            try await OsaurusInspectTool().execute(
+                argumentsJSON:
+                    "{\"action\": \"describe\", \"scope\": \"models\", \"id\": \"foundation\"}"
+            )
+        }
+        #expect(result.contains("Apple Foundation"), "missing foundation teach: \(result)")
+        #expect(result.contains("default_agent.model"))
     }
 }
 
-/// Weekday parsing for `osaurus_schedule` create/update with
-/// `frequency: weekly`. The model emits natural day text ("Monday"); the
-/// parser normalizes to a 3-letter prefix so full names, abbreviations,
-/// case, and plurals all resolve — only genuine non-weekdays are rejected.
+/// Weekday parsing for `schedules` entries with `frequency: weekly`. The
+/// model emits natural day text ("Monday"); the parser normalizes to a
+/// 3-letter prefix so full names, abbreviations, case, and plurals all
+/// resolve — only genuine non-weekdays are rejected.
 @Suite
 struct ScheduleWeeklyParsingTests {
 
     private func parseWeekday(_ value: String) -> ScheduleFrequency? {
-        let outcome = ScheduleFrequencyParsing.parse(
-            toolName: "osaurus_schedule",
+        let outcome = ConfigScheduleFrequency.parse(
             frequency: "weekly",
             value: value,
             timeOfDay: "09:30"
         )
-        if case .parsed(let frequency) = outcome { return frequency }
+        if case .success(let frequency) = outcome { return frequency }
         return nil
     }
 

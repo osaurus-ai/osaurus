@@ -387,7 +387,12 @@ public actor AgentBundleService {
             to: OsaurusPaths.agentRunsDirectory(for: agent.id).path
         )
 
-        await MainActor.run { AgentStore.save(agent) }
+        await MainActor.run {
+            AgentStore.save(agent)
+            // Imported agents are creations too: they join the Default
+            // spawn pool like any other new custom agent.
+            AgentManager.shared.registerInDefaultSpawnPool(agent)
+        }
         try? FileManager.default.removeItem(at: staging)
         return agent
     }

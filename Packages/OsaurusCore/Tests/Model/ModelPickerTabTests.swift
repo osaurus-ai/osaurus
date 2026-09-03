@@ -221,4 +221,35 @@ struct ModelPickerTabTests {
             ) == nil
         )
     }
+
+    // MARK: - Local source filter
+
+    private func externalModel(id: String, name: String, source: String) -> ModelPickerItem {
+        ModelPickerItem(id: id, displayName: name, source: .local, externalSource: source)
+    }
+
+    @Test func localSourceFilter_narrowsToOsaurusOrOneExternalSource() {
+        let items: [ModelPickerItem] = [
+            .foundation(),
+            localModel(id: "mlx/alpha", name: "Alpha"),
+            externalModel(id: "lm/beta", name: "Beta", source: "LM Studio"),
+            externalModel(id: "hf/gamma", name: "Gamma", source: "Hugging Face cache"),
+        ]
+
+        #expect(items.filteredByLocalSource(.any).map(\.id) == items.map(\.id))
+        // Osaurus keeps everything without an external provenance, Foundation included.
+        #expect(items.filteredByLocalSource(.osaurus).map(\.id) == ["foundation", "mlx/alpha"])
+        #expect(items.filteredByLocalSource(.external("LM Studio")).map(\.id) == ["lm/beta"])
+    }
+
+    @Test func distinctExternalSources_sortedAndEmptyWithoutExternals() {
+        let mixed: [ModelPickerItem] = [
+            localModel(id: "mlx/alpha", name: "Alpha"),
+            externalModel(id: "lm/beta", name: "Beta", source: "LM Studio"),
+            externalModel(id: "lm/delta", name: "Delta", source: "LM Studio"),
+            externalModel(id: "hf/gamma", name: "Gamma", source: "Hugging Face cache"),
+        ]
+        #expect(mixed.distinctExternalSources == ["Hugging Face cache", "LM Studio"])
+        #expect([localModel(id: "mlx/alpha", name: "Alpha")].distinctExternalSources.isEmpty)
+    }
 }

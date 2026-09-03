@@ -55,10 +55,19 @@ find_metallib_source() {
     [[ -f "${d}/default.metallib" ]] && { printf '%s' "${d}/default.metallib"; return 0; }
     [[ -f "${d}/mlx.metallib" ]] && { printf '%s' "${d}/mlx.metallib"; return 0; }
   done
-  # Xcode DerivedData build products (`make app` / xcodebuild).
+  # Build products. The `mlx-swift_Cmlx.bundle` copy is the MLX KERNEL
+  # library (~3.6 MB); the one inside `osaurus.app/Contents/Resources` is the
+  # app's own small metallib and does NOT contain the MLX kernels — a local
+  # MLX eval colocated with it dies at first decode with
+  # "[metal::Device] Unable to load kernel rmsbfloat16". Always prefer the
+  # Cmlx bundle, and search repo-local derived-data paths too: the Makefile
+  # and every `-derivedDataPath build/...` invocation put products there,
+  # not under ~/Library/Developer/Xcode/DerivedData.
   local cands=(
+    "${REPO_ROOT}"/build/*/Build/Products/*/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib
     "${HOME}"/Library/Developer/Xcode/DerivedData/osaurus-*/Build/Products/*/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib
-    "${HOME}"/Library/Developer/Xcode/DerivedData/osaurus-*/Build/Products/*/osaurus.app/Contents/Resources/default.metallib
+    "${REPO_ROOT}"/build/*/Build/Products/*/osaurus.app/Contents/Resources/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib
+    "${HOME}"/Library/Developer/Xcode/DerivedData/osaurus-*/Build/Products/*/osaurus.app/Contents/Resources/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib
   )
   local c
   for c in "${cands[@]-}"; do
@@ -67,10 +76,25 @@ find_metallib_source() {
   return 1
 }
 
+# The MLX kernel library is multi-megabyte. Anything much smaller is the
+# app's own metallib (or a truncated copy) and will fail at first decode
+# rather than at colocation time, which is far harder to diagnose.
+metallib_looks_like_mlx() {
+  local f="$1" bytes
+  bytes="$(stat -f%z "${f}" 2>/dev/null || echo 0)"
+  [[ "${bytes}" -ge 1048576 ]]
+}
+
 if [[ ${#bin_dirs[@]} -eq 0 ]]; then
   warn "no osaurus-evals .build/${EVALS_BUILD_CONFIGURATION} dir found; skipping metallib colocation."
 else
   if metallib_src="$(find_metallib_source)"; then
+    if ! metallib_looks_like_mlx "${metallib_src}"; then
+      warn "chosen metallib is suspiciously small: ${metallib_src}"
+      warn "that is almost certainly the app's own metallib, not MLX's kernel library."
+      warn "local MLX evals would abort at first decode with 'Unable to load kernel rmsbfloat16'."
+      warn "point OSAURUS_MLX_METALLIB at .../mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib"
+    fi
     for d in "${bin_dirs[@]}"; do
       for name in default.metallib mlx.metallib; do
         if [[ ! -f "${d}/${name}" ]]; then

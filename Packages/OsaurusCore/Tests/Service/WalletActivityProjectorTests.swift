@@ -80,7 +80,7 @@ struct WalletActivityProjectorTests {
         )[0]
 
         #expect(row.title == "venice/minimax-m3")
-        #expect(row.amountLabel == "-$1.23")
+        #expect(row.amountLabel == "-12,345 credits")
         #expect(row.isCredit == false)
         #expect(row.stateKind == .success)
     }
@@ -118,7 +118,7 @@ struct WalletActivityProjectorTests {
         )[0]
 
         #expect(row.title == "Credits added")
-        #expect(row.amountLabel == "+$5.00")
+        #expect(row.amountLabel == "+50,000 credits")
         #expect(row.isCredit)
         #expect(row.stateKind == .success)
     }
@@ -138,7 +138,7 @@ struct WalletActivityProjectorTests {
 
         #expect(rows.count == 1)
         #expect(rows[0].title == "Credits added")
-        #expect(rows[0].amountLabel == "+$2.00")
+        #expect(rows[0].amountLabel == "+20,000 credits")
         #expect(rows[0].isCredit)
     }
 
@@ -186,9 +186,9 @@ struct WalletActivityProjectorTests {
         )
 
         #expect(rows.map(\.title) == ["Adjustment", "Refund"])
-        #expect(rows[0].amountLabel == "-$0.25")
+        #expect(rows[0].amountLabel == "-2,500 credits")
         #expect(rows[0].isCredit == false)
-        #expect(rows[1].amountLabel == "+$0.75")
+        #expect(rows[1].amountLabel == "+7,500 credits")
         #expect(rows[1].isCredit)
     }
 
@@ -206,7 +206,7 @@ struct WalletActivityProjectorTests {
 
         #expect(rows.count == 1)
         #expect(rows[0].title == "Credits reversed")
-        #expect(rows[0].amountLabel == "-$1.25")
+        #expect(rows[0].amountLabel == "-12,500 credits")
         #expect(rows[0].isCredit == false)
         #expect(rows[0].stateKind == .secondary)
     }
@@ -265,7 +265,7 @@ struct WalletActivityProjectorTests {
         )[0]
 
         #expect(row.title == "Page extract")
-        #expect(row.amountLabel == "-$0.01")
+        #expect(row.amountLabel == "-125 credits")
         #expect(row.isIncludedWebRequest == false)
     }
 

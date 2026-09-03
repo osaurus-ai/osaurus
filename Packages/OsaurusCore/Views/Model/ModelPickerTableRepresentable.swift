@@ -437,6 +437,20 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
     @objc private func didClick() { onSelect?() }
     @objc private func didClickAccessory() { onAccessory?() }
 
+    // The row select is an NSClickGestureRecognizer, which only real mouse
+    // events drive — without an accessibility action, VoiceOver and AX
+    // automation can open the picker but can never actually choose a model.
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func accessibilityLabel() -> String? {
+        nameLabel.stringValue
+    }
+    override func accessibilityPerformPress() -> Bool {
+        guard onSelect != nil else { return false }
+        onSelect?()
+        return true
+    }
+
     /// Keep the whole-row select gesture from firing when the click lands on the
     /// visible favourite control — otherwise toggling a favourite would also
     /// select the model and dismiss the picker. The button's own action still

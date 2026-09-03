@@ -333,4 +333,82 @@ struct ContentBlockDisplayTests {
         let jsonLine = String(decoding: data, as: UTF8.self)
         return SharedArtifact.startMarker + jsonLine + SharedArtifact.endMarker
     }
+
+    // MARK: - Cancelled-turn visibility (issue #2510)
+
+    private func paragraphTexts(_ blocks: [ContentBlock]) -> [String] {
+        blocks.compactMap { block -> String? in
+            guard case let .paragraph(_, text, _, _) = block.kind else { return nil }
+            return text
+        }
+    }
+
+    @Test
+    func cancelledEmptyTurn_rendersInterruptedNotice() {
+        let cancelled = ChatTurn(role: .assistant, content: "")
+        cancelled.terminalStopReason = "cancelled"
+
+        let blocks = ContentBlock.generateBlocks(
+            from: [cancelled],
+            streamingTurnId: nil,
+            agentName: "Assistant"
+        )
+
+        #expect(
+            paragraphTexts(blocks)
+                == ["Interrupted — stopped before a response was produced."])
+    }
+
+    @Test
+    func cancelledThinkingOnlyTurn_rendersThinkingAndInterruptedNotice() {
+        let cancelled = ChatTurn(role: .assistant, content: "")
+        cancelled.thinking = "Working out the tides..."
+        cancelled.terminalStopReason = "cancelled"
+
+        let blocks = ContentBlock.generateBlocks(
+            from: [cancelled],
+            streamingTurnId: nil,
+            agentName: "Assistant"
+        )
+
+        let hasThinking = blocks.contains { block in
+            if case .thinking = block.kind { return true }
+            return false
+        }
+        #expect(hasThinking)
+        #expect(
+            paragraphTexts(blocks)
+                == ["Interrupted — stopped before a response was produced."])
+    }
+
+    @Test
+    func nonCancelledEmptyTurn_staysBlockless() {
+        // Without a cancel marker, billing, or generation stats the empty
+        // turn keeps its historical no-block behavior.
+        let empty = ChatTurn(role: .assistant, content: "")
+
+        let blocks = ContentBlock.generateBlocks(
+            from: [empty],
+            streamingTurnId: nil,
+            agentName: "Assistant"
+        )
+
+        #expect(paragraphTexts(blocks).isEmpty)
+    }
+
+    @Test
+    func streamingEmptyCancelStampedTurn_showsTypingNotInterrupted() {
+        // A turn still streaming must never show the interruption line —
+        // the marker only renders once the run is over.
+        let streaming = ChatTurn(role: .assistant, content: "")
+        streaming.terminalStopReason = "cancelled"
+
+        let blocks = ContentBlock.generateBlocks(
+            from: [streaming],
+            streamingTurnId: streaming.id,
+            agentName: "Assistant"
+        )
+
+        #expect(paragraphTexts(blocks).isEmpty)
+    }
 }

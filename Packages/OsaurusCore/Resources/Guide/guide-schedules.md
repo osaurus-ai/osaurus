@@ -6,12 +6,12 @@ order: 90
 
 # Schedules and Automation
 
-Schedules run saved agent instructions on a recurring cadence. Watchers trigger an agent when files change. Agents with self-scheduling can plan their own next wake-up.
+Schedules run saved agent instructions on a recurring frequency. Watchers trigger an agent when files change. Agents with self-scheduling can plan their own next wake-up.
 
 ## Schedules
 
-- Management (⌘⇧M) → Schedules: create, edit, pause/resume, and delete schedules; each pairs instructions with an agent and a frequency (calendar or cron cadence).
-- Or ask the default Osaurus assistant: "run my research agent every morning at 9" — it can create and manage schedules.
+- Management (⌘⇧M) → Schedules: create, edit, pause/resume, and delete schedules; each pairs instructions with an agent and a frequency.
+- In chat, the built-in assistant creates and manages schedules itself by applying a `schedules:` entry with `osaurus_config`. A schedule entry uses flat keys — `name`, `agent` (custom agent name), `instructions`, `frequency` (`once` | `every_n_minutes` | `hourly` | `daily` | `weekly` | `monthly` | `yearly` | `cron`), `frequency_time_of_day` (`"HH:mm"`, for daily/weekly/monthly/yearly), `frequency_value` (cron expression / weekday / day-of-month), `enabled`. Example: daily at 08:00 = `frequency: daily` + `frequency_time_of_day: "08:00"`.
 - History records every run; if the target agent logs runs to its database, history also shows failures, durations, and token counts.
 - Paused schedules and completed one-shots show no next run. Export a Markdown run summary from the history menu.
 - Each scheduled run starts a fresh chat session tagged `schedule` in the sidebar.

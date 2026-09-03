@@ -93,6 +93,22 @@ enum SeatbeltExecutor {
         }
     }
 
+    /// Reads whatever is already buffered in the pipe without ever blocking,
+    /// even while an orphaned descendant still holds the write end open.
+    private static func drainBufferedBytes(_ handle: FileHandle) -> Data {
+        let fd = handle.fileDescriptor
+        let flags = fcntl(fd, F_GETFL)
+        guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0 else { return Data() }
+        var drained = Data()
+        var buffer = [UInt8](repeating: 0, count: 65536)
+        while true {
+            let count = read(fd, &buffer, buffer.count)
+            guard count > 0 else { break }
+            drained.append(buffer, count: count)
+        }
+        return drained
+    }
+
     private final class ActivityClock: @unchecked Sendable {
         private let lock = NSLock()
         private var last = Date()
@@ -199,14 +215,31 @@ enum SeatbeltExecutor {
                 break
             }
         }
-        process.waitUntilExit()
+        // Reap the child — but only wait unconditionally when it exited on
+        // its own. On the timeout path the child can be wedged in an
+        // uninterruptible kernel wait (observed: sandbox checks against a
+        // broken sandboxd/XPC service on CI runners), where even SIGKILL
+        // does not take effect until the syscall returns. A bare
+        // `waitUntilExit()` there blocks forever, defeating the enforced
+        // timeout. Give the SIGKILL a bounded window to land, then abandon
+        // the process; launchd reaps it when the kernel finally releases it.
+        if timedOut {
+            for _ in 0..<20 where process.isRunning {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+        } else {
+            process.waitUntilExit()
+        }
 
-        // Drain any bytes still buffered in the pipes, then detach the
-        // handlers so the file handles can close.
-        stdoutCollector.append(stdoutPipe.fileHandleForReading.availableData)
-        stderrCollector.append(stderrPipe.fileHandleForReading.availableData)
+        // Detach the handlers, then drain any bytes still buffered in the
+        // pipes. The drain must never block: `availableData` waits while any
+        // write end is open, and a killed `sandbox-exec` can leave an orphaned
+        // grandchild of the shell holding the write end — which turned an
+        // already-handled inactivity timeout into an indefinite hang.
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
         stderrPipe.fileHandleForReading.readabilityHandler = nil
+        stdoutCollector.append(drainBufferedBytes(stdoutPipe.fileHandleForReading))
+        stderrCollector.append(drainBufferedBytes(stderrPipe.fileHandleForReading))
 
         if timedOut {
             throw SandboxError.timeout

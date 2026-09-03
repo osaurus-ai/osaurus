@@ -223,7 +223,8 @@ struct SessionPreflightCacheTests {
             let manager = AgentManager.shared
             let agent = Agent(
                 name: "SessionPreflightCacheTestAgent-\(UUID().uuidString.prefix(6))",
-                agentAddress: "test-session-preflight-\(UUID().uuidString)"
+                agentAddress: "test-session-preflight-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             manager.add(agent)
             await body(agent.id)

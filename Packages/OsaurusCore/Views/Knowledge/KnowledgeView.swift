@@ -12,6 +12,25 @@ import SwiftUI
 
 // MARK: - Knowledge View
 
+/// Sub-navigation for the Knowledge tab.
+///
+/// History earns its own tab because it is unbounded and the collections are
+/// not: the write log keeps up to 2000 records per collection, and a single
+/// afternoon of agent work produced enough rows in testing to push the
+/// collection grid off screen. It stays hidden until an agent has actually
+/// written something.
+enum KnowledgeTab: String, CaseIterable, AnimatedTabItem {
+    case collections
+    case history
+
+    var title: String {
+        switch self {
+        case .collections: return L("Collections")
+        case .history: return L("History")
+        }
+    }
+}
+
 struct KnowledgeView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var knowledgeManager = KnowledgeManager.shared
@@ -29,6 +48,9 @@ struct KnowledgeView: View {
     @State private var editingCollection: KnowledgeCollection?
     @State private var hasAppeared = false
     @State private var successMessage: String?
+    /// Style of the toast currently shown. Failures render as warnings; a
+    /// refused revert wearing a green checkmark reads as "reverted".
+    @State private var toastType: SimpleToastType = .success
 
     /// A freshly created collection awaiting the "grant to agents" prompt.
     /// Set right after `create`/`createFromGit` succeeds so the user can
@@ -41,7 +63,10 @@ struct KnowledgeView: View {
     // Curation review state (Phase 2).
     @State private var openTickets: [KnowledgeTicket] = []
     @State private var pendingProposals: [KnowledgeProposal] = []
+    /// Recent agent writes, grouped by run, for the history + revert section.
+    @State private var writeRuns: [KnowledgeWriteRun] = []
     @State private var reviewingProposal: KnowledgeProposal?
+    @State private var selectedTab: KnowledgeTab = .collections
 
     var body: some View {
         VStack(spacing: 0) {
@@ -83,6 +108,14 @@ struct KnowledgeView: View {
                         hasAppeared: hasAppeared
                     )
                     .padding(.horizontal, 32)
+                    // Falls back to Collections rather than showing an empty
+                    // tab: the selector is gone once the log is, and a
+                    // selection left pointing at it would strand the view.
+                } else if selectedTab == .history, !writeRuns.isEmpty {
+                    ScrollView {
+                        fullHistorySection
+                    }
+                    .opacity(hasAppeared ? 1 : 0)
                 } else {
                     ScrollView {
                         curationSection
@@ -138,7 +171,7 @@ struct KnowledgeView: View {
                 if let message = successMessage {
                     VStack {
                         Spacer()
-                        ThemedToastView(message, type: .success)
+                        ThemedToastView(message, type: toastType)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                             .padding(.bottom, 20)
                     }
@@ -175,7 +208,10 @@ struct KnowledgeView: View {
                                 showSuccess("Cloned \"\(created.name)\", indexing in the background")
                                 grantingCollection = created
                             } catch {
-                                showSuccess("Clone failed: \(error.localizedDescription)")
+                                showSuccess(
+                                    "Clone failed: \(error.localizedDescription)",
+                                    type: .error
+                                )
                             }
                         }
                     } else {
@@ -269,7 +305,12 @@ struct KnowledgeView: View {
                                 showSuccess(L("Approved proposal #\(proposal.id)"))
                             }
                         } catch {
-                            await MainActor.run { showSuccess("Approve failed: \(error.localizedDescription)") }
+                            await MainActor.run {
+                                showSuccess(
+                                    "Approve failed: \(error.localizedDescription)",
+                                    type: .error
+                                )
+                            }
                         }
                     }
                 },
@@ -378,12 +419,27 @@ struct KnowledgeView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                 Text(
-                    "Agents flag documents that look out of date. A Curator agent proposes a fix here for you to approve — nothing changes until you do.",
+                    "Agents leave a note here when a document looks out of date but fixing it was not the task at hand. Open one in a chat to have an agent correct it; you review the change before it is saved.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
                 .fixedSize(horizontal: false, vertical: true)
+
+                // Drain-only. Nothing creates proposals any more — the tool
+                // and the curator role are gone — but drafts already queued
+                // are the user's, so they get reviewed rather than discarded
+                // on upgrade. This block and the `proposals` table go once
+                // these can reasonably be assumed drained.
+                if !pendingProposals.isEmpty {
+                    Text(
+                        "Left over from the old review flow. Approve or dismiss these; agents now write documents directly, with your approval at the time.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
 
                 ForEach(pendingProposals) { proposal in
                     HStack(spacing: 10) {
@@ -424,15 +480,15 @@ struct KnowledgeView: View {
                                 .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
                                 .lineLimit(2)
-                            Text("Waiting for a curator to propose a fix", bundle: .module)
+                            Text("Open this in a chat to have it fixed", bundle: .module)
                                 .font(.system(size: 10))
                                 .foregroundColor(.orange)
                         }
                         Spacer(minLength: 8)
                         Button {
-                            startCurator(for: ticket)
+                            startTicketFix(for: ticket)
                         } label: {
-                            Text("Update with a curator", bundle: .module)
+                            Text("Fix in a chat", bundle: .module)
                                 .font(.system(size: 11, weight: .medium))
                         }
                         Button {
@@ -454,33 +510,35 @@ struct KnowledgeView: View {
         }
     }
 
-    /// A curator agent that can act on `collectionId`: knowledge on, curator
+    /// An agent that can act on `collectionId`.
     /// on, and this collection granted. `nil` when the user hasn't set one up.
-    private func curatorAgent(forCollectionId collectionId: String) -> Agent? {
+    /// Any agent granted this collection can now fix a ticket: write access
+    /// follows the grant, not a separate curator role.
+    private func agentGranted(forCollectionId collectionId: String) -> Agent? {
         guard let uuid = UUID(uuidString: collectionId) else { return nil }
         return AgentManager.shared.agents.first { agent in
             agent.settings.knowledgeEnabled
-                && agent.settings.knowledgeCuratorEnabled
                 && agent.settings.knowledgeCollectionIds.contains(uuid)
         }
     }
 
     /// Give the user a forward action beyond Dismiss: open a chat with a
-    /// curator agent whose composer is pre-filled with a briefing for this
+    /// granted agent whose composer is pre-filled with a briefing for this
     /// ticket, so the user lands with the request ready to send instead of a
-    /// blank window. The curator does the proposing through the normal chat +
-    /// tool path; the proposal then returns here for approval.
-    private func startCurator(for ticket: KnowledgeTicket) {
-        guard let agent = curatorAgent(forCollectionId: ticket.collectionId) else {
+    /// blank window. The agent corrects the document with `write_knowledge`
+    /// through the normal chat + tool path, showing a diff for approval.
+    private func startTicketFix(for ticket: KnowledgeTicket) {
+        guard let agent = agentGranted(forCollectionId: ticket.collectionId) else {
             showSuccess(
-                L("No curator yet — turn on Features → Knowledge → Curator for an agent that can use this collection.")
+                L("No agent has this collection yet. Grant it to one in Features → Knowledge."),
+                type: .warning
             )
             return
         }
         let windowId = ChatWindowManager.shared.createWindow(agentId: agent.id)
         // Seed the composer so the window isn't a blank prompt. The reviewer
-        // can edit or send as-is; the curator uses propose_knowledge_update,
-        // which lands back here as a pending proposal for approval.
+        // can edit or send as-is; the agent fixes the document with
+        // `write_knowledge`, which shows a diff for approval at call time.
         let collectionName =
             (UUID(uuidString: ticket.collectionId)
             .flatMap { KnowledgeManager.shared.collection(for: $0)?.name }) ?? ""
@@ -489,11 +547,87 @@ struct KnowledgeView: View {
             "Please work knowledge ticket #\(ticket.id) for `\(ticket.relPath)`\(collectionClause).\n"
             + "Reported issue: \(ticket.reason)\n\n"
             + "Read the current document, and if it is out of date, use "
-            + "propose_knowledge_update to draft a corrected version for my "
-            + "approval. Keep the existing frontmatter. Do not change anything "
-            + "until I approve the proposal."
+            + "write_knowledge to correct it. Keep the existing frontmatter. "
+            + "I will review the diff before it is saved."
         ChatWindowManager.shared.windowState(id: windowId)?.session.input = briefing
         showSuccess(L("Opened \(agent.name) with a briefing for ticket #\(ticket.id). Review it and hit send."))
+    }
+
+    /// The History tab: every run, with collection and reverted filters.
+    ///
+    /// The only surface for agent writes. The Collections tab used to carry a
+    /// duplicate strip of the same rows; with a tab of its own, that was the
+    /// same list rendered twice on one screen.
+    private var fullHistorySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(
+                "Everything agents have written to your collections, newest first. Reverting puts the document back the way it was before that run.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+
+            historyList
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 20)
+        .padding(.bottom, 24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var historyList: some View {
+        KnowledgeWriteHistoryView(
+            runs: writeRuns,
+            onRevertRun: { run in
+                Task {
+                    let failures = await KnowledgeWriteService.shared.revertRun(
+                        runId: run.runId
+                    )
+                    // A single-document run gets a sentence about that
+                    // document. The batch arithmetic ("Reverted 0 of 1")
+                    // is only for runs where partial success is possible.
+                    if let only = run.records.first, run.records.count == 1 {
+                        if failures.isEmpty {
+                            showSuccess(L("Reverted \(only.relPath)"))
+                        } else {
+                            showSuccess(
+                                L(
+                                    "Did not revert \(only.relPath): the document changed after the agent wrote it."
+                                ),
+                                type: .warning
+                            )
+                        }
+                    } else if failures.isEmpty {
+                        showSuccess(L("Reverted \(run.records.count) documents"))
+                    } else {
+                        // Best-effort per record: say what could not be put
+                        // back rather than implying the whole run undid.
+                        showSuccess(
+                            L(
+                                "Reverted \(run.records.count - failures.count) of \(run.records.count) documents. The rest changed after the agent wrote them, so they were left alone."
+                            ),
+                            type: .warning
+                        )
+                    }
+                    reloadCuration()
+                }
+            },
+            onRevertRecord: { record in
+                Task {
+                    do {
+                        try await KnowledgeWriteService.shared.revert(recordId: record.id)
+                        showSuccess(L("Reverted \(record.relPath)"))
+                    } catch {
+                        showSuccess(
+                            L("Could not revert: \(error.localizedDescription)"),
+                            type: .warning
+                        )
+                    }
+                    reloadCuration()
+                }
+            }
+        )
     }
 
     /// Load open tickets + pending proposals off the main thread (the
@@ -506,35 +640,90 @@ struct KnowledgeView: View {
             guard KnowledgeDatabase.shared.isOpen else { return }
             let tickets = (try? KnowledgeDatabase.shared.listTickets(collectionIds: nil, status: .open)) ?? []
             let proposals = (try? KnowledgeDatabase.shared.listProposals(status: .pending)) ?? []
+            // The write log is a separate store (it is primary data, not a
+            // rebuildable index), so it opens independently.
+            if !KnowledgeWriteLogDatabase.shared.isOpen {
+                try? KnowledgeWriteLogDatabase.shared.open()
+            }
+            let writes =
+                (try? KnowledgeWriteLogDatabase.shared.recentRecords(limit: 200)) ?? []
+            let names = await MainActor.run {
+                Dictionary(
+                    uniqueKeysWithValues: KnowledgeManager.shared.collections.map {
+                        ($0.id.uuidString, $0.name)
+                    }
+                )
+            }
+            let runs = KnowledgeWriteRun.group(writes, collectionNames: names)
             await MainActor.run {
                 // Assign only on a real change so the periodic poll can't churn
                 // the view every tick. Both lists are single-status queries, so
                 // comparing ids is sufficient to detect add/remove/status moves.
                 if tickets.map(\.id) != openTickets.map(\.id) { openTickets = tickets }
                 if proposals.map(\.id) != pendingProposals.map(\.id) { pendingProposals = proposals }
+                // Compare the flattened record ids AND their reverted state:
+                // a revert changes no ids, only status, and the row has to
+                // stop offering a button that would now fail.
+                let incoming = runs.flatMap { $0.records.map { "\($0.id):\($0.isReverted)" } }
+                let current = writeRuns.flatMap { $0.records.map { "\($0.id):\($0.isReverted)" } }
+                if incoming != current { writeRuns = runs }
             }
         }
     }
 
+    /// Tabs live inside the header container, not under it.
+    ///
+    /// `ManagerHeaderWithTabs` is what paints the header band and owns the
+    /// row's insets; a selector placed in the body below it sits on the page
+    /// background with nothing to anchor to, and reads as floating.
+    ///
+    /// Still only rendered once an agent has written something, so the common
+    /// case keeps the plain header it has always had.
+    @ViewBuilder
     private var headerView: some View {
-        ManagerHeaderWithActions(
-            title: L("Knowledge"),
-            subtitle: L("Folders of documents your agents can search and read on demand"),
-            count: knowledgeManager.collections.isEmpty ? nil : knowledgeManager.collections.count
-        ) {
-            HeaderIconButton("arrow.clockwise", help: "Re-index all collections") {
-                knowledgeManager.scheduleIndexAll()
-                showSuccess("Incremental re-index started")
-            }
-            HeaderPrimaryButton("Add Collection", icon: "plus") {
-                isCreating = true
-            }
+        if writeRuns.isEmpty {
+            ManagerHeaderWithActions(
+                title: L("Knowledge"),
+                subtitle: L("Folders of documents your agents can search and read on demand"),
+                count: knowledgeManager.collections.isEmpty
+                    ? nil : knowledgeManager.collections.count,
+                actions: { headerActions }
+            )
+        } else {
+            ManagerHeaderWithTabs(
+                title: L("Knowledge"),
+                subtitle: L("Folders of documents your agents can search and read on demand"),
+                count: knowledgeManager.collections.isEmpty
+                    ? nil : knowledgeManager.collections.count,
+                actions: { headerActions },
+                tabsRow: {
+                    HeaderTabsRow(
+                        selection: $selectedTab,
+                        counts: [
+                            .collections: knowledgeManager.collections.count,
+                            .history: writeRuns.count,
+                        ]
+                    )
+                }
+            )
         }
     }
 
-    private func showSuccess(_ message: String) {
+    @ViewBuilder
+    private var headerActions: some View {
+        HeaderIconButton("arrow.clockwise", help: "Re-index all collections") {
+            knowledgeManager.scheduleIndexAll()
+            showSuccess("Incremental re-index started")
+        }
+        HeaderPrimaryButton("Add Collection", icon: "plus") {
+            isCreating = true
+        }
+    }
+
+    private func showSuccess(_ message: String, type: SimpleToastType = .success) {
         withAnimation(theme.springAnimation()) {
             successMessage = message
+            toastType = type
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
             withAnimation(theme.animationQuick()) {
@@ -1545,7 +1734,7 @@ private struct KnowledgeCollectionDetailSheet: View {
             Divider()
             footer
         }
-        .frame(width: 560, height: 640)
+        .fittedSheetFrame(width: 560, height: 640)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
         .onAppear(perform: loadData)

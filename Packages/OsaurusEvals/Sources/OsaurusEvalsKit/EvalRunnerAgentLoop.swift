@@ -78,13 +78,13 @@ extension EvalRunner {
             }
             ServerRuntimeSettingsStore.overrideSnapshotInMemory(settings)
 
-            let effectiveMaxBatchSize = InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
+            let requestedMaxBatchSize = InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
             runtimeConcurrencyNote =
                 "runtimeConcurrency fixture: continuousBatching="
                 + "\(settings.concurrency.continuousBatching), "
                 + "maxConcurrentSequences="
                 + "\(settings.concurrency.maxConcurrentSequences.map(String.init) ?? "nil"), "
-                + "effectiveMaxBatchSize=\(effectiveMaxBatchSize)"
+                + "requestedMaxBatchSize=\(requestedMaxBatchSize)"
             if let runtimeConcurrencyNote {
                 FileHandle.standardError.write(
                     Data("[evals] \(testCase.id) — \(runtimeConcurrencyNote)\n".utf8)
@@ -454,8 +454,9 @@ extension EvalRunner {
         var judgeElapsed: Double?
         if transcript.error == nil, let rubric = exp.rubric, !rubric.isEmpty {
             // Self-heal the ephemeral judge provider before grading — a
-            // provider-mutating suite earlier in the same process (e.g.
-            // `default_agent`'s `osaurus_provider`) can have evicted it,
+            // provider-mutating suite earlier in the same process (e.g. a
+            // `default_agent` `osaurus_config` apply that touches providers)
+            // can have evicted it,
             // which would otherwise fail every rubric row spuriously.
             await ensureJudgeProviderRoutable(judgeModel)
             let judgeStarted = Date()
@@ -489,7 +490,16 @@ extension EvalRunner {
                     domain: testCase.domain,
                     query: resolvedQuery,
                     outcome: .errored,
-                    notes: [runtimeConcurrencyNote, "agent loop error: \(err)"].compactMap { $0 },
+                    notes: [
+                        runtimeConcurrencyNote,
+                        "agent loop error: \(err)",
+                        // Pre-decode errors keep their original error; the
+                        // MTP control claim is explicitly NOT evaluated —
+                        // never inferred from the absence of stats.
+                        EvalMTPControlState.requested.map {
+                            "MTP control (\($0.label)) not evaluated: case errored before completion"
+                        },
+                    ].compactMap { $0 },
                     modelId: modelId,
                     latencyMs: latency,
                     toolUsage: toolUsageStats(transcript),
@@ -662,6 +672,42 @@ extension EvalRunner {
             )
         }
 
+        // Fail-closed MTP control gate. Three evidence layers: the request
+        // (`--mtp`), the runtime's independent resolution (load launch plan
+        // + per-request strategy — captured NOW, while the model is
+        // resident), and the per-step token stats. A contradiction is an
+        // explicit ERROR; missing evidence turns an otherwise-passing row
+        // into an errored/unverified one — never a silent pass under the
+        // wrong decode path.
+        var mtpOutcome: EvalCaseOutcome = score.passed ? .passed : .failed
+        let mtpResolution: EvalMTPResolution? =
+            EvalMTPControlState.requested != nil
+            ? await Self.captureMTPResolution(modelId: modelId) : nil
+        if let requested = EvalMTPControlState.requested {
+            let resolution = mtpResolution
+            if let resolution {
+                score.notes.append(
+                    "mtp resolution: load=\(resolution.loadStatus ?? "none") strategy=\(resolution.requestStrategy) reason=\(resolution.loadReason ?? "none")"
+                )
+            }
+            switch EvalMTPControlState.verdict(
+                requested: requested,
+                resolution: resolution,
+                tokenStepConfiguredDepths: transcript.stepDiagnostics
+                    .filter { ($0.completionTokens ?? 0) > 0 }
+                    .map(\.mtpDepth))
+            {
+            case .honored:
+                break
+            case .violation(let message):
+                mtpOutcome = .errored
+                score.notes.append(message)
+            case .unverified(let message):
+                if mtpOutcome == .passed { mtpOutcome = .errored }
+                score.notes.append("MTP control UNVERIFIED: \(message)")
+            }
+        }
+
         return persistAgentLoopTranscript(
             transcript,
             for: EvalCaseReport(
@@ -669,13 +715,13 @@ extension EvalRunner {
                 label: label,
                 domain: testCase.domain,
                 query: resolvedQuery,
-                outcome: score.passed ? .passed : .failed,
+                outcome: mtpOutcome,
                 notes: score.notes,
                 modelId: modelId,
                 latencyMs: latency,
                 judgeLatencyMs: judgeElapsed,
                 toolUsage: toolUsageStats(transcript),
-                telemetry: telemetry(from: transcript),
+                telemetry: telemetry(from: transcript, mtpResolution: mtpResolution),
                 judge: judgeAudit,
                 context: transcript.contextAttribution
             ),
@@ -729,7 +775,8 @@ extension EvalRunner {
                         decodeTokensPerSecond: $0.decodeTokensPerSecond,
                         decodeThroughputAttribution: $0.decodeThroughputAttribution,
                         requestedEnableThinking: $0.requestedEnableThinking,
-                        thinkingState: $0.thinkingState
+                        thinkingState: $0.thinkingState,
+                        mtp: Self.mtpStepLabel($0)
                     )
                 },
                 error: transcript.error
@@ -742,12 +789,16 @@ extension EvalRunner {
     /// report's telemetry block (resource metrics — peak RAM, KV delta —
     /// are folded in later by `EvalRunner.runOne`). Returns nil when the
     /// run captured no streaming stats (remote/non-streaming).
-    private static func telemetry(from transcript: AgentLoopTranscript) -> EvalCaseTelemetry? {
+    private static func telemetry(
+        from transcript: AgentLoopTranscript,
+        mtpResolution: EvalMTPResolution? = nil
+    ) -> EvalCaseTelemetry? {
         // Total = input + output. Only meaningful once we have an input
         // estimate; completion is 0 on remote/non-streaming runs that never
         // surfaced a stats hint, which is the existing `completionTokens`
         // semantic — so the total there is the input estimate alone.
         let total = transcript.promptTokensTotal.map { $0 + (transcript.completionTokens ?? 0) }
+        let mtpSteps = transcript.stepDiagnostics.filter { $0.mtpDepth != nil }
         let t = EvalCaseTelemetry(
             decodeTokensPerSecond: transcript.decodeTokensPerSecond,
             prefillTokensPerSecond: transcript.prefillTokensPerSecond,
@@ -757,9 +808,60 @@ extension EvalRunner {
             promptTokensTotal: transcript.promptTokensTotal,
             peakContextTokens: transcript.peakContextTokens,
             totalModelTokens: total,
-            modelSteps: transcript.modelSteps
+            modelSteps: transcript.modelSteps,
+            loopExit: transcript.exit,
+            loopExitOrigin: transcript.exitOrigin,
+            loopRecoveryRetries: transcript.recoveryRetryTotal,
+            mtpRequested: EvalMTPControlState.requested?.label,
+            mtpLoadStatus: mtpResolution?.loadStatus,
+            mtpRequestStrategy: mtpResolution?.requestStrategy,
+            mtpDepth: mtpSteps.compactMap(\.mtpDepth).max(),
+            mtpActiveDepth: mtpSteps.compactMap(\.mtpActiveDepth).min(),
+            mtpVerifyCalls: sumIfAny(mtpSteps.compactMap(\.mtpVerifyCalls)),
+            mtpAcceptedDraftTokens: sumIfAny(mtpSteps.compactMap(\.mtpAcceptedDraftTokens)),
+            mtpBonusTokens: sumIfAny(mtpSteps.compactMap(\.mtpBonusTokens)),
+            mtpRejectedTokens: sumIfAny(mtpSteps.compactMap(\.mtpRejectedTokens)),
+            mtpARFallbackTokens: sumIfAny(mtpSteps.compactMap(\.mtpARFallbackTokens)),
+            mtpStepsWithMTP: mtpSteps.isEmpty ? nil : mtpSteps.count
         )
         return t.isEmpty ? nil : t
+    }
+
+    private static func sumIfAny(_ values: [Int]) -> Int? {
+        values.isEmpty ? nil : values.reduce(0, +)
+    }
+
+    /// Independent runtime resolution for the MTP verdict AND the report:
+    /// the resident model's load-time launch plan + the strategy a request
+    /// would run right now. Captured per case, so a mid-run settings change
+    /// can't be papered over. nil = no matching resident model (remote
+    /// provider, or the model was evicted) — which proves nothing and is
+    /// treated as UNVERIFIED by the verdict, never as "off".
+    static func captureMTPResolution(modelId: String) async -> EvalMTPResolution? {
+        guard let snapshot = await ModelRuntime.mtpResolution(forModel: modelId) else {
+            return nil
+        }
+        return EvalMTPResolution(
+            loadStatus: snapshot.loadStatus,
+            loadReason: snapshot.loadReason,
+            requestStrategy: snapshot.requestStrategy,
+            requestConfiguredDepth: snapshot.requestConfiguredDepth
+        )
+    }
+
+    /// Compact per-step MTP evidence line for the persisted transcript.
+    private static func mtpStepLabel(_ d: AgentLoopTranscript.StepDiagnostic) -> String? {
+        guard let depth = d.mtpDepth else { return nil }
+        var parts = ["d\(depth)"]
+        if let active = d.mtpActiveDepth { parts.append("active=\(active)") }
+        if let verify = d.mtpVerifyCalls { parts.append("verify=\(verify)") }
+        if let accepted = d.mtpAcceptedDraftTokens { parts.append("accepted=\(accepted)") }
+        if let bonus = d.mtpBonusTokens { parts.append("bonus=\(bonus)") }
+        if let rejected = d.mtpRejectedTokens { parts.append("rejected=\(rejected)") }
+        if let ar = d.mtpARFallbackTokens { parts.append("ar=\(ar)") }
+        if let downshifts = d.mtpAdaptiveDownshifts { parts.append("downshifts=\(downshifts)") }
+        if let reason = d.mtpAdaptiveFallbackReason { parts.append("reason=\(reason)") }
+        return parts.joined(separator: " ")
     }
 
     // MARK: - Capability fixtures (temp eval agent)
@@ -1533,6 +1635,46 @@ extension EvalRunner {
                             + "\(String(describing: observed.remoteJobs)) != \(value)"
                     )
                 }
+                if let value = expected.localJobs, observed.localJobs != value {
+                    failures.append(
+                        "wave[\(index)].local_jobs "
+                            + "\(String(describing: observed.localJobs)) != \(value)"
+                    )
+                }
+                if let value = expected.engineRequestedMaximum,
+                    observed.engineRequestedMaximum != value
+                {
+                    failures.append(
+                        "wave[\(index)].engine_requested_max "
+                            + "\(String(describing: observed.engineRequestedMaximum)) != \(value)"
+                    )
+                }
+                if let value = expected.engineArchitectureMaximum,
+                    observed.engineArchitectureMaximum != value
+                {
+                    failures.append(
+                        "wave[\(index)].engine_architecture_max "
+                            + "\(String(describing: observed.engineArchitectureMaximum)) != \(value)"
+                    )
+                }
+                if expected.requireUncappedArchitecture == true,
+                    observed.hasEngineArchitectureMaximum != true
+                        || observed.engineArchitectureMaximum != nil
+                {
+                    failures.append(
+                        "wave[\(index)].engine_architecture_max expected explicit null "
+                            + "but got present=\(observed.hasEngineArchitectureMaximum) "
+                            + "value=\(String(describing: observed.engineArchitectureMaximum))"
+                    )
+                }
+                if let value = expected.engineEffectiveMaximum,
+                    observed.engineEffectiveMaximum != value
+                {
+                    failures.append(
+                        "wave[\(index)].engine_effective_max "
+                            + "\(String(describing: observed.engineEffectiveMaximum)) != \(value)"
+                    )
+                }
                 if let value = expected.effectiveLocalSlots,
                     observed.effectiveLocalSlots != value
                 {
@@ -1570,6 +1712,10 @@ extension EvalRunner {
         let executionWaveSummary = executionWaves.map { wave in
             "wave=\(wave.wave.map(String.init) ?? "nil")"
                 + ",remote=\(wave.remoteJobs.map(String.init) ?? "nil")"
+                + ",local=\(wave.localJobs.map(String.init) ?? "nil")"
+                + ",engineRequested=\(wave.engineRequestedMaximum.map(String.init) ?? "nil")"
+                + ",architectureMax=\(wave.engineArchitectureMaximum.map(String.init) ?? "nil")"
+                + ",engineEffective=\(wave.engineEffectiveMaximum.map(String.init) ?? "nil")"
                 + ",slots=\(wave.effectiveLocalSlots.map(String.init) ?? "nil")"
                 + ",subwaves=\(wave.localSubwaves.map { String(describing: $0) } ?? "nil")"
                 + ",limitedBy=\(wave.limitingFactors.map { String(describing: $0) } ?? "nil")"

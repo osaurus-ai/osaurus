@@ -673,6 +673,14 @@ public struct ThemedAlertHost: View {
                     presentationStyle: .window,
                     onDismiss: { request.onDismiss() }
                 )
+                // Identity-key by request so a replacement alert gets a
+                // FRESH view. Without this, a request presented into the
+                // scope right after a button dismissal reuses the old
+                // view whose `isAppearing` state already animated to
+                // false — the new card renders fully transparent
+                // (observed live: the PII-model download progress alert
+                // was invisible after Install replaced the ask alert).
+                .id(request.id)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -154,6 +154,27 @@ enum AgentLoopModelStep {
     /// content, so transparently replaying would concatenate two attempts.
     /// End honestly without an automatic retry.
     case incompleteVisibleResponse
+    /// The model emitted visible text that ANNOUNCES an imminent tool call
+    /// ("Let me write the first batch:") and then stopped without emitting
+    /// one, while tools were on the table. Ending here is what makes a small
+    /// model look like its tools are silently failing: the user reads a
+    /// promise to act, no call runs, and the next turn the model reports the
+    /// tool "isn't executing". Recoverable — the driver nudges and retries,
+    /// and because the announcement is a preamble rather than an answer, the
+    /// retry's tool call reads as the natural continuation of it.
+    case announcedToolCall
+    /// The stream consumer cut the turn short because the model collapsed
+    /// into a phrase-repetition loop. Recoverable once: the repeat is a
+    /// decoding failure, not an answer, so ending here would present a wall
+    /// of the same sentence as the response.
+    case repetitionLoop(phrase: String?)
+    /// The turn ended by asking the user for permission to carry on ("would
+    /// you like me to continue?") instead of carrying on. Only a stall when
+    /// tracked work is still pending — the driver checks that before
+    /// recovering, so a genuine question to the user still ends the run.
+    /// `clarify` is the tool for real questions; this shape is the model
+    /// handing back a turn it was asked to finish.
+    case continuationRequest
 
     /// Classify a naturally completed model step from its rendered channels
     /// and authoritative terminal stop reason.
@@ -174,14 +195,27 @@ enum AgentLoopModelStep {
     ///   `requiresVisibleFinalResponse` cannot cover that case: it is
     ///   `hasStructuredToolWork || isRemoteAgentTarget`, both false on the very
     ///   first turn, which is exactly when this happens.
+    /// - Parameter content: the rendered visible content, used only to tell an
+    ///   answer apart from a bare announcement of an un-made tool call. Pass
+    ///   `nil` from surfaces that cannot cheaply materialise it; the
+    ///   announce-only recovery is then skipped and behaviour is unchanged.
     static func classifyTerminal(
         contentIsBlank: Bool,
         thinkingIsBlank: Bool,
         stopReason: String?,
         unclosedReasoning: Bool = false,
         requiresVisibleFinalResponse: Bool,
-        toolsWereOffered: Bool = false
+        toolsWereOffered: Bool = false,
+        content: String? = nil,
+        repetitionLoopPhrase: String? = nil
     ) -> Self {
+        // Checked before `stopReason`: the consumer stopped reading, so the
+        // reported terminal reason describes a stream nobody finished. A
+        // repeated sentence is never a usable answer regardless of how the
+        // generation would otherwise have ended.
+        if let repetitionLoopPhrase {
+            return .repetitionLoop(phrase: repetitionLoopPhrase.isEmpty ? nil : repetitionLoopPhrase)
+        }
         if stopReason == "length" {
             return .lengthExhausted
         }
@@ -204,8 +238,87 @@ enum AgentLoopModelStep {
         if contentIsBlank, toolsWereOffered {
             return .incompleteReasoning
         }
+        // Visible text, no call, tools available — check whether that text is
+        // an answer, a request to be allowed to carry on, or only a preamble
+        // to a call the model never emitted.
+        if toolsWereOffered, let content {
+            if isContinuationRequest(content) { return .continuationRequest }
+            if isAnnounceOnly(content) { return .announcedToolCall }
+        }
         return .finalResponse
     }
+
+    /// Whether visible content ends by asking permission to keep going.
+    ///
+    /// Matches only the closing line, and only an explicit ask about
+    /// CONTINUING — not questions in general. A model that asks something
+    /// substantive ("which version of the toolkit do you mean?") is doing the
+    /// right thing and must still end the turn.
+    static func isContinuationRequest(_ content: String) -> Bool {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasSuffix("?") else { return false }
+        guard trimmed.components(separatedBy: "```").count % 2 == 1 else { return false }
+
+        let lines = trimmed.split(whereSeparator: \.isNewline)
+        guard let last = lines.last?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        else { return false }
+        return Self.continuationRequestPhrases.contains { last.contains($0) }
+    }
+
+    /// Ways a model asks to be let off the hook mid-task. Lowercased,
+    /// matched anywhere in the closing line.
+    private static let continuationRequestPhrases: [String] = [
+        "would you like me to continue", "want me to continue", "shall i continue",
+        "should i continue", "do you want me to continue", "shall i proceed",
+        "should i proceed", "would you like me to proceed", "want me to proceed",
+        "shall i keep going", "should i keep going", "want me to keep going",
+        "would you like me to keep going", "ok to continue", "okay to continue",
+    ]
+
+    /// Whether visible content reads as a preamble to a tool call rather than
+    /// an answer to the user.
+    ///
+    /// Deliberately narrow, because a false positive suppresses a legitimate
+    /// final answer and spends a retry. The signal is the LAST non-empty line:
+    /// a finished answer does not end on a colon (a colon promises something
+    /// follows, and when something does follow the colon is no longer last),
+    /// and does not end on a bare first-person statement of what the model is
+    /// about to do. Both shapes dominate the announce-only turns in
+    /// osaurus#2439, where every "Let me write the first batch:" ended the run.
+    static func isAnnounceOnly(_ content: String) -> Bool {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        // An unbalanced fence means the visible tail is inside a code block,
+        // where a trailing colon carries no discourse meaning.
+        guard trimmed.components(separatedBy: "```").count % 2 == 1 else { return false }
+
+        let lines = trimmed.split(whereSeparator: \.isNewline)
+        guard
+            let last = lines.last?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !last.isEmpty
+        else { return false }
+        // Structural tails (list items, tables, fences, quotes) are answer
+        // content even when they happen to end in a colon.
+        guard let first = last.first,
+            !"-*>|#`+".contains(first)
+        else { return false }
+
+        if last.hasSuffix(":") { return true }
+
+        // "Let me check the result" / "I'll write these now" as the whole
+        // closing line, with no answer after it. Bounded length keeps this
+        // from matching a long sentence that merely opens with "I'll".
+        guard last.count <= 120 else { return false }
+        let lowered = last.lowercased()
+        return Self.announcementPrefixes.contains { lowered.hasPrefix($0) }
+    }
+
+    /// Openers of a first-person "about to act" line. Lowercased, matched as
+    /// prefixes of the final line only.
+    private static let announcementPrefixes: [String] = [
+        "let me ", "let's ", "now let me ", "i'll ", "i will ", "i am going to ",
+        "i'm going to ", "next, i'll ", "next i'll ", "first, let me ", "first let me ",
+    ]
 
     /// Preserve visible partial output, remove only terminal whitespace, and
     /// append the truthful output-cap notice. A whitespace-only completion
@@ -391,6 +504,35 @@ struct AgentLoopHooks {
     /// prior empty-final behavior, which is harmless off the chat surface.
     var emitFallbackText: ((_ text: String) async -> Void)?
 
+    /// Emit a final user-visible explanation when chat's fail-closed tool
+    /// policy stops the loop. The rejected envelope is already persisted as
+    /// a tool turn; this hook closes the visible assistant turn without
+    /// asking the model to guess about a denied or failed side effect.
+    var emitToolRejectionText: ((_ text: String) async -> Void)?
+
+    /// Diagnostics side channel, fired once immediately before the run
+    /// returns. Optional and observational: the loop's behaviour is
+    /// identical whether or not a surface supplies it, and `RunResult`
+    /// deliberately stays free of these fields so behavioural assertions
+    /// are unaffected. See `AgentToolLoop.ExitDiagnostics`.
+    var recordExitDiagnostics: ((AgentToolLoop.ExitDiagnostics) async -> Void)?
+
+    /// The user-visible text of the final response the surface just
+    /// classified, for the grounded-claim check
+    /// (`GroundedConfigClaimCheck`). Return nil to skip the check for this
+    /// turn — chat returns nil when `osaurus_config` is not in the offered
+    /// tool schema, so agents without the configure surface are never
+    /// second-guessed. Leaving the hook nil opts the surface out entirely.
+    var finalVisibleText: (() async -> String?)?
+
+    /// Keep the ungrounded final visible in the surface transcript but
+    /// exclude it from the next model request and prepare a fresh output
+    /// buffer — the same persistence-backed boundary contract as
+    /// `prepareTrackedTaskContinuation`. Required for the grounded-claim
+    /// retry: without it a streaming surface would splice two attempts into
+    /// one answer, so the driver skips the check when this is nil.
+    var prepareGroundedClaimRetry: (() async -> Void)?
+
     init(
         isCancelled: @escaping () async -> Bool = { false },
         buildMessages: @escaping (_ notices: [String]) async -> AgentLoopIterationInput,
@@ -411,7 +553,10 @@ struct AgentLoopHooks {
         onBatchComplete: @escaping (_ outcomes: [AgentLoopToolOutcome]) async -> Void = { _ in },
         pendingTodoCount: (() async -> Int)? = nil,
         todoProgressSnapshot: (() async -> AgentTodoProgressSnapshot?)? = nil,
-        emitFallbackText: ((_ text: String) async -> Void)? = nil
+        emitFallbackText: ((_ text: String) async -> Void)? = nil,
+        emitToolRejectionText: ((_ text: String) async -> Void)? = nil,
+        finalVisibleText: (() async -> String?)? = nil,
+        prepareGroundedClaimRetry: (() async -> Void)? = nil
     ) {
         self.isCancelled = isCancelled
         self.buildMessages = buildMessages
@@ -426,6 +571,9 @@ struct AgentLoopHooks {
         self.pendingTodoCount = pendingTodoCount
         self.todoProgressSnapshot = todoProgressSnapshot
         self.emitFallbackText = emitFallbackText
+        self.emitToolRejectionText = emitToolRejectionText
+        self.finalVisibleText = finalVisibleText
+        self.prepareGroundedClaimRetry = prepareGroundedClaimRetry
     }
 }
 
@@ -444,6 +592,29 @@ enum AgentLoopBudget {
         case bundleMetadata
         case providerMetadata
         case metadataFallback
+        /// The user's cap was lower than the model's window, so it decided the
+        /// number. Distinct from the metadata sources so the chip and logs can
+        /// say WHY the window is smaller than the bundle advertises.
+        case userCap
+    }
+
+    /// Applies the user's context cap to a resolved window.
+    ///
+    /// One helper, called by both resolver twins, because the sync and async
+    /// paths feed different surfaces — the send gate and context chip use the
+    /// sync one, the agent loop and subagent runner the async one — and a cap
+    /// honoured by only one of them would mean the number a user sees and the
+    /// number their agents actually run under disagree.
+    ///
+    /// Only ever lowers. A cap above the model's window is ignored rather than
+    /// obeyed: the weights cannot honour it, so raising it produces incoherent
+    /// output instead of more context.
+    static func applyingUserCap(
+        _ resolution: ContextWindowResolution,
+        cap: Int?
+    ) -> ContextWindowResolution {
+        guard let cap, cap > 0, cap < resolution.tokens else { return resolution }
+        return ContextWindowResolution(tokens: cap, source: .userCap)
     }
 
     struct ContextWindowResolution: Equatable, Sendable {
@@ -485,24 +656,28 @@ enum AgentLoopBudget {
                 source: .foundationFixed
             )
         }
+        let cap = await MainActor.run { ChatConfigurationStore.load().contextLengthCap }
         if let info = ModelInfo.load(modelId: modelId), let ctx = info.model.contextLength {
-            return ContextWindowResolution(tokens: ctx, source: .bundleMetadata)
+            return applyingUserCap(
+                ContextWindowResolution(tokens: ctx, source: .bundleMetadata), cap: cap)
         }
         if let providerContext = await MainActor.run(body: {
             providerContextWindow(modelId: modelId)
         }) {
-            return ContextWindowResolution(
-                tokens: providerContext,
-                source: .providerMetadata
-            )
+            return applyingUserCap(
+                ContextWindowResolution(
+                    tokens: providerContext,
+                    source: .providerMetadata
+                ), cap: cap)
         }
         return await MainActor.run {
-            ContextWindowResolution(
-                tokens:
-                    ChatConfigurationStore.load().contextLength
-                    ?? fallbackContextWindow,
-                source: .metadataFallback
-            )
+            applyingUserCap(
+                ContextWindowResolution(
+                    tokens:
+                        ChatConfigurationStore.load().contextLength
+                        ?? fallbackContextWindow,
+                    source: .metadataFallback
+                ), cap: cap)
         }
     }
 
@@ -529,21 +704,25 @@ enum AgentLoopBudget {
         // cold path (`findModelDirectory` + `config.json` read) blocks the main
         // thread long enough to trip the app-hang detector. A transient nil on a
         // cold cache falls through to the conservative store/fallback value.
+        let cap = ChatConfigurationStore.load().contextLengthCap
         if let info = ModelInfo.loadCachedOrWarm(modelId: modelId), let ctx = info.model.contextLength {
-            return ContextWindowResolution(tokens: ctx, source: .bundleMetadata)
+            return applyingUserCap(
+                ContextWindowResolution(tokens: ctx, source: .bundleMetadata), cap: cap)
         }
         if let providerContext = providerContextWindow(modelId: modelId) {
-            return ContextWindowResolution(
-                tokens: providerContext,
-                source: .providerMetadata
-            )
+            return applyingUserCap(
+                ContextWindowResolution(
+                    tokens: providerContext,
+                    source: .providerMetadata
+                ), cap: cap)
         }
-        return ContextWindowResolution(
-            tokens:
-                ChatConfigurationStore.load().contextLength
-                ?? fallbackContextWindow,
-            source: .metadataFallback
-        )
+        return applyingUserCap(
+            ContextWindowResolution(
+                tokens:
+                    ChatConfigurationStore.load().contextLength
+                    ?? fallbackContextWindow,
+                source: .metadataFallback
+            ), cap: cap)
     }
 
     /// Synchronous cache-only provider lookup used by both the async runtime
@@ -861,9 +1040,61 @@ enum AgentToolLoop {
         /// A streamed tool envelope repeatedly hit the model output ceiling
         /// before becoming executable.
         case truncatedToolCallExhausted
+        /// The model degenerated into a phrase-repetition loop and the bounded
+        /// retry did not recover it.
+        case repetitionLoopExhausted
         /// Bounded recovery could not turn reasoning-only/unclosed output into
         /// a user-visible final answer.
         case incompleteReasoningExhausted
+    }
+
+    /// WHICH decision produced the exit. `Exit` says what the run ended as;
+    /// `ExitOrigin` says which branch decided it, and the two are not 1:1.
+    ///
+    /// `.finalResponse` alone is returned from six distinct sites, three of
+    /// which are give-up paths taken only after a bounded recovery was
+    /// exhausted. Without this field an exhausted-recovery exit is
+    /// indistinguishable in telemetry from a model that simply answered —
+    /// which is why "the agent stopped mid-turn" reports have been
+    /// unfalsifiable from logs and eval reports alike.
+    ///
+    /// Diagnostic only: nothing branches on this value.
+    enum ExitOrigin: String, Sendable, Equatable {
+        /// The model produced a final answer and the driver accepted it.
+        case ordinaryModelFinal
+        /// Empty-turn recovery ran out of nudges with no completed tool work;
+        /// the fallback text was emitted and the run ended.
+        case emptyTurnRecoveryExhausted
+        /// Announce-only recovery ran out of nudges; the model's preamble is
+        /// kept as the answer.
+        case announcedToolCallRecoveryExhausted
+        /// The model asked whether to continue and no tracked work was
+        /// pending, so the question was handed to the user.
+        case continuationRequestNoPendingWork
+        /// Continuation-request recovery ran out of nudges.
+        case continuationRequestRecoveryExhausted
+        /// A malformed repeat of an already-successful desktop subagent call
+        /// was replaced by the prior tool's summary.
+        case desktopSummarySubstituted
+        /// Terminal states that are already unambiguous from `Exit` itself.
+        case typedTerminal
+    }
+
+    /// Bounded-recovery attempts actually spent during the run. All are
+    /// uncharged against the iteration budget, so without this they leave no
+    /// trace anywhere: a run that burned six nudges looks identical to one
+    /// that never stalled.
+    struct RecoveryCounters: Equatable, Sendable {
+        var emptyTurn: Int = 0
+        var announcedToolCall: Int = 0
+        var continuationRequest: Int = 0
+        var repetitionLoop: Int = 0
+        var incompleteReasoning: Int = 0
+
+        var total: Int {
+            emptyTurn + announcedToolCall + continuationRequest
+                + repetitionLoop + incompleteReasoning
+        }
     }
 
     struct RunResult: Equatable, Sendable {
@@ -881,6 +1112,17 @@ enum AgentToolLoop {
             self.iterations = iterations
             self.unfinishedTodoCount = unfinishedTodoCount
         }
+    }
+
+    /// Diagnostics emitted once, immediately before the run returns.
+    /// Deliberately NOT part of `RunResult`: that type is the behavioural
+    /// contract and 41 existing assertions compare it by value, so folding
+    /// observability into it would force every one of them to restate
+    /// diagnostic data. Nothing branches on any of this.
+    struct ExitDiagnostics: Equatable, Sendable {
+        var exit: Exit
+        var origin: ExitOrigin
+        var counters: RecoveryCounters
     }
 
     /// The dedupe-replay notice staged when a held result short-circuits
@@ -905,6 +1147,61 @@ enum AgentToolLoop {
     /// an empty turn never surfaces as a silent "No visible text was produced".
     static let emptyTurnFallback =
         "I wasn't able to generate a response to that. Please try rephrasing your request."
+
+    /// Max consecutive announce-only turns to nudge-and-retry. Lower than the
+    /// empty-turn budget: each retry leaves the announcement visible in the
+    /// transcript, so repeated attempts read as the model talking to itself.
+    /// If two nudges don't produce a call, the model is not going to make one
+    /// and the announcement is accepted as the (poor) final answer.
+    static let maxAnnouncedToolCallRetries = 2
+
+    /// Staged before an announce-only retry. Names the specific failure — the
+    /// model believes it already issued the call — because the generic
+    /// "produced no output" nudge does not fit a turn that produced text.
+    static let announcedToolCallNotice =
+        "[System Notice] Your previous turn described a tool call but did not actually emit one, so nothing ran. "
+        + "No file was written and no command executed. Emit the tool call itself now, as a real call — "
+        + "do not describe it, narrate it, or claim it already ran."
+
+    /// How many times a run will push back on "shall I continue?" before
+    /// letting the question stand. Two: enough to get past a model that asks
+    /// reflexively, few enough that a user who really is being consulted is
+    /// not talked over indefinitely.
+    static let maxContinuationRequestRetries = 2
+
+    /// Staged before a continuation-request retry. States the standing
+    /// authorization explicitly — a model that asks permission mid-task is
+    /// usually unsure it has any — and names the pending count so "continue"
+    /// has a concrete referent.
+    static func continuationRequestNotice(pending: Int) -> String {
+        let items = pending == 1 ? "1 item remains" : "\(pending) items remain"
+        return
+            "[System Notice] You asked whether to continue. Yes — continue. The user's request "
+            + "already authorized this work and \(items) unchecked on your todo. Do not ask "
+            + "again: proceed with the next pending item now. If you are genuinely blocked on "
+            + "something only the user can decide, call `clarify` with the specific question "
+            + "instead of asking in prose."
+    }
+
+    /// One retry. A model that degenerated once usually degenerates again,
+    /// and each attempt costs the user real wall-clock time.
+    static let maxRepetitionLoopRetries = 1
+
+    static func repetitionLoopNotice(phrase: String?) -> String {
+        let quoted = phrase.map { " (\"\($0)\")" } ?? ""
+        return
+            "[System Notice] Your previous turn repeated the same sentence\(quoted) over and over "
+            + "and was stopped. Repeating a plan is not progress. Do exactly ONE concrete thing "
+            + "now: emit a single tool call, or state plainly what is blocking you. Do not restate "
+            + "what you are about to do."
+    }
+
+    /// Shown when the retry degenerates too. Honest about what happened
+    /// rather than leaving a wall of repeated text as the answer.
+    static let repetitionLoopFallback =
+        "The model got stuck repeating itself and the response was stopped. "
+        + "This usually means the task is too large for one turn — try narrowing it to a single "
+        + "step, or switch to a different model."
 
     static let emptyToolTaskFallback =
         "The model returned empty output after tool execution. The agent task may be incomplete; retry with less context or continue from the latest tool result."
@@ -955,6 +1252,13 @@ enum AgentToolLoop {
     /// history and starts a fresh output buffer; the driver does not fabricate
     /// a user/system message or alter decode controls.
     static let maxIncompleteReasoningRetries = 1
+
+    /// Bounded grounded-claim retries per run (see
+    /// `GroundedConfigClaimCheck`): one regeneration per trip class — a
+    /// fabricated-envelope answer and an ungrounded change claim can each be
+    /// corrected once. The notice reflects true executed state back to the
+    /// model; the model always writes its own corrected answer.
+    static let maxGroundedClaimRetries = 2
 
     static let incompleteReasoningFallback =
         "The model ended in reasoning without producing a user-visible final answer. "
@@ -1149,6 +1453,21 @@ enum AgentToolLoop {
     /// (chat error bubble, HTTP SSE error, plugin JSON error).
     static let overBudgetMessage =
         "Context window cannot fit this request even after compaction. Shorten the input, reduce tool output, or start a new conversation."
+
+    /// The same message, but naming the user's own cap when that — rather
+    /// than the model — is what the request failed to fit.
+    ///
+    /// Telling someone to "shorten the input" when the model has a 108k
+    /// window and their Context Window Cap is 2048 sends them to fix the
+    /// wrong thing. The resolver already records `.userCap`, so the surface
+    /// can point at the setting that actually decided the number.
+    static func overBudgetMessage(windowSource: AgentLoopBudget.ContextWindowSource?) -> String {
+        guard windowSource == .userCap else { return overBudgetMessage }
+        return
+            "Context window cannot fit this request. The limit in force is your "
+            + "Context Window Cap (Settings → Server → Cache → Context & KV Policy), "
+            + "not the model's own window — raise or clear it, or shorten the input."
+    }
 
     // MARK: - Default parallel batch executor
 
@@ -1713,10 +2032,55 @@ enum AgentToolLoop {
         // productive turn; bounds the nudge-and-retry recovery so the loop
         // can never spin on a deterministically-empty model.
         var consecutiveEmptyTurns = 0
+        // Grounded-claim invariant state: whether any `osaurus_config` apply
+        // landed a real change this run, and how many corrective retries the
+        // final-response check has consumed (bounded, never editing output).
+        var hasGroundedConfigApply = false
+        var groundedClaimRetries = 0
+        // Consecutive announce-only turns (visible "let me…" preamble, no
+        // call). Reset by any productive turn, for the same reason.
+        var consecutiveAnnouncedToolCalls = 0
+        // Total repetition-loop recoveries this run.
+        var repetitionLoopRetries = 0
+        // Consecutive "shall I continue?" hand-backs this run.
+        var consecutiveContinuationRequests = 0
         // Total (not merely consecutive) reasoning-only recovery attempts.
         // A tool call between attempts must not re-arm another potentially
         // huge reasoning cycle in the same logical run.
         var incompleteReasoningRetries = 0
+        // Diagnostic-only RUN TOTALS. The three `consecutive*` counters above
+        // are reset by a successful `.toolCalls` step, so reading them at exit
+        // reports the current streak rather than what the run actually spent —
+        // an alternating stall/tool pattern would report zero. These never
+        // reset, so `RunResult.recoveryCounters` describes the whole run.
+        // Nothing branches on them.
+        var totalEmptyTurnRetries = 0
+        var totalAnnouncedToolCallRetries = 0
+        var totalContinuationRequestRetries = 0
+
+        /// Emit the exit diagnostics for this run. Called immediately before
+        /// each labelled `return`, so `origin` names the branch that actually
+        /// decided the outcome — the distinction `Exit` alone cannot make for
+        /// `.finalResponse`, which six different sites produce.
+        func recordExit(_ exit: Exit, _ origin: ExitOrigin) async {
+            await hooks.recordExitDiagnostics?(
+                ExitDiagnostics(
+                    exit: exit,
+                    origin: origin,
+                    counters: RecoveryCounters(
+                        emptyTurn: totalEmptyTurnRetries,
+                        announcedToolCall: totalAnnouncedToolCallRetries,
+                        continuationRequest: totalContinuationRequestRetries,
+                        repetitionLoop: repetitionLoopRetries,
+                        incompleteReasoning: incompleteReasoningRetries)))
+        }
+
+        /// Close a fail-closed tool rejection visibly. This runs only after
+        /// cancellation has been checked, so Stop/cancel retains its own
+        /// terminal semantics and never gains a synthetic denial message.
+        func emitToolRejection(_ outcome: AgentLoopToolOutcome) async {
+            await hooks.emitToolRejectionText?(ToolEnvelope.failureMessage(outcome.result))
+        }
         // Total oversized streamed-call recoveries. One typed retry gives a
         // model a chance to switch to bounded/chunked writes without allowing
         // another unbounded decode loop.
@@ -1815,9 +2179,40 @@ enum AgentToolLoop {
             }
             switch step {
             case .finalResponse:
+                // Grounded-claim invariant (user-approved honest-state
+                // reflection, see `GroundedConfigClaimCheck`): a final answer
+                // that IS a fabricated tool envelope, or that claims a config
+                // change no apply actually landed, gets the factual notice
+                // staged and one bounded regeneration. Both hooks are
+                // required — without the retry boundary a streaming surface
+                // would splice two attempts into one answer.
+                if let finalVisibleText = hooks.finalVisibleText,
+                    let prepareRetry = hooks.prepareGroundedClaimRetry,
+                    groundedClaimRetries < Self.maxGroundedClaimRetries,
+                    let visibleText = await finalVisibleText(),
+                    let notice = GroundedConfigClaimCheck.notice(
+                        finalText: visibleText,
+                        hasGroundedApply: hasGroundedConfigApply
+                    )
+                {
+                    groundedClaimRetries += 1
+                    print(
+                        "[Osaurus] Grounded-claim guard tripped "
+                            + "(retry \(groundedClaimRetries)/\(Self.maxGroundedClaimRetries), "
+                            + "groundedApply=\(hasGroundedConfigApply)): "
+                            + String(notice.prefix(140))
+                    )
+                    pendingStateNotice = notice
+                    await prepareRetry()
+                    // Protocol correction, not agent progress — don't charge
+                    // the tool-iteration budget (same as the empty-turn path).
+                    iteration -= 1
+                    continue
+                }
                 // An ordinary model final is authoritative. Todo is visible
                 // progress metadata; it must never override EOS/stop and make
                 // the driver regenerate the same answer until the step cap.
+                await recordExit(.finalResponse, .ordinaryModelFinal)
                 return RunResult(exit: .finalResponse, iterations: iteration)
 
             case .retryWithoutCharge:
@@ -1861,6 +2256,7 @@ enum AgentToolLoop {
                 // a temp-0 model that just emitted EOS produces text), then
                 // emit a fallback message so the user always sees something.
                 consecutiveEmptyTurns += 1
+                totalEmptyTurnRetries += 1
                 if consecutiveEmptyTurns <= Self.maxEmptyTurnRetries {
                     pendingStateNotice = Self.emptyTurnNotice
                     // Not charged against the tool-iteration budget.
@@ -1874,7 +2270,68 @@ enum AgentToolLoop {
                 // Recovery exhausted: guarantee a visible message instead of
                 // a silent dead-end, then end the run.
                 await hooks.emitFallbackText?(Self.emptyTurnFallback)
+                await recordExit(.finalResponse, .emptyTurnRecoveryExhausted)
                 return RunResult(exit: .finalResponse, iterations: iteration)
+
+            case .announcedToolCall:
+                // The model announced a call and stopped. Treating that as a
+                // final answer is what makes tools look silently broken, so
+                // nudge-and-retry instead. On exhaustion, accept the text as
+                // the final answer rather than emitting a fallback: unlike an
+                // empty turn, the user already has something on screen, and
+                // replacing it would retract visible content.
+                consecutiveAnnouncedToolCalls += 1
+                totalAnnouncedToolCallRetries += 1
+                if consecutiveAnnouncedToolCalls <= Self.maxAnnouncedToolCallRetries {
+                    pendingStateNotice = Self.announcedToolCallNotice
+                    // Not charged against the tool-iteration budget.
+                    iteration -= 1
+                    continue
+                }
+                await recordExit(.finalResponse, .announcedToolCallRecoveryExhausted)
+                return RunResult(exit: .finalResponse, iterations: iteration)
+
+            case .continuationRequest:
+                // Asking "would you like me to continue?" is only a stall when
+                // there IS tracked work left. With nothing pending it is a
+                // real question and the user should get it, so fall through to
+                // an ordinary final response rather than talking past them.
+                // Matches the todo-staleness call shape below: unwrap the hook
+                // first, then await it. A surface that supplies no hook has no
+                // tracked work to appeal to, so the question stands.
+                var pending = 0
+                if let pendingTodoCount = hooks.pendingTodoCount {
+                    pending = await pendingTodoCount()
+                }
+                guard pending > 0 else {
+                    await recordExit(.finalResponse, .continuationRequestNoPendingWork)
+                    return RunResult(exit: .finalResponse, iterations: iteration)
+                }
+                consecutiveContinuationRequests += 1
+                totalContinuationRequestRetries += 1
+                if consecutiveContinuationRequests <= Self.maxContinuationRequestRetries {
+                    pendingStateNotice = Self.continuationRequestNotice(pending: pending)
+                    // Not charged against the tool-iteration budget.
+                    iteration -= 1
+                    continue
+                }
+                // Recovery spent: the model will not proceed on its own. Hand
+                // the question to the user rather than looping on it — the
+                // text is already on screen and is a reasonable thing to end
+                // on once we have tried twice.
+                await recordExit(.finalResponse, .continuationRequestRecoveryExhausted)
+                return RunResult(exit: .finalResponse, iterations: iteration)
+
+            case .repetitionLoop(let phrase):
+                repetitionLoopRetries += 1
+                if repetitionLoopRetries <= Self.maxRepetitionLoopRetries {
+                    pendingStateNotice = Self.repetitionLoopNotice(phrase: phrase)
+                    // Not charged against the tool-iteration budget.
+                    iteration -= 1
+                    continue
+                }
+                await hooks.emitFallbackText?(Self.repetitionLoopFallback)
+                return RunResult(exit: .repetitionLoopExhausted, iterations: iteration)
 
             case .lengthExhausted:
                 // `stop=length` is authoritative. Do not mislabel a
@@ -1916,9 +2373,12 @@ enum AgentToolLoop {
                 )
 
             case .toolCalls(let invocations):
-                // A productive turn — reset the empty-turn recovery budget so
-                // a later unrelated empty turn gets its own fresh allowance.
+                // A productive turn — reset the empty-turn and announce-only
+                // recovery budgets so a later unrelated stall gets its own
+                // fresh allowance.
                 consecutiveEmptyTurns = 0
+                consecutiveAnnouncedToolCalls = 0
+                consecutiveContinuationRequests = 0
 
                 // A desktop subagent already completed successfully, and the
                 // very next model step emitted only a malformed repeat of that
@@ -1936,6 +2396,7 @@ enum AgentToolLoop {
                     let emitFinalText = hooks.emitFallbackText
                 {
                     await emitFinalText(summary)
+                    await recordExit(.finalResponse, .desktopSummarySubstituted)
                     return RunResult(exit: .finalResponse, iterations: iteration)
                 }
 
@@ -2232,8 +2693,9 @@ enum AgentToolLoop {
                         return await finishBatch(.cancelled)
                     }
                     if policy.stopOnToolRejection,
-                        outcomes.contains(where: Self.shouldStopAfterToolOutcome)
+                        let rejected = outcomes.first(where: Self.shouldStopAfterToolOutcome)
                     {
+                        await emitToolRejection(rejected)
                         return await finishBatch(.toolRejected)
                     }
                 } else {
@@ -2353,6 +2815,7 @@ enum AgentToolLoop {
                                 Self.shouldStopAfterToolOutcome(guardedOutcome)
                             {
                                 await hooks.onBatchComplete(outcomes)
+                                await emitToolRejection(guardedOutcome)
                                 return RunResult(exit: .toolRejected, iterations: iteration)
                             }
                             continue
@@ -2381,6 +2844,7 @@ enum AgentToolLoop {
                             if policy.stopOnToolRejection,
                                 Self.shouldStopAfterToolOutcome(outcome)
                             {
+                                await emitToolRejection(outcome)
                                 return RunResult(exit: .toolRejected, iterations: iteration)
                             }
                             continue
@@ -2439,6 +2903,7 @@ enum AgentToolLoop {
                         if policy.stopOnToolRejection,
                             Self.shouldStopAfterToolOutcome(outcomes[outcomes.count - 1])
                         {
+                            await emitToolRejection(outcomes[outcomes.count - 1])
                             return RunResult(exit: .toolRejected, iterations: iteration)
                         }
                     }
@@ -2449,6 +2914,20 @@ enum AgentToolLoop {
                     !Self.isRecoverableTodoContractResult($0.result)
                 }) {
                     completedToolWork = true
+                }
+                // Grounded-claim bookkeeping: remember when an apply landed a
+                // real change so a later change claim in the final answer is
+                // recognized as grounded.
+                if !hasGroundedConfigApply,
+                    outcomes.contains(where: {
+                        GroundedConfigClaimCheck.isGroundedApplyOutcome(
+                            toolName: $0.invocation.toolName,
+                            argumentsJSON: $0.invocation.jsonArguments,
+                            result: $0.result
+                        )
+                    })
+                {
+                    hasGroundedConfigApply = true
                 }
                 let successfulTodoOutcomes = outcomes.filter { outcome in
                     outcome.invocation.toolName == "todo"
@@ -2545,6 +3024,7 @@ enum AgentToolLoop {
             }
         }
 
+        await recordExit(.iterationCapReached, .typedTerminal)
         return RunResult(exit: .iterationCapReached, iterations: iteration)
     }
 }

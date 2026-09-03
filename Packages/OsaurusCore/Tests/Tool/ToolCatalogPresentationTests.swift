@@ -264,11 +264,13 @@ struct ToolCatalogPresentationTests {
         #expect(ToolsTab.resolved(from: "available") == .all)
         #expect(ToolsTab.resolved(from: "Remote") == .connections)
         #expect(ToolsTab.resolved(from: "remote") == .connections)
-        #expect(ToolsTab.resolved(from: "Sandbox") == .custom)
-        #expect(ToolsTab.resolved(from: "sandbox") == .custom)
+        // The Custom tab was retired; its tools now live as a section on the
+        // All Tools tab, so its legacy deep links resolve there.
+        #expect(ToolsTab.resolved(from: "Sandbox") == .all)
+        #expect(ToolsTab.resolved(from: "sandbox") == .all)
+        #expect(ToolsTab.resolved(from: "Custom") == .all)
         #expect(ToolsTab.resolved(from: "All") == .all)
         #expect(ToolsTab.resolved(from: "Connections") == .connections)
-        #expect(ToolsTab.resolved(from: "Custom") == .custom)
         #expect(ToolsTab.resolved(from: "bogus") == nil)
     }
 }

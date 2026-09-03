@@ -17,6 +17,7 @@ struct AgentReorderPersistenceTests {
         Agent(
             name: name,
             agentAddress: "test-reorder-\(UUID().uuidString)",
+            autonomousExec: AutonomousExecConfig(enabled: false),
             order: order
         )
     }

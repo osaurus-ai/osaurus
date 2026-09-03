@@ -128,15 +128,13 @@ struct ModelManagerSuggestedTests {
         }
     }
 
-    @Test @MainActor func lfm25Entry_haveExpectedMetadata() async {
+    @Test @MainActor func lfm25Entry_isCatalogOnly() async {
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
             let mxfp8 = suggested.first { $0.id == "OsaurusAI/LFM2.5-8B-A1B-MXFP8" }
 
             #expect(mxfp8 != nil)
             #expect(mxfp8?.modelType == "lfm2_moe")
-            // Catalog-only: the recommendation spine is Bonsai + Ornith MXFP8
-            // + official Gemma; LFM2.5 stays installable but is not a Top Pick.
             #expect(mxfp8?.isTopSuggestion == false)
             // Sizes now come from `ModelSizeCache` (empty here), not literals.
             #expect(mxfp8?.downloadSizeBytes == nil)
@@ -144,14 +142,51 @@ struct ModelManagerSuggestedTests {
         }
     }
 
-    @Test @MainActor func bonsaiEntries_areNormalizedTopPickVariants() async {
+    @Test @MainActor func raptorEntry_isMainstreamTopPick() async {
+        await withIsolatedModelSizeCache {
+            let suggested = ModelManager().suggestedModels
+            let raptor = suggested.first {
+                $0.id == "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M"
+            }
+
+            #expect(raptor != nil)
+            #expect(raptor?.modelType == "bailing_hybrid")
+            #expect(raptor?.isTopSuggestion == true)
+            #expect(raptor?.useCase == .general)
+            #expect(raptor?.downloadSizeBytes == 6_783_354_784)
+            #expect(raptor?.releasedAt != nil)
+        }
+    }
+
+    @Test @MainActor func nanbeige42Entry_isJang6mTopPick() async {
+        await withIsolatedModelSizeCache {
+            let suggested = ModelManager().suggestedModels
+            let jang6 = suggested.first { $0.id == "OsaurusAI/Nanbeige4.2-3B-JANG_6M" }
+            let mxfp8 = suggested.first { $0.id == "OsaurusAI/Nanbeige4.2-3B-MXFP8" }
+
+            #expect(jang6 != nil)
+            #expect(jang6?.modelType == "nanbeige")
+            #expect(jang6?.isTopSuggestion == true)
+            #expect(jang6?.useCase == .general)
+            // Bootstrap Hub size so 8 GB machines don't see a 1.5 GB
+            // name-heuristic and auto-default this over Gemma E2B.
+            #expect(jang6?.downloadSizeBytes == 3_921_000_000)
+            #expect(jang6?.releasedAt != nil)
+            // MXFP8 is format coverage, not the recommendation.
+            #expect(mxfp8?.isTopSuggestion != true)
+        }
+    }
+
+    @Test @MainActor func bonsaiEntries_areCatalogOnlyNormalizedVariants() async {
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
             let ternary = suggested.first { $0.id == "OsaurusAI/Bonsai-27b-Ternary-JANG" }
             let oneBit = suggested.first { $0.id == "OsaurusAI/Bonsai-27b-1bit-JANG" }
 
-            #expect(ternary?.isTopSuggestion == true)
-            #expect(oneBit?.isTopSuggestion == true)
+            // Demoted from Top Picks: dense 27B decode is too slow to be a
+            // recommended default (user feedback); both stay installable.
+            #expect(ternary?.isTopSuggestion == false)
+            #expect(oneBit?.isTopSuggestion == false)
             #expect(ternary?.downloadSizeBytes == 8_040_700_199)
             #expect(oneBit?.downloadSizeBytes == 4_679_030_015)
             #expect(
@@ -250,32 +285,31 @@ struct ModelManagerSuggestedTests {
 
     // MARK: - Top-pick reorg (precision-first)
 
-    @Test @MainActor func topPicks_recommendBonsaiOrnithAndOfficialGemma() async {
+    @Test @MainActor func topPicks_recommendRaptorLargeOrnithAndOfficialGemma() async {
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
             let topIds = Set(suggested.filter(\.isTopSuggestion).map { $0.id })
-            // Recommendation spine (2026-07-08, GUI-verified in the dev app —
-            // each loads, calls tools, reasons with thinking on, no marker
-            // leakage): Bonsai 27B low-bit builds for mainstream RAM, Ornith
-            // 1.0 MXFP8 for the larger tiers, and official OsaurusAI Gemma 4
-            // at the highest non-QAT/non-MXFP4 precision that exists for the
-            // smaller tiers. These are the ONLY Top Picks.
+            // Recommendation spine: Raptor 8B-A1B hybrid MoE for mainstream
+            // RAM, Ornith 1.5 35B-A3B MXFP8 for the larger tiers, official
+            // OsaurusAI Gemma 4 for the smaller
+            // VL tiers, and Nanbeige 4.2 3B JANG_6M as the text-quality
+            // exception (JANG_6M beats that family's MXFP8). These are the
+            // ONLY Top Picks.
             let expectedTopPicks: Set<String> = [
-                "OsaurusAI/Ornith-1.0-9B-MXFP8",
-                "OsaurusAI/Ornith-1.0-35B-MXFP8",
-                "OsaurusAI/Bonsai-27b-Ternary-JANG",
-                "OsaurusAI/Bonsai-27b-1bit-JANG",
+                "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M",
+                "OsaurusAI/Ornith-1.5-35B-A3B-MXFP8",
+                "OsaurusAI/Nanbeige4.2-3B-JANG_6M",
                 "OsaurusAI/gemma-4-12B-it-MXFP8",
                 "OsaurusAI/gemma-4-E4B-it-8bit",
                 "OsaurusAI/gemma-4-E2B-it-8bit",
             ]
             #expect(
                 topIds == expectedTopPicks,
-                "Top Picks should be exactly Bonsai + Ornith MXFP8 + official Gemma; got \(topIds.sorted())"
+                "Top Picks should be exactly Raptor + large Ornith 1.5 MXFP8 + Nanbeige JANG_6M + official Gemma; got \(topIds.sorted())"
             )
-            // Gemma QAT/MXFP4, plus Qwen 3.6 / Nemotron-3 / LFM2.5, are
-            // catalog-only for now — installable and selectable, just not part
-            // of the auto-default recommendation spine.
+            // Gemma QAT/MXFP4, plus Qwen 3.6 / Nemotron-3 / Bonsai, are
+            // catalog-only — installable and selectable, just not part of the
+            // auto-default recommendation spine.
             for id in [
                 "OsaurusAI/gemma-4-E2B-it-qat-MXFP4",
                 "OsaurusAI/gemma-4-12B-it-qat-MXFP4",
@@ -285,7 +319,10 @@ struct ModelManagerSuggestedTests {
                 "OsaurusAI/Qwen3.6-27B-MXFP8-MTP",
                 "OsaurusAI/Qwen3.6-35B-A3B-MXFP8-MTP",
                 "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
+                "OsaurusAI/Bonsai-27b-Ternary-JANG",
+                "OsaurusAI/Bonsai-27b-1bit-JANG",
                 "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
+                "OsaurusAI/Ornith-1.5-9B-MXFP8",
             ] {
                 #expect(!topIds.contains(id), "expected \(id) to NOT be a Top Pick (catalog-only)")
                 #expect(
@@ -321,6 +358,8 @@ struct ModelManagerSuggestedTests {
             "osaurusai/gemma-4-31b-it-jang_4m",
             "osaurusai/qwen3.5-122b-a10b-jang_4k",
             "osaurusai/qwen3.5-35b-a3b-jang_2s",
+            "osaurusai/ornith-1.0-9b-mxfp8",
+            "osaurusai/ornith-1.0-35b-mxfp8",
         ] {
             #expect(!ids.contains(retired), "expected \(retired) to be removed")
         }
@@ -451,20 +490,52 @@ struct ModelManagerSuggestedTests {
         }
     }
 
-    @Test @MainActor func onboardingDefault_selectsBonsaiVariantForMainstreamRAM() async {
+    @Test @MainActor func onboardingDefault_neverPicksDenseBonsai() async {
+        await withIsolatedModelSizeCache {
+            let candidates = ModelManager().suggestedModels.filter(\.isTopSuggestion)
+            // The dense Bonsai 27B must never be the auto-default again (user
+            // feedback: decode too slow); every RAM tier lands elsewhere.
+            for gb in stride(from: 8.0, through: 128.0, by: 2.0) {
+                let pick = ConfigureAIState.recommendedLocalPick(
+                    from: candidates, totalMemoryGB: gb)
+                #expect(
+                    pick?.id.lowercased().contains("bonsai") != true,
+                    "auto-default at \(gb)GB must not be dense Bonsai; got \(pick?.id ?? "nil")"
+                )
+            }
+        }
+    }
+
+    @Test @MainActor func onboardingDefault_selectsRaptorThrough24GB() async {
         await withIsolatedModelSizeCache {
             let candidates = ModelManager().suggestedModels.filter(\.isTopSuggestion)
             let sixteenGB = ConfigureAIState.recommendedLocalPick(
                 from: candidates,
                 totalMemoryGB: 16
             )
+            let eighteenGB = ConfigureAIState.recommendedLocalPick(
+                from: candidates,
+                totalMemoryGB: 18
+            )
             let twentyFourGB = ConfigureAIState.recommendedLocalPick(
                 from: candidates,
                 totalMemoryGB: 24
             )
 
-            #expect(sixteenGB?.id == "OsaurusAI/Bonsai-27b-1bit-JANG")
-            #expect(twentyFourGB?.id == "OsaurusAI/Bonsai-27b-Ternary-JANG")
+            let raptorId = "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M"
+            #expect(sixteenGB?.id == raptorId)
+            #expect(eighteenGB?.id == raptorId)
+            #expect(twentyFourGB?.id == raptorId)
+
+            // Nanbeige JANG_6M (~4.5 GB working set) is a Top Pick but must
+            // not steal the 8 GB multimodal floor (Gemma E2B). Raptor's
+            // measured bundle is intentionally not treated as comfortable on
+            // an 8 GB machine.
+            let eightGB = ConfigureAIState.recommendedLocalPick(
+                from: candidates,
+                totalMemoryGB: 8
+            )
+            #expect(eightGB?.id == "OsaurusAI/gemma-4-E2B-it-8bit")
         }
     }
 }

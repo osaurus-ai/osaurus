@@ -192,6 +192,8 @@ struct ServerSettingsTabContent: View {
     /// user cannot mistake it for the loaded model's cache window.
     @State private var draftMetadataFallbackTokens: Int?
     @State private var savedMetadataFallbackTokens: Int?
+    @State private var draftContextLengthCap: Int?
+    @State private var savedContextLengthCap: Int?
 
     @State private var hasLoaded: Bool = false
     @State private var saving: Bool = false
@@ -242,6 +244,7 @@ struct ServerSettingsTabContent: View {
     private var hasUnsavedChanges: Bool {
         draft != server.runtimeSettings
             || draftMetadataFallbackTokens != savedMetadataFallbackTokens
+            || draftContextLengthCap != savedContextLengthCap
             || draftLegacy.modelEvictionPolicy != server.configuration.modelEvictionPolicy
             || draftLegacy.globalProxyURL != server.configuration.globalProxyURL
             || draftLegacy.modelIdleResidencyPolicy != server.configuration.modelIdleResidencyPolicy
@@ -322,9 +325,12 @@ struct ServerSettingsTabContent: View {
             draft = server.runtimeSettings
             runtimeBaseline = server.runtimeSettings
             draftLegacy = server.configuration
-            let fallback = ChatConfigurationStore.load().contextLength
+            let chatConfig = ChatConfigurationStore.load()
+            let fallback = chatConfig.contextLength
             draftMetadataFallbackTokens = fallback
             savedMetadataFallbackTokens = fallback
+            draftContextLengthCap = chatConfig.contextLengthCap
+            savedContextLengthCap = chatConfig.contextLengthCap
         }
         .onChange(of: managementState.serverSectionRequest) { _, _ in
             applySectionRequest()
@@ -389,8 +395,10 @@ struct ServerSettingsTabContent: View {
                     CacheSection(
                         draft: $draft,
                         metadataFallbackTokens: $draftMetadataFallbackTokens,
+                        contextLengthCap: $draftContextLengthCap,
                         savedSettings: server.runtimeSettings,
-                        savedMetadataFallbackTokens: savedMetadataFallbackTokens
+                        savedMetadataFallbackTokens: savedMetadataFallbackTokens,
+                        savedContextLengthCap: savedContextLengthCap
                     )
                     .id(ServerSettingsSection.cache)
                     .settingsSearchHighlight(landedSection == .cache)
@@ -447,6 +455,7 @@ struct ServerSettingsTabContent: View {
         )
         runtimeConflictSections = []
         draftMetadataFallbackTokens = ChatConfiguration.default.contextLength
+        draftContextLengthCap = ChatConfiguration.default.contextLengthCap
         let defaults = ServerConfiguration.default
         var reset = draftLegacy
         reset.modelEvictionPolicy = defaults.modelEvictionPolicy
@@ -478,11 +487,15 @@ struct ServerSettingsTabContent: View {
             server.saveConfiguration()
         }
 
-        if draftMetadataFallbackTokens != savedMetadataFallbackTokens {
+        if draftMetadataFallbackTokens != savedMetadataFallbackTokens
+            || draftContextLengthCap != savedContextLengthCap
+        {
             var chat = ChatConfigurationStore.load()
             chat.contextLength = draftMetadataFallbackTokens
+            chat.contextLengthCap = draftContextLengthCap
             ChatConfigurationStore.save(chat)
             savedMetadataFallbackTokens = draftMetadataFallbackTokens
+            savedContextLengthCap = draftContextLengthCap
         }
 
         let effects = await server.saveRuntimeSettings(draft)

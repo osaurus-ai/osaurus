@@ -70,7 +70,7 @@ struct GitHubImportSheet: View {
             contentView
             footerView
         }
-        .frame(width: 560, height: 540)
+        .fittedSheetFrame(width: 560, height: 540)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(

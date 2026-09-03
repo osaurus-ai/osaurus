@@ -215,7 +215,7 @@ final class BrowserUseKind: SubagentKind, @unchecked Sendable {
             maxIterations: maxSteps,
             deadline: deadline,
             sessionId: sessionId,
-            enableThinking: scope.enableThinking,
+            enableThinking: scope.enableThinking(forDelegatedModel: resolved.name),
             isInterrupted: { interrupt.isInterrupted },
             toolset: toolset,
             onProgress: { [feed] tokens, tokensPerSecond in
@@ -292,6 +292,11 @@ final class BrowserUseKind: SubagentKind, @unchecked Sendable {
         case .truncatedToolCallExhausted:
             throw SubagentError.executionFailed(
                 message: "Browser Use repeatedly reached its output limit inside a tool call.",
+                retryable: false
+            )
+        case .repetitionLoopExhausted:
+            throw SubagentError.executionFailed(
+                message: "Browser Use got stuck repeating itself.",
                 retryable: false
             )
         case .incompleteReasoningExhausted:

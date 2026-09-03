@@ -485,6 +485,7 @@ struct CapabilitiesDiscoverToolTests {
                 let agent = Agent(
                     name: "CapabilitySearchGrant-\(UUID().uuidString.prefix(6))",
                     agentAddress: "capability-search-grant-\(UUID().uuidString)",
+                    autonomousExec: AutonomousExecConfig(enabled: false),
                     manualToolNames: [allowed.name]
                 )
                 AgentManager.shared.add(agent)
@@ -510,8 +511,8 @@ struct CapabilitiesDiscoverToolTests {
                 #expect(result.contains("availability: loadable_via_capabilities_load"))
 
                 let configureNames = ToolRegistry.configureToolNames
-                #expect(configureNames.contains("osaurus_provider"))
-                let configureQuery = #"{"query":"osaurus_provider"}"#
+                #expect(configureNames.contains("osaurus_config"))
+                let configureQuery = #"{"query":"osaurus_config"}"#
 
                 let seededConfigureResult = try await tool.execute(argumentsJSON: configureQuery)
                 for configureName in configureNames {
@@ -524,6 +525,7 @@ struct CapabilitiesDiscoverToolTests {
                 let unseededAgent = Agent(
                     name: "CapabilitySearchLegacy-\(UUID().uuidString.prefix(6))",
                     agentAddress: "capability-search-legacy-\(UUID().uuidString)",
+                    autonomousExec: AutonomousExecConfig(enabled: false),
                     manualToolNames: nil
                 )
                 AgentManager.shared.add(unseededAgent)
@@ -568,7 +570,7 @@ struct CapabilitiesDiscoverToolTests {
 
                 let defaultResult = try await CapabilitiesDiscoverTool(agentId: Agent.defaultId)
                     .execute(argumentsJSON: configureQuery)
-                #expect(defaultResult.contains("tool/osaurus_provider"))
+                #expect(defaultResult.contains("tool/osaurus_config"))
 
                 _ = await AgentManager.shared.delete(id: unseededAgent.id)
                 _ = await AgentManager.shared.delete(id: agent.id)
@@ -820,6 +822,7 @@ struct CapabilitiesLoadToolTests {
                 let agent = Agent(
                     name: "CapabilityLoadGrant-\(UUID().uuidString.prefix(6))",
                     agentAddress: "capability-load-grant-\(UUID().uuidString)",
+                    autonomousExec: AutonomousExecConfig(enabled: false),
                     manualToolNames: []
                 )
                 AgentManager.shared.add(agent)
@@ -945,6 +948,7 @@ struct CapabilitiesLoadToolTests {
                 let agent = Agent(
                     name: "SkillAutoLoad-\(UUID().uuidString.prefix(6))",
                     agentAddress: "skill-autoload-\(UUID().uuidString)",
+                    autonomousExec: AutonomousExecConfig(enabled: false),
                     manualToolNames: [groupTool.name]
                 )
                 AgentManager.shared.add(agent)

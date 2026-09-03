@@ -630,10 +630,15 @@ private struct SourceBadge: View {
     private var badgeColor: Color {
         switch source {
         case .chatUI: return .pink
+        case .agent: return .purple
         case .httpAPI: return .blue
         case .plugin: return .teal
         case .p2p: return .purple
         case .scheduled: return .orange
+        case .channel: return .indigo
+        case .schedule: return .orange
+        case .watcher: return .yellow
+        case .selfSchedule: return .mint
         }
     }
 }
@@ -642,10 +647,15 @@ extension RequestSource {
     var shortName: String {
         switch self {
         case .chatUI: return "Chat"
+        case .agent: return "Agent"
         case .httpAPI: return "HTTP"
         case .plugin: return "Plugin"
         case .p2p: return "P2P"
         case .scheduled: return "Scheduled"
+        case .channel: return "Channel"
+        case .schedule: return "Schedule"
+        case .watcher: return "Watcher"
+        case .selfSchedule: return "Self-scheduled"
         }
     }
 }

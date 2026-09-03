@@ -289,7 +289,13 @@ struct ChatEngineTests {
         #expect(args == #"{"path":"/Users/eric/Desktop/testmandel/mandelbrot.py"}"#)
     }
 
-    @Test func toolCallResponse_marksMissingRequiredArgumentsInvalid() throws {
+    /// Schema-invalid arguments must be preserved verbatim in the assistant's
+    /// recorded tool call — never replaced with an `_error` sentinel. The
+    /// sentinel destroyed the model's real arguments (blocking tool-level
+    /// recovery) and, recorded into history, taught models to re-emit the
+    /// error object as arguments on later calls. Execution-time enforcement
+    /// lives in `ToolRegistry.preflight`.
+    @Test func toolCallResponse_preservesSchemaInvalidArguments() throws {
         let tool = Tool(
             type: "function",
             function: ToolFunction(
@@ -310,7 +316,9 @@ struct ChatEngineTests {
             invocations: [
                 ServiceToolInvocation(
                     toolName: "line_count",
-                    jsonArguments: #"{}"#
+                    // `bogus` violates `additionalProperties: false` and has
+                    // no coercion rescue (unlike e.g. `file` → `path`).
+                    jsonArguments: #"{"path":"notes.txt","bogus":"kept"}"#
                 )
             ],
             responseId: "chatcmpl-test",
@@ -328,9 +336,9 @@ struct ChatEngineTests {
         let data = try #require(args.data(using: .utf8))
         let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
 
-        #expect(object["_error"] as? String == "invalid_tool_arguments")
-        #expect(object["_field"] as? String == "path")
-        #expect(object["_tool"] as? String == "line_count")
+        #expect(object["_error"] == nil)
+        #expect(object["path"] as? String == "notes.txt")
+        #expect(object["bogus"] as? String == "kept")
     }
 
     @Test func singleToolRequiredChoiceDispatchesAsNamedFunction() throws {
@@ -398,6 +406,24 @@ struct ChatEngineTests {
         var out = ""
         for try await d in stream { out += d }
         #expect(out == "abc")
+    }
+
+    @Test("consumer teardown preserves a completed runtime drain")
+    func completedStreamTeardownDoesNotCancelProducer() {
+        #expect(
+            !ChatEngine.shouldCancelProducerOnConsumerCancellation(
+                terminalStatsObserved: true
+            )
+        )
+    }
+
+    @Test("pre-terminal consumer teardown still cancels inference")
+    func preTerminalStreamTeardownCancelsProducer() {
+        #expect(
+            ChatEngine.shouldCancelProducerOnConsumerCancellation(
+                terminalStatsObserved: false
+            )
+        )
     }
 
     @Test func streamChat_preserves_reasoning_sentinel_for_endpoint_routing() async throws {

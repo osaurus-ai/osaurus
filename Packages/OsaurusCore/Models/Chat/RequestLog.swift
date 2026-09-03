@@ -77,6 +77,8 @@ struct ToolCallLog: Identifiable, Sendable {
 /// Source of the request
 enum RequestSource: String, Sendable, CaseIterable {
     case chatUI = "Chat UI"
+    /// A local agent or delegated subagent model step.
+    case agent = "Agent"
     case httpAPI = "HTTP API"
     case plugin = "Plugin"
     /// Inbound traffic from another Osaurus peer over the Secure Channel
@@ -92,14 +94,27 @@ enum RequestSource: String, Sendable, CaseIterable {
     /// `.chatUI`-sourced models, so closing an unrelated chat window could
     /// accelerate the unload of the model a scheduled job was mid-run with.
     case scheduled = "Scheduled"
+    /// Inbound work from a configured Agent Channel.
+    case channel = "Channel"
+    /// User-authored recurring schedule.
+    case schedule = "Schedule"
+    /// File-system watcher trigger.
+    case watcher = "Watcher"
+    /// Agent-authored wake-up.
+    case selfSchedule = "Self-scheduled"
 
     var displayName: String {
         switch self {
         case .chatUI: return L("Chat UI")
+        case .agent: return L("Agent")
         case .httpAPI: return L("HTTP API")
         case .plugin: return L("Plugin")
         case .p2p: return L("P2P")
         case .scheduled: return L("Scheduled")
+        case .channel: return L("Channel")
+        case .schedule: return L("Schedule")
+        case .watcher: return L("Watcher")
+        case .selfSchedule: return L("Self-scheduled")
         }
     }
 }

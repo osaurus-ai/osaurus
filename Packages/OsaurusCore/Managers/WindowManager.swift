@@ -56,7 +56,7 @@ public struct WindowConfiguration: Sendable {
 
     public static let management = WindowConfiguration(
         identifier: .management,
-        defaultSize: NSSize(width: 900, height: 640),
+        defaultSize: NSSize(width: 940, height: 640),
         styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
         usePanel: false,
         titlebarAppearsTransparent: true,

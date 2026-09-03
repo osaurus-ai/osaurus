@@ -225,6 +225,22 @@ struct SpawnGuidanceTests {
         #expect(text.contains("different local models are serialized"))
     }
 
+    @Test("artifact delivery guidance steers file deliverables to share_artifact, not the digest")
+    func artifactDeliveryGuidanceAlwaysPresent() {
+        let text = SystemPromptTemplates.spawnGuidance(
+            agents: [agent("helper")],
+            models: []
+        )
+        // The orchestrator must learn that a worker's share_artifact reaches
+        // THIS conversation — otherwise it asks workers to paste whole files
+        // into their reply and the digest cap truncates the deliverable.
+        #expect(text.contains("Workers deliver FILES as artifacts"))
+        #expect(text.contains("`share_artifact`"))
+        #expect(text.contains("artifact card"))
+        #expect(text.contains("`artifacts_shared`"))
+        #expect(text.contains("never ask a worker to paste full file contents"))
+    }
+
     @Test("a note is only rendered when present (no dangling em-dash for note-less models)")
     func noteOnlyRendersWhenPresent() {
         let text = SystemPromptTemplates.spawnGuidance(

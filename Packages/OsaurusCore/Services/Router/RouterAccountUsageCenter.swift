@@ -28,7 +28,7 @@ struct RouterAccountStatusSnapshot: Codable, Equatable, Sendable {
         self.routerEnabled = routerEnabled
         self.identityAvailable = identityAvailable
         self.balanceMicro = balance?.balanceMicro
-        self.formattedBalance = OsaurusRouter.formatMicroUSD(balance?.balanceMicro ?? "0")
+        self.formattedBalance = OsaurusRouter.formatMicroAsCredits(balance?.balanceMicro ?? "0")
         self.frozen = balance?.frozen == true
         self.lastError = lastError?.isEmpty == false ? lastError : nil
         self.generatedAt = generatedAt

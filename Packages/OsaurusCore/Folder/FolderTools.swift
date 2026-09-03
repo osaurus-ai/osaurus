@@ -214,6 +214,45 @@ enum FolderToolHelpers {
         fixed ?? ChatExecutionContext.currentFolderRoot
     }
 
+    /// Bounded search for files whose basename matches the (missing)
+    /// requested path, so a not-found envelope can quote the real
+    /// relative paths instead of leaving the model to guess-and-search.
+    /// Case-insensitive on the basename; hidden entries skipped; scan
+    /// capped so a huge tree can't stall a failing read.
+    static func basenameCandidates(
+        for relativePath: String,
+        rootPath: URL,
+        maxResults: Int = 5,
+        maxScanned: Int = 5_000
+    ) -> [String] {
+        let wanted = (relativePath as NSString).lastPathComponent.lowercased()
+        guard !wanted.isEmpty else { return [] }
+        guard
+            let enumerator = FileManager.default.enumerator(
+                at: rootPath,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )
+        else { return [] }
+        var results: [String] = []
+        var scanned = 0
+        let rootStandardized = rootPath.standardizedFileURL.path
+        for case let url as URL in enumerator {
+            scanned += 1
+            if scanned > maxScanned { break }
+            guard url.lastPathComponent.lowercased() == wanted else { continue }
+            guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
+            else { continue }
+            // Never surface denylisted paths through the recovery hint.
+            if shouldRefuseSecret(fileURL: url) { continue }
+            let full = url.standardizedFileURL.path
+            guard full.hasPrefix(rootStandardized + "/") else { continue }
+            results.append(String(full.dropFirst(rootStandardized.count + 1)))
+            if results.count >= maxResults { break }
+        }
+        return results
+    }
+
     /// Typed failure returned when a folder tool executes with no working
     /// folder in scope (e.g. the model guessed a tool name outside a folder
     /// session, or the folder was cleared mid-run).
@@ -934,6 +973,25 @@ struct FileReadTool: OsaurusTool {
 
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory) else {
+            // Resolve basename candidates before failing: a wrong path
+            // guess otherwise costs a failed turn plus one or two
+            // `file_search` turns (observed live) before the model finds
+            // the file it was told about. Quoting the real relative paths
+            // makes the very next call correct.
+            let candidates = FolderToolHelpers.basenameCandidates(
+                for: relativePath, rootPath: rootPath)
+            if !candidates.isEmpty {
+                return ToolEnvelope.failure(
+                    kind: .notFound,
+                    message:
+                        "File not found: \(relativePath). Files with a matching name exist at: "
+                        + candidates.joined(separator: ", ")
+                        + ". Use one of those exact relative paths.",
+                    field: "path",
+                    expected: "an existing relative path",
+                    tool: name
+                )
+            }
             throw FolderToolError.fileNotFound(relativePath)
         }
         let ext = fileURL.pathExtension.lowercased()
@@ -1005,7 +1063,19 @@ struct FileReadTool: OsaurusTool {
         }
         let validStart = max(1, min(startLine, lines.count))
         let validEnd = max(validStart, min(endLine, lines.count))
-        let charCap = maxChars > 0 ? min(maxChars, Self.maxOutputChars) : Self.maxOutputChars
+        // Adaptive cap: an explicit `max_chars` may exceed the default tier
+        // up to the absolute ceiling, and when the whole file fits under
+        // that ceiling it serves in one call — forced chunking of a file
+        // the model could hold whole just multiplies agent turns. Files
+        // above the ceiling keep the default tier + continuation chunking.
+        let charCap: Int
+        if maxChars > 0 {
+            charCap = min(maxChars, ToolOutputCaps.fileReadMax)
+        } else if content.text.count <= ToolOutputCaps.fileReadMax {
+            charCap = ToolOutputCaps.fileReadMax
+        } else {
+            charCap = Self.maxOutputChars
+        }
 
         var output = ""
         var lastLineIncluded = validStart - 1
@@ -1120,6 +1190,48 @@ struct FileReadTool: OsaurusTool {
         if let continuationStart {
             result["next_start_line"] = continuationStart
             result["next_end_line"] = validEnd
+        }
+        // Anti-paging guard: a model on chunk 2+ of a file too large to
+        // ever fit is usually sequentially paging the whole thing through
+        // context (observed live: 9B model read chunk after chunk of a
+        // 15K-line file until stopped — every chunk grows the transcript
+        // and the next prefill). Steer to tools that operate on the file
+        // without loading it. Stateless: fires on any continuation read of
+        // an over-ceiling file, so it needs no per-session tracking.
+        if validStart > 1, renderedTruncated,
+            content.text.count > ToolOutputCaps.fileReadMax
+        {
+            // Suggest only tools actually in THIS request's schema — the
+            // redaction tools are host-folder-only, and steering a
+            // combined/sandbox conversation toward an unoffered tool just
+            // trades paging churn for tool_not_found churn. A nil scope
+            // means the surface publishes no schema (direct registry use);
+            // the full folder surface applies there.
+            let scope = ChatExecutionContext.toolExecutionScope
+            func offered(_ tool: String) -> Bool { scope?.permits(tool) ?? true }
+            var alternatives: [String] = []
+            if offered("redact_file") {
+                alternatives.append("`redact_file`/`detect_pii` for redaction")
+            }
+            if offered("file_edit") {
+                alternatives.append("`file_edit` with `replace_all`/`edits` for replacements")
+            }
+            if offered("file_search") {
+                alternatives.append("`file_search` to locate specific lines")
+            }
+            if offered("shell_run") {
+                alternatives.append("`shell_run` for anything else")
+            }
+            var warning =
+                "This file is far too large to page through chunk by chunk - each chunk "
+                + "permanently grows the context and slows every later turn. Do NOT keep "
+                + "reading sequentially."
+            if !alternatives.isEmpty {
+                warning +=
+                    " Act with tools that process the file without loading it: "
+                    + alternatives.joined(separator: ", ") + "."
+            }
+            result["paging_warning"] = warning
         }
         // The numbered gutter cannot express whether the file's last line is
         // terminated — a byte-exact reconstruction (backup copies, `equals`
@@ -1856,6 +1968,10 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         + "location in the file — include surrounding context lines if needed to ensure uniqueness. "
         + "Copy the RAW file text only: never include the `N|` line-number prefixes shown in "
         + "`file_read` output. Fails if `old_string` is not found or matches multiple locations. "
+        + "For repeated occurrences of the same text pass `replace_all: true` to replace every one. "
+        + "For many distinct replacements pass `edits`: an array of {old_string, new_string} applied "
+        + "atomically in one call — if any edit fails to match, nothing is written. Prefer one `edits` "
+        + "call over many single-edit calls; for large pattern rewrites consider `shell_run` with `sed`. "
         + "Binary document/package extensions are rejected; this tool edits UTF-8 source only. "
         + "For runnable code, verify the result before claiming it works; a truncated diff is only a shortened review preview, not a partial edit. "
         + "Pass `dry_run: true` to preview the diff without modifying the file. "
@@ -1871,14 +1987,34 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             "old_string": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "The exact text to find and replace (must uniquely match one location in the file)"
+                    "The exact text to find and replace (must uniquely match one location in the file unless `replace_all` is true). Required unless `edits` is provided."
                 ),
             ]),
             "new_string": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "The replacement text"
+                    "The replacement text. Required unless `edits` is provided."
                 ),
+            ]),
+            "replace_all": .object([
+                "type": .string("boolean"),
+                "description": .string(
+                    "Replace every occurrence of `old_string` (or of each edit's `old_string` when `edits` is used) instead of requiring a unique match (default: false)"
+                ),
+            ]),
+            "edits": .object([
+                "type": .string("array"),
+                "description": .string(
+                    "Batch form: an array of {old_string, new_string} objects applied in order and atomically — if any edit fails, no change is written. Use instead of top-level `old_string`/`new_string` for multiple distinct replacements."
+                ),
+                "items": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "old_string": .object(["type": .string("string")]),
+                        "new_string": .object(["type": .string("string")]),
+                    ]),
+                    "required": .array([.string("old_string"), .string("new_string")]),
+                ]),
             ]),
             "dry_run": .object([
                 "type": .string("boolean"),
@@ -1887,12 +2023,16 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                 ),
             ]),
         ]),
-        "required": .array([.string("path"), .string("old_string"), .string("new_string")]),
+        "required": .array([.string("path")]),
     ])
 
     var requirements: [String] { [] }
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
     var mutatesHostFolder: Bool { true }
+
+    /// Cap on `edits` entries per call so a runaway batch can't produce an
+    /// unreviewably large atomic change.
+    static let maxBatchEdits = 100
 
     private let fixedRootPath: URL?
 
@@ -1914,31 +2054,84 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             return pathReq.failureEnvelope ?? ""
         }
 
-        // Empty `old_string` is ambiguous — `requireString` (default
-        // `allowEmpty: false`) rejects it with a pointed envelope that
-        // matches the sandbox in-place edit (`sandbox_write_file`).
-        let oldReq = requireString(
-            args,
-            "old_string",
-            expected: "non-empty exact text that uniquely matches one location in the file",
-            tool: name
-        )
-        guard case .value(let oldString) = oldReq else {
-            return oldReq.failureEnvelope ?? ""
-        }
-
-        // Empty `new_string` is the supported delete-the-match form.
-        let newReq = requireString(
-            args,
-            "new_string",
-            expected: "replacement text (use `\"\"` to delete the match)",
-            tool: name,
-            allowEmpty: true
-        )
-        guard case .value(let newString) = newReq else {
-            return newReq.failureEnvelope ?? ""
-        }
         let dryRun = coerceBool(args["dry_run"]) ?? false
+        let replaceAll = coerceBool(args["replace_all"]) ?? false
+
+        // Resolve the requested edits: either the batch `edits` array or the
+        // single `old_string`/`new_string` pair. Both funnel into one ordered
+        // list so the apply loop below has a single shape.
+        var requestedEdits: [(old: String, new: String)] = []
+        let isBatch = args["edits"] != nil
+        if isBatch {
+            guard let rawEdits = args["edits"] as? [[String: Any]], !rawEdits.isEmpty else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`edits` must be a non-empty array of {old_string, new_string} objects.",
+                    field: "edits",
+                    expected: "non-empty array of {old_string, new_string}",
+                    tool: name
+                )
+            }
+            if rawEdits.count > Self.maxBatchEdits {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "`edits` contains \(rawEdits.count) entries; the cap is \(Self.maxBatchEdits) per call. Split into multiple calls.",
+                    field: "edits",
+                    expected: "at most \(Self.maxBatchEdits) edits per call",
+                    tool: name
+                )
+            }
+            for (index, raw) in rawEdits.enumerated() {
+                // Empty `old_string` is ambiguous (same rule as the single
+                // form); empty `new_string` is the delete-the-match form.
+                guard let old = raw["old_string"] as? String, !old.isEmpty else {
+                    return ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "`edits[\(index)].old_string` must be a non-empty string.",
+                        field: "edits",
+                        expected: "non-empty exact text for every edit's old_string",
+                        tool: name
+                    )
+                }
+                guard let new = raw["new_string"] as? String else {
+                    return ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "`edits[\(index)].new_string` must be a string (use `\"\"` to delete the match).",
+                        field: "edits",
+                        expected: "replacement text for every edit",
+                        tool: name
+                    )
+                }
+                requestedEdits.append((old, new))
+            }
+        } else {
+            // Empty `old_string` is ambiguous — `requireString` (default
+            // `allowEmpty: false`) rejects it with a pointed envelope that
+            // matches the sandbox in-place edit (`sandbox_write_file`).
+            let oldReq = requireString(
+                args,
+                "old_string",
+                expected: "non-empty exact text that matches the target location (or pass `edits` for a batch)",
+                tool: name
+            )
+            guard case .value(let oldString) = oldReq else {
+                return oldReq.failureEnvelope ?? ""
+            }
+
+            // Empty `new_string` is the supported delete-the-match form.
+            let newReq = requireString(
+                args,
+                "new_string",
+                expected: "replacement text (use `\"\"` to delete the match)",
+                tool: name,
+                allowEmpty: true
+            )
+            guard case .value(let newString) = newReq else {
+                return newReq.failureEnvelope ?? ""
+            }
+            requestedEdits.append((oldString, newString))
+        }
 
         // Writable combined mode: an absolute `/workspace/...` path is the
         // Linux sandbox — route to the sandbox writer's in-place edit
@@ -1957,13 +2150,26 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                     tool: name
                 )
             }
+            // The sandbox writer's in-place edit branch only understands the
+            // single unique-match form; batch/replace_all stay host-only.
+            if isBatch || replaceAll {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "`edits` and `replace_all` are not supported for `/workspace/...` sandbox paths — "
+                        + "issue single old_string/new_string edits, or use `sandbox_exec` with `sed`.",
+                    field: isBatch ? "edits" : "replace_all",
+                    expected: "single old_string/new_string edit for sandbox paths",
+                    tool: name
+                )
+            }
             return try await sandboxBridgeWrite(
                 bridge,
                 tool: name,
                 args: [
                     "path": relativePath,
-                    "old_string": oldString,
-                    "new_string": newString,
+                    "old_string": requestedEdits[0].old,
+                    "new_string": requestedEdits[0].new,
                 ]
             )
         }
@@ -2006,31 +2212,52 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         }
         var content = originalContent
 
-        guard let range = content.range(of: oldString) else {
-            let diagnosis = Self.noMatchDiagnosis(oldString: oldString, content: content)
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message:
-                    "Could not find `old_string` in \(relativePath). \(diagnosis)",
-                field: "old_string",
-                expected: "exact non-empty text present once in the target file",
-                tool: name
-            )
+        // Apply every requested edit in order against the evolving content.
+        // Atomic by construction: content only reaches the filesystem after
+        // the whole loop succeeds, so a failing edit means nothing changed.
+        var perEditReplacements: [Int] = []
+        for (index, edit) in requestedEdits.enumerated() {
+            let label = isBatch ? "edits[\(index)].old_string" : "old_string"
+            let atomicNote = isBatch ? " No edits were applied — the batch is atomic." : ""
+            let matches = content.ranges(of: edit.old)
+            if matches.isEmpty {
+                let diagnosis = Self.noMatchDiagnosis(oldString: edit.old, content: content)
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "Could not find `\(label)` in \(relativePath). \(diagnosis)\(atomicNote)",
+                    field: "old_string",
+                    expected: "exact non-empty text present in the target file",
+                    tool: name
+                )
+            }
+            if matches.count > 1, !replaceAll {
+                // Action-first phrasing plus a machine-readable retry hint:
+                // observed live, a 9B model got the old hint ("...or pass
+                // replace_all...") buried mid-sentence, retried with
+                // `dry_run: true` instead, and abandoned the task.
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "Found \(matches.count) matches for `\(label)` in \(relativePath). "
+                        + "To replace EVERY occurrence, retry the same call with the added "
+                        + "argument \"replace_all\": true. To replace only one occurrence, "
+                        + "include more surrounding context in `old_string`. Do NOT add "
+                        + "dry_run - it only previews and changes nothing.\(atomicNote)",
+                    field: "old_string",
+                    expected: "the same call plus \"replace_all\": true (or a uniquely matching old_string)",
+                    tool: name,
+                    metadata: ["retry_with": ["replace_all": true]]
+                )
+            }
+            if replaceAll {
+                content = content.replacingOccurrences(of: edit.old, with: edit.new)
+                perEditReplacements.append(matches.count)
+            } else {
+                content.replaceSubrange(matches[0], with: edit.new)
+                perEditReplacements.append(1)
+            }
         }
-
-        let matches = content.ranges(of: oldString)
-        if matches.count > 1 {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message:
-                    "Found \(matches.count) matches for `old_string` in \(relativePath); include more surrounding context to identify one location.",
-                field: "old_string",
-                expected: "exact text that matches exactly one location",
-                tool: name
-            )
-        }
-
-        content.replaceSubrange(range, with: newString)
         var preview = WorkspaceWriteSafety.preview(
             path: relativePath,
             previousContent: originalContent,
@@ -2041,11 +2268,23 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             createsParentDirectories: false,
             fileURL: fileURL
         )
+        preview.payload["replacements"] = perEditReplacements.reduce(0, +)
+        if isBatch {
+            preview.payload["edits_applied"] = perEditReplacements
+        }
         if dryRun {
+            // Unmissable not-applied signal: observed live, a model read a
+            // dry-run preview as completion and told the user "all 3
+            // occurrences replaced" while the file was untouched.
+            var dryRunWarnings = preview.warnings
+            dryRunWarnings.append(
+                "PREVIEW ONLY - nothing was written. The file is unchanged. "
+                    + "Repeat the same call WITHOUT dry_run to apply the edit."
+            )
             return ToolEnvelope.success(
                 tool: name,
                 result: preview.payload,
-                warnings: preview.warnings
+                warnings: dryRunWarnings
             )
         }
         try content.write(to: fileURL, atomically: true, encoding: .utf8)
@@ -3829,6 +4068,11 @@ enum FolderToolFactory {
             FileOperationHistoryTool(rootPath: rootPath),
             FileUndoTool(rootPath: rootPath),
             FileSearchTool(rootPath: rootPath),
+            // Unconditional by design: the KV prefix hash covers canonical
+            // tool payloads, so availability of the PII model must degrade
+            // in the tool RESULT, never change the tool LIST.
+            DetectPIITool(rootPath: rootPath),
+            RedactFileTool(rootPath: rootPath),
             ShellRunTool(rootPath: rootPath),
             // Combined-mode bridge: registered with the folder set (it
             // needs the root) but hidden outside combined sandbox +

@@ -3,6 +3,278 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.24.4</title>
+            <pubDate>Wed, 02 Sep 2026 20:23:11 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.24.4</sparkle:version>
+            <sparkle:shortVersionString>0.24.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.24.4/Osaurus-0.24.4.dmg" length="74604563" type="application/octet-stream" sparkle:edSignature="8eVQaNWWB/4fJ5ot8PUqILt9eLqpEqbQ4moOrFkMGL5m0/SkZLBHX6DYyfmNrR4HxLzTEP3K1sGqa6XBauUDDA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Repin vmlx-swift to de0c26d3 (one canonical boundary record per tool-call cycle) (#2589) by @jjang-ai
+- Mark internal utility generations as auxiliary cache intent (repin vmlx 86d23df8) (#2586) by @jjang-ai
+- Evals: cache write/reuse scored per tool call + sustained-decode collapse gate (#2588) by @jjang-ai
+- Repin vmlx-swift to 65ba6986 (index-union MTP evidence, hybrid cache dedup, DSV3 dtype, verify prefetch) (#2585) by @jjang-ai
+
+## 🚀 Features
+
+- added custom endpoint support to onboarding (#2599) by @RaajeevChandran
+- added source filter to the model picker's local tab (#2597) by @RaajeevChandran
+- added raptor v0.5 in what's new modal (#2577) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- fix /api/show for external models and report tool/thinking capabilities (#2606) by @RaajeevChandran
+- Full Disk Access probe: anchor on the system TCC database, and read (#2601) (#2605) by @jjang-ai
+- Watcher/dispatch agents can actually reach their target folder (#2603) by @jjang-ai
+- fail image jobs on recovered mlx gpu errors instead of crashing and repin vmlx-swift (#2587) by @RaajeevChandran
+- RAM-Safety preflight: price KV headroom by each family's real cache topology (#2595) by @jjang-ai
+- fix unreadable approval content in tool approval modal (#2575) by @RaajeevChandran
+- Delegated runs resolve their own model's reasoning, not the parent's toggle (#2592) by @jjang-ai
+- Stop the engine at tool dispatch (kill zombie post-tool decode); repin vmlx de82613a (#2591) by @jjang-ai
+- Model picker: resolve local effort capabilities live (None vs Extra-High contradiction) (#2590) by @jjang-ai
+- fix theme editor freezes (#2578) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- Repin vmlx-swift to 5a63b9be: healer opt-in (#2604) + GLM-5.3 crash/wired/loader fixes (#2607) by @jjang-ai
+- Repin vmlx-swift to 2422cfb8: fp32 cascade fixes, MLA/QSA/GDN decode perf, Qwen3VL media order (#2598) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.24.3...0.24.4
+]]></description>
+        </item>
+        <item>
+            <title>0.24.3</title>
+            <pubDate>Mon, 31 Aug 2026 23:09:11 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.24.3</sparkle:version>
+            <sparkle:shortVersionString>0.24.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.24.3/Osaurus-0.24.3.dmg" length="74339113" type="application/octet-stream" sparkle:edSignature="U/e8NUbfj8EnqklrCk+M8xpYTWcmnQROfIL5AjtQ5uwLWGcryeR/SFlAN2k1YKqcKc2xt2BCuZlwtzvZb7tqBg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Advance the vmlx-swift pin to 1315fdcb (DeepseekV3 MoE f32 residual fix) (#2573) by @jjang-ai
+- Add Claude Code CLI integration (#2257) by @Yao920127
+- Warn when switching models mid-conversation (#2538) by @jjang-ai
+- Repin vMLX for 90+ tok/s Ornith 35B decode (#2553) by @jjang-ai
+- Repin vMLX for scoped Ornith 35B MTP safety (#2549) by @jjang-ai
+- evals(community): OsaurusAI/Muse-Glimmer-30B-JANG\_6M on Apple M5 Max (#2544) by @jax-0n-git
+- Repin vMLX with Qwen 3.8 legacy-parser correction (#2543) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- Stop the memory-safety profile default from clamping the MLX allocator pool (#2572) by @jjang-ai
+- Use Raptor for mainstream onboarding defaults (#2574) by @jjang-ai
+- Preserve reusable cache checkpoints across tool dispatch (#2571) by @jjang-ai
+- Fix embedding discovery in configured models directory (#2570) by @jjang-ai
+- Fix stale agent completion and heal misaligned model bundles (#2567) by @jjang-ai
+- Hide local memory warnings for cloud models (#2566) by @jjang-ai
+- Show and cancel exact live inference work (#2563) by @jjang-ai
+- Restore type tags on Responses Lite namespace tools (#2565) by @tpae
+- Preserve the admitted allocator ceiling for native MTP (#2561) by @jjang-ai
+- Recover media rejections and harden OpenAI Responses (#2562) by @tpae
+- Remove hidden HTTP reasoning-budget coercion (#2560) by @jjang-ai
+- Report native MTP fallback only when MTP did not run (#2554) by @jjang-ai
+- Give loaded skills a directory anchor for bundled resources (#2555) by @jjang-ai
+- Repin cancellable speculative prefill runtime (#2557) by @jjang-ai
+- Make denied chat tool outcomes visible and bounded (#2539) by @jjang-ai
+- Repin serialized MLX host reads for Qwen3.8 server crash (#2556) by @jjang-ai
+- Recognize bundle-declared local reasoning channels (#2545) by @jjang-ai
+- Evals: score grounded filesystem access across equivalent tools (#2548) by @jjang-ai
+- Make batch evals architecture-aware and truthful (#2536) by @jjang-ai
+- Evals: preserve agent-loop exit and architecture cache taxonomy (#2546) by @jjang-ai
+- Preserve explicit reasoning on the first cold send (#2537) by @jjang-ai
+- Remove the hidden Orchestrator tool kill switch (#2541) by @jjang-ai
+- Fix sequential spawn capacity after active file-cache growth (#2535) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.24.2...0.24.3
+]]></description>
+        </item>
+        <item>
+            <title>0.24.2</title>
+            <pubDate>Sat, 29 Aug 2026 07:28:12 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.24.2</sparkle:version>
+            <sparkle:shortVersionString>0.24.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.24.2/Osaurus-0.24.2.dmg" length="74075982" type="application/octet-stream" sparkle:edSignature="BAx7bZlPExJsQGOWOUTohPUVeCekinVmE2FwIqQ7a2ffzwfoPidoZa1Qm5RSy+6iDO/bkvFIQo8geHqkkKkKDg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Repin vmlx-swift to aeb5e21c19: QSA crash fix + end-of-output hang fix (#2532) by @jjang-ai
+- Agent loop: record which branch ended the run (telemetry only) (#2520) by @jjang-ai
+
+## 🚀 Features
+
+- simplify tools and plugins in settings (#2534) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Spawn admission: price a child by its bounded request, not the retention cap (#2533) by @jjang-ai
+- Evals: explicit fail-closed native-MTP controls (--mtp off|auto|d1|d2|d3) (#2531) by @jjang-ai
+- Agent loop: bound the truncated-read continuation steer (2 per file), keep the partial-read disclosure (#2528) by @jjang-ai
+
+## 🧰 Maintenance
+
+- Enable sandboxing by default with hardened runtime (#2529) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.24.1...0.24.2
+]]></description>
+        </item>
+        <item>
+            <title>0.24.1</title>
+            <pubDate>Fri, 28 Aug 2026 16:57:27 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.24.1</sparkle:version>
+            <sparkle:shortVersionString>0.24.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.24.1/Osaurus-0.24.1.dmg" length="72436901" type="application/octet-stream" sparkle:edSignature="i2KSP5H9g8n5yVvaIxFRJDv1Na/5sQIZ5V++tVOCpd9foT4O4XzKCbLngxaZqZmmmedc2rkNZej2MFXI+NktAA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🚀 Features
+
+- revamped settings (#2517) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- fix permissions view showing full disk access as granted when it is not (#2524) by @RaajeevChandran
+- fix settings crash on macos 15 when opening tabs with header sub tabs (#2522) by @RaajeevChandran
+- swap-balloon: verified lifecycle (refuse-dirty, trap sweep, orphan self-exit) (#2518) by @jjang-ai
+- Render the recorded cancelled state instead of an invisible empty turn (#2510) (#2516) by @jjang-ai
+- Swap banner copy: name swap and show the measured GB (keeps #2512 design) (#2515) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.24.0...0.24.1
+]]></description>
+        </item>
+        <item>
+            <title>0.24.0</title>
+            <pubDate>Fri, 28 Aug 2026 09:12:14 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.24.0</sparkle:version>
+            <sparkle:shortVersionString>0.24.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.24.0/Osaurus-0.24.0.dmg" length="72394089" type="application/octet-stream" sparkle:edSignature="pRhZo5u1a80LAiQUKMMt4t3DYbosPmtD3OrUMETKXXNhW0KsAoBHp+fiQmBq03sSQ8QyxSKcSzo3xm9kiyPXDQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Swap-pressure warning banner + designer emulation controls (#2507) by @jjang-ai
+- Promote the Orchestrator to a primary documented feature; prune stale docs (#2500) by @tpae
+- Repin vmlx-swift to 447a6a2b: Qwen 3.8 Flash Next native runtime (#2504) by @jjang-ai
+- fix(chat): render display math with stable SwiftMath images (#2417) by @yxf206-a11y
+- fix leaked pacing timer on mid-stream processor dealloc (#2486) by @donmimo
+- Introduce the Orchestrator: dedicated settings tab, identity, and launch polish (#2493) by @tpae
+- Default-agent declarative config + delegation orchestrator (#2485) by @tpae
+- Redesign onboarding as a 3-screen (#2481) by @tpae
+
+## 🚀 Features
+
+- chat UX improvements (#2499) by @RaajeevChandran
+- Migrate credit system UI from dollars to credits (#2495) by @tpae
+- let agents write knowledge directly with call-time approval (#2480) by @RaajeevChandran
+- add bulk edit and on-device redaction tools for folder chats (#2474) by @RaajeevChandran
+- api (ollama): add capabilities to /show response (#2462) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- improved memory swap banner (#2512) by @RaajeevChandran
+- Single, surfaced greedy-while-MTP coercion site (corrective for #2506) (#2509) by @jjang-ai
+- Speculative Depth buttons enforce a real manual MTP activation; greedy only while MTP runs (#2506) by @jjang-ai
+- Delete the persisted global Disable Tools switch; tool availability is agent-scoped (#2505) by @jjang-ai
+- The Speculative Depth row rendered on models with no MTP head (#2489) by @jjang-ai
+- minor improvements in onboarding (#2487) by @RaajeevChandran
+- Show the drafted width, and stop an unusable one from killing turns (#2473) by @jjang-ai
+- fixed main thread hangs (#2475) by @RaajeevChandran
+- Say why speculative decoding is not running (#2472) by @jjang-ai
+- Adopt a bundle's declared presence/frequency penalties, and show them (#2470) by @jjang-ai
+- fix wasted warm ups and the jumping context tooltip on channel bound agents (#2468) by @RaajeevChandran
+- keep cross-chat prefill reusable by stabilizing the injected time block (#2467) by @RaajeevChandran
+- attach granted plugin tools to channel dispatches (#2466) by @RaajeevChandran
+- hardcode openai context windows as api never returns them (#2464) by @RaajeevChandran
+- fix xai oauth models reporting a stale catalog and fallback context window (#2463) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- Onboarding polish: motion system, Figma speech bubble, click-through fixes; Top Picks to Ornith 1.5 (#2503) by @tpae
+- Orchestrator-first delegation: default-on spawn pool, same-turn spawn activation, and delegated artifact pass-through (#2498) by @tpae
+- Repin vmlx: Ling 3.0 (BailingMoeV3/KDA) runtime (#2491) by @jjang-ai
+- Repin vmlx-swift to 1c17ce83 for the presence/frequency penalty fixes (#2469) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.23.1...0.23.2
+]]></description>
+        </item>
+        <item>
+            <title>0.23.1</title>
+            <pubDate>Sun, 23 Aug 2026 23:34:48 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.23.1</sparkle:version>
+            <sparkle:shortVersionString>0.23.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.23.1/Osaurus-0.23.1.dmg" length="71513342" type="application/octet-stream" sparkle:edSignature="3TywE9r3XhgHPlom8QZ84WFLA3QFL9WB4//w7OhR2vVKQY2UV78qs9yt6QX1Aw91BjqTi1WHRBaOa1DMVY+LBg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Measure what coarsening the injected clock would be worth: 14.6x on a repeated document (#2461) by @jjang-ai
+- Cross-chat reuse: the cause is a timestamp, not a scoping policy (#2460) by @jjang-ai
+- Say when a configured disk cap is not the one being enforced (#2459) by @jjang-ai
+- T15: flipping reasoning mid-conversation costs one re-prefill, then nothing (#2458) by @jjang-ai
+- Correct the Step-3.7 row: text-only by design, not too big to run (#2457) by @jjang-ai
+- T8 no longer holds as written — the 42× restart win did not reproduce (#2456) by @jjang-ai
+- Step-3.7: attempted under a RAM guard rather than estimated away (#2455) by @jjang-ai
+- T11: cold and cache-served answers are identical at three arbitrary prefix lengths (#2454) by @jjang-ai
+- T9: the disk cap holds mid-conversation — and maxSizeGB is dead while maxSizePercent is set (#2453) by @jjang-ai
+- T10: three images across three turns — the pipeline keeps them distinct (#2452) by @jjang-ai
+- Prefix reuse is scoped to one conversation — a byte-identical prompt in a new chat reuses nothing (#2450) by @jjang-ai
+- T13: three vision families reuse across a media prefix at 10k and 20k (#2449) by @jjang-ai
+- Only an explicit Repair may rebuild a bundle the user changed (#2448) by @jjang-ai
+- Audio coverage: third family proven, the depth limit that is not ours, and an audio badge on the model chip (#2447) by @jjang-ai
+- Turning native MTP off did not stay off (#2446) by @jjang-ai
+- Repin vmlx to the merged VL feature-order fix (#2445) by @jjang-ai
+- An audio-capable model could not be given audio, and C7 was wrong about why (#2444) by @jjang-ai
+- Sampling Defaults were inert on almost every model, and nothing showed what actually ran (#2442) by @jjang-ai
+- Disk cache size is a percent in Settings, and every stale GB reader is fixed (#2441) by @jjang-ai
+- Stop billing cold model load as TTFT, and say when the Mac is the bottleneck (#2440) by @jjang-ai
+- Repin vmlx to the auto disk-cache size (10f27d03) (#2438) by @jjang-ai
+- Disk cache: auto-size to 10% of disk, surface usage in chat, add Clear SSD Cache (#2436) by @jjang-ai
+- Repin vmlx: adaptive depth re-arm + warmup-memo scope fix (#2432) by @jjang-ai
+- Make the MTP Mode hint tell the truth about a selected DFlash drafter (#2430) by @jjang-ai
+- Repin vmlx: DFlash 2 at 56-62 tok/s in-app (ring fix + q4 drafter + verify dispatch) (#2429) by @jjang-ai
+- Images to remote providers: size for the wire, fix mime labels, never silently drop (#2428) by @jjang-ai
+- Video attachments were silently dropped at send for bundles whose name lacks -vl (#2427) by @jjang-ai
+- Unload image gen/edit models from Loaded Models, like LLMs (#2426) by @jjang-ai
+- Fix the DFlash 2 drafter download link: point at the published incoai bundle (#2422) by @jjang-ai
+- Settings: DFlash 2 drafter picker with download link and live folder validation (#2421) by @jjang-ai
+- Repin vmlx: DFlash 2 drafter failures contained — AR fallback instead of a host crash (#2420) by @jjang-ai
+- Repin vmlx to staged-verify MTP + crash fixes; picker rows gain an accessibility press (#2419) by @jjang-ai
+- i18n: the Computer Use diagnostics panel was marked never-translate (#2329) by @YspritanHyzygy
+- i18n: unflag the remaining strings that were marked never-translate by mistake (#2330) by @YspritanHyzygy
+
+## 🚀 Features
+
+- make sidebar resizable (#2413) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- fit fixed size sheets to the screen so action footers stay reachable (#2435) by @RaajeevChandran
+- fix mcp connection docs to point to tools connections tab (#2434) by @RaajeevChandran
+- warn when inbound dispatch is on but reply automatically is off (#2317) by @RaajeevChandran
+- fix openai codex models reporting a fallback context window (#2416) by @RaajeevChandran
+- fix external providers stuck disconnected after an update relaunch (#2415) by @RaajeevChandran
+- minor adjustments to project pill for resizable sidebar (#2414) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.23.0...0.23.1
+]]></description>
+        </item>
+        <item>
             <title>0.23.0</title>
             <pubDate>Tue, 18 Aug 2026 22:35:45 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

@@ -66,6 +66,21 @@ struct SubagentCoexistence: Sendable {
     /// inflate ~1.3x once resident (KV + activations + framework overhead)…
     static let residencyInflation = 1.3
     /// …plus fixed headroom kept for the OS/app.
+    ///
+    /// TRACE vs the authoritative Memory Safety plan (review 2026-08-28):
+    /// these two constants predate the bounded-delegation work (they are
+    /// the #2221-era coexistence gate, kept in parity with
+    /// `ChatResidencyHandoff.memoryPreflight`) and are NOT additive with
+    /// `resolveMemorySafetyLoadPlan`. The gate consults the authoritative
+    /// plan separately via `memorySafetyAllowsTargetLoad`, and the batch
+    /// planner receives the plan's `resolvedLoadBudgetBytes` as its own
+    /// clamp; `headroomBytes` enters ONLY the physical-reclaimable
+    /// inequality (`availableBytes` — measured free+inactive+purgeable),
+    /// which the load-budget clamp deliberately excludes (see the
+    /// planner's `resolveMemoryCapacity` comment). Two disjoint
+    /// constraints joined by min — no double subtraction inside either.
+    /// Making these persisted settings is a product decision deliberately
+    /// NOT taken in the delegation PR.
     static let headroomBytes: Int64 = 3 * 1024 * 1024 * 1024
 
     /// Whether a subagent model of `requiredBytes` (on-disk weights) fits

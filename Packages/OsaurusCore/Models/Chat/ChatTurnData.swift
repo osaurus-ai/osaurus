@@ -44,6 +44,11 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// non-Responses turn.
     public var reasoningItemId: String?
     public var reasoningEncrypted: String?
+    /// Provider-native Responses output Items retained for exact stateless
+    /// replay. Empty for legacy sessions and non-Responses providers.
+    public var responsesOutputItems: [JSONValue]
+    public var inputTokenCount: Int?
+    public var cachedInputTokenCount: Int?
     /// An abandoned reasoning/protocol attempt can remain visible in the
     /// transcript without being replayed to the model. False for legacy turns.
     public var modelContextExcluded: Bool
@@ -77,6 +82,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         terminalStopReason: String? = nil,
         reasoningItemId: String? = nil,
         reasoningEncrypted: String? = nil,
+        responsesOutputItems: [JSONValue] = [],
+        inputTokenCount: Int? = nil,
+        cachedInputTokenCount: Int? = nil,
         modelContextExcluded: Bool = false,
         routerBilling: RouterBillingSummary? = nil,
         injectedContextPrefix: String? = nil
@@ -99,6 +107,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         self.terminalStopReason = terminalStopReason
         self.reasoningItemId = reasoningItemId
         self.reasoningEncrypted = reasoningEncrypted
+        self.responsesOutputItems = responsesOutputItems
+        self.inputTokenCount = inputTokenCount
+        self.cachedInputTokenCount = cachedInputTokenCount
         self.modelContextExcluded = modelContextExcluded
         self.routerBilling = routerBilling
         self.injectedContextPrefix = injectedContextPrefix
@@ -124,6 +135,11 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         terminalStopReason = try container.decodeIfPresent(String.self, forKey: .terminalStopReason)
         reasoningItemId = try container.decodeIfPresent(String.self, forKey: .reasoningItemId)
         reasoningEncrypted = try container.decodeIfPresent(String.self, forKey: .reasoningEncrypted)
+        responsesOutputItems =
+            try container.decodeIfPresent([JSONValue].self, forKey: .responsesOutputItems) ?? []
+        inputTokenCount = try container.decodeIfPresent(Int.self, forKey: .inputTokenCount)
+        cachedInputTokenCount =
+            try container.decodeIfPresent(Int.self, forKey: .cachedInputTokenCount)
         modelContextExcluded =
             try container.decodeIfPresent(Bool.self, forKey: .modelContextExcluded) ?? false
         routerBilling = try container.decodeIfPresent(RouterBillingSummary.self, forKey: .routerBilling)
@@ -162,6 +178,11 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(terminalStopReason, forKey: .terminalStopReason)
         try container.encodeIfPresent(reasoningItemId, forKey: .reasoningItemId)
         try container.encodeIfPresent(reasoningEncrypted, forKey: .reasoningEncrypted)
+        if !responsesOutputItems.isEmpty {
+            try container.encode(responsesOutputItems, forKey: .responsesOutputItems)
+        }
+        try container.encodeIfPresent(inputTokenCount, forKey: .inputTokenCount)
+        try container.encodeIfPresent(cachedInputTokenCount, forKey: .cachedInputTokenCount)
         if modelContextExcluded {
             try container.encode(true, forKey: .modelContextExcluded)
         }
@@ -176,7 +197,8 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         case toolCalls, toolCallId, toolResults, toolCallDurations, thinking
         case thinkingDuration
         case createdAt, completedAt, generationTokenCount, timeToFirstToken, terminalStopReason
-        case reasoningItemId, reasoningEncrypted
+        case reasoningItemId, reasoningEncrypted, responsesOutputItems
+        case inputTokenCount, cachedInputTokenCount
         case modelContextExcluded
         case routerBilling
         case injectedContextPrefix
@@ -207,6 +229,9 @@ extension ChatTurnData {
         self.terminalStopReason = turn.terminalStopReason
         self.reasoningItemId = turn.reasoningItemId
         self.reasoningEncrypted = turn.reasoningEncrypted
+        self.responsesOutputItems = turn.responsesOutputItems
+        self.inputTokenCount = turn.inputTokenCount
+        self.cachedInputTokenCount = turn.cachedInputTokenCount
         self.modelContextExcluded = turn.modelContextExcluded
         self.routerBilling = turn.routerBilling
         self.injectedContextPrefix = turn.injectedContextPrefix
@@ -236,6 +261,9 @@ extension ChatTurn {
         self.terminalStopReason = data.terminalStopReason
         self.reasoningItemId = data.reasoningItemId
         self.reasoningEncrypted = data.reasoningEncrypted
+        self.responsesOutputItems = data.responsesOutputItems
+        self.inputTokenCount = data.inputTokenCount
+        self.cachedInputTokenCount = data.cachedInputTokenCount
         self.modelContextExcluded = data.modelContextExcluded
         self.routerBilling = data.routerBilling
         self.injectedContextPrefix = data.injectedContextPrefix

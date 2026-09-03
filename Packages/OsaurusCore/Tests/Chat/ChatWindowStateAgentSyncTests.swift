@@ -60,6 +60,7 @@ struct ChatWindowStateAgentSyncTests {
             systemPrompt: systemPrompt,
             themeId: themeId,
             agentAddress: "test-windowstate-\(UUID().uuidString)",
+            autonomousExec: AutonomousExecConfig(enabled: false),
             toolSelectionMode: toolSelectionMode,
             manualToolNames: manualToolNames,
             avatar: avatar
@@ -194,6 +195,15 @@ struct ChatWindowStateAgentSyncTests {
             DefaultAgentConfigurationStore.save(revisionA)
 
             let window = makeWindow(for: Agent.defaultId)
+            // This test pins the PRE-SEND reconcile as the change detector,
+            // so the other two legitimate consumers must not race it: under
+            // a busy main run loop (full-suite runs) the 80 ms debounced
+            // budget pipeline or a still-pending init-time
+            // `refreshContextEstimates()` task fires inside
+            // `flushMainQueue()`, consumes the A→B change itself (correct
+            // app behavior — both perform the same rewarm), and the pre-send
+            // reconcile then truthfully reports "no change".
+            window.session.isolatePromptShapeReconcilerForTests()
             // Seed the exact preview baseline that backed the live green chip.
             _ = window.session.estimatedContextBreakdown
 

@@ -31,16 +31,17 @@ import Testing
 private final class PolicyProbeTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     let name: String
     let description = "Test-only permission policy probe."
-    let parameters: JSONValue? = nil
+    let parameters: JSONValue?
 
     let requirements: [String] = []
     let defaultPermissionPolicy: ToolPermissionPolicy
 
     private(set) var executions = 0
 
-    init(name: String, policy: ToolPermissionPolicy) {
+    init(name: String, policy: ToolPermissionPolicy, parameters: JSONValue? = nil) {
         self.name = name
         self.defaultPermissionPolicy = policy
+        self.parameters = parameters
     }
 
     func execute(argumentsJSON: String) async throws -> String {
@@ -104,6 +105,41 @@ struct ToolRegistryAutoApproveTests {
         #expect(object["field"] as? String == "columns")
         #expect(object["expected"] as? String == "one value per declared parameter")
         #expect(object["retryable"] as? Bool == true)
+    }
+
+    /// Schema preflight runs BEFORE the permission gate: a schema-invalid
+    /// call returns a typed `invalid_args` envelope for one model correction
+    /// without raising an approval prompt (or, headless, a gate denial) for
+    /// a call that cannot execute anyway.
+    @Test func schemaInvalidArgumentsRejectBeforeThePermissionGate() async throws {
+        let tool = PolicyProbeTool(
+            name: "test_preflight_before_gate_probe",
+            policy: .ask,
+            parameters: .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "path": .object(["type": .string("string")])
+                ]),
+                "required": .array([.string("path")]),
+                "additionalProperties": .bool(false),
+            ])
+        )
+        ToolRegistry.shared.register(tool)
+        defer { ToolRegistry.shared.unregister(names: [tool.name]) }
+
+        // `denyUnapprovedToolPrompts` would make the gate THROW if it were
+        // consulted first; the preflight rejection must win instead.
+        let result = try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
+            try await ToolRegistry.shared.execute(name: tool.name, argumentsJSON: "{}")
+        }
+
+        #expect(tool.executions == 0)
+        #expect(ToolEnvelope.isError(result))
+        let data = try #require(result.data(using: .utf8))
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["kind"] as? String == "invalid_args")
+        #expect(object["field"] as? String == "path")
     }
 
     // MARK: Global auto-allow chat setting

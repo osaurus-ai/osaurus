@@ -35,7 +35,7 @@ struct RouterAccountUsageCenterTests {
         )
 
         #expect(snapshot.accountStatus.state == .active)
-        #expect(snapshot.accountStatus.formattedBalance == "$7.00")
+        #expect(snapshot.accountStatus.formattedBalance == "70,000 credits")
         #expect(snapshot.credits.requestCount == 2)
         #expect(snapshot.credits.costMicro == "3250")
         #expect(snapshot.credits.inputTokens == 22)

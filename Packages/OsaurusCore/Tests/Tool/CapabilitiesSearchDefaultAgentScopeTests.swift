@@ -44,15 +44,16 @@ struct DefaultAgentSchemaScopeTests {
         )
         let names = Set(context.tools.map { $0.function.name })
         // Every name in the schema must belong to the fixed baseline.
+        let baseline = ToolRegistry.orchestratorAllowedToolNames
         for name in names {
             #expect(
-                ToolRegistry.defaultAgentAllowedToolNames.contains(name),
+                baseline.contains(name),
                 "non-baseline tool \(name) leaked into default-agent schema"
             )
         }
     }
 
-    /// End-to-end through `composeChatContext`: the consolidated writes load
+    /// End-to-end through `composeChatContext`: the declarative write loads
     /// directly, and the capability-search gateway is never present for the
     /// Default agent (it stays available to custom agents).
     @Test
@@ -66,9 +67,8 @@ struct DefaultAgentSchemaScopeTests {
             query: "connect my Anthropic account and download a small model"
         )
         let names = Set(context.tools.map { $0.function.name })
-        // Consolidated writes are present without any discover/load step.
-        #expect(names.contains("osaurus_provider"))
-        #expect(names.contains("osaurus_model"))
+        // The declarative write is present without any discover/load step.
+        #expect(names.contains("osaurus_config"))
         // The capability-search gateway is absent.
         #expect(!names.contains("capabilities_discover"))
         #expect(!names.contains("capabilities_load"))

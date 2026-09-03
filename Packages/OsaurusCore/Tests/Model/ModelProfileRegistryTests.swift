@@ -407,6 +407,20 @@ struct ModelProfileRegistryTests {
         ModelOptionsStore.shared.saveOptions(["disableThinking": .bool(true)], for: qwen)
         let explicitQwen = ModelOptionsStore.shared.loadOptions(for: qwen)
         #expect(explicitQwen?["disableThinking"]?.boolValue == true)
+        #expect(
+            ModelOptionsStore.shared.storedExplicitOptions(for: qwen)?["disableThinking"]?
+                .boolValue == true
+        )
+        #expect(ModelOptionsStore.shared.storedExplicitOptions(for: dsv4) != nil)
+
+        let legacy = "qwen3.6-legacy-\(UUID().uuidString)"
+        let legacyKey = "model_options_\(legacy)"
+        defer { UserDefaults.standard.removeObject(forKey: legacyKey) }
+        UserDefaults.standard.set(
+            try encoder.encode(["disableThinking": ModelOptionValue.bool(true)]),
+            forKey: legacyKey
+        )
+        #expect(ModelOptionsStore.shared.storedExplicitOptions(for: legacy) == nil)
     }
 
     @Test("Hy3 bundles expose native reasoning_effort values")

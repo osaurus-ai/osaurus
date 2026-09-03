@@ -17,7 +17,6 @@ extension ChatSession: ChatWarmupSessionContext {
         guard selectedModelIsLocal, !isRemoteAgentTarget else { return nil }
         guard !isImageGenerationModel(model) else { return nil }
 
-        let chatCfg = ChatConfigurationStore.load()
         let effectiveAgentId = agentId ?? Agent.defaultId
         let executionMode = await prepareChatExecutionMode(agentId: effectiveAgentId)
 
@@ -60,21 +59,31 @@ extension ChatSession: ChatWarmupSessionContext {
 
         let committedTurns = warmupCommittedTurns
 
-        let context = await SystemPromptComposer.composeChatContext(
-            agentId: effectiveAgentId,
-            executionMode: executionMode,
-            model: model,
-            modelType: selectedPickerItem?.modelType,
-            query: "",
-            messages: priorUserMessages,
-            toolsDisabled: chatCfg.disableTools,
-            additionalToolNames: cachedSession?.loadedToolNames ?? [],
-            frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
-            frozenToolSpecs: cachedSession?.initialToolSpecs,
-            frozenManifest: cachedSession?.frozenManifest,
-            frozenSoul: cachedSession?.frozenSoul,
-            trace: nil
-        )
+        // Compose under the SAME session source the real send binds
+        // (`ChatExecutionContext.$currentSessionSource` around the send task).
+        // Source-scoped gates — the channel publish tool and the Channel
+        // Destinations section — read that task-local; with it unset they
+        // resolve to "no usable bindings", so a channel-bound agent's warm-up
+        // built a 7-tool prompt the 8-tool send then diverged from mid-schema
+        // and the warmed prefill past the divergence was wasted every send.
+        let context = await ChatExecutionContext.$currentSessionSource.withValue(source) {
+            await SystemPromptComposer.composeChatContext(
+                agentId: effectiveAgentId,
+                executionMode: executionMode,
+                model: model,
+                modelType: selectedPickerItem?.modelType,
+                query: "",
+                messages: priorUserMessages,
+                // Match the send path: agent settings own tool availability.
+                toolsDisabled: false,
+                additionalToolNames: cachedSession?.loadedToolNames ?? [],
+                frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
+                frozenToolSpecs: cachedSession?.initialToolSpecs,
+                frozenManifest: cachedSession?.frozenManifest,
+                frozenSoul: cachedSession?.frozenSoul,
+                trace: nil
+            )
+        }
 
         var sys = context.prompt
 

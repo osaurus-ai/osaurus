@@ -76,6 +76,8 @@ struct ModelRuntimeIsHybridTests {
         for id in [
             "OsaurusAI/Ornith-1.0-9B-MXFP4",
             "OsaurusAI/Ornith-1.0-35B-MXFP4",
+            "OsaurusAI/Ornith-1.5-9B-MXFP8",
+            "OsaurusAI/Ornith-1.5-35B-A3B-MXFP8",
             "ornith-1.0-9b-mxfp4",  // picker form
             "ornith-1.0-35b-mxfp4",
         ] {

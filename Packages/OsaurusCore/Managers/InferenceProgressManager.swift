@@ -86,7 +86,86 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     /// Latest runtime-reported prefill stage. Nil means no prompt prefill is active.
     @MainActor @Published var prefillProgress: PrefillProgressState? = nil
 
+    // MARK: - Model-load accounting
+    //
+    // A cold container load happens INSIDE the window the chat measures as
+    // "time to first token": the send sets its start stamp, then awaits
+    // `streamChat`, and no delta can arrive until the weights are resident.
+    // So a user loading a 27 GB bundle sees the load billed as TTFT — one
+    // report showed "TTFT 215.61s" for a ~1.8k-token prompt, which is not a
+    // prefill rate any machine produces. The load is the honest explanation
+    // and it belongs in its own number.
+    //
+    // Intervals are recorded as a UNION, not a sum: two models loading
+    // concurrently is still one stretch of wall-clock the user waited
+    // through, so double-counting it would over-subtract and drive the
+    // reported TTFT to zero.
+
+    /// Closed load intervals, most recent last. Capped — this exists to
+    /// attribute the current turn, not to keep history.
+    @MainActor private var recentLoadIntervals: [DateInterval] = []
+
+    /// Start of the currently-open union interval, set when the refcount
+    /// leaves zero and cleared when it returns to zero.
+    @MainActor private var openLoadStart: Date?
+
+    private static let maxRetainedLoadIntervals = 32
+
     init() {}
+
+    /// Seconds within `from...to` during which at least one model container
+    /// was loading.
+    ///
+    /// Clips against the window on both ends so a load that began before the
+    /// send, or is still running, contributes only its overlapping part. A
+    /// still-open load is clipped to `to` rather than ignored — the cold-load
+    /// case we care about is precisely the one that has not finished when the
+    /// first token finally lands.
+    @MainActor
+    func modelLoadSeconds(from: Date, to: Date) -> TimeInterval {
+        guard to > from else { return 0 }
+        var total: TimeInterval = 0
+        for interval in recentLoadIntervals {
+            let lo = max(interval.start, from)
+            let hi = min(interval.end, to)
+            if hi > lo { total += hi.timeIntervalSince(lo) }
+        }
+        if let open = openLoadStart {
+            let lo = max(open, from)
+            if to > lo { total += to.timeIntervalSince(lo) }
+        }
+        // Can never exceed the window it is measured against.
+        return min(total, to.timeIntervalSince(from))
+    }
+
+    @MainActor
+    private func beginModelLoad(at: Date) {
+        if loadInFlightCount == 0 { openLoadStart = at }
+        loadInFlightCount += 1
+    }
+
+    @MainActor
+    private func endModelLoad(at: Date) {
+        loadInFlightCount = max(0, loadInFlightCount - 1)
+        guard loadInFlightCount == 0, let start = openLoadStart else { return }
+        openLoadStart = nil
+        // A finish whose timestamp precedes its start (clock adjustment, or a
+        // caller pairing out of order) would otherwise create a negative-length
+        // interval that subtracts time it never spent.
+        guard at > start else { return }
+        recentLoadIntervals.append(DateInterval(start: start, end: at))
+        if recentLoadIntervals.count > Self.maxRetainedLoadIntervals {
+            recentLoadIntervals.removeFirst(
+                recentLoadIntervals.count - Self.maxRetainedLoadIntervals)
+        }
+    }
+
+    #if DEBUG
+        /// Test seam: drive the accounting with explicit timestamps so the
+        /// overlap arithmetic can be verified without real loads.
+        @MainActor func _testBeginModelLoad(at: Date) { beginModelLoad(at: at) }
+        @MainActor func _testEndModelLoad(at: Date) { endModelLoad(at: at) }
+    #endif
 
     #if DEBUG
         /// Test-only factory: creates an isolated instance so tests don't share
@@ -142,8 +221,14 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     /// Signal that model container loading has started. Increments the
     /// in-flight refcount; the matching `modelLoadDidFinishAsync` must
     /// fire for every call, regardless of success / failure / cancel.
+    /// The timestamp is taken HERE, at the call site, not inside the
+    /// MainActor hop. Under the memory pressure that makes a load slow enough
+    /// to matter, that hop can itself be delayed, and stamping after it would
+    /// shorten the measured load by exactly the amount the machine was
+    /// struggling — biasing the number in the reassuring direction.
     func modelLoadWillStartAsync() {
-        Task { @MainActor in self.loadInFlightCount += 1 }
+        let at = Date()
+        Task { @MainActor in self.beginModelLoad(at: at) }
     }
 
     /// Signal that model container loading has finished. Decrements the
@@ -157,8 +242,7 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     /// `ModelRuntime.generateEventStream` for the canonical pattern —
     /// a narrow do/catch scoped to just the container load.
     func modelLoadDidFinishAsync() {
-        Task { @MainActor in
-            self.loadInFlightCount = max(0, self.loadInFlightCount - 1)
-        }
+        let at = Date()
+        Task { @MainActor in self.endModelLoad(at: at) }
     }
 }

@@ -17,6 +17,27 @@ import Testing
 @Suite("GenerationEventMapper bridge behaviour")
 struct GenerationEventMapperTests {
 
+    private final class TerminationProbe: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: String?
+
+        func record(_ termination: AsyncThrowingStream<ModelRuntimeEvent, Error>.Continuation.Termination) {
+            lock.lock()
+            value = switch termination {
+            case .cancelled: "cancelled"
+            case .finished: "finished"
+            @unknown default: "unknown"
+            }
+            lock.unlock()
+        }
+
+        func snapshot() -> String? {
+            lock.lock()
+            defer { lock.unlock() }
+            return value
+        }
+    }
+
     private func makeStream(_ events: [Generation]) -> AsyncStream<Generation> {
         AsyncStream { continuation in
             for ev in events { continuation.yield(ev) }
@@ -33,6 +54,52 @@ struct GenerationEventMapperTests {
         var out: [ModelRuntimeEvent] = []
         for try await ev in mapped { out.append(ev) }
         return out
+    }
+
+    @Test func toolBridge_dispatchesImmediatelyAndDrainsUpstream() async throws {
+        let probe = TerminationProbe()
+        let (upstream, upstreamContinuation) =
+            AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
+        upstreamContinuation.onTermination = { termination in
+            probe.record(termination)
+        }
+
+        let bridged = ModelRuntime.bridgeToolEventStream(upstream)
+        let consumer = Task { () -> String in
+            do {
+                for try await _ in bridged {}
+                return "missing"
+            } catch let invocation as ServiceToolInvocation {
+                return invocation.toolName
+            } catch {
+                return "wrong-error"
+            }
+        }
+
+        upstreamContinuation.yield(
+            .toolInvocation(name: "read_file", argsJSON: #"{"path":"a.txt"}"#)
+        )
+        #expect(await consumer.value == "read_file")
+        // Tool dispatch must not cancel the engine stream: its terminal drain
+        // owns KV/prefix persistence for the following agent-loop step.
+        #expect(probe.snapshot() == nil)
+
+        upstreamContinuation.yield(
+            .completionInfo(
+                tokenCount: 4,
+                tokensPerSecond: 100,
+                unclosedReasoning: false,
+                stopReason: "tool_calls",
+                promptTokensPerSecond: 1_000,
+                mtp: nil
+            )
+        )
+        upstreamContinuation.finish()
+
+        for _ in 0 ..< 100 where probe.snapshot() == nil {
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        #expect(probe.snapshot() == "finished")
     }
 
     @Test func chunk_passes_through_as_tokens() async throws {
@@ -165,7 +232,7 @@ struct GenerationEventMapperTests {
         )
         let events: [Generation] = [.chunk("ok"), .info(info)]
         let out = try await collect(events: events)
-        guard case .completionInfo(let count, let tps, let unclosed, let stopReason, _) = out.last else {
+        guard case .completionInfo(let count, let tps, let unclosed, let stopReason, _, _) = out.last else {
             Issue.record("expected completionInfo at end, got \(String(describing: out.last))")
             return
         }
@@ -188,7 +255,7 @@ struct GenerationEventMapperTests {
         )
         let events: [Generation] = [.reasoning("Self-Correction…"), .info(info)]
         let out = try await collect(events: events)
-        guard case .completionInfo(_, _, let unclosed, let stopReason, _) = out.last else {
+        guard case .completionInfo(_, _, let unclosed, let stopReason, _, _) = out.last else {
             Issue.record("expected completionInfo at end, got \(String(describing: out.last))")
             return
         }
@@ -212,7 +279,7 @@ struct GenerationEventMapperTests {
             events: [.reasoning("The user is straightforward greeting"), .info(info)],
             modelName: "JANGQ-AI/MiniMax-M2.7-JANGTQ"
         )
-        guard case .completionInfo(_, _, let unclosed, _, _) = out.last else {
+        guard case .completionInfo(_, _, let unclosed, _, _, _) = out.last else {
             Issue.record("expected completionInfo at end, got \(String(describing: out.last))")
             return
         }
@@ -370,7 +437,7 @@ struct GenerationEventMapperTests {
             ],
             modelName: "JANGQ-AI/MiniMax-M2.7-JANGTQ"
         )
-        guard case .completionInfo(let count, _, let unclosed, let stopReason, _) = out.last else {
+        guard case .completionInfo(let count, _, let unclosed, let stopReason, _, _) = out.last else {
             Issue.record("expected synthesized completionInfo at end, got \(String(describing: out.last))")
             return
         }

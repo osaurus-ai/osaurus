@@ -75,15 +75,15 @@ struct ChatTitleServiceTests {
         #expect(raw.hasPrefix(unwrapped))
     }
 
-    @Test("auto titles ship default-off")
-    func defaultOff() throws {
-        #expect(ChatConfiguration.default.autoGenerateChatTitles == false)
-        // A persisted config from a build predating the field decodes to off.
+    @Test("auto titles ship default-on")
+    func defaultOn() throws {
+        #expect(ChatConfiguration.default.autoGenerateChatTitles == true)
+        // A persisted config from a build predating the field decodes to on.
         let legacy = #"{"systemPrompt":"","title":"x"}"#
         let decoded = try JSONDecoder().decode(
             ChatConfiguration.self,
             from: Data(legacy.utf8)
         )
-        #expect(decoded.autoGenerateChatTitles == false)
+        #expect(decoded.autoGenerateChatTitles == true)
     }
 }

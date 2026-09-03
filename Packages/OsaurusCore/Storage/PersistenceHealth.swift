@@ -18,6 +18,16 @@ import Foundation
 import os
 
 /// Why a storage open failed, classified for actionable recovery UI.
+/// A store error type that can report whether THIS value is the
+/// "file came from a newer build, so we refused to open it" case.
+///
+/// A per-VALUE question, not a per-type one: `MemoryDatabaseError` also
+/// carries genuine faults like `.failedToOpen`, and conforming the whole enum
+/// would misclassify every one of them as a harmless downgrade.
+public protocol ForwardVersionStoreError: Error {
+    var isForwardVersion: Bool { get }
+}
+
 public enum StorageOpenIssueKind: String, Sendable {
     /// Encrypted store whose key is unavailable (Keychain miss, re-sign, or
     /// Mac migration). Recoverable: restore the key or reset the store.
@@ -25,14 +35,28 @@ public enum StorageOpenIssueKind: String, Sendable {
     /// File is not a valid database for the attempted format (corruption or
     /// a key/HMAC mismatch). Recoverable only by reset/restore.
     case corrupt
-    /// Schema migration failed (e.g. forward-version or a broken migration).
+    /// Schema migration failed (a broken or half-applied migration).
     case migration
+    /// The file was written by a NEWER build than this one and was refused.
+    ///
+    /// Deliberately separate from `.migration`. The data is intact — this is
+    /// a downgrade, not a fault — and the recovery advice is the opposite:
+    /// `.migration` invites Reset, which here would destroy a healthy store
+    /// the user simply cannot read yet. Users bounce between release channels
+    /// and betas, so this is a routine state, not an error.
+    case forwardVersion
     /// Anything else.
     case unknown
 
     /// Best-effort classification from a thrown open/migration error.
     public static func classify(_ error: Error) -> StorageOpenIssueKind {
         if error is StorageKeyError { return .locked }
+        // Structural, not string-matched: a store's forward-version refusal
+        // conforms to `ForwardVersionStoreError`, so a reworded message can't
+        // silently demote it back to `.migration` and start recommending Reset.
+        if let store = error as? ForwardVersionStoreError, store.isForwardVersion {
+            return .forwardVersion
+        }
         let msg = error.localizedDescription.lowercased()
         if msg.contains("migration") || msg.contains("schema v") { return .migration }
         if msg.contains("key verification") || msg.contains("hmac") { return .locked }

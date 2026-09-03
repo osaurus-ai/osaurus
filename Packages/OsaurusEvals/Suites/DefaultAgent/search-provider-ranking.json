@@ -1,0 +1,35 @@
+{
+  "id": "default_agent.search-provider-ranking",
+  "domain": "default_agent",
+  "label": "default agent • rank Bing first for web search",
+  "query": "When agents search the web, try Bing first, ahead of Brave and the other engines.",
+  "notes": "Wave 3c search scope: `search_providers.ranking` (ordered id list — bing_html first). Bing-first differs from the default ranking (Brave first): the earlier Brave-first wording matched the default order, so an honest model inspected, saw nothing to change, and correctly declined — a no-op is not a rankable behavior. The model may need a schema/export hop to learn the builtin ids, so the iteration budget is wider. Pins the ranking key and the bing_html id.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "ranking"
+          }
+        },
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "bing_html"
+          }
+        }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

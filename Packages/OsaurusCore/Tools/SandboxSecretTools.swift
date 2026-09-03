@@ -447,7 +447,10 @@ public enum SecretArgumentScrubber {
             tool_call_id: message.tool_call_id,
             reasoning_content: message.reasoning_content,
             reasoning_item_id: message.reasoning_item_id,
-            reasoning_encrypted: message.reasoning_encrypted
+            reasoning_encrypted: message.reasoning_encrypted,
+            // Native output Items can contain the same unredacted function
+            // arguments. Never persist/replay them after secret scrubbing.
+            responses_output_items: nil
         )
     }
 

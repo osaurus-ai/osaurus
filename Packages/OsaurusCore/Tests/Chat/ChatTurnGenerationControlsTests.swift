@@ -10,6 +10,39 @@ import Testing
 
 @Suite("Chat turn generation controls")
 struct ChatTurnGenerationControlsTests {
+
+    @Test("send freezes all model-dependent request metadata before async recovery")
+    func sendFreezesModelDependentMetadata() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: packageRoot
+                .appendingPathComponent("Views/Chat/ChatView.swift"),
+            encoding: .utf8
+        )
+        guard let sendStart = source.range(of: "func send(") else {
+            Issue.record("ChatSession.send source not found")
+            return
+        }
+        let sendBody = String(source[sendStart.lowerBound...])
+
+        for snapshot in [
+            "let turnModelId = selectedModel",
+            "let turnModelType = selectedPickerItem?.modelType",
+            "let turnSupportsImages = selectedModelSupportsImages",
+            "let turnSupportsAudio = selectedModelSupportsAudio",
+            "let turnSupportsVideo = selectedModelSupportsVideo",
+        ] {
+            #expect(sendBody.contains(snapshot), "missing per-turn snapshot: \(snapshot)")
+        }
+        #expect(sendBody.contains("modelType: turnModelType"))
+        #expect(sendBody.contains("supportsImages: turnSupportsImages"))
+        #expect(sendBody.contains("supportsAudio: turnSupportsAudio"))
+        #expect(sendBody.contains("supportsVideo: turnSupportsVideo"))
+        #expect(sendBody.contains("selectedModel: turnModelId"))
+    }
     private func request() -> ChatCompletionRequest {
         ChatCompletionRequest(
             model: "JANGQ-AI/Ornith-1.0-9B-JANG_4M",
@@ -120,6 +153,91 @@ struct ChatTurnGenerationControlsTests {
         #expect(controls.enableThinking == nil)
         #expect(request.enable_thinking == nil)
         #expect(request.modelOptions == nil)
+    }
+
+    @Test("cold first send recovers a persisted explicit Thinking choice")
+    func coldFirstSendRecoversPersistedThinkingChoice() async {
+        let modelId = "JANGQ-AI/Qwen3.6-35B-A3B-MXFP8"
+        actor ResolutionProbe {
+            var ids: [String] = []
+            func record(_ id: String) { ids.append(id) }
+        }
+        let probe = ResolutionProbe()
+
+        let controls = await ChatTurnGenerationControls.captureForSend(
+            modelId: modelId,
+            activeModelOptions: [:],
+            storedExplicitOptions: ["disableThinking": .bool(true)]
+        ) { id in
+            await probe.record(id)
+        }
+
+        #expect(await probe.ids == [modelId])
+        #expect(controls.enableThinking == false)
+        #expect(controls.modelOptions?["disableThinking"]?.boolValue == true)
+    }
+
+    @Test("an already-live control never waits for capability recovery")
+    func liveControlDoesNotWaitForCapabilityRecovery() async {
+        actor ResolutionProbe {
+            var count = 0
+            func record() { count += 1 }
+        }
+        let probe = ResolutionProbe()
+
+        let controls = await ChatTurnGenerationControls.captureForSend(
+            modelId: "JANGQ-AI/Qwen3.6-35B-A3B-MXFP8",
+            activeModelOptions: ["disableThinking": .bool(false)],
+            storedExplicitOptions: ["disableThinking": .bool(true)]
+        ) { _ in
+            await probe.record()
+        }
+
+        #expect(await probe.count == 0)
+        #expect(controls.enableThinking == true)
+    }
+
+    @Test("cold recovery preserves unrelated live controls")
+    func coldRecoveryPreservesUnrelatedLiveControls() async {
+        actor ResolutionProbe {
+            var count = 0
+            func record() { count += 1 }
+        }
+        let probe = ResolutionProbe()
+
+        let controls = await ChatTurnGenerationControls.captureForSend(
+            modelId: "JANGQ-AI/Qwen3.6-35B-A3B-MXFP8",
+            activeModelOptions: ["customFlag": .string("kept")],
+            storedExplicitOptions: ["disableThinking": .bool(true)]
+        ) { _ in
+            await probe.record()
+        }
+
+        #expect(await probe.count == 1)
+        #expect(controls.enableThinking == false)
+        #expect(controls.modelOptions?["disableThinking"]?.boolValue == true)
+        #expect(controls.modelOptions?["customFlag"]?.stringValue == "kept")
+    }
+
+    @Test("unrelated persisted controls do not trigger local reasoning recovery")
+    func unrelatedStoredControlDoesNotRecover() async {
+        actor ResolutionProbe {
+            var count = 0
+            func record() { count += 1 }
+        }
+        let probe = ResolutionProbe()
+
+        let controls = await ChatTurnGenerationControls.captureForSend(
+            modelId: "codex/gpt-current",
+            activeModelOptions: [:],
+            storedExplicitOptions: ["reasoningEffort": .string("high")]
+        ) { _ in
+            await probe.record()
+        }
+
+        #expect(await probe.count == 0)
+        #expect(controls.modelOptions == nil)
+        #expect(controls.enableThinking == nil)
     }
 
     @Test("DSV4 reasoning effort reaches every reconstructed tool-loop request unchanged")

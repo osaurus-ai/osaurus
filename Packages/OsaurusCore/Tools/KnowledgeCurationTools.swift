@@ -2,16 +2,23 @@
 //  KnowledgeCurationTools.swift
 //  osaurus
 //
-//  Curation-loop tools over knowledge collections:
-//    `flag_knowledge_stale`     — file a staleness ticket (annotation
-//                                 only; available to any agent with
-//                                 knowledge grants)
-//    `list_knowledge_tickets`   — browse tickets in the granted scope
-//    `propose_knowledge_update` — draft a replacement document as a
-//                                 pending proposal (curator agents only,
-//                                 `.ask` policy). The corpus is NEVER
-//                                 written by a tool: proposals wait for
-//                                 human approval in the Knowledge tab.
+//  Staleness-ticket tools over knowledge collections:
+//    `flag_knowledge_stale`   — file a staleness ticket
+//    `list_knowledge_tickets` — browse tickets in the granted scope
+//    `update_knowledge_ticket` — claim or release a ticket
+//
+//  Tickets are ANNOTATIONS: filing one never mutates a collection. They
+//  solve a different problem from writing — an agent noticing drift it is
+//  not currently being asked to fix, which is an asynchronous signal to a
+//  human rather than a consent gate on a pending action. Documents are
+//  written by `write_knowledge` / `delete_knowledge`, each approved at
+//  call time in the permission modal.
+//
+//  `propose_knowledge_update` and the curator role it belonged to were
+//  removed: that design asked for consent twice (the tool was already
+//  `.ask`, and its result was an inert draft needing a second approval),
+//  and returning pending meant the agent could never verify its own
+//  work — the failure mode behind osaurus#2439.
 //
 //  Scoping matches the retrieval tools: grants resolve from the calling
 //  agent at execution time via `KnowledgeToolScope`.
@@ -36,17 +43,21 @@ private func postCurationChanged() {
 final class FlagKnowledgeStaleTool: OsaurusTool, @unchecked Sendable {
     let name = "flag_knowledge_stale"
     // NOTE: compact-prompt models only see the FIRST sentence of this
-    // description (`oneLineToolDescription`, ≤180 chars) — the routing
-    // rule ("update request ⇒ file a ticket") must live there, not in a
-    // follow-up sentence (live-observed miss with Ornith-1.0-9B).
+    // description (`oneLineToolDescription`, ≤180 chars), so the routing
+    // rule has to live there rather than in a follow-up sentence
+    // (live-observed miss with Ornith-1.0-9B).
+    //
+    // That rule INVERTED when the corpus became writable. It used to be
+    // "update request ⇒ file a ticket", because nothing could edit a
+    // document. Now an update request goes straight to `write_knowledge`,
+    // and a ticket is only for drift nobody asked you to fix. Leaving the
+    // old wording would send every update request back through a queue that
+    // no longer leads anywhere.
     let description =
-        "File a staleness ticket to start an update to a knowledge document "
-        + "— the required first step for ANY update request, since "
-        + "collection files cannot be edited directly. Use it when the user "
-        + "reports a change or asks for an update, and when you discover "
-        + "outdated content yourself (changed APIs, superseded practices, "
-        + "broken references). It only records the report; a curator "
-        + "follows up on open tickets."
+        "Leave a note that a knowledge document looks outdated, when fixing it is NOT the "
+        + "current task. To actually change a document, use `write_knowledge` instead. "
+        + "Use this for drift you notice in passing (changed APIs, superseded practices, "
+        + "broken references). It only records the note for the user; nothing on disk changes."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -73,6 +84,17 @@ final class FlagKnowledgeStaleTool: OsaurusTool, @unchecked Sendable {
         ]),
         "required": .array([.string("path"), .string("reason")]),
     ])
+
+    /// Cancellation audit: one bounded SQLite ticket insert (plus grant/index
+    /// lookups) — no network, no external processes, no detached work; the
+    /// body terminates promptly and drains trivially.
+    var canExposeToSpawnedOperation: Bool { true }
+
+    func spawnedOperationCancellationSupport(
+        argumentsJSON _: String
+    ) -> SpawnedOperationCancellationSupport {
+        .cooperative
+    }
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
@@ -197,6 +219,17 @@ final class ListKnowledgeTicketsTool: OsaurusTool, @unchecked Sendable {
         "required": .array([]),
     ])
 
+    /// Cancellation audit: one capped (`limit` ≤ 100) SQLite ticket listing —
+    /// no network, no external processes, no detached work; the body
+    /// terminates promptly and drains trivially.
+    var canExposeToSpawnedOperation: Bool { true }
+
+    func spawnedOperationCancellationSupport(
+        argumentsJSON _: String
+    ) -> SpawnedOperationCancellationSupport {
+        .cooperative
+    }
+
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
@@ -280,6 +313,19 @@ final class UpdateKnowledgeTicketTool: OsaurusTool, @unchecked Sendable {
         ]),
         "required": .array([.string("ticket_id"), .string("status")]),
     ])
+
+    /// Cancellation audit: one bounded SQLite status update behind the
+    /// curator-role check — no network, no external processes, no detached
+    /// work; the body terminates promptly and drains trivially.
+    /// (`propose_knowledge_update` deliberately stays unaudited: its
+    /// interactive permission gate can stall a bounded child like `clarify`.)
+    var canExposeToSpawnedOperation: Bool { true }
+
+    func spawnedOperationCancellationSupport(
+        argumentsJSON _: String
+    ) -> SpawnedOperationCancellationSupport {
+        .cooperative
+    }
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
@@ -374,341 +420,6 @@ final class UpdateKnowledgeTicketTool: OsaurusTool, @unchecked Sendable {
     }
 }
 
-// MARK: - propose_knowledge_update
-
-final class ProposeKnowledgeUpdateTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    let name = "propose_knowledge_update"
-    let description =
-        "Draft a full replacement for a knowledge document (or a new "
-        + "document) as a PENDING proposal. The collection is never "
-        + "modified directly — the user reviews and approves proposals in "
-        + "the Knowledge tab. Curator agents only. Pass the complete new "
-        + "markdown, not a diff. Keep the document's existing frontmatter "
-        + "(type, title, tags) unless the change is specifically about it."
-
-    /// Proposals are drafts, but they queue a corpus mutation for
-    /// approval — keep the human in the loop at call time too.
-    var requirements: [String] { [] }
-    var defaultPermissionPolicy: ToolPermissionPolicy { .ask }
-
-    /// Hard cap on proposal content, aligned with the indexer's
-    /// oversized-file skip so an approved proposal stays indexable.
-    private static let maxContentBytes = 2 * 1024 * 1024
-
-    /// A curator that *read* the document first received it wrapped in
-    /// `read_knowledge`'s framing header — a `[Collection] path` line followed
-    /// by optional `title:`/`type:`/`tags:` lines and a blank separator. Weaker
-    /// models copy that header verbatim into their replacement content, which an
-    /// approval would then persist above the real body. Strip a leading framing
-    /// block so the leaked preamble never reaches disk. Conservative: only fires
-    /// when the first non-blank line is a bracketed name followed by ` ` (real
-    /// document bodies open with `#`, `---`, or prose, not `[name] …`).
-    static func strippingReadPreamble(_ content: String) -> String {
-        var lines = content.components(separatedBy: "\n")
-        var start = 0
-        while start < lines.count, lines[start].trimmingCharacters(in: .whitespaces).isEmpty {
-            start += 1
-        }
-        guard start < lines.count else { return content }
-        let header = lines[start]
-        guard header.hasPrefix("["), let close = header.firstIndex(of: "]") else { return content }
-        let inside = header[header.index(after: header.startIndex)..<close]
-        let afterClose = header.index(after: close)
-        guard !inside.trimmingCharacters(in: .whitespaces).isEmpty,
-            afterClose < header.endIndex, header[afterClose] == " "
-        else { return content }
-        var i = start + 1
-        while i < lines.count,
-            lines[i].hasPrefix("title: ") || lines[i].hasPrefix("type: ") || lines[i].hasPrefix("tags: ")
-        {
-            i += 1
-        }
-        if i < lines.count, lines[i].trimmingCharacters(in: .whitespaces).isEmpty {
-            i += 1
-        }
-        lines.removeSubrange(0..<i)
-        return lines.joined(separator: "\n")
-    }
-
-    let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object([
-            "path": .object([
-                "type": .string("string"),
-                "description": .string(
-                    "Document path relative to its collection. May be a new path to propose a new document."
-                ),
-            ]),
-            "new_content": .object([
-                "type": .string("string"),
-                "description": .string("The complete replacement markdown, including frontmatter if any."),
-            ]),
-            "rationale": .object([
-                "type": .string("string"),
-                "description": .string("Why this update is needed and what changed."),
-            ]),
-            "ticket_id": .object([
-                "type": .string("integer"),
-                "description": .string("Optional: the staleness ticket this proposal answers."),
-            ]),
-            "collection": .object([
-                "type": .string("string"),
-                "description": .string(
-                    "Optional: the collection name. Required for a new path when more than one collection is granted."
-                ),
-            ]),
-        ]),
-        "required": .array([.string("path"), .string("new_content"), .string("rationale")]),
-    ])
-
-    func execute(argumentsJSON: String) async throws -> String {
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
-
-        // Resolve an optional linked ticket up front. It is the authoritative
-        // source for the target path (and a usable rationale) when a weak model
-        // fumbles those arguments but still passes the `ticket_id` it is
-        // answering — a common failure mode with small local models that mangle
-        // tool-call JSON.
-        let ticketArg = ArgumentCoercion.int(args["ticket_id"])
-        var linkedTicket: KnowledgeTicket?
-        if let ticketArg {
-            try? KnowledgeDatabase.shared.open()
-            linkedTicket = try? KnowledgeDatabase.shared.getTicket(id: ticketArg)
-        }
-
-        // `path`: prefer the argument; fall back to the linked ticket's target.
-        let pathArg = (args["path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let relPath = (pathArg?.isEmpty == false ? pathArg : linkedTicket?.relPath) ?? ""
-        guard !relPath.isEmpty else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message:
-                    "Missing required property: path. Pass the collection-relative .md path, "
-                    + "or a `ticket_id` whose document should be updated.",
-                field: "path",
-                expected: "a collection-relative .md path",
-                tool: name
-            )
-        }
-        if let envelope = KnowledgeCurationToolSupport.validateRelPath(relPath, tool: name) {
-            return envelope
-        }
-        let relPathExtension = (relPath as NSString).pathExtension.lowercased()
-        guard KnowledgeIndexService.markdownExtensions.contains(relPathExtension) else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "Proposals must target a markdown document (`.md`).",
-                field: "path",
-                expected: "a path ending in .md",
-                tool: name
-            )
-        }
-
-        let contentReq = requireString(args, "new_content", expected: "complete replacement markdown", tool: name)
-        guard case .value(let newContent) = contentReq else { return contentReq.failureEnvelope ?? "" }
-        guard !newContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "Argument `new_content` must not be empty. To remove a document, say so in a ticket instead.",
-                field: "new_content",
-                expected: "complete replacement markdown",
-                tool: name
-            )
-        }
-        guard newContent.utf8.count <= Self.maxContentBytes else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "Proposal content exceeds \(Self.maxContentBytes) bytes.",
-                field: "new_content",
-                tool: name
-            )
-        }
-
-        // `rationale`: prefer the argument; fall back to the ticket's reason so a
-        // proposal answering a ticket still records why, even when the model
-        // dropped the field.
-        let rationaleArg = (args["rationale"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let rationale: String
-        if let rationaleArg, !rationaleArg.isEmpty {
-            rationale = rationaleArg
-        } else if let linkedTicket {
-            rationale = "Addresses ticket #\(linkedTicket.id): \(linkedTicket.reason)"
-        } else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message:
-                    "Missing required property: rationale. Explain why this update is needed, "
-                    + "or pass a `ticket_id` to inherit its reason.",
-                field: "rationale",
-                expected: "why this update is needed",
-                tool: name
-            )
-        }
-
-        // Curator gate at execution time — the schema strip is not the boundary.
-        guard let agentId = ChatExecutionContext.knowledgeAgentId else {
-            return ToolEnvelope.failure(
-                kind: .rejected,
-                message: "Knowledge tools require an active agent context.",
-                tool: name
-            )
-        }
-        let isCurator = await MainActor.run {
-            AgentManager.shared.effectiveCapabilities(for: agentId).knowledgeCuratorEnabled
-        }
-        guard isCurator else {
-            return ToolEnvelope.failure(
-                kind: .rejected,
-                message: "This agent is not a knowledge curator. Use flag_knowledge_stale to report drift instead.",
-                tool: name
-            )
-        }
-
-        // Resolve to the FULL granted set. The `collection` argument is not
-        // applied at this stage: for an existing document the `path` pins the
-        // collection, so a mismatched hint — e.g. the model passing the doc's
-        // human title ("Acme Knowledge Base") instead of the collection name
-        // ("Sample Knowledge") — must not hard-fail the call and cost a wasted
-        // approval + retry. The hint is validated below, only where it can
-        // actually disambiguate (a new or path-ambiguous document).
-        let scope = await KnowledgeToolScope.resolve(tool: name, collectionName: nil)
-        guard case .granted(let collections) = scope else {
-            if case .failure(let envelope) = scope { return envelope }
-            return ""
-        }
-        if let envelope = KnowledgeToolScope.ensureDatabaseOpen(tool: name) { return envelope }
-
-        let collectionHint = (args["collection"] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Resolve the target collection: an existing document pins it; a
-        // new or ambiguous path falls back to the `collection` hint.
-        // Drop any read_knowledge framing header the model copied into the
-        // draft before it becomes the proposal body.
-        let cleanContent = Self.strippingReadPreamble(newContent)
-        let collectionId: String
-        let collectionName: String
-        var proposalContent = cleanContent
-        switch KnowledgeCurationToolSupport.locateDocument(relPath: relPath, in: collections, tool: name) {
-        case .success(let match):
-            collectionId = match.collection.id.uuidString
-            collectionName = match.collection.name
-            // Guard against a rewrite silently dropping the document's
-            // frontmatter (type/title/tags): if the draft carries none but the
-            // existing document has it, re-attach the original block so an
-            // approved curation can't degrade the doc's OKF classification. A
-            // draft that DOES carry frontmatter is left as-is, so an intentional
-            // metadata change still applies.
-            let draftHasFrontmatter =
-                Skill.splitFrontmatter(cleanContent)?.frontmatterLines.isEmpty == false
-            if !draftHasFrontmatter {
-                let fileURL = match.collection.folderURL.appendingPathComponent(relPath)
-                if let existing = try? String(contentsOf: fileURL, encoding: .utf8),
-                    let split = Skill.splitFrontmatter(existing),
-                    !split.frontmatterLines.isEmpty
-                {
-                    proposalContent =
-                        "---\n" + split.frontmatterLines.joined(separator: "\n") + "\n---\n\n"
-                        + cleanContent
-                }
-            }
-        case .failure(let envelope):
-            // Not a single existing doc. Narrow by the hint when given; an
-            // unknown hint is a real error here since it can't pin anything.
-            let candidates: [KnowledgeCollection]
-            if let collectionHint, !collectionHint.isEmpty {
-                guard
-                    let match = collections.first(where: {
-                        $0.name.caseInsensitiveCompare(collectionHint) == .orderedSame
-                    })
-                else {
-                    let names = collections.map(\.name).joined(separator: ", ")
-                    return ToolEnvelope.failure(
-                        kind: .invalidArgs,
-                        message: "Unknown collection `\(collectionHint)`. Granted collections: \(names).",
-                        field: "collection",
-                        expected: "one of the agent's granted collection names",
-                        tool: name
-                    )
-                }
-                candidates = [match]
-            } else {
-                candidates = collections
-            }
-
-            if candidates.count == 1 {
-                // New document in the single resolved collection.
-                collectionId = candidates[0].id.uuidString
-                collectionName = candidates[0].name
-            } else if envelope.contains("multiple collections") {
-                return envelope
-            } else {
-                let names = candidates.map(\.name).joined(separator: ", ")
-                return ToolEnvelope.failure(
-                    kind: .invalidArgs,
-                    message:
-                        "`\(relPath)` is a new document and multiple collections are granted (\(names)). Pass `collection` to pick one.",
-                    field: "collection",
-                    expected: "one of: \(names)",
-                    tool: name
-                )
-            }
-        }
-
-        // Optional ticket link: must exist and belong to the resolved
-        // collection. Reuses the ticket fetched up front for the path/rationale
-        // fallback.
-        var ticketId: Int?
-        if let ticketArg {
-            guard let ticket = linkedTicket, ticket.collectionId == collectionId else {
-                return ToolEnvelope.failure(
-                    kind: .notFound,
-                    message: "No ticket #\(ticketArg) in collection `\(collectionName)`.",
-                    field: "ticket_id",
-                    tool: name
-                )
-            }
-            ticketId = ticketArg
-        } else if let openMatch = (try? KnowledgeDatabase.shared.listTickets(
-            collectionIds: [collectionId], status: .open))?
-            .first(where: { $0.relPath == relPath })
-        {
-            // Model omitted `ticket_id` (a common local-model miss): auto-link an
-            // open ticket targeting this same document so approving the proposal
-            // resolves the drift report instead of leaving it stranded.
-            ticketId = openMatch.id
-        }
-
-        do {
-            let proposalId = try KnowledgeDatabase.shared.createProposal(
-                ticketId: ticketId,
-                collectionId: collectionId,
-                relPath: relPath,
-                newContent: proposalContent,
-                rationale: rationale,
-                createdBy: agentId.uuidString
-            )
-            if let ticketId {
-                try? KnowledgeDatabase.shared.updateTicketStatus(id: ticketId, status: .proposed)
-            }
-            postCurationChanged()
-            var text =
-                "Created proposal #\(proposalId) for [\(collectionName)] \(relPath). "
-                + "It is pending review in the Knowledge tab; the document is unchanged until approved."
-            if let ticketId { text += " Ticket #\(ticketId) moved to proposed." }
-            return ToolEnvelope.success(tool: name, text: text)
-        } catch {
-            return ToolEnvelope.failure(
-                kind: .executionError,
-                message: "Could not create the proposal: \(error.localizedDescription)",
-                tool: name,
-                retryable: true
-            )
-        }
-    }
-}
 
 // MARK: - Shared helpers
 

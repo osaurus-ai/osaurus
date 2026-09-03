@@ -32,13 +32,6 @@ struct ModelRuntimeRAMFeasibilityTests {
         #expect(
             ModelRuntime.effectiveMLXCacheLimit(
                 dynamicLimit: 1024 * mib,
-                configuredLimits: [nil],
-                uncappedLimit: 16 * 1024 * mib
-            ) == 16 * 1024 * mib
-        )
-        #expect(
-            ModelRuntime.effectiveMLXCacheLimit(
-                dynamicLimit: 1024 * mib,
                 configuredLimits: [1024 * mib, 128 * mib, nil]
             ) == 128 * mib
         )
@@ -47,6 +40,93 @@ struct ModelRuntimeRAMFeasibilityTests {
                 dynamicLimit: 0,
                 configuredLimits: [128 * mib]
             ) == 0
+        )
+    }
+
+    @Test("Admitted allocator ceiling is request-scoped")
+    func admittedAllocatorCeilingIsRequestScoped() {
+        let mib = 1024 * 1024
+        let gib = 1024 * mib
+        #expect(
+            ModelRuntime.effectiveGenerationMLXCacheLimit(
+                persistentLimit: 128 * mib,
+                admittedMemoryLimit: 16 * 1024 * mib,
+                modelWeightsBytes: Int64(21 * gib),
+                physicalMemoryBytes: UInt64(128 * gib),
+                requiresAdmittedCeiling: true
+            ) == 7 * gib
+        )
+        #expect(
+            ModelRuntime.effectiveGenerationMLXCacheLimit(
+                persistentLimit: 128 * mib,
+                admittedMemoryLimit: 16 * 1024 * mib,
+                modelWeightsBytes: Int64(21 * gib),
+                physicalMemoryBytes: UInt64(128 * gib),
+                requiresAdmittedCeiling: false
+            ) == 128 * mib
+        )
+    }
+
+    @Test("Active allocator reuse stays proportional across Mac sizes")
+    func activeAllocatorReuseStaysProportional() {
+        let gib = 1024 * 1024 * 1024
+
+        // A small Mac cannot turn all otherwise-admitted RAM into freed
+        // buffers, even for a model whose weight-scaled allowance is larger.
+        #expect(
+            ModelRuntime.effectiveGenerationMLXCacheLimit(
+                persistentLimit: 128 * 1024 * 1024,
+                admittedMemoryLimit: 11 * gib,
+                modelWeightsBytes: Int64(8 * gib),
+                physicalMemoryBytes: UInt64(16 * gib),
+                requiresAdmittedCeiling: true
+            ) == 2 * gib
+        )
+
+        // A very large model on a large Mac is still capped at 16 GiB rather
+        // than inheriting the whole 70%-of-RAM admission budget.
+        #expect(
+            ModelRuntime.effectiveGenerationMLXCacheLimit(
+                persistentLimit: 128 * 1024 * 1024,
+                admittedMemoryLimit: 96 * gib,
+                modelWeightsBytes: Int64(95 * gib),
+                physicalMemoryBytes: UInt64(128 * gib),
+                requiresAdmittedCeiling: true
+            ) == 16 * gib
+        )
+
+        // The admission result remains a hard upper bound on constrained
+        // machines and an explicit larger persistent cap is never reduced.
+        #expect(
+            ModelRuntime.effectiveGenerationMLXCacheLimit(
+                persistentLimit: 4 * gib,
+                admittedMemoryLimit: 3 * gib,
+                modelWeightsBytes: Int64(21 * gib),
+                physicalMemoryBytes: UInt64(128 * gib),
+                requiresAdmittedCeiling: true
+            ) == 3 * gib
+        )
+    }
+
+    @Test("Only decode paths that need large reusable intermediates use the admitted ceiling")
+    func admittedAllocatorCeilingIsDecodePathDriven() {
+        #expect(
+            ModelRuntime.requiresAdmittedMLXAllocatorCeiling(
+                isPlainDeepseekV4AffineJANG: false,
+                usesNativeMTP: false
+            ) == false
+        )
+        #expect(
+            ModelRuntime.requiresAdmittedMLXAllocatorCeiling(
+                isPlainDeepseekV4AffineJANG: true,
+                usesNativeMTP: false
+            )
+        )
+        #expect(
+            ModelRuntime.requiresAdmittedMLXAllocatorCeiling(
+                isPlainDeepseekV4AffineJANG: false,
+                usesNativeMTP: true
+            )
         )
     }
 
@@ -464,6 +544,29 @@ struct ModelRuntimeRAMFeasibilityTests {
                 residentNames: [],
                 inflightNames: []
             )
+        )
+    }
+
+    @Test("Only a user-typed allocator override clamps the session holder")
+    func profileDefaultAllocatorCapDoesNotClamp() {
+        // Profile defaults (Safe Auto / Strict resolve to 128 MiB) must reach
+        // the holder as nil so the weight-scaled dynamic limit governs.
+        #expect(
+            ModelRuntime.explicitAllocatorCacheLimitBytes(
+                customAllocatorCacheBytes: nil
+            ) == nil
+        )
+        // An explicit user value still clamps.
+        #expect(
+            ModelRuntime.explicitAllocatorCacheLimitBytes(
+                customAllocatorCacheBytes: 256 << 20
+            ) == 256 << 20
+        )
+        // Values beyond Int.max saturate instead of trapping.
+        #expect(
+            ModelRuntime.explicitAllocatorCacheLimitBytes(
+                customAllocatorCacheBytes: UInt64.max
+            ) == Int.max
         )
     }
 }

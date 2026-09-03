@@ -531,7 +531,10 @@ struct SpawnConfigurationEditor: View {
                 forPickerModelId: item.id,
                 providerId: providerId
             )
-        case .local, .foundation, .imageGeneration:
+        // Claude Code routes locally by its `claude-code/…` picker id (no
+        // provider UUID to canonicalize against), so it keys the same way as
+        // the other local backends.
+        case .local, .foundation, .imageGeneration, .claudeCode:
             return item.id
         }
     }
@@ -586,7 +589,7 @@ struct SpawnConfigurationEditor: View {
             if modelCandidates.contains(where: { item in
                 guard item.id == id else { return false }
                 switch item.source {
-                case .local, .foundation, .imageGeneration: return true
+                case .local, .foundation, .imageGeneration, .claudeCode: return true
                 case .remote: return false
                 }
             }) {
@@ -864,6 +867,9 @@ struct SpawnConfigurationEditor: View {
         case .remote(let providerName, _): return providerName
         case .local, .foundation: return L("Local")
         case .imageGeneration: return L("Image")
+        // Distinct from "Local": it runs through the user's signed-in Claude
+        // Code CLI, so its limits and privacy story differ from on-device MLX.
+        case .claudeCode: return L("Claude Code")
         }
     }
 

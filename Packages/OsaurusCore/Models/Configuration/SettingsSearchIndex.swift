@@ -138,11 +138,18 @@ public enum SettingsSearchIndex {
 
         // MARK: Chat (generation knobs now live in the dedicated Chat tab)
         .init(
-            id: "settings.chat.systemPrompt",
-            tab: .chat,
-            section: "Chat",
+            id: "settings.orchestrator.systemPrompt",
+            tab: .orchestrator,
+            section: "Identity",
             title: "System Prompt",
-            keywords: ["persona", "instructions", "system prompt"]
+            keywords: ["persona", "instructions", "system prompt", "orchestrator"]
+        ),
+        .init(
+            id: "settings.orchestrator.name",
+            tab: .orchestrator,
+            section: "Identity",
+            title: "Orchestrator Name",
+            keywords: ["name", "rename", "display name", "orchestrator", "default agent", "osaurus"]
         ),
         .init(
             id: "settings.chat.autoGenerateTitles",
@@ -166,6 +173,16 @@ public enum SettingsSearchIndex {
             keywords: ["cmd n", "new chat", "shortcut", "keyboard", "new window", "hotkey"]
         ),
         .init(
+            id: "settings.chat.thinkingDisplay",
+            tab: .chat,
+            section: "Chat",
+            title: "Expand Thinking While Streaming",
+            keywords: [
+                "thinking", "reasoning", "expand thinking", "show thinking",
+                "group thinking", "tool activity", "chain of thought",
+            ]
+        ),
+        .init(
             id: "settings.chat.compactionModel",
             tab: .chat,
             section: "Chat",
@@ -173,17 +190,17 @@ public enum SettingsSearchIndex {
             keywords: ["compaction", "compact", "summarize", "context", "summary model"]
         ),
         .init(
-            id: "settings.chat.temperature",
-            tab: .chat,
+            id: "settings.orchestrator.temperature",
+            tab: .orchestrator,
             section: "Generation",
             title: "Temperature",
             keywords: ["randomness", "creativity", "sampling"]
         ),
         .init(
-            id: "settings.chat.maxTokens",
-            tab: .chat,
+            id: "settings.orchestrator.maxTokens",
+            tab: .orchestrator,
             section: "Generation",
-            title: "Default Agent Max Output Tokens",
+            title: "Max Output Tokens",
             keywords: [
                 "response length", "output tokens", "generation config",
                 "max new tokens", "not context", "not kv",
@@ -197,6 +214,8 @@ public enum SettingsSearchIndex {
             keywords: [
                 "context window", "context", "model maximum",
                 "metadata fallback", "kv retention", "cache window",
+                "context window cap", "context cap", "max context",
+                "limit context",
             ],
             subTab: "cache"
         ),
@@ -213,6 +232,24 @@ public enum SettingsSearchIndex {
             section: "Generation",
             title: "Max Tool Attempts",
             keywords: ["tool calls", "agent loop", "attempts"]
+        ),
+        // Had NO index entry at all. Worse than merely missing: searching
+        // "tool calls" matched `Max Tool Attempts` above, so the one query
+        // that did return something routed the user to a different setting.
+        // This is the control that answers "make every tool always allowed" —
+        // 83 tools ship `enabled: true` with an EMPTY policy map, and
+        // `ToolConfiguration.policy(for:)` defaults to `.ask`, so without this
+        // toggle every one of them prompts.
+        .init(
+            id: "settings.chat.autoAllowAllTools",
+            tab: .chat,
+            section: "Chat",
+            title: "Auto-Allow All Tool Calls",
+            keywords: [
+                "auto allow", "auto-allow", "allow all tools", "allow tools",
+                "tool permission", "tool permissions", "approve tools",
+                "approval", "always allow", "never ask", "tool prompt",
+            ]
         ),
 
         // MARK: Settings (Notifications / Legal)
@@ -372,7 +409,9 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Sampling Defaults",
             title: "Generation Defaults",
-            keywords: ["top p", "temperature", "sampling", "defaults"],
+            keywords: [
+                "top p", "temperature", "sampling", "sampler", "top k", "min p", "defaults",
+            ],
             subTab: "sampling"
         ),
         .init(
@@ -404,7 +443,17 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Cache",
             title: "Prompt Cache",
-            keywords: ["cache", "kv cache", "prefix"],
+            // The controls in this section are labelled "Disk Cache", "SSD
+            // Cache (L2)", "Disk Cache Size (% of disk)" and "Clear SSD
+            // Cache". None of those phrases resolved, so the section could
+            // not be found by any name it shows the user — the same defect
+            // D5 fixed for the sampler row.
+            keywords: [
+                "cache", "kv cache", "prefix",
+                "disk cache", "ssd cache", "l2 cache", "disk cache size",
+                "clear cache", "clear ssd cache", "disk cache directory",
+                "eviction", "evict", "paged kv", "gpu cache",
+            ],
             subTab: "cache"
         ),
         .init(
@@ -431,7 +480,13 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Speculative Decoding",
             title: "Speculative Decoding",
-            keywords: ["speculative", "mtp", "draft model"],
+            keywords: [
+                "speculative", "mtp", "draft model",
+                // The drafter picker lives in this card. Someone who has
+                // just downloaded a DFlash 2 checkpoint searches for its
+                // name, not for "speculative decoding".
+                "dflash", "dflash 2", "drafter", "block diffusion",
+            ],
             subTab: "speculative"
         ),
         .init(
@@ -439,7 +494,9 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Live Activity",
             title: "Live Activity",
-            keywords: ["live activity", "dynamic island", "status"],
+            keywords: [
+                "live activity", "dynamic island", "status", "sampler", "sampler last used",
+            ],
             subTab: "liveActivity"
         ),
         .init(
@@ -455,7 +512,16 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Tools & Templates",
             title: "Tools & Templates",
-            keywords: ["tool calling", "templates", "chat template"],
+            // "Reasoning Parser Override" lives in this section, and reasoning
+            // was unfindable by ANY of its own words — `reasoning`, `thinking`,
+            // `effort` and `preserve thinking` all returned 0 matches while
+            // three real controls existed. Same defect D5 fixed for the
+            // sampler row.
+            keywords: [
+                "tool calling", "templates", "chat template",
+                "reasoning", "reasoning parser", "reasoning effort", "effort",
+                "thinking", "preserve thinking", "think tags",
+            ],
             subTab: "tools"
         ),
         .init(
@@ -646,28 +712,29 @@ public enum SettingsSearchIndex {
             subTab: "Models"
         ),
 
-        // MARK: Subagents (main-chat policy + runtime knobs in Settings)
+        // MARK: Subagents (Orchestrator delegation policy + runtime knobs)
         // There is no global master switch and no dedicated Spawn tab anymore.
         // The built-in main chat has no AgentDetailView, so its allowed agents,
         // models, notes, permission, worker tools, and budgets live alongside
-        // shared handoff/RAM-safety knobs in this card. Custom-agent spawn/image
-        // policy remains in each agent's Subagents tab. Global image-generation
-        // settings live in the Image Generation tab (indexed above).
+        // shared handoff/RAM-safety knobs on the Orchestrator tab. Custom-agent
+        // spawn/image policy remains in each agent's Subagents tab. Global
+        // image-generation settings live in the Image Generation tab (indexed
+        // above).
         .init(
-            id: "settings.subagents",
-            tab: .settings,
-            section: "Subagents",
-            title: "Subagents",
+            id: "settings.orchestrator.delegation",
+            tab: .orchestrator,
+            section: "Delegation",
+            title: "Delegation",
             keywords: [
                 "spawn", "delegate", "delegation", "subagent",
                 "helper jobs", "agent delegation", "allowed agents",
-                "allowed models", "main chat", "batch subagents",
+                "allowed models", "main chat", "batch subagents", "orchestrator",
             ]
         ),
         .init(
-            id: "settings.subagents.mainChat",
-            tab: .settings,
-            section: "Subagents",
+            id: "settings.orchestrator.delegation.mainChat",
+            tab: .orchestrator,
+            section: "Delegation",
             title: "Main Chat Spawn",
             keywords: [
                 "default agent", "built-in chat", "spawn pool", "model notes",
@@ -676,9 +743,9 @@ public enum SettingsSearchIndex {
             ]
         ),
         .init(
-            id: "settings.subagents.handoff",
-            tab: .settings,
-            section: "Subagents",
+            id: "settings.orchestrator.delegation.handoff",
+            tab: .orchestrator,
+            section: "Delegation",
             title: "Local Handoff & RAM Safety",
             keywords: ["handoff", "ram safety", "residency", "unload", "preflight"]
         ),
@@ -699,23 +766,24 @@ public enum SettingsSearchIndex {
                 "cryptographic identity", "keys",
             ]
         ),
-        // The Storage tab is the single home for disk concerns: the models
-        // directory + external sources moved here from the General tab.
+        // The standalone Storage tab is gone: the models directory +
+        // external sources live on the General tab, and the encryption
+        // panel lives on the Privacy tab's Storage sub-tab.
         .init(
             id: "storage.location",
-            tab: .storage,
+            tab: .settings,
             title: "Models Directory",
             keywords: ["disk", "data location", "models folder", "move models", "cleanup", "models size"]
         ),
         .init(
             id: "storage.externalModels",
-            tab: .storage,
+            tab: .settings,
             title: "External Model Sources",
             keywords: ["hugging face", "hf cache", "lm studio", "external", "import models"]
         ),
         .init(
             id: "storage.encryption",
-            tab: .storage,
+            tab: .privacy,
             title: "Encrypt Local Data at Rest",
             keywords: ["sqlcipher", "encryption", "filevault", "at rest", "storage key", "backup"]
         ),

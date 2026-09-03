@@ -11,6 +11,8 @@ import SwiftUI
 struct ModelCacheInspectorView: View {
     @Environment(\.theme) private var theme
     @State private var items: [ModelRuntime.ModelCacheSummary] = []
+    @State private var imageItem: ImageGenerationService.LoadedModelSummary?
+    @State private var isUnloadingImageModel = false
     @State private var isClearingAll = false
     @State private var isRefreshing = false
     @State private var isHoveringRefresh = false
@@ -57,7 +59,7 @@ struct ModelCacheInspectorView: View {
                 }
             }
 
-            if items.isEmpty {
+            if items.isEmpty && imageItem == nil {
                 // Empty state
                 VStack(spacing: 8) {
                     Image(systemName: "tray")
@@ -78,6 +80,15 @@ struct ModelCacheInspectorView: View {
                             isUnloading: unloadingNames.contains(item.name),
                             onUnload: {
                                 Task { await unload(item) }
+                            }
+                        )
+                    }
+                    if let imageItem {
+                        ImageModelCacheRow(
+                            item: imageItem,
+                            isUnloading: isUnloadingImageModel,
+                            onUnload: {
+                                Task { await unloadImageModel() }
                             }
                         )
                     }
@@ -109,18 +120,19 @@ struct ModelCacheInspectorView: View {
                     Task {
                         isClearingAll = true
                         await MLXService.shared.clearRuntimeCache()
+                        await ImageGenerationService.shared.unload()
                         await refresh()
                         isClearingAll = false
                     }
                 }
-                .disabled(items.isEmpty)
-                .opacity(items.isEmpty ? 0.5 : 1.0)
+                .disabled(items.isEmpty && imageItem == nil)
+                .opacity(items.isEmpty && imageItem == nil ? 0.5 : 1.0)
 
                 Spacer()
 
                 // Model count badge
-                if !items.isEmpty {
-                    Text("\(items.count) model\(items.count == 1 ? "" : "s")", bundle: .module)
+                if loadedModelCount > 0 {
+                    Text("\(loadedModelCount) model\(loadedModelCount == 1 ? "" : "s")", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -134,11 +146,25 @@ struct ModelCacheInspectorView: View {
         }
     }
 
+    private var loadedModelCount: Int {
+        items.count + (imageItem == nil ? 0 : 1)
+    }
+
     private func refresh() async {
         isRefreshing = true
         items = await MLXService.shared.cachedRuntimeSummaries()
+        imageItem = await ImageGenerationService.shared.loadedModelSummary()
         isRefreshing = false
         onRefresh?()
+    }
+
+    @MainActor
+    private func unloadImageModel() async {
+        guard !isUnloadingImageModel else { return }
+        isUnloadingImageModel = true
+        await ImageGenerationService.shared.unload()
+        isUnloadingImageModel = false
+        await refresh()
     }
 
     @MainActor
@@ -350,6 +376,118 @@ private struct ModelCacheRow: View {
                     ),
                     lineWidth: 1
                 )
+        )
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        if bytes <= 0 { return "~0 MB" }
+        let kb = Double(bytes) / 1024.0
+        let mb = kb / 1024.0
+        let gb = mb / 1024.0
+        if gb >= 1.0 { return String(format: "%.2f GB", gb) }
+        return String(format: "%.1f MB", mb)
+    }
+}
+
+/// Row for the resident image gen/edit model — same affordance as the LLM
+/// rows so image weights can be released without quitting the app (#2425).
+private struct ImageModelCacheRow: View {
+    @Environment(\.theme) private var theme
+    let item: ImageGenerationService.LoadedModelSummary
+    let isUnloading: Bool
+    let onUnload: () -> Void
+
+    @State private var isHovered = false
+    @State private var isUnloadHovered = false
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(item.name)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+
+                    HStack(spacing: 3) {
+                        Image(systemName: "photo")
+                            .font(.system(size: 8, weight: .semibold))
+                        Text("Image", bundle: .module)
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .foregroundColor(theme.accentColor)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(theme.accentColor.opacity(0.12)))
+                    .overlay(
+                        Capsule().strokeBorder(theme.accentColor.opacity(0.25), lineWidth: 1)
+                    )
+                }
+
+                Text(formatBytes(item.bytes))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+            }
+
+            Spacer()
+
+            Button(action: onUnload) {
+                HStack(spacing: 5) {
+                    if isUnloading {
+                        ProgressView()
+                            .controlSize(.mini)
+                    }
+                    Text(isUnloading ? "Unloading…" : "Unload", bundle: .module)
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(
+                    isUnloading
+                        ? theme.secondaryText
+                        : (isUnloadHovered ? theme.errorColor : theme.secondaryText)
+                )
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(theme.buttonBackground.opacity(isUnloadHovered ? 0.95 : 0.7))
+
+                        if isUnloadHovered {
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(theme.errorColor.opacity(0.08))
+                        }
+                    }
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(
+                            isUnloadHovered ? theme.errorColor.opacity(0.3) : theme.buttonBorder.opacity(0.5),
+                            lineWidth: 1
+                        )
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(isUnloading)
+            .accessibilityIdentifier("image-model-cache-unload-\(item.name)")
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.15)) {
+                    isUnloadHovered = hovering
+                }
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(theme.cardBackground.opacity(isHovered ? 0.95 : 0.8))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(theme.cardBorder.opacity(isHovered ? 0.4 : 0.3), lineWidth: 1)
         )
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {

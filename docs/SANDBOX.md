@@ -153,7 +153,7 @@ swift test --package-path Packages/OsaurusCore --filter SandboxProvisioningDiagn
 
 | Component | Description |
 |-----------|-------------|
-| **Linux VM** | Alpine Linux with Kata Containers 3.17.0 ARM64 kernel, 8 GiB root filesystem |
+| **Linux VM** | Alpine Linux with Kata Containers 3.32.0 production ARM64 kernel, 8 GiB root filesystem |
 | **VirtioFS Mounts** | `/workspace` maps to `~/.osaurus/container/workspace/`, `/output` maps to `~/.osaurus/container/output/` |
 | **Networking** | vmnet-backed interface: shared NAT in `outbound` mode, host-only + filtering egress proxy in `proxy` mode, absent in `none` mode |
 | **Vsock Bridge** | Unix socket relayed via vsock connects the container to the Host API Bridge server |
@@ -667,10 +667,11 @@ Every external artifact the sandbox depends on is pinned to an immutable digest,
 | Artifact | Pin |
 |----------|-----|
 | GHCR image (`ghcr.io/osaurus-ai/sandbox`) | Multi-arch index digest (`@sha256:...`); the `:latest` tag is never used at runtime |
-| Kata kernel tarball | SHA-256 verified after download against an in-source constant |
-| Initfs blob | SHA-256 verified after download against an in-source constant |
+| Containerization SDK | Exact SwiftPM pin: 0.41.0 (the SDK used by Apple container 1.3.0) |
+| Kata kernel | Kata 3.32.0, Linux `6.18.35-197` production/non-debug binary; both the release tarball and extracted kernel have pinned SHA-256 digests |
+| vminit initfs | Containerization `vminit:0.41.0` OCI index pinned by digest |
 
-A digest mismatch is **fail-closed**: the temp file is deleted, alternate mirrors are not tried (silent fallback would mask exactly the upstream-compromise scenario this defends against), and provisioning aborts with `SandboxError.integrityCheckFailed`. The hashing pass is bounded at 512 MiB to stop a runaway download from turning into a multi-GB hash job.
+A digest mismatch is **fail-closed**: the temp file is deleted, alternate mirrors are not tried (silent fallback would mask exactly the upstream-compromise scenario this defends against), and provisioning aborts with `SandboxError.integrityCheckFailed`. The hashing pass is bounded at 768 MiB to accommodate the pinned Kata archive while stopping a runaway download from turning into a multi-GB hash job.
 
 To rotate a pin (e.g. after intentionally bumping the sandbox image): fetch the new digest with `crane digest …` or `docker buildx imagetools inspect …`, paste the multi-arch index digest into `containerImage` in `SandboxManager.swift`, and update the corresponding SHA-256 constants alongside the URL in the same file.
 

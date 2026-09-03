@@ -179,6 +179,8 @@ enum AgentChannelInboundActivityPresentation {
             return L("The message had no usable content to dispatch.")
         case "no_route_matched":
             return L("No routing rule claimed this message and no default agent is set. Add a route for this room or pick a default agent in the channel settings.")
+        case "auto_reply_disabled":
+            return L("The reply stayed in Osaurus because Reply Automatically is off. Turn it on in the channel settings to post replies back.")
         case "rate_limited":
             return L("Inbound handling is rate limited right now. Wait a moment and try again.")
         default:

@@ -1,0 +1,35 @@
+{
+  "id": "default_agent.mcp-token-ref",
+  "domain": "default_agent",
+  "label": "default agent • add an HTTP MCP server with a token_ref secret reference",
+  "query": "Add an HTTP MCP server called 'linear' at https://mcp.linear.app/mcp. It needs a bearer token — use the one already in my LINEAR_MCP_TOKEN environment variable, and don't ask me to paste it into chat.",
+  "notes": "Phase 4 secret-ref scope for MCP: `token_ref: env:LINEAR_MCP_TOKEN` on an HTTP entry. The whole point of the ref grammar is that the secret VALUE never travels through chat; the case pins the ref key and the env: reference string.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "token_ref"
+          }
+        },
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "env:LINEAR_MCP_TOKEN"
+          }
+        }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

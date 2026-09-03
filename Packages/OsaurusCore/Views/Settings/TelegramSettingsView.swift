@@ -579,6 +579,7 @@ struct TelegramSettingsView: View {
                     defaultAgentId: $inboundAgentId,
                     routes: $inboundRoutes
                 )
+                AgentChannelPluginPreloadOverflowNotice(agentId: inboundAgentId)
                 SettingsToggle(
                     title: L("Reply Automatically"),
                     description: L(
@@ -586,6 +587,9 @@ struct TelegramSettingsView: View {
                     ),
                     isOn: $inboundAutoReplyEnabled
                 )
+                if !inboundAutoReplyEnabled {
+                    AgentChannelAutoReplyOffNotice()
+                }
             }
         }
     }

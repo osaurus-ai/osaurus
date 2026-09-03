@@ -67,14 +67,14 @@ public struct AgentQuickAction: Codable, Identifiable, Sendable, Equatable {
                 prompt: L("Help me add a cloud AI provider.")
             ),
             AgentQuickAction(
-                icon: "slider.horizontal.3",
-                text: L("Change a setting"),
-                prompt: L("I want to change an Osaurus setting.")
-            ),
-            AgentQuickAction(
                 icon: "person.2",
                 text: L("Create an agent"),
                 prompt: L("Help me create a new agent.")
+            ),
+            AgentQuickAction(
+                icon: "point.3.connected.trianglepath.dotted",
+                text: L("Delegate a task"),
+                prompt: L("Delegate a task to one of my agents.")
             ),
         ]
     }
@@ -127,8 +127,14 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var agentIndex: UInt32?
     /// Derived cryptographic address for this agent (nil = no address yet)
     public var agentAddress: String?
-    /// Controls the agent's ability to run arbitrary commands in the sandbox
+    /// Controls the agent's ability to run arbitrary commands in the sandbox.
+    /// `nil` is an unconfigured custom agent and resolves default-on when a
+    /// sandbox backend is available; `enabled: false` is an explicit opt-out.
+    /// The built-in Default agent is always hard-off at effective resolution.
     public var autonomousExec: AutonomousExecConfig?
+    /// Behavior of the Claude Code subprocess backend when this agent is on a
+    /// `claude-code/…` model. Nil = defaults (agent mode, read-only tools).
+    public var claudeCode: ClaudeCodeAgentConfig?
     /// Per-agent plugin instruction overrides keyed by plugin ID
     public var pluginInstructions: [String: String]?
     /// Whether this agent is advertised via Bonjour on the local network
@@ -192,6 +198,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         agentIndex: UInt32? = nil,
         agentAddress: String? = nil,
         autonomousExec: AutonomousExecConfig? = nil,
+        claudeCode: ClaudeCodeAgentConfig? = nil,
         pluginInstructions: [String: String]? = nil,
         bonjourEnabled: Bool = false,
         toolSelectionMode: ToolSelectionMode? = nil,
@@ -224,6 +231,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.agentIndex = agentIndex
         self.agentAddress = agentAddress
         self.autonomousExec = autonomousExec
+        self.claudeCode = claudeCode
         self.pluginInstructions = pluginInstructions
         self.bonjourEnabled = bonjourEnabled
         self.toolSelectionMode = toolSelectionMode
@@ -282,16 +290,26 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         id == defaultId.uuidString
     }
 
-    /// The default agent — front door to configuring Osaurus.
-    /// Renders as "Osaurus" in chat and the picker; subtitle nudges
-    /// users toward the configure flow that's unique to this agent.
-    /// `avatar: "green"` resolves the bundled `osaurus-avatar-green`
-    /// asset in `NativeMessageCellView`/`SharedHeaderComponents`.
+    /// Custom display name for the built-in Orchestrator agent, mirrored
+    /// from `DefaultAgentConfiguration.displayName` by
+    /// `DefaultAgentConfigurationStore` on every load/save. Kept as a
+    /// nonisolated static so the value-type `default` accessor can read
+    /// it from any context; writes only happen on the main actor
+    /// (the store is `@MainActor`), so reads never race a write.
+    nonisolated(unsafe) public static var defaultAgentNameOverride: String?
+
+    /// The default agent — the built-in Orchestrator that configures
+    /// Osaurus and delegates work. Renders as "Osaurus" in chat and the
+    /// picker unless the user set a custom name in Settings →
+    /// Orchestrator; subtitle nudges users toward the configure flow
+    /// that's unique to this agent. `avatar: "green"` resolves the
+    /// bundled `osaurus-avatar-green` asset in
+    /// `NativeMessageCellView`/`SharedHeaderComponents`.
     public static var `default`: Agent {
         Agent(
             id: defaultId,
-            name: "Osaurus",
-            description: L("Sets up Osaurus and answers questions about the app"),
+            name: defaultAgentNameOverride ?? "Osaurus",
+            description: L("Configures Osaurus and delegates work to your agents"),
             systemPrompt: "",
             themeId: nil,
             defaultModel: nil,
@@ -341,6 +359,8 @@ extension Agent {
         agentIndex = try c.decodeIfPresent(UInt32.self, forKey: .agentIndex)
         agentAddress = try c.decodeIfPresent(String.self, forKey: .agentAddress)
         autonomousExec = try c.decodeIfPresent(AutonomousExecConfig.self, forKey: .autonomousExec)
+        // Added after initial release; absent in older agent JSON.
+        claudeCode = try c.decodeIfPresent(ClaudeCodeAgentConfig.self, forKey: .claudeCode)
         pluginInstructions = try c.decodeIfPresent([String: String].self, forKey: .pluginInstructions)
         bonjourEnabled = try c.decodeIfPresent(Bool.self, forKey: .bonjourEnabled) ?? false
         toolSelectionMode = try c.decodeIfPresent(ToolSelectionMode.self, forKey: .toolSelectionMode)
@@ -375,18 +395,84 @@ extension Agent {
     }
 }
 
+// MARK: - Claude Code Configuration
+
+/// Per-agent behavior for the Claude Code subprocess backend.
+///
+/// Only consulted when the agent is running a `claude-code/…` model; agents on
+/// any other model ignore it entirely.
+public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable {
+    /// Whether Claude Code runs its own agent loop and tools, or is reduced to
+    /// a plain text generator.
+    ///
+    /// Note that `.textOnly` means *no tools at all*, not "Osaurus's tools
+    /// instead": `claude -p` only accepts tool definitions over MCP, never as
+    /// OpenAI-style schemas, so Osaurus's tools cannot be forwarded to it.
+    public var mode: ClaudeCodeMode
+    /// Agent mode: auto-approve the file-writing built-ins (`Edit`, `Write`,
+    /// `NotebookEdit`). Defaults `false` — a run starts read-only and the user
+    /// opts into mutation explicitly.
+    public var allowWrites: Bool
+    /// Agent mode: auto-approve `Bash`. Defaults `false`. Note this is *not*
+    /// the Osaurus sandbox — Claude Code's shell runs unconfined on the host
+    /// under the user's own account.
+    public var allowShell: Bool
+    /// Agent mode: attach Osaurus's own config tools over MCP, so the run can
+    /// read this app's state. Defaults `false` — the tool definitions cost
+    /// context on every turn and only work while the Osaurus server is up.
+    public var allowOsaurusTools: Bool
+    /// Nested under `allowOsaurusTools`: also expose the Osaurus tools that
+    /// *change* configuration (agents, providers, models, plugins). Defaults
+    /// `false`, so the grant starts read-only like every other switch here.
+    public var allowOsaurusConfigWrites: Bool
+
+    public init(
+        mode: ClaudeCodeMode = .agent,
+        allowWrites: Bool = false,
+        allowShell: Bool = false,
+        allowOsaurusTools: Bool = false,
+        allowOsaurusConfigWrites: Bool = false
+    ) {
+        self.mode = mode
+        self.allowWrites = allowWrites
+        self.allowShell = allowShell
+        self.allowOsaurusTools = allowOsaurusTools
+        self.allowOsaurusConfigWrites = allowOsaurusConfigWrites
+    }
+
+    public static let `default` = ClaudeCodeAgentConfig()
+
+    private enum CodingKeys: String, CodingKey {
+        case mode, allowWrites, allowShell, allowOsaurusTools, allowOsaurusConfigWrites
+    }
+
+    /// Custom decode so a missing key — or a `mode` written by a future build
+    /// that added a case — falls back to the safe defaults instead of failing
+    /// the whole agent decode and losing the user's agent.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let decoded = try? c.decodeIfPresent(ClaudeCodeMode.self, forKey: .mode) {
+            mode = decoded ?? .agent
+        } else {
+            mode = .agent
+        }
+        allowWrites = try c.decodeIfPresent(Bool.self, forKey: .allowWrites) ?? false
+        allowShell = try c.decodeIfPresent(Bool.self, forKey: .allowShell) ?? false
+        allowOsaurusTools = try c.decodeIfPresent(Bool.self, forKey: .allowOsaurusTools) ?? false
+        allowOsaurusConfigWrites =
+            try c.decodeIfPresent(Bool.self, forKey: .allowOsaurusConfigWrites) ?? false
+    }
+}
+
 // MARK: - Autonomous Exec Configuration
 
 public struct AutonomousExecConfig: Codable, Sendable, Equatable {
-    /// Whether the agent's sandbox (autonomous code execution) is on. Note the
+    /// Whether the agent's sandbox (autonomous code execution) is on. The
     /// *effective* default is resolved in
-    /// `AgentManager.effectiveAutonomousExec`, not by this struct: the chip
-    /// defaults ON for the Default agent and newly created agents on supported
-    /// machines (`AgentManager.sandboxEnabledByDefault`). This field's own
-    /// default below stays `false` so it remains a neutral base for
-    /// `current ?? .default` mutations in the settings UI (which only flips
-    /// individual sub-toggles) and never silently turns the sandbox on for an
-    /// existing custom agent that was left unconfigured.
+    /// `AgentManager.effectiveAutonomousExec`, not by this struct: unconfigured
+    /// custom agents default ON on supported hosts, explicit false remains
+    /// OFF, and the built-in Default agent is always OFF. This field's own
+    /// default below stays `false` as a neutral mutation base.
     public var enabled: Bool
     public var maxCommandsPerTurn: Int
     public var pluginCreate: Bool
@@ -550,9 +636,9 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// agent can never reach a collection it wasn't granted. Empty → the
     /// knowledge tools stay hidden (nothing to search).
     public var knowledgeCollectionIds: [UUID]
-    /// Curator role: `propose_knowledge_update` exposed to the model.
-    /// A child of `knowledgeEnabled` — proposals still only ever create
-    /// pending drafts reviewed by the user.
+    /// DEPRECATED and inert. Gated `propose_knowledge_update`, removed with
+    /// the proposal architecture. Kept so existing agent JSON still decodes;
+    /// nothing reads it, and writing follows the collection grant instead.
     public var knowledgeCuratorEnabled: Bool
 
     public init(
@@ -955,10 +1041,9 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// execution time, so the grant list — not the schema — is the
     /// security boundary. Empty → the knowledge tools stay hidden.
     public var knowledgeCollectionIds: [UUID]
-    /// Curator role opt-in: exposes `propose_knowledge_update` (`.ask`
-    /// policy) so this agent can draft document replacements as pending
-    /// proposals. A child of `knowledgeEnabled`; proposals never touch
-    /// the corpus until the user approves them in the Knowledge tab.
+    /// DEPRECATED and inert. Gated `propose_knowledge_update`, removed with
+    /// the proposal architecture. Kept so existing agent JSON still decodes;
+    /// nothing reads it, and writing follows the collection grant instead.
     public var knowledgeCuratorEnabled: Bool
 
     public init(

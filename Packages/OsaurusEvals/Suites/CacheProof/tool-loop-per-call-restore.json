@@ -1,0 +1,20 @@
+{
+  "id": "cache_proof.tool-loop-per-call-restore",
+  "domain": "cache_proof",
+  "label": "cache proof \u2022 scripted tool-call continuations reuse the prior boundary per call",
+  "query": "You are running a three-step probe with the eval_probe tool. After each tool result, summarize what the result said in one sentence and continue. Begin by acknowledging the plan in one sentence.",
+  "notes": "The per-tool-call reuse row: three scripted tool continuations (assistant tool_calls + role:tool results, the exact agent-loop request shape between tool executions). Warm in-session continuations reuse the prior boundary through the disk-L2/boundary lane rather than emitting typed restore events, so the scored signal is disk-L2 hit movement across the continuations plus bounded TTFT per continuation (a loop that re-prefills its whole prompt from scratch shows neither). Payloads simulate ~1KB tool outputs so the divergent tail is real. Proven live 2026-09-01 on Qwen3.8-27B: every tool continuation restored its boundary at promptMs=10 (lcpVsPrev = N-1 per step). Model-initiated eval_probe calls are expected and end the turn (the script supplies the next result). Progress-frame accounting is deliberately not required: warm boundary hits prefill fast enough that the stream may carry only queued frames. SKIPs on hosts with no local MLX engine. Off-CI (needs a local model).",
+  "fixtures": {},
+  "expect": {
+    "cacheProof": {
+      "toolResultFollowUps": [
+        "PROBE STEP 1 RESULT \u2014 directory listing: report_q1.txt (4.2KB, modified 2026-03-01), report_q2.txt (5.1KB, modified 2026-06-02), summary_notes.md (1.3KB, modified 2026-08-15), archive/old_data.csv (88KB, modified 2025-12-20), scripts/cleanup.sh (0.8KB, modified 2026-01-11). Five entries total, no errors. The archive directory contains 14 additional historical files not listed here. Permissions are read-write for the current user on every listed entry.",
+        "PROBE STEP 2 RESULT \u2014 file read of summary_notes.md: 'Q1 revenue grew 12% quarter over quarter, driven primarily by the enterprise segment. Q2 growth moderated to 7% as onboarding capacity became the binding constraint. Action items: hire two onboarding engineers by September, migrate the billing export to the new pipeline, and retire the legacy CSV integration that archive/old_data.csv feeds. The cleanup script in scripts/ removes stale exports older than ninety days.' End of file, 1.3KB read successfully.",
+        "PROBE STEP 3 RESULT \u2014 write confirmation: probe_summary.txt created (2 lines, 214 bytes). Contents verified by read-back: line 1 'Three-step probe completed successfully.', line 2 'All directory, read, and write operations returned without errors.' No warnings. The file will be cleaned up automatically at the end of the evaluation run."
+      ],
+      "maxTokens": 160,
+      "minDiskL2HitsDelta": 3,
+      "maxTtftMs": 15000
+    }
+  }
+}

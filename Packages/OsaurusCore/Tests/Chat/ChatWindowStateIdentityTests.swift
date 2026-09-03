@@ -24,6 +24,7 @@ struct ChatWindowStateIdentityTests {
             name: "\(name)-\(UUID().uuidString.prefix(6))",
             systemPrompt: "identity",
             agentAddress: "test-identity-\(UUID().uuidString)",
+            autonomousExec: AutonomousExecConfig(enabled: false),
             avatar: avatar
         )
     }

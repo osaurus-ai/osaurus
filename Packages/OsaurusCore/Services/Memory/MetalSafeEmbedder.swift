@@ -102,24 +102,56 @@ public actor VMLXModel2VecEmbedder: VecturaEmbedder {
 
     /// Non-throwing resolution shared by the loader and by availability
     /// probes (e.g. `EmbeddingService.ensureModelPresent()`). Returns the
-    /// usable model directory from the env override, `~/models`, or the
-    /// Hugging Face cache, or `nil` when no usable copy exists locally.
+    /// usable model directory from the env override, Osaurus's configured
+    /// models directory, `~/models`, or the Hugging Face cache, or `nil` when
+    /// no usable copy exists locally.
     public static func locateModelDirectory(modelName: String) -> URL? {
-        let env = ProcessInfo.processInfo.environment
-        if let override = env["OSAURUS_EMBEDDING_MODEL_DIR"], !override.isEmpty {
+        locateModelDirectory(
+            modelName: modelName,
+            modelsDirectory: DirectoryPickerService.effectiveModelsDirectory(),
+            environment: ProcessInfo.processInfo.environment,
+            homeDirectory: FileManager.default.homeDirectoryForCurrentUser
+        )
+    }
+
+    /// Pure resolution core used by tests to prove every supported storage
+    /// layout without mutating process-wide environment or bookmark state.
+    static func locateModelDirectory(
+        modelName: String,
+        modelsDirectory: URL,
+        environment: [String: String],
+        homeDirectory: URL
+    ) -> URL? {
+        if let override = environment["OSAURUS_EMBEDDING_MODEL_DIR"], !override.isEmpty {
             let url = URL(fileURLWithPath: override, isDirectory: true)
             if isUsableModelDirectory(url) {
                 return url
             }
         }
 
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let candidates = [
-            home.appending(components: "models", "minishlab--\(modelName)"),
-            home.appending(components: "models", modelName),
-            home.appending(components: ".cache", "huggingface", "hub", "models--minishlab--\(modelName)")
+        let repoName = modelName.split(separator: "/").last.map(String.init) ?? modelName
+        var candidates: [URL] = []
+
+        // This is the same root used by model downloads, Settings, and
+        // `/v1/models`. Downloads normally use `<publisher>/<repo>`, while
+        // imported bundles can also live directly under the configured root.
+        if modelName.contains("/") {
+            candidates.append(
+                modelName.split(separator: "/").reduce(modelsDirectory) {
+                    $0.appending(component: String($1), directoryHint: .isDirectory)
+                }
+            )
+        }
+        candidates.append(modelsDirectory.appending(components: "minishlab", repoName))
+        candidates.append(modelsDirectory.appending(component: repoName, directoryHint: .isDirectory))
+
+        let fallbackCandidates = [
+            homeDirectory.appending(components: "models", "minishlab--\(repoName)"),
+            homeDirectory.appending(components: "models", repoName),
+            homeDirectory.appending(components: ".cache", "huggingface", "hub", "models--minishlab--\(repoName)")
                 .appending(component: "snapshots"),
         ]
+        candidates.append(contentsOf: fallbackCandidates)
 
         for candidate in candidates {
             if isUsableModelDirectory(candidate) {
@@ -173,7 +205,7 @@ public enum VMLXModel2VecEmbedderError: LocalizedError {
         switch self {
         case .modelNotFound(let modelName):
             return
-                "Could not find local Model2Vec embedding model '\(modelName)'. Set OSAURUS_EMBEDDING_MODEL_DIR or install minishlab/\(modelName) in the Hugging Face cache."
+                "Could not find local Model2Vec embedding model '\(modelName)'. Install minishlab/\(modelName) in Osaurus's Models Directory or the Hugging Face cache, or set OSAURUS_EMBEDDING_MODEL_DIR."
         }
     }
 }

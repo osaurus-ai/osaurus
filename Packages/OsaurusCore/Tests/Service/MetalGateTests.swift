@@ -360,15 +360,19 @@ struct MetalGateTests {
         #expect(gate.contains("public func exitPIIDetection()"))
         #expect(gate.contains(#"acquireCancellable("pii", shared: false)"#))
 
-        // The detector holds the gate across the load eval and the forward pass
-        // (a cancelled scan bails out before detect instead of encoding).
+        // The detector holds the gate across the load eval and every
+        // windowed forward pass (a cancelled scan bails out before detect
+        // instead of encoding). The detect call now runs per window inside
+        // the gate-bracketed loop.
         #expect(detector.contains("try await MetalGate.shared.enterPIIDetection()"))
         #expect(detector.contains("await MetalGate.shared.exitPIIDetection()"))
-        #expect(
-            detector.contains(
-                "        }\n        let detected = model.detect(text)"
-            )
-        )
+        #expect(detector.contains("let detected = model.detect(String(window.text))"))
+        // Gate exit follows the window loop, not each iteration.
+        if let enterIndex = detector.range(of: "let detected = model.detect(String(window.text))"),
+            let exitIndex = detector.range(of: "await MetalGate.shared.exitPIIDetection()\n        return")
+        {
+            #expect(enterIndex.lowerBound < exitIndex.lowerBound)
+        }
     }
 
     // MARK: - Source contract: gate-holding code never awaits the PII owner

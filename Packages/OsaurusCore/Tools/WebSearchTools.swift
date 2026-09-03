@@ -230,6 +230,21 @@ final class WebSearchTool: OsaurusTool, @unchecked Sendable {
         "additionalProperties": .bool(false),
     ])
 
+    /// Cancellation audit: the body is one hosted-first search
+    /// (`SearchProviderManager.runHostedFirstSearch`) whose backends are
+    /// contractually cancellation-friendly (`SearchBackend` doc: URLSession
+    /// async APIs, which propagate task cancellation and throw
+    /// `CancellationError`). The body performs no detached work and returns
+    /// only after that call completes or throws, so an owning spawned run can
+    /// abort and drain it.
+    var canExposeToSpawnedOperation: Bool { true }
+
+    func spawnedOperationCancellationSupport(
+        argumentsJSON _: String
+    ) -> SpawnedOperationCancellationSupport {
+        .cooperative
+    }
+
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
@@ -362,6 +377,20 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
         ]),
         "additionalProperties": .bool(false),
     ])
+
+    /// Cancellation audit: search rides the same cancellation-friendly
+    /// URLSession-async backend contract as `web_search`; per-page extraction
+    /// uses a bounded ephemeral `URLSession` with an explicit timeout that is
+    /// invalidated-and-cancelled on scope exit (`SearchReadability.extract`),
+    /// and `enrichedResults` checks `Task.isCancelled` before every
+    /// extraction. No detached work survives the body's return.
+    var canExposeToSpawnedOperation: Bool { true }
+
+    func spawnedOperationCancellationSupport(
+        argumentsJSON _: String
+    ) -> SpawnedOperationCancellationSupport {
+        .cooperative
+    }
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)

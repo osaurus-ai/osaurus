@@ -26,6 +26,7 @@ public enum DefaultAgentConfigurationStore {
         if let cached { return cached }
         let loaded = loadFromDisk()
         cached = loaded
+        Agent.defaultAgentNameOverride = loaded.resolvedDisplayName
         return loaded
     }
 
@@ -33,6 +34,7 @@ public enum DefaultAgentConfigurationStore {
     /// `.appConfigurationChanged` notification so observers re-read.
     public static func save(_ configuration: DefaultAgentConfiguration) {
         cached = configuration
+        Agent.defaultAgentNameOverride = configuration.resolvedDisplayName
         saveToDisk(configuration)
         NotificationCenter.default.post(name: .appConfigurationChanged, object: nil)
     }
@@ -42,6 +44,7 @@ public enum DefaultAgentConfigurationStore {
     /// `load()` to reread from the new directory.
     public static func resetCacheForTests() {
         cached = nil
+        Agent.defaultAgentNameOverride = nil
     }
 
     // MARK: - Disk

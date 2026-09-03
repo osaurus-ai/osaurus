@@ -1,18 +1,22 @@
 {
   "id": "default_agent.agent-activate",
   "domain": "default_agent",
-  "label": "default agent • activate (switch to) an agent by id",
-  "query": "Switch to the agent with id 8d3b1f6a-4c20-47e9-b5a1-2f7c9e043d18.",
-  "notes": "action 'activate' with id. Unknown id → typed not-found error (no switch). The selection assertion pins the 'activate' action (not the literal UUID — small models mis-transcribe 32-hex-digit ids; the action is the behavior under test), proving the model maps \"switch to\" onto activate rather than create.",
-  "fixtures": {},
+  "label": "default agent • activate (switch to) an agent by name",
+  "query": "Switch to the agent named \"Eval Browser Agent\".",
+  "notes": "Switching agents maps onto `active_agent: <name>` in the document (entities match by name in the declarative model). The agent is seeded so activation SUCCEEDS. The selection assertion pins the active_agent key, proving the model maps \"switch to\" onto activation rather than creating a duplicate agent.",
+  "fixtures": {
+    "seedAgents": [
+      { "id": "8d3b1f6a-4c20-47e9-b5a1-2f7c9e043d18", "name": "Eval Browser Agent" }
+    ]
+  },
   "expect": {
     "defaultAgent": {
-      "mustCallTools": ["osaurus_agent"],
+      "mustCallTools": ["osaurus_config"],
       "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
       "argsMustContain": [
-        { "tool": "osaurus_agent", "args": { "action": "activate" } }
+        { "tool": "osaurus_config", "args": { "action": "apply", "yaml": "active_agent" } }
       ],
-      "maxIterations": 4
+      "maxIterations": 8
     }
   }
 }

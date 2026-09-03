@@ -15,6 +15,7 @@
 //   * `.cancelled` — the user dismissed the sheet.
 //
 
+import AppKit
 import Foundation
 import Testing
 
@@ -92,5 +93,31 @@ struct ProviderCredentialPromptServiceTests {
         // Codex authenticates via OAuth so the catalog must surface
         // the OAuth method.
         #expect(codex.instructions.authMethod == .oauth)
+    }
+
+    @Test
+    func credentialPanel_canBecomeKeyDespiteBorderlessStyle() {
+        // Regression: the prompt panel is borderless (`.fullSizeContentView`
+        // only), and a borderless NSPanel refuses key status by default —
+        // which made the API key field unfocusable. The subclass must opt
+        // in so `makeKey()` succeeds and text input can take focus.
+        let panel = CredentialPromptPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 580, height: 420),
+            styleMask: [.fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        #expect(panel.canBecomeKey)
+        #expect(panel.canBecomeMain)
+
+        // Sanity contrast: a plain panel with the same style mask cannot
+        // become key — this is the exact condition that broke focus.
+        let plain = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 580, height: 420),
+            styleMask: [.fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        #expect(!plain.canBecomeKey)
     }
 }

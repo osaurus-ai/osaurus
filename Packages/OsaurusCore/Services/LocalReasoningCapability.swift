@@ -75,6 +75,7 @@ enum LocalReasoningCapability {
 
     private static nonisolated let lock = NSLock()
     private static nonisolated(unsafe) var cache: [String: Capability] = [:]
+    private static nonisolated(unsafe) var inFlightBackgroundDetects: Set<String> = []
 
     static func capability(forModelId modelId: String) -> Capability {
         let key = modelId.lowercased()
@@ -84,6 +85,20 @@ enum LocalReasoningCapability {
             return hit
         }
         lock.unlock()
+
+        // A cold miss detects from on-disk config files (chat template,
+        // generation config) — an open(2) that stalls for seconds under disk
+        // pressure. The main thread reaches this from view-body recomputes
+        // (the model chip's reasoning suffix), so it never pays that read:
+        // detect on a background queue, memoize, and post
+        // `.localModelsChanged` so observing UI recomputes with the real
+        // answer. `.none` in the interim only softens presentation; dispatch
+        // paths (ChatEngine, the batch adapter) run off-main and keep the
+        // synchronous, authoritative resolution.
+        if Thread.isMainThread {
+            scheduleBackgroundDetect(key: key, modelId: modelId)
+            return .none
+        }
 
         let detected = detect(modelId: modelId)
 
@@ -99,6 +114,50 @@ enum LocalReasoningCapability {
         cache[key] = detected
         lock.unlock()
         return detected
+    }
+
+    /// Authoritative dispatch-time resolution that never performs model
+    /// discovery or bundle I/O on the main thread. UI lookups deliberately
+    /// return a provisional `.none` on a cold cache; a request carrying an
+    /// already-persisted explicit Thinking choice must wait for the real
+    /// answer before freezing its per-turn controls.
+    static func resolveForDispatch(modelId: String) async -> Capability {
+        await ModelManager.awaitLocalModelsCacheReadyForDispatch()
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(returning: capability(forModelId: modelId))
+            }
+        }
+    }
+
+    /// Resolve a main-thread cold miss off-main. Deduped per key so a burst
+    /// of body recomputes triggers one disk read, not one per frame. The
+    /// provisional-miss rule from `capability(forModelId:)` applies here too:
+    /// a `.none` computed before the local-models scan finishes is not
+    /// memoized (and not announced), so the next lookup retries.
+    private static func scheduleBackgroundDetect(key: String, modelId: String) {
+        lock.lock()
+        let alreadyRunning = !inFlightBackgroundDetects.insert(key).inserted
+        lock.unlock()
+        if alreadyRunning { return }
+
+        DispatchQueue.global(qos: .utility).async {
+            let detected = detect(modelId: modelId)
+            let provisionalMiss = detected == .none && !ModelManager.isLocalModelsCacheWarm
+            lock.lock()
+            if !provisionalMiss {
+                cache[key] = detected
+            }
+            inFlightBackgroundDetects.remove(key)
+            lock.unlock()
+            // Only a real capability changes what the UI showed for the
+            // interim `.none`; skip the notification churn otherwise.
+            if !provisionalMiss, detected != .none {
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+                }
+            }
+        }
     }
 
     /// Call when models are added/removed so the next lookup re-reads templates.
@@ -117,8 +176,21 @@ enum LocalReasoningCapability {
         guard let dir = localDirectory(forModelId: modelId) else {
             return .none
         }
+        return detect(at: dir)
+    }
+
+    /// Directory-based detection for callers that already hold the resolved
+    /// bundle directory (e.g. `ModelInfo.load(from:)` serving /api/show, where
+    /// the id→directory resolution above would re-run discovery and, for
+    /// external bundles, depend on ModelManager cache warmth). Reads disk;
+    /// keep off the main thread.
+    static func detect(at dir: URL) -> Capability {
+        let declaredCapability = readDeclaredReasoningCapability(at: dir)
         if let template = readChatTemplate(at: dir) {
-            let analyzed = analyze(template: template)
+            let analyzed = merge(
+                templateCapability: analyze(template: template),
+                declaredCapability: declaredCapability
+            )
             let declared = generationConfigDeclaredThinkingOn(at: dir)
             if let metadataDefault = declared ?? readTemplateDefaultThinkingOn(at: dir) {
                 return Capability(
@@ -141,7 +213,35 @@ enum LocalReasoningCapability {
         if let cap = readJangConfigReasoning(at: dir) {
             return cap
         }
+        // Some native families expose a structured reasoning parser and a
+        // non-boolean control (Muse Glimmer's `reasoning_strength` is the
+        // concrete example). Their bundle contract is authoritative even
+        // though the template contains neither `<think>` nor
+        // `enable_thinking`. Do not invent a toggle or a default here: only
+        // surface the channel the publisher declared.
+        if let declaredCapability {
+            return declaredCapability
+        }
         return .none
+    }
+
+    /// Merge template mechanics with an explicit bundle declaration. The
+    /// template remains the sole owner of boolean-toggle semantics; metadata
+    /// can add the existence of a structured reasoning channel, but cannot
+    /// manufacture `enable_thinking`, tag injection, or a serving default.
+    static func merge(
+        templateCapability: Capability,
+        declaredCapability: Capability?
+    ) -> Capability {
+        guard let declaredCapability else { return templateCapability }
+        return Capability(
+            supportsThinking: templateCapability.supportsThinking
+                || declaredCapability.supportsThinking,
+            hasEnableThinkingKwarg: templateCapability.hasEnableThinkingKwarg,
+            templateInjectsThinkTag: templateCapability.templateInjectsThinkTag,
+            defaultThinkingOn: templateCapability.defaultThinkingOn,
+            declaredDefaultThinkingOn: templateCapability.declaredDefaultThinkingOn
+        )
     }
 
     /// Pure, testable template analysis.
@@ -245,7 +345,11 @@ enum LocalReasoningCapability {
             cacheOnly
             ? ModelManager.findInstalledMLXModelFromCache(named: modelId)
             : ModelManager.findInstalledMLXModel(named: modelId)
-        return found?.localDirectory
+        // Externally registered bundles can be path-resolved from their
+        // persisted manifest before the external catalog's heavier MLXModel
+        // memo finishes rebuilding. This keeps dispatch-time capability
+        // validation authoritative for HF/LM Studio/custom-folder models too.
+        return found?.localDirectory ?? ExternalModelLocator.path(forId: modelId)
     }
 
     /// Read `jang_config.json > chat > reasoning` and surface it as a
@@ -302,6 +406,40 @@ enum LocalReasoningCapability {
             hasEnableThinkingKwarg: false,
             templateInjectsThinkTag: false,
             defaultThinkingOn: jangReasoningDefaultThinkingOn(reasoning) ?? false
+        )
+    }
+
+    /// Read the publisher's generic reasoning-channel declaration from the
+    /// model bundle. This is deliberately narrower than family detection:
+    /// `supports_thinking: true` is the contract; parser names and model ids
+    /// are not guessed. Both config.json and jang_config.json are accepted
+    /// because current publishers stamp the same `capabilities` object into
+    /// either or both files.
+    static func readDeclaredReasoningCapability(at dir: URL) -> Capability? {
+        for filename in ["config.json", "jang_config.json"] {
+            guard let data = readSmallConfigFile(dir.appendingPathComponent(filename)) else {
+                continue
+            }
+            if let capability = analyzeDeclaredCapabilities(data: data) {
+                return capability
+            }
+        }
+        return nil
+    }
+
+    /// Pure parser for `capabilities.supports_thinking`. A false or missing
+    /// declaration returns nil so template / legacy JANG detection keeps its
+    /// existing behavior.
+    static func analyzeDeclaredCapabilities(data: Data) -> Capability? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let capabilities = root["capabilities"] as? [String: Any],
+            capabilities["supports_thinking"] as? Bool == true
+        else { return nil }
+        return Capability(
+            supportsThinking: true,
+            hasEnableThinkingKwarg: false,
+            templateInjectsThinkTag: false,
+            defaultThinkingOn: false
         )
     }
 

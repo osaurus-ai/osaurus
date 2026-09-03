@@ -241,7 +241,7 @@ struct ImageGenerationPanelView: View {
             }
             footer
         }
-        .frame(width: 620, height: 640)
+        .fittedSheetFrame(width: 620, height: 640)
         .background(theme.primaryBackground)
     }
 

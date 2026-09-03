@@ -57,6 +57,11 @@ actor CapabilityLoadBuffer {
         "capabilities_load",
         BuiltinSandboxTools.initPendingToolName,
         "sandbox_plugin_register",
+        // A config apply can create an agent and grow the launching
+        // conversation's spawn pool; ConfigApplier stages the constrained
+        // spawn specs so the orchestrator can run the new agent in the
+        // SAME turn instead of waiting for the next compose.
+        "osaurus_config",
     ]
 
     static func shouldActivate(after toolName: String) -> Bool {
@@ -1168,9 +1173,8 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                         kind: .rejected,
                         message:
                             "Default agent can only load configuration write tools "
-                            + "(`osaurus_*_<verb>`). Use `osaurus_status`, `osaurus_list`, "
-                            + "`osaurus_describe`, or `osaurus_help` for reads; nothing else "
-                            + "needs `capabilities_load`."
+                            + "(`osaurus_*_<verb>`). Use `osaurus_inspect` or `osaurus_help` "
+                            + "for reads; nothing else needs `capabilities_load`."
                     )
                 )
             }

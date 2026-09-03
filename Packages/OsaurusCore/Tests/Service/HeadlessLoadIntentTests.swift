@@ -52,7 +52,7 @@ struct HeadlessLoadIntentTests {
         // The session is what ultimately builds the request the model sees; if the
         // intent dies here, everything downstream is interactive again.
         #expect(context.chatSession.loadIntent == .background)
-        #expect(context.chatSession.source.inferenceSource == .scheduled)
+        #expect(context.chatSession.source.inferenceSource == .schedule)
     }
 
     // MARK: - The trap
@@ -111,9 +111,9 @@ struct HeadlessLoadIntentTests {
 
     @Test("Autonomous sources map to a provenance that is not chatUI")
     func autonomousSourcesMapAwayFromChatUI() {
-        #expect(SessionSource.schedule.inferenceSource == .scheduled)
-        #expect(SessionSource.watcher.inferenceSource == .scheduled)
-        #expect(SessionSource.selfSchedule.inferenceSource == .scheduled)
+        #expect(SessionSource.schedule.inferenceSource == .schedule)
+        #expect(SessionSource.watcher.inferenceSource == .watcher)
+        #expect(SessionSource.selfSchedule.inferenceSource == .selfSchedule)
 
         // …and the ones a human drives keep theirs.
         #expect(SessionSource.chat.inferenceSource == .chatUI)

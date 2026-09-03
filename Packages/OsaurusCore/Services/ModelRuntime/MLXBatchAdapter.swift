@@ -98,7 +98,33 @@ struct MLXBatchAdapter {
         let topK: Int
         let minP: Float
         let repetitionPenalty: Float?
+        /// Resolved presence/frequency penalties, so the Live Activity readout
+        /// can show what actually applied. Without them here the value would be
+        /// enforced but invisible — the shape that let this gap go unnoticed.
+        let presencePenalty: Float?
+        let frequencyPenalty: Float?
+        /// What actually drafts this request: `nativeMTP`, `dflash2`, or nil for
+        /// ordinary decoding. Resolved, not requested — the Mode picker is an
+        /// input to this, never a description of it.
+        let draftStrategy: String?
+        /// Why native MTP is NOT running when the user asked for it.
+        ///
+        /// This string was already computed and written to the submit log, where
+        /// no user will ever see it. A model whose tuning artifact never asserted
+        /// `output_equivalent` cannot run MTP even on Force-On — correctly, since
+        /// that assertion is the output-equivalence proof — but without surfacing
+        /// the reason the setting just appears to do nothing.
+        let mtpFallbackReason: String?
         let compiledBatchDecode: Bool
+        /// True when native MTP forced this request's sampler to greedy —
+        /// the machine-readable form of the coercion, carried by the same
+        /// single resolution that builds the run parameters, the readout,
+        /// and the API diagnostics.
+        var mtpGreedyEnforced: Bool = false
+        /// True when that enforcement actually CHANGED the sampler (the
+        /// pre-coercion resolution was not already greedy) — the condition
+        /// for the surfaced log line.
+        var samplerWasChanged: Bool = false
     }
 
     static func effectiveGenerationSettings(
@@ -108,7 +134,13 @@ struct MLXBatchAdapter {
         maxBatchSize: Int,
         modelDefaults: LocalGenerationDefaults.Defaults,
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
-        nativeMTPExplicitSamplingFallback: Bool = false,
+        /// True when native MTP is active, which forces greedy decoding. The
+        /// readout has to show the COERCED sampler: reporting the request's
+        /// temp 1 / top-p 0.95 while argmax actually runs is the same
+        /// display-lie this readout exists to prevent.
+        forcesGreedyForNativeMTP: Bool = false,
+        nativeMTPFallbackReason: String? = nil,
+        nativeMTPRequestFallback: Bool = false,
         cacheTopology: ModelCacheTopologySnapshot? = nil,
         stage: String = "resolved"
     ) -> EffectiveGenerationSettings {
@@ -136,20 +168,39 @@ struct MLXBatchAdapter {
             runtimeDefault: runtimeRepetitionPenalty
         )
 
-        return EffectiveGenerationSettings(
+        // Merge order: per-request → THE USER'S Sampling Defaults → model-shipped
+        // defaults → vmlx engine defaults.
+        //
+        // The user's settings used to sit BEHIND the model's shipped defaults,
+        // which made them inert: 83 of 95 bundles in a real local library ship
+        // `temperature`/`top_p`/`top_k` in generation_config.json, so setting a
+        // temperature in Settings changed nothing on almost every model. The
+        // field was editable, saved, and had no effect — the same shape as the
+        // context-length setting that could not constrain anything.
+        //
+        // A blank field really is absent, not zero: a persisted `generation`
+        // block from a real run contains only `streamInterval` and
+        // `diffusionMaxDenoisingSteps`. So a non-nil runtime value here is
+        // always something the user deliberately chose, and deliberate choices
+        // outrank a bundle's suggestion. Per-request still wins over both.
+        let resolved = EffectiveGenerationSettings(
             stage: stage,
             temperature: generation.temperature
-                ?? defaultTemperature
                 ?? runtimeTemperature
+                ?? defaultTemperature
                 ?? engineDefaults.temperature,
             maxTokens: generation.maxTokensExplicit
                 ? generation.maxTokens
-                : (modelDefaults.maxTokens ?? runtimeMaxTokens ?? generation.maxTokens),
-            topP: generation.topPOverride ?? modelDefaults.topP ?? runtimeTopP ?? engineDefaults.topP,
-            topK: generation.topKOverride ?? modelDefaults.topK ?? runtimeTopK ?? engineDefaults.topK,
-            minP: generation.minPOverride ?? modelDefaults.minP ?? runtimeMinP ?? engineDefaults.minP,
+                : (runtimeMaxTokens ?? modelDefaults.maxTokens ?? generation.maxTokens),
+            topP: generation.topPOverride ?? runtimeTopP ?? modelDefaults.topP ?? engineDefaults.topP,
+            topK: generation.topKOverride ?? runtimeTopK ?? modelDefaults.topK ?? engineDefaults.topK,
+            minP: generation.minPOverride ?? runtimeMinP ?? modelDefaults.minP ?? engineDefaults.minP,
             repetitionPenalty: repetitionPenalty,
-            compiledBatchDecode: nativeMTPExplicitSamplingFallback
+            presencePenalty: generation.presencePenalty ?? modelDefaults.presencePenalty,
+            frequencyPenalty: generation.frequencyPenalty ?? modelDefaults.frequencyPenalty,
+            draftStrategy: draftStrategy?.kindName,
+            mtpFallbackReason: nativeMTPFallbackReason,
+            compiledBatchDecode: nativeMTPRequestFallback
                 ? false
                 : shouldEnableCompiledBatchDecode(
                     modelName: modelName,
@@ -157,6 +208,26 @@ struct MLXBatchAdapter {
                     cacheTopology: cacheTopology
                 )
         )
+        // Native MTP forces greedy on the parameters that RUN, so the readout
+        // must say greedy too. Printing the request's temp 1 / top-p 0.95
+        // while argmax executes is the display-lie this readout exists to stop.
+        guard forcesGreedyForNativeMTP else { return resolved }
+        return EffectiveGenerationSettings(
+            stage: resolved.stage,
+            temperature: 0,
+            maxTokens: resolved.maxTokens,
+            topP: 1,
+            topK: 0,
+            minP: 0,
+            repetitionPenalty: resolved.repetitionPenalty,
+            presencePenalty: resolved.presencePenalty,
+            frequencyPenalty: resolved.frequencyPenalty,
+            draftStrategy: resolved.draftStrategy,
+            mtpFallbackReason: resolved.mtpFallbackReason,
+            compiledBatchDecode: resolved.compiledBatchDecode,
+            mtpGreedyEnforced: true,
+            samplerWasChanged: resolved.temperature != 0 || resolved.topP != 1
+                || resolved.topK != 0 || resolved.minP != 0)
     }
 
     static func recordPendingEffectiveGenerationSettings(
@@ -204,14 +275,12 @@ struct MLXBatchAdapter {
         if disableNativeMTP {
             return nil
         }
-        guard
-            requestSamplingIsExplicitGreedy(
-                generation: generation,
-                draftStrategy: draftStrategy
-            )
-        else {
-            return nil
-        }
+        // Sampling is NOT a reason to abandon MTP any more. The submit path
+        // coerces the running parameters to greedy whenever MTP is active, so
+        // the equivalence precondition holds by construction. Dropping MTP
+        // here meant an ordinary chat turn — which reports
+        // `samplingParametersAreImplicit` — never engaged it at all, while the
+        // UI still said "MTP depth 2".
         if let promptTokenCount,
             promptTokenCount < nativeMTPTinyPromptMinimumTokens
         {
@@ -220,45 +289,32 @@ struct MLXBatchAdapter {
         return draftStrategy
     }
 
-    private static func nativeMTPFallbackReason(
-        generation: GenerationParameters,
-        draftStrategy: MLXLMCommon.DraftStrategy?,
+    static func nativeMTPFallbackReason(
+        requestedNativeMTP: Bool = false,
+        requestedDraftStrategy: MLXLMCommon.DraftStrategy?,
+        effectiveDraftStrategy: MLXLMCommon.DraftStrategy?,
         promptTokenCount: Int,
-        coldWarmup: Bool
+        coldWarmup: Bool,
+        loadResolutionReason: String? = nil
     ) -> String? {
-        guard draftStrategy?.usesNativeMTP == true else { return nil }
-        if coldWarmup { return "cold_warmup" }
-        if !requestSamplingIsExplicitGreedy(
-            generation: generation,
-            draftStrategy: draftStrategy
-        ) {
-            return "explicit_sampling"
+        guard requestedNativeMTP || requestedDraftStrategy?.usesNativeMTP == true else {
+            return nil
         }
-        if promptTokenCount < nativeMTPTinyPromptMinimumTokens {
+        // A fallback reason describes a strategy that was requested but did
+        // not run. Sampling no longer drops native MTP: the submit path keeps
+        // it active and resolves its running sampler separately. Reporting
+        // `explicit_sampling` while `native_mtp:dN` actually executes makes
+        // the eval/API telemetry internally contradictory.
+        guard effectiveDraftStrategy?.usesNativeMTP != true else { return nil }
+        if requestedDraftStrategy?.usesNativeMTP == true, coldWarmup {
+            return "cold_warmup"
+        }
+        if requestedDraftStrategy?.usesNativeMTP == true,
+            promptTokenCount < nativeMTPTinyPromptMinimumTokens
+        {
             return "tiny_prompt"
         }
-        return nil
-    }
-
-    private static func requestSamplingIsExplicitGreedy(
-        generation: GenerationParameters,
-        draftStrategy: MLXLMCommon.DraftStrategy?
-    ) -> Bool {
-        guard draftStrategy?.usesNativeMTP == true else { return false }
-        if generation.samplingParametersAreImplicit {
-            return false
-        }
-        guard generation.temperature == 0 else { return false }
-        if let topP = generation.topPOverride, topP < 1 { return false }
-        if let topK = generation.topKOverride, topK != 0 { return false }
-        if let minP = generation.minPOverride, minP != 0 { return false }
-        if let repetitionPenalty = generation.repetitionPenalty,
-            repetitionPenalty != 0,
-            repetitionPenalty != 1
-        {
-            return false
-        }
-        return true
+        return loadResolutionReason
     }
 
     private static func effectiveRepetitionPenalty(
@@ -271,7 +327,10 @@ struct MLXBatchAdapter {
             return explicit
         }
 
-        let resolved = modelDefault ?? runtimeDefault
+        // Same precedence correction as the other sampler fields: the user's
+        // Sampling Default outranks the bundle's shipped one. Behind the
+        // model's value it was inert on any bundle that ships a penalty.
+        let resolved = runtimeDefault ?? modelDefault
         return resolved
     }
 
@@ -545,6 +604,8 @@ struct MLXBatchAdapter {
             }
             return ModelBatchCapacitySnapshot(
                 modelName: entry.0,
+                requestedMaximum: snapshot.requestedMaximum,
+                architectureMaximum: snapshot.architectureMaximum,
                 configuredMaximum: snapshot.configuredMaximum,
                 activeCount: snapshot.activeCount,
                 pendingCount: snapshot.pendingCount,
@@ -585,6 +646,14 @@ struct MLXBatchAdapter {
             var diskL2Hits = 0
             var diskL2Misses = 0
             var diskL2Stores = 0
+            // Root-wide gauges: every model's DiskCache reads the SAME
+            // cacheDir/cache_index.db with no modelKey predicate, so each
+            // reports the identical whole-root figure. MAX, never sum --
+            // summing would multiply the reported size by the model count.
+            var diskL2PayloadBytes = 0
+            var diskL2MaxBytes = 0
+            // Per-instance counter, so this one genuinely accumulates.
+            var diskL2Evictions = 0
             var ssmHits = 0
             var ssmMisses = 0
             var ssmReDerives = 0
@@ -605,6 +674,10 @@ struct MLXBatchAdapter {
                     diskL2Hits += diskStats.hits
                     diskL2Misses += diskStats.misses
                     diskL2Stores += diskStats.stores
+                    diskL2PayloadBytes = max(
+                        diskL2PayloadBytes, diskStats.currentPayloadBytes)
+                    diskL2MaxBytes = max(diskL2MaxBytes, diskStats.maxSizeBytes)
+                    diskL2Evictions += diskStats.evictions
                 }
                 ssmHits += stats.ssmStats.hits
                 ssmMisses += stats.ssmStats.misses
@@ -651,7 +724,10 @@ struct MLXBatchAdapter {
                 diskL2Stores: diskL2Stores,
                 ssmCompanionHits: ssmHits,
                 ssmCompanionMisses: ssmMisses,
-                ssmCompanionReDerives: ssmReDerives
+                ssmCompanionReDerives: ssmReDerives,
+                diskL2PayloadBytes: diskL2PayloadBytes,
+                diskL2MaxBytes: diskL2MaxBytes,
+                diskL2Evictions: diskL2Evictions
             )
             return processLifetimeCounters.mergingCounters(into: live)
         }
@@ -757,14 +833,25 @@ struct MLXBatchAdapter {
     ///   defaults write ai.osaurus ai.osaurus.mtp.disableLoadWarmup -bool true
     static let mtpLoadWarmupDisabledKey = "ai.osaurus.mtp.disableLoadWarmup"
 
+    /// The prompt is intentionally well above `nativeMTPTinyPromptMinimumTokens`.
+    /// A short prompt such as "Hi" consumes the AR cold flag but the following
+    /// request still cannot enter native MTP, so it never builds the D3 verifier
+    /// buffer working set that determines first-user-request speed.
+    static let nativeMTPLoadWarmupPrompt = """
+        Count from one through thirty two, one number per line, with no explanation. \
+        This hidden deterministic request initializes native speculative decoding \
+        and its verifier buffers before the first visible user request begins.
+        """
+    static let nativeMTPLoadWarmupVerifierTokens = 8
+
     /// Runs the native-MTP cold warmup at model-load time instead of on the
-    /// user's first request. The registry's cold-warmup rule forces the
-    /// first generation per model into plain AR mode; without this, that
-    /// "first generation" is the user's entire first response, which
-    /// silently loses the MTP decode speedup. A hidden two-token greedy
-    /// generation through the regular `generate` path (so gating, engine
-    /// creation, and solo-lease behavior are identical to a real request)
-    /// consumes the warmup for a fraction of a second instead.
+    /// user's first request. The registry's cold-warmup rule forces the first
+    /// generation per model into plain AR mode. We therefore need two bounded
+    /// generations through the regular `generate` path: an AR bootstrap that
+    /// consumes the flag, followed by a real native-MTP generation that runs
+    /// the D3 verifier and materializes its hot Metal buffers. The historical
+    /// single two-token "Hi" generation performed only the AR half and never
+    /// executed native MTP at all.
     ///
     /// Failure is non-fatal and self-healing: the warm flag is reset so the
     /// next real request performs the AR warmup exactly as before.
@@ -781,22 +868,34 @@ struct MLXBatchAdapter {
 
         let startedAt = CFAbsoluteTimeGetCurrent()
         do {
-            let prepared = try await generate(
-                modelName: modelName,
-                container: container,
-                buildChat: { [MLXLMCommon.Chat.Message(role: .user, content: "Hi")] },
-                buildToolsSpec: { nil },
-                generation: GenerationParameters(temperature: 0, maxTokens: 2),
-                toolChoice: nil,
-                stopSequences: [],
-                draftStrategy: draftStrategy,
-                runtime: runtime,
-                maxBatchSize: maxBatchSize
-            )
-            for await _ in prepared.stream {}
+            func runWarmup(maxTokens: Int) async throws {
+                let prepared = try await generate(
+                    modelName: modelName,
+                    container: container,
+                    buildChat: {
+                        [MLXLMCommon.Chat.Message(role: .user, content: nativeMTPLoadWarmupPrompt)]
+                    },
+                    buildToolsSpec: { nil },
+                    generation: GenerationParameters(temperature: 0, maxTokens: maxTokens),
+                    toolChoice: nil,
+                    stopSequences: [],
+                    draftStrategy: draftStrategy,
+                    runtime: runtime,
+                    maxBatchSize: maxBatchSize
+                )
+                for await _ in prepared.stream {}
+            }
+
+            // Phase 1 is deliberately AR: consumeNativeMTPColdWarmup disables
+            // MTP for the first generation after every model load.
+            try await runWarmup(maxTokens: 2)
+            // Phase 2 sees the warm flag and must actually exercise the native
+            // verifier. Eight output tokens cover at least two D3 verifier
+            // steps without adding material load latency.
+            try await runWarmup(maxTokens: nativeMTPLoadWarmupVerifierTokens)
             let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
             batchAdapterLog.info(
-                "native MTP load warmup: completed for \(modelName, privacy: .public) in \(elapsedMs, privacy: .public)ms; first user request decodes with MTP"
+                "native MTP load warmup: AR bootstrap plus verifier warmup completed for \(modelName, privacy: .public) in \(elapsedMs, privacy: .public)ms; first user request decodes with MTP"
             )
         } catch {
             // The failed generation may already have consumed the warm flag;
@@ -1275,29 +1374,6 @@ struct MLXBatchAdapter {
         }
     }
 
-    /// Reasoning-token ceiling for wire-API requests, sized so the visible
-    /// answer always gets a share of `max_tokens`. Applies only to
-    /// `.httpAPI` (the reported failure surface): the chat UI renders
-    /// reasoning itself and owns its own limits, plugins/P2P/autonomous runs
-    /// keep today's behavior until they opt in. Nil below 129 tokens — a cap
-    /// that small can't be meaningfully split, and forcing an instant think
-    /// close there would rewrite the model's output more than it helps.
-    /// The reserve grows with the cap (a third, clamped to 160…2048) so tiny
-    /// caps still answer and huge caps still bound the runaway-think failure
-    /// without cramping deep reasoning.
-    static func apiReasoningAnswerBudget(
-        requestSource: RequestSource,
-        maxTokens: Int
-    ) -> Int? {
-        guard requestSource == .httpAPI else { return nil }
-        let answerReserve = min(max(maxTokens / 3, 160), 2048)
-        let budget = maxTokens - answerReserve
-        // Below this the ceiling would fire almost immediately and rewrite
-        // the output more than it rescues; tiny caps keep today's behavior.
-        guard budget >= 64 else { return nil }
-        return budget
-    }
-
     private static func isDirectRailReasoningEffort(_ value: String?) -> Bool {
         guard let value else { return false }
         switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
@@ -1373,8 +1449,11 @@ struct MLXBatchAdapter {
         toolChoice: ToolChoiceOption?,
         stopSequences: [String],
         draftStrategy: MLXLMCommon.DraftStrategy?,
+        nativeMTPRequested: Bool = false,
+        nativeMTPLoadResolutionReason: String? = nil,
         runtime: RuntimeConfig,
-        maxBatchSize: Int
+        maxBatchSize: Int,
+        onEngineDrained: @Sendable @escaping () async -> Void = {}
     ) async throws -> PreparedStream {
         let trace = generation.ttftTrace
         trace?.mark("batch_prepare_start")
@@ -1495,12 +1574,14 @@ struct MLXBatchAdapter {
             disableNativeMTP: nativeMTPColdWarmup
         )
         let nativeMTPFallbackReason = Self.nativeMTPFallbackReason(
-            generation: generation,
-            draftStrategy: draftStrategy,
+            requestedNativeMTP: nativeMTPRequested,
+            requestedDraftStrategy: draftStrategy,
+            effectiveDraftStrategy: effectiveDraftStrategy,
             promptTokenCount: prepared.promptTokens.count,
-            coldWarmup: nativeMTPColdWarmup
+            coldWarmup: nativeMTPColdWarmup,
+            loadResolutionReason: nativeMTPLoadResolutionReason
         )
-        let nativeMTPExplicitSamplingFallback =
+        let nativeMTPRequestFallback =
             draftStrategy?.usesNativeMTP == true && effectiveDraftStrategy == nil
         // Fetched BEFORE the effective settings so compiled-decode
         // eligibility can key off the container's REAL per-layer cache
@@ -1514,7 +1595,9 @@ struct MLXBatchAdapter {
             maxBatchSize: maxBatchSize,
             modelDefaults: modelDefaults,
             draftStrategy: effectiveDraftStrategy,
-            nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback,
+            forcesGreedyForNativeMTP: effectiveDraftStrategy?.usesNativeMTP == true,
+            nativeMTPFallbackReason: nativeMTPFallbackReason,
+            nativeMTPRequestFallback: nativeMTPRequestFallback,
             cacheTopology: cacheTopology,
             stage: "submitted_to_batch_engine"
         )
@@ -1531,8 +1614,17 @@ struct MLXBatchAdapter {
             topK: effective.topK,
             minP: effective.minP,
             repetitionPenalty: effective.repetitionPenalty,
-            presencePenalty: generation.presencePenalty,
-            frequencyPenalty: generation.frequencyPenalty,
+            // Per-request wins, then the bundle's shipped default — the same
+            // order the other sampling fields use. Before this, a bundle
+            // declaring `presence_penalty` had it adopted by vmlx's
+            // `GenerateParameters(generationConfig:fallback:)` and dropped here,
+            // because `LocalGenerationDefaults` (which osaurus uses instead of
+            // that initializer) did not read the key at all.
+            //
+            // A declared `0.0` stays inert: `makeGenerateParameters` treats 0 as
+            // "unset" per the OpenAI default.
+            presencePenalty: generation.presencePenalty ?? modelDefaults.presencePenalty,
+            frequencyPenalty: generation.frequencyPenalty ?? modelDefaults.frequencyPenalty,
             randomSeed: generation.seed,
             stopSequences: stopSequences,
             draftStrategy: effectiveDraftStrategy,
@@ -1546,21 +1638,29 @@ struct MLXBatchAdapter {
                 ?? runtime.concurrency.prefillStepSize,
             modelName: modelName
         )
-        // OpenAI-compatible API clients read `content` only —
-        // `reasoning_content` is invisible to them — so a think block that
-        // spends the whole finite max_tokens returns an empty answer ("AI
-        // generation did not return any text", the live Anarlog report).
-        // Reserve answer room by asking vmlx for a per-request reasoning
-        // ceiling; the engine resolves it through the same
-        // `ReasoningBudget.arm` path as the env override (primed vs
-        // self-opening, round-tripped close token) and stays inert for
-        // non-reasoning bundles whose vocab has no think tags.
-        if let budget = Self.apiReasoningAnswerBudget(
-            requestSource: generation.requestSource,
-            maxTokens: effective.maxTokens
-        ) {
-            mlxParams.requestedReasoningBudgetTokens = budget
+        // Native MTP verifies drafts against the target's own argmax, so its
+        // output-equivalence guarantee is only defined under greedy decoding —
+        // turning MTP on is a request for greedy decoding. That coercion is
+        // resolved ONCE, inside `effectiveGenerationSettings` above:
+        // `mlxParams` is built from the already-coerced values, the API's
+        // `last_effective_generation` shows them, and the flags carried on
+        // `effective` drive this log and the `mtp_greedy_enforced` diagnostic.
+        // Every other generation parameter (max tokens, stops, penalties,
+        // seed) follows the request/runtime/bundle resolution untouched, and
+        // non-MTP requests keep their sampler everywhere.
+        if effective.samplerWasChanged {
+            batchAdapterLog.info(
+                "native MTP active: greedy sampler enforced for this request model=\(modelName, privacy: .public) (bundle generation_config governs all non-MTP requests)"
+            )
         }
+
+        // Do not invent a reasoning budget from `max_tokens`. A wire client
+        // choosing a finite output cap did not ask Osaurus to mask the model's
+        // reasoning tokens or force a close token. Besides changing model
+        // output, that hidden processor makes native MTP ineligible because a
+        // drafted token could bypass the per-token budget. Explicit reasoning
+        // controls belong on an explicit API field; absent one, the bundle
+        // template and generation config remain authoritative.
         // Block-diffusion speed/quality budget (DiffusionGemma): server
         // setting, default 16 (seeded by ServerRuntimeSettingsStore).
         // nil = bundle's generation_config.json value. Ignored by
@@ -1671,14 +1771,42 @@ struct MLXBatchAdapter {
         // lease (which the next step waits on) releases right after.
         let producerSubmitAt = CFAbsoluteTimeGetCurrent()
         let producerTask = Task<Void, Never> {
+            var terminalInfo: Generation?
+            var toolEarlyStopRequested = false
             await withTaskCancellationHandler {
                 for await event in upstream {
                     if case .info = event {
-                        continuation.yield(event)
+                        // `.info` is terminal to every public consumer. Hold
+                        // it until the upstream producer, disk/cache commit,
+                        // and allocator teardown have all completed; yielding
+                        // it here lets an immediate follow-up request enter
+                        // ModelRuntime before this request closes its allocator
+                        // window, suppressing the required inter-request clear.
+                        terminalInfo = event
                         continue
                     }
                     if !Task.isCancelled {
                         continuation.yield(event)
+                    }
+                    // A parsed tool call ends the useful part of this turn:
+                    // the host dispatches the tool the moment the event lands,
+                    // and everything the model decodes after it is discarded.
+                    // Request an early stop of the direct B=1 producer NOW —
+                    // vmlx finishes the generation with a natural `.stop`
+                    // (the loop's emitted-tool-call rule), runs its boundary
+                    // stores, and closes the upstream, so this drain loop
+                    // ends within a token instead of riding the model's
+                    // post-tool prose to EOS (up to maxTokens of zombie
+                    // decode at full GPU cost while the tool executes). All
+                    // ordering tails below — STREAM-DRAINED, onEngineDrained,
+                    // lease and Metal-gate release — are unchanged.
+                    if case .toolCall = event, soloLease != nil,
+                        !toolEarlyStopRequested
+                    {
+                        toolEarlyStopRequested = true
+                        Task {
+                            await engine.cancelActiveSoloGenerationAndWait()
+                        }
                     }
                 }
             } onCancel: {
@@ -1707,6 +1835,17 @@ struct MLXBatchAdapter {
                     + "postSubmitMs=\(Int((CFAbsoluteTimeGetCurrent() - producerSubmitAt) * 1000)) "
                     + "(decode + post-gen disk store)"
             )
+            // This callback owns request-scoped allocator teardown. It must
+            // run before the wrapped stream finishes and before the solo
+            // lease is released: otherwise an immediately-following HTTP or
+            // chat request can increment the allocator-window refcount while
+            // this request is between engine drain and outer-task cleanup.
+            // That race suppresses the inter-request cache return and leaves
+            // the next D3 verifier competing with the prior working set.
+            await onEngineDrained()
+            if let terminalInfo {
+                continuation.yield(terminalInfo)
+            }
             continuation.finish()
             if let soloLease {
                 await soloLease.release()
@@ -2184,6 +2323,13 @@ struct MLXBatchAdapter {
             if toolChoiceRequiresLocalCall(toolChoice) {
                 lmInput = lmInput.withCacheRestorePolicy(.freshRequiredToolSelection)
             }
+            // Internal utility one-shots (title/follow-ups/memory/transcript
+            // cleanup) never persist prompt boundaries — their prompts embed
+            // per-turn content and are never resumed. Warm-up prefill keeps
+            // its own dedicated intent.
+            if generation.auxiliaryCacheIntent, !generation.warmupPrefill {
+                lmInput = lmInput.withCachePromptIntent(.auxiliary)
+            }
 
             let tokens =
                 lmInput.text.tokenIds
@@ -2249,4 +2395,5 @@ struct MLXBatchAdapter {
             return "\(key)=<\(type(of: value))>"
         }.joined(separator: ",")
     }
+
 }

@@ -44,6 +44,61 @@ struct SchemaValidatorAdvancedTests {
         #expect((result.errorMessage ?? "").contains("did not match"))
     }
 
+    // MARK: - nested paths in item/object failures
+
+    /// A failure inside an array item must name the item — a bare
+    /// `Property 'kind' must be one of …` is unactionable against an
+    /// 11-intent batch (observed live with a large action-multiplexed tool).
+    @Test func arrayItemObjectFailureCarriesTheItemIndex() {
+        let schema: JSONValue = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "intents": .object([
+                    "type": .string("array"),
+                    "items": .object([
+                        "type": .string("object"),
+                        "properties": .object([
+                            "kind": .object([
+                                "type": .string("string"),
+                                "enum": .array([.string("say"), .string("idle")]),
+                            ])
+                        ]),
+                        "required": .array([.string("kind")]),
+                    ]),
+                ])
+            ]),
+        ])
+        let arguments: [String: Any] = [
+            "intents": [["kind": "say"], ["kind": "celebrate"]]
+        ]
+
+        let result = SchemaValidator.validate(arguments: arguments, against: schema)
+        #expect(!result.isValid)
+        #expect(result.field == "intents[1].kind")
+        #expect((result.errorMessage ?? "").hasPrefix("intents[1]: "))
+    }
+
+    /// Same for a nested object property: the parent key prefixes the path.
+    @Test func nestedObjectFailureCarriesTheParentKey() {
+        let schema: JSONValue = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "intent": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "kind": .object(["type": .string("string")])
+                    ]),
+                    "required": .array([.string("kind")]),
+                ])
+            ]),
+        ])
+        let arguments: [String: Any] = ["intent": [String: Any]()]
+
+        let result = SchemaValidator.validate(arguments: arguments, against: schema)
+        #expect(!result.isValid)
+        #expect(result.field == "intent.kind")
+    }
+
     // MARK: - object-level anyOf of required groups (path-XOR-content)
 
     /// Mirrors `share_artifact`'s schema: `{}` must fail preflight with a

@@ -240,10 +240,15 @@ struct InsightsDetailPane: View {
     private func sourceIcon(_ source: RequestSource) -> String {
         switch source {
         case .chatUI: return "bubble.left.and.bubble.right.fill"
+        case .agent: return "person.2.fill"
         case .httpAPI: return "network"
         case .plugin: return "puzzlepiece.extension.fill"
         case .p2p: return "antenna.radiowaves.left.and.right"
         case .scheduled: return "clock.arrow.circlepath"
+        case .channel: return "bubble.left.and.text.bubble.right.fill"
+        case .schedule: return "calendar.badge.clock"
+        case .watcher: return "eye.fill"
+        case .selfSchedule: return "clock.badge.checkmark.fill"
         }
     }
 

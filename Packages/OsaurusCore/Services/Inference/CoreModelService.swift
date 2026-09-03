@@ -74,7 +74,9 @@ public enum CoreModelStatus: Sendable, Equatable {
 public actor CoreModelService {
     public static let shared = CoreModelService()
 
-    private let localServices: [ModelService] = [FoundationModelService(), MLXService.shared]
+    private let localServices: [ModelService] = [
+        FoundationModelService(), ClaudeCodeService(), MLXService.shared,
+    ]
 
     private static let maxRetries = 3
     private static let baseRetryDelayNanoseconds: UInt64 = 1_000_000_000
@@ -192,7 +194,11 @@ public actor CoreModelService {
             // the actor. Probing residency from out here and then loading on a
             // later actor hop is a check-then-act race: whatever the probe saw can
             // change before the load runs.
-            loadIntent: intent == .background ? .background : .interactive
+            loadIntent: intent == .background ? .background : .interactive,
+            // Every CoreModelService one-shot is an internal utility (title,
+            // follow-ups, memory distillation, transcript cleanup) whose prompt
+            // is never resumed — the engine must not persist its boundaries.
+            auxiliaryCacheIntent: true
         )
 
         do {
@@ -509,8 +515,12 @@ public actor CoreModelService {
     /// `.modelUnavailable` and `.circuitBreakerOpen` won't change
     /// shape across consecutive sub-second attempts. Cancellation is
     /// never retryable.
-    private static func isRetryable(_ error: Error) -> Bool {
+    static func isRetryable(_ error: Error) -> Bool {
         if error is CancellationError { return false }
+        // A second Claude Code subprocess would spend the same subscription
+        // quota (or repeat the same auth/install failure). The CLI already owns
+        // its transport retries, so never replay a failed turn here.
+        if error is ClaudeCodeError { return false }
         guard let coreErr = error as? CoreModelError else { return true }
         return coreErr == .timedOut
     }

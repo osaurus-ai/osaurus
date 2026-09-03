@@ -488,8 +488,43 @@ public final class SandboxToolRegistrar {
         unavailability[agentId] = next
         if prev != next {
             debugLog("[Sandbox] \(message)")
+            let tokens = Self.failureTelemetryTokens(
+                kind: kind,
+                backend: SandboxBackend.current
+            )
+            SandboxStartupMetricsStore.recordFailure(
+                SandboxStartupFailureSample(
+                    category: tokens.category,
+                    backend: tokens.backend,
+                    phase: tokens.phase
+                )
+            )
+            FeatureTelemetry.sandboxProvisionFailure(
+                category: tokens.category,
+                backend: tokens.backend,
+                phase: tokens.phase
+            )
         }
         publishActiveAgentUnavailability(for: agentId, reason: next)
+    }
+
+    /// Convert internal failures to a privacy-safe, bounded telemetry
+    /// vocabulary. The detailed user-facing message stays local.
+    nonisolated static func failureTelemetryTokens(
+        kind: UnavailabilityReason.Kind,
+        backend: SandboxBackend
+    ) -> (category: String, backend: String, phase: String) {
+        let backendToken = backend == .virtualMachine ? "vm" : "seatbelt"
+        switch kind {
+        case .containerUnavailable:
+            return ("container_unavailable", backendToken, "availability")
+        case .provisioningFailed:
+            return ("agent_provision_failed", backendToken, "agent_provision")
+        case .startupFailed:
+            return ("runtime_start_failed", backendToken, "runtime_start")
+        case .vmnetOwnedByOtherProcess:
+            return ("vmnet_in_use", backendToken, "vm_ownership")
+        }
     }
 
     /// Mirror per-agent unavailability into `SandboxManager.State.shared`

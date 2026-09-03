@@ -167,7 +167,10 @@ public enum SubagentSession {
         let feed = SubagentFeed(
             toolCallId: scope.toolCallId,
             kindId: kind.capability.id,
-            title: kind.feedTitle
+            title: kind.feedTitle,
+            agentId: scope.agentId,
+            parentSessionId: scope.sessionId,
+            suppressNotchMirror: kind.suppressNotchMirror
         )
         let interrupt = InterruptToken()
         SubagentFeedRegistry.shared.register(feed)
@@ -200,6 +203,118 @@ public enum SubagentSession {
                 )
             )
         }
+    }
+
+    /// `background: true` spawn dispatch. Validation, model resolution, and
+    /// the permission verdict all run INLINE — a bad target or a denial
+    /// fails this tool call immediately, exactly like the synchronous path.
+    /// Only the execution detaches: the prepared run continues in an
+    /// unstructured task that outlives the parent turn, and this call
+    /// returns an acknowledgment envelope at once.
+    ///
+    /// The pre-registered feed drives the notch background-task row (via
+    /// `SubagentBackgroundTaskBridge`) and the interrupt token backs its
+    /// Stop control. The terminal digest never travels this tool call's
+    /// result channel — `SubagentReportBack` delivers it to the launching
+    /// session as a follow-up turn once that session is idle.
+    ///
+    /// A LOCAL-model helper defers its start until the parent's current
+    /// stream ends: its residency handoff may evict the parent's resident
+    /// model, which must never happen mid-reply. `localStartGate` overrides
+    /// that wait in tests.
+    static func dispatchInBackground(
+        _ kind: any SubagentKind,
+        tool: String,
+        localStartGate: (@Sendable () async -> Void)? = nil
+    ) async -> String {
+        let scope = SubagentScope.current()
+        let parentSession = ChatExecutionContext.currentChatSessionBox
+        let feed = SubagentFeed(
+            toolCallId: scope.toolCallId,
+            kindId: kind.capability.id,
+            title: kind.feedTitle,
+            agentId: scope.agentId,
+            parentSessionId: scope.sessionId,
+            suppressNotchMirror: kind.suppressNotchMirror
+        )
+        let interrupt = InterruptToken()
+        SubagentFeedRegistry.shared.register(feed)
+        SubagentInterruptCenter.shared.register(interrupt, for: scope.toolCallId)
+
+        feed.emitPhase("validating target")
+        let prepared: PreparedSubagentRun
+        switch await prepare(kind, tool: tool, scope: scope, interrupt: interrupt) {
+        case .failure(let envelope):
+            feed.finish(success: false, summary: ToolEnvelope.failureMessage(envelope))
+            SubagentInterruptCenter.shared.unregister(scope.toolCallId)
+            SubagentFeedRegistry.shared.unregister(toolCallId: scope.toolCallId)
+            return envelope
+        case .ready(let ready):
+            prepared = ready
+        }
+
+        let title = kind.feedTitle
+        let needsLocalGate = prepared.resolved.isLocal
+        feed.emitPhase("dispatched", detail: "running in background")
+
+        // Unstructured on purpose: the helper must survive the parent
+        // turn's task tree (this tool call returns the ack and its task
+        // ends). `runPrepared` rebinds every scope task-local from
+        // `prepared.scope`, and `activeKindId` is task-tree scoped, so the
+        // parent turn can keep dispatching while this runs.
+        Task {
+            if needsLocalGate {
+                if let localStartGate {
+                    await localStartGate()
+                } else {
+                    await SubagentReportBack.waitUntilParentStreamEnds(
+                        parentSession,
+                        orInterrupted: interrupt
+                    )
+                }
+            }
+            _ = await runPrepared(
+                prepared,
+                presentation: SubagentRunPresentation(
+                    feed: feed,
+                    interrupt: interrupt,
+                    registerWithUI: false
+                )
+            )
+            SubagentInterruptCenter.shared.unregister(scope.toolCallId)
+            SubagentFeedRegistry.shared.unregister(toolCallId: scope.toolCallId)
+            // The feed's terminal status IS the canonical digest —
+            // `runPrepared` finishes it with the compact summary on both
+            // the success and failure paths.
+            let success: Bool
+            let summary: String
+            if case .finished(let ok, let digest) = feed.currentStatus() {
+                success = ok
+                summary = digest
+            } else {
+                success = false
+                summary = "Helper run ended without a result."
+            }
+            await SubagentReportBack.deliver(
+                title: title,
+                success: success,
+                summary: summary,
+                to: parentSession
+            )
+        }
+
+        return ToolEnvelope.success(
+            tool: tool,
+            result: [
+                "dispatched": true,
+                "background": true,
+                "helper": title,
+                "note":
+                    "The helper is running in the background. Its result will arrive as a "
+                    + "follow-up message in this conversation — do not wait, poll, or "
+                    + "re-dispatch the same task. Tell the user the helper will report back.",
+            ]
+        )
     }
 
     /// Resolve and authorize a kind without admitting it or changing model
@@ -395,7 +510,10 @@ public enum SubagentSession {
                 feed: SubagentFeed(
                     toolCallId: prepared.scope.toolCallId,
                     kindId: prepared.kind.capability.id,
-                    title: prepared.kind.feedTitle
+                    title: prepared.kind.feedTitle,
+                    agentId: prepared.scope.agentId,
+                    parentSessionId: prepared.scope.sessionId,
+                    suppressNotchMirror: prepared.kind.suppressNotchMirror
                 ),
                 interrupt: InterruptToken(),
                 registerWithUI: true
@@ -828,17 +946,34 @@ public enum SubagentSession {
                         )
                         admissionHeld = false
                     }
+                    // STABLE policy refusal, not a transient queue state:
+                    // capacity was recomputed after the admission wait and is
+                    // still zero, so nothing about retrying THIS turn can
+                    // succeed — memory/state must change first. Labeling it
+                    // retryable invited the parent model to burn its
+                    // remaining iterations re-spawning into the same wall
+                    // (observed as repeated rejections / iteration-budget
+                    // exhaustion on 16 GB Macs). Queue TIMEOUTS elsewhere
+                    // remain retryable; this is the post-wait verdict.
                     let message =
-                        "\(prepared.tool) no longer fits the current local RAM-safety "
-                        + "and batching limits after waiting for admission."
+                        "\(prepared.tool) was rejected by RAM-safety admission: the "
+                        + "local model has no free capacity for a child run under the "
+                        + "current memory and batching limits, and waiting did not "
+                        + "free any. Do not retry this turn — tell the user the "
+                        + "delegation could not run; it may succeed after memory or "
+                        + "settings change."
                     if presentation.finishFeed {
                         feed.finish(success: false, summary: message)
                     }
                     return ToolEnvelope.failure(
-                        kind: .unavailable,
+                        kind: .rejected,
                         message: message,
                         tool: prepared.tool,
-                        retryable: true
+                        retryable: false,
+                        metadata: [
+                            "admission": "stable_memory_refusal",
+                            "refreshed_capacity": refreshedCapacity,
+                        ]
                     )
                 }
             }
@@ -1032,7 +1167,8 @@ public enum SubagentSession {
 
         let memoryFacts = await ModelRuntime.shared.subagentBatchMemoryFacts(
             for: prepared.resolved.name,
-            residencyPlan: residencyPlan
+            residencyPlan: residencyPlan,
+            requestEstimate: prepared.kind.admissionRequestEstimate()
         )
         let plan = SpawnBatchTool.makeLocalAdmissionPlan(
             localJobCount: requested,

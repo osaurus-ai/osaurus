@@ -261,9 +261,18 @@ public struct SystemPromptComposer: Sendable {
         if PrefillDebugLog.shared.isEnabled {
             let window = ContextSizeResolver.resolve(modelId: snapshot.model)
             let toolTokens = ToolRegistry.shared.totalEstimatedTokens(for: toolset.tools)
+            // `source=` is the bound session source, the input every
+            // source-scoped gate (channel publish tool, Channel Destinations)
+            // resolves against. Logging it makes warmup/send parity directly
+            // readable: two banners for one session must show the same source
+            // and the same staticPrefixHash, and `source=nil` on any live
+            // session's banner is itself the bug (an unbound compose path).
+            let boundSource = ChatExecutionContext.currentSessionSource
+                .map { String(describing: $0) } ?? "nil"
             PrefillDebugLog.shared.log(
                 "==== COMPOSE model=\(snapshot.model) sizeClass=\(window.sizeClass) "
                     + "ctxLen=\(window.contextLength.map(String.init) ?? "?") "
+                    + "source=\(boundSource) "
                     + "executionMode=\(executionMode) toolCount=\(toolset.tools.count) "
                     + "toolTokens≈\(toolTokens) "
                     + "systemPromptTokens≈\(manifest.totalEstimatedTokens) "
@@ -320,7 +329,7 @@ public struct SystemPromptComposer: Sendable {
 
     /// Per-turn memory snippet, or nil when memory is disabled (either
     /// at the agent level or auto-off via the size-class). Pass the latest
-    /// query through so the relevance gate can select pinned, episode, or
+    /// query through so retrieval can rank pinned, episode, and
     /// transcript memory. The memory block is injected into the user message
     /// instead of the system prompt, so query-specific recall does not
     /// destabilize the static system/tool cache prefix.
@@ -587,8 +596,7 @@ public struct SystemPromptComposer: Sendable {
     /// toggle is off.
     ///
     /// Two signals are NOT overridable and win in every mode:
-    ///   - `globalToolsDisabled`: the session-global `ChatConfiguration`
-    ///     "Disable tools" switch, an absolute kill-switch.
+    ///   - `globalToolsDisabled`: an explicit request/surface kill-switch.
     ///   - `sizeClassDisablesTools`: the small-context auto-disable, a hard
     ///     capability limit.
     static func resolveEffectiveToolsOff(
@@ -1414,12 +1422,7 @@ public struct SystemPromptComposer: Sendable {
                     id: "knowledge",
                     label: L("Knowledge"),
                     content: SystemPromptTemplates.knowledgeGuidance(
-                        collections: snapshot.knowledgeCollections,
-                        // Curator line only when the proposal tool actually
-                        // resolved — mirrors the section's own schema gate.
-                        curator: !resolvedNames.isDisjoint(
-                            with: Self.knowledgeCuratorToolNames
-                        )
+                        collections: snapshot.knowledgeCollections
                     )
                 )
             )
@@ -1441,9 +1444,14 @@ public struct SystemPromptComposer: Sendable {
                 .static(
                     id: "agentLoopGuidance",
                     label: L("Agent Loop"),
-                    content: toolset.prefersCompactPrompt
-                        ? SystemPromptTemplates.agentLoopGuidanceCompact
-                        : SystemPromptTemplates.agentLoopGuidance
+                    // The `share_artifact` bullet rides only when the tool
+                    // actually resolved — the orchestrator surface excludes
+                    // it (workers deliver artifacts), and naming an
+                    // uncallable tool is the recitation-loop trap.
+                    content: SystemPromptTemplates.agentLoopGuidance(
+                        compact: toolset.prefersCompactPrompt,
+                        includeShareArtifact: resolvedNames.contains("share_artifact")
+                    )
                 )
             )
         }
@@ -1519,6 +1527,17 @@ public struct SystemPromptComposer: Sendable {
                     id: "folderContext",
                     label: L("Working Directory"),
                     content: SystemPromptTemplates.folderContext(from: folder)
+                )
+            )
+            // Bulk-edit steering: constant text, `.static` so it joins the
+            // cached KV prefix (one-time cold prefill on update, byte-stable
+            // per turn thereafter). Ordering: after folderContext so it
+            // reads as a refinement of the folder tool surface.
+            composer.append(
+                .static(
+                    id: "bulkEditGuidance",
+                    label: L("Bulk Edits"),
+                    content: SystemPromptTemplates.bulkEditGuidance()
                 )
             )
         }
@@ -1928,11 +1947,13 @@ public struct SystemPromptComposer: Sendable {
     ]
 
     /// The Default agent's routing / escape-hatch write tool — used to create
-    /// or activate another agent for out-of-scope asks. Kept loaded even when
-    /// the other configure writes are deferred on small local models, because the
-    /// out-of-scope handoff is a core, frequent path that shouldn't pay a
-    /// `capabilities_load` round-trip first.
-    static let defaultAgentRoutingToolName = "osaurus_agent"
+    /// or activate another agent for out-of-scope asks (via a small
+    /// declarative apply). Kept loaded even when other configure writes would
+    /// be deferred on small local models, because the out-of-scope handoff is
+    /// a core, frequent path that shouldn't pay a `capabilities_load`
+    /// round-trip first. Since the declarative consolidation this is also the
+    /// ONLY configure write tool.
+    static let defaultAgentRoutingToolName = "osaurus_config"
 
     /// Tools that keep their full schema in the first-turn bootstrap. They
     /// are the path for discovering and upgrading every other capability, so
@@ -1951,8 +1972,19 @@ public struct SystemPromptComposer: Sendable {
     /// full parameter schema, so small models see the constraints on turn 1
     /// without paying for the full prose (which the `.small` budget
     /// guardrail can't afford).
+    ///
+    /// The knowledge write tools qualify on the same grounds, and the cost of
+    /// leaving them out was measured rather than guessed. With their property
+    /// descriptions stripped, a live model sent `documents` as a prose STRING
+    /// instead of an array, and — because the rule "when replacing a
+    /// document, carry its `---` frontmatter across, `read_knowledge` returns
+    /// the body without it" lives in the `content` description — replaced
+    /// documents kept losing their title, type and tags. Both are argument
+    /// contracts, both were invisible, and neither tool is ever reached via a
+    /// `capabilities_load` that would have restored the full spec.
     private static let constraintPreservingBootstrapToolNames: Set<String> = [
         "complete", "clarify", "share_artifact",
+        "write_knowledge", "delete_knowledge", "edit_knowledge",
     ]
 
     /// Compress first-turn always-loaded specs by keeping the callable name,
@@ -2137,15 +2169,23 @@ public struct SystemPromptComposer: Sendable {
     static let knowledgeToolNames: Set<String> = [
         "search_knowledge", "read_knowledge", "list_knowledge",
         "flag_knowledge_stale", "list_knowledge_tickets",
+        // Direct write follows the collection grant, not a separate role: the
+        // grant is the access boundary and the approval modal is the consent
+        // gate. Gating it behind an extra opt-in is what left an agent with
+        // knowledge grants unable to write and unable to say why (#2439).
+        "write_knowledge", "delete_knowledge", "edit_knowledge",
+        "update_knowledge_ticket",
     ]
 
-    /// Curator-only knowledge tools, gated on
-    /// `AgentConfigSnapshot.knowledgeCuratorEnabled` in `resolveTools`.
-    /// The tool re-checks the role at execution time, so this strip is a
-    /// token-cost optimization, not the boundary.
-    static let knowledgeCuratorToolNames: Set<String> = [
-        "propose_knowledge_update", "update_knowledge_ticket",
-    ]
+    /// Formerly curator-only knowledge tools.
+    ///
+    /// Now EMPTY. `propose_knowledge_update` was removed with the proposal
+    /// architecture, and `update_knowledge_ticket` moved to the ordinary
+    /// knowledge set: claiming or releasing a ticket is bookkeeping over an
+    /// annotation, never a corpus mutation, so it does not need a role of its
+    /// own. Kept as an empty set rather than deleted so the composer's
+    /// gate/strip pair keeps its shape for a future privileged group.
+    static let knowledgeCuratorToolNames: Set<String> = []
 
     /// Render the schema snapshot block injected after the onboarding
     /// prompt when `dbEnabled` is true. Best-effort: a failure to open
@@ -2790,7 +2830,7 @@ public struct SystemPromptComposer: Sendable {
         // @MainActor, so this synchronous read is safe.
         let imageCache = ModelPickerItemCache.shared
         let hasReadyImageEditModel = imageCache.hasReadyImageEditModel
-        let visibleDelegation = SubagentToolVisibility.visibleDelegationToolNames(
+        var visibleDelegation = SubagentToolVisibility.visibleDelegationToolNames(
             agentId: snapshot.agentId,
             snapshot: snapshot,
             config: SubagentConfigurationStore.snapshot(),
@@ -2801,6 +2841,24 @@ public struct SystemPromptComposer: Sendable {
             // installed. Read off the same warmed picker cache.
             hasReadyAppleScriptModel: imageCache.hasReadyAppleScriptModel
         )
+        // Recursion guard for TRUE agent delegation: a `.delegation`-sourced
+        // session IS a spawned child (a real dispatched chat of the target
+        // agent), so it must never fan out further — strip every spawn tool
+        // regardless of the target agent's own spawnable configuration.
+        // `ChatSession.send` rebinds `currentSessionSource` from the
+        // session's persisted source on every turn, so the strip holds for
+        // follow-up turns (notch quick replies) too, keeping the schema
+        // stable across the whole delegated session.
+        if ChatExecutionContext.currentSessionSource == .delegation {
+            visibleDelegation.subtract(SubagentCapabilityRegistry.spawn.toolNames)
+            // `clarify` asks the USER a question, but a delegated child's
+            // requester is the orchestrator model — the parent dispatcher
+            // would sit blind on `.waitingForInput` until its wall-clock
+            // budget expires. Same contract as the legacy bounded child
+            // (`TextSubagentKind.isExcludedChildTool`). The child should
+            // answer from its instructions or state assumptions instead.
+            byName.removeValue(forKey: "clarify")
+        }
         for capability in SubagentCapabilityRegistry.all {
             switch capability.gate {
             case .perAgent:
@@ -2818,17 +2876,17 @@ public struct SystemPromptComposer: Sendable {
 
         // Default-agent configure surface:
         //   * For the Default agent, hard-restrict to the consolidated
-        //     configure surface (`osaurus_status` / `osaurus_list` /
-        //     `osaurus_describe` reads + the per-domain `osaurus_*` write
-        //     tools) plus the agent-loop tools. The writes load DIRECTLY —
-        //     the Default agent does not use `capabilities_discover` /
-        //     `capabilities_load`. `additionalToolNames` still unions in so a
-        //     custom-agent-style mid-session load never gets stripped here.
+        //     configure surface (the `osaurus_inspect` read + the single declarative
+        //     `osaurus_config` write) plus the agent-loop tools. Everything
+        //     loads DIRECTLY — the Default agent does not use
+        //     `capabilities_discover` / `capabilities_load`.
+        //     `additionalToolNames` still unions in so a custom-agent-style
+        //     mid-session load never gets stripped here.
         //   * For every other agent, strip the configure tools wholesale.
-        //     Even if a registration path leaks `osaurus_provider` into the
+        //     Even if a registration path leaks `osaurus_config` into the
         //     schema, the strip filter keeps the model from seeing it.
         if snapshot.agentId == Agent.defaultId {
-            var allowed = ToolRegistry.defaultAgentAllowedToolNames
+            var allowed = ToolRegistry.orchestratorAllowedToolNames
                 .union(additionalToolNames)
             // Spawn UX: the main/default chat may call the delegation tools
             // (image / spawn) that survived the per-agent strip above — i.e. the
@@ -2845,47 +2903,41 @@ public struct SystemPromptComposer: Sendable {
             // the Default agent never gets it, so it stays off this allowlist
             // even if a stray snapshot carries the flag.
 
-            // Small local models: the per-domain configure WRITE tools are
-            // the bulk of this agent's turn-1 schema (~60%+ of prefill). On a
-            // model that prefers a compact prompt, defer them: keep the three
-            // reads, the agent-loop tools, the `osaurus_agent` routing/escape
-            // tool, and the delegation tools; load a write tool on demand via
-            // `capabilities_load` the first time the user actually changes a
-            // setting. The compact addendum names the deferred tools so the
-            // model loads by name in one round-trip (no `capabilities_discover`,
-            // which would also drag in the discovery nudge). Mid-session loads
-            // survive because `additionalToolNames` was unioned in above.
+            // Since the declarative consolidation the write surface is ONE
+            // tool (`osaurus_config`), which doubles as the routing/escape
+            // tool and therefore always stays loaded — there is nothing left
+            // to defer behind `capabilities_load` on small models, so the old
+            // compact-deferral path (and its schema-side `capabilities_load`)
+            // is gone entirely.
             let prefersCompact = ContextSizeResolver.resolve(modelId: snapshot.model)
                 .prefersCompactPrompt
-            if prefersCompact {
-                let deferred = ToolRegistry.configureWriteToolNames
-                    .subtracting(additionalToolNames)
-                    .subtracting([Self.defaultAgentRoutingToolName])
-                allowed.subtract(deferred)
-                allowed.insert("capabilities_load")
+            // Orchestrator invariant: worker-owned tools (`share_artifact`)
+            // never reach the orchestrator's schema — not even via
+            // `additionalToolNames` — because workers deliver artifacts
+            // themselves (see `ToolRegistry.orchestratorExcludedToolNames`).
+            allowed.subtract(ToolRegistry.orchestratorExcludedToolNames)
+            // Quick lookups run in the orchestrator itself: `web_search` is
+            // an always-loaded built-in already in `byName`, but retrieval
+            // (`search_and_extract`) is a dynamic tool — expose it up front
+            // so the discovery→retrieval transition advertised by
+            // `web_search` results is callable on turn 1. The per-agent
+            // `webSearchEnabled` gate still governs both tools.
+            if snapshot.webSearchEnabled {
+                for spec in ToolRegistry.shared.specs(forTools: ["search_and_extract"]) {
+                    byName[spec.function.name] = spec
+                }
             }
             byName = byName.filter { allowed.contains($0.key) }
 
-            // Keep a lazy-loaded configure write lean. A tool the model pulled
-            // in via `capabilities_load` enters through `additionalToolNames`
-            // as a FULL spec (the generic `replacingExisting` add above), which
-            // re-prefilled ~600 tokens for `osaurus_provider` alone. On a model
-            // that prefers a compact prompt, re-apply the bootstrap skeleton so
-            // the post-load schema matches the lean turn-1 baseline (enums +
-            // field names kept, prose dropped). Idempotent on the reads /
-            // routing tool, which are already compacted in the baseline.
+            // On a model that prefers a compact prompt, keep the configure
+            // write lean: `osaurus_config`'s full spec is long prose, so
+            // re-apply the bootstrap skeleton (enums + field names kept,
+            // prose dropped). The compact addendum teaches the YAML workflow
+            // the spec prose would otherwise carry.
             if prefersCompact {
                 for name in ToolRegistry.configureWriteToolNames {
                     guard let full = byName[name] else { continue }
                     byName[name] = compactBootstrapSpec(full)
-                }
-                // `capabilities_load` is kept at full spec by the general
-                // bootstrap (it documents the plugin/method/skill/tool id
-                // formats). The Default agent only ever loads a configure
-                // write by `tool/<name>` — a usage its addendum spells out —
-                // so the skeleton is enough here and drops ~165 tokens.
-                if let load = byName["capabilities_load"] {
-                    byName["capabilities_load"] = forcedCompactBootstrapSpec(load)
                 }
             }
         } else {
@@ -3073,6 +3125,18 @@ public struct SystemPromptComposer: Sendable {
                 )
                 allowed.formUnion(ToolRegistry.coreWorkspaceToolNames)
             }
+            // Redaction tools join the schema only when a HOST folder is
+            // active: they resolve the chat's folder root directly and have
+            // no sandbox bridge, so VM-only mode must not offer them.
+            if executionMode.usesHostFolderTools {
+                add(
+                    ToolRegistry.shared.specs(
+                        forTools: Array(ToolRegistry.redactionToolNames)
+                    ),
+                    replacingExisting: true
+                )
+                allowed.formUnion(ToolRegistry.redactionToolNames)
+            }
             if snapshot.dbEnabled { allowed.formUnion(agentDBToolNames) }
             if snapshot.renderChartEnabled { allowed.insert("render_chart") }
             if snapshot.speakEnabled { allowed.insert("speak") }
@@ -3112,6 +3176,13 @@ public struct SystemPromptComposer: Sendable {
             // This unconditionally available baseline tool is part of the
             // stable schema. Query wording never adds or removes it.
             allowed.insert("get_current_time")
+            // The orchestrator invariant holds in workspace modes too: even
+            // with a folder/sandbox attached, the Default agent dispatches
+            // artifact delivery to workers (`share_artifact` stays
+            // worker-owned; the native search tools remain available).
+            if snapshot.agentId == Agent.defaultId {
+                allowed.subtract(ToolRegistry.orchestratorExcludedToolNames)
+            }
             byName = byName.filter { allowed.contains($0.key) }
 
         }
@@ -3418,6 +3489,22 @@ public struct SystemPromptComposer: Sendable {
         return forChat(snapshot: snapshot, agentId: agentId, executionMode: executionMode)
     }
 
+    /// The explicit persona profile a compose renders under — resolved ONCE
+    /// from the snapshot and consulted at every profile-sensitive branch,
+    /// replacing implicit `agentId == Agent.defaultId` stacking.
+    public enum PromptProfile: String, Sendable {
+        /// The Default agent: the standalone Osaurus assistant —
+        /// the addendum IS the identity.
+        case osaurusAssistant
+        /// Any custom agent: its own persona.
+        case customAgent
+
+        @MainActor
+        static func resolve(snapshot: AgentConfigSnapshot) -> PromptProfile {
+            snapshot.agentId == Agent.defaultId ? .osaurusAssistant : .customAgent
+        }
+    }
+
     /// Snapshot-aware composer factory. Returns just the platform +
     /// persona pair — every other static section (operational directives,
     /// agent loop, sandbox/folder, capability nudge) is appended later by
@@ -3435,15 +3522,18 @@ public struct SystemPromptComposer: Sendable {
         // `ConfigurationDomainRegistry` and prepended to the user's
         // own persona so the addendum sits as a *system role*
         // preamble. Memoized inside the builder so adding it costs
-        // a single pointer read per compose.
+        // a single pointer read per compose. Under `.osaurusAssistant`
+        // it is the standalone assistant identity.
+        let profile = PromptProfile.resolve(snapshot: snapshot)
         let basePrompt: String
-        if snapshot.agentId == Agent.defaultId {
+        switch profile {
+        case .osaurusAssistant:
             let prefersCompact = ContextSizeResolver.resolve(modelId: snapshot.model)
                 .prefersCompactPrompt
             let addendum = DefaultAgentSystemPromptBuilder.render(compact: prefersCompact)
             let userPersona = snapshot.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
             basePrompt = userPersona.isEmpty ? addendum : addendum + "\n\n" + snapshot.systemPrompt
-        } else {
+        case .customAgent:
             basePrompt = snapshot.systemPrompt
         }
         composer.appendBasePrompt(systemPrompt: basePrompt)
@@ -3511,9 +3601,14 @@ public struct SystemPromptComposer: Sendable {
             let trimmed = automationContext.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { prefix = "\(trimmed)\n\n" + prefix }
         }
+        // Time rides LAST, right against the user's text: it is the most
+        // volatile block, and keeping it at the tail means the stabler
+        // automation/screen/memory bytes stay adjacent to the shared static
+        // prefix — a fresh chat whose earlier blocks match a previous
+        // session's prefill diverges only here, not at byte 0 of the turn.
         if let timeContext {
             let trimmed = timeContext.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { prefix = "\(trimmed)\n\n" + prefix }
+            if !trimmed.isEmpty { prefix += "\(trimmed)\n\n" }
         }
         return prefix.isEmpty ? nil : prefix
     }

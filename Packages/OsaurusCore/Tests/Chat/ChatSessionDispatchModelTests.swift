@@ -25,7 +25,7 @@ struct ChatSessionDispatchModelTests {
 
     /// Agent with a configured default model. Callers must run `cleanup`.
     private func makeAgent(defaultModel: String) -> (agent: Agent, cleanup: () async -> Void) {
-        let agent = Agent(name: "Dispatch Model Test Agent \(UUID().uuidString)")
+        let agent = Agent(name: "Dispatch Model Test Agent \(UUID().uuidString)", autonomousExec: AutonomousExecConfig(enabled: false))
         AgentManager.shared.add(agent)
         AgentManager.shared.updateDefaultModel(for: agent.id, model: defaultModel)
         return (agent, { _ = await AgentManager.shared.delete(id: agent.id) })

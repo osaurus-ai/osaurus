@@ -103,7 +103,7 @@ struct ShareAgentSheet: View {
                 )
             )
         }
-        .frame(width: 520, height: 640)
+        .fittedSheetFrame(width: 520, height: 640)
         .background(theme.cardBackground)
         .onAppear {
             reloadLedger()

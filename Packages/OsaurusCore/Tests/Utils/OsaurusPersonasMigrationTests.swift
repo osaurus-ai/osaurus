@@ -21,7 +21,7 @@ struct OsaurusPersonasMigrationTests {
     private func seedAgentJSON(at url: URL, id: UUID, name: String) throws {
         // A minimal but real `Agent` record so the migrated file is a valid
         // decode target, not just opaque bytes.
-        let agent = Agent(id: id, name: name)
+        let agent = Agent(id: id, name: name, autonomousExec: AutonomousExecConfig(enabled: false))
         let data = try JSONEncoder().encode(agent)
         try data.write(to: url, options: .atomic)
     }
@@ -127,14 +127,14 @@ struct OsaurusPersonasMigrationTests {
             try fm.createDirectory(at: agents, withIntermediateDirectories: true)
             try seedLoadableAgentJSON(
                 at: agents.appendingPathComponent("\(id).json"),
-                agent: Agent(id: id, name: "Canonical")
+                agent: Agent(id: id, name: "Canonical", autonomousExec: AutonomousExecConfig(enabled: false))
             )
 
             let legacy = root.appendingPathComponent("Personas", isDirectory: true)
             try fm.createDirectory(at: legacy, withIntermediateDirectories: true)
             try seedLoadableAgentJSON(
                 at: legacy.appendingPathComponent("\(id).json"),
-                agent: Agent(id: id, name: "Legacy")
+                agent: Agent(id: id, name: "Legacy", autonomousExec: AutonomousExecConfig(enabled: false))
             )
 
             let result = OsaurusPaths.migrateLegacyPersonasIfNeeded()
@@ -242,7 +242,8 @@ struct OsaurusPersonasMigrationTests {
                 let canonical = Agent(
                     id: originalId,
                     name: "Canonical",
-                    systemPrompt: "canonical prompt"
+                    systemPrompt: "canonical prompt",
+                    autonomousExec: AutonomousExecConfig(enabled: false)
                 )
                 try seedLoadableAgentJSON(
                     at: agents.appendingPathComponent("\(originalId.uuidString).json"),
@@ -255,6 +256,7 @@ struct OsaurusPersonasMigrationTests {
                     systemPrompt: "legacy prompt",
                     agentIndex: 42,
                     agentAddress: "0xlegacy",
+                    autonomousExec: AutonomousExecConfig(enabled: false),
                     customAvatarFilename: "\(originalId.uuidString).png",
                     order: 7
                 )
@@ -315,6 +317,7 @@ struct OsaurusPersonasMigrationTests {
                     systemPrompt: "orphan prompt",
                     agentIndex: 11,
                     agentAddress: "0xorphan",
+                    autonomousExec: AutonomousExecConfig(enabled: false),
                     order: 3
                 )
                 let backupURL = agents.appendingPathComponent("\(originalId.uuidString).json.1.bak")
@@ -360,17 +363,18 @@ struct OsaurusPersonasMigrationTests {
                 let occupiedRecoveredId = UUID()
                 try seedLoadableAgentJSON(
                     at: agents.appendingPathComponent("\(originalId.uuidString).json"),
-                    agent: Agent(id: originalId, name: "Canonical")
+                    agent: Agent(id: originalId, name: "Canonical", autonomousExec: AutonomousExecConfig(enabled: false))
                 )
                 try seedLoadableAgentJSON(
                     at: agents.appendingPathComponent("\(occupiedRecoveredId.uuidString).json"),
-                    agent: Agent(id: occupiedRecoveredId, name: "Occupied")
+                    agent: Agent(id: occupiedRecoveredId, name: "Occupied", autonomousExec: AutonomousExecConfig(enabled: false))
                 )
 
                 let legacy = Agent(
                     id: originalId,
                     name: "Legacy",
-                    systemPrompt: "legacy prompt"
+                    systemPrompt: "legacy prompt",
+                    autonomousExec: AutonomousExecConfig(enabled: false)
                 )
                 let backupURL = agents.appendingPathComponent("\(originalId.uuidString).json.bak")
                 try seedLoadableAgentJSON(at: backupURL, agent: legacy)
@@ -408,7 +412,8 @@ struct OsaurusPersonasMigrationTests {
                     name: "Osaurus",
                     isBuiltIn: true,
                     createdAt: Date(timeIntervalSince1970: 0),
-                    updatedAt: Date(timeIntervalSince1970: 0)
+                    updatedAt: Date(timeIntervalSince1970: 0),
+                    autonomousExec: AutonomousExecConfig(enabled: false)
                 )
                 let backupURL = agents.appendingPathComponent("\(Agent.defaultId.uuidString).json.bak")
                 try seedLoadableAgentJSON(at: backupURL, agent: builtIn)
@@ -445,7 +450,8 @@ struct OsaurusPersonasMigrationTests {
                     id: existingId,
                     name: "Current",
                     agentIndex: 5,
-                    agentAddress: reusedAddress
+                    agentAddress: reusedAddress,
+                    autonomousExec: AutonomousExecConfig(enabled: false)
                 )
                 try seedLoadableAgentJSON(
                     at: agents.appendingPathComponent("\(existingId.uuidString).json"),
@@ -458,6 +464,7 @@ struct OsaurusPersonasMigrationTests {
                     systemPrompt: "orphan prompt",
                     agentIndex: 5,
                     agentAddress: reusedAddress,
+                    autonomousExec: AutonomousExecConfig(enabled: false),
                     customAvatarFilename: "\(originalId.uuidString).png",
                     order: 4
                 )
@@ -525,7 +532,8 @@ struct OsaurusPersonasMigrationTests {
                 let orphan = Agent(
                     id: originalId,
                     name: "Orphan",
-                    systemPrompt: "restore should roll back JSON only"
+                    systemPrompt: "restore should roll back JSON only",
+                    autonomousExec: AutonomousExecConfig(enabled: false)
                 )
                 try seedLoadableAgentJSON(at: backupURL, agent: orphan)
                 // POSIX mode bits alone do not constrain a root-run local

@@ -137,3 +137,64 @@ struct BootstrapSpecCompactionTests {
         #expect(!desc.contains("Second sentence"))
     }
 }
+
+/// The knowledge write tools' ARGUMENT contracts must survive first-turn
+/// compaction.
+///
+/// Measured, not assumed. With their property descriptions stripped, a live
+/// model sent `documents` as a prose string instead of an array, and kept
+/// dropping frontmatter on replaces because the rule explaining that
+/// `read_knowledge` returns the body without it lives in the `content`
+/// description. Neither tool is ever reached via a `capabilities_load` that
+/// would have restored the full spec.
+@Suite
+struct KnowledgeWriteBootstrapSpecTests {
+
+    @Test func writeToolsKeepTheirParameterDescriptions() {
+        for tool in [WriteKnowledgeTool().asOpenAITool(), DeleteKnowledgeTool().asOpenAITool()] {
+            let compact = SystemPromptComposer.forcedCompactBootstrapSpec(tool)
+            // Prose is trimmed to one line, but the schema survives intact.
+            #expect(compact.function.parameters == tool.function.parameters)
+        }
+    }
+
+    /// The array-vs-object shape is the contract a live model got wrong, so
+    /// the surviving schema has to still carry it.
+    @Test func documentsStaysADescribedArrayOfPathAndContent() {
+        let compact = SystemPromptComposer.forcedCompactBootstrapSpec(
+            WriteKnowledgeTool().asOpenAITool()
+        )
+        guard case .object(let root)? = compact.function.parameters,
+            case .object(let properties)? = root["properties"],
+            case .object(let documents)? = properties["documents"]
+        else {
+            Issue.record("documents property did not survive compaction")
+            return
+        }
+        #expect(documents["type"] == .string("array"))
+        guard case .string(let hint)? = documents["description"] else {
+            Issue.record("documents lost its description, which is the contract")
+            return
+        }
+        #expect(hint.contains("one call"))
+    }
+
+    /// The frontmatter rule is the one that kept destroying metadata.
+    @Test func contentKeepsTheFrontmatterRule() {
+        let compact = SystemPromptComposer.forcedCompactBootstrapSpec(
+            WriteKnowledgeTool().asOpenAITool()
+        )
+        guard case .object(let root)? = compact.function.parameters,
+            case .object(let properties)? = root["properties"],
+            case .object(let documents)? = properties["documents"],
+            case .object(let items)? = documents["items"],
+            case .object(let itemProperties)? = items["properties"],
+            case .object(let content)? = itemProperties["content"],
+            case .string(let rule)? = content["description"]
+        else {
+            Issue.record("content lost its description")
+            return
+        }
+        #expect(rule.contains("frontmatter"))
+    }
+}

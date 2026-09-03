@@ -76,7 +76,7 @@ Agents can also opt into a private local database and a single self-scheduled ne
 
 ### Agent Loop
 
-Every chat is an agent loop. Pick a working folder and the agent gets file, search, and git tools. Toggle the sandbox and it gets shell access in an isolated sandbox. The model writes a markdown todo list, executes against it, and closes out with a verified summary -- all in the same chat window. See the [Agent Loop Guide](docs/AGENT_LOOP.md).
+Custom agents run an agent loop. Pick a working folder and the agent gets file, search, and git tools. Toggle the sandbox and it gets shell access in an isolated sandbox. The model writes a markdown todo list, executes against it, and closes out with a verified summary -- all in the same chat window. The built-in Orchestrator is the exception: it has no working folder, sandbox, browser, or computer use. For filesystem work, create or switch to a custom agent, then pick the folder there. See the [Agent Loop Guide](docs/AGENT_LOOP.md) and [Orchestrator Guide](docs/ORCHESTRATOR.md).
 
 ### Sandbox
 
@@ -118,9 +118,13 @@ Expose agents to the internet via secure WebSocket tunnels through `agent.osauru
 
 When two Osaurus agents talk -- across your LAN or across the world through the relay -- the conversation is **end-to-end encrypted**: a forward-secret X25519 handshake authenticated by each agent's crypto identity, with every request, streamed token, and access key sealed in ChaCha20-Poly1305. The relay becomes a blind pipe that forwards ciphertext it cannot open; a man-in-the-middle cannot complete a handshake; replayed or truncated traffic is detected and refused; and there is no plaintext fallback an attacker can force. Zero configuration -- pairing is all it takes. See the [Secure Channel docs](docs/SECURE_CHANNEL.md).
 
+### Orchestrator
+
+The built-in Osaurus agent is the default Orchestrator. New chat windows open on it unless you start a chat on a custom agent. Ask it anything about the app and it answers from live state; ask it to change a setting and it plans the change, shows an approval card, and applies only after you confirm. It also delegates work: spawn your custom agents and allowed local/cloud models as subagents -- in parallel, within budgets you set -- and get their results woven back into the conversation. It deliberately does no hands-on work itself -- no sandbox, working folder, browser, or computer use; those belong to custom agents -- which keeps it safe and predictable. The chat composer does not offer a working-folder chip on the Orchestrator; picking a folder there would not grant file tools. For filesystem work, create or switch to a custom agent, then pick the working folder on that agent. Rename the Orchestrator, give it a persona, and control exactly what it may delegate to in Settings → Orchestrator. See the [Orchestrator Guide](docs/ORCHESTRATOR.md).
+
 ### Subagents (Spawn)
 
-Let a chat delegate a bounded task to another model -- **local or remote** -- or to one of your saved agents, and get a compact result back without cluttering the conversation. Perfect for offloading research, coding, or analysis to a specialist mid-turn. When the subagent runs on a local model, Osaurus does a **single-residency handoff**: it unloads your chat model, runs the job, then reloads and continues, so two large models never fight for memory. Off by default, approved on first use, and configured per agent.
+Let a chat -- the Orchestrator or any custom agent -- delegate a bounded task to another model -- **local or remote** -- or to one of your saved agents, and get a compact result back without cluttering the conversation. Perfect for offloading research, coding, or analysis to a specialist mid-turn. When the subagent runs on a **different local** model, Osaurus normally does a **single-residency handoff**: it unloads your chat model, runs the job, then reloads and continues, so two large models never fight for memory. Same-model children reuse the resident model; experimental RAM-safe coexistence can keep both resident when enabled and admitted. Custom agents are added to the Orchestrator's spawn pool automatically (you can remove them in Settings → Orchestrator). First use still asks for approval; budgets and permission mode are configured per agent.
 
 ### Browser Use
 

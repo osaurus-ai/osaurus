@@ -11,6 +11,7 @@
 #if os(macOS)
 
     import CryptoKit
+    import Containerization
     import Foundation
     import Testing
 
@@ -224,6 +225,40 @@
 
     @Suite("Sandbox warm-boot cache key")
     struct SandboxWarmBootStampTests {
+
+        @Test
+        func runtimePins_areProductionAndVersionCoherent() {
+            #expect(SandboxRuntimeAssets.kernelVersion == "6.18.35-197")
+            #expect(SandboxRuntimeAssets.kernelUpstreamRelease == "kata-containers 3.32.0")
+            #expect(
+                SandboxRuntimeAssets.kernelArchivePath.hasSuffix(
+                    "/vmlinux-\(SandboxRuntimeAssets.kernelVersion)"
+                )
+            )
+            #expect(!SandboxRuntimeAssets.kernelArchivePath.contains("-debug"))
+            #expect(SandboxRuntimeAssets.kernelTarballURL.contains("/3.32.0/"))
+            #expect(
+                SandboxRuntimeAssets.initfsReference.hasPrefix(
+                    "ghcr.io/apple/containerization/vminit@sha256:"
+                )
+            )
+            #expect(SandboxRuntimeAssets.runtimeFormatVersion.contains("0.41"))
+            #expect(SandboxRuntimeAssets.runtimeFormatVersion.contains("kata-3.32"))
+        }
+
+        @Test
+        func processRestrictions_enableNoNewPrivilegesAndDropPrivilegedCapabilities() {
+            var config = LinuxProcessConfiguration(arguments: ["/usr/bin/true"])
+            config.capabilities = .allCapabilities
+            config.noNewPrivileges = false
+
+            SandboxManager.applyProcessRestrictions(to: &config)
+
+            #expect(config.noNewPrivileges)
+            #expect(config.capabilities.effective.contains(.chown))
+            #expect(!config.capabilities.effective.contains(.sysAdmin))
+            #expect(!config.capabilities.bounding.contains(.sysAdmin))
+        }
 
         /// The image digest currently pinned by the binary. Read via the
         /// stamp helper itself: a config carrying both current values

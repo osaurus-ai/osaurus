@@ -32,6 +32,12 @@ public struct ProviderReplayDiagnosticBundle: Sendable, Equatable {
     public let request: ProviderReplayDiagnosticRequest
     public let response: ProviderReplayDiagnosticResponse?
     public let transportError: String?
+    /// Raw `URLError.Code` value of the underlying transport failure, when the
+    /// transport error was a `URLError`. Retained (as a bare integer — no
+    /// sensitive content) so connect-phase classification can recover the
+    /// transient/permanent distinction that wrapping the error into
+    /// `requestFailedWithDiagnostics` would otherwise erase.
+    public let transportURLErrorCode: Int?
 
     public init(
         phase: String,
@@ -69,6 +75,7 @@ public struct ProviderReplayDiagnosticBundle: Sendable, Equatable {
         self.transportError = transportError.map {
             ProviderDiagnosticRedactor.safe($0.localizedDescription, maxLength: 500)
         }
+        self.transportURLErrorCode = (transportError as? URLError)?.code.rawValue
     }
 
     public var summary: String {

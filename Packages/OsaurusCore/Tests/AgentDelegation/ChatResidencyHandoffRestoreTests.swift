@@ -18,6 +18,53 @@ import Testing
 
 @Suite(.serialized)
 struct ChatResidencyHandoffRestoreTests {
+    @Test("active file-cache pages remain reclaimable after a child run")
+    func activeFileCacheRemainsReclaimable() {
+        let gib: Int64 = 1 << 30
+        let page: Int64 = 16 << 10
+        // 16 GiB host: 2 GiB wired, 1 GiB compressed, 4 GiB internal of
+        // which 1 GiB is purgeable. The remaining 10 GiB is reclaimable,
+        // regardless of whether its file-backed pages sit active or inactive.
+        let result = ChatResidencyHandoff.reclaimableMemoryBytes(
+            physicalBytes: 16 * gib,
+            pageSize: page,
+            wiredPages: 2 * gib / page,
+            compressorPages: 1 * gib / page,
+            internalPages: 4 * gib / page,
+            purgeablePages: 1 * gib / page
+        )
+        #expect(result == 10 * gib)
+    }
+
+    @Test("unreclaimable anonymous and compressed pages remain charged")
+    func unreclaimablePagesRemainCharged() {
+        let gib: Int64 = 1 << 30
+        let page: Int64 = 16 << 10
+        let result = ChatResidencyHandoff.reclaimableMemoryBytes(
+            physicalBytes: 16 * gib,
+            pageSize: page,
+            wiredPages: 3 * gib / page,
+            compressorPages: 2 * gib / page,
+            internalPages: 7 * gib / page,
+            purgeablePages: 1 * gib / page
+        )
+        #expect(result == 5 * gib)
+    }
+
+    @Test("invalid or overflowing host counters fail closed")
+    func invalidHostCountersFailClosed() {
+        #expect(
+            ChatResidencyHandoff.reclaimableMemoryBytes(
+                physicalBytes: 16 << 30,
+                pageSize: Int64.max,
+                wiredPages: Int64.max,
+                compressorPages: 1,
+                internalPages: 0,
+                purgeablePages: 0
+            ) == 0
+        )
+    }
+
 
     /// A name `ModelManager.findInstalledModel` can never resolve, so `preload`
     /// fast-throws before touching the GPU — driving the restore failure +

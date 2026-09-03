@@ -203,6 +203,7 @@ struct ToolScopeGateRecoveryTests {
         let agent = Agent(
             name: "GroupRescueDenied-\(UUID().uuidString.prefix(6))",
             agentAddress: "test-group-rescue-\(UUID().uuidString)",
+            autonomousExec: AutonomousExecConfig(enabled: false),
             toolSelectionMode: .manual,
             memoryEnabled: false
         )

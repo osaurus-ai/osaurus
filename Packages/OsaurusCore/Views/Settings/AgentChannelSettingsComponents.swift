@@ -275,7 +275,7 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
 
             footerBar
         }
-        .frame(width: 800, height: 640)
+        .fittedSheetFrame(width: 800, height: 640)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
@@ -666,6 +666,71 @@ struct AgentChannelSectionHeading: View {
                     .foregroundColor(themeManager.currentTheme.tertiaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+}
+
+// MARK: - Auto-Reply Off Notice
+
+/// Inline warning shown under the "Reply Automatically" toggle when inbound
+/// dispatch is enabled but auto-reply is off: incoming messages still run the
+/// agent, but the reply stays local. Since channel-triggered runs cannot
+/// publish through channel tools, this is the only reply path, so surfacing
+/// the misconfiguration here prevents silently dropped replies.
+struct AgentChannelAutoReplyOffNotice: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    var body: some View {
+        Label {
+            Text(
+                "Replies will stay in Osaurus. Incoming messages still run the agent, but its responses are not posted back until Reply Automatically is on.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 10))
+        }
+        .foregroundColor(themeManager.currentTheme.warningColor)
+    }
+}
+
+/// Inline warning shown under the dispatch routing controls when the
+/// responding agent's applicable plugin tools exceed the channel preload
+/// ceiling. Past the cap, the overflow tools are not preloaded into channel
+/// sessions and small local models rarely self-serve through
+/// `capabilities_load`, so without this notice the degradation is invisible:
+/// installing one more plugin silently changes which tools "just work" over
+/// the channel. Renders nothing when the agent is within the cap.
+struct AgentChannelPluginPreloadOverflowNotice: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    let agentId: UUID?
+
+    private var overflowCount: Int {
+        guard let agentId else { return 0 }
+        return AgentChannelInboundRelay.preloadOverflowCount(
+            registered: ToolRegistry.shared.registeredPluginToolNames,
+            granted: AgentManager.shared.effectiveEnabledToolNames(for: agentId)
+        )
+    }
+
+    var body: some View {
+        let overflow = overflowCount
+        if overflow > 0 {
+            Label {
+                Text(
+                    "This agent has \(overflow) more plugin tools than channel messages preload. The extra tools may not respond over this channel. Narrow the agent's tool selection to make every tool available.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+            }
+            .foregroundColor(themeManager.currentTheme.warningColor)
         }
     }
 }

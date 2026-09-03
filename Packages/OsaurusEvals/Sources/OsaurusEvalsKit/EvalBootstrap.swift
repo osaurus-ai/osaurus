@@ -166,7 +166,12 @@ public enum EvalBootstrap {
     ///   - a `container/` symlink: the sandbox VM (kernel, rootfs, workspace)
     ///     is host-global BY DESIGN — boot costs minutes and the container is
     ///     shared with the host app — so it is the one deliberate exception
-    ///     to isolation. Per-case sandbox-agent cleanup still runs.
+    ///     to isolation. Per-case sandbox-agent cleanup still runs;
+    ///   - a `models/` mirror of the real models directory (per-model
+    ///     symlinks, see `seedIsolatedModelsDirectory`), wired through
+    ///     `DirectoryPickerService.setProcessModelsDirectoryOverride` so a
+    ///     models prune/delete can never destroy real weights and downloads
+    ///     die with the root. Skipped when the caller set `OSU_MODELS_DIR`.
     ///
     /// Returns the temp root, or nil when the root is ALREADY overridden
     /// (e.g. a test set `OsaurusPaths.overrideRoot`) — the first isolation
@@ -225,6 +230,31 @@ public enum EvalBootstrap {
             isolatedRoot: root,
             symlinkTools: plan.loadInstalledPlugins
         )
+
+        // Isolate the MODELS store too. `OsaurusPaths.overrideRoot` only
+        // covers `~/.osaurus`; the models directory (`~/MLXModels` or the
+        // user's bookmark) lives outside it, so before this seeding a
+        // model-issued `osaurus_config` models prune deleted the user's REAL
+        // weights mid-lane (observed 2026-08-22: Bonsai/Ornith/dealignai
+        // wiped from `~/MLXModels` during a DefaultAgent run), and
+        // model-download fixtures leaked junk dirs into the real store.
+        // The isolated store holds one SYMLINK per model dir: reads and the
+        // serving local model resolve through the links, while a delete
+        // unlinks only the symlink and a download lands in the throwaway
+        // root. An explicit `OSU_MODELS_DIR` from the caller still wins —
+        // `DirectoryPickerService` checks env before this override — so we
+        // skip the work when the caller already isolated the store.
+        let modelsEnv = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if modelsEnv?.isEmpty ?? true {
+            let realModels = DirectoryPickerService.effectiveModelsDirectory()
+            let isolatedModels = seedIsolatedModelsDirectory(
+                realModelsDirectory: realModels,
+                isolatedRoot: root
+            )
+            isolatedModelsRepairSource = (real: realModels, isolatedRoot: root)
+            DirectoryPickerService.setProcessModelsDirectoryOverride(isolatedModels)
+        }
 
         OsaurusPaths.overrideRoot = root
 
@@ -317,6 +347,83 @@ public enum EvalBootstrap {
                 withDestinationURL: realContainer
             )
         }
+    }
+
+    /// Build the isolated models store: `<isolatedRoot>/models/<owner>/` are
+    /// REAL directories, each model directory inside them is a SYMLINK to the
+    /// real one. Two-level mirroring matches the HF `owner/name` model-id
+    /// layout that `ModelManager` scans:
+    ///   - reads (catalog scan, `isDownloaded`, weight loading for the
+    ///     serving local model) follow the links to the real weights;
+    ///   - `FileManager.removeItem` on a model path removes the LINK, never
+    ///     the target, so a models prune cannot destroy user weights;
+    ///   - downloads create real directories inside the throwaway root and
+    ///     die with it, instead of leaking fixture dirs into `~/MLXModels`.
+    /// Top-level loose files are symlinked as-is. Internal (not private) so
+    /// the deletion-safety contract is unit-testable against a fabricated
+    /// real store.
+    nonisolated static func seedIsolatedModelsDirectory(
+        realModelsDirectory: URL,
+        isolatedRoot: URL
+    ) -> URL {
+        let fm = FileManager.default
+        let isolatedModels = isolatedRoot.appendingPathComponent("models", isDirectory: true)
+        try? fm.createDirectory(at: isolatedModels, withIntermediateDirectories: true)
+
+        guard
+            let owners = try? fm.contentsOfDirectory(
+                at: realModelsDirectory,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )
+        else { return isolatedModels }
+
+        for owner in owners {
+            let isDirectory =
+                (try? owner.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            let mirrored = isolatedModels.appendingPathComponent(owner.lastPathComponent)
+            guard isDirectory else {
+                try? fm.createSymbolicLink(at: mirrored, withDestinationURL: owner)
+                continue
+            }
+            try? fm.createDirectory(at: mirrored, withIntermediateDirectories: true)
+            guard
+                let models = try? fm.contentsOfDirectory(
+                    at: owner,
+                    includingPropertiesForKeys: nil,
+                    options: [.skipsHiddenFiles]
+                )
+            else { continue }
+            for model in models {
+                try? fm.createSymbolicLink(
+                    at: mirrored.appendingPathComponent(model.lastPathComponent),
+                    withDestinationURL: model
+                )
+            }
+        }
+        return isolatedModels
+    }
+
+    /// Where the isolated models store was seeded from, kept so a per-case
+    /// repair can re-create symlinks a model-issued prune removed. Single
+    /// assignment during bootstrap, read-only afterwards.
+    nonisolated(unsafe) private static var isolatedModelsRepairSource:
+        (real: URL, isolatedRoot: URL)?
+
+    /// Re-seed any missing symlinks in the isolated models store. A models
+    /// prune during a case unlinks symlinks (never real weights); without
+    /// this repair the SERVING local model becomes unresolvable and every
+    /// later case in the lane errors with `modelNotFound` — one flailing
+    /// apply must not poison the rest of the run. Idempotent: existing links
+    /// are left alone (`try?` create fails on collision), so per-case cost is
+    /// one directory scan. No-op when the models store was not isolated by
+    /// this process (explicit `OSU_MODELS_DIR` runs).
+    nonisolated static func repairIsolatedModelsStore() {
+        guard let source = isolatedModelsRepairSource else { return }
+        _ = seedIsolatedModelsDirectory(
+            realModelsDirectory: source.real,
+            isolatedRoot: source.isolatedRoot
+        )
     }
 
     /// Name of the pid marker each isolated root carries so a later process
@@ -528,7 +635,9 @@ public enum EvalBootstrap {
         // Safe disk-L2 default for the constrained profile; an explicit
         // OSAURUS_EVALS_DISK_L2_CAP_GB (applied after this, in
         // applyKVRegimeOverrideIfRequested) or a user-configured cap wins.
-        if settings.cache.blockDisk.maxSizeGB == nil {
+        if settings.cache.blockDisk.maxSizeGB == nil,
+            settings.cache.blockDisk.maxSizePercent == nil
+        {
             settings.cache.blockDisk.maxSizeGB = simulatedProfileDefaultDiskL2CapGB
             notes.append(
                 "blockDisk.maxSizeGB=\(simulatedProfileDefaultDiskL2CapGB) (profile default)"
@@ -641,8 +750,15 @@ public enum EvalBootstrap {
                 // `blockDisk.maxSizeGB` flows to `CacheCoordinatorConfig.diskCacheMaxGB`
                 // → `DiskCache.maxSizeBytes`, enforced after every store. Bounds
                 // the disk-L2 lane for a safe reuse A/B on a constrained host.
+                //
+                // The percent MUST be cleared: resolution is percent-then-GB,
+                // and schema v3 stamps 10% onto every install. Leaving it set
+                // would silently ignore this explicit cap and run the lane at
+                // 10% of the host disk instead — every cap-sensitive A/B would
+                // compare two runs that were never actually capped differently.
+                settings.cache.blockDisk.maxSizePercent = nil
                 settings.cache.blockDisk.maxSizeGB = capGB
-                notes.append("blockDisk.maxSizeGB=\(capGB)")
+                notes.append("blockDisk.maxSizeGB=\(capGB) (percent cleared so GB wins)")
             } else {
                 notes.append("diskL2Cap='\(diskCapRaw)' ignored (use a positive GB number)")
             }

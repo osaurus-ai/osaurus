@@ -18,6 +18,12 @@ struct ProviderRowCard: View {
         /// An explicit SF Symbol (e.g. the "Use an API key" drill-in), tinted
         /// with the accent gradient on hover.
         case symbol(String)
+        /// An SF Symbol carrying its own brand gradient. For rows that are a
+        /// real vendor but have no `ProviderPreset` — Claude Code, which drives
+        /// a local binary rather than an HTTP endpoint. Without this such a row
+        /// would share the accent gradient with the generic `.symbol` rows and
+        /// read as the same thing on hover.
+        case brandedSymbol(String, gradient: [Color])
     }
 
     private let leading: Leading
@@ -61,14 +67,19 @@ struct ProviderRowCard: View {
 
     /// Explicit action row not tied to a single provider (e.g. "Use an API
     /// key"). `title`/`subtitle` are localization keys.
+    ///
+    /// Pass `gradient` for a row that represents a real vendor without a
+    /// `ProviderPreset`, so it hovers to its own brand color instead of the
+    /// shared accent.
     init(
         icon: String,
         title: String,
         subtitle: String,
+        gradient: [Color]? = nil,
         action: @escaping () -> Void
     ) {
         self.init(
-            leading: .symbol(icon),
+            leading: gradient.map { .brandedSymbol(icon, gradient: $0) } ?? .symbol(icon),
             titleText: Text(LocalizedStringKey(title), bundle: .module),
             subtitle: subtitle,
             badge: nil,
@@ -146,6 +157,10 @@ struct ProviderRowCard: View {
                 Image(systemName: symbol)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(isHovered ? .white : theme.secondaryText)
+            case .brandedSymbol(let symbol, _):
+                Image(systemName: symbol)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(isHovered ? .white : theme.secondaryText)
             }
         }
     }
@@ -154,6 +169,7 @@ struct ProviderRowCard: View {
         switch leading {
         case .preset(let preset): return preset.gradient
         case .symbol: return [theme.accentColor, theme.accentColor.opacity(0.7)]
+        case .brandedSymbol(_, let gradient): return gradient
         }
     }
 }

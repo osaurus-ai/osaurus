@@ -28,7 +28,8 @@ struct AgentManagerLifecycleNotificationTests {
         Agent(
             name: "\(name)-\(UUID().uuidString.prefix(6))",
             systemPrompt: "Test identity",
-            agentAddress: "test-lifecycle-\(UUID().uuidString)"
+            agentAddress: "test-lifecycle-\(UUID().uuidString)",
+            autonomousExec: AutonomousExecConfig(enabled: false)
         )
     }
 
@@ -122,7 +123,8 @@ struct AgentManagerLifecycleNotificationTests {
             let backup = Agent(
                 id: agentId,
                 name: "RecoveredNotify",
-                systemPrompt: "Recovered through manager"
+                systemPrompt: "Recovered through manager",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             try self.seedAgentBackup(at: backupURL, agent: backup)
 
@@ -165,7 +167,8 @@ struct AgentManagerLifecycleNotificationTests {
             AgentStore.save(Agent(
                 id: originalId,
                 name: "CanonicalNotify",
-                systemPrompt: "canonical through manager"
+                systemPrompt: "canonical through manager",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             ))
 
             let backupURL = agents.appendingPathComponent("\(originalId.uuidString).json.bak")
@@ -174,7 +177,8 @@ struct AgentManagerLifecycleNotificationTests {
                 name: "LegacyNotify",
                 systemPrompt: "legacy through manager",
                 agentIndex: 17,
-                agentAddress: "0xlegacy-manager"
+                agentAddress: "0xlegacy-manager",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
             try self.seedAgentBackup(at: backupURL, agent: backup)
 

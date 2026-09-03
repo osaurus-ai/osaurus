@@ -1066,4 +1066,222 @@ struct LocalGenerationDefaultsTests {
             )
         }
     }
+
+    // MARK: - Ornith 1.5 35B MTP safety migration
+
+    private func makeOrnithMTPFixture(
+        name: String,
+        modelType: String = "qwen3_5_moe",
+        architecture: String = "Qwen3_5MoeForConditionalGeneration",
+        declaresMTP: Bool = true,
+        tuning: String? = #"{"native_mtp":{"best_depth":1,"validated":true,"output_equivalent":true,"note":"preserve me"}}"#
+    ) throws -> URL {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("\(name)-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        try """
+        {"model_type":"\(modelType)","architectures":["\(architecture)"]}
+        """.write(
+            to: tmp.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try """
+        {"runtime":{"bundle_has_mtp":\(declaresMTP)},"mtp":{"artifact_available":\(declaresMTP)}}
+        """.write(
+            to: tmp.appendingPathComponent("jang_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        if let tuning {
+            try tuning.write(
+                to: tmp.appendingPathComponent("vmlx_mtp_tuning.json"),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+        return tmp
+    }
+
+    @Test(
+        "only Ornith 1.5 35B quant bundles receive the manual MTP block",
+        arguments: ["JANG_4M", "JANG_6M", "MXFP8"]
+    )
+    func ornith15A3BMigrationIsExactAndIdempotent(quant: String) throws {
+        let tmp = try makeOrnithMTPFixture(
+            name: "Ornith-1.5-35B-A3B-UNCENSORED-\(quant)"
+        )
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let changed = try LocalGenerationDefaults
+            .repairOrnith15A3BManualMTPBlockIfNeeded(
+                at: tmp,
+                modelName: "dealign.ai/Ornith-1.5-35B-A3B-UNCENSORED-\(quant)"
+            )
+        #expect(changed)
+
+        let data = try Data(contentsOf: tmp.appendingPathComponent("vmlx_mtp_tuning.json"))
+        let root = try #require(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        let native = try #require(root["native_mtp"] as? [String: Any])
+        #expect(native["blocked"] as? Bool == true)
+        #expect(native["manual_blocked"] as? Bool == true)
+        #expect((native["best_depth"] as? NSNumber)?.intValue == 1)
+        #expect(native["note"] as? String == "preserve me")
+
+        let second = try LocalGenerationDefaults
+            .repairOrnith15A3BManualMTPBlockIfNeeded(
+                at: tmp,
+                modelName: "Ornith 1.5 35B A3B \(quant)"
+            )
+        #expect(!second)
+    }
+
+    @Test(
+        "neighboring MTP families and Ornith 9B are never stamped",
+        arguments: [
+            "Ornith-1.5-9B-JANG_4M",
+            "Ornith-1.0-35B-A3B-JANG_4M",
+            "Qwen3.8-27B-JANG_6D",
+            "Qwen3.8-Flash-Next-JANG_4M",
+        ]
+    )
+    func ornithMigrationLeavesEveryControlUntouched(name: String) throws {
+        let tmp = try makeOrnithMTPFixture(name: name)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let before = try Data(contentsOf: tmp.appendingPathComponent("vmlx_mtp_tuning.json"))
+
+        let changed = try LocalGenerationDefaults
+            .repairOrnith15A3BManualMTPBlockIfNeeded(at: tmp, modelName: name)
+        let after = try Data(contentsOf: tmp.appendingPathComponent("vmlx_mtp_tuning.json"))
+        #expect(!changed)
+        #expect(after == before)
+    }
+
+    @Test("a deceptive Ornith 35B name cannot stamp a different architecture")
+    func ornithMigrationRequiresExactRuntimeArchitecture() throws {
+        let tmp = try makeOrnithMTPFixture(
+            name: "Ornith-1.5-35B-A3B-JANG_4M",
+            modelType: "qwen4_exp",
+            architecture: "Qwen4ExpForConditionalGeneration"
+        )
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let before = try Data(contentsOf: tmp.appendingPathComponent("vmlx_mtp_tuning.json"))
+
+        let changed = try LocalGenerationDefaults
+            .repairOrnith15A3BManualMTPBlockIfNeeded(
+                at: tmp,
+                modelName: "Ornith-1.5-35B-A3B-JANG_4M"
+            )
+        #expect(!changed)
+        #expect(
+            try Data(contentsOf: tmp.appendingPathComponent("vmlx_mtp_tuning.json"))
+                == before)
+    }
+
+    @Test("an exact old bundle without a tuning file gets one safety sidecar")
+    func ornithMigrationCreatesMissingTuningSidecarFromMTPEvidence() throws {
+        let tmp = try makeOrnithMTPFixture(
+            name: "Ornith-1.5-35B-A3B-JANG_4M",
+            tuning: nil
+        )
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        #expect(
+            try LocalGenerationDefaults.repairOrnith15A3BManualMTPBlockIfNeeded(
+                at: tmp,
+                modelName: "dealign.ai/Ornith-1.5-35B-A3B-JANG_4M"
+            ))
+        let root = try #require(
+            try JSONSerialization.jsonObject(
+                with: Data(contentsOf: tmp.appendingPathComponent("vmlx_mtp_tuning.json"))
+            ) as? [String: Any]
+        )
+        let native = try #require(root["native_mtp"] as? [String: Any])
+        #expect(native["blocked"] as? Bool == true)
+        #expect(native["manual_blocked"] as? Bool == true)
+    }
+
+    @Test("an exact bundle with malformed tuning fails instead of enabling MTP")
+    func ornithMigrationFailsClosedOnMalformedTuning() throws {
+        let tmp = try makeOrnithMTPFixture(
+            name: "Ornith-1.5-35B-A3B-JANG_4M",
+            tuning: "{not-json"
+        )
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        #expect(throws: (any Error).self) {
+            _ = try LocalGenerationDefaults.repairOrnith15A3BManualMTPBlockIfNeeded(
+                at: tmp,
+                modelName: "Ornith-1.5-35B-A3B-JANG_4M"
+            )
+        }
+    }
+
+    // MARK: - vmlx parity
+
+    /// vmlx's `GenerationConfigFile` decodes `presence_penalty` and
+    /// `frequency_penalty` (vmlx-swift#297). osaurus does NOT use
+    /// `GenerateParameters(generationConfig:fallback:)` — it re-implements the
+    /// adoption here — so before this was wired, a bundle declaring a penalty
+    /// had it honoured by the direct engine and silently dropped by the app.
+    @Test("Qwen3-style presence_penalty is adopted, not dropped")
+    func adoptsDeclaredPenalties() {
+        let d = Self.defaults(
+            fromJSON: #"""
+                {
+                  "do_sample": true, "temperature": 0.7, "top_p": 0.8, "top_k": 20,
+                  "presence_penalty": 1.5, "frequency_penalty": 0.5,
+                  "repetition_penalty": 1.05
+                }
+                """#
+        )
+        #expect(d.presencePenalty == 1.5)
+        #expect(d.frequencyPenalty == 0.5)
+        #expect(d.repetitionPenalty == 1.05)
+    }
+
+    /// The neutral value must stay inert. `makeGenerateParameters` treats 0 as
+    /// "unset" per the OpenAI default, so reading a declared 0.0 must not switch
+    /// a penalty ON for a bundle that only wrote the neutral value — which is
+    /// what most inspectable bundles actually ship.
+    @Test("a declared 0.0 penalty is read but stays neutral")
+    func zeroPenaltyIsNeutral() {
+        let d = Self.defaults(
+            fromJSON: #"{"temperature": 0.7, "presence_penalty": 0.0, "frequency_penalty": 0.0}"#
+        )
+        #expect(d.presencePenalty == 0.0)
+        #expect(d.frequencyPenalty == 0.0)
+    }
+
+    /// Pins the covered key set against vmlx's `GenerationConfigFile`. This is a
+    /// hand-mirrored decoder, which is exactly why it drifted: vmlx gained two
+    /// keys and nothing here failed. `suppress_tokens` is the one vmlx decodes
+    /// that osaurus still does not adopt — named here rather than left silent,
+    /// because an omission nobody can see is how this happened the first time.
+    /// It has no sink in `makeGenerateParameters`, so wiring it would be inert.
+    @Test("every sampling key vmlx decodes is either adopted or named as a gap")
+    func vmlxParity() {
+        let d = Self.defaults(
+            fromJSON: #"""
+                {
+                  "max_new_tokens": 512, "temperature": 0.7, "top_p": 0.8, "top_k": 20,
+                  "min_p": 0.01, "repetition_penalty": 1.05, "do_sample": true,
+                  "presence_penalty": 1.5, "frequency_penalty": 0.5,
+                  "suppress_tokens": [11, 22]
+                }
+                """#
+        )
+        #expect(d.maxTokens == 512)
+        #expect(d.temperature == 0.7)
+        #expect(d.topP == 0.8)
+        #expect(d.topK == 20)
+        #expect(d.minP == 0.01)
+        #expect(d.repetitionPenalty == 1.05)
+        #expect(d.doSample == true)
+        #expect(d.presencePenalty == 1.5)
+        #expect(d.frequencyPenalty == 0.5)
+        // KNOWN GAP: suppress_tokens — adopt here once a sink exists.
+    }
 }

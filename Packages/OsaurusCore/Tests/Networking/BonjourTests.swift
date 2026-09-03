@@ -19,7 +19,7 @@ import Testing
 @MainActor
 struct BonjourAdvertiserTXTTests {
     @Test func txtRecord_omitsOscAndAddress_whenAddressless() {
-        let agent = Agent(name: "Local")
+        let agent = Agent(name: "Local", autonomousExec: AutonomousExecConfig(enabled: false))
         let fields = NetService.dictionary(fromTXTRecord: BonjourAdvertiser.txtRecord(for: agent))
         // An addressless agent cannot complete a handshake, so it must NOT
         // claim Secure Channel support.
@@ -30,7 +30,7 @@ struct BonjourAdvertiserTXTTests {
     }
 
     @Test func txtRecord_includesOscAndAddress_whenAddressPresent() {
-        let agent = Agent(name: "Local", agentAddress: "0xABCDEF")
+        let agent = Agent(name: "Local", agentAddress: "0xABCDEF", autonomousExec: AutonomousExecConfig(enabled: false))
         let fields = NetService.dictionary(fromTXTRecord: BonjourAdvertiser.txtRecord(for: agent))
         #expect(fields["osc"].flatMap { String(data: $0, encoding: .utf8) } == "1")
         #expect(fields["address"].flatMap { String(data: $0, encoding: .utf8) } == "0xABCDEF")

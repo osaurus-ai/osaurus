@@ -534,6 +534,16 @@ actor MLXService: ToolCapableService {
         }
         let localDirectory =
             modelDirectory
+            // A model discovered in the HF cache, LM Studio, or a custom model
+            // folder does NOT live under the app's models directory, so
+            // rebuilding its path from `effectiveModelsDirectory()` yields a
+            // path that does not exist. That fell through to the name-only
+            // descriptor, which infers capability from the model ID — so a
+            // bundle whose config.json declares a vision tower was refused
+            // with "Image input is not advertised" while the picker, which
+            // reads the scan record, badged it "Vision" and happily accepted
+            // the attachment. Ask the locator where the bundle actually is.
+            ?? ExternalModelLocator.path(forId: modelId)
             ?? modelId.split(separator: "/").map(String.init).reduce(
                 DirectoryPickerService.effectiveModelsDirectory()
             ) {

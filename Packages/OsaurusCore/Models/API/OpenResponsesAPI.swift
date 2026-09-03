@@ -19,10 +19,33 @@ public struct OpenResponsesReasoningConfig: Codable, Sendable {
     /// UI has no reasoning to display. "auto" lets the server pick the
     /// summary granularity (works without org verification).
     public let summary: String?
+    /// Which prior reasoning items the model may use on a follow-up turn.
+    /// Osaurus manually replays complete history, so `all_turns` preserves the
+    /// same reasoning continuity as the Codex client.
+    public let context: String?
 
-    public init(effort: String, summary: String? = nil) {
+    public init(effort: String, summary: String? = nil, context: String? = nil) {
         self.effort = effort
         self.summary = summary
+        self.context = context
+    }
+}
+
+/// OpenAI Responses output formatting. This differs from Chat Completions'
+/// top-level `response_format`: JSON mode is `text.format` on `/responses`.
+public struct OpenResponsesTextConfig: Codable, Sendable {
+    public let format: OpenResponsesTextFormat?
+
+    public init(format: OpenResponsesTextFormat?) {
+        self.format = format
+    }
+}
+
+public struct OpenResponsesTextFormat: Codable, Sendable {
+    public let type: String
+
+    public init(type: String) {
+        self.type = type
     }
 }
 
@@ -52,6 +75,18 @@ public struct OpenResponsesRequest: Codable, Sendable {
     public let metadata: [String: String]?
     /// Reasoning configuration for reasoning models
     public let reasoning: OpenResponsesReasoningConfig?
+    /// Osaurus owns and replays conversation history locally. Disable remote
+    /// response-object storage so the wire contract matches that stateless
+    /// architecture and encrypted reasoning can be replayed.
+    public let store: Bool?
+    /// Additional response fields needed for stateless reasoning continuity.
+    public let include: [String]?
+    /// Whether the provider may issue independent function calls in parallel.
+    public let parallel_tool_calls: Bool?
+    /// Stable conversation-scoped cache-routing key.
+    public let prompt_cache_key: String?
+    /// Responses-native output formatting (`text.format`).
+    public let text: OpenResponsesTextConfig?
 }
 
 /// Input can be a string or array of input items
@@ -101,6 +136,10 @@ public enum OpenResponsesInputItem: Codable, Sendable {
     /// `include:["reasoning.encrypted_content"]`. Must appear immediately
     /// before the `function_call`(s) it produced.
     case reasoning(OpenResponsesReasoningInputItem)
+    /// Provider-native output Item replayed verbatim. Responses is explicitly
+    /// item-based, and preserving the original JSON retains assistant `phase`,
+    /// item identifiers, and future item fields that ChatMessage cannot model.
+    case raw(JSONValue)
 
     private enum CodingKeys: String, CodingKey {
         case type
@@ -128,11 +167,7 @@ public enum OpenResponsesInputItem: Codable, Sendable {
             // OpenAI Responses clients omit this discriminator for plain message input items.
             self = .message(try OpenResponsesMessageItem(from: decoder))
         default:
-            throw DecodingError.dataCorruptedError(
-                forKey: .type,
-                in: container,
-                debugDescription: "Unknown input item type: \(type ?? "<missing>")"
-            )
+            self = .raw(try JSONValue(from: decoder))
         }
     }
 
@@ -145,6 +180,8 @@ public enum OpenResponsesInputItem: Codable, Sendable {
         case .functionCallOutput(let item):
             try item.encode(to: encoder)
         case .reasoning(let item):
+            try item.encode(to: encoder)
+        case .raw(let item):
             try item.encode(to: encoder)
         }
     }
@@ -176,17 +213,35 @@ public struct OpenResponsesMessageItem: Codable, Sendable {
     public let type: String
     public let role: String
     public let content: OpenResponsesMessageContent
+    /// Present when replaying a provider-authored output message.
+    public let id: String?
+    public let status: OpenResponsesItemStatus?
+    /// GPT-5.3 Codex and later distinguish intermediate commentary from the
+    /// final answer. OpenAI requires clients to preserve this on follow-ups.
+    public let phase: String?
 
     private enum CodingKeys: String, CodingKey {
         case type
         case role
         case content
+        case id
+        case status
+        case phase
     }
 
-    public init(role: String, content: OpenResponsesMessageContent) {
+    public init(
+        role: String,
+        content: OpenResponsesMessageContent,
+        id: String? = nil,
+        status: OpenResponsesItemStatus? = nil,
+        phase: String? = nil
+    ) {
         self.type = "message"
         self.role = role
         self.content = content
+        self.id = id
+        self.status = status
+        self.phase = phase
     }
 
     public init(from decoder: Decoder) throws {
@@ -208,6 +263,9 @@ public struct OpenResponsesMessageItem: Codable, Sendable {
         self.type = "message"
         self.role = try container.decode(String.self, forKey: .role)
         self.content = try container.decode(OpenResponsesMessageContent.self, forKey: .content)
+        self.id = try container.decodeIfPresent(String.self, forKey: .id)
+        self.status = try container.decodeIfPresent(OpenResponsesItemStatus.self, forKey: .status)
+        self.phase = try container.decodeIfPresent(String.self, forKey: .phase)
     }
 }
 
@@ -369,12 +427,16 @@ public struct OpenResponsesTool: Codable, Sendable {
     public let name: String
     public let description: String?
     public let parameters: JSONValue?
+    /// Explicitly choose strict or best-effort behavior instead of relying on
+    /// provider-side schema normalization.
+    public let strict: Bool?
 
-    public init(name: String, description: String?, parameters: JSONValue?) {
+    public init(name: String, description: String?, parameters: JSONValue?, strict: Bool? = nil) {
         self.type = "function"
         self.name = name
         self.description = description
         self.parameters = parameters
+        self.strict = strict
     }
 }
 
@@ -450,6 +512,7 @@ public struct OpenResponsesResponse: Codable, Sendable {
     public let output_text: String?
     public let usage: OpenResponsesUsage?
     public let metadata: [String: String]?
+    public var error: OpenResponsesError? = nil
 
     public init(
         id: String,
@@ -594,11 +657,13 @@ public struct OpenResponsesOutputMessage: Codable, Sendable {
 public enum OpenResponsesItemStatus: String, Codable, Sendable {
     case inProgress = "in_progress"
     case completed = "completed"
+    case incomplete = "incomplete"
 }
 
 /// Output content types
 public enum OpenResponsesOutputContent: Codable, Sendable {
     case outputText(OpenResponsesOutputText)
+    case refusal(OpenResponsesRefusal)
 
     private enum CodingKeys: String, CodingKey {
         case type
@@ -611,6 +676,8 @@ public enum OpenResponsesOutputContent: Codable, Sendable {
         switch type {
         case "output_text":
             self = .outputText(try OpenResponsesOutputText(from: decoder))
+        case "refusal":
+            self = .refusal(try OpenResponsesRefusal(from: decoder))
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .type,
@@ -624,6 +691,8 @@ public enum OpenResponsesOutputContent: Codable, Sendable {
         switch self {
         case .outputText(let content):
             try content.encode(to: encoder)
+        case .refusal(let content):
+            try content.encode(to: encoder)
         }
     }
 }
@@ -636,6 +705,17 @@ public struct OpenResponsesOutputText: Codable, Sendable {
     public init(text: String) {
         self.type = "output_text"
         self.text = text
+    }
+}
+
+/// A model safety refusal is content, not a transport decode failure.
+public struct OpenResponsesRefusal: Codable, Sendable {
+    public let type: String
+    public let refusal: String
+
+    public init(refusal: String) {
+        self.type = "refusal"
+        self.refusal = refusal
     }
 }
 
@@ -980,6 +1060,12 @@ extension OpenResponsesRequest {
                     // Completions path has no equivalent, so skip them here;
                     // the assistant tool_calls / outputs that follow carry the
                     // actionable history.
+                    continue
+                case .raw:
+                    // Unknown provider-native Items have no Chat Completions
+                    // equivalent. Preserve them on the outbound Responses path;
+                    // the local Chat Completions adapter intentionally ignores
+                    // them rather than inventing text.
                     continue
                 }
             }

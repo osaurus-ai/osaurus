@@ -3,8 +3,8 @@
 //  osaurus
 //
 //  Defines all available tabs in the management sidebar, grouped into
-//  labeled sections (General, Models, Agents & Automation, Server,
-//  Privacy & Security, Account) that drive the sidebar's visual grouping.
+//  labeled sections (General, Models, Agents, Capabilities, Automation,
+//  Developers) that drive the sidebar's visual grouping.
 //
 
 import Foundation
@@ -16,10 +16,10 @@ import SwiftUI
 public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
     case general
     case models
-    case agentsAutomation
-    case server
-    case privacySecurity
-    case account
+    case agents
+    case capabilities
+    case automation
+    case developers
 
     public var id: String { rawValue }
 
@@ -27,26 +27,23 @@ public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .general: L("General")
         case .models: L("Models")
-        case .agentsAutomation: L("Agents & Automation")
-        case .server: L("Server")
-        case .privacySecurity: L("Privacy & Security")
-        case .account: L("Account")
+        case .agents: L("Agents")
+        case .capabilities: L("Capabilities")
+        case .automation: L("Automation")
+        case .developers: L("Developer Tools")
         }
     }
 
     /// Tabs belonging to this section, in display order.
     public var tabs: [ManagementTab] {
         switch self {
-        case .general: [.settings, .chat, .voice, .themes]
+        case .general:
+            [.settings, .chat, .voice, .themes, .credits, .identity, .permissions, .privacy]
         case .models: [.models, .providers, .imageGeneration]
-        case .agentsAutomation:
-            [
-                .agents, .agentChannels, .memory, .knowledge, .tools, .search, .skills, .commands,
-                .plugins, .schedules, .watchers, .sandbox, .computerUse, .browser,
-            ]
-        case .server: [.server]
-        case .privacySecurity: [.privacy, .permissions, .identity, .storage]
-        case .account: [.credits, .insights]
+        case .agents: [.orchestrator, .agents, .agentChannels]
+        case .capabilities: [.search, .knowledge, .memory, .tools, .skills, .commands]
+        case .automation: [.schedules, .watchers, .computerUse, .browser]
+        case .developers: [.server, .sandbox, .insights]
         }
     }
 }
@@ -59,6 +56,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case chat
     case voice
     case themes
+    case orchestrator
     case models
     case providers
     case imageGeneration
@@ -70,7 +68,6 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case search
     case skills
     case commands
-    case plugins
     case schedules
     case watchers
     case sandbox
@@ -80,7 +77,6 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case privacy
     case permissions
     case identity
-    case storage
     case credits
     case insights
 
@@ -94,23 +90,24 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     /// The sidebar section this tab belongs to.
     public var section: ManagementSection {
         switch self {
-        case .settings, .chat, .voice, .themes: .general
+        case .settings, .chat, .voice, .themes, .credits, .identity, .permissions, .privacy:
+            .general
         case .models, .providers, .imageGeneration: .models
-        case .agents, .agentChannels, .memory, .knowledge, .tools, .search, .skills, .commands,
-            .plugins, .schedules, .watchers, .sandbox, .computerUse, .browser:
-            .agentsAutomation
-        case .server: .server
-        case .privacy, .permissions, .identity, .storage: .privacySecurity
-        case .credits, .insights: .account
+        case .orchestrator, .agents, .agentChannels: .agents
+        case .search, .knowledge, .memory, .tools, .skills, .commands: .capabilities
+        case .schedules, .watchers, .computerUse, .browser: .automation
+        case .server, .sandbox, .insights: .developers
         }
     }
 
     /// Resolves a sidebar tab id, including legacy raw values whose destination
-    /// has moved (`"dashboard"` → Credits, `"channels"` → Agent Channels).
+    /// has moved (`"dashboard"` → Credits, `"channels"` → Agent Channels,
+    /// `"storage"` → Privacy, which now hosts the storage-encryption panel).
     public static func resolved(from rawValue: String) -> ManagementTab? {
         switch rawValue {
         case "dashboard": .credits
         case "channels", "integrations", "agent-channels": .agentChannels
+        case "storage": .privacy
         default: ManagementTab(rawValue: rawValue)
         }
     }
@@ -122,10 +119,9 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .providers: "cloud.fill"
         case .agents: "person.2.fill"
         case .agentChannels: "bubble.left.and.bubble.right.fill"
-        case .plugins: "puzzlepiece.extension.fill"
         case .sandbox: "shippingbox.fill"
         case .tools: "wrench.and.screwdriver.fill"
-        case .search: "magnifyingglass"
+        case .search: "globe"
         case .skills: "sparkles"
         case .commands: "command"
         case .memory: "brain.head.profile.fill"
@@ -142,23 +138,22 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .imageGeneration: "photo.artframe"
         case .privacy: "hand.raised.fill"
         case .identity: "person.badge.key.fill"
-        case .storage: "externaldrive.fill.badge.checkmark"
         case .chat: "text.bubble.fill"
         case .settings: "gearshape.fill"
+        case .orchestrator: "point.3.connected.trianglepath.dotted"
         }
     }
 
     public var label: String {
         switch self {
         case .credits: L("Credits")
-        case .models: L("Models")
-        case .providers: L("Providers")
+        case .models: L("Local Models")
+        case .providers: L("Cloud Models")
         case .agents: L("Agents")
         case .agentChannels: L("Channels")
-        case .plugins: L("Plugins")
         case .sandbox: L("Sandbox")
         case .tools: L("Tools")
-        case .search: L("Search")
+        case .search: L("Web Search")
         case .skills: L("Skills")
         case .commands: L("Commands")
         case .memory: L("Memory")
@@ -171,13 +166,13 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .server: L("Server")
         case .permissions: L("Permissions")
         case .computerUse: L("Computer Use")
-        case .browser: L("Browser")
-        case .imageGeneration: L("Images")
+        case .browser: L("Browser Use")
+        case .imageGeneration: L("Media")
         case .privacy: L("Privacy")
         case .identity: L("Identity")
-        case .storage: L("Storage")
         case .chat: L("Chat")
         case .settings: L("General")
+        case .orchestrator: L("Orchestrator")
         }
     }
 
