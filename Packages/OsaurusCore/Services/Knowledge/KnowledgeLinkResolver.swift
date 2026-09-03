@@ -103,6 +103,45 @@ public enum KnowledgeLinkResolver {
         return components.url
     }
 
+    /// Find knowledge-document paths written as plain prose (no backticks),
+    /// e.g. "saved to UW Metrics & Definitions/Reports/Summary.md". Anchored
+    /// on a known collection name followed by `/`, extending to the next
+    /// whitespace, and existence-gated like the code-span path. Returns
+    /// UTF-16 ranges into `text` plus the link to attach.
+    public static func plainTextMatches(in text: String) -> [(range: NSRange, url: URL)] {
+        installObserverIfNeeded()
+        guard text.contains("/") else { return [] }
+        let collections = KnowledgeManager.shared.collections.filter(\.isEnabled)
+        guard !collections.isEmpty else { return [] }
+
+        let ns = text as NSString
+        let whitespace = CharacterSet.whitespacesAndNewlines
+        var results: [(range: NSRange, url: URL)] = []
+        for collection in collections {
+            let prefix = collection.name + "/"
+            var cursor = 0
+            while cursor < ns.length {
+                let found = ns.range(of: prefix, range: NSRange(location: cursor, length: ns.length - cursor))
+                guard found.location != NSNotFound else { break }
+                var end = found.location + found.length
+                while end < ns.length {
+                    // Surrogate halves fail the scalar init and are treated as
+                    // non-whitespace, which is what we want.
+                    if let scalar = Unicode.Scalar(ns.character(at: end)), whitespace.contains(scalar) {
+                        break
+                    }
+                    end += 1
+                }
+                let candidate = ns.substring(with: NSRange(location: found.location, length: end - found.location))
+                if let match = linkURL(forCodeSpan: candidate) {
+                    results.append((NSRange(location: found.location, length: match.matchedLength), match.url))
+                }
+                cursor = end
+            }
+        }
+        return results
+    }
+
     /// Resolve a clicked `osaurus-knowledge://` link back to the file on
     /// disk. Returns nil if the collection is gone or the file no longer
     /// exists (it may have been deleted since render time).

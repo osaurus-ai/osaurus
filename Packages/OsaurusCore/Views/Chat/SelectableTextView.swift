@@ -681,19 +681,20 @@ struct SelectableTextView: NSViewRepresentable {
         if InlineMathScanner.mayContainMath(text) {
             let segments = InlineMathScanner.split(text)
             if segments.contains(where: { $0.isMath }) {
-                return renderSegmentsWithMath(
-                    segments,
-                    fontSize: fontSize,
-                    weight: weight,
-                    isItalic: isItalic,
-                    baseAttributes: baseAttributes
-                )
+                return withKnowledgeLinks(
+                    renderSegmentsWithMath(
+                        segments,
+                        fontSize: fontSize,
+                        weight: weight,
+                        isItalic: isItalic,
+                        baseAttributes: baseAttributes
+                    ))
             }
         }
 
         // Fast path: skip markdown parsing for plain text
         guard likelyContainsMarkdown(text) else {
-            return NSMutableAttributedString(string: text, attributes: baseAttributes)
+            return withKnowledgeLinks(NSMutableAttributedString(string: text, attributes: baseAttributes))
         }
 
         // Try to parse as markdown
@@ -704,11 +705,31 @@ struct SelectableTextView: NSViewRepresentable {
             // Convert to mutable and apply theme styling
             let mutable = NSMutableAttributedString(attributedString: markdownAttr)
             applyThemeStyling(to: mutable, baseFontSize: fontSize, baseWeight: weight, isItalic: isItalic)
-            return mutable
+            return withKnowledgeLinks(mutable)
         }
 
         // Fallback to plain text
-        return NSMutableAttributedString(string: text, attributes: baseAttributes)
+        return withKnowledgeLinks(NSMutableAttributedString(string: text, attributes: baseAttributes))
+    }
+
+    /// Attach knowledge-document links to paths written as plain prose.
+    /// Ranges already linked (markdown links, backticked spans handled in
+    /// `applyThemeStyling`) are left untouched.
+    private func withKnowledgeLinks(_ attrString: NSMutableAttributedString) -> NSMutableAttributedString {
+        let matches = KnowledgeLinkResolver.plainTextMatches(in: attrString.string)
+        guard !matches.isEmpty else { return attrString }
+        let accentColor = NSColor(theme.accentColor)
+        for match in matches {
+            guard match.range.location + match.range.length <= attrString.length,
+                attrString.attribute(.link, at: match.range.location, effectiveRange: nil) == nil
+            else { continue }
+            attrString.addAttribute(.link, value: match.url, range: match.range)
+            attrString.addAttribute(.foregroundColor, value: accentColor, range: match.range)
+            attrString.addAttribute(
+                .underlineStyle, value: NSUnderlineStyle.single.rawValue, range: match.range
+            )
+        }
+        return attrString
     }
 
     // MARK: - Inline Math Helpers
