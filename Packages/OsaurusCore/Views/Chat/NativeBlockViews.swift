@@ -594,6 +594,12 @@ final class NativeCodeBlockView: NSView {
     /// bounded cadence so colors appear progressively without paying the
     /// JavaScriptCore cost on every delta.
     private var streamingHighlightWork: DispatchWorkItem?
+    /// Set once the streaming code crosses `streamingHighlightMaxLength`.
+    /// Per-delta appends inherit the trailing character's attributes, and
+    /// the periodic full pass was what corrected them — so the first crossing
+    /// does one plain rebuild (everything after streams uncolored instead of
+    /// wearing the last token's color), and later passes are skipped.
+    private var streamingHighlightCapped = false
     private static let streamingHighlightInterval: TimeInterval = 0.4
 
     /// Mid-stream passes re-highlight the entire current code every interval,
@@ -724,12 +730,16 @@ final class NativeCodeBlockView: NSView {
     /// retroactively, e.g. an unclosed block comment) and skips the shared
     /// highlight cache so streaming prefixes don't pollute it.
     private func scheduleStreamingHighlight(theme: any ThemeProtocol) {
-        guard streamingHighlightWork == nil else { return }
+        guard streamingHighlightWork == nil, !streamingHighlightCapped else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.streamingHighlightWork = nil
             guard self.lastIsStreaming, let cv = self.codeView else { return }
-            guard self.lastCode.utf16.count <= Self.streamingHighlightMaxLength else { return }
+            guard self.lastCode.utf16.count <= Self.streamingHighlightMaxLength else {
+                self.streamingHighlightCapped = true
+                self.applyStreamingText(to: cv, code: self.lastCode, theme: theme, fullRebuild: true)
+                return
+            }
             self.applyHighlighting(
                 to: cv,
                 code: self.lastCode,
@@ -909,6 +919,7 @@ final class NativeCodeBlockView: NSView {
         streamingCursor = nil
         streamingHighlightWork?.cancel()
         streamingHighlightWork = nil
+        streamingHighlightCapped = false
     }
 
     /// New code landed — actively revealing is the opposite of "waiting".
