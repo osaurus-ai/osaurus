@@ -331,6 +331,13 @@ public final class RelayTunnelManager: ObservableObject {
 
     private func connect() async {
         guard webSocketTask == nil || !isConnected else { return }
+        // Identity of whatever task was live when this connect started. The
+        // suspensions below (master key, session build) are windows in which
+        // another connect can publish a new socket; `isConnected` only flips
+        // in `handleAuthOk`, so a guard on it alone passes for the whole
+        // handshake and let two overlapping connects publish two sockets.
+        // Re-checking against this identity catches the overlap exactly.
+        let taskAtEntry = webSocketTask
 
         let enabled = configuration.enabledAgentIds
         guard !enabled.isEmpty else { return }
@@ -358,7 +365,7 @@ public final class RelayTunnelManager: ObservableObject {
         }
 
         // Re-check after the suspension: another connect may have won the race
-        guard webSocketTask == nil || !isConnected else { return }
+        guard webSocketTask === taskAtEntry else { return }
 
         // Detached: building the session reads the disk-backed proxy/server
         // configuration (a stat plus a possible file read + decode under the
@@ -368,7 +375,11 @@ public final class RelayTunnelManager: ObservableObject {
         }.value
         // The detached hop is another suspension a racing connect could have
         // crossed; re-check before publishing the new task.
-        guard webSocketTask == nil || !isConnected else { return }
+        guard webSocketTask === taskAtEntry else { return }
+        // A stale, never-authenticated task from a failed handshake is what
+        // let the entry guard through; retire it so it can't leak.
+        taskAtEntry?.cancel(with: .goingAway, reason: nil)
+        urlSession?.invalidateAndCancel()
         let task = session.webSocketTask(with: Self.relayURL)
         self.urlSession = session
         self.webSocketTask = task
@@ -430,8 +441,13 @@ public final class RelayTunnelManager: ObservableObject {
                 guard let task = self.webSocketTask else { break }
                 do {
                     let message = try await task.receive()
+                    // A socket retired by a newer connect must neither feed
+                    // frames into the live session nor tear it down when its
+                    // final receive fails; only the current task may.
+                    guard self.webSocketTask === task else { break }
                     self.handleMessage(message)
                 } catch {
+                    guard self.webSocketTask === task else { break }
                     self.handleDisconnect()
                     break
                 }
